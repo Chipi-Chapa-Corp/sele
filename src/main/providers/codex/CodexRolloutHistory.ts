@@ -47,6 +47,11 @@ type RolloutEntry = {
   index: number
 }
 
+type ParsedRollout = {
+  entries: RolloutEntry[]
+  turnModels: Map<string, string>
+}
+
 const isToolCallPayload = (payload: RolloutPayload): boolean =>
   payload.type === 'custom_tool_call' ||
   payload.type === 'function_call' ||
@@ -77,38 +82,44 @@ const getRecordValue = (value: unknown): Record<string, unknown> | null =>
 const getStringValue = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null
 
+const getPayloadModel = (payload: RolloutPayload): string | null => {
+  const directModel = getStringValue(payload.model)
+  if (directModel) return directModel
+
+  const collaborationMode = getRecordValue(payload.collaboration_mode)
+  const collaborationModeSettings = getRecordValue(collaborationMode?.settings)
+
+  return getStringValue(collaborationModeSettings?.model)
+}
+
 const getRequiredUsageNumber = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 
-const parseRollout = (contents: string): RolloutEntry[] => {
+const parseRollout = (contents: string): ParsedRollout => {
   const entries: RolloutEntry[] = []
+  const turnModels = new Map<string, string>()
 
   contents.split('\n').forEach((line, index) => {
     if (!line.trim()) return
 
     try {
       const record = JSON.parse(line) as RolloutRecord
-      if (record.payload?.type) {
-        entries.push({ record, payload: record.payload, index })
-        return
+      const payload = record.payload
+      if (!payload) return
+
+      if (record.type === 'turn_context') {
+        const turnId = getStringValue(payload.turn_id)
+        const model = getPayloadModel(payload)
+        if (turnId && model && !turnModels.has(turnId)) turnModels.set(turnId, model)
       }
 
-      if (record.type === 'turn_context' && record.payload) {
-        entries.push({
-          record,
-          payload: {
-            ...record.payload,
-            type: record.type
-          },
-          index
-        })
-      }
+      if (payload.type) entries.push({ record, payload, index })
     } catch {
       // A malformed rollout row should not prevent the rest of the history from loading.
     }
   })
 
-  return entries
+  return { entries, turnModels }
 }
 
 const groupEntriesByTurn = (entries: RolloutEntry[]): Map<string, RolloutEntry[]> => {
@@ -170,14 +181,7 @@ const getFirstEntryTimestampSeconds = (entries: RolloutEntry[]): number | null =
 }
 
 const getEntryModel = (entry: RolloutEntry): string | null => {
-  const payload = entry.payload
-  const directModel = getStringValue(payload.model)
-  if (directModel) return directModel
-
-  const collaborationMode = getRecordValue(payload.collaboration_mode)
-  const collaborationModeSettings = getRecordValue(collaborationMode?.settings)
-
-  return getStringValue(collaborationModeSettings?.model)
+  return getPayloadModel(entry.payload)
 }
 
 const getTurnModel = (entries: RolloutEntry[]): string | null => {
@@ -472,7 +476,11 @@ const createContextCompactionItem = (entry: RolloutEntry): CodexThreadItem => ({
   rawToolData: [entry.record]
 })
 
-const createTurn = (turnId: string, entries: RolloutEntry[]): CodexTurn => {
+const createTurn = (
+  turnId: string,
+  entries: RolloutEntry[],
+  turnContextModel: string | null
+): CodexTurn => {
   const items: CodexThreadItem[] = []
   const usedPatchEntryIndexes = new Set<number>()
   const hasFinalAgentMessage = entries.some(
@@ -526,7 +534,7 @@ const createTurn = (turnId: string, entries: RolloutEntry[]): CodexTurn => {
 
   return {
     id: turnId,
-    model: getTurnModel(entries),
+    model: getTurnModel(entries) ?? turnContextModel,
     startedAt: getFirstEntryTimestampSeconds(entries),
     completedAt: getLastEntryTimestampSeconds(entries),
     items
@@ -537,8 +545,11 @@ export const loadRolloutHistory = async (rolloutPath: string | null): Promise<Co
   if (!rolloutPath) return []
 
   try {
-    const entriesByTurn = groupEntriesByTurn(parseRollout(await readFile(rolloutPath, 'utf8')))
-    return [...entriesByTurn.entries()].map(([turnId, entries]) => createTurn(turnId, entries))
+    const { entries, turnModels } = parseRollout(await readFile(rolloutPath, 'utf8'))
+    const entriesByTurn = groupEntriesByTurn(entries)
+    return [...entriesByTurn.entries()].map(([turnId, turnEntries]) =>
+      createTurn(turnId, turnEntries, turnModels.get(turnId) ?? null)
+    )
   } catch {
     return []
   }
@@ -550,7 +561,7 @@ export const loadRolloutContextUsage = async (
   if (!rolloutPath) return null
 
   try {
-    const entries = parseRollout(await readFile(rolloutPath, 'utf8'))
+    const { entries } = parseRollout(await readFile(rolloutPath, 'utf8'))
 
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const contextUsage = normalizeRolloutContextUsage(entries[index])

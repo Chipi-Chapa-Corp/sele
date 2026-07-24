@@ -2757,9 +2757,31 @@ export const App: React.FC = () => {
   const pinnedChatGroup = chatGroups.find((group) => group.kind === 'pinned') ?? null
   const activeChatGroups = chatGroups.filter((group) => group.kind === 'cwd')
   const doneChatGroup = chatGroups.find((group) => group.kind === 'done') ?? null
+  const messageBoxNotesCwd = selectedChat ? changesProjectCwd : newSessionCwd
+  const messageBoxNotesVisible = Boolean(selectedChat) || newChatOpen
+  const messageBoxNotesGroup = useMemo(
+    () =>
+      messageBoxNotesVisible
+        ? {
+            key: getChatCwdGroupKey(messageBoxNotesCwd),
+            cwd: messageBoxNotesCwd,
+            label: getChatCwdLabel(messageBoxNotesCwd)
+          }
+        : null,
+    [messageBoxNotesCwd, messageBoxNotesVisible]
+  )
 
   useEffect(() => {
-    const groupsToLoad = activeChatGroups.filter(
+    const notesGroups = new Map(
+      activeChatGroups.map((group) => [group.key, { key: group.key, cwd: group.cwd }])
+    )
+    if (messageBoxNotesGroup) {
+      notesGroups.set(messageBoxNotesGroup.key, {
+        key: messageBoxNotesGroup.key,
+        cwd: messageBoxNotesGroup.cwd
+      })
+    }
+    const groupsToLoad = Array.from(notesGroups.values()).filter(
       (group) => !(group.key in cwdNotesByGroup) && !loadingCwdNotesRef.current.has(group.key)
     )
     if (groupsToLoad.length === 0) return
@@ -2784,7 +2806,7 @@ export const App: React.FC = () => {
         return nextNotes
       })
     })
-  }, [activeChatGroups, cwdNotesByGroup])
+  }, [activeChatGroups, cwdNotesByGroup, messageBoxNotesGroup])
 
   useEffect(() => {
     const entriesByKey = new Map<string, { key: string; cwd: string | null }>()
@@ -2944,7 +2966,10 @@ export const App: React.FC = () => {
     })
   }
 
-  const handleCwdNotesChange = (group: ChatListGroupData, notes: ProviderCwdNote[]): void => {
+  const handleCwdNotesChange = (
+    group: Pick<ChatListGroupData, 'key' | 'cwd'>,
+    notes: ProviderCwdNote[]
+  ): void => {
     setCwdNotesByGroup((currentNotes) => ({
       ...currentNotes,
       [group.key]: notes
@@ -3579,12 +3604,10 @@ export const App: React.FC = () => {
         chatPageSize={chatPageSize}
         onLoadMoreChats={handleLoadMoreChatsInGroup}
         onShowLessChats={handleShowLessChatsInGroup}
-        notes={cwdNotesByGroup[group.key] ?? []}
         projectIconSrc={projectIconsByGroup[group.key]?.dataUrl ?? null}
         onMarkChatDone={handleMarkChatDone}
         onMarkCwdChatsDone={(nextGroup) => void handleMarkCwdChatsDone(nextGroup)}
         onNewChatInCwd={handleNewChatInCwd}
-        onNotesChange={handleCwdNotesChange}
         onSelectProjectIcon={(nextGroup) => void handleSelectProjectIcon(nextGroup)}
         onResolveApproval={(chat, decision) => void handleResolveChatApproval(chat, decision)}
         onSelectChat={handleSelectChat}
@@ -4856,6 +4879,13 @@ export const App: React.FC = () => {
                   contextUsage={messageBoxContextUsage}
                   model={model}
                   models={models}
+                  notesContextKey={messageBoxNotesGroup?.key}
+                  notes={
+                    messageBoxNotesGroup
+                      ? (cwdNotesByGroup[messageBoxNotesGroup.key] ?? [])
+                      : undefined
+                  }
+                  notesLabel={messageBoxNotesGroup?.label}
                   operationsDisabled={providerUpdateInProgress}
                   pending={sendState === 'sending'}
                   reasoningEffort={reasoningEffort}
@@ -4864,6 +4894,11 @@ export const App: React.FC = () => {
                   onApprovalModeChange={handleApprovalModeChange}
                   onCancelEdit={handleCancelEditMessage}
                   onModelChange={handleModelChange}
+                  onNotesChange={
+                    messageBoxNotesGroup
+                      ? (notes) => handleCwdNotesChange(messageBoxNotesGroup, notes)
+                      : undefined
+                  }
                   onReasoningEffortChange={handleReasoningEffortChange}
                   onSandboxModeChange={handleSandboxModeChange}
                   onStop={handleStopChat}

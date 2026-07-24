@@ -21,6 +21,7 @@ import type {
   ProviderApprovalMode,
   ProviderApprovalModeOption,
   ProviderAccountUsage,
+  ProviderCwdNote,
   ProviderModel,
   ProviderModelId,
   ProviderReasoningEffort,
@@ -29,6 +30,7 @@ import type {
   ProviderUsageOptions
 } from '../../../shared/provider'
 import { Button } from './Button'
+import { CwdNotesButton } from './CwdNotesButton'
 import { DisclosureToggle } from './DisclosureToggle'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { SegmentedControl } from './SegmentedControl'
@@ -54,9 +56,13 @@ type MessageBoxProps = {
   accountUsageError: string | null
   accountUsageState: 'idle' | 'loading' | 'ready' | 'error'
   contextUsage: MessageBoxContextUsage
+  notes?: ProviderCwdNote[]
+  notesContextKey?: string
+  notesLabel?: string
   onApprovalModeChange: (approvalMode: ProviderApprovalMode) => void
   onCancelEdit?: () => void
   onModelChange: (model: ProviderModelId) => void
+  onNotesChange?: (notes: ProviderCwdNote[]) => void
   onReasoningEffortChange: (reasoningEffort: ProviderReasoningEffort) => void
   onSandboxModeChange: (sandboxMode: ProviderSandboxMode) => void
   onStop?: () => Promise<void> | void
@@ -296,6 +302,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   accountUsageError,
   accountUsageState,
   contextUsage,
+  notes = [],
+  notesContextKey,
+  notesLabel,
   model,
   models,
   operationsDisabled = false,
@@ -306,6 +315,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   onApprovalModeChange,
   onCancelEdit,
   onModelChange,
+  onNotesChange,
   onReasoningEffortChange,
   onSandboxModeChange,
   onStop,
@@ -730,6 +740,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 onChange={onReasoningEffortChange}
               />
             </span>
+            {notesLabel && onNotesChange && (
+              <CwdNotesButton
+                key={notesContextKey}
+                label={notesLabel}
+                notes={notes}
+                onNotesChange={onNotesChange}
+              />
+            )}
           </div>
           <div className="message-box__send-controls">
             {editing && (
