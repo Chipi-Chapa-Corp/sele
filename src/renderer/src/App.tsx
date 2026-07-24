@@ -4694,6 +4694,7 @@ export const App: React.FC = () => {
                         chatHasActiveTurn ? handleInterruptPendingMessage : undefined
                       }
                       onEditMessage={handleEditMessage}
+                      projectCwd={changesProjectCwd}
                       selectedModelId={model}
                     />
                   ))}

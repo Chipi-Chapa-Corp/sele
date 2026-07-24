@@ -58,6 +58,7 @@ type ChatDetailItemProps = {
   onEditPendingMessage?: (message: ProviderPendingMessage) => void
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
+  projectCwd?: string | null
   selectedModelId?: ProviderModelId
 }
 
@@ -197,11 +198,18 @@ const getToolDisplayLabel = (
   active: boolean
 ): string => (active ? getActiveToolLabel(label, activity) : getFinishedToolLabel(label, activity))
 
-const DiffContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) => (
+const DiffContent: React.FC<{
+  tools: ProviderWorkingTool[]
+  projectCwd?: string | null
+}> = ({ tools, projectCwd }) => (
   <div className="chat-detail__activity-content">
     {tools.flatMap((tool) =>
       tool.diffs.map((diff, index) => (
-        <ToolDiff fileDiff={diff} key={`${tool.id}:${diff.path}:${index}`} />
+        <ToolDiff
+          fileDiff={diff}
+          key={`${tool.id}:${diff.path}:${index}`}
+          projectCwd={projectCwd}
+        />
       ))
     )}
   </div>
@@ -355,13 +363,14 @@ const Activity: React.FC<{
   tools: ProviderWorkingTool[]
   active: boolean
   expanded: boolean
-}> = ({ label, tools, active, expanded }) => {
+  projectCwd?: string | null
+}> = ({ label, tools, active, expanded, projectCwd }) => {
   const activity = tools[0]?.activity ?? 'other'
 
   const detailLabel = getToolDisplayLabel(label || tools[0]?.toolId || 'Tool use', activity, active)
   const content =
     activity === 'edit' || activity === 'create' || activity === 'delete' ? (
-      <DiffContent tools={tools} />
+      <DiffContent tools={tools} projectCwd={projectCwd} />
     ) : activity === 'command' ||
       activity === 'search' ||
       activity === 'git' ||
@@ -443,7 +452,8 @@ const ToolItem: React.FC<{
   item: ProviderToolItem
   activeToolIds: Set<string>
   expanded?: boolean
-}> = ({ item, activeToolIds, expanded = false }) => {
+  projectCwd?: string | null
+}> = ({ item, activeToolIds, expanded = false, projectCwd }) => {
   const tools = getToolsFromToolItem(item)
   const activity = tools[0]?.activity ?? 'other'
   const active = tools.some((tool) => activeToolIds.has(tool.id))
@@ -461,7 +471,15 @@ const ToolItem: React.FC<{
     )
   }
 
-  return <Activity label={rawLabel} tools={tools} active={active} expanded={expanded} />
+  return (
+    <Activity
+      label={rawLabel}
+      tools={tools}
+      active={active}
+      expanded={expanded}
+      projectCwd={projectCwd}
+    />
+  )
 }
 
 const MarkdownMessage: React.FC<{ className: string; content: string }> = ({
@@ -601,10 +619,11 @@ const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolActivity
   )
 }
 
-const ToolSequence: React.FC<{ items: ProviderToolItem[]; activeToolIds: Set<string> }> = ({
-  items,
-  activeToolIds
-}) => {
+const ToolSequence: React.FC<{
+  items: ProviderToolItem[]
+  activeToolIds: Set<string>
+  projectCwd?: string | null
+}> = ({ items, activeToolIds, projectCwd }) => {
   const tools = items.flatMap(getToolsFromToolItem)
   const activeTools = tools.filter((tool) => activeToolIds.has(tool.id))
   const active = activeTools.length > 0
@@ -624,7 +643,12 @@ const ToolSequence: React.FC<{ items: ProviderToolItem[]; activeToolIds: Set<str
       </summary>
       <div className="chat-detail__tool-sequence-content">
         {items.map((item) => (
-          <ToolItem item={item} activeToolIds={activeToolIds} key={item.id} />
+          <ToolItem
+            item={item}
+            activeToolIds={activeToolIds}
+            key={item.id}
+            projectCwd={projectCwd}
+          />
         ))}
       </div>
     </details>
@@ -745,7 +769,10 @@ const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] => {
   return blocks
 }
 
-const WorkingStep: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
+const WorkingStep: React.FC<{
+  item: ProviderWorkingStep
+  projectCwd?: string | null
+}> = ({ item, projectCwd }) => {
   const blocks = groupWorkingItems(item.items)
   const lastWorkingItem = item.items.at(-1)
   const signature = useMemo(
@@ -806,6 +833,7 @@ const WorkingStep: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
                 items={block.items}
                 activeToolIds={activeToolIds}
                 key={block.items[0]?.id}
+                projectCwd={projectCwd}
               />
             ) : (
               block.items.map((toolItem) => (
@@ -814,6 +842,7 @@ const WorkingStep: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
                   activeToolIds={activeToolIds}
                   expanded={active && toolItem === lastWorkingItem}
                   key={toolItem.id}
+                  projectCwd={projectCwd}
                 />
               ))
             )
@@ -845,6 +874,7 @@ export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
   onEditPendingMessage,
   onInterruptPendingMessage,
   onEditMessage,
+  projectCwd,
   selectedModelId
 }) => {
   const [copied, setCopied] = useState(false)
@@ -974,5 +1004,5 @@ export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
     )
   }
 
-  return <WorkingStep item={item} />
+  return <WorkingStep item={item} projectCwd={projectCwd} />
 }

@@ -70,6 +70,34 @@ const refractorAdapter = {
   highlight: (value: string, language: string) => refractor.highlight(value, language).children
 }
 
+const getDisplayPath = (path: string, projectCwd: string | null | undefined): string => {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const rawProjectCwd = projectCwd?.trim().replace(/\\/g, '/')
+  const normalizedProjectCwd =
+    rawProjectCwd === '/' || /^[A-Za-z]:\/$/.test(rawProjectCwd ?? '')
+      ? rawProjectCwd
+      : rawProjectCwd?.replace(/\/+$/, '')
+
+  if (!normalizedProjectCwd) return normalizedPath
+
+  const caseInsensitive = /^(?:[A-Za-z]:\/|\/\/)/.test(normalizedProjectCwd)
+  const comparisonPath = caseInsensitive ? normalizedPath.toLocaleLowerCase() : normalizedPath
+  const comparisonProjectCwd = caseInsensitive
+    ? normalizedProjectCwd.toLocaleLowerCase()
+    : normalizedProjectCwd
+
+  if (comparisonPath === comparisonProjectCwd) {
+    return normalizedPath.split('/').filter(Boolean).at(-1) ?? normalizedPath
+  }
+
+  const projectPrefix = comparisonProjectCwd.endsWith('/')
+    ? comparisonProjectCwd
+    : `${comparisonProjectCwd}/`
+  if (!comparisonPath.startsWith(projectPrefix)) return normalizedPath
+
+  return normalizedPath.slice(projectPrefix.length)
+}
+
 const getLanguage = (path: string): string | null => {
   const fileName = path.split(/[\\/]/).at(-1)?.toLocaleLowerCase() ?? ''
   const extension = fileName.includes('.') ? (fileName.split('.').at(-1) ?? '') : ''
@@ -160,12 +188,19 @@ const getRenderedFiles = (
   }
 }
 
-export const ToolDiff = ({ fileDiff }: { fileDiff: ProviderFileDiff }): React.JSX.Element => {
+export const ToolDiff = ({
+  fileDiff,
+  projectCwd
+}: {
+  fileDiff: ProviderFileDiff
+  projectCwd?: string | null
+}): React.JSX.Element => {
   const files = useMemo(() => getRenderedFiles(fileDiff), [fileDiff])
+  const displayPath = getDisplayPath(fileDiff.path, projectCwd)
 
   return (
     <section className="chat-detail__diff-section">
-      <h3>{fileDiff.path}</h3>
+      <div className="chat-detail__diff-path">{displayPath}</div>
       {files.length > 0 ? (
         <div className="chat-detail__diff-scroll">
           {files.map(({ file, tokens }, index) => (

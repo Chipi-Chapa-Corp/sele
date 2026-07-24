@@ -91,7 +91,6 @@
 .chat-detail__pending-message-label {
   max-width: 82%;
   color: var(--quiet);
-  font-size: 0.86rem;
   font-weight: 700;
   line-height: 1.2;
 }
@@ -400,16 +399,15 @@
   border-top: 1px solid var(--line);
 }
 
-.chat-detail__activity-content h3 {
+.chat-detail__diff-path {
   margin: 0 0 7px;
   color: var(--quiet);
   font-family: inherit;
   font-weight: 750;
   letter-spacing: 0.045em;
-  text-transform: uppercase;
 }
 
-.chat-detail__activity-content pre + h3 {
+.chat-detail__activity-content pre + .chat-detail__diff-path {
   margin-top: 12px;
 }
 
@@ -451,7 +449,6 @@
   --diff-font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   min-width: 100%;
-  font-size: 0.86rem;
 }
 
 .chat-detail__diff + .chat-detail__diff {
