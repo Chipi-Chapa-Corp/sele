@@ -46,6 +46,7 @@ import type {
   ProviderWorkingTool
 } from '../../../shared/provider'
 import { Button } from './Button'
+import { HighlightedCode } from './HighlightedCode'
 import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
 
@@ -210,17 +211,23 @@ const CommandContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) =
   <div className="chat-detail__activity-content chat-detail__activity-content--command">
     {tools.map((tool) => (
       <section key={tool.id}>
-        {tool.command && <pre>{tool.command}</pre>}
+        {tool.command && (
+          <HighlightedCode language={getInputLanguage(tool.command)}>
+            {tool.command}
+          </HighlightedCode>
+        )}
         {tool.command && tool.stdout && (
           <span className="chat-detail__command-divider" aria-hidden="true" />
         )}
-        {tool.stdout && <pre>{tool.stdout}</pre>}
+        {tool.stdout && (
+          <HighlightedCode language={getOutputLanguage(tool.stdout)}>{tool.stdout}</HighlightedCode>
+        )}
       </section>
     ))}
   </div>
 )
 
-const formatRawOutput = (value: unknown): string => {
+const formatToolValue = (value: unknown): string => {
   if (value == null) return 'null'
   if (typeof value === 'string') return value
 
@@ -231,11 +238,54 @@ const formatRawOutput = (value: unknown): string => {
   }
 }
 
+const isJson = (value: string): boolean => {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false
+
+  try {
+    JSON.parse(trimmed)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const getOutputLanguage = (value: string): string | null => {
+  if (isJson(value)) return 'json'
+
+  const trimmed = value.trimStart()
+  if (trimmed.startsWith('diff --git ') || trimmed.startsWith('@@ ')) return 'diff'
+  if (/^<(?!!--)[A-Za-z][^>]*>/.test(trimmed)) return 'markup'
+
+  return null
+}
+
+const getInputLanguage = (value: string): string => {
+  if (isJson(value)) return 'json'
+  if (/^(?:tools|functions)\.[A-Za-z0-9_]+\s*\(/.test(value.trimStart())) return 'javascript'
+  return 'bash'
+}
+
+const getToolValueLanguage = (value: unknown, input = false): string | null => {
+  if (typeof value !== 'string') return 'json'
+  return input ? getInputLanguage(value) : getOutputLanguage(value)
+}
+
 const RawContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) => (
-  <div className="chat-detail__activity-content">
+  <div className="chat-detail__activity-content chat-detail__activity-content--command">
     {tools.map((tool) => (
       <section key={tool.id}>
-        <pre>{formatRawOutput(tool.rawOutput)}</pre>
+        {tool.rawInput != null && (
+          <HighlightedCode language={getToolValueLanguage(tool.rawInput, true)}>
+            {formatToolValue(tool.rawInput)}
+          </HighlightedCode>
+        )}
+        {tool.rawInput != null && (
+          <span className="chat-detail__command-divider" aria-hidden="true" />
+        )}
+        <HighlightedCode language={getToolValueLanguage(tool.rawOutput)}>
+          {formatToolValue(tool.rawOutput)}
+        </HighlightedCode>
       </section>
     ))}
   </div>

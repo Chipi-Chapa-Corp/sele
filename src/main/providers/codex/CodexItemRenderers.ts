@@ -26,6 +26,7 @@ export type CodexThreadItem = {
   tool?: string
   namespace?: string | null
   query?: string
+  arguments?: unknown
   changes?: {
     path: string
     kind: { type: 'add' | 'delete' } | { type: 'update'; move_path: string | null }
@@ -69,6 +70,7 @@ type WorkingItemRenderResult =
       diffs: ProviderFileDiff[]
       backgroundSessionId: string | null
       finishedBackgroundSessionId: string | null
+      rawInput: unknown
       rawOutput: unknown
       raw: unknown[]
     }
@@ -698,6 +700,14 @@ const getRawToolOutput = (item: CodexThreadItem): unknown => {
   return item.rawToolData ?? item
 }
 
+const getRawToolInput = (item: CodexThreadItem): unknown => {
+  if (item.customToolInput !== undefined) return item.customToolInput
+  if (item.command !== undefined) return item.command
+  if (item.arguments !== undefined) return item.arguments
+  if (item.query !== undefined) return item.query
+  return null
+}
+
 const getToolId = (item: CodexThreadItem): string =>
   item.customToolName ??
   (item.server && item.tool ? `${item.server}/${item.tool}` : null) ??
@@ -857,6 +867,7 @@ const renderTool = (
   diffs,
   backgroundSessionId: getStartedBackgroundSessionId(item),
   finishedBackgroundSessionId: getFinishedBackgroundSessionId(item),
+  rawInput: getRawToolInput(item),
   rawOutput,
   raw: item.rawToolData ?? [item]
 })

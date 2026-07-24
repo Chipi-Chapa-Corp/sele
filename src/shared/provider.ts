@@ -376,6 +376,7 @@ export type ProviderWorkingTool = {
   diffs: ProviderFileDiff[]
   backgroundSessionId: string | null
   finishedBackgroundSessionId: string | null
+  rawInput: unknown
   rawOutput: unknown
   raw: unknown[]
 }

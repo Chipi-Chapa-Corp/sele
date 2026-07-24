@@ -479,122 +479,122 @@
   word-break: normal;
 }
 
-.chat-detail__diff .token.comment,
-.chat-detail__diff .token.prolog,
-.chat-detail__diff .token.doctype,
-.chat-detail__diff .token.cdata {
+.chat-detail__activity-content .token.comment,
+.chat-detail__activity-content .token.prolog,
+.chat-detail__activity-content .token.doctype,
+.chat-detail__activity-content .token.cdata {
   color: #777772;
 }
 
-.chat-detail__diff .token.punctuation {
+.chat-detail__activity-content .token.punctuation {
   color: #666661;
 }
 
-.chat-detail__diff .token.property,
-.chat-detail__diff .token.tag,
-.chat-detail__diff .token.boolean,
-.chat-detail__diff .token.number,
-.chat-detail__diff .token.constant,
-.chat-detail__diff .token.symbol,
-.chat-detail__diff .token.deleted {
+.chat-detail__activity-content .token.property,
+.chat-detail__activity-content .token.tag,
+.chat-detail__activity-content .token.boolean,
+.chat-detail__activity-content .token.number,
+.chat-detail__activity-content .token.constant,
+.chat-detail__activity-content .token.symbol,
+.chat-detail__activity-content .token.deleted {
   color: #a03c38;
 }
 
-.chat-detail__diff .token.selector,
-.chat-detail__diff .token.attr-name,
-.chat-detail__diff .token.string,
-.chat-detail__diff .token.char,
-.chat-detail__diff .token.builtin,
-.chat-detail__diff .token.inserted {
+.chat-detail__activity-content .token.selector,
+.chat-detail__activity-content .token.attr-name,
+.chat-detail__activity-content .token.string,
+.chat-detail__activity-content .token.char,
+.chat-detail__activity-content .token.builtin,
+.chat-detail__activity-content .token.inserted {
   color: #39744b;
 }
 
-.chat-detail__diff .token.operator,
-.chat-detail__diff .token.entity,
-.chat-detail__diff .token.url,
-.chat-detail__diff .language-css .token.string,
-.chat-detail__diff .style .token.string,
-.chat-detail__diff .token.variable {
+.chat-detail__activity-content .token.operator,
+.chat-detail__activity-content .token.entity,
+.chat-detail__activity-content .token.url,
+.chat-detail__activity-content .language-css .token.string,
+.chat-detail__activity-content .style .token.string,
+.chat-detail__activity-content .token.variable {
   color: #8c5a24;
 }
 
-.chat-detail__diff .token.atrule,
-.chat-detail__diff .token.attr-value,
-.chat-detail__diff .token.function,
-.chat-detail__diff .token.class-name {
+.chat-detail__activity-content .token.atrule,
+.chat-detail__activity-content .token.attr-value,
+.chat-detail__activity-content .token.function,
+.chat-detail__activity-content .token.class-name {
   color: #76552f;
 }
 
-.chat-detail__diff .token.keyword {
+.chat-detail__activity-content .token.keyword {
   color: #7d438e;
 }
 
-.chat-detail__diff .token.regex,
-.chat-detail__diff .token.important {
+.chat-detail__activity-content .token.regex,
+.chat-detail__activity-content .token.important {
   color: #a75022;
 }
 
-.chat-detail__diff .token.bold,
-.chat-detail__diff .token.important {
+.chat-detail__activity-content .token.bold,
+.chat-detail__activity-content .token.important {
   font-weight: 700;
 }
 
-.chat-detail__diff .token.italic {
+.chat-detail__activity-content .token.italic {
   font-style: italic;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__diff .token.comment,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.prolog,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.doctype,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.cdata {
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.comment,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.prolog,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.doctype,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.cdata {
   color: #898984;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__diff .token.punctuation {
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.punctuation {
   color: #b4b4af;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__diff .token.property,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.tag,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.boolean,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.number,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.constant,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.symbol,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.deleted {
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.property,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.tag,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.boolean,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.number,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.constant,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.symbol,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.deleted {
   color: #ee8580;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__diff .token.selector,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.attr-name,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.string,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.char,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.builtin,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.inserted {
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.selector,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.attr-name,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.string,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.char,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.builtin,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.inserted {
   color: #8fc89d;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__diff .token.operator,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.entity,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.url,
-:root[data-color-scheme='dark'] .chat-detail__diff .language-css .token.string,
-:root[data-color-scheme='dark'] .chat-detail__diff .style .token.string,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.variable {
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.operator,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.entity,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.url,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .language-css .token.string,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .style .token.string,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.variable {
   color: #ddb278;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__diff .token.atrule,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.attr-value,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.function,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.class-name {
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.atrule,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.attr-value,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.function,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.class-name {
   color: #d8ac7e;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__diff .token.keyword {
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.keyword {
   color: #d49ae2;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__diff .token.regex,
-:root[data-color-scheme='dark'] .chat-detail__diff .token.important {
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.regex,
+:root[data-color-scheme='dark'] .chat-detail__activity-content .token.important {
   color: #e99b65;
 }
 
