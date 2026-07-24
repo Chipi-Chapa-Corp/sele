@@ -479,6 +479,15 @@
   box-shadow: var(--control-shadow);
 }
 
+.changes-sidebar__commit-activity-cancel {
+  --control-height-small: 24px;
+  --control-icon-size: 15px;
+
+  display: inline-flex;
+  flex: none;
+  pointer-events: auto;
+}
+
 .changes-sidebar__commit-activity-badge {
   display: inline-flex;
   min-width: 0;

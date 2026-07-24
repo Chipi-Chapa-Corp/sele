@@ -452,13 +452,31 @@ const CommitActivityActionIcon: React.FC<{ activity: ProviderToolActivity }> = (
   return <Wrench aria-hidden="true" />
 }
 
-const CommitActivityRow: React.FC<{ activity: CommitActivityDisplay }> = ({ activity }) => {
+const CommitActivityRow: React.FC<{
+  activity: CommitActivityDisplay
+  canceling?: boolean
+  onCancel?: () => Promise<void> | void
+}> = ({ activity, canceling = false, onCancel }) => {
   const commitActionName = commitActionLabels[activity.commitAction]
   const commitActionLabel = activity.source === 'ai' ? `AI ${commitActionName}` : commitActionName
   const title = `${commitActionLabel} · ${activity.currentAction.label}`
+  const cancelLabel = `Cancel AI ${commitActionName.toLocaleLowerCase()}`
 
   return (
     <div className="changes-sidebar__commit-activity">
+      {onCancel && (
+        <span className="changes-sidebar__commit-activity-cancel">
+          <Button
+            aria-label={cancelLabel}
+            callback={onCancel}
+            disabled={canceling}
+            icon={<X aria-hidden="true" />}
+            size="small"
+            theme="transparent"
+            title={cancelLabel}
+          />
+        </span>
+      )}
       <span className="changes-sidebar__commit-activity-badge">
         <ChangesAnimatedIcon Icon={AnimatedGitCommitHorizontalIcon} active />
         <span>{commitActionLabel}</span>
@@ -1747,6 +1765,7 @@ export const App: React.FC = () => {
   const [directCommitActivities, setDirectCommitActivities] = useState<
     Record<string, DirectCommitActivity>
   >({})
+  const [cancelingAiCommitKeys, setCancelingAiCommitKeys] = useState<Set<string>>(() => new Set())
   const [syncState, setSyncState] = useState<SendState>('idle')
   const [syncError, setSyncError] = useState<string | null>(null)
   const [syncRecovery, setSyncRecovery] = useState<GitSyncRecoveryState | null>(null)
@@ -4229,6 +4248,39 @@ export const App: React.FC = () => {
     }
   }
 
+  const handleCancelAiCommit = async (activity: ScopedCommitActivity): Promise<void> => {
+    const activityKey = getProviderChatKey(activity.providerId, activity.chatId)
+    if (providerUpdateInProgress || cancelingAiCommitKeys.has(activityKey)) return
+
+    setCancelingAiCommitKeys((currentKeys) => new Set(currentKeys).add(activityKey))
+    setCommitState('idle')
+    setCommitError(null)
+
+    try {
+      const detail = await providerApi.stopChat(activity.providerId, activity.chatId)
+      applyChatDetail(activity.providerId, detail)
+      setScopedCommitActivities((currentActivities) => {
+        if (!currentActivities[activityKey]) return currentActivities
+
+        const nextActivities = { ...currentActivities }
+        delete nextActivities[activityKey]
+        return nextActivities
+      })
+      setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
+    } catch (error) {
+      setCommitState('error')
+      setCommitError(getErrorMessage(error, 'Unable to cancel the AI commit.'))
+    } finally {
+      setCancelingAiCommitKeys((currentKeys) => {
+        if (!currentKeys.has(activityKey)) return currentKeys
+
+        const nextKeys = new Set(currentKeys)
+        nextKeys.delete(activityKey)
+        return nextKeys
+      })
+    }
+  }
+
   const showRecoverableGitFailure = (
     cwd: string,
     requestedAction: GitSyncAction,
@@ -5042,10 +5094,20 @@ export const App: React.FC = () => {
                   {currentProjectCommitActivities.map((activity) => (
                     <CommitActivityRow
                       activity={activity}
+                      canceling={
+                        providerUpdateInProgress ||
+                        (activity.source === 'ai' &&
+                          cancelingAiCommitKeys.has(
+                            getProviderChatKey(activity.providerId, activity.chatId)
+                          ))
+                      }
                       key={
                         activity.source === 'ai'
                           ? getProviderChatKey(activity.providerId, activity.chatId)
                           : activity.id
+                      }
+                      onCancel={
+                        activity.source === 'ai' ? () => handleCancelAiCommit(activity) : undefined
                       }
                     />
                   ))}
