@@ -2,6 +2,7 @@ import {
   Check,
   Folder,
   GitBranch,
+  GitCommitHorizontal,
   LoaderCircle,
   Pin,
   PinOff,
@@ -18,6 +19,7 @@ type ChatListItemProps = {
   chat: ProviderChat
   selected: boolean
   showProject: boolean
+  committing?: boolean
   canMarkDone?: boolean
   canMarkUndone?: boolean
   onClick: () => void
@@ -61,6 +63,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   chat,
   selected,
   showProject,
+  committing = false,
   canMarkDone = true,
   canMarkUndone = false,
   onClick,
@@ -101,7 +104,17 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
         onClick={onClick}
       >
         <span className="chat-list-item__header">
-          {workingStatus ? (
+          {committing ? (
+            <span
+              className="chat-list-item__status-container chat-list-item__status-container--leading"
+              title="Committing changes"
+            >
+              <GitCommitHorizontal
+                className="chat-list-item__committing"
+                aria-label="Committing changes"
+              />
+            </span>
+          ) : workingStatus ? (
             <span
               className="chat-list-item__status-container chat-list-item__status-container--leading"
               title={statusLabels[workingStatus]}

@@ -18,6 +18,7 @@ type ChatListGroupProps = {
   group: ChatListGroupData
   open: boolean
   selectedChatKey: string | null
+  committingChatKeys?: ReadonlySet<string>
   visibleChatCount?: number
   chatPageSize?: number
   projectIconSrc?: string | null
@@ -40,6 +41,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   group,
   open,
   selectedChatKey,
+  committingChatKeys,
   visibleChatCount = group.chats.length,
   chatPageSize = 20,
   projectIconSrc = null,
@@ -143,6 +145,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             ariaLabel={`${group.label} chats`}
             chats={visibleChats}
             selectedChatKey={selectedChatKey}
+            committingChatKeys={committingChatKeys}
             canMarkDone={group.kind !== 'done'}
             canMarkUndone={group.kind === 'done'}
             showProjects={group.kind === 'pinned' || group.kind === 'done'}

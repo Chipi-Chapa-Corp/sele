@@ -1228,6 +1228,32 @@
   flex: none;
 }
 
+.chat-detail__commit-placeholder {
+  display: inline-flex;
+  max-width: 82%;
+  align-self: flex-end;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 15px;
+  border: 1px dashed var(--message-border);
+  border-radius: 17px 17px 6px;
+  color: color-mix(in srgb, var(--lead) 72%, transparent);
+  background: color-mix(in srgb, var(--assistant-message) 68%, transparent);
+  line-height: 1.4;
+}
+
+.chat-detail__commit-placeholder-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--menu-option-check-color);
+}
+
+.chat-detail__commit-placeholder-icon > svg {
+  width: 18px;
+  height: 18px;
+}
+
 @media (max-width: 800px) {
   .chat {
     display: block;

@@ -6,6 +6,7 @@ type ChatListProps = {
   ariaLabel?: string
   chats: ProviderChat[]
   selectedChatKey: string | null
+  committingChatKeys?: ReadonlySet<string>
   canMarkDone?: boolean
   canMarkUndone?: boolean
   showProjects?: boolean
@@ -23,6 +24,7 @@ export const ChatList: React.FC<ChatListProps> = ({
   ariaLabel = 'Chats',
   chats,
   selectedChatKey,
+  committingChatKeys,
   canMarkDone = true,
   canMarkUndone = false,
   showProjects = false,
@@ -41,6 +43,7 @@ export const ChatList: React.FC<ChatListProps> = ({
           key={chatKey}
           chat={chat}
           selected={chatKey === selectedChatKey}
+          committing={committingChatKeys?.has(chatKey)}
           canMarkDone={canMarkDone}
           canMarkUndone={canMarkUndone}
           showProject={showProjects}

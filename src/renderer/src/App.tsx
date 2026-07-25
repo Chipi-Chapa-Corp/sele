@@ -197,6 +197,11 @@ type ScopedCommitActivity = {
   currentAction: CommitActivityAction
   startedAt: number
 }
+type StartingScopedCommitActivity = {
+  providerId: ProviderId
+  sourceChatId: string
+  commitAction: GitCommitPromptAction
+}
 type DirectCommitActivity = {
   source: 'git'
   id: string
@@ -1764,6 +1769,8 @@ export const App: React.FC = () => {
   const [scopedCommitActivities, setScopedCommitActivities] = useState<
     Record<string, ScopedCommitActivity>
   >({})
+  const [startingScopedCommitActivity, setStartingScopedCommitActivity] =
+    useState<StartingScopedCommitActivity | null>(null)
   const [directCommitActivities, setDirectCommitActivities] = useState<
     Record<string, DirectCommitActivity>
   >({})
@@ -2430,6 +2437,40 @@ export const App: React.FC = () => {
 
   const selectedProviderId = selectedChat?.providerId
   const selectedChatId = selectedChat?.id
+  const committingSelectedChatKey =
+    selectedProviderId && selectedChatId
+      ? getChatKey({ providerId: selectedProviderId, id: selectedChatId })
+      : null
+  const committingChatActions = useMemo(() => {
+    const actions = new Map<string, GitCommitPromptAction>()
+
+    Object.values(scopedCommitActivities).forEach((activity) => {
+      if (!activity.sourceChatId) return
+
+      actions.set(
+        getChatKey({ providerId: activity.providerId, id: activity.sourceChatId }),
+        activity.commitAction
+      )
+    })
+    if (startingScopedCommitActivity) {
+      actions.set(
+        getChatKey({
+          providerId: startingScopedCommitActivity.providerId,
+          id: startingScopedCommitActivity.sourceChatId
+        }),
+        startingScopedCommitActivity.commitAction
+      )
+    }
+
+    return actions
+  }, [scopedCommitActivities, startingScopedCommitActivity])
+  const committingChatKeys = useMemo(
+    () => new Set(committingChatActions.keys()),
+    [committingChatActions]
+  )
+  const selectedChatAiCommitAction = committingSelectedChatKey
+    ? (committingChatActions.get(committingSelectedChatKey) ?? null)
+    : null
   const usageProviderId = selectedProviderId ?? newSessionProvider
   const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
   const changesProjectCwd = selectedChat
@@ -2559,7 +2600,7 @@ export const App: React.FC = () => {
       scrollToBottom(contentElement)
       chatAutoScrollEnabledRef.current = true
     })
-  }, [chatDetail])
+  }, [chatDetail, selectedChatAiCommitAction])
 
   useEffect(() => {
     chatAutoScrollEnabledRef.current = true
@@ -3608,6 +3649,7 @@ export const App: React.FC = () => {
         key={group.key}
         open={groupOpen}
         selectedChatKey={selectedChat ? getChatKey(selectedChat) : null}
+        committingChatKeys={committingChatKeys}
         visibleChatCount={visibleChatCount}
         chatPageSize={chatPageSize}
         onLoadMoreChats={handleLoadMoreChatsInGroup}
@@ -3634,6 +3676,7 @@ export const App: React.FC = () => {
   const messageBoxDisabled = selectedChat
     ? providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
+      Boolean(selectedChatAiCommitAction) ||
       (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
     : providerUpdateInProgress
   const canEditOwnMessages = Boolean(
@@ -4144,6 +4187,14 @@ export const App: React.FC = () => {
     setCommitError(null)
     setSendState('sending')
 
+    if (chatId) {
+      setStartingScopedCommitActivity({
+        providerId,
+        sourceChatId: chatId,
+        commitAction: action
+      })
+    }
+
     if (chatId && !useForkedChat && chatDetail?.id === chatId) {
       applyViewedChatDetail(providerId, {
         ...chatDetail,
@@ -4211,6 +4262,11 @@ export const App: React.FC = () => {
       setSendState('error')
       return false
     } finally {
+      setStartingScopedCommitActivity((currentActivity) =>
+        currentActivity?.providerId === providerId && currentActivity.sourceChatId === chatId
+          ? null
+          : currentActivity
+      )
       sendInFlightRef.current = false
     }
   }
@@ -4794,6 +4850,7 @@ export const App: React.FC = () => {
                   )}
                   {!editingMessage &&
                     chatLoadState === 'ready' &&
+                    !selectedChatAiCommitAction &&
                     visibleChatItems.length === 0 && (
                       <p className="chat__status">No messages found.</p>
                     )}
@@ -4814,6 +4871,24 @@ export const App: React.FC = () => {
                       selectedModelId={model}
                     />
                   ))}
+                  {selectedChatAiCommitAction && (
+                    <div
+                      className="chat-detail__commit-placeholder"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <ChangesAnimatedIcon
+                        Icon={AnimatedGitCommitHorizontalIcon}
+                        active
+                        className="chat-detail__commit-placeholder-icon"
+                      />
+                      <span>
+                        {selectedChatAiCommitAction === 'amend'
+                          ? 'AI is amending the commit…'
+                          : 'AI is committing changes…'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -4979,7 +5054,9 @@ export const App: React.FC = () => {
                       : undefined
                   }
                   notesLabel={messageBoxNotesGroup?.label}
-                  operationsDisabled={providerUpdateInProgress}
+                  operationsDisabled={
+                    providerUpdateInProgress || Boolean(selectedChatAiCommitAction)
+                  }
                   pending={sendState === 'sending'}
                   reasoningEffort={reasoningEffort}
                   sandboxMode={sandboxMode}

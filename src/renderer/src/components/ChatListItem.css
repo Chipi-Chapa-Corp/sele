@@ -96,6 +96,14 @@
   animation: chat-list-item-spin 900ms linear infinite;
 }
 
+.chat-list-item__committing {
+  width: 17px;
+  height: 17px;
+  color: var(--menu-option-check-color);
+  animation: chat-list-item-committing-pulse 1200ms ease-in-out infinite;
+  transform-origin: center;
+}
+
 .chat-list-item__approval-icon {
   width: 17px;
   height: 17px;
@@ -131,6 +139,19 @@
 @keyframes chat-list-item-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes chat-list-item-committing-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
   }
 }
 
