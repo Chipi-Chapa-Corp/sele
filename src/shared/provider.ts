@@ -438,6 +438,7 @@ export type ProviderChatUpdatedEvent = {
   providerId: ProviderId
   chatId: string
   detail: ProviderChatDetail
+  turnCompleted: boolean
 }
 
 export type ProviderTurnOptions = {

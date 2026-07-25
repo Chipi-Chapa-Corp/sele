@@ -16,6 +16,10 @@ import type {
   ProviderOneShotOptions
 } from '../../shared/provider'
 
+export type ProviderChatUpdateMetadata = {
+  turnCompleted?: boolean
+}
+
 export type ProviderAdapter = {
   id: ProviderId
   login: () => Promise<ProviderLoginResult>
@@ -70,6 +74,8 @@ export type ProviderAdapter = {
     decision: ProviderApprovalDecision
   ) => Promise<ProviderChatDetail>
   stopChat: (chatId: string) => Promise<ProviderChatDetail>
-  onChatUpdated: (listener: (detail: ProviderChatDetail) => void) => () => void
+  onChatUpdated: (
+    listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
+  ) => () => void
   dispose: () => void
 }

@@ -30,7 +30,7 @@ import {
   fallbackProviderSandboxModes,
   providerOneShotGenerationCanceledMessage
 } from '../../../shared/provider'
-import type { ProviderAdapter } from '../ProviderAdapter'
+import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
 import { CodexAppServerClient, type RpcNotification, type RpcRequest } from './CodexAppServerClient'
 import { getChatItems, type CodexThreadItem, type CodexTurn } from './CodexItemRenderers'
 import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProviderUpdate'
@@ -884,7 +884,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private client = new CodexAppServerClient()
   private disposeNotificationListener: (() => void) | null = null
   private disposeServerRequestListener: (() => void) | null = null
-  private chatUpdatedListeners = new Set<(detail: ProviderChatDetail) => void>()
+  private chatUpdatedListeners = new Set<
+    (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
+  >()
   private threads = new Map<string, CodexThread>()
   private pendingTurnIds = new Map<string, string>()
   private activeTurnIds = new Map<string, string>()
@@ -1552,7 +1554,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
-  onChatUpdated = (listener: (detail: ProviderChatDetail) => void): (() => void) => {
+  onChatUpdated = (
+    listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
+  ): (() => void) => {
     this.chatUpdatedListeners.add(listener)
     return () => this.chatUpdatedListeners.delete(listener)
   }
@@ -2106,11 +2110,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return thread
   }
 
-  private emitChatUpdated = (threadId: string): void => {
+  private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
     const detail = this.getCachedChatDetail(threadId)
     if (!detail) return
 
-    this.chatUpdatedListeners.forEach((listener) => listener(detail))
+    this.chatUpdatedListeners.forEach((listener) => listener(detail, metadata))
   }
 
   private scheduleChatUpdated = (threadId: string): void => {
@@ -3104,7 +3108,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.upsertTurn(threadId, turn)
     }
 
-    this.scheduleChatUpdated(threadId)
+    if (notification.method === 'turn/completed') {
+      this.emitChatUpdated(threadId, { turnCompleted: true })
+    } else {
+      this.scheduleChatUpdated(threadId)
+    }
 
     if (notification.method === 'turn/completed') {
       this.removeSteeringMessageForTurn(threadId, turn.id)

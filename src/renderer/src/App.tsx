@@ -1787,8 +1787,8 @@ export const App: React.FC = () => {
   const chatAutoScrollEnabledRef = useRef(true)
   const chatAutoScrollFrameRef = useRef<number | null>(null)
   const selectedChatKeyRef = useRef<string | null>(null)
+  const changesCwdRef = useRef<string | null>(null)
   const scopedCommitActivitiesRef = useRef<Record<string, ScopedCommitActivity>>({})
-  const chatHadActiveTurnByKeyRef = useRef(new Map<string, boolean>())
   const loadingCwdNotesRef = useRef(new Set<string>())
   const loadingProjectIconsRef = useRef(new Set<string>())
   const modelManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.model))
@@ -2388,6 +2388,15 @@ export const App: React.FC = () => {
         if (selectedChatKeyRef.current === updatedChatKey) {
           markChatSeenAt(event.providerId, event.chatId, seenUpdatedAt)
         }
+        if (
+          event.turnCompleted &&
+          changesCwdRef.current &&
+          event.detail.cwd === changesCwdRef.current
+        ) {
+          setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
+          setGitBranchLoadRequest((currentRequest) => currentRequest + 1)
+          setFileTreeLoadRequest((currentRequest) => currentRequest + 1)
+        }
         const commitActivity = scopedCommitActivitiesRef.current[updatedChatKey]
         if (commitActivity && !isActiveChatStatus(event.detail.status)) {
           setScopedCommitActivities((currentActivities) => {
@@ -2397,7 +2406,6 @@ export const App: React.FC = () => {
             delete nextActivities[updatedChatKey]
             return nextActivities
           })
-          setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
         }
         if (commitActivity && isActiveChatStatus(event.detail.status)) {
           setScopedCommitActivities((currentActivities) => {
@@ -2427,36 +2435,15 @@ export const App: React.FC = () => {
   const changesProjectCwd = selectedChat
     ? (chatDetail?.projectCwd ?? selectedChat.projectCwd ?? changesCwd)
     : newSessionCwd
+  useEffect(() => {
+    changesCwdRef.current = changesCwd
+  }, [changesCwd])
   const pendingApproval = chatDetail?.pendingApproval ?? null
   const currentApprovalResolution =
     approvalResolution.approvalId === pendingApproval?.id ? approvalResolution : null
   const approvalDecisionInFlight = currentApprovalResolution?.decision ?? null
   const resolvingApprovalId = approvalResolution.decision ? approvalResolution.approvalId : null
   const approvalError = currentApprovalResolution?.error ?? null
-
-  useEffect(() => {
-    if (!selectedProviderId || !selectedChatId) return
-    const chatKey = getChatKey({ providerId: selectedProviderId, id: selectedChatId })
-    const hasActiveTurn = isActiveChatStatus(chatDetail?.status)
-    const hadActiveTurn = chatHadActiveTurnByKeyRef.current.get(chatKey) ?? false
-
-    if (hasActiveTurn) {
-      chatHadActiveTurnByKeyRef.current.set(chatKey, true)
-      return
-    }
-
-    if (!hadActiveTurn) {
-      chatHadActiveTurnByKeyRef.current.set(chatKey, false)
-      return
-    }
-
-    if (!changesCwd) {
-      return
-    }
-
-    chatHadActiveTurnByKeyRef.current.set(chatKey, false)
-    queueMicrotask(() => setGitChangeLoadRequest((currentRequest) => currentRequest + 1))
-  }, [changesCwd, chatDetail?.status, selectedChatId, selectedProviderId])
 
   const refreshAccountUsage = useCallback(
     async (options: ProviderUsageOptions = {}): Promise<void> => {

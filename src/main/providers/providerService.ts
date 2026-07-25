@@ -102,13 +102,14 @@ const collectProviderChatIdsByCwd = async (
 }
 
 for (const adapter of Object.values(adapters)) {
-  adapter.onChatUpdated((detail) => {
+  adapter.onChatUpdated((detail, updateMetadata) => {
     void applyMetadataToDetail(detail)
       .then((enrichedDetail) => {
         const event = {
           providerId: adapter.id,
           chatId: enrichedDetail.id,
-          detail: enrichedDetail
+          detail: enrichedDetail,
+          turnCompleted: updateMetadata?.turnCompleted ?? false
         } satisfies ProviderChatUpdatedEvent
 
         chatUpdatedListeners.forEach((listener) => listener(event))
