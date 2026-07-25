@@ -3857,6 +3857,17 @@ export const App: React.FC = () => {
       .sort((firstActivity, secondActivity) => firstActivity.startedAt - secondActivity.startedAt)
   }, [changesCwd, changesProjectCwd, directCommitActivities, scopedCommitActivities])
   const projectCommitInProgress = currentProjectCommitActivities.length > 0
+  const directProjectCommitInProgress = currentProjectCommitActivities.some(
+    (activity) => activity.source === 'git'
+  )
+  const currentChatAiCommitInProgress = currentProjectCommitActivities.some(
+    (activity) =>
+      activity.source === 'ai' &&
+      (selectedChat
+        ? activity.providerId === selectedChat.providerId &&
+          activity.sourceChatId === selectedChat.id
+        : activity.sourceChatId == null)
+  )
   const aiCommitUnavailable =
     sendState === 'sending' ||
     Boolean(editingMessage) ||
@@ -3879,7 +3890,8 @@ export const App: React.FC = () => {
     uncommittedChangedFiles.length === 0 ||
     changesLoadState !== 'ready' ||
     commitState === 'sending' ||
-    projectCommitInProgress ||
+    directProjectCommitInProgress ||
+    currentChatAiCommitInProgress ||
     syncInProgress ||
     aiCommitUnavailable
   const getAiCommitActionDisabled = (): boolean => aiCommitBaseDisabled
@@ -5144,7 +5156,8 @@ export const App: React.FC = () => {
                       disabled={
                         providerUpdateInProgress ||
                         commitState === 'sending' ||
-                        projectCommitInProgress
+                        directProjectCommitInProgress ||
+                        currentChatAiCommitInProgress
                       }
                       onChange={(event) => {
                         setCommitState('idle')
