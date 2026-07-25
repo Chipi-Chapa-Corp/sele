@@ -68,6 +68,25 @@ export type AppFileTreeResult = {
   files: AppFileTreeFile[]
 }
 
+export type AppFileContentsOptions = {
+  cwd?: string | null
+  path: string
+}
+
+export type AppFileContentsResult = {
+  contents: string
+  version: string
+}
+
+export type AppWriteFileContentsOptions = AppFileContentsOptions & {
+  contents: string
+  expectedVersion: string
+}
+
+export type AppWriteFileContentsResult = {
+  version: string
+}
+
 export type AppGitCommitOptions = {
   cwd?: string | null
   action?: AppGitCommitAction
@@ -154,6 +173,8 @@ export type AppApi = {
   getDefaultCwd: () => Promise<string>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getFileTree: (options?: AppFileTreeOptions) => Promise<AppFileTreeResult>
+  getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
+  writeFileContents: (options: AppWriteFileContentsOptions) => Promise<AppWriteFileContentsResult>
   getRecentGitCommitMessages: (
     options?: AppGitRecentCommitMessagesOptions
   ) => Promise<AppGitRecentCommitMessagesResult>
@@ -182,6 +203,8 @@ export const appIpcChannels = {
   getDefaultCwd: 'app:get-default-cwd',
   getGitChanges: 'app:get-git-changes',
   getFileTree: 'app:get-file-tree',
+  getFileContents: 'app:get-file-contents',
+  writeFileContents: 'app:write-file-contents',
   getRecentGitCommitMessages: 'app:get-recent-git-commit-messages',
   getUncommittedGitDiff: 'app:get-uncommitted-git-diff',
   getUncommittedGitPatchChanges: 'app:get-uncommitted-git-patch-changes',

@@ -1,0 +1,423 @@
+.file-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 910;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 40%);
+  -webkit-app-region: no-drag;
+}
+
+.file-editor-dialog {
+  display: grid;
+  width: min(1180px, calc(100vw - 32px));
+  height: min(900px, calc(100vh - 32px));
+  min-width: 0;
+  min-height: min(580px, calc(100vh - 32px));
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  color: var(--ink);
+  background: var(--floating-bg);
+  box-shadow:
+    0 32px 100px rgb(0 0 0 / 34%),
+    var(--panel-shadow);
+  font: inherit;
+}
+
+.file-editor-overlay--expanded {
+  top: var(--window-titlebar-height);
+  padding: 0;
+}
+
+.file-editor-dialog--expanded {
+  width: 100vw;
+  height: 100%;
+  min-height: 0;
+  border-width: 0;
+  border-radius: 0;
+}
+
+.file-editor-dialog__header {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--glass-line);
+  background: var(--glass-strong);
+}
+
+.file-editor-dialog__file-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+}
+
+.file-editor-dialog__file-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.9;
+}
+
+.file-editor-dialog__title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-editor-dialog__title strong,
+.file-editor-dialog__title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-editor-dialog__title strong {
+  max-width: 50%;
+  flex: none;
+  color: var(--lead);
+  font-weight: 650;
+}
+
+.file-editor-dialog__title span {
+  flex: 1;
+  color: var(--muted);
+}
+
+.file-editor-dialog__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-editor-dialog__actions .ui-button__icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.file-editor-dialog__actions .file-editor-dialog__spinner {
+  animation: file-editor-spin 900ms linear infinite;
+}
+
+.file-editor-dialog__control {
+  appearance: none;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--lead);
+  cursor: pointer;
+  background: transparent;
+  outline: 0;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.file-editor-dialog__control:hover {
+  border-color: var(--control-border);
+  background: var(--glass-subtle);
+}
+
+.file-editor-dialog__control:active {
+  transform: translateY(1px);
+}
+
+.file-editor-dialog__control:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.file-editor-dialog__control svg {
+  width: 18px;
+  height: 18px;
+}
+
+.file-editor-dialog__control--close:hover {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 26%, transparent);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.file-editor-dialog__body {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  background: var(--activity-bg);
+}
+
+.file-editor-dialog__state {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.file-editor-dialog__state > svg {
+  width: 38px;
+  height: 38px;
+  color: var(--quiet);
+  stroke-width: 1.5;
+}
+
+.file-editor-dialog__state .file-editor-dialog__spinner {
+  animation: file-editor-spin 900ms linear infinite;
+}
+
+.file-editor-dialog__state p {
+  max-width: 560px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.file-editor-dialog__editor {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-editor-dialog__highlight,
+.file-editor-dialog__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 100%;
+  margin: 0;
+  padding: 18px 20px;
+  border: 0;
+  border-radius: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-weight: 400;
+  line-height: 1.6;
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.file-editor-dialog__highlight {
+  z-index: 0;
+  overflow: auto;
+  color: var(--lead);
+  background: transparent;
+  pointer-events: none;
+  scrollbar-width: none;
+}
+
+.file-editor-dialog__highlight::-webkit-scrollbar {
+  display: none;
+}
+
+.file-editor-dialog__highlight code {
+  font: inherit;
+}
+
+.file-editor-dialog__input {
+  z-index: 1;
+  overflow: auto;
+  color: transparent;
+  caret-color: var(--lead);
+  background: transparent;
+  outline: 0;
+  resize: none;
+  -webkit-text-fill-color: transparent;
+  scrollbar-color: var(--glass-edge) transparent;
+}
+
+.file-editor-dialog__input:focus-visible {
+  outline: 0;
+}
+
+.file-editor-dialog__input::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.file-editor-dialog__error {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 2;
+  max-width: min(680px, calc(100% - 24px));
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
+  border-radius: 9px;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 9%, var(--floating-bg));
+  box-shadow: var(--subtle-shadow);
+  line-height: 1.4;
+  transform: translateX(-50%);
+}
+
+.file-editor-dialog__highlight .token.comment,
+.file-editor-dialog__highlight .token.prolog,
+.file-editor-dialog__highlight .token.doctype,
+.file-editor-dialog__highlight .token.cdata {
+  color: #777772;
+}
+
+.file-editor-dialog__highlight .token.punctuation {
+  color: #666661;
+}
+
+.file-editor-dialog__highlight .token.property,
+.file-editor-dialog__highlight .token.tag,
+.file-editor-dialog__highlight .token.boolean,
+.file-editor-dialog__highlight .token.number,
+.file-editor-dialog__highlight .token.constant,
+.file-editor-dialog__highlight .token.symbol,
+.file-editor-dialog__highlight .token.deleted {
+  color: #a03c38;
+}
+
+.file-editor-dialog__highlight .token.selector,
+.file-editor-dialog__highlight .token.attr-name,
+.file-editor-dialog__highlight .token.string,
+.file-editor-dialog__highlight .token.char,
+.file-editor-dialog__highlight .token.builtin,
+.file-editor-dialog__highlight .token.inserted {
+  color: #39744b;
+}
+
+.file-editor-dialog__highlight .token.operator,
+.file-editor-dialog__highlight .token.entity,
+.file-editor-dialog__highlight .token.url,
+.file-editor-dialog__highlight .language-css .token.string,
+.file-editor-dialog__highlight .style .token.string,
+.file-editor-dialog__highlight .token.variable {
+  color: #8c5a24;
+}
+
+.file-editor-dialog__highlight .token.atrule,
+.file-editor-dialog__highlight .token.attr-value,
+.file-editor-dialog__highlight .token.function,
+.file-editor-dialog__highlight .token.class-name {
+  color: #76552f;
+}
+
+.file-editor-dialog__highlight .token.keyword {
+  color: #7d438e;
+}
+
+.file-editor-dialog__highlight .token.regex,
+.file-editor-dialog__highlight .token.important {
+  color: #a75022;
+}
+
+.file-editor-dialog__highlight .token.bold,
+.file-editor-dialog__highlight .token.important {
+  font-weight: 700;
+}
+
+.file-editor-dialog__highlight .token.italic {
+  font-style: italic;
+}
+
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.comment,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.prolog,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.doctype,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.cdata {
+  color: #898984;
+}
+
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.punctuation {
+  color: #b4b4af;
+}
+
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.property,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.tag,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.boolean,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.number,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.constant,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.symbol,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.deleted {
+  color: #ee8580;
+}
+
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.selector,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.attr-name,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.string,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.char,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.builtin,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.inserted {
+  color: #8fc89d;
+}
+
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.operator,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.entity,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.url,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .language-css .token.string,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .style .token.string,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.variable {
+  color: #ddb278;
+}
+
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.atrule,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.attr-value,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.function,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.class-name {
+  color: #d8ac7e;
+}
+
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.keyword {
+  color: #d49ae2;
+}
+
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.regex,
+:root[data-color-scheme='dark'] .file-editor-dialog__highlight .token.important {
+  color: #e99b65;
+}
+
+@keyframes file-editor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .file-editor-overlay {
+    padding: 8px;
+  }
+
+  .file-editor-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    min-height: 0;
+    border-radius: 14px;
+  }
+
+  .file-editor-dialog__actions .ui-button__label {
+    display: none;
+  }
+
+  .file-editor-dialog__actions .ui-button {
+    width: var(--control-height-small);
+    padding: 0;
+  }
+
+  .file-editor-dialog__highlight,
+  .file-editor-dialog__input {
+    padding: 14px;
+  }
+}

@@ -114,6 +114,7 @@ import { ChatDetailItem } from './components/ChatDetailItem'
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
 import { Button, type ButtonDropdownAction } from './components/Button'
 import { Dropdown, type DropdownOption } from './components/Dropdown'
+import { FileEditorDialog, type FileEditorTarget } from './components/FileEditorDialog'
 import { Input } from './components/Input'
 import { MessageBox } from './components/MessageBox'
 import { SegmentedControl } from './components/SegmentedControl'
@@ -1678,6 +1679,7 @@ export const App: React.FC = () => {
   const [appSettings, setAppSettings] = useState<AppSettings>(readStoredAppSettings)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('appearance')
+  const [fileEditorTarget, setFileEditorTarget] = useState<FileEditorTarget | null>(null)
   const [chats, setChats] = useState<ProviderChat[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
@@ -3989,6 +3991,20 @@ export const App: React.FC = () => {
     setCollapsedChangeTreeFolders(nextCollapsedFolders)
   }
 
+  const handleOpenFile = (file: TreeFile): void => {
+    if (!changesCwd) return
+
+    setFileEditorTarget({
+      cwd: changesCwd,
+      path: file.path,
+      displayPath: getChangedFileDisplayPath(file)
+    })
+  }
+
+  const handleCloseFileEditor = useCallback((): void => {
+    setFileEditorTarget(null)
+  }, [])
+
   const renderTreeNode = <TFile extends TreeFile>(
     node: ChangeTreeNode<TFile>,
     depth: number,
@@ -4046,10 +4062,13 @@ export const App: React.FC = () => {
 
     return (
       <li className={fileItemClassName} key={node.file.path} role="treeitem">
-        <div
+        <button
           className="changes-sidebar__tree-row changes-sidebar__tree-row--file"
+          type="button"
+          aria-label={`Open ${displayPath}`}
           title={fileTitle}
           style={getChangeTreeRowStyle(depth)}
+          onClick={() => handleOpenFile(node.file)}
         >
           <span className="changes-sidebar__tree-spacer" aria-hidden="true" />
           <span className="changes-sidebar__tree-icon" aria-hidden="true">
@@ -4058,7 +4077,7 @@ export const App: React.FC = () => {
           <span className="changes-sidebar__tree-name" title={fileTitle}>
             {node.name}
           </span>
-        </div>
+        </button>
       </li>
     )
   }
@@ -4620,6 +4639,9 @@ export const App: React.FC = () => {
   return (
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
+      {fileEditorTarget && (
+        <FileEditorDialog target={fileEditorTarget} onClose={handleCloseFileEditor} />
+      )}
       <div className="chat__panels" ref={panelsRef} style={panelsStyle}>
         <div className="chat__sidebar-panel" data-panel="true" id="sidebar">
           <aside className="chat-sidebar" aria-label="Recent conversations">

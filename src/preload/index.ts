@@ -14,6 +14,8 @@ const appApi: AppApi = {
   getDefaultCwd: () => ipcRenderer.invoke(appIpcChannels.getDefaultCwd),
   getGitChanges: (options) => ipcRenderer.invoke(appIpcChannels.getGitChanges, options),
   getFileTree: (options) => ipcRenderer.invoke(appIpcChannels.getFileTree, options),
+  getFileContents: (options) => ipcRenderer.invoke(appIpcChannels.getFileContents, options),
+  writeFileContents: (options) => ipcRenderer.invoke(appIpcChannels.writeFileContents, options),
   getRecentGitCommitMessages: (options) =>
     ipcRenderer.invoke(appIpcChannels.getRecentGitCommitMessages, options),
   getUncommittedGitDiff: (options) =>

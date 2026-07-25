@@ -353,7 +353,7 @@
 }
 
 .changes-sidebar__tree-row--file {
-  cursor: default;
+  cursor: pointer;
 }
 
 .changes-sidebar__tree-row:hover {
@@ -372,7 +372,7 @@
   background: color-mix(in srgb, var(--changes-row-color) 20%, transparent);
 }
 
-.changes-sidebar__tree-row--folder:focus-visible {
+.changes-sidebar__tree-row:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }

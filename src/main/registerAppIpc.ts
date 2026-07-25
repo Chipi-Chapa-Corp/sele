@@ -1,11 +1,22 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
 import type {
   AppColorScheme,
+  AppFileContentsOptions,
   AppFileTreeFile,
   AppFileTreeOptions,
   AppGitCommitAction,
@@ -22,6 +33,7 @@ import type {
   AppGitUncommittedPatchChangesOptions,
   AppProjectIcon,
   AppProjectIconOptions,
+  AppWriteFileContentsOptions,
   AppWindowState
 } from '../shared/app'
 import { appIpcChannels } from '../shared/app'
@@ -261,6 +273,48 @@ const getFileTreeOptions = (value: unknown): AppFileTreeOptions => {
 
   return {
     cwd: getDefaultPath(options.cwd)
+  }
+}
+
+const getFileContentsOptions = (value: unknown): AppFileContentsOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid file options')
+  }
+
+  const options = value as { cwd?: unknown; path?: unknown }
+  if (
+    typeof options.path !== 'string' ||
+    options.path.length === 0 ||
+    options.path.includes('\0')
+  ) {
+    throw new Error('Invalid file path')
+  }
+
+  return {
+    cwd: getOptionalCwd(options.cwd),
+    path: options.path
+  }
+}
+
+const getWriteFileContentsOptions = (value: unknown): AppWriteFileContentsOptions => {
+  const fileOptions = getFileContentsOptions(value)
+  const options = value as {
+    contents?: unknown
+    expectedVersion?: unknown
+  }
+
+  if (typeof options.contents !== 'string') throw new Error('Invalid file contents')
+  if (
+    typeof options.expectedVersion !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(options.expectedVersion)
+  ) {
+    throw new Error('Invalid file version')
+  }
+
+  return {
+    ...fileOptions,
+    contents: options.contents,
+    expectedVersion: options.expectedVersion
   }
 }
 
@@ -679,6 +733,84 @@ const getFileTree = async (
       firstFile.path.localeCompare(secondFile.path)
     )
   }
+}
+
+const maxEditableFileBytes = 2 * 1024 * 1024
+
+const getFileVersion = (contents: Buffer | string): string =>
+  createHash('sha256').update(contents).digest('hex')
+
+const resolveEditableFile = async (
+  cwd: string,
+  path: string
+): Promise<{ absolutePath: string; size: number }> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+
+  const relativePath = normalizePatchPath(repositoryRoot, path)
+  const absolutePath = resolve(repositoryRoot, relativePath)
+  const [fileStat, repositoryRealPath, fileRealPath] = await Promise.all([
+    lstat(absolutePath),
+    realpath(repositoryRoot),
+    realpath(absolutePath)
+  ])
+  const realRelativePath = relative(repositoryRealPath, fileRealPath)
+  const normalizedRealRelativePath = realRelativePath.replace(/\\/g, '/')
+
+  if (fileStat.isSymbolicLink()) throw new Error('Symbolic links cannot be edited.')
+  if (
+    !normalizedRealRelativePath ||
+    normalizedRealRelativePath === '..' ||
+    normalizedRealRelativePath.startsWith('../') ||
+    isAbsolute(realRelativePath)
+  ) {
+    throw new Error('Files outside the repository cannot be edited.')
+  }
+  if (!fileStat.isFile()) throw new Error('Choose a regular file to edit.')
+  if (fileStat.size > maxEditableFileBytes) {
+    throw new Error('Files larger than 2 MB cannot be edited.')
+  }
+
+  return { absolutePath, size: fileStat.size }
+}
+
+const readEditableFile = async (
+  cwd: string,
+  path: string
+): Promise<{ contents: string; version: string }> => {
+  const { absolutePath } = await resolveEditableFile(cwd, path)
+  const file = await readFile(absolutePath)
+  const contents = file.toString('utf8')
+
+  if (!Buffer.from(contents, 'utf8').equals(file)) {
+    throw new Error('Binary files cannot be edited.')
+  }
+
+  return {
+    contents,
+    version: getFileVersion(file)
+  }
+}
+
+const writeEditableFile = async (
+  cwd: string,
+  path: string,
+  contents: string,
+  expectedVersion: string
+): Promise<{ version: string }> => {
+  if (Buffer.byteLength(contents, 'utf8') > maxEditableFileBytes) {
+    throw new Error('Files larger than 2 MB cannot be edited.')
+  }
+
+  const { absolutePath } = await resolveEditableFile(cwd, path)
+  const currentContents = await readFile(absolutePath)
+
+  if (getFileVersion(currentContents) !== expectedVersion) {
+    throw new Error('This file changed on disk. Reload it before saving.')
+  }
+
+  await writeFile(absolutePath, contents, 'utf8')
+  return { version: getFileVersion(contents) }
 }
 
 const getRecentGitCommitMessages = async (
@@ -1216,6 +1348,21 @@ export const registerAppIpc = (): void => {
   ipcMain.handle(appIpcChannels.getFileTree, async (_event, value: unknown) => {
     const options = getFileTreeOptions(value)
     return getFileTree(options.cwd ?? process.cwd())
+  })
+
+  ipcMain.handle(appIpcChannels.getFileContents, async (_event, value: unknown) => {
+    const options = getFileContentsOptions(value)
+    return readEditableFile(options.cwd ?? process.cwd(), options.path)
+  })
+
+  ipcMain.handle(appIpcChannels.writeFileContents, async (_event, value: unknown) => {
+    const options = getWriteFileContentsOptions(value)
+    return writeEditableFile(
+      options.cwd ?? process.cwd(),
+      options.path,
+      options.contents,
+      options.expectedVersion
+    )
   })
 
   ipcMain.handle(appIpcChannels.getRecentGitCommitMessages, async (_event, value: unknown) => {
