@@ -190,12 +190,15 @@
 }
 
 .file-editor-dialog__editor {
+  --file-editor-gutter-width: calc(2ch + 30px);
+
   position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
+.file-editor-dialog__line-numbers,
 .file-editor-dialog__highlight,
 .file-editor-dialog__input {
   position: absolute;
@@ -217,8 +220,23 @@
   overflow-wrap: normal;
 }
 
+.file-editor-dialog__line-numbers {
+  z-index: 2;
+  width: var(--file-editor-gutter-width);
+  min-width: 0;
+  padding: 18px 14px 18px 8px;
+  overflow: hidden;
+  border-right: 1px solid var(--glass-line);
+  color: var(--quiet);
+  background: var(--activity-bg);
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+}
+
 .file-editor-dialog__highlight {
   z-index: 0;
+  padding-left: calc(var(--file-editor-gutter-width) + 14px);
   overflow: auto;
   color: var(--lead);
   background: transparent;
@@ -236,6 +254,7 @@
 
 .file-editor-dialog__input {
   z-index: 1;
+  padding-left: calc(var(--file-editor-gutter-width) + 14px);
   overflow: auto;
   color: transparent;
   caret-color: var(--lead);
@@ -416,8 +435,14 @@
     padding: 0;
   }
 
+  .file-editor-dialog__line-numbers {
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
   .file-editor-dialog__highlight,
   .file-editor-dialog__input {
     padding: 14px;
+    padding-left: calc(var(--file-editor-gutter-width) + 14px);
   }
 }

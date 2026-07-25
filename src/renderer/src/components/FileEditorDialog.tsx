@@ -1,5 +1,5 @@
 import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent, ReactNode } from 'react'
+import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 import type { RootContent } from 'hast'
 import { FileCode2, LoaderCircle, Maximize2, Minimize2, RefreshCw, Save, X } from 'lucide-react'
 import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
@@ -128,6 +128,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [expanded, setExpanded] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLPreElement>(null)
+  const lineNumbersRef = useRef<HTMLPreElement>(null)
   const loadRequestRef = useRef(0)
   const language = useMemo(() => getLanguage(target.path), [target.path])
   const displayPath = useMemo(() => target.displayPath.replace(/\\/g, '/'), [target.displayPath])
@@ -135,6 +136,18 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const fileName = displayPathParts.at(-1) ?? displayPath
   const directoryName = displayPathParts.slice(0, -1).join('/') || '.'
   const dirty = loadState === 'ready' && contents !== savedContents
+  const lineCount = useMemo(() => contents.split('\n').length, [contents])
+  const lineNumbers = useMemo(
+    () => Array.from({ length: lineCount }, (_, index) => index + 1).join('\n'),
+    [lineCount]
+  )
+  const editorStyle = useMemo(
+    () =>
+      ({
+        '--file-editor-gutter-width': `calc(${Math.max(2, String(lineCount).length)}ch + 30px)`
+      }) as CSSProperties,
+    [lineCount]
+  )
 
   const highlightedContents = useMemo(() => {
     if (!language) return contents
@@ -223,13 +236,15 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     }
   }, [contents, dirty, loadState, saveState, target.cwd, target.path, version])
 
-  const syncHighlightScroll = (): void => {
+  const syncEditorScroll = (): void => {
     const textarea = textareaRef.current
     const highlight = highlightRef.current
-    if (!textarea || !highlight) return
+    const lineNumbersElement = lineNumbersRef.current
+    if (!textarea || !highlight || !lineNumbersElement) return
 
     highlight.scrollTop = textarea.scrollTop
     highlight.scrollLeft = textarea.scrollLeft
+    lineNumbersElement.scrollTop = textarea.scrollTop
   }
 
   const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -337,12 +352,20 @@ export const FileEditorDialog = memo(function FileEditorDialog({
           )}
 
           {loadState === 'ready' && (
-            <div className="file-editor-dialog__editor">
+            <div className="file-editor-dialog__editor" style={editorStyle}>
               {error && (
                 <div className="file-editor-dialog__error" role="alert">
                   {error}
                 </div>
               )}
+              <pre
+                ref={lineNumbersRef}
+                className="file-editor-dialog__line-numbers"
+                aria-hidden="true"
+              >
+                {lineNumbers}
+                {'\n'}
+              </pre>
               <pre ref={highlightRef} className="file-editor-dialog__highlight" aria-hidden="true">
                 <code className={language ? `language-${language}` : undefined}>
                   {highlightedContents}
@@ -361,7 +384,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   setError(null)
                 }}
                 onKeyDown={handleEditorKeyDown}
-                onScroll={syncHighlightScroll}
+                onScroll={syncEditorScroll}
                 spellCheck={false}
                 value={contents}
                 wrap="off"
