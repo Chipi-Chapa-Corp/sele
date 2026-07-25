@@ -319,6 +319,77 @@
   text-underline-offset: 0.18em;
 }
 
+.chat-detail__file-link {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.36em;
+  margin: 0 0.05em;
+  padding: 0.12em 0.46em;
+  border: 1px solid var(--control-border);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
+  font: inherit;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: left;
+  vertical-align: -0.14em;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.chat-detail__file-link-icon {
+  display: grid;
+  width: 1.05em;
+  height: 1.05em;
+  place-items: center;
+  flex: none;
+}
+
+.chat-detail__file-link-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.chat-detail__file-link-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-detail__file-link-separator,
+.chat-detail__file-link-line {
+  flex: none;
+  color: var(--quiet);
+  font-weight: 600;
+}
+
+.chat-detail__file-link:hover {
+  color: var(--ink);
+  background: var(--secondary-surface-hover);
+  box-shadow: var(--secondary-shadow-hover);
+  transform: translateY(-1px);
+}
+
+.chat-detail__file-link:active {
+  background: var(--secondary-surface-active);
+  box-shadow: none;
+  transform: none;
+}
+
+.chat-detail__file-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 @media (prefers-color-scheme: dark) {
   .chat-detail__message a,
   .chat-detail__working-message a {
@@ -359,22 +430,36 @@
   white-space: pre;
 }
 
-.chat-detail__message table,
-.chat-detail__working-message table {
-  display: block;
+.chat-detail__table-scroll {
   max-width: 100%;
   margin: 0.8em 0 1em;
   overflow: auto;
-  border-collapse: collapse;
+  border: 1px solid var(--line);
+  border-radius: 10px;
 }
 
-.chat-detail__message th,
-.chat-detail__message td,
-.chat-detail__working-message th,
-.chat-detail__working-message td {
+.chat-detail__table {
+  width: max-content;
+  min-width: 100%;
+  border-spacing: 0;
+  border-collapse: separate;
+}
+
+.chat-detail__table th,
+.chat-detail__table td {
   padding: 7px 9px;
-  border: 1px solid var(--line);
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   text-align: left;
+}
+
+.chat-detail__table tr > :last-child {
+  border-right: 0;
+}
+
+.chat-detail__table tbody tr:last-child > td {
+  border-bottom: 0;
 }
 
 .chat-detail__activity-content {

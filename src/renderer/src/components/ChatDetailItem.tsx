@@ -1,5 +1,21 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import type { ForwardRefExoticComponent, HTMLAttributes, RefAttributes } from 'react'
+import {
+  Children,
+  cloneElement,
+  Fragment,
+  isValidElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
+import type {
+  AnchorHTMLAttributes,
+  ForwardRefExoticComponent,
+  HTMLAttributes,
+  ReactNode,
+  RefAttributes,
+  TableHTMLAttributes
+} from 'react'
 import {
   ActivityIcon as AnimatedActivityIcon,
   BoxIcon as AnimatedBoxIcon,
@@ -16,6 +32,7 @@ import {
   TerminalIcon as AnimatedTerminalIcon,
   WrenchIcon as AnimatedWrenchIcon
 } from 'lucide-animated'
+import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
 import {
   ArrowUp,
   Check,
@@ -58,6 +75,7 @@ type ChatDetailItemProps = {
   onEditPendingMessage?: (message: ProviderPendingMessage) => void
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
+  onOpenFileLink?: (path: string, displayPath: string) => void
   projectCwd?: string | null
   selectedModelId?: ProviderModelId
 }
@@ -131,19 +149,144 @@ const placeholderOptions = [
 const longRunningActivities = new Set<ProviderToolActivity>(['npm', 'npx', 'script', 'command'])
 const silencePlaceholderDelayMs = 600
 const animatedIconReplayMs = 1_050
-const markdownOptions = {
-  disableParsingRawHTML: true,
-  forceBlock: true,
-  wrapper: Fragment,
-  overrides: {
-    a: {
-      props: {
-        rel: 'noreferrer',
-        target: '_blank'
-      }
-    }
+
+type MarkdownFileTarget = {
+  path: string
+  displayPath: string
+  line?: number
+}
+
+type MarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
+  onOpenFileLink?: (path: string, displayPath: string) => void
+}
+
+const externalLinkPattern = /^(?:https?|mailto|tel):/i
+const windowsAbsolutePathPattern = /^[a-z]:[\\/]/i
+const sourceLocationPattern = /^(.*?):(\d+)(?::\d+)?$/
+const fragmentLocationPattern = /#L(\d+)(?:C\d+)?$/i
+
+const decodeLinkTarget = (target: string): string => {
+  try {
+    return decodeURIComponent(target)
+  } catch {
+    return target
   }
-} as const
+}
+
+const getMarkdownFileTarget = (href: string | undefined): MarkdownFileTarget | null => {
+  const rawHref = href?.trim()
+  if (!rawHref || rawHref.startsWith('#') || externalLinkPattern.test(rawHref)) return null
+
+  const fragmentLocationMatch = rawHref.match(fragmentLocationPattern)
+  const withoutFragment = fragmentLocationMatch
+    ? rawHref.slice(0, fragmentLocationMatch.index)
+    : rawHref
+  const locationMatch = withoutFragment.match(sourceLocationPattern)
+  let path = decodeLinkTarget(locationMatch?.[1] ?? withoutFragment)
+  const lineValue = fragmentLocationMatch?.[1] ?? locationMatch?.[2]
+  const line = lineValue ? Number.parseInt(lineValue, 10) : undefined
+
+  if (/^file:\/\//i.test(path)) {
+    try {
+      path = decodeLinkTarget(new URL(path).pathname)
+      if (/^\/[a-z]:\//i.test(path)) path = path.slice(1)
+    } catch {
+      return null
+    }
+  } else if (/^[a-z][a-z\d+.-]*:/i.test(path) && !windowsAbsolutePathPattern.test(path)) {
+    return null
+  }
+
+  const displayPath = path.replace(/\\/g, '/').replace(/^\.\//, '')
+  if (!displayPath) return null
+
+  return { path, displayPath, line }
+}
+
+const withoutSourceLocation = (children: ReactNode, line: number | undefined): ReactNode => {
+  if (!line) return children
+
+  const locationPattern = new RegExp(`(?::${line}(?::\\d+)?|#L${line}(?:C\\d+)?)$`, 'i')
+
+  return Children.map(children, (child) => {
+    if (typeof child === 'string') return child.replace(locationPattern, '')
+    if (!isValidElement<{ children?: ReactNode }>(child) || child.props.children == null)
+      return child
+
+    return cloneElement(child, undefined, withoutSourceLocation(child.props.children, line))
+  })
+}
+
+const MarkdownLink: React.FC<MarkdownLinkProps> = ({
+  children,
+  href,
+  onOpenFileLink,
+  ...props
+}) => {
+  const fileTarget = getMarkdownFileTarget(href)
+
+  if (!fileTarget || !onOpenFileLink) {
+    return (
+      <a {...props} href={href} rel="noreferrer" target="_blank">
+        {children}
+      </a>
+    )
+  }
+
+  const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
+  const displayLine = fileTarget.line && fileTarget.line > 1 ? fileTarget.line : undefined
+  const title = displayLine
+    ? `Open ${fileTarget.displayPath} at line ${displayLine}`
+    : `Open ${fileTarget.displayPath}`
+
+  return (
+    <button
+      className="chat-detail__file-link"
+      type="button"
+      title={title}
+      onClick={() => onOpenFileLink(fileTarget.path, fileTarget.displayPath)}
+    >
+      <span className="chat-detail__file-link-icon" aria-hidden="true">
+        <SymbolsFileIcon fileName={fileName} autoAssign />
+      </span>
+      <span className="chat-detail__file-link-label">
+        {withoutSourceLocation(children, fileTarget.line)}
+      </span>
+      {displayLine && (
+        <>
+          <span className="chat-detail__file-link-separator" aria-hidden="true">
+            ·
+          </span>
+          <span className="chat-detail__file-link-line" aria-label={`Line ${displayLine}`}>
+            {displayLine}
+          </span>
+        </>
+      )}
+    </button>
+  )
+}
+
+const MarkdownTable: React.FC<TableHTMLAttributes<HTMLTableElement>> = ({ children, ...props }) => (
+  <div className="chat-detail__table-scroll">
+    <table {...props} className="chat-detail__table">
+      {children}
+    </table>
+  </div>
+)
+
+const getMarkdownOptions = (onOpenFileLink?: (path: string, displayPath: string) => void) =>
+  ({
+    disableParsingRawHTML: true,
+    forceBlock: true,
+    wrapper: Fragment,
+    overrides: {
+      a: {
+        component: MarkdownLink,
+        props: { onOpenFileLink }
+      },
+      table: MarkdownTable
+    }
+  }) as const
 
 const getStableIndex = (id: string, length: number): number => {
   let hash = 0
@@ -448,6 +591,33 @@ const withPromptMarkdownLineBreaks = (content: string): string => {
     .join('')
 }
 
+const withClickableAngleFileLinks = (content: string): string => {
+  let fence: MarkdownFence | null = null
+
+  return content
+    .split('\n')
+    .map((line) => {
+      if (fence) {
+        if (isMarkdownFenceClose(line, fence)) fence = null
+        return line
+      }
+
+      const nextFence = getMarkdownFence(line)
+      if (nextFence) {
+        fence = nextFence
+        return line
+      }
+
+      return line.replace(/\]\(<([^>\r\n]+)>\)/g, (match, target: string) => {
+        if (!getMarkdownFileTarget(target)) return match
+
+        const encodedTarget = encodeURI(target).replace(/\(/g, '%28').replace(/\)/g, '%29')
+        return `](${encodedTarget})`
+      })
+    })
+    .join('\n')
+}
+
 const ToolItem: React.FC<{
   item: ProviderToolItem
   activeToolIds: Set<string>
@@ -482,14 +652,19 @@ const ToolItem: React.FC<{
   )
 }
 
-const MarkdownMessage: React.FC<{ className: string; content: string }> = ({
-  className,
-  content
-}) => (
-  <div className={className}>
-    <Markdown options={markdownOptions}>{content}</Markdown>
-  </div>
-)
+const MarkdownMessage: React.FC<{
+  className: string
+  content: string
+  onOpenFileLink?: (path: string, displayPath: string) => void
+}> = ({ className, content, onOpenFileLink }) => {
+  const markdownOptions = useMemo(() => getMarkdownOptions(onOpenFileLink), [onOpenFileLink])
+
+  return (
+    <div className={className}>
+      <Markdown options={markdownOptions}>{withClickableAngleFileLinks(content)}</Markdown>
+    </div>
+  )
+}
 
 const copyTextToClipboard = async (content: string): Promise<void> => {
   if (navigator.clipboard?.writeText) {
@@ -771,8 +946,9 @@ const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] => {
 
 const WorkingStep: React.FC<{
   item: ProviderWorkingStep
+  onOpenFileLink?: (path: string, displayPath: string) => void
   projectCwd?: string | null
-}> = ({ item, projectCwd }) => {
+}> = ({ item, onOpenFileLink, projectCwd }) => {
   const blocks = groupWorkingItems(item.items)
   const lastWorkingItem = item.items.at(-1)
   const signature = useMemo(
@@ -851,6 +1027,7 @@ const WorkingStep: React.FC<{
               className="chat-detail__working-message"
               content={block.item.content}
               key={block.item.id}
+              onOpenFileLink={onOpenFileLink}
             />
           )
         )}
@@ -874,6 +1051,7 @@ export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
   onEditPendingMessage,
   onInterruptPendingMessage,
   onEditMessage,
+  onOpenFileLink,
   projectCwd,
   selectedModelId
 }) => {
@@ -994,6 +1172,7 @@ export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
         <MarkdownMessage
           className={`chat-detail__message chat-detail__message--${role}`}
           content={role === 'user' ? withPromptMarkdownLineBreaks(item.content) : item.content}
+          onOpenFileLink={onOpenFileLink}
         />
         <div className="chat-detail__message-footer">
           {role === 'user' && messageDate}
@@ -1004,5 +1183,5 @@ export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
     )
   }
 
-  return <WorkingStep item={item} projectCwd={projectCwd} />
+  return <WorkingStep item={item} onOpenFileLink={onOpenFileLink} projectCwd={projectCwd} />
 }

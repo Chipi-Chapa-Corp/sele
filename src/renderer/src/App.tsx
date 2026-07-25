@@ -4013,6 +4013,25 @@ export const App: React.FC = () => {
     })
   }
 
+  const handleOpenFileLink = useCallback(
+    (path: string, displayPath: string): void => {
+      if (!changesCwd) return
+
+      const normalizedCwd = changesCwd.replace(/\\/g, '/').replace(/\/+$/, '')
+      const normalizedDisplayPath = displayPath.replace(/\\/g, '/')
+      const relativeDisplayPath = normalizedDisplayPath.startsWith(`${normalizedCwd}/`)
+        ? normalizedDisplayPath.slice(normalizedCwd.length + 1)
+        : normalizedDisplayPath
+
+      setFileEditorTarget({
+        cwd: changesCwd,
+        path,
+        displayPath: relativeDisplayPath
+      })
+    },
+    [changesCwd]
+  )
+
   const handleCloseFileEditor = useCallback((): void => {
     setFileEditorTarget(null)
   }, [])
@@ -4803,6 +4822,7 @@ export const App: React.FC = () => {
                         chatHasActiveTurn ? handleInterruptPendingMessage : undefined
                       }
                       onEditMessage={handleEditMessage}
+                      onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
                       projectCwd={changesProjectCwd}
                       selectedModelId={model}
                     />
