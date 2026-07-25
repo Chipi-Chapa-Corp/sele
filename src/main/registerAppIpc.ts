@@ -66,12 +66,41 @@ const getDefaultPath = (value: unknown): string | undefined => {
 const imageMimeTypes = {
   '.avif': 'image/avif',
   '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
   '.jpeg': 'image/jpeg',
   '.jpg': 'image/jpeg',
   '.png': 'image/png',
+  '.svg': 'image/svg+xml',
   '.webp': 'image/webp'
 } satisfies Record<string, string>
 const maxProjectIconBytes = 8 * 1024 * 1024
+const automaticProjectIconPaths = [
+  '.idea/icon.svg',
+  'favicon.svg',
+  'favicon.png',
+  'favicon.ico',
+  'public/favicon.svg',
+  'public/favicon.png',
+  'public/favicon.ico',
+  'static/favicon.svg',
+  'static/favicon.png',
+  'static/favicon.ico',
+  'assets/favicon.svg',
+  'assets/favicon.png',
+  'assets/favicon.ico',
+  'src/favicon.svg',
+  'src/favicon.png',
+  'src/favicon.ico',
+  'src/assets/favicon.svg',
+  'src/assets/favicon.png',
+  'src/assets/favicon.ico',
+  'src/app/favicon.svg',
+  'src/app/favicon.png',
+  'src/app/favicon.ico',
+  'app/favicon.svg',
+  'app/favicon.png',
+  'app/favicon.ico'
+]
 
 const getOptionalCwd = (value: unknown): string | null => {
   if (value == null) return null
@@ -92,31 +121,54 @@ const getProjectIconOptions = (value: unknown): AppProjectIconOptions => {
 const getImageMimeType = (imagePath: string): string | null =>
   imageMimeTypes[extname(imagePath).toLocaleLowerCase()] ?? null
 
-const getProjectIconDataUrl = async (imagePath: string): Promise<string | null> => {
+const getProjectIconFile = async (
+  imagePath: string
+): Promise<{ dataUrl: string; updatedAt: number } | null> => {
   const mimeType = getImageMimeType(imagePath)
   if (!mimeType) return null
 
+  const imageStat = await stat(imagePath)
+  if (!imageStat.isFile() || imageStat.size > maxProjectIconBytes) return null
+
   const file = await readFile(imagePath)
-  return `data:${mimeType};base64,${file.toString('base64')}`
+  return {
+    dataUrl: `data:${mimeType};base64,${file.toString('base64')}`,
+    updatedAt: imageStat.mtimeMs
+  }
 }
 
 const getAppProjectIcon = async (cwd: string | null): Promise<AppProjectIcon | null> => {
-  const icon = await getStoredProjectIcon(cwd)
-  if (!icon) return null
-
-  const dataUrl = await getProjectIconDataUrl(icon.imagePath).catch(() => null)
-  if (!dataUrl) return null
-
-  return {
-    cwd,
-    dataUrl,
-    updatedAt: icon.updatedAt
+  const customIcon = await getStoredProjectIcon(cwd)
+  if (customIcon) {
+    const image = await getProjectIconFile(customIcon.imagePath).catch(() => null)
+    if (image) {
+      return {
+        cwd,
+        dataUrl: image.dataUrl,
+        updatedAt: customIcon.updatedAt
+      }
+    }
   }
+
+  if (!cwd) return null
+
+  for (const relativeIconPath of automaticProjectIconPaths) {
+    const image = await getProjectIconFile(join(cwd, relativeIconPath)).catch(() => null)
+    if (!image) continue
+
+    return {
+      cwd,
+      dataUrl: image.dataUrl,
+      updatedAt: image.updatedAt
+    }
+  }
+
+  return null
 }
 
 const copyProjectIcon = async (sourcePath: string): Promise<string> => {
   const mimeType = getImageMimeType(sourcePath)
-  if (!mimeType) throw new Error('Choose a PNG, JPEG, GIF, WebP, or AVIF image.')
+  if (!mimeType) throw new Error('Choose a PNG, JPEG, GIF, WebP, AVIF, SVG, or ICO image.')
 
   const sourceStat = await stat(sourcePath)
   if (!sourceStat.isFile()) throw new Error('Choose an image file.')
@@ -1434,7 +1486,7 @@ export const registerAppIpc = (): void => {
       filters: [
         {
           name: 'Images',
-          extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif']
+          extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'ico']
         }
       ]
     } satisfies Electron.OpenDialogOptions
