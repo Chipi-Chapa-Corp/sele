@@ -113,6 +113,7 @@ import {
 import { ChatDetailItem } from './components/ChatDetailItem'
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
 import { Button, type ButtonDropdownAction } from './components/Button'
+import { ChatPlan, type ChatPlanData, type ChatPlanItem } from './components/ChatPlan'
 import { Dropdown, type DropdownOption } from './components/Dropdown'
 import { FileEditorDialog, type FileEditorTarget } from './components/FileEditorDialog'
 import { Input } from './components/Input'
@@ -1223,6 +1224,86 @@ const getWorkingItemTools = (item: ProviderWorkingItem): ProviderWorkingTool[] =
   if (item.type === 'tool') return [item]
   if (item.type === 'toolGroup') return item.tools
   return []
+}
+
+const planItemStatuses = new Set<ChatPlanItem['status']>(['pending', 'in_progress', 'completed'])
+
+const getToolInputRecord = (rawInput: unknown): Record<string, unknown> | null => {
+  if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
+    return rawInput as Record<string, unknown>
+  }
+  if (typeof rawInput !== 'string') return null
+
+  const trimmedInput = rawInput.trim()
+  const objectStart = trimmedInput.indexOf('{')
+  const objectEnd = trimmedInput.lastIndexOf('}')
+  if (objectStart < 0 || objectEnd <= objectStart) return null
+
+  try {
+    const parsedInput = JSON.parse(trimmedInput.slice(objectStart, objectEnd + 1)) as unknown
+    return parsedInput && typeof parsedInput === 'object' && !Array.isArray(parsedInput)
+      ? (parsedInput as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+const getPlanFromTool = (tool: ProviderWorkingTool, contextKey: string): ChatPlanData | null => {
+  if (tool.toolId !== 'update_plan') return null
+
+  const input = getToolInputRecord(tool.rawInput)
+  if (!input || !Array.isArray(input.plan)) return null
+
+  const items = input.plan.flatMap((item): ChatPlanItem[] => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+
+    const candidate = item as Record<string, unknown>
+    const step = typeof candidate.step === 'string' ? candidate.step.trim() : ''
+    const status = candidate.status
+    if (
+      !step ||
+      typeof status !== 'string' ||
+      !planItemStatuses.has(status as ChatPlanItem['status'])
+    ) {
+      return []
+    }
+
+    return [{ step, status: status as ChatPlanItem['status'] }]
+  })
+  if (items.length === 0) return null
+
+  const explanation =
+    typeof input.explanation === 'string' && input.explanation.trim()
+      ? input.explanation.trim()
+      : null
+
+  return {
+    contextKey,
+    explanation,
+    items,
+    signature: `${tool.id}:${JSON.stringify({ explanation, items })}`
+  }
+}
+
+const getLatestChatPlan = (
+  detail: ProviderChatDetail | null,
+  contextKey: string | null
+): ChatPlanData | null => {
+  if (!detail || !contextKey) return null
+
+  let latestPlan: ChatPlanData | null = null
+  for (const item of detail.items) {
+    if (item.type !== 'working') continue
+
+    for (const workingItem of item.items) {
+      for (const tool of getWorkingItemTools(workingItem)) {
+        latestPlan = getPlanFromTool(tool, contextKey) ?? latestPlan
+      }
+    }
+  }
+
+  return latestPlan
 }
 
 const getCommitActivityCurrentAction = (
@@ -2437,6 +2518,10 @@ export const App: React.FC = () => {
 
   const selectedProviderId = selectedChat?.providerId
   const selectedChatId = selectedChat?.id
+  const selectedChatKey =
+    selectedProviderId && selectedChatId
+      ? getChatKey({ providerId: selectedProviderId, id: selectedChatId })
+      : null
   const committingSelectedChatKey =
     selectedProviderId && selectedChatId
       ? getChatKey({ providerId: selectedProviderId, id: selectedChatId })
@@ -2471,6 +2556,11 @@ export const App: React.FC = () => {
   const selectedChatAiCommitAction = committingSelectedChatKey
     ? (committingChatActions.get(committingSelectedChatKey) ?? null)
     : null
+  const messageBoxPlan = useMemo(
+    () =>
+      chatDetail?.id === selectedChatId ? getLatestChatPlan(chatDetail, selectedChatKey) : null,
+    [chatDetail, selectedChatId, selectedChatKey]
+  )
   const usageProviderId = selectedProviderId ?? newSessionProvider
   const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
   const changesProjectCwd = selectedChat
@@ -4563,6 +4653,24 @@ export const App: React.FC = () => {
               <span className="settings-switch__control" aria-hidden="true" />
             </label>
           </div>
+          <div className="settings-dialog__field">
+            <div className="settings-dialog__field-header">
+              <h3 id="settings-chat-hide-plans-label">Hide plans in chats</h3>
+              <p>Hide the expandable plan panel above the message box.</p>
+            </div>
+            <label className="settings-switch">
+              <input
+                type="checkbox"
+                role="switch"
+                aria-labelledby="settings-chat-hide-plans-label"
+                checked={appSettings.chat.hidePlans}
+                onChange={(event) =>
+                  handleChatDropdownPreferenceChange('hidePlans', event.currentTarget.checked)
+                }
+              />
+              <span className="settings-switch__control" aria-hidden="true" />
+            </label>
+          </div>
         </section>
       )
     }
@@ -4892,6 +5000,7 @@ export const App: React.FC = () => {
                 </div>
               </div>
             )}
+            {!appSettings.chat.hidePlans && <ChatPlan plan={messageBoxPlan} />}
             <div className="chat-panel__composer">
               <div className="chat-panel__composer-inner">
                 {!selectedChat && newChatOpen && providerUpdateSuggestion && (

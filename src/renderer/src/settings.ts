@@ -15,6 +15,7 @@ export type AppSettings = {
     theme: AppThemePreference
   }
   chat: {
+    hidePlans: boolean
     updateExistingChats: boolean
     updateNewChats: boolean
   }
@@ -105,6 +106,7 @@ export const defaultAppSettings: AppSettings = {
     theme: 'system'
   },
   chat: {
+    hidePlans: false,
     updateExistingChats: true,
     updateNewChats: true
   },
@@ -170,6 +172,8 @@ export const readStoredAppSettings = (): AppSettings => {
           : defaultAppSettings.appearance.theme
       },
       chat: {
+        hidePlans:
+          typeof chat.hidePlans === 'boolean' ? chat.hidePlans : defaultAppSettings.chat.hidePlans,
         updateExistingChats:
           typeof chat.updateExistingChats === 'boolean'
             ? chat.updateExistingChats
@@ -218,6 +222,9 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
 
     const storedChat: Partial<AppSettings['chat']> = {}
+    if (settings.chat.hidePlans !== defaultAppSettings.chat.hidePlans) {
+      storedChat.hidePlans = settings.chat.hidePlans
+    }
     if (settings.chat.updateExistingChats !== defaultAppSettings.chat.updateExistingChats) {
       storedChat.updateExistingChats = settings.chat.updateExistingChats
     }
