@@ -9,11 +9,11 @@
   display: flex;
   min-width: 260px;
   max-width: calc(100vw - 24px);
-  max-height: min(420px, 56vh);
+  max-height: min(480px, 62vh);
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   overflow: hidden;
-  padding: 8px;
+  padding: 10px;
   border: 1px solid var(--menu-border);
   border-radius: 12px;
   color: var(--lead);
@@ -26,7 +26,21 @@
   min-width: 0;
   flex-direction: column;
   gap: 6px;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--glass-edge) transparent;
+  scrollbar-gutter: stable both-edges;
+}
+
+.cwd-notes-menu__items::-webkit-scrollbar {
+  width: 10px;
+}
+
+.cwd-notes-menu__items::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--glass-edge);
+  background-clip: padding-box;
 }
 
 .cwd-notes-menu__empty {
@@ -67,9 +81,4 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
   align-items: center;
-}
-
-.cwd-notes-menu__form .ui-input {
-  min-height: var(--control-height-small);
-  border-radius: var(--control-radius-small);
 }

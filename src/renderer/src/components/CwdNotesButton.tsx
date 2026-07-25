@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState
 } from 'react'
@@ -29,7 +30,7 @@ const createNoteId = (): string => {
 const getNotesMenuStyle = (buttonRect: DOMRect): CSSProperties => {
   const viewportInset = 12
   const menuOffset = 6
-  const menuWidth = Math.min(320, window.innerWidth - viewportInset * 2)
+  const menuWidth = Math.min(360, window.innerWidth - viewportInset * 2)
   const bottomSpace = window.innerHeight - buttonRect.bottom
   const openUp = bottomSpace < 260 && buttonRect.top > bottomSpace
   const nextMenuStyle: CSSProperties = {
@@ -50,7 +51,9 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
   const reactId = useId().replace(/:/g, '')
   const rootRef = useRef<HTMLSpanElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const itemsRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const scrollAfterAddRef = useRef(false)
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
   const [draft, setDraft] = useState('')
@@ -112,10 +115,19 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
     }
   }, [closeMenu, open, updateMenuPosition])
 
+  useLayoutEffect(() => {
+    if (!scrollAfterAddRef.current) return
+
+    scrollAfterAddRef.current = false
+    const items = itemsRef.current
+    if (items) items.scrollTop = items.scrollHeight
+  }, [notes])
+
   const handleAddNote = (): void => {
     const text = draft.trim()
     if (!text) return
 
+    scrollAfterAddRef.current = true
     onNotesChange([
       ...notes,
       {
@@ -152,7 +164,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
         closeMenu()
       }}
     >
-      <div className="cwd-notes-menu__items">
+      <div ref={itemsRef} className="cwd-notes-menu__items">
         {notes.length === 0 ? (
           <p className="cwd-notes-menu__empty">No notes yet</p>
         ) : (
@@ -182,7 +194,6 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
         />
         <Button
           theme="secondary"
-          size="small"
           aria-label="Add note"
           title="Add note"
           callback={handleAddNote}
