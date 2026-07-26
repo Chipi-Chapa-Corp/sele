@@ -4,6 +4,8 @@ import {
   Fragment,
   isValidElement,
   memo,
+  startTransition,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -279,6 +281,9 @@ const placeholderOptions = [
 ] satisfies Array<{ label: string; Icon: AnimatedIconComponent }>
 const longRunningActivities = new Set<ProviderToolActivity>(['npm', 'npx', 'script', 'command'])
 const silencePlaceholderDelayMs = 600
+const animatedIconReplayMs = 1_050
+const streamRenderMaxDelayMs = 180
+const streamPacketAnimationMs = 150
 
 type MarkdownFileTarget = {
   path: string
@@ -605,8 +610,10 @@ const LoopingAnimatedIcon: React.FC<{
     }
 
     icon?.startAnimation()
+    const interval = window.setInterval(() => icon?.startAnimation(), animatedIconReplayMs)
 
     return () => {
+      window.clearInterval(interval)
       icon?.stopAnimation()
     }
   }, [active])
@@ -614,7 +621,7 @@ const LoopingAnimatedIcon: React.FC<{
   return (
     <Icon
       ref={iconRef}
-      className={`chat-detail__animated-icon${active ? ' chat-detail__animated-icon--active' : ''}`}
+      className="chat-detail__animated-icon"
       size={18}
       animateOnHover={false}
       aria-hidden="true"
@@ -752,6 +759,151 @@ const withClickableAngleFileLinks = (content: string): string => {
     .join('\n')
 }
 
+const getNaturalStreamBoundary = (content: string, afterIndex: number): number | null => {
+  let fence: MarkdownFence | null = null
+  let offset = 0
+  let boundary: number | null = null
+
+  for (const part of content.match(/[^\n]*(?:\n|$)/g) ?? []) {
+    if (!part) continue
+
+    const line = part.endsWith('\n') ? part.slice(0, -1) : part
+    const partEnd = offset + part.length
+
+    if (fence) {
+      if (isMarkdownFenceClose(line, fence)) {
+        fence = null
+        if (partEnd > afterIndex) boundary = partEnd
+      }
+      offset = partEnd
+      continue
+    }
+
+    const nextFence = getMarkdownFence(line)
+    if (nextFence) {
+      fence = nextFence
+      offset = partEnd
+      continue
+    }
+
+    const sentenceBoundaryPattern = /[.!?](?:["')\]]*)(?=\s|$)/g
+    for (const match of line.matchAll(sentenceBoundaryPattern)) {
+      const matchEnd = offset + (match.index ?? 0) + match[0].length
+      if (matchEnd > afterIndex) boundary = matchEnd
+    }
+
+    if (part.endsWith('\n') && partEnd > afterIndex) boundary = partEnd
+    offset = partEnd
+  }
+
+  return boundary
+}
+
+type StreamRenderState = {
+  animate: boolean
+  content: string
+  revision: number
+}
+
+const useStreamRenderedContent = (
+  content: string,
+  streaming: boolean
+): StreamRenderState & { visibleContent: string } => {
+  const [renderState, setRenderState] = useState<StreamRenderState>(() => ({
+    animate: false,
+    content,
+    revision: 0
+  }))
+  const latestContentRef = useRef(content)
+  const renderedContentRef = useRef(content)
+  const flushTimerRef = useRef<number | null>(null)
+  const scheduleFlushRef = useRef<() => void>(() => {})
+
+  const clearFlushTimer = useCallback((): void => {
+    if (flushTimerRef.current === null) return
+    window.clearTimeout(flushTimerRef.current)
+    flushTimerRef.current = null
+  }, [])
+
+  const flushContent = useCallback((nextContent: string, animate: boolean): void => {
+    renderedContentRef.current = nextContent
+    startTransition(() => {
+      setRenderState((currentState) =>
+        currentState.content === nextContent
+          ? currentState
+          : {
+              animate,
+              content: nextContent,
+              revision: currentState.revision + 1
+            }
+      )
+    })
+  }, [])
+
+  const scheduleFlush = useCallback((): void => {
+    if (flushTimerRef.current !== null) return
+
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null
+      const latestContent = latestContentRef.current
+      const renderedLength = renderedContentRef.current.length
+      if (latestContent.length <= renderedLength) return
+
+      const boundary = getNaturalStreamBoundary(latestContent, renderedLength)
+      const nextLength = boundary ?? latestContent.length
+      flushContent(latestContent.slice(0, nextLength), boundary !== null)
+
+      if (nextLength < latestContent.length) scheduleFlushRef.current()
+    }, streamRenderMaxDelayMs)
+  }, [flushContent])
+
+  useEffect(() => {
+    scheduleFlushRef.current = scheduleFlush
+  }, [scheduleFlush])
+
+  useEffect(() => {
+    latestContentRef.current = content
+
+    if (!streaming) {
+      clearFlushTimer()
+      const previousContent = renderedContentRef.current
+      flushContent(
+        content,
+        content.startsWith(previousContent) && content.length > previousContent.length
+      )
+      return
+    }
+
+    const renderedContent = renderedContentRef.current
+    if (!content.startsWith(renderedContent)) {
+      clearFlushTimer()
+      flushContent(content, false)
+      return
+    }
+    if (content.length === renderedContent.length) return
+
+    const boundary = getNaturalStreamBoundary(content, renderedContent.length)
+    if (boundary !== null) {
+      clearFlushTimer()
+      flushContent(content.slice(0, boundary), true)
+    }
+
+    if (renderedContentRef.current.length < content.length) scheduleFlush()
+  }, [clearFlushTimer, content, flushContent, scheduleFlush, streaming])
+
+  useEffect(
+    () => () => {
+      clearFlushTimer()
+    },
+    [clearFlushTimer]
+  )
+
+  return {
+    ...renderState,
+    visibleContent: streaming ? renderState.content : content
+  }
+}
+
 const ToolItem: React.FC<{
   item: ProviderToolItem
   activeToolIds: Set<string>
@@ -792,15 +944,41 @@ const MarkdownMessageComponent: React.FC<{
   onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
   streaming?: boolean
 }> = ({ className, content, onOpenFileLink, streaming = false }) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const packetAnimationRef = useRef<Animation | null>(null)
   const markdownOptions = useMemo(() => getMarkdownOptions(onOpenFileLink), [onOpenFileLink])
+  const { animate, revision, visibleContent } = useStreamRenderedContent(content, streaming)
+
+  useEffect(() => {
+    if (!animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    const container = containerRef.current
+    const target = container?.lastElementChild ?? container
+    if (!target) return
+
+    packetAnimationRef.current?.cancel()
+    packetAnimationRef.current = target.animate(
+      [
+        { opacity: 0.72, transform: 'translateY(3px)' },
+        { opacity: 1, transform: 'translateY(0)' }
+      ],
+      {
+        duration: streamPacketAnimationMs,
+        easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+      }
+    )
+  }, [animate, revision])
+
+  useEffect(
+    () => () => {
+      packetAnimationRef.current?.cancel()
+    },
+    []
+  )
 
   return (
-    <div className={className} data-streaming={streaming || undefined}>
-      {streaming ? (
-        <span className="chat-detail__streaming-text">{content}</span>
-      ) : (
-        <Markdown options={markdownOptions}>{withClickableAngleFileLinks(content)}</Markdown>
-      )}
+    <div className={className} data-streaming={streaming || undefined} ref={containerRef}>
+      <Markdown options={markdownOptions}>{withClickableAngleFileLinks(visibleContent)}</Markdown>
     </div>
   )
 }

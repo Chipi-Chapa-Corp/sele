@@ -28,10 +28,6 @@
   white-space: normal;
 }
 
-.chat-detail__streaming-text {
-  white-space: pre-wrap;
-}
-
 .chat-detail__message--assistant {
   max-width: 100%;
   padding: 0;
@@ -727,29 +723,6 @@
   width: 18px;
   height: 18px;
   place-items: center;
-}
-
-.chat-detail__animated-icon--active {
-  animation: chat-detail-active-icon-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes chat-detail-active-icon-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  50% {
-    opacity: 0.58;
-    transform: scale(0.9);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chat-detail__animated-icon--active {
-    animation: none;
-  }
 }
 
 .chat-detail__animated-icon > svg,

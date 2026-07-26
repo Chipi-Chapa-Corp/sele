@@ -371,6 +371,7 @@ const fallbackDefaultSandboxMode =
   fallbackProviderSandboxModes.find((mode) => mode.isDefault)?.id ??
   fallbackProviderSandboxModes[0]?.id ??
   'workspace-write'
+const refreshIconReplayMs = 1_050
 
 const providerLabels = {
   codex: 'Codex'
@@ -635,8 +636,10 @@ const ChangesAnimatedIcon: React.FC<{
     }
 
     icon?.startAnimation()
+    const interval = window.setInterval(() => icon?.startAnimation(), refreshIconReplayMs)
 
     return () => {
+      window.clearInterval(interval)
       icon?.stopAnimation()
     }
   }, [active])
@@ -3302,10 +3305,12 @@ export const App: React.FC = () => {
             : null
 
         if (selectedDetail) {
-          applyChatDetail(event.providerId, selectedDetail)
-          setCommittedChatUpdate({
-            sequence: event.sequence,
-            detailApplied: true
+          startTransition(() => {
+            applyChatDetail(event.providerId, selectedDetail)
+            setCommittedChatUpdate({
+              sequence: event.sequence,
+              detailApplied: true
+            })
           })
         } else {
           applyChatSummary(event.providerId, event.summary, event.turnCompleted)
@@ -3485,12 +3490,14 @@ export const App: React.FC = () => {
         if (!active) return
 
         const nextPlan = getLatestChatPlan(detail, contextKey)
-        setExtractedChatPlan((currentPlan) =>
-          currentPlan?.contextKey === nextPlan?.contextKey &&
-          currentPlan?.signature === nextPlan?.signature
-            ? currentPlan
-            : nextPlan
-        )
+        startTransition(() => {
+          setExtractedChatPlan((currentPlan) =>
+            currentPlan?.contextKey === nextPlan?.contextKey &&
+            currentPlan?.signature === nextPlan?.signature
+              ? currentPlan
+              : nextPlan
+          )
+        })
       }, 0)
     })
 

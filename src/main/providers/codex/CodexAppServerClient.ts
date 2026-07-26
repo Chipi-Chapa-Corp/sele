@@ -30,6 +30,45 @@ type PendingRequest = {
 }
 
 const requestTimeoutMs = 30_000
+const codexResourceMemoryHigh = '2G'
+
+type AppServerCommand = {
+  command: string
+  args: string[]
+}
+
+const getAppServerCommand = (binary: string): AppServerCommand => {
+  const appServerArgs = ['app-server', '--listen', 'stdio://']
+  const canUseSystemd =
+    process.platform === 'linux' &&
+    Boolean(process.env.DBUS_SESSION_BUS_ADDRESS) &&
+    process.env.SELE_DISABLE_CODEX_RESOURCE_ISOLATION !== '1'
+
+  if (!canUseSystemd) {
+    return {
+      command: binary,
+      args: appServerArgs
+    }
+  }
+
+  return {
+    command: 'systemd-run',
+    args: [
+      '--user',
+      '--pipe',
+      '--wait',
+      '--collect',
+      '--quiet',
+      `--unit=sele-codex-${process.pid}-${Date.now()}`,
+      '--property=CPUWeight=25',
+      '--property=IOWeight=25',
+      `--property=MemoryHigh=${codexResourceMemoryHigh}`,
+      '--property=OOMScoreAdjust=500',
+      binary,
+      ...appServerArgs
+    ]
+  }
+}
 
 export class CodexAppServerClient {
   private process: ChildProcessWithoutNullStreams | null = null
@@ -83,7 +122,8 @@ export class CodexAppServerClient {
 
   private initialize = async (): Promise<void> => {
     const binary = process.env.CODEX_BINARY_PATH || 'codex'
-    const child = spawn(binary, ['app-server', '--listen', 'stdio://'], {
+    const appServerCommand = getAppServerCommand(binary)
+    const child = spawn(appServerCommand.command, appServerCommand.args, {
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe']
     })
