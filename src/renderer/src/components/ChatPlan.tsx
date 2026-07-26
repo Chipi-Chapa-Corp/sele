@@ -1,6 +1,41 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { ArrowRight, Check, ChevronUp, Minus } from 'lucide-react'
 import './ChatPlan.css'
+
+const seenPlansStorageKey = 'sele:seen-chat-plans:v1'
+const maxStoredSeenPlans = 500
+
+const readSeenPlanSignatures = (): Record<string, string> => {
+  try {
+    const storedValue = window.localStorage.getItem(seenPlansStorageKey)
+    if (!storedValue) return {}
+
+    const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
+    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
+
+    return Object.fromEntries(
+      Object.entries(parsedValue)
+        .filter(
+          ([contextKey, signature]) =>
+            contextKey.length <= 512 && typeof signature === 'string' && signature.length <= 128
+        )
+        .slice(-maxStoredSeenPlans) as [string, string][]
+    )
+  } catch {
+    return {}
+  }
+}
+
+const writeSeenPlanSignatures = (signatures: Record<string, string>): void => {
+  try {
+    const storedSignatures = Object.fromEntries(
+      Object.entries(signatures).slice(-maxStoredSeenPlans)
+    )
+    window.localStorage.setItem(seenPlansStorageKey, JSON.stringify(storedSignatures))
+  } catch {
+    // Seen state is non-critical; ignore unavailable storage.
+  }
+}
 
 export type ChatPlanItem = {
   status: 'pending' | 'in_progress' | 'completed'
@@ -21,10 +56,14 @@ type ChatPlanProps = {
 export const ChatPlan: React.FC<ChatPlanProps> = ({ plan }) => {
   const drawerId = useId().replace(/:/g, '')
   const [openContextKey, setOpenContextKey] = useState<string | null>(null)
-  const [seenSignatures, setSeenSignatures] = useState<Record<string, string>>({})
-  const controlRef = useRef<HTMLElement>(null)
+  const [seenSignatures, setSeenSignatures] =
+    useState<Record<string, string>>(readSeenPlanSignatures)
   const open = Boolean(plan && openContextKey === plan.contextKey)
   const updated = plan !== null && !open && seenSignatures[plan.contextKey] !== plan.signature
+
+  useEffect(() => {
+    writeSeenPlanSignatures(seenSignatures)
+  }, [seenSignatures])
 
   useEffect(() => {
     if (!plan || !open) return
@@ -35,11 +74,15 @@ export const ChatPlan: React.FC<ChatPlanProps> = ({ plan }) => {
 
     queueMicrotask(() => {
       if (!active) return
-      setSeenSignatures((currentSignatures) =>
-        currentSignatures[contextKey] === signature
-          ? currentSignatures
-          : { ...currentSignatures, [contextKey]: signature }
-      )
+      setSeenSignatures((currentSignatures) => {
+        if (currentSignatures[contextKey] === signature) return currentSignatures
+
+        const nextEntries = Object.entries(currentSignatures).filter(
+          ([storedContextKey]) => storedContextKey !== contextKey
+        )
+        nextEntries.push([contextKey, signature])
+        return Object.fromEntries(nextEntries.slice(-maxStoredSeenPlans))
+      })
     })
 
     return () => {
@@ -50,24 +93,13 @@ export const ChatPlan: React.FC<ChatPlanProps> = ({ plan }) => {
   useEffect(() => {
     if (!open) return
 
-    const handlePointerDown = (event: PointerEvent): void => {
-      const target = event.target
-      if (target instanceof Node && controlRef.current?.contains(target)) return
-
-      setOpenContextKey(null)
-    }
-
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') setOpenContextKey(null)
     }
 
-    document.addEventListener('pointerdown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)
 
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
+    return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open])
 
   if (!plan) return null
@@ -80,7 +112,7 @@ export const ChatPlan: React.FC<ChatPlanProps> = ({ plan }) => {
   const progressLabel = `${completedItemCount} of ${plan.items.length} completed`
 
   return (
-    <section className="chat-plan" ref={controlRef}>
+    <section className="chat-plan">
       <button
         type="button"
         className="chat-plan__toggle"

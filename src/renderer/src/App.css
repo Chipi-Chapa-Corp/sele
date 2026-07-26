@@ -186,7 +186,7 @@
   --changes-added: #2f8f5b;
   --changes-deleted: var(--error);
   --changes-renamed: var(--info);
-  --changes-untracked: #8a66be;
+  --changes-untracked: var(--changes-added);
 
   display: grid;
   width: 100%;
@@ -199,18 +199,24 @@
 
 :root[data-color-scheme='dark'] .changes-sidebar {
   --changes-added: #68c58e;
-  --changes-untracked: #b58ce2;
 }
 
 .changes-sidebar__header {
   position: relative;
-  display: flex;
+  display: grid;
   min-width: 0;
   min-height: var(--window-titlebar-height);
   align-items: center;
+  gap: 8px;
   padding: 8px var(--changes-sidebar-x);
   user-select: none;
   -webkit-app-region: drag;
+}
+
+.changes-sidebar__titlebar {
+  display: flex;
+  width: 100%;
+  min-width: 0;
 }
 
 .changes-sidebar__refresh-icon {
@@ -1097,6 +1103,12 @@
   justify-self: end;
 }
 
+.settings-dialog__number-input {
+  width: 88px;
+  justify-self: end;
+  text-align: right;
+}
+
 .settings-dialog__prompt-textarea {
   appearance: none;
   width: 100%;
@@ -1188,8 +1200,8 @@
   padding-left: var(--window-mac-controls-width);
 }
 
-:root:not([data-platform='darwin']) .changes-sidebar__header {
-  padding-right: calc(var(--changes-sidebar-x) + var(--window-controls-width));
+:root:not([data-platform='darwin']) .changes-sidebar__titlebar {
+  padding-right: var(--window-controls-width);
 }
 
 .chat-detail__messages-inner {
@@ -1219,33 +1231,60 @@
   flex: none;
 }
 
-.chat-detail__commit-placeholder {
+.chat-detail__commit-marker {
   display: inline-flex;
   max-width: 82%;
-  align-self: flex-end;
+  align-self: flex-start;
   align-items: center;
   gap: 9px;
   padding: 12px 15px;
   border: 1px dashed var(--message-border);
-  border-radius: 17px 17px 6px;
+  border-radius: 17px 17px 17px 6px;
   color: color-mix(in srgb, var(--lead) 72%, transparent);
   background: color-mix(in srgb, var(--assistant-message) 68%, transparent);
   line-height: 1.4;
 }
 
-.chat-detail__commit-placeholder-icon {
+.chat-detail__commit-marker--finished {
+  border-style: solid;
+  color: var(--lead);
+  background: var(--assistant-message);
+}
+
+.chat-detail__commit-marker--stopped {
+  border-style: solid;
+}
+
+.chat-detail__commit-marker--failed {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--error) 42%, var(--message-border));
+  color: var(--error);
+}
+
+.chat-detail__commit-marker-icon {
+  display: inline-flex;
   width: 18px;
   height: 18px;
   flex: none;
+  align-items: center;
+  justify-content: center;
   color: var(--menu-option-check-color);
 }
 
-.chat-detail__commit-placeholder-icon > svg {
+.chat-detail__commit-marker--failed .chat-detail__commit-marker-icon {
+  color: var(--error);
+}
+
+.chat-detail__commit-marker--stopped .chat-detail__commit-marker-icon {
+  color: var(--muted);
+}
+
+.chat-detail__commit-marker-icon > svg {
   width: 18px;
   height: 18px;
 }
 
-.chat-detail__commit-placeholder-cancel {
+.chat-detail__commit-marker-cancel {
   --control-height-small: 24px;
   --control-icon-size: 15px;
 

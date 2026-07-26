@@ -1,22 +1,28 @@
-import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
-import type { RootContent } from 'hast'
-import { FileCode2, LoaderCircle, Maximize2, Minimize2, RefreshCw, Save, X } from 'lucide-react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  FileCode2,
+  FileDiff,
+  LoaderCircle,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
+  Save,
+  X
+} from 'lucide-react'
 import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
-import { refractor } from 'refractor'
-import jsx from 'refractor/jsx'
-import tsx from 'refractor/tsx'
+import type { AppGitChangeKind } from '../../../shared/app'
+import type { ProviderFileDiff } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { Button } from './Button'
+import { EditableUnifiedDiff, UnifiedDiff } from './UnifiedDiff'
 import './FileEditorDialog.css'
-
-if (!refractor.registered('jsx')) refractor.register(jsx)
-if (!refractor.registered('tsx')) refractor.register(tsx)
 
 export type FileEditorTarget = {
   cwd: string
   path: string
   displayPath: string
+  kind?: AppGitChangeKind | null
+  previousPath?: string | null
 }
 
 type FileEditorDialogProps = {
@@ -26,86 +32,8 @@ type FileEditorDialogProps = {
 
 type LoadState = 'loading' | 'ready' | 'error'
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
-
-const languageByExtension: Record<string, string> = {
-  bash: 'bash',
-  c: 'c',
-  cc: 'cpp',
-  cjs: 'javascript',
-  cpp: 'cpp',
-  cs: 'csharp',
-  css: 'css',
-  cts: 'typescript',
-  go: 'go',
-  h: 'c',
-  hpp: 'cpp',
-  htm: 'markup',
-  html: 'markup',
-  ini: 'ini',
-  java: 'java',
-  js: 'javascript',
-  json: 'json',
-  jsonc: 'json',
-  jsx: 'jsx',
-  kt: 'kotlin',
-  less: 'less',
-  lua: 'lua',
-  md: 'markdown',
-  mdx: 'markdown',
-  mjs: 'javascript',
-  mts: 'typescript',
-  php: 'php',
-  pl: 'perl',
-  py: 'python',
-  r: 'r',
-  rb: 'ruby',
-  rs: 'rust',
-  sass: 'sass',
-  scss: 'scss',
-  sh: 'bash',
-  sql: 'sql',
-  svg: 'markup',
-  swift: 'swift',
-  ts: 'typescript',
-  tsx: 'tsx',
-  vb: 'vbnet',
-  xml: 'markup',
-  yaml: 'yaml',
-  yml: 'yaml',
-  zsh: 'bash'
-}
-
-const languageByFileName: Record<string, string> = {
-  '.bashrc': 'bash',
-  '.zshrc': 'bash',
-  dockerfile: 'docker',
-  makefile: 'makefile'
-}
-
-const getLanguage = (path: string): string | null => {
-  const fileName = path.split(/[\\/]/).at(-1)?.toLocaleLowerCase() ?? ''
-  const extension = fileName.includes('.') ? (fileName.split('.').at(-1) ?? '') : ''
-  const language = languageByFileName[fileName] ?? languageByExtension[extension]
-
-  return language && refractor.registered(language) ? language : null
-}
-
-const renderNode = (node: RootContent, key: number): ReactNode => {
-  if (node.type === 'text') return node.value
-  if (node.type !== 'element') return null
-
-  const classNames = node.properties.className
-  const className = Array.isArray(classNames)
-    ? classNames.filter((value): value is string => typeof value === 'string').join(' ')
-    : typeof classNames === 'string'
-      ? classNames
-      : undefined
-
-  return createElement(
-    node.tagName,
-    { className, key },
-    node.children.map((child, index) => renderNode(child, index))
-  )
+type LoadDiffOptions = {
+  background?: boolean
 }
 
 const getErrorMessage = (error: unknown, fallback: string): string => {
@@ -113,6 +41,12 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
 
   const message = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
   return message || fallback
+}
+
+const getDiffKind = (kind: AppGitChangeKind): ProviderFileDiff['kind'] => {
+  if (kind === 'delete') return 'delete'
+  if (kind === 'create' || kind === 'untracked') return 'create'
+  return 'edit'
 }
 
 export const FileEditorDialog = memo(function FileEditorDialog({
@@ -124,47 +58,47 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [contents, setContents] = useState('')
   const [savedContents, setSavedContents] = useState('')
   const [version, setVersion] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [editorError, setEditorError] = useState<string | null>(null)
+  const [diff, setDiff] = useState('')
+  const [diffLoadState, setDiffLoadState] = useState<LoadState>(target.kind ? 'loading' : 'ready')
+  const [diffError, setDiffError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const highlightRef = useRef<HTMLPreElement>(null)
-  const lineNumbersRef = useRef<HTMLPreElement>(null)
   const loadRequestRef = useRef(0)
-  const language = useMemo(() => getLanguage(target.path), [target.path])
+  const diffLoadRequestRef = useRef(0)
+  const canShowDiff = Boolean(target.kind)
+  const canEdit = target.kind !== 'delete'
   const displayPath = useMemo(() => target.displayPath.replace(/\\/g, '/'), [target.displayPath])
   const displayPathParts = useMemo(() => displayPath.split('/').filter(Boolean), [displayPath])
   const fileName = displayPathParts.at(-1) ?? displayPath
   const directoryName = displayPathParts.slice(0, -1).join('/') || '.'
   const dirty = loadState === 'ready' && contents !== savedContents
-  const lineCount = useMemo(() => contents.split('\n').length, [contents])
-  const lineNumbers = useMemo(
-    () => Array.from({ length: lineCount }, (_, index) => index + 1).join('\n'),
-    [lineCount]
-  )
-  const editorStyle = useMemo(
+  const renderedFileDiff = useMemo<ProviderFileDiff | null>(
     () =>
-      ({
-        '--file-editor-gutter-width': `calc(${Math.max(2, String(lineCount).length)}ch + 30px)`
-      }) as CSSProperties,
-    [lineCount]
+      target.kind
+        ? {
+            path: target.path,
+            kind: getDiffKind(target.kind),
+            diff
+          }
+        : null,
+    [diff, target.kind, target.path]
   )
-
-  const highlightedContents = useMemo(() => {
-    if (!language) return contents
-
-    try {
-      return refractor.highlight(contents, language).children.map(renderNode)
-    } catch {
-      return contents
-    }
-  }, [contents, language])
+  const editableFileDiff = useMemo<ProviderFileDiff>(
+    () =>
+      renderedFileDiff ?? {
+        path: target.path,
+        kind: 'edit',
+        diff: ''
+      },
+    [renderedFileDiff, target.path]
+  )
 
   const loadFile = useCallback(async (): Promise<void> => {
     const request = loadRequestRef.current + 1
     loadRequestRef.current = request
     setLoadState('loading')
     setSaveState('idle')
-    setError(null)
+    setEditorError(null)
 
     try {
       const result = await appApi.getFileContents({
@@ -180,20 +114,56 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     } catch (loadError) {
       if (loadRequestRef.current !== request) return
 
-      setError(getErrorMessage(loadError, 'Unable to open this file.'))
+      setEditorError(getErrorMessage(loadError, 'Unable to open this file.'))
       setVersion(null)
       setLoadState('error')
     }
   }, [target.cwd, target.path])
 
-  useEffect(() => {
-    queueMicrotask(() => void loadFile())
-  }, [loadFile])
+  const loadDiff = useCallback(
+    async (options: LoadDiffOptions = {}): Promise<void> => {
+      if (!target.kind) return
+
+      const background = options.background === true
+      const request = diffLoadRequestRef.current + 1
+      diffLoadRequestRef.current = request
+      if (!background) setDiffLoadState('loading')
+      setDiffError(null)
+
+      try {
+        const result = await appApi.getGitFileDiff({
+          cwd: target.cwd,
+          path: target.path,
+          previousPath: target.previousPath
+        })
+        if (diffLoadRequestRef.current !== request) return
+
+        setDiff(result.diff)
+        setDiffLoadState('ready')
+      } catch (loadError) {
+        if (diffLoadRequestRef.current !== request) return
+
+        const message = getErrorMessage(loadError, 'Unable to load this diff.')
+        setDiffError(message)
+        if (background) {
+          setEditorError(message)
+        } else {
+          setDiffLoadState('error')
+        }
+      }
+    },
+    [target.cwd, target.kind, target.path, target.previousPath]
+  )
 
   useEffect(() => {
-    if (loadState !== 'ready') return
-    queueMicrotask(() => textareaRef.current?.focus({ preventScroll: true }))
-  }, [loadState])
+    if (!canEdit) return
+    queueMicrotask(() => void loadFile())
+  }, [canEdit, loadFile])
+
+  useEffect(() => {
+    if (!canShowDiff) return
+    queueMicrotask(() => void loadDiff())
+  }, [canShowDiff, loadDiff])
 
   const requestClose = useCallback((): void => {
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
@@ -217,7 +187,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
     const contentsToSave = contents
     setSaveState('saving')
-    setError(null)
+    setEditorError(null)
 
     try {
       const result = await appApi.writeFileContents({
@@ -230,44 +200,22 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setSavedContents(contentsToSave)
       setVersion(result.version)
       setSaveState('saved')
+      if (canShowDiff) void loadDiff({ background: true })
     } catch (saveError) {
-      setError(getErrorMessage(saveError, 'Unable to save this file.'))
+      setEditorError(getErrorMessage(saveError, 'Unable to save this file.'))
       setSaveState('error')
     }
-  }, [contents, dirty, loadState, saveState, target.cwd, target.path, version])
-
-  const syncEditorScroll = (): void => {
-    const textarea = textareaRef.current
-    const highlight = highlightRef.current
-    const lineNumbersElement = lineNumbersRef.current
-    if (!textarea || !highlight || !lineNumbersElement) return
-
-    highlight.scrollTop = textarea.scrollTop
-    highlight.scrollLeft = textarea.scrollLeft
-    lineNumbersElement.scrollTop = textarea.scrollTop
-  }
-
-  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 's') {
-      event.preventDefault()
-      void handleSave()
-      return
-    }
-
-    if (event.key !== 'Tab' || event.metaKey || event.ctrlKey || event.altKey) return
-
-    event.preventDefault()
-    const textarea = event.currentTarget
-    const selectionStart = textarea.selectionStart
-    const selectionEnd = textarea.selectionEnd
-    const nextContents = `${contents.slice(0, selectionStart)}  ${contents.slice(selectionEnd)}`
-
-    setContents(nextContents)
-    setSaveState('idle')
-    queueMicrotask(() => {
-      textarea.setSelectionRange(selectionStart + 2, selectionStart + 2)
-    })
-  }
+  }, [
+    canShowDiff,
+    contents,
+    dirty,
+    loadDiff,
+    loadState,
+    saveState,
+    target.cwd,
+    target.path,
+    version
+  ])
 
   return (
     <div
@@ -281,7 +229,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         className={`file-editor-dialog${expanded ? ' file-editor-dialog--expanded' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-label={`Edit ${displayPath}`}
+        aria-label={`${canEdit ? 'Edit' : 'View changes to'} ${displayPath}`}
       >
         <header className="file-editor-dialog__header">
           <span className="file-editor-dialog__file-icon" aria-hidden="true">
@@ -292,22 +240,24 @@ export const FileEditorDialog = memo(function FileEditorDialog({
             <span title={directoryName}>{directoryName}</span>
           </div>
           <div className="file-editor-dialog__actions">
-            <Button
-              aria-label={`Save ${displayPath}`}
-              callback={handleSave}
-              disabled={!dirty || saveState === 'saving'}
-              icon={
-                saveState === 'saving' ? (
-                  <LoaderCircle className="file-editor-dialog__spinner" />
-                ) : (
-                  <Save />
-                )
-              }
-              label={saveState === 'saving' ? 'Saving' : 'Save'}
-              size="small"
-              theme="primary"
-              title="Save (Ctrl/Cmd+S)"
-            />
+            {canEdit && (
+              <Button
+                aria-label={`Save ${displayPath}`}
+                callback={handleSave}
+                disabled={!dirty || saveState === 'saving'}
+                icon={
+                  saveState === 'saving' ? (
+                    <LoaderCircle className="file-editor-dialog__spinner" />
+                  ) : (
+                    <Save />
+                  )
+                }
+                label={saveState === 'saving' ? 'Saving' : 'Save'}
+                size="small"
+                theme="primary"
+                title="Save (Ctrl/Cmd+S)"
+              />
+            )}
             <button
               className="file-editor-dialog__control"
               type="button"
@@ -330,19 +280,57 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         </header>
 
         <div className="file-editor-dialog__body">
-          {loadState === 'loading' && (
-            <div className="file-editor-dialog__state" role="status">
-              <LoaderCircle className="file-editor-dialog__spinner" aria-hidden="true" />
-              <span>Opening file…</span>
+          {canShowDiff && !canEdit && (
+            <div className="file-editor-dialog__diff-view">
+              {diffLoadState === 'loading' && (
+                <div className="file-editor-dialog__state" role="status">
+                  <LoaderCircle className="file-editor-dialog__spinner" aria-hidden="true" />
+                  <span>Loading diff…</span>
+                </div>
+              )}
+              {diffLoadState === 'error' && (
+                <div className="file-editor-dialog__state" role="alert">
+                  <FileDiff aria-hidden="true" />
+                  <p>{diffError}</p>
+                  <Button
+                    callback={loadDiff}
+                    icon={<RefreshCw />}
+                    label="Try again"
+                    size="small"
+                    theme="secondary"
+                  />
+                </div>
+              )}
+              {diffLoadState === 'ready' &&
+                (diff && renderedFileDiff ? (
+                  <div className="file-editor-dialog__diff-scroll">
+                    <UnifiedDiff className="file-editor-dialog__diff" fileDiff={renderedFileDiff} />
+                  </div>
+                ) : (
+                  <div className="file-editor-dialog__state">
+                    <FileDiff aria-hidden="true" />
+                    <p>No changes to display.</p>
+                  </div>
+                ))}
             </div>
           )}
 
-          {loadState === 'error' && (
+          {canEdit && (loadState === 'loading' || (canShowDiff && diffLoadState === 'loading')) && (
+            <div className="file-editor-dialog__state" role="status">
+              <LoaderCircle className="file-editor-dialog__spinner" aria-hidden="true" />
+              <span>{canShowDiff ? 'Opening editable diff…' : 'Opening file…'}</span>
+            </div>
+          )}
+
+          {canEdit && (loadState === 'error' || (canShowDiff && diffLoadState === 'error')) && (
             <div className="file-editor-dialog__state" role="alert">
-              <FileCode2 aria-hidden="true" />
-              <p>{error}</p>
+              {canShowDiff ? <FileDiff aria-hidden="true" /> : <FileCode2 aria-hidden="true" />}
+              <p>{editorError ?? diffError}</p>
               <Button
-                callback={loadFile}
+                callback={() => {
+                  void loadFile()
+                  if (canShowDiff) void loadDiff()
+                }}
                 icon={<RefreshCw />}
                 label="Try again"
                 size="small"
@@ -351,43 +339,26 @@ export const FileEditorDialog = memo(function FileEditorDialog({
             </div>
           )}
 
-          {loadState === 'ready' && (
-            <div className="file-editor-dialog__editor" style={editorStyle}>
-              {error && (
+          {canEdit && loadState === 'ready' && (!canShowDiff || diffLoadState === 'ready') && (
+            <div className="file-editor-dialog__inline-diff">
+              {editorError && (
                 <div className="file-editor-dialog__error" role="alert">
-                  {error}
+                  {editorError}
                 </div>
               )}
-              <pre
-                ref={lineNumbersRef}
-                className="file-editor-dialog__line-numbers"
-                aria-hidden="true"
-              >
-                {lineNumbers}
-                {'\n'}
-              </pre>
-              <pre ref={highlightRef} className="file-editor-dialog__highlight" aria-hidden="true">
-                <code className={language ? `language-${language}` : undefined}>
-                  {highlightedContents}
-                  {'\n'}
-                </code>
-              </pre>
-              <textarea
-                ref={textareaRef}
-                className="file-editor-dialog__input"
-                aria-label={`Contents of ${target.displayPath}`}
-                autoCapitalize="off"
-                autoCorrect="off"
-                onChange={(event) => {
-                  setContents(event.currentTarget.value)
+              <EditableUnifiedDiff
+                key={target.path}
+                ariaLabel={`Contents of ${target.displayPath}`}
+                baselineContents={savedContents}
+                className="file-editor-dialog__diff"
+                contents={contents}
+                fileDiff={editableFileDiff}
+                onChange={(nextContents) => {
+                  setContents(nextContents)
                   setSaveState('idle')
-                  setError(null)
+                  setEditorError(null)
                 }}
-                onKeyDown={handleEditorKeyDown}
-                onScroll={syncEditorScroll}
-                spellCheck={false}
-                value={contents}
-                wrap="off"
+                onSave={() => void handleSave()}
               />
             </div>
           )}

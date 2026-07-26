@@ -49,6 +49,21 @@ export type AppGitChangesOptions = {
   source: AppGitChangeSource
 }
 
+export type AppGitBranchesOptions = {
+  cwd?: string | null
+}
+
+export type AppGitSwitchBranchOptions = AppGitBranchesOptions & {
+  branchName: string
+  create?: boolean
+}
+
+export type AppGitBranchesResult = {
+  repositoryRoot: string
+  currentBranch: string | null
+  branches: string[]
+}
+
 export type AppFileTreeOptions = {
   cwd?: string | null
 }
@@ -112,6 +127,14 @@ export type AppGitDiffResult = {
   diff: string
 }
 
+export type AppGitFileDiffOptions = AppFileContentsOptions & {
+  previousPath?: string | null
+}
+
+export type AppGitFileDiffResult = {
+  diff: string
+}
+
 export type AppGitUncommittedPatchChangesOptions = {
   cwd?: string | null
   patches: AppGitPatchChange[]
@@ -172,6 +195,8 @@ export type AppApi = {
   closeWindow: () => Promise<void>
   getDefaultCwd: () => Promise<string>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
+  getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
+  switchGitBranch: (options: AppGitSwitchBranchOptions) => Promise<AppGitBranchesResult>
   getFileTree: (options?: AppFileTreeOptions) => Promise<AppFileTreeResult>
   getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
   writeFileContents: (options: AppWriteFileContentsOptions) => Promise<AppWriteFileContentsResult>
@@ -179,6 +204,7 @@ export type AppApi = {
     options?: AppGitRecentCommitMessagesOptions
   ) => Promise<AppGitRecentCommitMessagesResult>
   getUncommittedGitDiff: (options?: AppGitDiffOptions) => Promise<AppGitDiffResult>
+  getGitFileDiff: (options: AppGitFileDiffOptions) => Promise<AppGitFileDiffResult>
   getUncommittedGitPatchChanges: (
     options: AppGitUncommittedPatchChangesOptions
   ) => Promise<AppGitUncommittedPatchChangesResult>
@@ -202,11 +228,14 @@ export const appIpcChannels = {
   closeWindow: 'app:close-window',
   getDefaultCwd: 'app:get-default-cwd',
   getGitChanges: 'app:get-git-changes',
+  getGitBranches: 'app:get-git-branches',
+  switchGitBranch: 'app:switch-git-branch',
   getFileTree: 'app:get-file-tree',
   getFileContents: 'app:get-file-contents',
   writeFileContents: 'app:write-file-contents',
   getRecentGitCommitMessages: 'app:get-recent-git-commit-messages',
   getUncommittedGitDiff: 'app:get-uncommitted-git-diff',
+  getGitFileDiff: 'app:get-git-file-diff',
   getUncommittedGitPatchChanges: 'app:get-uncommitted-git-patch-changes',
   commitGitChanges: 'app:commit-git-changes',
   pullGitChanges: 'app:pull-git-changes',

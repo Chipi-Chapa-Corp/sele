@@ -1,0 +1,66 @@
+.unified-diff {
+  --diff-background-color: transparent;
+  --diff-text-color: var(--lead);
+  --diff-selection-background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  --diff-selection-text-color: var(--lead);
+  --diff-gutter-insert-background-color: color-mix(in srgb, #2f8f46 16%, transparent);
+  --diff-gutter-insert-text-color: var(--muted);
+  --diff-gutter-delete-background-color: color-mix(in srgb, #c74c44 16%, transparent);
+  --diff-gutter-delete-text-color: var(--muted);
+  --diff-code-insert-background-color: color-mix(in srgb, #2f8f46 10%, transparent);
+  --diff-code-insert-text-color: var(--lead);
+  --diff-code-delete-background-color: color-mix(in srgb, #c74c44 10%, transparent);
+  --diff-code-delete-text-color: var(--lead);
+  --diff-code-insert-edit-background-color: color-mix(in srgb, #2f8f46 28%, transparent);
+  --diff-code-insert-edit-text-color: var(--lead);
+  --diff-code-delete-edit-background-color: color-mix(in srgb, #c74c44 28%, transparent);
+  --diff-code-delete-edit-text-color: var(--lead);
+  --diff-font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  min-width: 100%;
+}
+
+.unified-diff + .unified-diff {
+  border-top: 1px solid var(--line);
+}
+
+.unified-diff .diff-gutter-col {
+  width: 6ch;
+}
+
+.unified-diff .diff-line {
+  line-height: 1.55;
+}
+
+.unified-diff .diff-gutter {
+  padding: 0 9px;
+  border-right: 1px solid var(--line);
+  color: var(--quiet);
+}
+
+.unified-diff .diff-code {
+  padding: 0 12px;
+  overflow-wrap: normal;
+  white-space: pre;
+  word-break: normal;
+}
+
+.unified-diff__fallback {
+  margin: 0;
+  padding: 18px 20px;
+  overflow: auto;
+  color: var(--lead);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.editable-unified-diff {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: inherit;
+  background: transparent;
+}

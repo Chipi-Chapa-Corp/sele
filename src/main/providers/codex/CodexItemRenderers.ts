@@ -72,7 +72,6 @@ type WorkingItemRenderResult =
       finishedBackgroundSessionId: string | null
       rawInput: unknown
       rawOutput: unknown
-      raw: unknown[]
     }
 
 type WorkingItemRenderMatcher = {
@@ -708,6 +707,89 @@ const getRawToolInput = (item: CodexThreadItem): unknown => {
   return null
 }
 
+const maxToolCommandLength = 80_000
+const maxToolOutputLength = 160_000
+const maxToolDiffLength = 400_000
+const maxRawToolValueLength = 80_000
+const maxRawToolCollectionEntries = 200
+const maxRawToolDepth = 8
+const truncatedToolValueMarker = '… [truncated to keep the app responsive]'
+
+const truncateToolText = (value: string | null, limit: number): string | null => {
+  if (value == null || value.length <= limit) return value
+  return `${value.slice(0, limit)}\n${truncatedToolValueMarker}`
+}
+
+type RawToolValueBudget = {
+  remaining: number
+  seen: WeakSet<object>
+}
+
+const getBoundedRawToolValue = (
+  value: unknown,
+  budget: RawToolValueBudget = {
+    remaining: maxRawToolValueLength,
+    seen: new WeakSet<object>()
+  },
+  depth = 0
+): unknown => {
+  if (typeof value === 'string') {
+    if (value.length <= budget.remaining) {
+      budget.remaining -= value.length
+      return value
+    }
+
+    const visibleValue = value.slice(0, Math.max(0, budget.remaining))
+    budget.remaining = 0
+    return `${visibleValue}\n${truncatedToolValueMarker}`
+  }
+  if (
+    value == null ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'undefined'
+  ) {
+    return value
+  }
+  if (typeof value === 'bigint' || typeof value === 'symbol' || typeof value === 'function') {
+    return String(value)
+  }
+  if (depth >= maxRawToolDepth || budget.remaining <= 0) return truncatedToolValueMarker
+  if (budget.seen.has(value)) return '[Circular]'
+
+  budget.seen.add(value)
+
+  if (Array.isArray(value)) {
+    const boundedValue: unknown[] = []
+    const entryLimit = Math.min(value.length, maxRawToolCollectionEntries)
+
+    for (let index = 0; index < entryLimit && budget.remaining > 0; index += 1) {
+      budget.remaining -= 1
+      boundedValue.push(getBoundedRawToolValue(value[index], budget, depth + 1))
+    }
+    if (entryLimit < value.length || budget.remaining <= 0) {
+      boundedValue.push(truncatedToolValueMarker)
+    }
+
+    return boundedValue
+  }
+
+  const boundedValue: Record<string, unknown> = {}
+  const entries = Object.entries(value as Record<string, unknown>)
+  const entryLimit = Math.min(entries.length, maxRawToolCollectionEntries)
+
+  for (let index = 0; index < entryLimit && budget.remaining > 0; index += 1) {
+    const [key, entryValue] = entries[index]
+    budget.remaining -= key.length + 1
+    boundedValue[key] = getBoundedRawToolValue(entryValue, budget, depth + 1)
+  }
+  if (entryLimit < entries.length || budget.remaining <= 0) {
+    boundedValue.__truncated__ = truncatedToolValueMarker
+  }
+
+  return boundedValue
+}
+
 const getToolId = (item: CodexThreadItem): string =>
   item.customToolName ??
   (item.server && item.tool ? `${item.server}/${item.tool}` : null) ??
@@ -844,8 +926,10 @@ const getFileDiffs = (item: CodexThreadItem): ProviderFileDiff[] =>
   (item.changes ?? []).map((change) => ({
     path: change.path,
     kind: change.kind.type === 'add' ? 'create' : change.kind.type === 'delete' ? 'delete' : 'edit',
-    diff: change.diff
+    diff: truncateToolText(change.diff, maxToolDiffLength) ?? ''
   }))
+
+const defaultRawToolOutput = Symbol('defaultRawToolOutput')
 
 const renderTool = (
   item: CodexThreadItem,
@@ -855,22 +939,29 @@ const renderTool = (
   stdout: string | null = null,
   diffs: ProviderFileDiff[] = [],
   toolId = getToolId(item),
-  rawOutput: unknown = getRawToolOutput(item)
-): WorkingItemRenderResult => ({
-  type: 'tool',
-  toolId,
-  status: item.status ?? 'finished',
-  activity,
-  label,
-  command,
-  stdout,
-  diffs,
-  backgroundSessionId: getStartedBackgroundSessionId(item),
-  finishedBackgroundSessionId: getFinishedBackgroundSessionId(item),
-  rawInput: getRawToolInput(item),
-  rawOutput,
-  raw: item.rawToolData ?? [item]
-})
+  rawOutput: unknown | typeof defaultRawToolOutput = defaultRawToolOutput
+): WorkingItemRenderResult => {
+  const showRawValues = activity === 'other'
+
+  return {
+    type: 'tool',
+    toolId,
+    status: item.status ?? 'finished',
+    activity,
+    label,
+    command: truncateToolText(command, maxToolCommandLength),
+    stdout: truncateToolText(stdout, maxToolOutputLength),
+    diffs,
+    backgroundSessionId: getStartedBackgroundSessionId(item),
+    finishedBackgroundSessionId: getFinishedBackgroundSessionId(item),
+    rawInput: showRawValues ? getBoundedRawToolValue(getRawToolInput(item)) : null,
+    rawOutput: showRawValues
+      ? getBoundedRawToolValue(
+          rawOutput === defaultRawToolOutput ? getRawToolOutput(item) : rawOutput
+        )
+      : null
+  }
+}
 
 type ToolPresentation = {
   activity: ProviderToolActivity
@@ -1249,7 +1340,7 @@ const createAssistantMessage = (
   model: turn.model ?? null
 })
 
-export const getChatItems = (
+const renderChatItems = (
   turns: CodexTurn[],
   fallbackStartedAt: number | null = null,
   options: GetChatItemsOptions = {}
@@ -1370,6 +1461,41 @@ export const getChatItems = (
     }
 
     if (!flushBufferedFinalMessage()) pushWorkingStep(workingStatus)
+  }
+
+  return chatItems
+}
+
+const finishedTurnChatItemsCache = new WeakMap<
+  CodexTurn,
+  { fallbackStartedAt: number | null; items: ProviderChatItem[] }
+>()
+
+export const getChatItems = (
+  turns: CodexTurn[],
+  fallbackStartedAt: number | null = null,
+  options: GetChatItemsOptions = {}
+): ProviderChatItem[] => {
+  const chatItems: ProviderChatItem[] = []
+  const hasPendingItemOverrides =
+    Boolean(options.hiddenPendingMessageIds?.size) ||
+    Boolean(options.pendingSteeringMessageIds?.size)
+
+  for (const turn of turns) {
+    if (!isFinishedTurn(turn) || hasPendingItemOverrides) {
+      chatItems.push(...renderChatItems([turn], fallbackStartedAt, options))
+      continue
+    }
+
+    const cachedTurn = finishedTurnChatItemsCache.get(turn)
+    if (cachedTurn && cachedTurn.fallbackStartedAt === fallbackStartedAt) {
+      chatItems.push(...cachedTurn.items)
+      continue
+    }
+
+    const items = renderChatItems([turn], fallbackStartedAt, options)
+    finishedTurnChatItemsCache.set(turn, { fallbackStartedAt, items })
+    chatItems.push(...items)
   }
 
   return chatItems

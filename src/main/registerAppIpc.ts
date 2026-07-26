@@ -21,7 +21,10 @@ import type {
   AppFileTreeOptions,
   AppGitCommitAction,
   AppGitCommitOptions,
+  AppGitBranchesOptions,
+  AppGitBranchesResult,
   AppGitDiffOptions,
+  AppGitFileDiffOptions,
   AppGitChangeKind,
   AppGitChangesOptions,
   AppGitFileChange,
@@ -30,6 +33,7 @@ import type {
   AppGitPatchChange,
   AppGitRecentCommitMessagesOptions,
   AppGitRecoverableFailure,
+  AppGitSwitchBranchOptions,
   AppGitUncommittedPatchChangesOptions,
   AppProjectIcon,
   AppProjectIconOptions,
@@ -316,6 +320,39 @@ const getGitChangesOptions = (value: unknown): AppGitChangesOptions => {
   }
 }
 
+const getGitBranchesOptions = (value: unknown): AppGitBranchesOptions => {
+  if (value == null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid Git branch options')
+  }
+
+  return {
+    cwd: getDefaultPath((value as { cwd?: unknown }).cwd)
+  }
+}
+
+const getGitSwitchBranchOptions = (value: unknown): AppGitSwitchBranchOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid Git branch switch options')
+  }
+
+  const options = value as { branchName?: unknown; create?: unknown; cwd?: unknown }
+  const branchName = typeof options.branchName === 'string' ? options.branchName.trim() : ''
+
+  if (!branchName || branchName.includes('\0') || branchName.includes('\n')) {
+    throw new Error('Invalid branch name')
+  }
+  if (options.create != null && typeof options.create !== 'boolean') {
+    throw new Error('Invalid Git create branch option')
+  }
+
+  return {
+    branchName,
+    create: Boolean(options.create),
+    cwd: getDefaultPath(options.cwd)
+  }
+}
+
 const getFileTreeOptions = (value: unknown): AppFileTreeOptions => {
   if (value == null) return {}
   if (typeof value !== 'object' || Array.isArray(value))
@@ -498,6 +535,23 @@ const getGitDiffOptions = (value: unknown): AppGitDiffOptions => {
   }
 }
 
+const getGitFileDiffOptions = (value: unknown): AppGitFileDiffOptions => {
+  const fileOptions = getFileContentsOptions(value)
+  const previousPath = (value as { previousPath?: unknown }).previousPath
+
+  if (
+    previousPath != null &&
+    (typeof previousPath !== 'string' || previousPath.length === 0 || previousPath.includes('\0'))
+  ) {
+    throw new Error('Invalid previous file path')
+  }
+
+  return {
+    ...fileOptions,
+    previousPath: previousPath ?? null
+  }
+}
+
 const getGitUncommittedPatchChangesOptions = (
   value: unknown
 ): AppGitUncommittedPatchChangesOptions => {
@@ -516,6 +570,41 @@ const getGitUncommittedPatchChangesOptions = (
 const getCurrentBranchName = async (cwd: string): Promise<string | null> => {
   const branchName = await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
   return branchName && branchName !== 'HEAD' ? branchName : null
+}
+
+const getGitBranches = async (cwd: string): Promise<AppGitBranchesResult> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+
+  const [currentBranch, branchOutput] = await Promise.all([
+    getCurrentBranchName(repositoryRoot),
+    runGit(repositoryRoot, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], true)
+  ])
+  const branches = (branchOutput ?? '')
+    .split('\n')
+    .map((branch) => branch.trim())
+    .filter(Boolean)
+    .sort((firstBranch, secondBranch) => firstBranch.localeCompare(secondBranch))
+
+  return {
+    repositoryRoot,
+    currentBranch,
+    branches
+  }
+}
+
+const switchGitBranch = async (
+  cwd: string,
+  branchName: string,
+  create: boolean
+): Promise<AppGitBranchesResult> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+
+  await runGit(repositoryRoot, ['check-ref-format', '--branch', branchName], true)
+  await runGit(repositoryRoot, create ? ['switch', '-c', branchName] : ['switch', branchName], true)
+
+  return getGitBranches(repositoryRoot)
 }
 
 const getOriginHeadBranch = async (cwd: string): Promise<string | null> => {
@@ -948,6 +1037,47 @@ const getUncommittedGitDiff = async (cwd: string): Promise<{ diff: string }> => 
     const diff = await runGit(
       repositoryRoot,
       ['diff', '--cached', '--binary', '--full-index', '--find-renames'],
+      { env, required: true }
+    )
+
+    return { diff: diff ?? '' }
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+const getGitFileDiff = async (
+  cwd: string,
+  path: string,
+  previousPath?: string | null
+): Promise<{ diff: string }> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+
+  const paths = [
+    normalizePatchPath(repositoryRoot, path),
+    ...(previousPath ? [normalizePatchPath(repositoryRoot, previousPath)] : [])
+  ]
+  const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-git-index-'))
+  const indexPath = join(tempDirectory, 'index')
+  const env = getTemporaryIndexEnv(indexPath)
+
+  try {
+    await initializeTemporaryIndex(repositoryRoot, indexPath)
+    await runGit(repositoryRoot, ['add', '-A', '--', '.'], { env, required: true })
+
+    const diff = await runGit(
+      repositoryRoot,
+      [
+        'diff',
+        '--cached',
+        '--binary',
+        '--full-index',
+        '--find-renames',
+        '--unified=10000000',
+        '--',
+        ...paths
+      ],
       { env, required: true }
     )
 
@@ -1397,6 +1527,20 @@ export const registerAppIpc = (): void => {
     return getGitChanges(options.cwd ?? process.cwd(), options.source)
   })
 
+  ipcMain.handle(appIpcChannels.getGitBranches, async (_event, value: unknown) => {
+    const options = getGitBranchesOptions(value)
+    return getGitBranches(options.cwd ?? process.cwd())
+  })
+
+  ipcMain.handle(appIpcChannels.switchGitBranch, async (_event, value: unknown) => {
+    const options = getGitSwitchBranchOptions(value)
+    return switchGitBranch(
+      options.cwd ?? process.cwd(),
+      options.branchName,
+      Boolean(options.create)
+    )
+  })
+
   ipcMain.handle(appIpcChannels.getFileTree, async (_event, value: unknown) => {
     const options = getFileTreeOptions(value)
     return getFileTree(options.cwd ?? process.cwd())
@@ -1425,6 +1569,11 @@ export const registerAppIpc = (): void => {
   ipcMain.handle(appIpcChannels.getUncommittedGitDiff, async (_event, value: unknown) => {
     const options = getGitDiffOptions(value)
     return getUncommittedGitDiff(options.cwd ?? process.cwd())
+  })
+
+  ipcMain.handle(appIpcChannels.getGitFileDiff, async (_event, value: unknown) => {
+    const options = getGitFileDiffOptions(value)
+    return getGitFileDiff(options.cwd ?? process.cwd(), options.path, options.previousPath)
   })
 
   ipcMain.handle(appIpcChannels.getUncommittedGitPatchChanges, async (_event, value: unknown) => {

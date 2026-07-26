@@ -3,6 +3,9 @@ import {
   cloneElement,
   Fragment,
   isValidElement,
+  memo,
+  startTransition,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -78,7 +81,136 @@ type ChatDetailItemProps = {
   onOpenFileLink?: (path: string, displayPath: string) => void
   projectCwd?: string | null
   selectedModelId?: ProviderModelId
+  streaming?: boolean
 }
+
+const areUnknownValuesEqual = (
+  first: unknown,
+  second: unknown,
+  seen = new Map<object, object>()
+): boolean => {
+  if (Object.is(first, second)) return true
+  if (first == null || second == null || typeof first !== 'object' || typeof second !== 'object') {
+    return false
+  }
+
+  const seenSecond = seen.get(first)
+  if (seenSecond) return seenSecond === second
+  seen.set(first, second)
+
+  if (Array.isArray(first) || Array.isArray(second)) {
+    if (!Array.isArray(first) || !Array.isArray(second) || first.length !== second.length) {
+      return false
+    }
+
+    return first.every((value, index) => areUnknownValuesEqual(value, second[index], seen))
+  }
+
+  const firstRecord = first as Record<string, unknown>
+  const secondRecord = second as Record<string, unknown>
+  const firstKeys = Object.keys(firstRecord)
+  const secondKeys = Object.keys(secondRecord)
+  if (firstKeys.length !== secondKeys.length) return false
+
+  return firstKeys.every(
+    (key) =>
+      Object.prototype.hasOwnProperty.call(secondRecord, key) &&
+      areUnknownValuesEqual(firstRecord[key], secondRecord[key], seen)
+  )
+}
+
+const areFileDiffsEqual = (
+  first: ProviderWorkingTool['diffs'],
+  second: ProviderWorkingTool['diffs']
+): boolean =>
+  first.length === second.length &&
+  first.every((diff, index) => {
+    const nextDiff = second[index]
+    return diff.path === nextDiff.path && diff.kind === nextDiff.kind && diff.diff === nextDiff.diff
+  })
+
+const areWorkingToolsEqual = (first: ProviderWorkingTool, second: ProviderWorkingTool): boolean =>
+  first.id === second.id &&
+  first.toolId === second.toolId &&
+  first.status === second.status &&
+  first.activity === second.activity &&
+  first.label === second.label &&
+  first.command === second.command &&
+  first.stdout === second.stdout &&
+  first.backgroundSessionId === second.backgroundSessionId &&
+  first.finishedBackgroundSessionId === second.finishedBackgroundSessionId &&
+  areFileDiffsEqual(first.diffs, second.diffs) &&
+  areUnknownValuesEqual(first.rawInput, second.rawInput) &&
+  areUnknownValuesEqual(first.rawOutput, second.rawOutput)
+
+const areWorkingItemsEqual = (first: ProviderWorkingItem, second: ProviderWorkingItem): boolean => {
+  if (first.type !== second.type || first.id !== second.id) return false
+  if (first.type === 'message') {
+    return second.type === 'message' && first.content === second.content
+  }
+  if (first.type === 'toolGroup') {
+    return (
+      second.type === 'toolGroup' &&
+      first.label === second.label &&
+      first.tools.length === second.tools.length &&
+      first.tools.every((tool, index) => areWorkingToolsEqual(tool, second.tools[index]))
+    )
+  }
+
+  return second.type === 'tool' && areWorkingToolsEqual(first, second)
+}
+
+const areChatItemsEqual = (first: ProviderChatItem, second: ProviderChatItem): boolean => {
+  if (first === second) return true
+  if (first.type !== second.type || first.id !== second.id) return false
+
+  if (first.type === 'contextCompaction') return second.type === 'contextCompaction'
+  if (first.type === 'message') {
+    return (
+      second.type === 'message' &&
+      first.role === second.role &&
+      first.content === second.content &&
+      first.createdAt === second.createdAt &&
+      first.label === second.label &&
+      first.model === second.model
+    )
+  }
+  if (first.type === 'pendingMessage') {
+    return (
+      second.type === 'pendingMessage' &&
+      first.kind === second.kind &&
+      first.content === second.content &&
+      first.createdAt === second.createdAt
+    )
+  }
+
+  if (second.type === 'working' && first.status === second.status && first.status === 'worked') {
+    return true
+  }
+
+  return (
+    second.type === 'working' &&
+    first.status === second.status &&
+    first.items.length === second.items.length &&
+    first.items.every((item, index) => areWorkingItemsEqual(item, second.items[index]))
+  )
+}
+
+const areChatDetailItemPropsEqual = (
+  first: ChatDetailItemProps,
+  second: ChatDetailItemProps
+): boolean =>
+  first.canEditOwnMessages === second.canEditOwnMessages &&
+  first.modelLabelsById === second.modelLabelsById &&
+  first.onDeletePendingMessage === second.onDeletePendingMessage &&
+  first.onEditPendingMessage === second.onEditPendingMessage &&
+  first.onInterruptPendingMessage === second.onInterruptPendingMessage &&
+  first.onEditMessage === second.onEditMessage &&
+  first.onOpenFileLink === second.onOpenFileLink &&
+  first.projectCwd === second.projectCwd &&
+  first.selectedModelId === second.selectedModelId &&
+  first.streaming === second.streaming &&
+  areChatItemsEqual(first.item, second.item)
 
 type ProviderToolItem = Exclude<ProviderWorkingItem, { type: 'message' }>
 type ProviderWorkingMessageItem = Extract<ProviderWorkingItem, { type: 'message' }>
@@ -149,6 +281,8 @@ const placeholderOptions = [
 const longRunningActivities = new Set<ProviderToolActivity>(['npm', 'npx', 'script', 'command'])
 const silencePlaceholderDelayMs = 600
 const animatedIconReplayMs = 1_050
+const streamRenderMaxDelayMs = 180
+const streamPacketAnimationMs = 150
 
 type MarkdownFileTarget = {
   path: string
@@ -508,27 +642,17 @@ const Activity: React.FC<{
   expanded: boolean
   projectCwd?: string | null
 }> = ({ label, tools, active, expanded, projectCwd }) => {
+  const [openState, setOpenState] = useState({ expanded, open: expanded })
+  const open = openState.expanded === expanded ? openState.open : expanded
   const activity = tools[0]?.activity ?? 'other'
 
   const detailLabel = getToolDisplayLabel(label || tools[0]?.toolId || 'Tool use', activity, active)
-  const content =
-    activity === 'edit' || activity === 'create' || activity === 'delete' ? (
-      <DiffContent tools={tools} projectCwd={projectCwd} />
-    ) : activity === 'command' ||
-      activity === 'search' ||
-      activity === 'git' ||
-      activity === 'npm' ||
-      activity === 'npx' ||
-      activity === 'script' ? (
-      <CommandContent tools={tools} />
-    ) : (
-      <RawContent tools={tools} />
-    )
 
   return (
     <details
       className={`chat-detail__tool-group${active ? ' chat-detail__tool-group--active' : ''}`}
-      open={expanded}
+      open={open}
+      onToggle={(event) => setOpenState({ expanded, open: event.currentTarget.open })}
     >
       <summary>
         <span className="chat-detail__tool-icon">
@@ -537,7 +661,19 @@ const Activity: React.FC<{
         <span className="chat-detail__tool-label">{detailLabel}</span>
         <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
       </summary>
-      {content}
+      {open &&
+        (activity === 'edit' || activity === 'create' || activity === 'delete' ? (
+          <DiffContent tools={tools} projectCwd={projectCwd} />
+        ) : activity === 'command' ||
+          activity === 'search' ||
+          activity === 'git' ||
+          activity === 'npm' ||
+          activity === 'npx' ||
+          activity === 'script' ? (
+          <CommandContent tools={tools} />
+        ) : (
+          <RawContent tools={tools} />
+        ))}
     </details>
   )
 }
@@ -618,6 +754,151 @@ const withClickableAngleFileLinks = (content: string): string => {
     .join('\n')
 }
 
+const getNaturalStreamBoundary = (content: string, afterIndex: number): number | null => {
+  let fence: MarkdownFence | null = null
+  let offset = 0
+  let boundary: number | null = null
+
+  for (const part of content.match(/[^\n]*(?:\n|$)/g) ?? []) {
+    if (!part) continue
+
+    const line = part.endsWith('\n') ? part.slice(0, -1) : part
+    const partEnd = offset + part.length
+
+    if (fence) {
+      if (isMarkdownFenceClose(line, fence)) {
+        fence = null
+        if (partEnd > afterIndex) boundary = partEnd
+      }
+      offset = partEnd
+      continue
+    }
+
+    const nextFence = getMarkdownFence(line)
+    if (nextFence) {
+      fence = nextFence
+      offset = partEnd
+      continue
+    }
+
+    const sentenceBoundaryPattern = /[.!?](?:["')\]]*)(?=\s|$)/g
+    for (const match of line.matchAll(sentenceBoundaryPattern)) {
+      const matchEnd = offset + (match.index ?? 0) + match[0].length
+      if (matchEnd > afterIndex) boundary = matchEnd
+    }
+
+    if (part.endsWith('\n') && partEnd > afterIndex) boundary = partEnd
+    offset = partEnd
+  }
+
+  return boundary
+}
+
+type StreamRenderState = {
+  animate: boolean
+  content: string
+  revision: number
+}
+
+const useStreamRenderedContent = (
+  content: string,
+  streaming: boolean
+): StreamRenderState & { visibleContent: string } => {
+  const [renderState, setRenderState] = useState<StreamRenderState>(() => ({
+    animate: false,
+    content,
+    revision: 0
+  }))
+  const latestContentRef = useRef(content)
+  const renderedContentRef = useRef(content)
+  const flushTimerRef = useRef<number | null>(null)
+  const scheduleFlushRef = useRef<() => void>(() => {})
+
+  const clearFlushTimer = useCallback((): void => {
+    if (flushTimerRef.current === null) return
+    window.clearTimeout(flushTimerRef.current)
+    flushTimerRef.current = null
+  }, [])
+
+  const flushContent = useCallback((nextContent: string, animate: boolean): void => {
+    renderedContentRef.current = nextContent
+    startTransition(() => {
+      setRenderState((currentState) =>
+        currentState.content === nextContent
+          ? currentState
+          : {
+              animate,
+              content: nextContent,
+              revision: currentState.revision + 1
+            }
+      )
+    })
+  }, [])
+
+  const scheduleFlush = useCallback((): void => {
+    if (flushTimerRef.current !== null) return
+
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null
+      const latestContent = latestContentRef.current
+      const renderedLength = renderedContentRef.current.length
+      if (latestContent.length <= renderedLength) return
+
+      const boundary = getNaturalStreamBoundary(latestContent, renderedLength)
+      const nextLength = boundary ?? latestContent.length
+      flushContent(latestContent.slice(0, nextLength), boundary !== null)
+
+      if (nextLength < latestContent.length) scheduleFlushRef.current()
+    }, streamRenderMaxDelayMs)
+  }, [flushContent])
+
+  useEffect(() => {
+    scheduleFlushRef.current = scheduleFlush
+  }, [scheduleFlush])
+
+  useEffect(() => {
+    latestContentRef.current = content
+
+    if (!streaming) {
+      clearFlushTimer()
+      const previousContent = renderedContentRef.current
+      flushContent(
+        content,
+        content.startsWith(previousContent) && content.length > previousContent.length
+      )
+      return
+    }
+
+    const renderedContent = renderedContentRef.current
+    if (!content.startsWith(renderedContent)) {
+      clearFlushTimer()
+      flushContent(content, false)
+      return
+    }
+    if (content.length === renderedContent.length) return
+
+    const boundary = getNaturalStreamBoundary(content, renderedContent.length)
+    if (boundary !== null) {
+      clearFlushTimer()
+      flushContent(content.slice(0, boundary), true)
+    }
+
+    if (renderedContentRef.current.length < content.length) scheduleFlush()
+  }, [clearFlushTimer, content, flushContent, scheduleFlush, streaming])
+
+  useEffect(
+    () => () => {
+      clearFlushTimer()
+    },
+    [clearFlushTimer]
+  )
+
+  return {
+    ...renderState,
+    visibleContent: streaming ? renderState.content : content
+  }
+}
+
 const ToolItem: React.FC<{
   item: ProviderToolItem
   activeToolIds: Set<string>
@@ -652,19 +933,52 @@ const ToolItem: React.FC<{
   )
 }
 
-const MarkdownMessage: React.FC<{
+const MarkdownMessageComponent: React.FC<{
   className: string
   content: string
   onOpenFileLink?: (path: string, displayPath: string) => void
-}> = ({ className, content, onOpenFileLink }) => {
+  streaming?: boolean
+}> = ({ className, content, onOpenFileLink, streaming = false }) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const packetAnimationRef = useRef<Animation | null>(null)
   const markdownOptions = useMemo(() => getMarkdownOptions(onOpenFileLink), [onOpenFileLink])
+  const { animate, revision, visibleContent } = useStreamRenderedContent(content, streaming)
+
+  useEffect(() => {
+    if (!animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    const container = containerRef.current
+    const target = container?.lastElementChild ?? container
+    if (!target) return
+
+    packetAnimationRef.current?.cancel()
+    packetAnimationRef.current = target.animate(
+      [
+        { opacity: 0.72, transform: 'translateY(3px)' },
+        { opacity: 1, transform: 'translateY(0)' }
+      ],
+      {
+        duration: streamPacketAnimationMs,
+        easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+      }
+    )
+  }, [animate, revision])
+
+  useEffect(
+    () => () => {
+      packetAnimationRef.current?.cancel()
+    },
+    []
+  )
 
   return (
-    <div className={className}>
-      <Markdown options={markdownOptions}>{withClickableAngleFileLinks(content)}</Markdown>
+    <div className={className} data-streaming={streaming || undefined} ref={containerRef}>
+      <Markdown options={markdownOptions}>{withClickableAngleFileLinks(visibleContent)}</Markdown>
     </div>
   )
 }
+
+const MarkdownMessage = memo(MarkdownMessageComponent)
 
 const copyTextToClipboard = async (content: string): Promise<void> => {
   if (navigator.clipboard?.writeText) {
@@ -799,6 +1113,7 @@ const ToolSequence: React.FC<{
   activeToolIds: Set<string>
   projectCwd?: string | null
 }> = ({ items, activeToolIds, projectCwd }) => {
+  const [open, setOpen] = useState(false)
   const tools = items.flatMap(getToolsFromToolItem)
   const activeTools = tools.filter((tool) => activeToolIds.has(tool.id))
   const active = activeTools.length > 0
@@ -808,6 +1123,8 @@ const ToolSequence: React.FC<{
   return (
     <details
       className={`chat-detail__tool-sequence${active ? ' chat-detail__tool-sequence--active' : ''}`}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
         <span className="chat-detail__tool-icon">
@@ -816,16 +1133,18 @@ const ToolSequence: React.FC<{
         <span className="chat-detail__tool-label">{label}</span>
         <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
       </summary>
-      <div className="chat-detail__tool-sequence-content">
-        {items.map((item) => (
-          <ToolItem
-            item={item}
-            activeToolIds={activeToolIds}
-            key={item.id}
-            projectCwd={projectCwd}
-          />
-        ))}
-      </div>
+      {open && (
+        <div className="chat-detail__tool-sequence-content">
+          {items.map((item) => (
+            <ToolItem
+              item={item}
+              activeToolIds={activeToolIds}
+              key={item.id}
+              projectCwd={projectCwd}
+            />
+          ))}
+        </div>
+      )}
     </details>
   )
 }
@@ -1002,39 +1321,42 @@ const WorkingStep: React.FC<{
         {heading}
         <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
       </summary>
-      <div className="chat-detail__step-content">
-        {blocks.map((block, blockIndex) =>
-          block.type === 'tools' ? (
-            block.items.length > 1 &&
-            (blockIndex < blocks.length - 1 || item.status !== 'working' || showPlaceholder) ? (
-              <ToolSequence
-                items={block.items}
-                activeToolIds={activeToolIds}
-                key={block.items[0]?.id}
-                projectCwd={projectCwd}
-              />
-            ) : (
-              block.items.map((toolItem) => (
-                <ToolItem
-                  item={toolItem}
+      {open && (
+        <div className="chat-detail__step-content">
+          {blocks.map((block, blockIndex) =>
+            block.type === 'tools' ? (
+              block.items.length > 1 &&
+              (blockIndex < blocks.length - 1 || item.status !== 'working' || showPlaceholder) ? (
+                <ToolSequence
+                  items={block.items}
                   activeToolIds={activeToolIds}
-                  expanded={active && toolItem === lastWorkingItem}
-                  key={toolItem.id}
+                  key={block.items[0]?.id}
                   projectCwd={projectCwd}
                 />
-              ))
+              ) : (
+                block.items.map((toolItem) => (
+                  <ToolItem
+                    item={toolItem}
+                    activeToolIds={activeToolIds}
+                    expanded={active && toolItem === lastWorkingItem}
+                    key={toolItem.id}
+                    projectCwd={projectCwd}
+                  />
+                ))
+              )
+            ) : (
+              <MarkdownMessage
+                className="chat-detail__working-message"
+                content={block.item.content}
+                key={block.item.id}
+                onOpenFileLink={onOpenFileLink}
+                streaming={active && block.item === lastWorkingItem}
+              />
             )
-          ) : (
-            <MarkdownMessage
-              className="chat-detail__working-message"
-              content={block.item.content}
-              key={block.item.id}
-              onOpenFileLink={onOpenFileLink}
-            />
-          )
-        )}
-        {showPlaceholder && <WorkingPlaceholder id={`${item.id}:${item.items.length}`} />}
-      </div>
+          )}
+          {showPlaceholder && <WorkingPlaceholder id={`${item.id}:${item.items.length}`} />}
+        </div>
+      )}
     </details>
   )
 }
@@ -1045,7 +1367,7 @@ const getPendingMessageLabel = (message: ProviderPendingMessage): string =>
 const getPendingMessageActionLabel = (message: ProviderPendingMessage): string =>
   message.kind === 'steering' ? 'steering' : 'queued'
 
-export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
+const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   canEditOwnMessages = false,
   item,
   modelLabelsById,
@@ -1055,7 +1377,8 @@ export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
   onEditMessage,
   onOpenFileLink,
   projectCwd,
-  selectedModelId
+  selectedModelId,
+  streaming = false
 }) => {
   const [copied, setCopied] = useState(false)
 
@@ -1175,6 +1498,7 @@ export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
           className={`chat-detail__message chat-detail__message--${role}`}
           content={role === 'user' ? withPromptMarkdownLineBreaks(item.content) : item.content}
           onOpenFileLink={onOpenFileLink}
+          streaming={!pending && role === 'assistant' && streaming}
         />
         <div className="chat-detail__message-footer">
           {role === 'user' && messageDate}
@@ -1187,3 +1511,5 @@ export const ChatDetailItem: React.FC<ChatDetailItemProps> = ({
 
   return <WorkingStep item={item} onOpenFileLink={onOpenFileLink} projectCwd={projectCwd} />
 }
+
+export const ChatDetailItem = memo(ChatDetailItemComponent, areChatDetailItemPropsEqual)

@@ -1,8 +1,10 @@
 import {
   type CSSProperties,
+  Fragment,
   type ForwardRefExoticComponent,
   type HTMLAttributes,
   type RefAttributes,
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -61,6 +63,7 @@ import {
 } from '@react-symbols/icons/utils'
 import type {
   AppFileTreeResult,
+  AppGitBranchesResult,
   AppGitChangeKind,
   AppGitChangesResult,
   AppGitCommitAction,
@@ -105,6 +108,7 @@ import {
   fallbackProviderApprovalModes,
   fallbackProviderModels,
   fallbackProviderSandboxModes,
+  isProviderId,
   isProviderApprovalMode,
   isProviderApprovalPolicy,
   isProviderApprovalsReviewer,
@@ -112,6 +116,7 @@ import {
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
+import { BranchSwitcher } from './components/BranchSwitcher'
 import { Button, type ButtonDropdownAction } from './components/Button'
 import { ChatPlan, type ChatPlanData, type ChatPlanItem } from './components/ChatPlan'
 import { Dropdown, type DropdownOption } from './components/Dropdown'
@@ -193,6 +198,7 @@ type ScopedCommitActivity = {
   providerId: ProviderId
   chatId: string
   sourceChatId: string | null
+  markerId: string
   projectCwd: string | null
   commitAction: GitCommitPromptAction
   currentAction: CommitActivityAction
@@ -201,7 +207,20 @@ type ScopedCommitActivity = {
 type StartingScopedCommitActivity = {
   providerId: ProviderId
   sourceChatId: string
+  markerId: string
   commitAction: GitCommitPromptAction
+}
+type ChatCommitMarkerStatus = 'pending' | 'finished' | 'stopped' | 'failed'
+type ChatCommitMarker = {
+  id: string
+  providerId: ProviderId
+  sourceChatId: string
+  commitChatId: string | null
+  commitAction: GitCommitPromptAction
+  status: ChatCommitMarkerStatus
+  afterItemId: string | null
+  startedAt: number
+  finishedAt: number | null
 }
 type DirectCommitActivity = {
   source: 'git'
@@ -221,6 +240,9 @@ type CachedPatchChangedFiles = {
   files: ChangedFile[]
 }
 type FileTreeScope = {
+  cwd: string
+}
+type GitBranchesScope = {
   cwd: string
 }
 type ChangedFile = {
@@ -281,6 +303,11 @@ type MessageBoxSelection = {
   sandboxMode: ProviderSandboxMode
 }
 type StoredMessageBoxSelection = Partial<MessageBoxSelection>
+type ChatBooleanSettingKey = Exclude<keyof AppSettings['chat'], 'recentChatCacheLimit'>
+type RecentChatCacheEntry = {
+  detail: ProviderChatDetail
+  updatedAt: number
+}
 type ChatResizeEdge = 'left' | 'right'
 type GitChangesScope = {
   cwd: string
@@ -312,6 +339,8 @@ const chatPaneDefaultReferenceWidth = 1200
 const chatPanePreferenceStorageKey = 'sele:chat-pane-preference:v1'
 const messageBoxSelectionStorageKey = 'sele:message-box-selection:v1'
 const providerUpdatePreferenceStorageKey = 'sele:provider-update-preferences:v1'
+const scopedCommitActivitiesStorageKey = 'sele:scoped-commit-activities:v1'
+const chatCommitMarkersStorageKey = 'sele:chat-commit-markers:v1'
 const gitCurrentChatModelValue = '__sele_current_chat_model__'
 const pinnedGroupKey = 'pinned'
 const unknownCwdGroupKey = 'cwd:unknown'
@@ -405,6 +434,173 @@ const commitActionLabels = {
   amend: 'Amend'
 } satisfies Record<GitCommitPromptAction, string>
 
+const providerToolActivities = new Set<ProviderToolActivity>([
+  'read',
+  'search',
+  'git',
+  'edit',
+  'create',
+  'delete',
+  'npm',
+  'npx',
+  'script',
+  'command',
+  'other'
+])
+const chatCommitMarkerStatuses = new Set<ChatCommitMarkerStatus>([
+  'pending',
+  'finished',
+  'stopped',
+  'failed'
+])
+
+const readStoredScopedCommitActivities = (): Record<string, ScopedCommitActivity> => {
+  try {
+    const storedValue = window.localStorage.getItem(scopedCommitActivitiesStorageKey)
+    if (!storedValue) return {}
+
+    const parsedValue = JSON.parse(storedValue) as unknown
+    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
+
+    const activities: Record<string, ScopedCommitActivity> = {}
+    Object.values(parsedValue as Record<string, unknown>).forEach((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return
+
+      const candidate = value as Partial<ScopedCommitActivity>
+      const currentAction =
+        candidate.currentAction &&
+        typeof candidate.currentAction === 'object' &&
+        !Array.isArray(candidate.currentAction)
+          ? (candidate.currentAction as Partial<CommitActivityAction>)
+          : null
+      const markerId =
+        typeof candidate.markerId === 'string' && candidate.markerId
+          ? candidate.markerId
+          : typeof candidate.providerId === 'string' &&
+              typeof candidate.chatId === 'string' &&
+              typeof candidate.startedAt === 'number'
+            ? `legacy:${candidate.providerId}:${candidate.chatId}:${candidate.startedAt}`
+            : ''
+      if (
+        candidate.source !== 'ai' ||
+        !isProviderId(candidate.providerId) ||
+        typeof candidate.chatId !== 'string' ||
+        !candidate.chatId ||
+        (candidate.sourceChatId !== null && typeof candidate.sourceChatId !== 'string') ||
+        !markerId ||
+        (candidate.projectCwd !== null && typeof candidate.projectCwd !== 'string') ||
+        (candidate.commitAction !== 'commit' && candidate.commitAction !== 'amend') ||
+        !currentAction ||
+        typeof currentAction.label !== 'string' ||
+        !providerToolActivities.has(currentAction.activity as ProviderToolActivity) ||
+        typeof candidate.startedAt !== 'number' ||
+        !Number.isFinite(candidate.startedAt)
+      ) {
+        return
+      }
+
+      const activity = {
+        source: 'ai',
+        providerId: candidate.providerId,
+        chatId: candidate.chatId,
+        sourceChatId: candidate.sourceChatId,
+        markerId,
+        projectCwd: candidate.projectCwd,
+        commitAction: candidate.commitAction,
+        currentAction: {
+          label: currentAction.label,
+          activity: currentAction.activity as ProviderToolActivity
+        },
+        startedAt: candidate.startedAt
+      } satisfies ScopedCommitActivity
+
+      activities[getProviderChatKey(activity.providerId, activity.chatId)] = activity
+    })
+
+    return activities
+  } catch {
+    return {}
+  }
+}
+
+const readStoredChatCommitMarkers = (): Record<string, ChatCommitMarker> => {
+  try {
+    const storedValue = window.localStorage.getItem(chatCommitMarkersStorageKey)
+    if (!storedValue) return {}
+
+    const parsedValue = JSON.parse(storedValue) as unknown
+    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
+
+    const markers: Record<string, ChatCommitMarker> = {}
+    Object.values(parsedValue as Record<string, unknown>).forEach((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return
+
+      const candidate = value as Partial<ChatCommitMarker>
+      if (
+        typeof candidate.id !== 'string' ||
+        !candidate.id ||
+        !isProviderId(candidate.providerId) ||
+        typeof candidate.sourceChatId !== 'string' ||
+        !candidate.sourceChatId ||
+        (candidate.commitChatId !== null && typeof candidate.commitChatId !== 'string') ||
+        (candidate.commitAction !== 'commit' && candidate.commitAction !== 'amend') ||
+        !chatCommitMarkerStatuses.has(candidate.status as ChatCommitMarkerStatus) ||
+        (candidate.afterItemId !== null && typeof candidate.afterItemId !== 'string') ||
+        typeof candidate.startedAt !== 'number' ||
+        !Number.isFinite(candidate.startedAt) ||
+        (candidate.finishedAt !== null &&
+          (typeof candidate.finishedAt !== 'number' || !Number.isFinite(candidate.finishedAt)))
+      ) {
+        return
+      }
+
+      markers[candidate.id] = {
+        id: candidate.id,
+        providerId: candidate.providerId,
+        sourceChatId: candidate.sourceChatId,
+        commitChatId: candidate.commitChatId,
+        commitAction: candidate.commitAction,
+        status: candidate.status as ChatCommitMarkerStatus,
+        afterItemId: candidate.afterItemId,
+        startedAt: candidate.startedAt,
+        finishedAt: candidate.finishedAt
+      }
+    })
+
+    return markers
+  } catch {
+    return {}
+  }
+}
+
+const writeStoredChatCommitMarkers = (markers: Record<string, ChatCommitMarker>): void => {
+  try {
+    if (Object.keys(markers).length === 0) {
+      window.localStorage.removeItem(chatCommitMarkersStorageKey)
+      return
+    }
+
+    window.localStorage.setItem(chatCommitMarkersStorageKey, JSON.stringify(markers))
+  } catch {
+    // Visual commit history remains available for this session if storage is unavailable.
+  }
+}
+
+const writeStoredScopedCommitActivities = (
+  activities: Record<string, ScopedCommitActivity>
+): void => {
+  try {
+    if (Object.keys(activities).length === 0) {
+      window.localStorage.removeItem(scopedCommitActivitiesStorageKey)
+      return
+    }
+
+    window.localStorage.setItem(scopedCommitActivitiesStorageKey, JSON.stringify(activities))
+  } catch {
+    // Commit activity recovery is best-effort when storage is unavailable.
+  }
+}
+
 const GitRefreshIcon: React.FC = () => (
   <RefreshCw className="changes-sidebar__refresh-icon" aria-hidden="true" />
 )
@@ -480,6 +676,71 @@ const CommitActivityRow: React.FC<{
           {activity.currentAction.label}
         </span>
       </span>
+    </div>
+  )
+}
+
+const getChatCommitMarkerLabel = (marker: ChatCommitMarker): string => {
+  if (marker.status === 'pending') {
+    return marker.commitAction === 'amend'
+      ? 'AI is amending the commit…'
+      : 'AI is committing changes…'
+  }
+  if (marker.status === 'failed') {
+    return marker.commitAction === 'amend' ? 'AI amend failed' : 'AI commit failed'
+  }
+  if (marker.status === 'stopped') {
+    return marker.commitAction === 'amend' ? 'AI amend stopped' : 'AI commit stopped'
+  }
+
+  return marker.commitAction === 'amend' ? 'AI amend finished' : 'AI commit finished'
+}
+
+const ChatCommitMarkerItem: React.FC<{
+  marker: ChatCommitMarker
+  canceling?: boolean
+  onCancel?: () => Promise<void> | void
+}> = ({ marker, canceling = false, onCancel }) => {
+  const label = getChatCommitMarkerLabel(marker)
+  const cancelLabel = `Cancel AI ${marker.commitAction}`
+
+  return (
+    <div
+      className={`chat-detail__commit-marker chat-detail__commit-marker--${marker.status}`}
+      role="status"
+      aria-live={marker.status === 'pending' ? 'polite' : undefined}
+    >
+      {marker.status === 'pending' ? (
+        <ChangesAnimatedIcon
+          Icon={AnimatedGitCommitHorizontalIcon}
+          active
+          className="chat-detail__commit-marker-icon"
+        />
+      ) : (
+        <span className="chat-detail__commit-marker-icon" aria-hidden="true">
+          {marker.status === 'finished' ? (
+            <Check />
+          ) : marker.status === 'stopped' ? (
+            <Minus />
+          ) : (
+            <X />
+          )}
+        </span>
+      )}
+      <span>{label}</span>
+      {marker.status === 'pending' && onCancel && (
+        <span className="chat-detail__commit-marker-cancel">
+          <Button
+            aria-label={cancelLabel}
+            callback={onCancel}
+            disabled={canceling}
+            icon={<X aria-hidden="true" />}
+            size="small"
+            theme="transparent"
+            title={cancelLabel}
+          />
+        </span>
+      )}
     </div>
   )
 }
@@ -961,8 +1222,32 @@ const getChatKey = (chat: Pick<ProviderChat, 'providerId' | 'id'>): string =>
 const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
   getChatKey({ providerId, id: chatId })
 
+const createChatCommitMarkerId = (): string => {
+  const randomId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
+  return `ai-commit:${Date.now()}:${randomId}`
+}
+
+const trimRecentChatCache = (cache: Map<string, RecentChatCacheEntry>, limit: number): void => {
+  while (cache.size > limit) {
+    const oldestKey = cache.keys().next().value
+    if (typeof oldestKey !== 'string') return
+    cache.delete(oldestKey)
+  }
+}
+
 const isActiveChatStatus = (status: ProviderChatDetail['status'] | undefined): boolean =>
   status === 'active' || status === 'waitingOnApproval' || status === 'waitingOnUserInput'
+
+const getChatCommitMarkerTerminalStatus = (
+  detail: ProviderChatDetail
+): Exclude<ChatCommitMarkerStatus, 'pending'> => {
+  if (detail.status === 'error') return 'failed'
+
+  const lastWorkingStep = detail.items.findLast(
+    (item): item is ProviderWorkingStep => item.type === 'working'
+  )
+  return lastWorkingStep?.status === 'stopped' ? 'stopped' : 'finished'
+}
 
 const compareChatsByCreatedAtDesc = (firstChat: ProviderChat, secondChat: ProviderChat): number => {
   if (secondChat.createdAt !== firstChat.createdAt) {
@@ -1233,6 +1518,18 @@ const getToolInputRecord = (rawInput: unknown): Record<string, unknown> | null =
   }
 }
 
+const getPlanSignature = (items: ChatPlanItem[]): string => {
+  const serializedItems = JSON.stringify(items)
+  let hash = 2_166_136_261
+
+  for (let index = 0; index < serializedItems.length; index += 1) {
+    hash ^= serializedItems.charCodeAt(index)
+    hash = Math.imul(hash, 16_777_619)
+  }
+
+  return `${items.length}:${(hash >>> 0).toString(36)}`
+}
+
 const getPlanFromTool = (tool: ProviderWorkingTool, contextKey: string): ChatPlanData | null => {
   if (tool.toolId !== 'update_plan') return null
 
@@ -1266,7 +1563,7 @@ const getPlanFromTool = (tool: ProviderWorkingTool, contextKey: string): ChatPla
     contextKey,
     explanation,
     items,
-    signature: `${tool.id}:${JSON.stringify({ explanation, items })}`
+    signature: getPlanSignature(items)
   }
 }
 
@@ -1276,18 +1573,25 @@ const getLatestChatPlan = (
 ): ChatPlanData | null => {
   if (!detail || !contextKey) return null
 
-  let latestPlan: ChatPlanData | null = null
-  for (const item of detail.items) {
+  for (let itemIndex = detail.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = detail.items[itemIndex]
     if (item.type !== 'working') continue
 
-    for (const workingItem of item.items) {
-      for (const tool of getWorkingItemTools(workingItem)) {
-        latestPlan = getPlanFromTool(tool, contextKey) ?? latestPlan
+    for (
+      let workingItemIndex = item.items.length - 1;
+      workingItemIndex >= 0;
+      workingItemIndex -= 1
+    ) {
+      const tools = getWorkingItemTools(item.items[workingItemIndex])
+
+      for (let toolIndex = tools.length - 1; toolIndex >= 0; toolIndex -= 1) {
+        const plan = getPlanFromTool(tools[toolIndex], contextKey)
+        if (plan) return plan
       }
     }
   }
 
-  return latestPlan
+  return null
 }
 
 const getCommitActivityCurrentAction = (
@@ -1754,6 +2058,7 @@ export const App: React.FC = () => {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
   const [chatDetail, setChatDetail] = useState<ProviderChatDetail | null>(null)
+  const [extractedChatPlan, setExtractedChatPlan] = useState<ChatPlanData | null>(null)
   const [chatLoadState, setChatLoadState] = useState<LoadState>('ready')
   const [chatLoadRequest, setChatLoadRequest] = useState(0)
   const [sendState, setSendState] = useState<SendState>('idle')
@@ -1812,6 +2117,12 @@ export const App: React.FC = () => {
   const [gitChangeLoadState, setGitChangeLoadState] = useState<LoadState>('ready')
   const [gitChangeLoadScope, setGitChangeLoadScope] = useState<GitChangesScope | null>(null)
   const [gitChangeLoadRequest, setGitChangeLoadRequest] = useState(0)
+  const [gitBranches, setGitBranches] = useState<AppGitBranchesResult | null>(null)
+  const [gitBranchesScope, setGitBranchesScope] = useState<GitBranchesScope | null>(null)
+  const [gitBranchLoadState, setGitBranchLoadState] = useState<LoadState>('ready')
+  const [gitBranchLoadRequest, setGitBranchLoadRequest] = useState(0)
+  const [gitBranchActionState, setGitBranchActionState] = useState<SendState>('idle')
+  const [gitBranchError, setGitBranchError] = useState<string | null>(null)
   const [uncommittedPatchFilter, setUncommittedPatchFilter] =
     useState<UncommittedPatchFilter | null>(null)
   const [uncommittedPatchFilterState, setUncommittedPatchFilterState] = useState<LoadState>('ready')
@@ -1833,7 +2144,10 @@ export const App: React.FC = () => {
   const [commitError, setCommitError] = useState<string | null>(null)
   const [scopedCommitActivities, setScopedCommitActivities] = useState<
     Record<string, ScopedCommitActivity>
-  >({})
+  >(readStoredScopedCommitActivities)
+  const [chatCommitMarkers, setChatCommitMarkers] = useState<Record<string, ChatCommitMarker>>(
+    readStoredChatCommitMarkers
+  )
   const [startingScopedCommitActivity, setStartingScopedCommitActivity] =
     useState<StartingScopedCommitActivity | null>(null)
   const [directCommitActivities, setDirectCommitActivities] = useState<
@@ -1856,11 +2170,17 @@ export const App: React.FC = () => {
   const settingsCloseButtonRef = useRef<HTMLButtonElement>(null)
   const sendInFlightRef = useRef(false)
   const commitInFlightRef = useRef(false)
+  const gitBranchRequestIdRef = useRef(0)
   const chatAutoScrollEnabledRef = useRef(true)
   const chatAutoScrollFrameRef = useRef<number | null>(null)
   const selectedChatKeyRef = useRef<string | null>(null)
+  const selectedChatUpdatedAtRef = useRef<number | null>(null)
+  const recentChatCacheLimitRef = useRef(appSettings.chat.recentChatCacheLimit)
+  const recentChatCacheRef = useRef(new Map<string, RecentChatCacheEntry>())
   const changesCwdRef = useRef<string | null>(null)
-  const scopedCommitActivitiesRef = useRef<Record<string, ScopedCommitActivity>>({})
+  const initialChatCommitMarkersRef = useRef(chatCommitMarkers)
+  const scopedCommitActivitiesRef =
+    useRef<Record<string, ScopedCommitActivity>>(scopedCommitActivities)
   const loadingCwdNotesRef = useRef(new Set<string>())
   const loadingProjectIconsRef = useRef(new Set<string>())
   const modelManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.model))
@@ -1879,11 +2199,193 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     selectedChatKeyRef.current = selectedChat ? getChatKey(selectedChat) : null
+    selectedChatUpdatedAtRef.current = selectedChat?.updatedAt ?? null
   }, [selectedChat])
 
   useEffect(() => {
+    const limit = appSettings.chat.recentChatCacheLimit
+    recentChatCacheLimitRef.current = limit
+    if (limit === 0) {
+      recentChatCacheRef.current.clear()
+      return
+    }
+
+    trimRecentChatCache(recentChatCacheRef.current, limit)
+  }, [appSettings.chat.recentChatCacheLimit])
+
+  useEffect(() => {
     scopedCommitActivitiesRef.current = scopedCommitActivities
+    writeStoredScopedCommitActivities(scopedCommitActivities)
   }, [scopedCommitActivities])
+
+  useEffect(() => {
+    writeStoredChatCommitMarkers(chatCommitMarkers)
+  }, [chatCommitMarkers])
+
+  useEffect(() => {
+    let active = true
+    const restoredActivities = Object.values(scopedCommitActivitiesRef.current)
+    const restoredMarkerIds = new Set(restoredActivities.map((activity) => activity.markerId))
+    const recoverablePendingMarkers = Object.values(initialChatCommitMarkersRef.current).filter(
+      (marker) =>
+        marker.status === 'pending' &&
+        Boolean(marker.commitChatId) &&
+        !restoredMarkerIds.has(marker.id)
+    )
+
+    setChatCommitMarkers((currentMarkers) => {
+      let changed = false
+      const nextMarkers = { ...currentMarkers }
+
+      Object.values(nextMarkers).forEach((marker) => {
+        if (
+          marker.status !== 'pending' ||
+          marker.commitChatId ||
+          restoredMarkerIds.has(marker.id)
+        ) {
+          return
+        }
+
+        changed = true
+        nextMarkers[marker.id] = {
+          ...marker,
+          status: 'failed',
+          finishedAt: Date.now()
+        }
+      })
+
+      restoredActivities.forEach((activity) => {
+        if (!activity.sourceChatId || nextMarkers[activity.markerId]) return
+
+        changed = true
+        nextMarkers[activity.markerId] = {
+          id: activity.markerId,
+          providerId: activity.providerId,
+          sourceChatId: activity.sourceChatId,
+          commitChatId: activity.chatId,
+          commitAction: activity.commitAction,
+          status: 'pending',
+          afterItemId: null,
+          startedAt: activity.startedAt,
+          finishedAt: null
+        }
+      })
+
+      return changed ? nextMarkers : currentMarkers
+    })
+
+    void Promise.all(
+      restoredActivities.map(async (activity) => {
+        try {
+          const detail = await providerApi.getChat(activity.providerId, activity.chatId)
+          if (!active) return
+
+          const activityKey = getProviderChatKey(activity.providerId, activity.chatId)
+          if (!isActiveChatStatus(detail.status)) {
+            setChatCommitMarkers((currentMarkers) => {
+              const marker = currentMarkers[activity.markerId]
+              if (!marker || marker.status !== 'pending') return currentMarkers
+
+              return {
+                ...currentMarkers,
+                [marker.id]: {
+                  ...marker,
+                  status: getChatCommitMarkerTerminalStatus(detail),
+                  afterItemId:
+                    activity.chatId === activity.sourceChatId
+                      ? (detail.items.at(-1)?.id ?? marker.afterItemId)
+                      : marker.afterItemId,
+                  finishedAt: Date.now()
+                }
+              }
+            })
+          }
+
+          setScopedCommitActivities((currentActivities) => {
+            const currentActivity = currentActivities[activityKey]
+            if (!currentActivity) return currentActivities
+
+            if (!isActiveChatStatus(detail.status)) {
+              const nextActivities = { ...currentActivities }
+              delete nextActivities[activityKey]
+              return nextActivities
+            }
+
+            return {
+              ...currentActivities,
+              [activityKey]: {
+                ...currentActivity,
+                currentAction: getCommitActivityCurrentAction(detail, currentActivity.commitAction)
+              }
+            }
+          })
+        } catch {
+          // Keep the restored activity if the provider cannot be reached yet.
+        }
+      })
+    )
+
+    void Promise.all(
+      recoverablePendingMarkers.map(async (marker) => {
+        const commitChatId = marker.commitChatId
+        if (!commitChatId) return
+
+        try {
+          const detail = await providerApi.getChat(marker.providerId, commitChatId)
+          if (!active) return
+
+          if (!isActiveChatStatus(detail.status)) {
+            setChatCommitMarkers((currentMarkers) => {
+              const currentMarker = currentMarkers[marker.id]
+              if (!currentMarker || currentMarker.status !== 'pending') return currentMarkers
+
+              return {
+                ...currentMarkers,
+                [marker.id]: {
+                  ...currentMarker,
+                  status: getChatCommitMarkerTerminalStatus(detail),
+                  afterItemId:
+                    commitChatId === marker.sourceChatId
+                      ? (detail.items.at(-1)?.id ?? currentMarker.afterItemId)
+                      : currentMarker.afterItemId,
+                  finishedAt: Date.now()
+                }
+              }
+            })
+            return
+          }
+
+          const activityKey = getProviderChatKey(marker.providerId, commitChatId)
+          const activity = {
+            source: 'ai',
+            providerId: marker.providerId,
+            chatId: commitChatId,
+            sourceChatId: marker.sourceChatId,
+            markerId: marker.id,
+            projectCwd: detail.projectCwd ?? detail.cwd,
+            commitAction: marker.commitAction,
+            currentAction: getCommitActivityCurrentAction(detail, marker.commitAction),
+            startedAt: marker.startedAt
+          } satisfies ScopedCommitActivity
+
+          setScopedCommitActivities((currentActivities) => {
+            const nextActivities = {
+              ...currentActivities,
+              [activityKey]: activity
+            }
+            scopedCommitActivitiesRef.current = nextActivities
+            return nextActivities
+          })
+        } catch {
+          // Keep the pending marker for a later provider update if recovery is temporarily offline.
+        }
+      })
+    )
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     if (!panePercents) return
@@ -2298,6 +2800,57 @@ export const App: React.FC = () => {
     })
   }, [model, models])
 
+  const removeRecentChatCacheEntry = useCallback((providerId: ProviderId, chatId: string): void => {
+    recentChatCacheRef.current.delete(getProviderChatKey(providerId, chatId))
+  }, [])
+
+  const cacheRecentChatDetail = useCallback(
+    (
+      providerId: ProviderId,
+      detail: ProviderChatDetail,
+      updatedAt: number,
+      force = false
+    ): void => {
+      const cache = recentChatCacheRef.current
+      const limit = recentChatCacheLimitRef.current
+      const cacheKey = getProviderChatKey(providerId, detail.id)
+
+      if (limit === 0 || detail.done || detail.purpose === 'commit') {
+        cache.delete(cacheKey)
+        return
+      }
+      if (!force && selectedChatKeyRef.current !== cacheKey && !cache.has(cacheKey)) return
+
+      cache.delete(cacheKey)
+      cache.set(cacheKey, { detail, updatedAt })
+      trimRecentChatCache(cache, limit)
+    },
+    []
+  )
+
+  const getRecentCachedChatDetail = useCallback((chat: ProviderChat): ProviderChatDetail | null => {
+    if (recentChatCacheLimitRef.current === 0 || chat.done) return null
+
+    const cache = recentChatCacheRef.current
+    const cacheKey = getChatKey(chat)
+    const entry = cache.get(cacheKey)
+    if (!entry) return null
+
+    if (
+      entry.detail.done ||
+      entry.detail.purpose === 'commit' ||
+      entry.updatedAt < chat.updatedAt ||
+      entry.detail.status !== chat.status
+    ) {
+      cache.delete(cacheKey)
+      return null
+    }
+
+    cache.delete(cacheKey)
+    cache.set(cacheKey, entry)
+    return entry.detail
+  }, [])
+
   const applyChatDetail = useCallback(
     (
       providerId: ProviderId,
@@ -2305,6 +2858,7 @@ export const App: React.FC = () => {
       options: ApplyChatDetailOptions = {}
     ): void => {
       const updatedAt = Date.now()
+      cacheRecentChatDetail(providerId, detail, updatedAt, options.select)
 
       if (detail.purpose === 'commit') {
         setChats((currentChats) =>
@@ -2336,7 +2890,7 @@ export const App: React.FC = () => {
         return mergeChats(currentChats, [nextChat])
       })
     },
-    []
+    [cacheRecentChatDetail]
   )
 
   const showNewChatView = useCallback((projectCwd?: string | null): void => {
@@ -2353,6 +2907,28 @@ export const App: React.FC = () => {
 
   const applyChatMetadata = useCallback((metadataList: ProviderChatMetadata[]): void => {
     const metadataById = new Map(metadataList.map((metadata) => [metadata.id, metadata]))
+    const recentChatCache = recentChatCacheRef.current
+
+    for (const [cacheKey, entry] of recentChatCache) {
+      const metadata = metadataById.get(entry.detail.id)
+      if (!metadata) continue
+
+      if (metadata.done || metadata.purpose === 'commit') {
+        recentChatCache.delete(cacheKey)
+        continue
+      }
+
+      recentChatCache.set(cacheKey, {
+        ...entry,
+        detail: {
+          ...entry.detail,
+          pinned: metadata.pinned,
+          done: metadata.done,
+          seenUpdatedAt: metadata.seenUpdatedAt,
+          purpose: metadata.purpose
+        }
+      })
+    }
 
     setChats((currentChats) =>
       currentChats.map((chat) => {
@@ -2402,6 +2978,17 @@ export const App: React.FC = () => {
     (providerId: ProviderId, chatId: string, seenUpdatedAt: number): void => {
       const mergeSeenUpdatedAt = (currentSeenUpdatedAt: number | null): number =>
         currentSeenUpdatedAt == null ? seenUpdatedAt : Math.max(currentSeenUpdatedAt, seenUpdatedAt)
+      const cacheKey = getProviderChatKey(providerId, chatId)
+      const cacheEntry = recentChatCacheRef.current.get(cacheKey)
+      if (cacheEntry) {
+        recentChatCacheRef.current.set(cacheKey, {
+          ...cacheEntry,
+          detail: {
+            ...cacheEntry.detail,
+            seenUpdatedAt: mergeSeenUpdatedAt(cacheEntry.detail.seenUpdatedAt)
+          }
+        })
+      }
 
       setChats((currentChats) =>
         currentChats.map((chat) =>
@@ -2455,9 +3042,10 @@ export const App: React.FC = () => {
       providerApi.onChatUpdated((event) => {
         const seenUpdatedAt = Date.now()
         const updatedChatKey = getChatKey({ providerId: event.providerId, id: event.chatId })
+        const viewingUpdatedChat = selectedChatKeyRef.current === updatedChatKey
 
-        applyChatDetail(event.providerId, event.detail)
-        if (selectedChatKeyRef.current === updatedChatKey) {
+        startTransition(() => applyChatDetail(event.providerId, event.detail))
+        if (viewingUpdatedChat && event.turnCompleted) {
           markChatSeenAt(event.providerId, event.chatId, seenUpdatedAt)
         }
         if (
@@ -2471,6 +3059,23 @@ export const App: React.FC = () => {
         }
         const commitActivity = scopedCommitActivitiesRef.current[updatedChatKey]
         if (commitActivity && !isActiveChatStatus(event.detail.status)) {
+          setChatCommitMarkers((currentMarkers) => {
+            const marker = currentMarkers[commitActivity.markerId]
+            if (!marker || marker.status !== 'pending') return currentMarkers
+
+            return {
+              ...currentMarkers,
+              [marker.id]: {
+                ...marker,
+                status: getChatCommitMarkerTerminalStatus(event.detail),
+                afterItemId:
+                  commitActivity.chatId === commitActivity.sourceChatId
+                    ? (event.detail.items.at(-1)?.id ?? marker.afterItemId)
+                    : marker.afterItemId,
+                finishedAt: Date.now()
+              }
+            }
+          })
           setScopedCommitActivities((currentActivities) => {
             if (!currentActivities[updatedChatKey]) return currentActivities
 
@@ -2540,18 +3145,63 @@ export const App: React.FC = () => {
   const selectedChatAiCommitAction = committingSelectedChatKey
     ? (committingChatActions.get(committingSelectedChatKey) ?? null)
     : null
-  const selectedChatAiCommitActivity =
-    selectedProviderId && selectedChatId
-      ? (Object.values(scopedCommitActivities).find(
-          (activity) =>
-            activity.providerId === selectedProviderId && activity.sourceChatId === selectedChatId
-        ) ?? null)
-      : null
-  const messageBoxPlan = useMemo(
+  const selectedChatCommitMarkers = useMemo(
     () =>
-      chatDetail?.id === selectedChatId ? getLatestChatPlan(chatDetail, selectedChatKey) : null,
-    [chatDetail, selectedChatId, selectedChatKey]
+      selectedProviderId && selectedChatId
+        ? Object.values(chatCommitMarkers)
+            .filter(
+              (marker) =>
+                marker.providerId === selectedProviderId && marker.sourceChatId === selectedChatId
+            )
+            .sort((firstMarker, secondMarker) => firstMarker.startedAt - secondMarker.startedAt)
+        : [],
+    [chatCommitMarkers, selectedChatId, selectedProviderId]
   )
+  const scopedCommitActivitiesByMarkerId = useMemo(
+    () =>
+      new Map(
+        Object.values(scopedCommitActivities).map((activity) => [activity.markerId, activity])
+      ),
+    [scopedCommitActivities]
+  )
+  const messageBoxPlan =
+    extractedChatPlan?.contextKey === selectedChatKey ? extractedChatPlan : null
+  useEffect(() => {
+    if (
+      appSettings.chat.hidePlans ||
+      !selectedChatKey ||
+      !selectedChatId ||
+      chatDetail?.id !== selectedChatId
+    ) {
+      return
+    }
+
+    let active = true
+    let timeoutId: number | null = null
+    const detail = chatDetail
+    const contextKey = selectedChatKey
+    const animationFrame = window.requestAnimationFrame(() => {
+      timeoutId = window.setTimeout(() => {
+        if (!active) return
+
+        const nextPlan = getLatestChatPlan(detail, contextKey)
+        startTransition(() => {
+          setExtractedChatPlan((currentPlan) =>
+            currentPlan?.contextKey === nextPlan?.contextKey &&
+            currentPlan?.signature === nextPlan?.signature
+              ? currentPlan
+              : nextPlan
+          )
+        })
+      }, 0)
+    })
+
+    return () => {
+      active = false
+      window.cancelAnimationFrame(animationFrame)
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
+    }
+  }, [appSettings.chat.hidePlans, chatDetail, selectedChatId, selectedChatKey])
   const usageProviderId = selectedProviderId ?? newSessionProvider
   const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
   const changesProjectCwd = selectedChat
@@ -2623,8 +3273,16 @@ export const App: React.FC = () => {
       .getChat(selectedProviderId, selectedChatId)
       .then((detail) => {
         if (!active) return
-        setChatDetail(detail)
-        setChatLoadState('ready')
+        cacheRecentChatDetail(
+          selectedProviderId,
+          detail,
+          selectedChatUpdatedAtRef.current ?? Date.now(),
+          true
+        )
+        startTransition(() => {
+          setChatDetail(detail)
+          setChatLoadState('ready')
+        })
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
       })
       .catch(() => {
@@ -2634,7 +3292,14 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [chatDetail?.id, chatLoadRequest, markChatSeenAt, selectedProviderId, selectedChatId])
+  }, [
+    cacheRecentChatDetail,
+    chatDetail?.id,
+    chatLoadRequest,
+    markChatSeenAt,
+    selectedProviderId,
+    selectedChatId
+  ])
 
   useEffect(() => {
     const resizeHandles = [resizeHandleRef.current, changesResizeHandleRef.current].filter(
@@ -2670,10 +3335,11 @@ export const App: React.FC = () => {
     const contentElement = contentRef.current
     if (!contentElement || !chatAutoScrollEnabledRef.current) return
 
-    scrollToBottom(contentElement)
     if (chatAutoScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(chatAutoScrollFrameRef.current)
     }
+    if (!isActiveChatStatus(chatDetail.status)) scrollToBottom(contentElement)
+
     chatAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
       chatAutoScrollFrameRef.current = null
       if (contentRef.current !== contentElement) return
@@ -2681,7 +3347,7 @@ export const App: React.FC = () => {
       scrollToBottom(contentElement)
       chatAutoScrollEnabledRef.current = true
     })
-  }, [chatDetail, selectedChatAiCommitAction])
+  }, [chatDetail, selectedChatCommitMarkers])
 
   useEffect(() => {
     chatAutoScrollEnabledRef.current = true
@@ -2709,6 +3375,8 @@ export const App: React.FC = () => {
       setSyncState('idle')
       setSyncError(null)
       setSyncRecovery(null)
+      setGitBranchActionState('idle')
+      setGitBranchError(null)
     })
 
     return () => {
@@ -2730,6 +3398,50 @@ export const App: React.FC = () => {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    let active = true
+    const requestId = ++gitBranchRequestIdRef.current
+
+    if (!changesCwd) {
+      queueMicrotask(() => {
+        if (!active || gitBranchRequestIdRef.current !== requestId) return
+        setGitBranches(null)
+        setGitBranchesScope(null)
+        setGitBranchLoadState('ready')
+      })
+
+      return () => {
+        active = false
+      }
+    }
+
+    const scope: GitBranchesScope = { cwd: changesCwd }
+
+    queueMicrotask(() => {
+      if (!active || gitBranchRequestIdRef.current !== requestId) return
+      setGitBranchLoadState('loading')
+      setGitBranchError(null)
+    })
+
+    appApi
+      .getGitBranches({ cwd: changesCwd })
+      .then((result) => {
+        if (!active || gitBranchRequestIdRef.current !== requestId) return
+        setGitBranches(result)
+        setGitBranchesScope(scope)
+        setGitBranchLoadState('ready')
+      })
+      .catch((error) => {
+        if (!active || gitBranchRequestIdRef.current !== requestId) return
+        setGitBranchLoadState('error')
+        setGitBranchError(getErrorMessage(error, 'Unable to load branches.'))
+      })
+
+    return () => {
+      active = false
+    }
+  }, [changesCwd, gitBranchLoadRequest])
 
   useEffect(() => {
     if (!changesCwd) return
@@ -3138,6 +3850,7 @@ export const App: React.FC = () => {
     const selectingCurrentChat =
       selectedChat?.providerId === chat.providerId && selectedChat.id === chat.id
     const seenUpdatedAt = chat.updatedAt
+    const cachedDetail = getRecentCachedChatDetail(chat)
     const seenChat = {
       ...chat,
       seenUpdatedAt:
@@ -3149,15 +3862,32 @@ export const App: React.FC = () => {
     setNewChatOpen(false)
     setSearchOpen(false)
     setSearchQuery('')
-    markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
 
-    if (selectingCurrentChat && chatLoadState === 'ready' && chatDetail?.id === chat.id) return
+    if (selectingCurrentChat && chatLoadState === 'ready' && chatDetail?.id === chat.id) {
+      markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
+      return
+    }
 
+    selectedChatKeyRef.current = getChatKey(chat)
+    selectedChatUpdatedAtRef.current = chat.updatedAt
+    setSelectedChat(seenChat)
     setChatDetail(null)
     setChatLoadState('loading')
-    setSelectedChat(seenChat)
+    if (cachedDetail) {
+      startTransition(() => {
+        setChatDetail({
+          ...cachedDetail,
+          seenUpdatedAt:
+            cachedDetail.seenUpdatedAt == null
+              ? seenUpdatedAt
+              : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
+        })
+        setChatLoadState('ready')
+      })
+    }
+    markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
 
-    if (selectingCurrentChat) {
+    if (selectingCurrentChat && !cachedDetail) {
       setChatLoadRequest((currentRequest) => currentRequest + 1)
     }
   }
@@ -3203,15 +3933,35 @@ export const App: React.FC = () => {
     }))
   }
 
-  const handleChatDropdownPreferenceChange = (
-    key: keyof AppSettings['chat'],
-    value: boolean
-  ): void => {
+  const handleChatDropdownPreferenceChange = (key: ChatBooleanSettingKey, value: boolean): void => {
     updateAppSettings((currentSettings) => ({
       ...currentSettings,
       chat: {
         ...currentSettings.chat,
         [key]: value
+      }
+    }))
+  }
+
+  const handleRecentChatCacheLimitChange = (value: number): void => {
+    if (!Number.isFinite(value)) return
+
+    const recentChatCacheLimit = Math.min(Math.max(Math.floor(value), 0), 50)
+    recentChatCacheLimitRef.current = recentChatCacheLimit
+    if (recentChatCacheLimit === 0) {
+      recentChatCacheRef.current.clear()
+    } else {
+      trimRecentChatCache(recentChatCacheRef.current, recentChatCacheLimit)
+      if (selectedChat && chatDetail?.id === selectedChat.id) {
+        cacheRecentChatDetail(selectedChat.providerId, chatDetail, selectedChat.updatedAt, true)
+      }
+    }
+
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      chat: {
+        ...currentSettings.chat,
+        recentChatCacheLimit
       }
     }))
   }
@@ -3377,6 +4127,7 @@ export const App: React.FC = () => {
     try {
       const metadata = await providerApi.markChatDone(chat.providerId, chat.id, done)
       applyChatMetadata([metadata])
+      if (metadata.done) removeRecentChatCacheEntry(chat.providerId, chat.id)
 
       if (done && selectedChat?.providerId === chat.providerId && selectedChat.id === chat.id) {
         showNewChatView()
@@ -3433,39 +4184,45 @@ export const App: React.FC = () => {
     }
   }
 
-  const handleEditMessage = (message: ProviderMessage): void => {
-    if (
-      message.role !== 'user' ||
-      !chatDetail?.capabilities.editMessages ||
-      sendInFlightRef.current
-    ) {
-      return
-    }
+  const handleEditMessage = useCallback(
+    (message: ProviderMessage): void => {
+      if (
+        message.role !== 'user' ||
+        !chatDetail?.capabilities.editMessages ||
+        sendInFlightRef.current
+      ) {
+        return
+      }
 
-    setSendState('idle')
-    setEditingMessage({
-      type: 'message',
-      id: message.id,
-      content: message.content
-    })
-  }
+      setSendState('idle')
+      setEditingMessage({
+        type: 'message',
+        id: message.id,
+        content: message.content
+      })
+    },
+    [chatDetail?.capabilities.editMessages]
+  )
 
-  const handleEditPendingMessage = (message: ProviderPendingMessage): void => {
-    if (!selectedChat || sendInFlightRef.current) return
+  const handleEditPendingMessage = useCallback(
+    (message: ProviderPendingMessage): void => {
+      if (!selectedChatId || sendInFlightRef.current) return
 
-    setSendState('idle')
-    setEditingMessage({
-      type: 'pending',
-      id: message.id,
-      kind: message.kind,
-      content: message.content
-    })
-  }
+      setSendState('idle')
+      setEditingMessage({
+        type: 'pending',
+        id: message.id,
+        kind: message.kind,
+        content: message.content
+      })
+    },
+    [selectedChatId]
+  )
 
-  const handleCancelEditMessage = (): void => {
+  const handleCancelEditMessage = useCallback((): void => {
     setSendState('idle')
     setEditingMessage(null)
-  }
+  }, [])
 
   const getCurrentTurnOptions = (): ProviderTurnOptions => ({
     ...getApprovalAccessOptions(approvalMode, sandboxMode),
@@ -3675,41 +4432,54 @@ export const App: React.FC = () => {
     }
   }
 
-  const handleDeletePendingMessage = async (message: ProviderPendingMessage): Promise<void> => {
-    if (providerUpdateInProgress || !selectedChat) return
+  const handleDeletePendingMessage = useCallback(
+    async (message: ProviderPendingMessage): Promise<void> => {
+      if (providerUpdateInProgress || !selectedProviderId || !selectedChatId) return
 
-    try {
-      const detail = await providerApi.deletePendingMessage(
-        selectedChat.providerId,
-        selectedChat.id,
-        message.id
-      )
-      applyViewedChatDetail(selectedChat.providerId, detail)
-      if (sendState === 'error') setSendState('idle')
-    } catch {
-      setSendState('error')
-    }
-  }
+      try {
+        const detail = await providerApi.deletePendingMessage(
+          selectedProviderId,
+          selectedChatId,
+          message.id
+        )
+        applyViewedChatDetail(selectedProviderId, detail)
+        if (sendState === 'error') setSendState('idle')
+      } catch {
+        setSendState('error')
+      }
+    },
+    [applyViewedChatDetail, providerUpdateInProgress, selectedChatId, selectedProviderId, sendState]
+  )
 
-  const handleInterruptPendingMessage = async (message: ProviderPendingMessage): Promise<void> => {
-    if (providerUpdateInProgress || !selectedChat || sendInFlightRef.current) return
-    sendInFlightRef.current = true
-    setSendState('sending')
+  const handleInterruptPendingMessage = useCallback(
+    async (message: ProviderPendingMessage): Promise<void> => {
+      if (
+        providerUpdateInProgress ||
+        !selectedProviderId ||
+        !selectedChatId ||
+        sendInFlightRef.current
+      ) {
+        return
+      }
+      sendInFlightRef.current = true
+      setSendState('sending')
 
-    try {
-      const detail = await providerApi.interruptPendingMessage(
-        selectedChat.providerId,
-        selectedChat.id,
-        message.id
-      )
-      applyViewedChatDetail(selectedChat.providerId, detail)
-      setSendState('idle')
-    } catch {
-      setSendState('error')
-    } finally {
-      sendInFlightRef.current = false
-    }
-  }
+      try {
+        const detail = await providerApi.interruptPendingMessage(
+          selectedProviderId,
+          selectedChatId,
+          message.id
+        )
+        applyViewedChatDetail(selectedProviderId, detail)
+        setSendState('idle')
+      } catch {
+        setSendState('error')
+      } finally {
+        sendInFlightRef.current = false
+      }
+    },
+    [applyViewedChatDetail, providerUpdateInProgress, selectedChatId, selectedProviderId]
+  )
 
   const handleChatContentScroll = (): void => {
     const contentElement = contentRef.current
@@ -3768,7 +4538,40 @@ export const App: React.FC = () => {
     !providerUpdateInProgress &&
     !editingMessage
   )
-  const visibleChatItems = chatDetail ? getVisibleChatItems(chatDetail.items, editingMessage) : []
+  const visibleChatItems = useMemo(
+    () => (chatDetail ? getVisibleChatItems(chatDetail.items, editingMessage) : []),
+    [chatDetail, editingMessage]
+  )
+  const [chatCommitMarkersByAfterItemId, trailingChatCommitMarkers] = useMemo(() => {
+    const visibleItemIds = new Set(visibleChatItems.map((item) => item.id))
+    const allItemIds = new Set(chatDetail?.items.map((item) => item.id) ?? [])
+    const markersByAfterItemId = new Map<string, ChatCommitMarker[]>()
+    const trailingMarkers: ChatCommitMarker[] = []
+
+    selectedChatCommitMarkers.forEach((marker) => {
+      if (!marker.afterItemId) {
+        trailingMarkers.push(marker)
+        return
+      }
+      if (!visibleItemIds.has(marker.afterItemId)) {
+        if (!allItemIds.has(marker.afterItemId)) trailingMarkers.push(marker)
+        return
+      }
+
+      const anchoredMarkers = markersByAfterItemId.get(marker.afterItemId) ?? []
+      anchoredMarkers.push(marker)
+      markersByAfterItemId.set(marker.afterItemId, anchoredMarkers)
+    })
+
+    return [markersByAfterItemId, trailingMarkers] as const
+  }, [chatDetail?.items, selectedChatCommitMarkers, visibleChatItems])
+  const lastStreamingChatItem = chatHasActiveTurn
+    ? visibleChatItems.findLast((item) => item.type !== 'pendingMessage')
+    : null
+  const streamingChatItemId =
+    lastStreamingChatItem?.type === 'message' && lastStreamingChatItem.role === 'assistant'
+      ? lastStreamingChatItem.id
+      : null
   const messageBoxContextUsage = useMemo(() => {
     if (chatDetail?.contextUsage) {
       return {
@@ -3940,22 +4743,14 @@ export const App: React.FC = () => {
     .join(', ')
   const changesGitMetadata = changesCwd && gitChangesScope?.cwd === changesCwd ? gitChanges : null
   const filesMetadata = changesCwd && fileTreeScope?.cwd === changesCwd ? fileTree : null
+  const branchMetadata = changesCwd && gitBranchesScope?.cwd === changesCwd ? gitBranches : null
   const currentBranchName =
+    branchMetadata?.currentBranch ??
     (changesPaneView === 'files' ? filesMetadata?.branchName : changesGitMetadata?.branchName) ??
     changesGitMetadata?.branchName ??
     selectedChat?.branchName ??
     null
-  const branchDropdownValue = currentBranchName ?? '__no_branch__'
-  const branchDropdownOptions = useMemo<DropdownOption<string>[]>(
-    () => [
-      {
-        value: branchDropdownValue,
-        label: currentBranchName ?? 'No branch',
-        icon: <GitBranch aria-hidden="true" />
-      }
-    ],
-    [branchDropdownValue, currentBranchName]
-  )
+  const branchNames = branchMetadata?.branches ?? (currentBranchName ? [currentBranchName] : [])
   const commitInputValue = commitInput.trim()
   const commitFiles = useMemo(() => getCommitFiles(changedFiles), [changedFiles])
   const syncInProgress = syncState === 'sending'
@@ -4014,6 +4809,14 @@ export const App: React.FC = () => {
     syncInProgress ||
     commitState === 'sending' ||
     projectCommitInProgress
+  const branchSwitchDisabled =
+    providerUpdateInProgress ||
+    !changesCwd ||
+    gitBranchActionState === 'sending' ||
+    syncInProgress ||
+    commitState === 'sending' ||
+    projectCommitInProgress ||
+    chatIsBusy
   const syncDropdownActions: ButtonDropdownAction[] = [
     ...(hasUnpulledChanges
       ? [
@@ -4096,6 +4899,39 @@ export const App: React.FC = () => {
     })
   }
 
+  const handleSwitchBranch = async (branchName: string, create: boolean): Promise<boolean> => {
+    if (branchSwitchDisabled || !changesCwd) return false
+
+    const cwd = changesCwd
+    const requestId = ++gitBranchRequestIdRef.current
+    setGitBranchActionState('sending')
+    setGitBranchError(null)
+
+    try {
+      const result = await appApi.switchGitBranch({ cwd, branchName, create })
+      if (gitBranchRequestIdRef.current === requestId) {
+        setGitBranches(result)
+        setGitBranchesScope({ cwd })
+        setGitBranchLoadState('ready')
+        setGitBranchActionState('idle')
+        setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
+        setFileTreeLoadRequest((currentRequest) => currentRequest + 1)
+      }
+      return true
+    } catch (error) {
+      if (gitBranchRequestIdRef.current === requestId) {
+        setGitBranchActionState('error')
+        setGitBranchError(
+          getErrorMessage(
+            error,
+            create ? 'Unable to create this branch.' : 'Unable to switch branches.'
+          )
+        )
+      }
+      return false
+    }
+  }
+
   const handleToggleActiveTreeFolders = (): void => {
     if (activeTreeFolderPaths.length === 0) return
 
@@ -4120,7 +4956,9 @@ export const App: React.FC = () => {
     setFileEditorTarget({
       cwd: changesCwd,
       path: file.path,
-      displayPath: getChangedFileDisplayPath(file)
+      displayPath: getChangedFileDisplayPath(file),
+      kind: file.kind ?? null,
+      previousPath: file.previousPath ?? null
     })
   }
 
@@ -4261,6 +5099,10 @@ export const App: React.FC = () => {
     const turnOptions = getGitTurnOptions()
     const useForkedChat = chatId != null && turnOptions.model !== model
     const useHiddenChat = chatId == null || useForkedChat
+    const markerId = chatId ? createChatCommitMarkerId() : null
+    const markerStartedAt = Date.now()
+    const sourceAnchorItemId =
+      chatId && chatDetail?.id === chatId ? (chatDetail.items.at(-1)?.id ?? null) : null
 
     sendInFlightRef.current = true
     chatAutoScrollEnabledRef.current = true
@@ -4268,10 +5110,25 @@ export const App: React.FC = () => {
     setCommitError(null)
     setSendState('sending')
 
-    if (chatId) {
+    if (chatId && markerId) {
+      setChatCommitMarkers((currentMarkers) => ({
+        ...currentMarkers,
+        [markerId]: {
+          id: markerId,
+          providerId,
+          sourceChatId: chatId,
+          commitChatId: null,
+          commitAction: action,
+          status: 'pending',
+          afterItemId: null,
+          startedAt: markerStartedAt,
+          finishedAt: null
+        }
+      }))
       setStartingScopedCommitActivity({
         providerId,
         sourceChatId: chatId,
+        markerId,
         commitAction: action
       })
     }
@@ -4310,6 +5167,27 @@ export const App: React.FC = () => {
       else applyViewedChatDetail(providerId, detail)
 
       setCommitInput('')
+      if (markerId) {
+        setChatCommitMarkers((currentMarkers) => {
+          const marker = currentMarkers[markerId]
+          if (!marker) return currentMarkers
+
+          return {
+            ...currentMarkers,
+            [markerId]: {
+              ...marker,
+              commitChatId: detail.id,
+              status: isActiveChatStatus(detail.status)
+                ? 'pending'
+                : getChatCommitMarkerTerminalStatus(detail),
+              afterItemId: useHiddenChat
+                ? sourceAnchorItemId
+                : (detail.items.at(-1)?.id ?? sourceAnchorItemId),
+              finishedAt: isActiveChatStatus(detail.status) ? null : Date.now()
+            }
+          }
+        })
+      }
       if (isActiveChatStatus(detail.status)) {
         const activityKey = getProviderChatKey(providerId, detail.id)
         const activity = {
@@ -4317,21 +5195,42 @@ export const App: React.FC = () => {
           providerId,
           chatId: detail.id,
           sourceChatId: chatId,
+          markerId: markerId ?? `untracked:${providerId}:${detail.id}:${markerStartedAt}`,
           projectCwd: changesProjectCwd ?? changesCwd,
           commitAction: action,
           currentAction: getCommitActivityCurrentAction(detail, action),
-          startedAt: Date.now()
+          startedAt: markerStartedAt
         } satisfies ScopedCommitActivity
 
-        setScopedCommitActivities((currentActivities) => ({
-          ...currentActivities,
-          [activityKey]: activity
-        }))
+        setScopedCommitActivities((currentActivities) => {
+          const nextActivities = {
+            ...currentActivities,
+            [activityKey]: activity
+          }
+          scopedCommitActivitiesRef.current = nextActivities
+          return nextActivities
+        })
       }
       setCommitState('idle')
       setSendState('idle')
       return true
     } catch (error) {
+      if (markerId) {
+        setChatCommitMarkers((currentMarkers) => {
+          const marker = currentMarkers[markerId]
+          if (!marker || marker.status !== 'pending') return currentMarkers
+
+          return {
+            ...currentMarkers,
+            [markerId]: {
+              ...marker,
+              status: 'failed',
+              afterItemId: sourceAnchorItemId,
+              finishedAt: Date.now()
+            }
+          }
+        })
+      }
       if (chatId && !useForkedChat) {
         void providerApi
           .getChat(providerId, chatId)
@@ -4433,6 +5332,23 @@ export const App: React.FC = () => {
     try {
       const detail = await providerApi.stopChat(activity.providerId, activity.chatId)
       applyChatDetail(activity.providerId, detail)
+      setChatCommitMarkers((currentMarkers) => {
+        const marker = currentMarkers[activity.markerId]
+        if (!marker || marker.status !== 'pending') return currentMarkers
+
+        return {
+          ...currentMarkers,
+          [marker.id]: {
+            ...marker,
+            status: 'stopped',
+            afterItemId:
+              activity.chatId === activity.sourceChatId
+                ? (detail.items.at(-1)?.id ?? marker.afterItemId)
+                : marker.afterItemId,
+            finishedAt: Date.now()
+          }
+        }
+      })
       setScopedCommitActivities((currentActivities) => {
         if (!currentActivities[activityKey]) return currentActivities
 
@@ -4453,6 +5369,22 @@ export const App: React.FC = () => {
         return nextKeys
       })
     }
+  }
+
+  const renderChatCommitMarker = (marker: ChatCommitMarker): React.ReactElement => {
+    const activity = scopedCommitActivitiesByMarkerId.get(marker.id)
+    const activityKey = activity ? getProviderChatKey(activity.providerId, activity.chatId) : null
+
+    return (
+      <ChatCommitMarkerItem
+        marker={marker}
+        canceling={
+          providerUpdateInProgress || Boolean(activityKey && cancelingAiCommitKeys.has(activityKey))
+        }
+        key={marker.id}
+        onCancel={activity ? () => handleCancelAiCommit(activity) : undefined}
+      />
+    )
   }
 
   const showRecoverableGitFailure = (
@@ -4661,6 +5593,27 @@ export const App: React.FC = () => {
               />
               <span className="settings-switch__control" aria-hidden="true" />
             </label>
+          </div>
+          <div className="settings-dialog__field">
+            <label className="settings-dialog__field-header" htmlFor="settings-chat-cache-limit">
+              <h3>Cache recent chats</h3>
+              <p>
+                Keep this many recent chats that haven’t been marked done in memory. Use 0 to
+                disable.
+              </p>
+            </label>
+            <Input
+              className="settings-dialog__number-input"
+              id="settings-chat-cache-limit"
+              type="number"
+              min={0}
+              max={50}
+              step={1}
+              value={appSettings.chat.recentChatCacheLimit}
+              onChange={(event) =>
+                handleRecentChatCacheLimitChange(event.currentTarget.valueAsNumber)
+              }
+            />
           </div>
         </section>
       )
@@ -4949,70 +5902,37 @@ export const App: React.FC = () => {
                   )}
                   {!editingMessage &&
                     chatLoadState === 'ready' &&
-                    !selectedChatAiCommitAction &&
-                    visibleChatItems.length === 0 && (
+                    visibleChatItems.length === 0 &&
+                    selectedChatCommitMarkers.length === 0 && (
                       <p className="chat__status">No messages found.</p>
                     )}
                   {visibleChatItems.map((item) => (
-                    <ChatDetailItem
-                      canEditOwnMessages={canEditOwnMessages}
-                      item={item}
-                      key={item.id}
-                      modelLabelsById={modelLabelsById}
-                      onDeletePendingMessage={handleDeletePendingMessage}
-                      onEditPendingMessage={handleEditPendingMessage}
-                      onInterruptPendingMessage={
-                        chatHasActiveTurn ? handleInterruptPendingMessage : undefined
-                      }
-                      onEditMessage={handleEditMessage}
-                      onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
-                      projectCwd={changesProjectCwd}
-                      selectedModelId={model}
-                    />
-                  ))}
-                  {selectedChatAiCommitAction && (
-                    <div
-                      className="chat-detail__commit-placeholder"
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <ChangesAnimatedIcon
-                        Icon={AnimatedGitCommitHorizontalIcon}
-                        active
-                        className="chat-detail__commit-placeholder-icon"
+                    <Fragment key={item.id}>
+                      <ChatDetailItem
+                        canEditOwnMessages={canEditOwnMessages}
+                        item={item}
+                        modelLabelsById={modelLabelsById}
+                        onDeletePendingMessage={handleDeletePendingMessage}
+                        onEditPendingMessage={handleEditPendingMessage}
+                        onInterruptPendingMessage={
+                          chatHasActiveTurn ? handleInterruptPendingMessage : undefined
+                        }
+                        onEditMessage={handleEditMessage}
+                        onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+                        projectCwd={changesProjectCwd}
+                        selectedModelId={model}
+                        streaming={item.id === streamingChatItemId}
                       />
-                      <span>
-                        {selectedChatAiCommitAction === 'amend'
-                          ? 'AI is amending the commit…'
-                          : 'AI is committing changes…'}
-                      </span>
-                      {selectedChatAiCommitActivity && (
-                        <span className="chat-detail__commit-placeholder-cancel">
-                          <Button
-                            aria-label={`Cancel AI ${selectedChatAiCommitActivity.commitAction}`}
-                            callback={() => handleCancelAiCommit(selectedChatAiCommitActivity)}
-                            disabled={
-                              providerUpdateInProgress ||
-                              cancelingAiCommitKeys.has(
-                                getProviderChatKey(
-                                  selectedChatAiCommitActivity.providerId,
-                                  selectedChatAiCommitActivity.chatId
-                                )
-                              )
-                            }
-                            icon={<X aria-hidden="true" />}
-                            size="small"
-                            theme="transparent"
-                            title={`Cancel AI ${selectedChatAiCommitActivity.commitAction}`}
-                          />
-                        </span>
-                      )}
-                    </div>
-                  )}
+                      {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
+                    </Fragment>
+                  ))}
+                  {trailingChatCommitMarkers.map(renderChatCommitMarker)}
                 </div>
               </div>
             )}
-            {!appSettings.chat.hidePlans && <ChatPlan plan={messageBoxPlan} />}
+            {!appSettings.chat.hidePlans && (
+              <ChatPlan key={selectedChatKey ?? 'no-chat'} plan={messageBoxPlan} />
+            )}
             <div className="chat-panel__composer">
               <div className="chat-panel__composer-inner">
                 {!selectedChat && newChatOpen && providerUpdateSuggestion && (
@@ -5217,41 +6137,48 @@ export const App: React.FC = () => {
           <aside className="changes-sidebar" aria-label="Changed files">
             <header className="changes-sidebar__header">
               {renderWindowControls('default')}
-              <SegmentedControl
-                aria-label="Changes view"
-                className="changes-sidebar__view-toggle"
-                options={[
-                  {
-                    value: 'git',
-                    label: null,
-                    ariaLabel: 'Git',
-                    title: 'Git',
-                    icon: <GitBranch aria-hidden="true" />
-                  },
-                  {
-                    value: 'files',
-                    label: null,
-                    ariaLabel: 'Files',
-                    title: 'Files',
-                    icon: <Files aria-hidden="true" />
-                  }
-                ]}
-                value={changesPaneView}
-                onChange={setChangesPaneView}
-              />
-            </header>
-            <div className="changes-sidebar__body">
+              <div className="changes-sidebar__titlebar">
+                <SegmentedControl
+                  aria-label="Changes view"
+                  className="changes-sidebar__view-toggle"
+                  options={[
+                    {
+                      value: 'git',
+                      label: null,
+                      ariaLabel: 'Git',
+                      title: 'Git',
+                      icon: <GitBranch aria-hidden="true" />
+                    },
+                    {
+                      value: 'files',
+                      label: null,
+                      ariaLabel: 'Files',
+                      title: 'Files',
+                      icon: <Files aria-hidden="true" />
+                    }
+                  ]}
+                  value={changesPaneView}
+                  onChange={setChangesPaneView}
+                />
+              </div>
               <div className="changes-sidebar__controls changes-sidebar__controls--files">
                 <label className="sr-only" htmlFor="changes-branch">
                   Branch
                 </label>
-                <Dropdown
+                <BranchSwitcher
+                  branches={branchNames}
+                  busy={gitBranchActionState === 'sending'}
+                  currentBranch={currentBranchName}
+                  disabled={branchSwitchDisabled}
+                  error={gitBranchError}
                   id="changes-branch"
-                  fill
-                  options={branchDropdownOptions}
-                  size="large"
-                  value={branchDropdownValue}
-                  onChange={() => {}}
+                  loading={gitBranchLoadState === 'loading'}
+                  onClearError={() => {
+                    setGitBranchError(null)
+                    if (gitBranchActionState === 'error') setGitBranchActionState('idle')
+                  }}
+                  onOpen={() => setGitBranchLoadRequest((currentRequest) => currentRequest + 1)}
+                  onSwitch={handleSwitchBranch}
                 />
                 <Button
                   theme="transparent"
@@ -5285,6 +6212,8 @@ export const App: React.FC = () => {
                   icon={<GitRefreshIcon />}
                 />
               </div>
+            </header>
+            <div className="changes-sidebar__body">
               <div className="changes-sidebar__content">
                 {changesPaneView === 'git' ? (
                   <>

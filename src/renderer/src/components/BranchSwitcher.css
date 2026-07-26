@@ -1,0 +1,199 @@
+:where(.branch-switcher) {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+
+:where(.branch-switcher__trigger) {
+  appearance: none;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 0 13px 0 14px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  color: var(--lead);
+  cursor: pointer;
+  background: var(--control-surface);
+  box-shadow: var(--control-shadow);
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+:where(.branch-switcher__trigger:not(:disabled):hover),
+:where(.branch-switcher--open .branch-switcher__trigger) {
+  color: var(--ink);
+  background: var(--control-surface-hover);
+  box-shadow: var(--control-shadow-hover);
+  transform: translateY(-1px);
+}
+
+:where(.branch-switcher__trigger:not(:disabled):active) {
+  background: var(--control-surface-active);
+  box-shadow: var(--control-shadow-active);
+  transform: translateY(0);
+}
+
+:where(.branch-switcher__trigger:focus-visible) {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+:where(.branch-switcher__trigger:disabled) {
+  color: var(--control-disabled-color);
+  cursor: default;
+}
+
+:where(.branch-switcher__value) {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+}
+
+:where(.branch-switcher__value svg),
+:where(.branch-switcher__chevron) {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  flex: none;
+}
+
+:where(.branch-switcher__value svg) {
+  color: var(--quiet);
+}
+
+:where(.branch-switcher__value span) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:where(.branch-switcher__chevron) {
+  transition: transform 160ms ease;
+}
+
+:where(.branch-switcher--open .branch-switcher__chevron) {
+  transform: rotate(180deg);
+}
+
+:where(.branch-switcher__menu) {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  max-height: min(420px, 56vh);
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid var(--menu-border);
+  border-radius: 12px;
+  color: var(--lead);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+}
+
+:where(.branch-switcher__list) {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+:where(.branch-switcher__option) {
+  appearance: none;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  grid-template-columns: var(--control-icon-size) minmax(0, 1fr) var(--control-icon-size);
+  align-items: center;
+  gap: 10px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--lead);
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+}
+
+:where(.branch-switcher__option--active) {
+  color: var(--ink);
+  background: var(--menu-option-active-bg);
+}
+
+:where(.branch-switcher__option--create) {
+  color: var(--menu-option-selected-color);
+}
+
+:where(.branch-switcher__option:disabled) {
+  cursor: default;
+  opacity: 0.62;
+}
+
+:where(.branch-switcher__option-icon),
+:where(.branch-switcher__option-check) {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  flex: none;
+}
+
+:where(.branch-switcher__option-icon) {
+  color: var(--quiet);
+}
+
+:where(.branch-switcher__option--active .branch-switcher__option-icon),
+:where(.branch-switcher__option--create .branch-switcher__option-icon) {
+  color: currentColor;
+}
+
+:where(.branch-switcher__option-label) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:where(.branch-switcher__option-label strong) {
+  font-weight: 800;
+}
+
+:where(.branch-switcher__option-check) {
+  color: var(--menu-option-check-color);
+}
+
+:where(.branch-switcher__message),
+:where(.branch-switcher__status),
+:where(.branch-switcher__error) {
+  margin: 0;
+  padding: 9px 11px;
+  color: var(--quiet);
+  line-height: 1.35;
+}
+
+:where(.branch-switcher__status),
+:where(.branch-switcher__error) {
+  border-top: 1px solid var(--menu-border);
+}
+
+:where(.branch-switcher__error) {
+  color: var(--error);
+}

@@ -13,6 +13,8 @@ const appApi: AppApi = {
   closeWindow: () => ipcRenderer.invoke(appIpcChannels.closeWindow),
   getDefaultCwd: () => ipcRenderer.invoke(appIpcChannels.getDefaultCwd),
   getGitChanges: (options) => ipcRenderer.invoke(appIpcChannels.getGitChanges, options),
+  getGitBranches: (options) => ipcRenderer.invoke(appIpcChannels.getGitBranches, options),
+  switchGitBranch: (options) => ipcRenderer.invoke(appIpcChannels.switchGitBranch, options),
   getFileTree: (options) => ipcRenderer.invoke(appIpcChannels.getFileTree, options),
   getFileContents: (options) => ipcRenderer.invoke(appIpcChannels.getFileContents, options),
   writeFileContents: (options) => ipcRenderer.invoke(appIpcChannels.writeFileContents, options),
@@ -20,6 +22,7 @@ const appApi: AppApi = {
     ipcRenderer.invoke(appIpcChannels.getRecentGitCommitMessages, options),
   getUncommittedGitDiff: (options) =>
     ipcRenderer.invoke(appIpcChannels.getUncommittedGitDiff, options),
+  getGitFileDiff: (options) => ipcRenderer.invoke(appIpcChannels.getGitFileDiff, options),
   getUncommittedGitPatchChanges: (options) =>
     ipcRenderer.invoke(appIpcChannels.getUncommittedGitPatchChanges, options),
   commitGitChanges: (options) => ipcRenderer.invoke(appIpcChannels.commitGitChanges, options),

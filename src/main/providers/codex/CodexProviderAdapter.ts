@@ -676,7 +676,9 @@ const titleGenerationTimeoutMs = 30_000
 const oneShotGenerationTimeoutMs = 120_000
 const oneShotCancellationRetentionMs = 120_000
 const titleGenerationPromptLimit = 2_000
-const chatUpdateDebounceMs = 50
+// Full chat snapshots cross IPC and trigger renderer work. Keep enough time between snapshots for
+// input and window events even when a long-running chat has a large history.
+const chatUpdateDebounceMs = 250
 let localTurnSequence = 0
 
 const titleGenerationOutputSchema = {
@@ -1061,6 +1063,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   getChat = async (chatId: string): Promise<ProviderChatDetail> => {
+    const cachedDetail = this.getCachedChatDetail(chatId)
+    if (cachedDetail) return cachedDetail
+
     const response = await this.client.request<ThreadReadResponse>('thread/read', {
       threadId: chatId,
       includeTurns: true

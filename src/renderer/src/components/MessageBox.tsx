@@ -432,15 +432,17 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const textareaDisabled = operationsDisabled || (active ? false : disabled || pending)
   const activePrimaryLabel = activePrimaryMode === 'queue' ? 'Queue message' : 'Steer current turn'
   const editingPendingMessage = editSession?.type === 'pending'
+  const usageDisabled = operationsDisabled || (!active && (disabled || pending))
+  const usageMenuOpen = usageOpen && !usageDisabled
 
   useEffect(() => {
     messageRef.current = message
   }, [message])
 
   useEffect(() => {
-    if (!usageOpen) return
+    if (!usageMenuOpen) return
 
-    const handlePointerDown = (event: PointerEvent): void => {
+    const handleClick = (event: MouseEvent): void => {
       const target = event.target
       if (target instanceof Node && usageControlRef.current?.contains(target)) return
 
@@ -451,14 +453,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       if (event.key === 'Escape') setUsageOpen(false)
     }
 
-    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('click', handleClick)
     document.addEventListener('keydown', handleKeyDown)
 
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('click', handleClick)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [usageOpen])
+  }, [usageMenuOpen])
 
   useEffect(() => {
     if (!editSession) {
@@ -614,7 +616,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       : rateLimits.slice(1)
 
   const handleUsageToggle = (): void => {
-    const nextOpen = !usageOpen
+    if (usageDisabled) return
+
+    const nextOpen = !usageMenuOpen
     setUsageOpen(nextOpen)
     if (nextOpen) void onUsageRefresh?.({ includeStatistics: usageView === 'statistics' })
   }
@@ -767,13 +771,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 style={usageButtonStyle}
                 aria-label={usageButtonLabel}
                 aria-controls={`message-usage-${usagePopoverId}`}
-                aria-expanded={usageOpen}
+                aria-expanded={usageMenuOpen}
+                disabled={usageDisabled}
                 title={usageButtonLabel}
                 onClick={handleUsageToggle}
               >
                 <span className="message-box__usage-ring" aria-hidden="true" />
               </button>
-              {usageOpen && (
+              {usageMenuOpen && (
                 <div
                   className="message-box__usage-popover"
                   id={`message-usage-${usagePopoverId}`}

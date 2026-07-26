@@ -378,7 +378,6 @@ export type ProviderWorkingTool = {
   finishedBackgroundSessionId: string | null
   rawInput: unknown
   rawOutput: unknown
-  raw: unknown[]
 }
 
 export type ProviderWorkingToolGroup = {

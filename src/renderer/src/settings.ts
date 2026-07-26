@@ -15,6 +15,7 @@ export type AppSettings = {
     theme: AppThemePreference
   }
   chat: {
+    recentChatCacheLimit: number
     hidePlans: boolean
     updateExistingChats: boolean
     updateNewChats: boolean
@@ -106,6 +107,7 @@ export const defaultAppSettings: AppSettings = {
     theme: 'system'
   },
   chat: {
+    recentChatCacheLimit: 10,
     hidePlans: false,
     updateExistingChats: true,
     updateNewChats: true
@@ -121,6 +123,14 @@ export const isAppThemePreference = (value: unknown): value is AppThemePreferenc
 
 const isStoredModel = (value: unknown): value is ProviderModelId =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 128
+
+const getStoredRecentChatCacheLimit = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return defaultAppSettings.chat.recentChatCacheLimit
+  }
+
+  return Math.min(Math.max(Math.floor(value), 0), 50)
+}
 
 const readPromptField = (
   storedPrompt: Record<string, unknown>,
@@ -172,6 +182,7 @@ export const readStoredAppSettings = (): AppSettings => {
           : defaultAppSettings.appearance.theme
       },
       chat: {
+        recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
         hidePlans:
           typeof chat.hidePlans === 'boolean' ? chat.hidePlans : defaultAppSettings.chat.hidePlans,
         updateExistingChats:
@@ -222,6 +233,9 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
 
     const storedChat: Partial<AppSettings['chat']> = {}
+    if (settings.chat.recentChatCacheLimit !== defaultAppSettings.chat.recentChatCacheLimit) {
+      storedChat.recentChatCacheLimit = settings.chat.recentChatCacheLimit
+    }
     if (settings.chat.hidePlans !== defaultAppSettings.chat.hidePlans) {
       storedChat.hidePlans = settings.chat.hidePlans
     }
