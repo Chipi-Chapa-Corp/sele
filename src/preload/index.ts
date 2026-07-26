@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { AppApi, AppColorScheme, AppWindowState } from '../shared/app'
 import { appIpcChannels } from '../shared/app'
-import type { ProviderApi, ProviderChatUpdatedEvent } from '../shared/provider'
+import type { ProviderRendererApi, ProviderWindowChatUpdatedEvent } from '../shared/provider'
 import { providerIpcChannels } from '../shared/provider'
 
 const appApi: AppApi = {
@@ -51,7 +51,7 @@ const appApi: AppApi = {
   }
 }
 
-const providerApi: ProviderApi = {
+const providerApi: ProviderRendererApi = {
   login: (providerId) => ipcRenderer.invoke(providerIpcChannels.login, providerId),
   getUpdateAvailability: (providerId) =>
     ipcRenderer.invoke(providerIpcChannels.getUpdateAvailability, providerId),
@@ -76,6 +76,14 @@ const providerApi: ProviderApi = {
     ipcRenderer.invoke(providerIpcChannels.startChat, providerId, message, options, purpose),
   continueChat: (providerId, chatId, message, options) =>
     ipcRenderer.invoke(providerIpcChannels.continueChat, providerId, chatId, message, options),
+  continueChatSummary: (providerId, chatId, message, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.continueChatSummary,
+      providerId,
+      chatId,
+      message,
+      options
+    ),
   continueChatInFork: (providerId, chatId, message, purpose, options) =>
     ipcRenderer.invoke(
       providerIpcChannels.continueChatInFork,
@@ -88,6 +96,15 @@ const providerApi: ProviderApi = {
   sendActiveChatMessage: (providerId, chatId, message, mode, options) =>
     ipcRenderer.invoke(
       providerIpcChannels.sendActiveChatMessage,
+      providerId,
+      chatId,
+      message,
+      mode,
+      options
+    ),
+  sendActiveChatMessageSummary: (providerId, chatId, message, mode, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.sendActiveChatMessageSummary,
       providerId,
       chatId,
       message,
@@ -120,6 +137,8 @@ const providerApi: ProviderApi = {
     ipcRenderer.invoke(providerIpcChannels.resolveApproval, providerId, chatId, decision),
   stopChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.stopChat, providerId, chatId),
+  stopChatSummary: (providerId, chatId) =>
+    ipcRenderer.invoke(providerIpcChannels.stopChatSummary, providerId, chatId),
   markChatDone: (providerId, chatId, done) =>
     ipcRenderer.invoke(providerIpcChannels.markChatDone, providerId, chatId, done),
   markCwdChatsDone: (providerId, cwd) =>
@@ -132,13 +151,24 @@ const providerApi: ProviderApi = {
     ipcRenderer.invoke(providerIpcChannels.markChatSeen, providerId, chatId, seenUpdatedAt),
   setChatPinned: (providerId, chatId, pinned) =>
     ipcRenderer.invoke(providerIpcChannels.setChatPinned, providerId, chatId, pinned),
+  setViewedChat: (providerId, chatId) =>
+    ipcRenderer.send(providerIpcChannels.viewedChatChanged, providerId, chatId),
+  acknowledgeChatUpdate: (sequence, detailApplied) =>
+    ipcRenderer.send(providerIpcChannels.chatUpdateAcknowledged, sequence, detailApplied),
   onChatUpdated: (listener): (() => void) => {
-    const handleChatUpdated = (_: IpcRendererEvent, event: ProviderChatUpdatedEvent): void => {
+    const handleChatUpdated = (
+      _: IpcRendererEvent,
+      event: ProviderWindowChatUpdatedEvent
+    ): void => {
       listener(event)
     }
 
     ipcRenderer.on(providerIpcChannels.chatUpdated, handleChatUpdated)
-    return () => ipcRenderer.removeListener(providerIpcChannels.chatUpdated, handleChatUpdated)
+    ipcRenderer.send(providerIpcChannels.chatUpdatesReady)
+    return () => {
+      ipcRenderer.removeListener(providerIpcChannels.chatUpdated, handleChatUpdated)
+      ipcRenderer.send(providerIpcChannels.chatUpdatesStopped)
+    }
   }
 }
 

@@ -76,6 +76,21 @@ const languageByFileName: Record<string, string> = {
   makefile: 'makefile'
 }
 
+const maxStructuredDiffLength = 200_000
+const maxStructuredDiffLines = 4_000
+
+const hasMoreThanLines = (value: string, maxLines: number): boolean => {
+  let lineCount = 1
+  let index = -1
+
+  while ((index = value.indexOf('\n', index + 1)) >= 0) {
+    lineCount += 1
+    if (lineCount > maxLines) return true
+  }
+
+  return false
+}
+
 const refractorAdapter = {
   // react-diff-view expects the pre-refractor@4 array result rather than a HAST root.
   highlight: (value: string, language: string) => refractor.highlight(value, language).children
@@ -468,7 +483,16 @@ export const UnifiedDiff = ({
   fileDiff: ProviderFileDiff
   line?: number
 }): React.JSX.Element => {
-  const files = useMemo(() => getRenderedFiles(fileDiff), [fileDiff])
+  const renderStructuredDiff = useMemo(
+    () =>
+      fileDiff.diff.length <= maxStructuredDiffLength &&
+      !hasMoreThanLines(fileDiff.diff, maxStructuredDiffLines),
+    [fileDiff.diff]
+  )
+  const files = useMemo(
+    () => (renderStructuredDiff ? getRenderedFiles(fileDiff) : []),
+    [fileDiff, renderStructuredDiff]
+  )
   const targetAnchorId = `unified-diff-target-${useId().replace(/:/g, '')}`
   const lineTarget = useMemo(() => {
     if (!line) return null

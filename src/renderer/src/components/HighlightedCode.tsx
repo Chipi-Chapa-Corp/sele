@@ -8,6 +8,8 @@ type HighlightedCodeProps = {
   language: string | null
 }
 
+const maxHighlightedCodeLength = 100_000
+
 const renderNode = (node: RootContent, key: number): ReactNode => {
   if (node.type === 'text') return node.value
   if (node.type !== 'element') return null
@@ -31,7 +33,13 @@ export const HighlightedCode = ({
   language
 }: HighlightedCodeProps): React.JSX.Element => {
   const highlighted = useMemo(() => {
-    if (!language || !refractor.registered(language)) return children
+    if (
+      children.length > maxHighlightedCodeLength ||
+      !language ||
+      !refractor.registered(language)
+    ) {
+      return children
+    }
 
     try {
       return refractor.highlight(children, language).children.map(renderNode)

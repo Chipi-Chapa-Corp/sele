@@ -78,6 +78,9 @@ import type {
 import type {
   ProviderChat,
   ProviderChatDetail,
+  ProviderChatDetailUpdate,
+  ProviderChatItemUpdate,
+  ProviderChatUpdateSummary,
   ProviderFileDiff,
   ProviderWorkingItem,
   ProviderWorkingStep,
@@ -147,6 +150,10 @@ type LoadState = 'loading' | 'ready' | 'error'
 type SendState = 'idle' | 'sending' | 'error'
 type ApplyChatDetailOptions = {
   select?: boolean
+}
+type CommittedChatUpdate = {
+  sequence: number
+  detailApplied: boolean
 }
 type EditingMessage =
   | (Pick<ProviderMessage, 'id' | 'content'> & { type: 'message' })
@@ -1425,6 +1432,161 @@ const getChatFromDetail = (
   purpose: detail.purpose ?? existingChat?.purpose ?? null
 })
 
+const getWorkingStepFromUpdate = (
+  update: Extract<ProviderChatItemUpdate, { type: 'working' }>,
+  currentItem: ProviderChatItem | undefined
+): ProviderWorkingStep | null => {
+  const { items, workingItemsPrefixLastId, workingItemsStartIndex, ...workingStep } = update
+  if (
+    !Number.isSafeInteger(workingItemsStartIndex) ||
+    workingItemsStartIndex < 0 ||
+    (workingItemsStartIndex > 0 &&
+      (currentItem?.type !== 'working' ||
+        currentItem.id !== update.id ||
+        currentItem.items.length < workingItemsStartIndex ||
+        currentItem.items[workingItemsStartIndex - 1]?.id !== workingItemsPrefixLastId))
+  ) {
+    return null
+  }
+
+  return {
+    ...workingStep,
+    items:
+      workingItemsStartIndex === 0
+        ? items
+        : [...(currentItem as ProviderWorkingStep).items.slice(0, workingItemsStartIndex), ...items]
+  }
+}
+
+const getChatDetailFromUpdate = (
+  update: ProviderChatDetailUpdate,
+  currentDetail: ProviderChatDetail | null
+): ProviderChatDetail | null => {
+  const { chatItemsPrefixLastId, chatItemsStartIndex, items, ...chatDetail } = update
+  if (
+    !Number.isSafeInteger(chatItemsStartIndex) ||
+    chatItemsStartIndex < 0 ||
+    (chatItemsStartIndex > 0 &&
+      (currentDetail?.id !== update.id ||
+        currentDetail.items.length < chatItemsStartIndex ||
+        currentDetail.items[chatItemsStartIndex - 1]?.id !== chatItemsPrefixLastId))
+  ) {
+    return null
+  }
+
+  const mergedItems: ProviderChatItem[] =
+    chatItemsStartIndex === 0 ? [] : currentDetail!.items.slice(0, chatItemsStartIndex)
+  for (const [index, item] of items.entries()) {
+    if (item.type !== 'working') {
+      mergedItems.push(item)
+      continue
+    }
+
+    const mergedWorkingStep = getWorkingStepFromUpdate(
+      item,
+      currentDetail?.items[chatItemsStartIndex + index]
+    )
+    if (!mergedWorkingStep) return null
+    mergedItems.push(mergedWorkingStep)
+  }
+
+  return {
+    ...chatDetail,
+    items: mergedItems
+  }
+}
+
+const getChatDetailFromUpdateSummary = (
+  detail: ProviderChatDetail,
+  summary: ProviderChatUpdateSummary
+): ProviderChatDetail => ({
+  ...detail,
+  title: summary.title,
+  cwd: summary.cwd,
+  cwdKind: summary.cwdKind,
+  projectCwd: summary.projectCwd,
+  branchName: summary.branchName,
+  status: summary.status,
+  pendingApproval: summary.pendingApproval,
+  pinned: summary.pinned,
+  done: summary.done,
+  seenUpdatedAt: summary.seenUpdatedAt,
+  purpose: summary.purpose
+})
+
+const arePendingApprovalsEqual = (
+  first: ProviderChat['pendingApproval'],
+  second: ProviderChat['pendingApproval']
+): boolean =>
+  first === second ||
+  (Boolean(first) &&
+    Boolean(second) &&
+    first?.id === second?.id &&
+    first?.type === second?.type &&
+    first?.command === second?.command &&
+    first?.cwd === second?.cwd &&
+    first?.reason === second?.reason &&
+    first?.startedAt === second?.startedAt)
+
+const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
+  first.id === second.id &&
+  first.providerId === second.providerId &&
+  first.title === second.title &&
+  first.preview === second.preview &&
+  first.cwd === second.cwd &&
+  first.cwdKind === second.cwdKind &&
+  first.projectCwd === second.projectCwd &&
+  first.branchName === second.branchName &&
+  first.createdAt === second.createdAt &&
+  first.updatedAt === second.updatedAt &&
+  first.status === second.status &&
+  arePendingApprovalsEqual(first.pendingApproval, second.pendingApproval) &&
+  first.pinned === second.pinned &&
+  first.done === second.done &&
+  first.seenUpdatedAt === second.seenUpdatedAt &&
+  first.purpose === second.purpose
+
+const getChatFromUpdateSummary = (
+  providerId: ProviderId,
+  summary: ProviderChatUpdateSummary,
+  existingChat: ProviderChat | null,
+  turnCompleted: boolean
+): ProviderChat => {
+  const summaryChanged =
+    !existingChat ||
+    existingChat.title !== summary.title ||
+    existingChat.cwd !== summary.cwd ||
+    existingChat.cwdKind !== summary.cwdKind ||
+    existingChat.projectCwd !== summary.projectCwd ||
+    existingChat.branchName !== summary.branchName ||
+    existingChat.status !== summary.status ||
+    !arePendingApprovalsEqual(existingChat.pendingApproval, summary.pendingApproval) ||
+    existingChat.pinned !== summary.pinned ||
+    existingChat.done !== summary.done ||
+    existingChat.seenUpdatedAt !== summary.seenUpdatedAt ||
+    existingChat.purpose !== summary.purpose
+
+  return {
+    id: summary.id,
+    providerId,
+    title: summary.title,
+    preview: !existingChat || turnCompleted ? summary.preview : existingChat.preview,
+    cwd: summary.cwd,
+    cwdKind: summary.cwdKind,
+    projectCwd: summary.projectCwd,
+    branchName: summary.branchName,
+    createdAt: existingChat?.createdAt ?? summary.updatedAt,
+    updatedAt:
+      !existingChat || summaryChanged || turnCompleted ? summary.updatedAt : existingChat.updatedAt,
+    status: summary.status,
+    pendingApproval: summary.pendingApproval,
+    pinned: summary.pinned,
+    done: summary.done,
+    seenUpdatedAt: summary.seenUpdatedAt,
+    purpose: summary.purpose
+  }
+}
+
 const getOptimisticItems = (items: ProviderChatItem[], message: string): ProviderChatItem[] => {
   const createdAt = Date.now()
   const id = `optimistic:${createdAt}`
@@ -1626,6 +1788,23 @@ const getCommitActivityCurrentAction = (
       label: workingMessage.content.trim(),
       activity: 'other'
     }
+  }
+
+  return {
+    label: `Preparing ${commitActionLabels[fallbackAction].toLocaleLowerCase()}`,
+    activity: 'other'
+  }
+}
+
+const getCommitActivityCurrentActionFromSummary = (
+  summary: ProviderChatUpdateSummary,
+  fallbackAction: GitCommitPromptAction
+): CommitActivityAction => {
+  if (summary.currentActivity) {
+    return getCommitActivityActionFromLabel(
+      summary.currentActivity.label,
+      summary.currentActivity.activity
+    )
   }
 
   return {
@@ -2073,6 +2252,7 @@ export const App: React.FC = () => {
   const [extractedChatPlan, setExtractedChatPlan] = useState<ChatPlanData | null>(null)
   const [chatLoadState, setChatLoadState] = useState<LoadState>('ready')
   const [chatLoadRequest, setChatLoadRequest] = useState(0)
+  const [committedChatUpdate, setCommittedChatUpdate] = useState<CommittedChatUpdate | null>(null)
   const [sendState, setSendState] = useState<SendState>('idle')
   const [editingMessage, setEditingMessage] = useState<EditingMessage | null>(null)
   const [approvalModes, setApprovalModes] = useState<ProviderApprovalModeOption[]>(
@@ -2180,6 +2360,7 @@ export const App: React.FC = () => {
   const [windowState, setWindowState] = useState<AppWindowState>({ isMaximized: false })
   const panelsRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const chatDetailRef = useRef<ProviderChatDetail | null>(chatDetail)
   const chatSearchContentRef = useRef<HTMLDivElement>(null)
   const chatSearchInputRef = useRef<HTMLInputElement>(null)
   const chatSearchMatchesRef = useRef<Range[]>([])
@@ -2233,6 +2414,10 @@ export const App: React.FC = () => {
     selectedChatKeyRef.current = selectedChat ? getChatKey(selectedChat) : null
     selectedChatUpdatedAtRef.current = selectedChat?.updatedAt ?? null
   }, [selectedChat])
+
+  useEffect(() => {
+    chatDetailRef.current = chatDetail
+  }, [chatDetail])
 
   useEffect(() => {
     const limit = appSettings.chat.recentChatCacheLimit
@@ -2890,6 +3075,10 @@ export const App: React.FC = () => {
       options: ApplyChatDetailOptions = {}
     ): void => {
       const updatedAt = Date.now()
+      const detailKey = getProviderChatKey(providerId, detail.id)
+      if (options.select || selectedChatKeyRef.current === detailKey) {
+        chatDetailRef.current = detail
+      }
       cacheRecentChatDetail(providerId, detail, updatedAt, options.select)
 
       if (detail.purpose === 'commit') {
@@ -2926,9 +3115,52 @@ export const App: React.FC = () => {
     [cacheRecentChatDetail, resetChatSearch]
   )
 
+  const applyChatSummary = useCallback(
+    (providerId: ProviderId, summary: ProviderChatUpdateSummary, turnCompleted: boolean): void => {
+      removeRecentChatCacheEntry(providerId, summary.id)
+
+      if (summary.purpose === 'commit') {
+        setChats((currentChats) =>
+          currentChats.filter((chat) => chat.providerId !== providerId || chat.id !== summary.id)
+        )
+        return
+      }
+
+      const summaryKey = getProviderChatKey(providerId, summary.id)
+      if (selectedChatKeyRef.current === summaryKey && chatDetailRef.current?.id === summary.id) {
+        chatDetailRef.current = getChatDetailFromUpdateSummary(chatDetailRef.current, summary)
+        setChatDetail((currentDetail) =>
+          currentDetail?.id === summary.id
+            ? getChatDetailFromUpdateSummary(currentDetail, summary)
+            : currentDetail
+        )
+      }
+
+      setSelectedChat((currentChat) => {
+        if (currentChat?.providerId !== providerId || currentChat.id !== summary.id) {
+          return currentChat
+        }
+
+        const nextChat = getChatFromUpdateSummary(providerId, summary, currentChat, turnCompleted)
+        return areChatsEqual(currentChat, nextChat) ? currentChat : nextChat
+      })
+      setChats((currentChats) => {
+        const existingChat =
+          currentChats.find((chat) => chat.providerId === providerId && chat.id === summary.id) ??
+          null
+        const nextChat = getChatFromUpdateSummary(providerId, summary, existingChat, turnCompleted)
+        if (existingChat && areChatsEqual(existingChat, nextChat)) return currentChats
+
+        return mergeChats(currentChats, [nextChat])
+      })
+    },
+    [removeRecentChatCacheEntry]
+  )
+
   const showNewChatView = useCallback(
     (projectCwd?: string | null): void => {
       resetChatSearch()
+      chatDetailRef.current = null
       setSelectedChat(null)
       setChatDetail(null)
       setChatLoadState('ready')
@@ -3080,48 +3312,82 @@ export const App: React.FC = () => {
         const seenUpdatedAt = Date.now()
         const updatedChatKey = getChatKey({ providerId: event.providerId, id: event.chatId })
         const viewingUpdatedChat = selectedChatKeyRef.current === updatedChatKey
+        const selectedDetail =
+          viewingUpdatedChat && event.detail
+            ? getChatDetailFromUpdate(event.detail, chatDetailRef.current)
+            : null
 
-        startTransition(() => applyChatDetail(event.providerId, event.detail))
+        if (selectedDetail) {
+          startTransition(() => {
+            applyChatDetail(event.providerId, selectedDetail)
+            setCommittedChatUpdate({
+              sequence: event.sequence,
+              detailApplied: true
+            })
+          })
+        } else {
+          applyChatSummary(event.providerId, event.summary, event.turnCompleted)
+          if (viewingUpdatedChat) {
+            chatDetailRef.current = null
+            setChatDetail(null)
+            setChatLoadState('loading')
+            setChatLoadRequest((currentRequest) => currentRequest + 1)
+          }
+          providerApi.acknowledgeChatUpdate(event.sequence, false)
+        }
         if (viewingUpdatedChat && event.turnCompleted) {
           markChatSeenAt(event.providerId, event.chatId, seenUpdatedAt)
         }
         if (
           event.turnCompleted &&
           changesCwdRef.current &&
-          event.detail.cwd === changesCwdRef.current
+          event.summary.cwd === changesCwdRef.current
         ) {
           setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
           setGitBranchLoadRequest((currentRequest) => currentRequest + 1)
           setFileTreeLoadRequest((currentRequest) => currentRequest + 1)
         }
         const commitActivity = scopedCommitActivitiesRef.current[updatedChatKey]
-        if (commitActivity && !isActiveChatStatus(event.detail.status)) {
-          setChatCommitMarkers((currentMarkers) => {
-            const marker = currentMarkers[commitActivity.markerId]
-            if (!marker || marker.status !== 'pending') return currentMarkers
+        if (commitActivity && !isActiveChatStatus(event.summary.status)) {
+          const finishCommitActivity = (detail: ProviderChatDetail): void => {
+            setChatCommitMarkers((currentMarkers) => {
+              const marker = currentMarkers[commitActivity.markerId]
+              if (!marker || marker.status !== 'pending') return currentMarkers
 
-            return {
-              ...currentMarkers,
-              [marker.id]: {
-                ...marker,
-                status: getChatCommitMarkerTerminalStatus(event.detail),
-                afterItemId:
-                  commitActivity.chatId === commitActivity.sourceChatId
-                    ? getLastChatCommitMarkerAnchorId(event.detail.items, marker.afterItemId)
-                    : marker.afterItemId,
-                finishedAt: Date.now()
+              return {
+                ...currentMarkers,
+                [marker.id]: {
+                  ...marker,
+                  status: getChatCommitMarkerTerminalStatus(detail),
+                  afterItemId:
+                    commitActivity.chatId === commitActivity.sourceChatId
+                      ? getLastChatCommitMarkerAnchorId(detail.items, marker.afterItemId)
+                      : marker.afterItemId,
+                  finishedAt: Date.now()
+                }
               }
-            }
-          })
-          setScopedCommitActivities((currentActivities) => {
-            if (!currentActivities[updatedChatKey]) return currentActivities
+            })
+            setScopedCommitActivities((currentActivities) => {
+              if (!currentActivities[updatedChatKey]) return currentActivities
 
-            const nextActivities = { ...currentActivities }
-            delete nextActivities[updatedChatKey]
-            return nextActivities
-          })
+              const nextActivities = { ...currentActivities }
+              delete nextActivities[updatedChatKey]
+              return nextActivities
+            })
+          }
+
+          if (selectedDetail) {
+            finishCommitActivity(selectedDetail)
+          } else {
+            void providerApi
+              .getChat(event.providerId, event.chatId)
+              .then(finishCommitActivity)
+              .catch(() => {
+                // Keep the activity pending so startup recovery can finish it later.
+              })
+          }
         }
-        if (commitActivity && isActiveChatStatus(event.detail.status)) {
+        if (commitActivity && isActiveChatStatus(event.summary.status)) {
           setScopedCommitActivities((currentActivities) => {
             const currentActivity = currentActivities[updatedChatKey]
             if (!currentActivity) return currentActivities
@@ -3130,17 +3396,27 @@ export const App: React.FC = () => {
               ...currentActivities,
               [updatedChatKey]: {
                 ...currentActivity,
-                currentAction: getCommitActivityCurrentAction(
-                  event.detail,
-                  currentActivity.commitAction
-                )
+                currentAction: selectedDetail
+                  ? getCommitActivityCurrentAction(selectedDetail, currentActivity.commitAction)
+                  : getCommitActivityCurrentActionFromSummary(
+                      event.summary,
+                      currentActivity.commitAction
+                    )
               }
             }
           })
         }
       }),
-    [applyChatDetail, markChatSeenAt]
+    [applyChatDetail, applyChatSummary, markChatSeenAt]
   )
+
+  useEffect(() => {
+    if (!committedChatUpdate) return
+    providerApi.acknowledgeChatUpdate(
+      committedChatUpdate.sequence,
+      committedChatUpdate.detailApplied
+    )
+  }, [committedChatUpdate])
 
   const selectedProviderId = selectedChat?.providerId
   const selectedChatId = selectedChat?.id
@@ -3148,6 +3424,11 @@ export const App: React.FC = () => {
     selectedProviderId && selectedChatId
       ? getChatKey({ providerId: selectedProviderId, id: selectedChatId })
       : null
+
+  useEffect(() => {
+    providerApi.setViewedChat(selectedProviderId ?? null, selectedChatId ?? null)
+  }, [selectedChatId, selectedProviderId])
+
   const committingSelectedChatKey =
     selectedProviderId && selectedChatId
       ? getChatKey({ providerId: selectedProviderId, id: selectedChatId })
@@ -3310,6 +3591,7 @@ export const App: React.FC = () => {
       .getChat(selectedProviderId, selectedChatId)
       .then((detail) => {
         if (!active) return
+        chatDetailRef.current = detail
         cacheRecentChatDetail(
           selectedProviderId,
           detail,
@@ -4030,18 +4312,21 @@ export const App: React.FC = () => {
 
     selectedChatKeyRef.current = getChatKey(chat)
     selectedChatUpdatedAtRef.current = chat.updatedAt
+    chatDetailRef.current = null
     setSelectedChat(seenChat)
     setChatDetail(null)
     setChatLoadState('loading')
     if (cachedDetail) {
+      const nextCachedDetail = {
+        ...cachedDetail,
+        seenUpdatedAt:
+          cachedDetail.seenUpdatedAt == null
+            ? seenUpdatedAt
+            : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
+      }
+      chatDetailRef.current = nextCachedDetail
       startTransition(() => {
-        setChatDetail({
-          ...cachedDetail,
-          seenUpdatedAt:
-            cachedDetail.seenUpdatedAt == null
-              ? seenUpdatedAt
-              : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
-        })
+        setChatDetail(nextCachedDetail)
         setChatLoadState('ready')
       })
     }
@@ -4054,6 +4339,7 @@ export const App: React.FC = () => {
 
   const handleBack = (): void => {
     resetChatSearch()
+    chatDetailRef.current = null
     setSelectedChat(null)
     setChatDetail(null)
     setNewChatOpen(false)
@@ -4503,14 +4789,15 @@ export const App: React.FC = () => {
 
     if (chatHasActiveTurn && chatDetail?.capabilities.activeMessages) {
       try {
-        const detail = await providerApi.sendActiveChatMessage(
+        const summary = await providerApi.sendActiveChatMessageSummary(
           providerId,
           chatId,
           message,
           activeMode ?? 'steer',
           turnOptions
         )
-        applyViewedChatDetail(providerId, detail)
+        applyChatSummary(providerId, summary, false)
+        markChatSeenAt(providerId, chatId, Date.now())
         setSendState('idle')
       } catch {
         setSendState('error')
@@ -4531,8 +4818,14 @@ export const App: React.FC = () => {
     }
 
     try {
-      const detail = await providerApi.continueChat(providerId, chatId, message, turnOptions)
-      applyViewedChatDetail(providerId, detail)
+      const summary = await providerApi.continueChatSummary(
+        providerId,
+        chatId,
+        message,
+        turnOptions
+      )
+      applyChatSummary(providerId, summary, false)
+      markChatSeenAt(providerId, chatId, Date.now())
       setSendState('idle')
     } catch {
       void providerApi
@@ -4601,8 +4894,9 @@ export const App: React.FC = () => {
     setSendState('sending')
 
     try {
-      const detail = await providerApi.stopChat(selectedChat.providerId, selectedChat.id)
-      applyViewedChatDetail(selectedChat.providerId, detail)
+      const summary = await providerApi.stopChatSummary(selectedChat.providerId, selectedChat.id)
+      applyChatSummary(selectedChat.providerId, summary, true)
+      markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
       setSendState('idle')
     } catch {
       setSendState('error')

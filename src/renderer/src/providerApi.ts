@@ -1,7 +1,7 @@
-import type { ProviderApi } from '../../shared/provider'
+import type { ProviderRendererApi } from '../../shared/provider'
 
 type ProviderWindow = Window & {
-  providerApi: ProviderApi
+  providerApi: ProviderRendererApi
 }
 
 export const providerApi = (window as unknown as ProviderWindow).providerApi

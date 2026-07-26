@@ -433,11 +433,41 @@ export type ProviderChatDetail = {
   items: ProviderChatItem[]
 }
 
+export type ProviderChatActivitySummary = {
+  label: string
+  activity: ProviderToolActivity
+}
+
+export type ProviderChatUpdateSummary = Omit<ProviderChat, 'providerId' | 'createdAt'> & {
+  currentActivity: ProviderChatActivitySummary | null
+}
+
 export type ProviderChatUpdatedEvent = {
   providerId: ProviderId
   chatId: string
   detail: ProviderChatDetail
+  summary: ProviderChatUpdateSummary
   turnCompleted: boolean
+}
+
+export type ProviderWorkingStepUpdate = Omit<ProviderWorkingStep, 'items'> & {
+  items: ProviderWorkingItem[]
+  workingItemsStartIndex: number
+  workingItemsPrefixLastId: string | null
+}
+
+export type ProviderChatItemUpdate =
+  Exclude<ProviderChatItem, ProviderWorkingStep> | ProviderWorkingStepUpdate
+
+export type ProviderChatDetailUpdate = Omit<ProviderChatDetail, 'items'> & {
+  items: ProviderChatItemUpdate[]
+  chatItemsStartIndex: number
+  chatItemsPrefixLastId: string | null
+}
+
+export type ProviderWindowChatUpdatedEvent = Omit<ProviderChatUpdatedEvent, 'detail'> & {
+  detail: ProviderChatDetailUpdate | null
+  sequence: number
 }
 
 export type ProviderTurnOptions = {
@@ -555,6 +585,26 @@ export type ProviderApi = {
   onChatUpdated: (listener: (event: ProviderChatUpdatedEvent) => void) => () => void
 }
 
+export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
+  continueChatSummary: (
+    providerId: ProviderId,
+    chatId: string,
+    message: string,
+    options?: ProviderTurnOptions
+  ) => Promise<ProviderChatUpdateSummary>
+  sendActiveChatMessageSummary: (
+    providerId: ProviderId,
+    chatId: string,
+    message: string,
+    mode: ProviderActiveSendMode,
+    options?: ProviderTurnOptions
+  ) => Promise<ProviderChatUpdateSummary>
+  stopChatSummary: (providerId: ProviderId, chatId: string) => Promise<ProviderChatUpdateSummary>
+  setViewedChat: (providerId: ProviderId | null, chatId: string | null) => void
+  acknowledgeChatUpdate: (sequence: number, detailApplied: boolean) => void
+  onChatUpdated: (listener: (event: ProviderWindowChatUpdatedEvent) => void) => () => void
+}
+
 export const providerIpcChannels = {
   login: 'provider:login',
   getUpdateAvailability: 'provider:get-update-availability',
@@ -583,7 +633,14 @@ export const providerIpcChannels = {
   setCwdNotes: 'provider:set-cwd-notes',
   markChatSeen: 'provider:mark-chat-seen',
   setChatPinned: 'provider:set-chat-pinned',
-  chatUpdated: 'provider:chat-updated'
+  continueChatSummary: 'provider:continue-chat-summary',
+  sendActiveChatMessageSummary: 'provider:send-active-chat-message-summary',
+  stopChatSummary: 'provider:stop-chat-summary',
+  chatUpdated: 'provider:chat-updated',
+  chatUpdatesReady: 'provider:chat-updates-ready',
+  chatUpdatesStopped: 'provider:chat-updates-stopped',
+  viewedChatChanged: 'provider:viewed-chat-changed',
+  chatUpdateAcknowledged: 'provider:chat-update-acknowledged'
 } as const
 
 export const isProviderId = (value: unknown): value is ProviderId =>

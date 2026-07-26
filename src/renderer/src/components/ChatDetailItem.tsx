@@ -144,6 +144,7 @@ const areWorkingToolsEqual = (first: ProviderWorkingTool, second: ProviderWorkin
   areUnknownValuesEqual(first.rawOutput, second.rawOutput)
 
 const areWorkingItemsEqual = (first: ProviderWorkingItem, second: ProviderWorkingItem): boolean => {
+  if (first === second) return true
   if (first.type !== second.type || first.id !== second.id) return false
   if (first.type === 'message') {
     return second.type === 'message' && first.content === second.content

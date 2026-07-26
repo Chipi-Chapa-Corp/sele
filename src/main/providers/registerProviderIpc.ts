@@ -1,15 +1,22 @@
 import { isAbsolute } from 'node:path'
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain, type WebContents } from 'electron'
 import type {
   ProviderApprovalDecision,
   ProviderActiveSendMode,
+  ProviderChatDetail,
+  ProviderChatDetailUpdate,
+  ProviderChatItem,
   ProviderChatListOptions,
   ProviderChatPurpose,
+  ProviderChatUpdatedEvent,
   ProviderCwdNote,
   ProviderId,
   ProviderOneShotOptions,
+  ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
-  ProviderUsageOptions
+  ProviderUsageOptions,
+  ProviderWorkingItem,
+  ProviderWorkingStepUpdate
 } from '../../shared/provider'
 import {
   isProviderApprovalPolicy,
@@ -21,7 +28,213 @@ import {
   isProviderSandboxMode,
   providerIpcChannels
 } from '../../shared/provider'
-import { providerApi } from './providerService'
+import { getChatUpdateSummary, providerApi } from './providerService'
+
+type QueuedWindowChatUpdate = Omit<ProviderWindowChatUpdatedEvent, 'detail' | 'sequence'> & {
+  detail: ProviderChatDetail | null
+}
+
+type InFlightChatUpdate = {
+  sequence: number
+  chatKey: string
+  detail: ProviderChatDetail | null
+}
+
+type AcknowledgedChatDetail = {
+  chatKey: string
+  detail: ProviderChatDetail
+}
+
+type ChatUpdateDeliveryState = {
+  ready: boolean
+  viewedChatKey: string | null
+  inFlightUpdate: InFlightChatUpdate | null
+  acknowledgedDetail: AcknowledgedChatDetail | null
+  pendingByChatKey: Map<string, QueuedWindowChatUpdate>
+  latestUpdateAtByChatKey: Map<string, number>
+}
+
+const chatUpdateDeliveryByWebContentsId = new Map<number, ChatUpdateDeliveryState>()
+let nextChatUpdateSequence = 1
+
+const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
+  `${providerId}:${chatId}`
+
+const getChangedTailStartIndex = <TItem extends { id: string }>(
+  previousItems: TItem[],
+  nextItems: TItem[],
+  isActive: (item: TItem) => boolean
+): number => {
+  if (nextItems.length === 0 || previousItems.length === 0) return 0
+
+  const sharedLength = Math.min(previousItems.length, nextItems.length)
+  const candidates = [nextItems.length - 1]
+  let sharedIdCount = 0
+
+  while (
+    sharedIdCount < sharedLength &&
+    previousItems[sharedIdCount].id === nextItems[sharedIdCount].id
+  ) {
+    sharedIdCount += 1
+  }
+  if (sharedIdCount < sharedLength) candidates.push(sharedIdCount)
+  if (previousItems.length !== nextItems.length) {
+    candidates.push(Math.max(0, sharedLength - 1))
+  }
+
+  const previousActiveIndex = previousItems.findIndex(isActive)
+  const nextActiveIndex = nextItems.findIndex(isActive)
+  if (previousActiveIndex >= 0) candidates.push(previousActiveIndex)
+  if (nextActiveIndex >= 0) candidates.push(nextActiveIndex)
+
+  return Math.max(0, Math.min(...candidates))
+}
+
+const isRunningWorkingItem = (item: ProviderWorkingItem): boolean => {
+  if (item.type === 'message') return false
+  if (item.type === 'tool') return item.status === 'running'
+  return item.tools.some((tool) => tool.status === 'running')
+}
+
+const createWorkingStepUpdate = (
+  item: Extract<ProviderChatItem, { type: 'working' }>,
+  previousItem: ProviderChatItem | undefined
+): ProviderWorkingStepUpdate => {
+  const previousWorkingItem =
+    previousItem?.type === 'working' && previousItem.id === item.id ? previousItem : null
+  const workingItemsStartIndex = previousWorkingItem
+    ? getChangedTailStartIndex(previousWorkingItem.items, item.items, isRunningWorkingItem)
+    : 0
+  const { items, ...workingStep } = item
+
+  return {
+    ...workingStep,
+    items: items.slice(workingItemsStartIndex),
+    workingItemsStartIndex,
+    workingItemsPrefixLastId:
+      workingItemsStartIndex > 0 ? (items[workingItemsStartIndex - 1]?.id ?? null) : null
+  }
+}
+
+const createChatDetailUpdate = (
+  detail: ProviderChatDetail,
+  previousDetail: ProviderChatDetail | null
+): ProviderChatDetailUpdate => {
+  const matchingPreviousDetail = previousDetail?.id === detail.id ? previousDetail : null
+  const chatItemsStartIndex = matchingPreviousDetail
+    ? getChangedTailStartIndex(
+        matchingPreviousDetail.items,
+        detail.items,
+        (item) => item.type === 'working' && item.status === 'working'
+      )
+    : 0
+  const { items, ...chatDetail } = detail
+
+  return {
+    ...chatDetail,
+    items: items
+      .slice(chatItemsStartIndex)
+      .map((item, index) =>
+        item.type === 'working'
+          ? createWorkingStepUpdate(
+              item,
+              matchingPreviousDetail?.items[chatItemsStartIndex + index]
+            )
+          : item
+      ),
+    chatItemsStartIndex,
+    chatItemsPrefixLastId:
+      chatItemsStartIndex > 0 ? (items[chatItemsStartIndex - 1]?.id ?? null) : null
+  }
+}
+
+const getChatUpdateDeliveryState = (webContents: WebContents): ChatUpdateDeliveryState => {
+  const existingState = chatUpdateDeliveryByWebContentsId.get(webContents.id)
+  if (existingState) return existingState
+
+  const state: ChatUpdateDeliveryState = {
+    ready: false,
+    viewedChatKey: null,
+    inFlightUpdate: null,
+    acknowledgedDetail: null,
+    pendingByChatKey: new Map(),
+    latestUpdateAtByChatKey: new Map()
+  }
+  chatUpdateDeliveryByWebContentsId.set(webContents.id, state)
+  webContents.once('destroyed', () => {
+    chatUpdateDeliveryByWebContentsId.delete(webContents.id)
+  })
+  return state
+}
+
+const sendChatUpdate = (
+  webContents: WebContents,
+  state: ChatUpdateDeliveryState,
+  update: QueuedWindowChatUpdate
+): void => {
+  if (webContents.isDestroyed() || !state.ready || state.inFlightUpdate !== null) return
+
+  const sequence = nextChatUpdateSequence
+  nextChatUpdateSequence =
+    nextChatUpdateSequence >= Number.MAX_SAFE_INTEGER ? 1 : nextChatUpdateSequence + 1
+  const chatKey = getProviderChatKey(update.providerId, update.chatId)
+  const previousDetail =
+    state.acknowledgedDetail?.chatKey === chatKey ? state.acknowledgedDetail.detail : null
+  const detailUpdate = update.detail ? createChatDetailUpdate(update.detail, previousDetail) : null
+  state.inFlightUpdate = {
+    sequence,
+    chatKey,
+    detail: update.detail
+  }
+  webContents.send(providerIpcChannels.chatUpdated, {
+    ...update,
+    detail: detailUpdate,
+    sequence
+  } satisfies ProviderWindowChatUpdatedEvent)
+}
+
+const sendNextChatUpdate = (webContents: WebContents, state: ChatUpdateDeliveryState): void => {
+  if (!state.ready || state.inFlightUpdate !== null || state.pendingByChatKey.size === 0) return
+
+  const preferredChatKey =
+    state.viewedChatKey && state.pendingByChatKey.has(state.viewedChatKey)
+      ? state.viewedChatKey
+      : state.pendingByChatKey.keys().next().value
+  if (typeof preferredChatKey !== 'string') return
+
+  const update = state.pendingByChatKey.get(preferredChatKey)
+  state.pendingByChatKey.delete(preferredChatKey)
+  if (update) sendChatUpdate(webContents, state, update)
+}
+
+const queueChatUpdateForWindow = (
+  webContents: WebContents,
+  event: ProviderChatUpdatedEvent
+): void => {
+  if (webContents.isDestroyed()) return
+
+  const state = getChatUpdateDeliveryState(webContents)
+  const chatKey = getProviderChatKey(event.providerId, event.chatId)
+  const latestUpdateAt = state.latestUpdateAtByChatKey.get(chatKey)
+  if (latestUpdateAt !== undefined && event.summary.updatedAt < latestUpdateAt) return
+  state.latestUpdateAtByChatKey.set(chatKey, event.summary.updatedAt)
+
+  const pendingUpdate = state.pendingByChatKey.get(chatKey)
+  const update = {
+    providerId: event.providerId,
+    chatId: event.chatId,
+    detail: state.viewedChatKey === chatKey ? event.detail : null,
+    summary: event.summary,
+    turnCompleted: event.turnCompleted || pendingUpdate?.turnCompleted === true
+  } satisfies QueuedWindowChatUpdate
+
+  if (!state.ready || state.inFlightUpdate !== null) {
+    state.pendingByChatKey.set(chatKey, update)
+    return
+  }
+
+  sendChatUpdate(webContents, state, update)
+}
 
 const requireProviderId = (value: unknown): ProviderId => {
   if (!isProviderId(value)) throw new Error(`Unknown provider: ${String(value)}`)
@@ -221,9 +434,90 @@ const requireOneShotOptions = (value: unknown): ProviderOneShotOptions | undefin
 export const registerProviderIpc = (): void => {
   providerApi.onChatUpdated((event) => {
     BrowserWindow.getAllWindows().forEach((window) => {
-      window.webContents.send(providerIpcChannels.chatUpdated, event)
+      queueChatUpdateForWindow(window.webContents, event)
     })
   })
+
+  ipcMain.on(providerIpcChannels.chatUpdatesReady, (event) => {
+    const state = getChatUpdateDeliveryState(event.sender)
+    state.ready = true
+    sendNextChatUpdate(event.sender, state)
+  })
+
+  ipcMain.on(providerIpcChannels.chatUpdatesStopped, (event) => {
+    const state = getChatUpdateDeliveryState(event.sender)
+    state.ready = false
+    state.inFlightUpdate = null
+    state.acknowledgedDetail = null
+    state.pendingByChatKey.clear()
+  })
+
+  ipcMain.on(
+    providerIpcChannels.viewedChatChanged,
+    (event, providerIdValue: unknown, chatIdValue: unknown) => {
+      const state = getChatUpdateDeliveryState(event.sender)
+      const clearingViewedChat = providerIdValue == null && chatIdValue == null
+      if (!clearingViewedChat && (providerIdValue == null || chatIdValue == null)) {
+        return
+      }
+
+      try {
+        const nextViewedChatKey = clearingViewedChat
+          ? null
+          : getProviderChatKey(requireProviderId(providerIdValue), requireChatId(chatIdValue))
+        if (state.viewedChatKey !== nextViewedChatKey) state.acknowledgedDetail = null
+        state.viewedChatKey = nextViewedChatKey
+      } catch {
+        return
+      }
+
+      for (const [chatKey, update] of state.pendingByChatKey) {
+        if (chatKey === state.viewedChatKey || update.detail === null) continue
+        state.pendingByChatKey.set(chatKey, {
+          ...update,
+          detail: null
+        })
+      }
+      sendNextChatUpdate(event.sender, state)
+    }
+  )
+
+  ipcMain.on(
+    providerIpcChannels.chatUpdateAcknowledged,
+    (event, sequenceValue: unknown, detailAppliedValue: unknown) => {
+      if (
+        typeof sequenceValue !== 'number' ||
+        !Number.isSafeInteger(sequenceValue) ||
+        sequenceValue < 1 ||
+        typeof detailAppliedValue !== 'boolean'
+      ) {
+        return
+      }
+
+      const state = getChatUpdateDeliveryState(event.sender)
+      const inFlightUpdate = state.inFlightUpdate
+      if (!inFlightUpdate || inFlightUpdate.sequence !== sequenceValue) return
+
+      if (
+        detailAppliedValue &&
+        inFlightUpdate.detail &&
+        state.viewedChatKey === inFlightUpdate.chatKey
+      ) {
+        state.acknowledgedDetail = {
+          chatKey: inFlightUpdate.chatKey,
+          detail: inFlightUpdate.detail
+        }
+      } else if (
+        inFlightUpdate.detail &&
+        state.acknowledgedDetail?.chatKey === inFlightUpdate.chatKey
+      ) {
+        state.acknowledgedDetail = null
+      }
+
+      state.inFlightUpdate = null
+      sendNextChatUpdate(event.sender, state)
+    }
+  )
 
   ipcMain.handle(providerIpcChannels.login, (_, providerId: unknown) =>
     providerApi.login(requireProviderId(providerId))
@@ -300,6 +594,19 @@ export const registerProviderIpc = (): void => {
   )
 
   ipcMain.handle(
+    providerIpcChannels.continueChatSummary,
+    async (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) => {
+      const detail = await providerApi.continueChat(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireMessage(message),
+        requireTurnOptions(options)
+      )
+      return getChatUpdateSummary(detail, Date.now())
+    }
+  )
+
+  ipcMain.handle(
     providerIpcChannels.continueChatInFork,
     (
       _,
@@ -328,6 +635,27 @@ export const registerProviderIpc = (): void => {
         requireActiveSendMode(mode),
         requireTurnOptions(options)
       )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.sendActiveChatMessageSummary,
+    async (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      message: unknown,
+      mode: unknown,
+      options: unknown
+    ) => {
+      const detail = await providerApi.sendActiveChatMessage(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireMessage(message),
+        requireActiveSendMode(mode),
+        requireTurnOptions(options)
+      )
+      return getChatUpdateSummary(detail, Date.now())
+    }
   )
 
   ipcMain.handle(
@@ -390,6 +718,17 @@ export const registerProviderIpc = (): void => {
 
   ipcMain.handle(providerIpcChannels.stopChat, (_, providerId: unknown, chatId: unknown) =>
     providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.stopChatSummary,
+    async (_, providerId: unknown, chatId: unknown) => {
+      const detail = await providerApi.stopChat(
+        requireProviderId(providerId),
+        requireChatId(chatId)
+      )
+      return getChatUpdateSummary(detail, Date.now())
+    }
   )
 
   ipcMain.handle(

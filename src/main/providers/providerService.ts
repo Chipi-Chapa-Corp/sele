@@ -1,11 +1,15 @@
 import type {
   ProviderApi,
   ProviderChat,
+  ProviderChatActivitySummary,
   ProviderChatDetail,
   ProviderChatMetadata,
+  ProviderChatUpdateSummary,
   ProviderChatUpdatedEvent,
   ProviderId,
-  ProviderUsageOptions
+  ProviderUsageOptions,
+  ProviderWorkingItem,
+  ProviderWorkingStep
 } from '../../shared/provider'
 import {
   getChatMetadata,
@@ -24,6 +28,12 @@ import type { ProviderAdapter } from './ProviderAdapter'
 const adapters: Record<ProviderId, ProviderAdapter> = {
   codex: new CodexProviderAdapter()
 }
+
+const chatUpdatePreviewLimit = 500
+const chatUpdateActivityLabelLimit = 240
+
+const truncateChatUpdateText = (value: string, limit: number): string =>
+  value.length <= limit ? value : `${value.slice(0, limit - 1)}…`
 
 const chatUpdatedListeners = new Set<(event: ProviderChatUpdatedEvent) => void>()
 
@@ -76,6 +86,59 @@ const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<Provid
   }
 }
 
+const getChatUpdateActivity = (detail: ProviderChatDetail): ProviderChatActivitySummary | null => {
+  const workingStep = detail.items.findLast(
+    (item): item is ProviderWorkingStep => item.type === 'working' && item.status === 'working'
+  )
+  if (!workingStep) return null
+
+  const tools = workingStep.items.flatMap((item) =>
+    item.type === 'message' ? [] : item.type === 'toolGroup' ? item.tools : [item]
+  )
+  const activeTool = tools.findLast((tool) => tool.status === 'running') ?? tools.at(-1)
+  if (activeTool) {
+    return {
+      label: truncateChatUpdateText(activeTool.label, chatUpdateActivityLabelLimit),
+      activity: activeTool.activity
+    }
+  }
+
+  const workingMessage = workingStep.items.findLast(
+    (item): item is Extract<ProviderWorkingItem, { type: 'message' }> =>
+      item.type === 'message' && item.content.trim().length > 0
+  )
+  return workingMessage
+    ? {
+        label: truncateChatUpdateText(workingMessage.content.trim(), chatUpdateActivityLabelLimit),
+        activity: 'other'
+      }
+    : null
+}
+
+export const getChatUpdateSummary = (
+  detail: ProviderChatDetail,
+  updatedAt: number
+): ProviderChatUpdateSummary => ({
+  id: detail.id,
+  title: detail.title,
+  preview: truncateChatUpdateText(
+    detail.items.findLast((item) => item.type === 'message')?.content.trim() ?? '',
+    chatUpdatePreviewLimit
+  ),
+  cwd: detail.cwd,
+  cwdKind: detail.cwdKind,
+  projectCwd: detail.projectCwd,
+  branchName: detail.branchName,
+  updatedAt,
+  status: detail.status,
+  pendingApproval: detail.pendingApproval,
+  pinned: detail.pinned,
+  done: detail.done,
+  seenUpdatedAt: detail.seenUpdatedAt,
+  purpose: detail.purpose,
+  currentActivity: getChatUpdateActivity(detail)
+})
+
 const collectProviderChatIdsByCwd = async (
   providerId: ProviderId,
   cwd: string | null
@@ -103,12 +166,14 @@ const collectProviderChatIdsByCwd = async (
 
 for (const adapter of Object.values(adapters)) {
   adapter.onChatUpdated((detail, updateMetadata) => {
+    const updatedAt = Date.now()
     void applyMetadataToDetail(detail)
       .then((enrichedDetail) => {
         const event = {
           providerId: adapter.id,
           chatId: enrichedDetail.id,
           detail: enrichedDetail,
+          summary: getChatUpdateSummary(enrichedDetail, updatedAt),
           turnCompleted: updateMetadata?.turnCompleted ?? false
         } satisfies ProviderChatUpdatedEvent
 
