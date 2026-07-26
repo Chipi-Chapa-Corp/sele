@@ -13,7 +13,8 @@
   font: inherit;
 }
 
-:where(.ui-input::-webkit-search-cancel-button) {
+.ui-input::-webkit-search-cancel-button {
+  appearance: none;
   display: none;
 }
 
