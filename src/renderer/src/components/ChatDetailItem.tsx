@@ -614,7 +614,7 @@ const LoopingAnimatedIcon: React.FC<{
   return (
     <Icon
       ref={iconRef}
-      className="chat-detail__animated-icon"
+      className={`chat-detail__animated-icon${active ? ' chat-detail__animated-icon--active' : ''}`}
       size={18}
       animateOnHover={false}
       aria-hidden="true"
@@ -660,11 +660,7 @@ const Activity: React.FC<{
         <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
       </summary>
       {open &&
-        (active ? (
-          <div className="chat-detail__activity-pending">
-            Output is collected while this tool runs.
-          </div>
-        ) : activity === 'edit' || activity === 'create' || activity === 'delete' ? (
+        (activity === 'edit' || activity === 'create' || activity === 'delete' ? (
           <DiffContent tools={tools} projectCwd={projectCwd} />
         ) : activity === 'command' ||
           activity === 'search' ||

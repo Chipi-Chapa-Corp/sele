@@ -479,13 +479,6 @@
   backdrop-filter: blur(12px) saturate(1.2);
 }
 
-.chat-detail__activity-pending {
-  margin: 9px 0 12px;
-  padding: 10px 12px;
-  color: var(--quiet);
-  line-height: 1.4;
-}
-
 .chat-detail__activity-content section {
   margin: 0;
   padding: 12px 14px;
@@ -734,6 +727,29 @@
   width: 18px;
   height: 18px;
   place-items: center;
+}
+
+.chat-detail__animated-icon--active {
+  animation: chat-detail-active-icon-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes chat-detail-active-icon-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.58;
+    transform: scale(0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-detail__animated-icon--active {
+    animation: none;
+  }
 }
 
 .chat-detail__animated-icon > svg,
