@@ -479,15 +479,6 @@
   box-shadow: var(--control-shadow);
 }
 
-.changes-sidebar__commit-activity-cancel {
-  --control-height-small: 24px;
-  --control-icon-size: 15px;
-
-  display: inline-flex;
-  flex: none;
-  pointer-events: auto;
-}
-
 .changes-sidebar__commit-activity-badge {
   display: inline-flex;
   min-width: 0;
@@ -1252,6 +1243,15 @@
 .chat-detail__commit-placeholder-icon > svg {
   width: 18px;
   height: 18px;
+}
+
+.chat-detail__commit-placeholder-cancel {
+  --control-height-small: 24px;
+  --control-icon-size: 15px;
+
+  display: inline-flex;
+  flex: none;
+  margin-left: 3px;
 }
 
 @media (max-width: 800px) {

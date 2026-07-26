@@ -957,6 +957,7 @@ const WorkingStep: React.FC<{
   )
   const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
   const active = item.status === 'working'
+  const [open, setOpen] = useState(active)
   const showPlaceholder = useSilencePlaceholder(
     signature,
     active && (!lastWorkingItem || lastWorkingItem.type === 'message'),
@@ -994,7 +995,8 @@ const WorkingStep: React.FC<{
   return (
     <details
       className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
-      open={active}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
         {heading}

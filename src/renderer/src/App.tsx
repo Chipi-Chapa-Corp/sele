@@ -461,29 +461,13 @@ const CommitActivityActionIcon: React.FC<{ activity: ProviderToolActivity }> = (
 
 const CommitActivityRow: React.FC<{
   activity: CommitActivityDisplay
-  canceling?: boolean
-  onCancel?: () => Promise<void> | void
-}> = ({ activity, canceling = false, onCancel }) => {
+}> = ({ activity }) => {
   const commitActionName = commitActionLabels[activity.commitAction]
-  const commitActionLabel = activity.source === 'ai' ? `AI ${commitActionName}` : commitActionName
+  const commitActionLabel = commitActionName
   const title = `${commitActionLabel} · ${activity.currentAction.label}`
-  const cancelLabel = `Cancel AI ${commitActionName.toLocaleLowerCase()}`
 
   return (
     <div className="changes-sidebar__commit-activity">
-      {onCancel && (
-        <span className="changes-sidebar__commit-activity-cancel">
-          <Button
-            aria-label={cancelLabel}
-            callback={onCancel}
-            disabled={canceling}
-            icon={<X aria-hidden="true" />}
-            size="small"
-            theme="transparent"
-            title={cancelLabel}
-          />
-        </span>
-      )}
       <span className="changes-sidebar__commit-activity-badge">
         <ChangesAnimatedIcon Icon={AnimatedGitCommitHorizontalIcon} active />
         <span>{commitActionLabel}</span>
@@ -2556,6 +2540,13 @@ export const App: React.FC = () => {
   const selectedChatAiCommitAction = committingSelectedChatKey
     ? (committingChatActions.get(committingSelectedChatKey) ?? null)
     : null
+  const selectedChatAiCommitActivity =
+    selectedProviderId && selectedChatId
+      ? (Object.values(scopedCommitActivities).find(
+          (activity) =>
+            activity.providerId === selectedProviderId && activity.sourceChatId === selectedChatId
+        ) ?? null)
+      : null
   const messageBoxPlan = useMemo(
     () =>
       chatDetail?.id === selectedChatId ? getLatestChatPlan(chatDetail, selectedChatKey) : null,
@@ -4995,6 +4986,27 @@ export const App: React.FC = () => {
                           ? 'AI is amending the commit…'
                           : 'AI is committing changes…'}
                       </span>
+                      {selectedChatAiCommitActivity && (
+                        <span className="chat-detail__commit-placeholder-cancel">
+                          <Button
+                            aria-label={`Cancel AI ${selectedChatAiCommitActivity.commitAction}`}
+                            callback={() => handleCancelAiCommit(selectedChatAiCommitActivity)}
+                            disabled={
+                              providerUpdateInProgress ||
+                              cancelingAiCommitKeys.has(
+                                getProviderChatKey(
+                                  selectedChatAiCommitActivity.providerId,
+                                  selectedChatAiCommitActivity.chatId
+                                )
+                              )
+                            }
+                            icon={<X aria-hidden="true" />}
+                            size="small"
+                            theme="transparent"
+                            title={`Cancel AI ${selectedChatAiCommitActivity.commitAction}`}
+                          />
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -5318,26 +5330,11 @@ export const App: React.FC = () => {
                   role="status"
                   aria-label="Commit activity"
                 >
-                  {currentProjectCommitActivities.map((activity) => (
-                    <CommitActivityRow
-                      activity={activity}
-                      canceling={
-                        providerUpdateInProgress ||
-                        (activity.source === 'ai' &&
-                          cancelingAiCommitKeys.has(
-                            getProviderChatKey(activity.providerId, activity.chatId)
-                          ))
-                      }
-                      key={
-                        activity.source === 'ai'
-                          ? getProviderChatKey(activity.providerId, activity.chatId)
-                          : activity.id
-                      }
-                      onCancel={
-                        activity.source === 'ai' ? () => handleCancelAiCommit(activity) : undefined
-                      }
-                    />
-                  ))}
+                  {currentProjectCommitActivities
+                    .filter((activity) => activity.source === 'git')
+                    .map((activity) => (
+                      <CommitActivityRow activity={activity} key={activity.id} />
+                    ))}
                 </div>
                 <div className="changes-sidebar__input-row">
                   <label className="changes-sidebar__commit-message">
