@@ -1256,6 +1256,11 @@ const getChatCommitMarkerTerminalStatus = (
   return lastWorkingStep?.status === 'stopped' ? 'stopped' : 'finished'
 }
 
+const getLastChatCommitMarkerAnchorId = (
+  items: ProviderChatItem[],
+  fallbackId: string | null = null
+): string | null => items.findLast((item) => item.type !== 'pendingMessage')?.id ?? fallbackId
+
 const compareChatsByCreatedAtDesc = (firstChat: ProviderChat, secondChat: ProviderChat): number => {
   if (secondChat.createdAt !== firstChat.createdAt) {
     return secondChat.createdAt - firstChat.createdAt
@@ -2320,7 +2325,7 @@ export const App: React.FC = () => {
                   status: getChatCommitMarkerTerminalStatus(detail),
                   afterItemId:
                     activity.chatId === activity.sourceChatId
-                      ? (detail.items.at(-1)?.id ?? marker.afterItemId)
+                      ? getLastChatCommitMarkerAnchorId(detail.items, marker.afterItemId)
                       : marker.afterItemId,
                   finishedAt: Date.now()
                 }
@@ -2373,7 +2378,7 @@ export const App: React.FC = () => {
                   status: getChatCommitMarkerTerminalStatus(detail),
                   afterItemId:
                     commitChatId === marker.sourceChatId
-                      ? (detail.items.at(-1)?.id ?? currentMarker.afterItemId)
+                      ? getLastChatCommitMarkerAnchorId(detail.items, currentMarker.afterItemId)
                       : currentMarker.afterItemId,
                   finishedAt: Date.now()
                 }
@@ -3102,7 +3107,7 @@ export const App: React.FC = () => {
                 status: getChatCommitMarkerTerminalStatus(event.detail),
                 afterItemId:
                   commitActivity.chatId === commitActivity.sourceChatId
-                    ? (event.detail.items.at(-1)?.id ?? marker.afterItemId)
+                    ? getLastChatCommitMarkerAnchorId(event.detail.items, marker.afterItemId)
                     : marker.afterItemId,
                 finishedAt: Date.now()
               }
@@ -4716,19 +4721,26 @@ export const App: React.FC = () => {
     () => (chatDetail ? getVisibleChatItems(chatDetail.items, editingMessage) : []),
     [chatDetail, editingMessage]
   )
-  const [chatCommitMarkersByAfterItemId, trailingChatCommitMarkers] = useMemo(() => {
-    const visibleItemIds = new Set(visibleChatItems.map((item) => item.id))
+  const firstPendingChatItemId =
+    visibleChatItems.find((item) => item.type === 'pendingMessage')?.id ?? null
+  const [chatCommitMarkersByAfterItemId, unanchoredChatCommitMarkers] = useMemo(() => {
+    const visibleItemsById = new Map(visibleChatItems.map((item) => [item.id, item]))
     const allItemIds = new Set(chatDetail?.items.map((item) => item.id) ?? [])
     const markersByAfterItemId = new Map<string, ChatCommitMarker[]>()
-    const trailingMarkers: ChatCommitMarker[] = []
+    const unanchoredMarkers: ChatCommitMarker[] = []
 
     selectedChatCommitMarkers.forEach((marker) => {
       if (!marker.afterItemId) {
-        trailingMarkers.push(marker)
+        unanchoredMarkers.push(marker)
         return
       }
-      if (!visibleItemIds.has(marker.afterItemId)) {
-        if (!allItemIds.has(marker.afterItemId)) trailingMarkers.push(marker)
+      const anchorItem = visibleItemsById.get(marker.afterItemId)
+      if (!anchorItem) {
+        if (!allItemIds.has(marker.afterItemId)) unanchoredMarkers.push(marker)
+        return
+      }
+      if (anchorItem.type === 'pendingMessage') {
+        unanchoredMarkers.push(marker)
         return
       }
 
@@ -4737,7 +4749,7 @@ export const App: React.FC = () => {
       markersByAfterItemId.set(marker.afterItemId, anchoredMarkers)
     })
 
-    return [markersByAfterItemId, trailingMarkers] as const
+    return [markersByAfterItemId, unanchoredMarkers] as const
   }, [chatDetail?.items, selectedChatCommitMarkers, visibleChatItems])
   const lastStreamingChatItem = chatHasActiveTurn
     ? visibleChatItems.findLast((item) => item.type !== 'pendingMessage')
@@ -5277,7 +5289,7 @@ export const App: React.FC = () => {
     const markerId = chatId ? createChatCommitMarkerId() : null
     const markerStartedAt = Date.now()
     const sourceAnchorItemId =
-      chatId && chatDetail?.id === chatId ? (chatDetail.items.at(-1)?.id ?? null) : null
+      chatId && chatDetail?.id === chatId ? getLastChatCommitMarkerAnchorId(chatDetail.items) : null
 
     sendInFlightRef.current = true
     chatAutoScrollEnabledRef.current = true
@@ -5357,7 +5369,7 @@ export const App: React.FC = () => {
                 : getChatCommitMarkerTerminalStatus(detail),
               afterItemId: useHiddenChat
                 ? sourceAnchorItemId
-                : (detail.items.at(-1)?.id ?? sourceAnchorItemId),
+                : getLastChatCommitMarkerAnchorId(detail.items, sourceAnchorItemId),
               finishedAt: isActiveChatStatus(detail.status) ? null : Date.now()
             }
           }
@@ -5518,7 +5530,7 @@ export const App: React.FC = () => {
             status: 'stopped',
             afterItemId:
               activity.chatId === activity.sourceChatId
-                ? (detail.items.at(-1)?.id ?? marker.afterItemId)
+                ? getLastChatCommitMarkerAnchorId(detail.items, marker.afterItemId)
                 : marker.afterItemId,
             finishedAt: Date.now()
           }
@@ -6156,6 +6168,8 @@ export const App: React.FC = () => {
                     )}
                   {visibleChatItems.map((item) => (
                     <Fragment key={item.id}>
+                      {item.id === firstPendingChatItemId &&
+                        unanchoredChatCommitMarkers.map(renderChatCommitMarker)}
                       <ChatDetailItem
                         canEditOwnMessages={canEditOwnMessages}
                         item={item}
@@ -6174,7 +6188,8 @@ export const App: React.FC = () => {
                       {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
                     </Fragment>
                   ))}
-                  {trailingChatCommitMarkers.map(renderChatCommitMarker)}
+                  {!firstPendingChatItemId &&
+                    unanchoredChatCommitMarkers.map(renderChatCommitMarker)}
                 </div>
               </div>
             )}
