@@ -1,7 +1,15 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useId, useMemo, useRef } from 'react'
 import '../monacoEnvironment'
 import * as monaco from 'monaco-editor'
-import { Diff, markEdits, parseDiff, tokenize } from 'react-diff-view'
+import {
+  Diff,
+  findChangeByNewLineNumber,
+  findChangeByOldLineNumber,
+  getChangeKey,
+  markEdits,
+  parseDiff,
+  tokenize
+} from 'react-diff-view'
 import type { FileData, HunkData, HunkTokens } from 'react-diff-view'
 import { refractor } from 'refractor'
 import jsx from 'refractor/jsx'
@@ -306,6 +314,7 @@ export const EditableUnifiedDiff = ({
   className,
   contents,
   fileDiff,
+  line,
   onChange,
   onSave
 }: {
@@ -314,11 +323,13 @@ export const EditableUnifiedDiff = ({
   className?: string
   contents: string
   fileDiff: ProviderFileDiff
+  line?: number
   onChange: (contents: string) => void
   onSave: () => void
 }): React.JSX.Element => {
   const hostRef = useRef<HTMLDivElement>(null)
   const editorStateRef = useRef<{
+    modifiedEditor: monaco.editor.IStandaloneCodeEditor
     originalModel: monaco.editor.ITextModel
     modifiedModel: monaco.editor.ITextModel
   } | null>(null)
@@ -394,7 +405,7 @@ export const EditableUnifiedDiff = ({
     editor.setModel({ original: originalModel, modified: modifiedModel })
     const originalEditor = editor.getOriginalEditor()
     const modifiedEditor = editor.getModifiedEditor()
-    editorStateRef.current = { modifiedModel, originalModel }
+    editorStateRef.current = { modifiedEditor, modifiedModel, originalModel }
     originalEditor.updateOptions({ ariaLabel: `Original ${ariaLabel}` })
     modifiedEditor.updateOptions({ ariaLabel })
 
@@ -425,6 +436,15 @@ export const EditableUnifiedDiff = ({
   }, [ariaLabel])
 
   useEffect(() => {
+    const modifiedEditor = editorStateRef.current?.modifiedEditor
+    if (!modifiedEditor || !line) return
+
+    const lineNumber = Math.min(line, modifiedEditor.getModel()?.getLineCount() ?? line)
+    modifiedEditor.setPosition({ lineNumber, column: 1 })
+    modifiedEditor.revealLineInCenter(lineNumber, monaco.editor.ScrollType.Immediate)
+  }, [line])
+
+  useEffect(() => {
     const editorState = editorStateRef.current
     if (!editorState) return
 
@@ -441,13 +461,41 @@ export const EditableUnifiedDiff = ({
 
 export const UnifiedDiff = ({
   className,
-  fileDiff
+  fileDiff,
+  line
 }: {
   className?: string
   fileDiff: ProviderFileDiff
+  line?: number
 }): React.JSX.Element => {
   const files = useMemo(() => getRenderedFiles(fileDiff), [fileDiff])
+  const targetAnchorId = `unified-diff-target-${useId().replace(/:/g, '')}`
+  const lineTarget = useMemo(() => {
+    if (!line) return null
+
+    for (const [fileIndex, { file }] of files.entries()) {
+      const change =
+        fileDiff.kind === 'delete'
+          ? findChangeByOldLineNumber(file.hunks, line)
+          : findChangeByNewLineNumber(file.hunks, line)
+      if (change) return { fileIndex, changeKey: getChangeKey(change) }
+    }
+
+    return null
+  }, [fileDiff.kind, files, line])
   const diffClassName = ['unified-diff', className].filter(Boolean).join(' ')
+
+  useEffect(() => {
+    if (!lineTarget) return
+
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .getElementById(targetAnchorId)
+        ?.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' })
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [lineTarget, targetAnchorId])
 
   if (files.length === 0) {
     return <pre className="unified-diff__fallback">{fileDiff.diff}</pre>
@@ -455,16 +503,27 @@ export const UnifiedDiff = ({
 
   return (
     <>
-      {files.map(({ file, tokens }, index) => (
-        <Diff
-          className={diffClassName}
-          diffType={file.type}
-          hunks={file.hunks}
-          key={`${file.oldPath}:${file.newPath}:${index}`}
-          tokens={tokens}
-          viewType="unified"
-        />
-      ))}
+      {files.map(({ file, tokens }, index) => {
+        const targetChangeKey = lineTarget?.fileIndex === index ? lineTarget.changeKey : undefined
+
+        return (
+          <Diff
+            className={diffClassName}
+            diffType={file.type}
+            generateAnchorID={
+              targetChangeKey
+                ? (change) =>
+                    getChangeKey(change) === targetChangeKey ? targetAnchorId : undefined
+                : undefined
+            }
+            hunks={file.hunks}
+            key={`${file.oldPath}:${file.newPath}:${index}`}
+            selectedChanges={targetChangeKey ? [targetChangeKey] : undefined}
+            tokens={tokens}
+            viewType="unified"
+          />
+        )
+      })}
     </>
   )
 }

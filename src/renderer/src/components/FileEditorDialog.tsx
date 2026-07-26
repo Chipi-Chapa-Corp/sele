@@ -21,6 +21,7 @@ export type FileEditorTarget = {
   cwd: string
   path: string
   displayPath: string
+  line?: number
   kind?: AppGitChangeKind | null
   previousPath?: string | null
 }
@@ -229,7 +230,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         className={`file-editor-dialog${expanded ? ' file-editor-dialog--expanded' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-label={`${canEdit ? 'Edit' : 'View changes to'} ${displayPath}`}
+        aria-label={`${canEdit ? 'Edit' : 'View changes to'} ${displayPath}${target.line ? ` at line ${target.line}` : ''}`}
       >
         <header className="file-editor-dialog__header">
           <span className="file-editor-dialog__file-icon" aria-hidden="true">
@@ -304,7 +305,11 @@ export const FileEditorDialog = memo(function FileEditorDialog({
               {diffLoadState === 'ready' &&
                 (diff && renderedFileDiff ? (
                   <div className="file-editor-dialog__diff-scroll">
-                    <UnifiedDiff className="file-editor-dialog__diff" fileDiff={renderedFileDiff} />
+                    <UnifiedDiff
+                      className="file-editor-dialog__diff"
+                      fileDiff={renderedFileDiff}
+                      line={target.line}
+                    />
                   </div>
                 ) : (
                   <div className="file-editor-dialog__state">
@@ -353,6 +358,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                 className="file-editor-dialog__diff"
                 contents={contents}
                 fileDiff={editableFileDiff}
+                line={target.line}
                 onChange={(nextContents) => {
                   setContents(nextContents)
                   setSaveState('idle')

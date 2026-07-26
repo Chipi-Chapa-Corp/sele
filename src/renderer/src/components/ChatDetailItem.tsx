@@ -78,7 +78,7 @@ type ChatDetailItemProps = {
   onEditPendingMessage?: (message: ProviderPendingMessage) => void
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
-  onOpenFileLink?: (path: string, displayPath: string) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
   projectCwd?: string | null
   selectedModelId?: ProviderModelId
   streaming?: boolean
@@ -291,7 +291,7 @@ type MarkdownFileTarget = {
 }
 
 type MarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
-  onOpenFileLink?: (path: string, displayPath: string) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
 }
 
 const externalLinkPattern = /^(?:https?|mailto|tel):/i
@@ -318,7 +318,9 @@ const getMarkdownFileTarget = (href: string | undefined): MarkdownFileTarget | n
   const locationMatch = withoutFragment.match(sourceLocationPattern)
   let path = decodeLinkTarget(locationMatch?.[1] ?? withoutFragment)
   const lineValue = fragmentLocationMatch?.[1] ?? locationMatch?.[2]
-  const line = lineValue ? Number.parseInt(lineValue, 10) : undefined
+  const parsedLine = lineValue ? Number.parseInt(lineValue, 10) : undefined
+  const line =
+    parsedLine && Number.isSafeInteger(parsedLine) && parsedLine > 0 ? parsedLine : undefined
 
   if (/^file:\/\//i.test(path)) {
     try {
@@ -368,7 +370,7 @@ const MarkdownLink: React.FC<MarkdownLinkProps> = ({
   }
 
   const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
-  const displayLine = fileTarget.line && fileTarget.line > 1 ? fileTarget.line : undefined
+  const displayLine = fileTarget.line
   const title = displayLine
     ? `Open ${fileTarget.displayPath} at line ${displayLine}`
     : `Open ${fileTarget.displayPath}`
@@ -378,7 +380,7 @@ const MarkdownLink: React.FC<MarkdownLinkProps> = ({
       className="chat-detail__file-link"
       type="button"
       title={title}
-      onClick={() => onOpenFileLink(fileTarget.path, fileTarget.displayPath)}
+      onClick={() => onOpenFileLink(fileTarget.path, fileTarget.displayPath, fileTarget.line)}
     >
       <span className="chat-detail__file-link-icon" aria-hidden="true">
         <SymbolsFileIcon fileName={fileName} autoAssign />
@@ -408,7 +410,9 @@ const MarkdownTable: React.FC<TableHTMLAttributes<HTMLTableElement>> = ({ childr
   </div>
 )
 
-const getMarkdownOptions = (onOpenFileLink?: (path: string, displayPath: string) => void) =>
+const getMarkdownOptions = (
+  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+) =>
   ({
     disableParsingRawHTML: true,
     forceBlock: true,
@@ -936,7 +940,7 @@ const ToolItem: React.FC<{
 const MarkdownMessageComponent: React.FC<{
   className: string
   content: string
-  onOpenFileLink?: (path: string, displayPath: string) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
   streaming?: boolean
 }> = ({ className, content, onOpenFileLink, streaming = false }) => {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1265,7 +1269,7 @@ const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] => {
 
 const WorkingStep: React.FC<{
   item: ProviderWorkingStep
-  onOpenFileLink?: (path: string, displayPath: string) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
   projectCwd?: string | null
 }> = ({ item, onOpenFileLink, projectCwd }) => {
   const blocks = groupWorkingItems(item.items)

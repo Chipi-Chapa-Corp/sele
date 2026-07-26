@@ -5137,7 +5137,7 @@ export const App: React.FC = () => {
   }
 
   const handleOpenFileLink = useCallback(
-    (path: string, displayPath: string): void => {
+    (path: string, displayPath: string, line?: number): void => {
       if (!changesCwd) return
 
       const normalizedCwd = changesCwd.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -5149,7 +5149,8 @@ export const App: React.FC = () => {
       setFileEditorTarget({
         cwd: changesCwd,
         path,
-        displayPath: relativeDisplayPath
+        displayPath: relativeDisplayPath,
+        line
       })
     },
     [changesCwd]
