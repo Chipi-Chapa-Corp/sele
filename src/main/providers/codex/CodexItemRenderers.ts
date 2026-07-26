@@ -1292,7 +1292,12 @@ const getWorkingStatus = (turn: CodexTurn): ProviderWorkingStep['status'] => {
     return 'stopped'
   }
 
-  if (turn.status === 'completed') return 'worked'
+  if (
+    turn.status === 'completed' ||
+    (turn.status == null && typeof turn.completedAt === 'number')
+  ) {
+    return 'worked'
+  }
 
   return 'working'
 }

@@ -1221,7 +1221,7 @@ const getActiveToolIds = (item: ProviderWorkingStep): Set<string> => {
   const lastItem = item.items.at(-1)
   if (lastItem && lastItem.type !== 'message') {
     for (const tool of getToolsFromToolItem(lastItem)) {
-      activeToolIds.add(tool.id)
+      if (tool.status === 'running') activeToolIds.add(tool.id)
     }
   }
 
