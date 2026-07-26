@@ -149,10 +149,11 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
     onNotesChange(notes.filter((note) => note.id !== noteId))
   }
 
-  const menu = open ? (
+  const menu = (
     <div
       ref={menuRef}
       className="cwd-notes-menu"
+      hidden={!open}
       id={menuId}
       role="dialog"
       aria-label={`${label} notes`}
@@ -202,7 +203,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
         />
       </form>
     </div>
-  ) : null
+  )
 
   return (
     <span className="cwd-notes" ref={rootRef}>
@@ -218,7 +219,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
         }}
         icon={<StickyNote aria-hidden="true" />}
       />
-      {menu && createPortal(menu, document.body)}
+      {createPortal(menu, document.body)}
     </span>
   )
 }

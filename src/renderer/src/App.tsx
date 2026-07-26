@@ -371,7 +371,6 @@ const fallbackDefaultSandboxMode =
   fallbackProviderSandboxModes.find((mode) => mode.isDefault)?.id ??
   fallbackProviderSandboxModes[0]?.id ??
   'workspace-write'
-const refreshIconReplayMs = 1_050
 
 const providerLabels = {
   codex: 'Codex'
@@ -636,10 +635,8 @@ const ChangesAnimatedIcon: React.FC<{
     }
 
     icon?.startAnimation()
-    const interval = window.setInterval(() => icon?.startAnimation(), refreshIconReplayMs)
 
     return () => {
-      window.clearInterval(interval)
       icon?.stopAnimation()
     }
   }, [active])
@@ -1853,19 +1850,6 @@ const mergeAccountUsage = (
     summary: currentUsage.summary,
     dailyUsageBuckets: currentUsage.dailyUsageBuckets
   }
-}
-
-const getVisibleChatItems = (
-  items: ProviderChatItem[],
-  editingMessage: EditingMessage | null
-): ProviderChatItem[] => {
-  if (!editingMessage || editingMessage.type === 'pending') return items
-
-  const editingMessageIndex = items.findIndex(
-    (item) => item.type === 'message' && item.id === editingMessage.id
-  )
-
-  return editingMessageIndex < 0 ? items : items.slice(0, editingMessageIndex)
 }
 
 const sortTreeFiles = <TFile extends TreeFile>(files: TFile[]): TFile[] =>
@@ -3318,12 +3302,10 @@ export const App: React.FC = () => {
             : null
 
         if (selectedDetail) {
-          startTransition(() => {
-            applyChatDetail(event.providerId, selectedDetail)
-            setCommittedChatUpdate({
-              sequence: event.sequence,
-              detailApplied: true
-            })
+          applyChatDetail(event.providerId, selectedDetail)
+          setCommittedChatUpdate({
+            sequence: event.sequence,
+            detailApplied: true
           })
         } else {
           applyChatSummary(event.providerId, event.summary, event.turnCompleted)
@@ -3503,14 +3485,12 @@ export const App: React.FC = () => {
         if (!active) return
 
         const nextPlan = getLatestChatPlan(detail, contextKey)
-        startTransition(() => {
-          setExtractedChatPlan((currentPlan) =>
-            currentPlan?.contextKey === nextPlan?.contextKey &&
-            currentPlan?.signature === nextPlan?.signature
-              ? currentPlan
-              : nextPlan
-          )
-        })
+        setExtractedChatPlan((currentPlan) =>
+          currentPlan?.contextKey === nextPlan?.contextKey &&
+          currentPlan?.signature === nextPlan?.signature
+            ? currentPlan
+            : nextPlan
+        )
       }, 0)
     })
 
@@ -5011,10 +4991,7 @@ export const App: React.FC = () => {
     !providerUpdateInProgress &&
     !editingMessage
   )
-  const visibleChatItems = useMemo(
-    () => (chatDetail ? getVisibleChatItems(chatDetail.items, editingMessage) : []),
-    [chatDetail, editingMessage]
-  )
+  const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
   const firstPendingChatItemId =
     visibleChatItems.find((item) => item.type === 'pendingMessage')?.id ?? null
   const [chatCommitMarkersByAfterItemId, unanchoredChatCommitMarkers] = useMemo(() => {

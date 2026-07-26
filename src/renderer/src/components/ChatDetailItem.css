@@ -28,6 +28,10 @@
   white-space: normal;
 }
 
+.chat-detail__streaming-text {
+  white-space: pre-wrap;
+}
+
 .chat-detail__message--assistant {
   max-width: 100%;
   padding: 0;
@@ -473,6 +477,13 @@
   box-shadow: var(--subtle-shadow);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
   backdrop-filter: blur(12px) saturate(1.2);
+}
+
+.chat-detail__activity-pending {
+  margin: 9px 0 12px;
+  padding: 10px 12px;
+  color: var(--quiet);
+  line-height: 1.4;
 }
 
 .chat-detail__activity-content section {
