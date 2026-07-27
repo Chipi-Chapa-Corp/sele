@@ -128,6 +128,7 @@ import { FileEditorDialog, type FileEditorTarget } from './components/FileEditor
 import { Input } from './components/Input'
 import { MessageBox } from './components/MessageBox'
 import { SegmentedControl } from './components/SegmentedControl'
+import { TerminalPanel } from './components/TerminalPanel'
 import { appApi } from './appApi'
 import { providerApi } from './providerApi'
 import {
@@ -186,7 +187,7 @@ type AnimatedIconComponent = ForwardRefExoticComponent<
 type ChangeSource = 'chat' | 'lastTurn' | 'uncommitted'
 type PatchChangeSource = Extract<ChangeSource, 'chat' | 'lastTurn'>
 type GitChangeSource = Exclude<ChangeSource, 'chat' | 'lastTurn'>
-type ChangesPaneView = 'git' | 'files'
+type ChangesPaneView = 'git' | 'files' | 'terminal'
 type GitCommitPromptAction = AppGitCommitAction
 type GitSyncAction = 'pull' | 'push' | 'pullAndPush'
 type GitSyncStep = Exclude<GitSyncAction, 'pullAndPush'>
@@ -2242,6 +2243,7 @@ export const App: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('appearance')
   const [fileEditorTarget, setFileEditorTarget] = useState<FileEditorTarget | null>(null)
+  const [terminalCwd, setTerminalCwd] = useState<string | null | undefined>(undefined)
   const [chats, setChats] = useState<ProviderChat[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
@@ -2388,6 +2390,7 @@ export const App: React.FC = () => {
   const sandboxModeManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.sandboxMode))
   const approvalModeBeforeFullAccessRef = useRef<ProviderApprovalMode | null>(null)
   const collapsedFileTreeFoldersByCwdRef = useRef(new Map<string, Record<string, boolean>>())
+  const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
 
   const resetChatSearch = useCallback((): void => {
     setChatSearchOpen(false)
@@ -3515,6 +3518,47 @@ export const App: React.FC = () => {
   }, [appSettings.chat.hidePlans, chatDetail, selectedChatId, selectedChatKey])
   const usageProviderId = selectedProviderId ?? newSessionProvider
   const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
+
+  const handleChangesPaneViewChange = useCallback(
+    (view: ChangesPaneView): void => {
+      if (view === 'terminal') {
+        setTerminalCwd((currentCwd) => (currentCwd === undefined ? changesCwd : currentCwd))
+      } else {
+        lastNonTerminalChangesPaneViewRef.current = view
+      }
+
+      setChangesPaneView(view)
+    },
+    [changesCwd]
+  )
+
+  const handleToggleTerminal = useCallback((): void => {
+    handleChangesPaneViewChange(
+      changesPaneView === 'terminal' ? lastNonTerminalChangesPaneViewRef.current : 'terminal'
+    )
+  }, [changesPaneView, handleChangesPaneViewChange])
+
+  useEffect(() => {
+    const handleTerminalShortcut = (event: KeyboardEvent): void => {
+      if (settingsOpen || fileEditorTarget) return
+      if (
+        event.code !== 'Backquote' ||
+        !event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.shiftKey
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      handleToggleTerminal()
+    }
+
+    document.addEventListener('keydown', handleTerminalShortcut, true)
+    return () => document.removeEventListener('keydown', handleTerminalShortcut, true)
+  }, [fileEditorTarget, handleToggleTerminal, settingsOpen])
   const changesProjectCwd = selectedChat
     ? (chatDetail?.projectCwd ?? selectedChat.projectCwd ?? changesCwd)
     : newSessionCwd
@@ -6729,12 +6773,12 @@ export const App: React.FC = () => {
         />
 
         <div className="chat__changes-panel" data-panel="true" id="changes">
-          <aside className="changes-sidebar" aria-label="Changed files">
+          <aside className="changes-sidebar" aria-label="Workspace sidebar">
             <header className="changes-sidebar__header">
               {renderWindowControls('default')}
               <div className="changes-sidebar__titlebar">
                 <SegmentedControl
-                  aria-label="Changes view"
+                  aria-label="Sidebar view"
                   className="changes-sidebar__view-toggle"
                   options={[
                     {
@@ -6750,102 +6794,127 @@ export const App: React.FC = () => {
                       ariaLabel: 'Files',
                       title: 'Files',
                       icon: <Files aria-hidden="true" />
+                    },
+                    {
+                      value: 'terminal',
+                      label: null,
+                      ariaLabel: 'Terminal',
+                      title: 'Terminal (Ctrl+`)',
+                      icon: <Terminal aria-hidden="true" />
                     }
                   ]}
                   value={changesPaneView}
-                  onChange={setChangesPaneView}
+                  onChange={handleChangesPaneViewChange}
                 />
               </div>
-              <div className="changes-sidebar__controls changes-sidebar__controls--files">
-                <label className="sr-only" htmlFor="changes-branch">
-                  Branch
-                </label>
-                <BranchSwitcher
-                  branches={branchNames}
-                  busy={gitBranchActionState === 'sending'}
-                  currentBranch={currentBranchName}
-                  disabled={branchSwitchDisabled}
-                  error={gitBranchError}
-                  id="changes-branch"
-                  loading={gitBranchLoadState === 'loading'}
-                  onClearError={() => {
-                    setGitBranchError(null)
-                    if (gitBranchActionState === 'error') setGitBranchActionState('idle')
-                  }}
-                  onOpen={() => setGitBranchLoadRequest((currentRequest) => currentRequest + 1)}
-                  onSwitch={handleSwitchBranch}
-                />
-                <Button
-                  theme="transparent"
-                  size="small"
-                  aria-label={treeToggleLabel}
-                  title={treeToggleLabel}
-                  disabled={activeTreeFolderPaths.length === 0}
-                  callback={handleToggleActiveTreeFolders}
-                  icon={
-                    hasCollapsedActiveTreeFolders ? (
-                      <ListChevronsUpDown aria-hidden="true" />
-                    ) : (
-                      <ListChevronsDownUp aria-hidden="true" />
-                    )
-                  }
-                />
-                <Button
-                  theme="transparent"
-                  size="small"
-                  aria-label={refreshSidebarLabel}
-                  title={refreshSidebarLabel}
-                  disabled={!changesCwd || activeSidebarLoadState === 'loading'}
-                  callback={() => {
-                    if (changesPaneView === 'files') {
-                      setFileTreeLoadRequest((currentRequest) => currentRequest + 1)
-                      return
+              {changesPaneView !== 'terminal' && (
+                <div className="changes-sidebar__controls changes-sidebar__controls--files">
+                  <label className="sr-only" htmlFor="changes-branch">
+                    Branch
+                  </label>
+                  <BranchSwitcher
+                    branches={branchNames}
+                    busy={gitBranchActionState === 'sending'}
+                    currentBranch={currentBranchName}
+                    disabled={branchSwitchDisabled}
+                    error={gitBranchError}
+                    id="changes-branch"
+                    loading={gitBranchLoadState === 'loading'}
+                    onClearError={() => {
+                      setGitBranchError(null)
+                      if (gitBranchActionState === 'error') setGitBranchActionState('idle')
+                    }}
+                    onOpen={() => setGitBranchLoadRequest((currentRequest) => currentRequest + 1)}
+                    onSwitch={handleSwitchBranch}
+                  />
+                  <Button
+                    theme="transparent"
+                    size="small"
+                    aria-label={treeToggleLabel}
+                    title={treeToggleLabel}
+                    disabled={activeTreeFolderPaths.length === 0}
+                    callback={handleToggleActiveTreeFolders}
+                    icon={
+                      hasCollapsedActiveTreeFolders ? (
+                        <ListChevronsUpDown aria-hidden="true" />
+                      ) : (
+                        <ListChevronsDownUp aria-hidden="true" />
+                      )
                     }
+                  />
+                  <Button
+                    theme="transparent"
+                    size="small"
+                    aria-label={refreshSidebarLabel}
+                    title={refreshSidebarLabel}
+                    disabled={!changesCwd || activeSidebarLoadState === 'loading'}
+                    callback={() => {
+                      if (changesPaneView === 'files') {
+                        setFileTreeLoadRequest((currentRequest) => currentRequest + 1)
+                        return
+                      }
 
-                    setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
-                  }}
-                  icon={<GitRefreshIcon />}
-                />
-              </div>
+                      setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
+                    }}
+                    icon={<GitRefreshIcon />}
+                  />
+                </div>
+              )}
             </header>
-            <div className="changes-sidebar__body">
-              <div className="changes-sidebar__content">
-                {changesPaneView === 'git' ? (
-                  <>
-                    {visibleChangesLoadState === 'loading' && (
-                      <ChangesSidebarGitState active label="Loading changes" />
-                    )}
-                    {visibleChangesLoadState === 'error' && (
-                      <p className="changes-sidebar__status">Unable to load changes.</p>
-                    )}
-                    {visibleChangesLoadState === 'ready' && changedFiles.length === 0 && (
-                      <ChangesSidebarGitState active={false} label={changesEmptyMessage} />
-                    )}
-                    {visibleChangesLoadState === 'ready' && changedFiles.length > 0 && (
-                      <ul className="changes-sidebar__tree" role="tree">
-                        {changeTree.map((node) => renderChangeTreeNode(node, 0))}
-                      </ul>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    {visibleFilesLoadState === 'loading' && (
-                      <ChangesSidebarGitState active label="Loading files" />
-                    )}
-                    {visibleFilesLoadState === 'error' && (
-                      <p className="changes-sidebar__status">Unable to load files.</p>
-                    )}
-                    {visibleFilesLoadState === 'ready' && repositoryFiles.length === 0 && (
-                      <p className="changes-sidebar__status">{filesEmptyMessage}</p>
-                    )}
-                    {visibleFilesLoadState === 'ready' && repositoryFiles.length > 0 && (
-                      <ul className="changes-sidebar__tree" role="tree">
-                        {repositoryFileTree.map((node) => renderRepositoryFileTreeNode(node, 0))}
-                      </ul>
-                    )}
-                  </>
-                )}
-              </div>
+            <div
+              className={`changes-sidebar__body${
+                changesPaneView === 'terminal' ? ' changes-sidebar__body--terminal' : ''
+              }`}
+            >
+              {changesPaneView !== 'terminal' && (
+                <div className="changes-sidebar__content">
+                  {changesPaneView === 'git' ? (
+                    <>
+                      {visibleChangesLoadState === 'loading' && (
+                        <ChangesSidebarGitState active label="Loading changes" />
+                      )}
+                      {visibleChangesLoadState === 'error' && (
+                        <p className="changes-sidebar__status">Unable to load changes.</p>
+                      )}
+                      {visibleChangesLoadState === 'ready' && changedFiles.length === 0 && (
+                        <ChangesSidebarGitState active={false} label={changesEmptyMessage} />
+                      )}
+                      {visibleChangesLoadState === 'ready' && changedFiles.length > 0 && (
+                        <ul className="changes-sidebar__tree" role="tree">
+                          {changeTree.map((node) => renderChangeTreeNode(node, 0))}
+                        </ul>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {visibleFilesLoadState === 'loading' && (
+                        <ChangesSidebarGitState active label="Loading files" />
+                      )}
+                      {visibleFilesLoadState === 'error' && (
+                        <p className="changes-sidebar__status">Unable to load files.</p>
+                      )}
+                      {visibleFilesLoadState === 'ready' && repositoryFiles.length === 0 && (
+                        <p className="changes-sidebar__status">{filesEmptyMessage}</p>
+                      )}
+                      {visibleFilesLoadState === 'ready' && repositoryFiles.length > 0 && (
+                        <ul className="changes-sidebar__tree" role="tree">
+                          {repositoryFileTree.map((node) => renderRepositoryFileTreeNode(node, 0))}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+              {terminalCwd !== undefined && (
+                <div
+                  className={`changes-sidebar__terminal${
+                    changesPaneView === 'terminal' ? ' changes-sidebar__terminal--active' : ''
+                  }`}
+                  aria-hidden={changesPaneView !== 'terminal'}
+                >
+                  <TerminalPanel cwd={terminalCwd} />
+                </div>
+              )}
             </div>
             {changesPaneView === 'git' && (
               <footer className="changes-sidebar__footer">

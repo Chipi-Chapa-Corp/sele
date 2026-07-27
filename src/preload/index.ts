@@ -11,6 +11,8 @@ import type {
 import { appIpcChannels } from '../shared/app'
 import type { ProviderRendererApi, ProviderWindowChatUpdatedEvent } from '../shared/provider'
 import { providerIpcChannels } from '../shared/provider'
+import type { TerminalDataEvent, TerminalExitEvent, TerminalRendererApi } from '../shared/terminal'
+import { terminalIpcChannels } from '../shared/terminal'
 
 const appApi: AppApi = {
   getColorScheme: () => ipcRenderer.invoke(appIpcChannels.getColorScheme),
@@ -181,8 +183,35 @@ const providerApi: ProviderRendererApi = {
   }
 }
 
+const terminalApi: TerminalRendererApi = {
+  createSession: (options) => ipcRenderer.invoke(terminalIpcChannels.createSession, options),
+  write: (sessionId, data) => ipcRenderer.send(terminalIpcChannels.write, sessionId, data),
+  resize: (sessionId, cols, rows) =>
+    ipcRenderer.send(terminalIpcChannels.resize, sessionId, cols, rows),
+  setPaused: (sessionId, paused) =>
+    ipcRenderer.send(terminalIpcChannels.setPaused, sessionId, paused),
+  closeSession: (sessionId) => ipcRenderer.invoke(terminalIpcChannels.closeSession, sessionId),
+  onData: (listener): (() => void) => {
+    const handleData = (_: IpcRendererEvent, event: TerminalDataEvent): void => {
+      listener(event)
+    }
+
+    ipcRenderer.on(terminalIpcChannels.data, handleData)
+    return () => ipcRenderer.removeListener(terminalIpcChannels.data, handleData)
+  },
+  onExit: (listener): (() => void) => {
+    const handleExit = (_: IpcRendererEvent, event: TerminalExitEvent): void => {
+      listener(event)
+    }
+
+    ipcRenderer.on(terminalIpcChannels.exit, handleExit)
+    return () => ipcRenderer.removeListener(terminalIpcChannels.exit, handleExit)
+  }
+}
+
 contextBridge.exposeInMainWorld('appApi', appApi)
 contextBridge.exposeInMainWorld('providerApi', providerApi)
+contextBridge.exposeInMainWorld('terminalApi', terminalApi)
 
 type PerformanceWithMemory = Performance & {
   memory?: {

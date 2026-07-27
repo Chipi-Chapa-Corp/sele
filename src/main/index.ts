@@ -8,6 +8,7 @@ import { registerFreezeDiagnostics } from './freezeDiagnostics'
 import { disposeProviderAdapters } from './providers/providerService'
 import { registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
+import { disposeTerminalSessions, registerTerminalIpc } from './registerTerminalIpc'
 
 const getColorScheme = (): AppColorScheme => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
 
@@ -60,6 +61,7 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.sele')
   registerAppIpc()
   registerProviderIpc()
+  registerTerminalIpc()
   disposeFreezeDiagnostics = registerFreezeDiagnostics()
 
   app.on('browser-window-created', (_, window) => {
@@ -77,6 +79,7 @@ app.on('before-quit', () => {
   disposeFreezeDiagnostics?.()
   disposeFreezeDiagnostics = null
   disposeProviderAdapters()
+  disposeTerminalSessions()
   void disposeDatabase()
 })
 
