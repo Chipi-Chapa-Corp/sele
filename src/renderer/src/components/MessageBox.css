@@ -286,6 +286,23 @@
   padding-top: 6px;
 }
 
+.message-box__usage-reset {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+  color: var(--lead);
+}
+
+.message-box__usage-reset > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message-box__usage-status {
   margin: 0;
   color: var(--lead);

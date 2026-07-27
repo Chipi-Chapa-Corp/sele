@@ -9,6 +9,7 @@ import type {
   ProviderApprovalModeOption,
   ProviderSandboxModeOption,
   ProviderModel,
+  ProviderAccountRateLimitResetOutcome,
   ProviderAccountUsage,
   ProviderUsageOptions,
   ProviderActiveSendMode,
@@ -29,6 +30,7 @@ export type ProviderAdapter = {
   getSandboxModes: () => Promise<ProviderSandboxModeOption[]>
   getModels: () => Promise<ProviderModel[]>
   getUsage: (options?: ProviderUsageOptions) => Promise<ProviderAccountUsage>
+  resetRateLimits: () => Promise<ProviderAccountRateLimitResetOutcome>
   getChats: (options?: ProviderChatListOptions) => Promise<ProviderChatPage>
   getChat: (chatId: string) => Promise<ProviderChatDetail>
   generateOneShot: (message: string, options?: ProviderOneShotOptions) => Promise<string>

@@ -9,6 +9,7 @@ import {
   FolderPen,
   Gauge,
   ListPlus,
+  RotateCcw,
   ShieldQuestionMark,
   SlidersHorizontal,
   Sparkles,
@@ -20,6 +21,7 @@ import type {
   ProviderActiveSendMode,
   ProviderApprovalMode,
   ProviderApprovalModeOption,
+  ProviderAccountRateLimitResetOutcome,
   ProviderAccountUsage,
   ProviderCwdNote,
   ProviderModel,
@@ -67,6 +69,7 @@ type MessageBoxProps = {
   onSandboxModeChange: (sandboxMode: ProviderSandboxMode) => void
   onStop?: () => Promise<void> | void
   onUsageRefresh?: (options?: ProviderUsageOptions) => Promise<void> | void
+  onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   onSend: (message: string, activeMode?: ProviderActiveSendMode) => Promise<void> | void
 }
 
@@ -289,6 +292,13 @@ const formatDayCount = (value: string | null | undefined): string => {
   return days === 1 ? '1 day' : `${numberFormatter.format(days)} days`
 }
 
+const getRateLimitResetMessage = (outcome: ProviderAccountRateLimitResetOutcome): string => {
+  if (outcome === 'reset') return 'Rate limits reset.'
+  if (outcome === 'nothingToReset') return 'There is no used limit to reset.'
+  if (outcome === 'noCredit') return 'No reset credits are available.'
+  return 'That reset credit was already used.'
+}
+
 export const MessageBox: React.FC<MessageBoxProps> = ({
   approvalMode,
   approvalModes,
@@ -320,6 +330,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   onSandboxModeChange,
   onStop,
   onUsageRefresh,
+  onUsageReset,
   onSend
 }) => {
   const usagePopoverId = useId().replace(/:/g, '')
@@ -327,6 +338,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageView, setUsageView] = useState<UsagePopoverView>('usage')
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
+  const [rateLimitResetPending, setRateLimitResetPending] = useState(false)
+  const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
   const editSessionIdRef = useRef<string | null>(null)
   const messageRef = useRef(message)
   const messageBeforeEditRef = useRef<string | null>(null)
@@ -614,6 +627,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     mainRateLimits.length > 0
       ? rateLimits.filter((limit) => !isMainRateLimit(limit))
       : rateLimits.slice(1)
+  const availableRateLimitResets = accountUsage?.rateLimitResetCredits?.availableCount ?? 0
 
   const handleUsageToggle = (): void => {
     if (usageDisabled) return
@@ -627,6 +641,31 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     setUsageView(nextView)
     if (nextView === 'statistics' && !accountUsage?.statisticsLoaded) {
       void onUsageRefresh?.({ includeStatistics: true })
+    }
+  }
+
+  const handleRateLimitReset = async (): Promise<void> => {
+    if (!onUsageReset || rateLimitResetPending || availableRateLimitResets <= 0) return
+
+    const resetCountLabel =
+      availableRateLimitResets === 1
+        ? 'your last remaining reset'
+        : `one of your ${numberFormatter.format(availableRateLimitResets)} remaining resets`
+    if (!window.confirm(`Use ${resetCountLabel} to reset your Codex rate limits?`)) return
+
+    setRateLimitResetPending(true)
+    setRateLimitResetMessage(null)
+
+    try {
+      const outcome = await onUsageReset()
+      setRateLimitResetMessage(getRateLimitResetMessage(outcome))
+      await onUsageRefresh?.()
+    } catch (resetError) {
+      setRateLimitResetMessage(
+        resetError instanceof Error ? resetError.message : 'Unable to reset rate limits.'
+      )
+    } finally {
+      setRateLimitResetPending(false)
     }
   }
 
@@ -860,6 +899,27 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                               </div>
                             )}
                           </div>
+                        )}
+                        {availableRateLimitResets > 0 && onUsageReset && (
+                          <div className="message-box__usage-reset">
+                            <span>
+                              {numberFormatter.format(availableRateLimitResets)}{' '}
+                              {availableRateLimitResets === 1 ? 'reset' : 'resets'} left
+                            </span>
+                            <Button
+                              callback={handleRateLimitReset}
+                              disabled={rateLimitResetPending}
+                              icon={<RotateCcw aria-hidden="true" />}
+                              label={rateLimitResetPending ? 'Resetting...' : 'Reset limits'}
+                              size="small"
+                              theme="secondary"
+                            />
+                          </div>
+                        )}
+                        {rateLimitResetMessage && (
+                          <p className="message-box__usage-status" role="status">
+                            {rateLimitResetMessage}
+                          </p>
                         )}
                         {accountUsage &&
                           accountUsage.rateLimits.length === 0 &&

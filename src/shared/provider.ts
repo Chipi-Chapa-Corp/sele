@@ -246,12 +246,20 @@ export type ProviderAccountRateLimit = {
   resetsAt: number | null
 }
 
+export type ProviderAccountRateLimitResetCredits = {
+  availableCount: number
+}
+
+export type ProviderAccountRateLimitResetOutcome =
+  'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed'
+
 export type ProviderAccountUsage = {
   updatedAt: number
   statisticsLoaded: boolean
   summary: ProviderAccountUsageSummary | null
   dailyUsageBuckets: ProviderAccountUsageDailyBucket[] | null
   rateLimits: ProviderAccountRateLimit[]
+  rateLimitResetCredits: ProviderAccountRateLimitResetCredits | null
   errors: string[]
 }
 
@@ -496,6 +504,7 @@ export type ProviderApi = {
     providerId: ProviderId,
     options?: ProviderUsageOptions
   ) => Promise<ProviderAccountUsage>
+  resetRateLimits: (providerId: ProviderId) => Promise<ProviderAccountRateLimitResetOutcome>
   getChats: (providerId: ProviderId, options?: ProviderChatListOptions) => Promise<ProviderChatPage>
   getChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
   generateOneShot: (
@@ -613,6 +622,7 @@ export const providerIpcChannels = {
   getSandboxModes: 'provider:get-sandbox-modes',
   getModels: 'provider:get-models',
   getUsage: 'provider:get-usage',
+  resetRateLimits: 'provider:reset-rate-limits',
   getChats: 'provider:get-chats',
   getChat: 'provider:get-chat',
   generateOneShot: 'provider:generate-one-shot',

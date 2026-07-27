@@ -580,6 +580,10 @@ export const registerProviderIpc = (): void => {
     providerApi.getUsage(requireProviderId(providerId), requireUsageOptions(options))
   )
 
+  ipcMain.handle(providerIpcChannels.resetRateLimits, (_, providerId: unknown) =>
+    providerApi.resetRateLimits(requireProviderId(providerId))
+  )
+
   ipcMain.handle(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) =>
     providerApi.getChats(requireProviderId(providerId), requireChatListOptions(options))
   )

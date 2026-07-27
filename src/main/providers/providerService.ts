@@ -193,6 +193,7 @@ export const providerApi: ProviderApi = {
   getSandboxModes: (providerId) => adapters[providerId].getSandboxModes(),
   getModels: (providerId) => adapters[providerId].getModels(),
   getUsage: (providerId, options?: ProviderUsageOptions) => adapters[providerId].getUsage(options),
+  resetRateLimits: (providerId) => adapters[providerId].resetRateLimits(),
   getChats: async (providerId, options) => {
     const page = await adapters[providerId].getChats(options)
     const chats = await applyMetadataToChats(page.chats)

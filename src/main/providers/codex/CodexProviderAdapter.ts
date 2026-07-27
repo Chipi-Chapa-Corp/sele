@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type {
   ProviderModel,
   ProviderReasoningEffortOption,
@@ -12,6 +13,8 @@ import type {
   ProviderPendingApproval,
   ProviderPendingMessage,
   ProviderAccountRateLimit,
+  ProviderAccountRateLimitResetCredits,
+  ProviderAccountRateLimitResetOutcome,
   ProviderAccountUsage,
   ProviderAccountUsageDailyBucket,
   ProviderAccountUsageSummary,
@@ -105,6 +108,11 @@ type AccountUsageResponse = {
 type AccountRateLimitsResponse = {
   rateLimits?: unknown
   rateLimitsByLimitId?: unknown
+  rateLimitResetCredits?: unknown
+}
+
+type AccountRateLimitResetResponse = {
+  outcome: unknown
 }
 
 type ThreadReadResponse = {
@@ -276,6 +284,14 @@ const getOptionalTokenStringValue = (value: unknown): string | null => {
   if (typeof value === 'string' && /^\d+$/.test(value.trim())) return value.trim()
 
   return null
+}
+
+const getOptionalCountValue = (value: unknown): number | null => {
+  const count = getOptionalTokenStringValue(value)
+  if (count == null) return null
+
+  const numericCount = Number(count)
+  return Number.isSafeInteger(numericCount) ? numericCount : null
 }
 
 const getRequiredUsageNumber = (value: unknown): number | null =>
@@ -456,6 +472,29 @@ const normalizeAccountRateLimits = (
 
     return firstLimit.label.localeCompare(secondLimit.label)
   })
+}
+
+const normalizeRateLimitResetCredits = (
+  value: unknown
+): ProviderAccountRateLimitResetCredits | null => {
+  const summary = getRecordValue(value)
+  if (!summary) return null
+
+  const availableCount = getOptionalCountValue(summary.availableCount)
+  return availableCount == null ? null : { availableCount }
+}
+
+const normalizeRateLimitResetOutcome = (value: unknown): ProviderAccountRateLimitResetOutcome => {
+  if (
+    value === 'reset' ||
+    value === 'nothingToReset' ||
+    value === 'noCredit' ||
+    value === 'alreadyRedeemed'
+  ) {
+    return value
+  }
+
+  throw new Error('Invalid rate-limit reset response')
 }
 
 const requireStringValue = (value: unknown, fieldName: string): string => {
@@ -1017,8 +1056,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
       summary: normalizeAccountUsageSummary(usage?.summary),
       dailyUsageBuckets: normalizeAccountUsageDailyBuckets(usage?.dailyUsageBuckets),
       rateLimits: normalizeAccountRateLimits(rateLimits),
+      rateLimitResetCredits: normalizeRateLimitResetCredits(rateLimits?.rateLimitResetCredits),
       errors
     }
+  }
+
+  resetRateLimits = async (): Promise<ProviderAccountRateLimitResetOutcome> => {
+    const response = await this.client.request<AccountRateLimitResetResponse>(
+      'account/rateLimitResetCredit/consume',
+      { idempotencyKey: randomUUID() }
+    )
+
+    return normalizeRateLimitResetOutcome(response.outcome)
   }
 
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {

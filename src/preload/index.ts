@@ -71,6 +71,8 @@ const providerApi: ProviderRendererApi = {
   getModels: (providerId) => ipcRenderer.invoke(providerIpcChannels.getModels, providerId),
   getUsage: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getUsage, providerId, options),
+  resetRateLimits: (providerId) =>
+    ipcRenderer.invoke(providerIpcChannels.resetRateLimits, providerId),
   getChats: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
   getChat: (providerId, chatId) =>

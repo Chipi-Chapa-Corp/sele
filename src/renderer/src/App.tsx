@@ -1268,6 +1268,16 @@ const getLastChatCommitMarkerAnchorId = (
   fallbackId: string | null = null
 ): string | null => items.findLast((item) => item.type !== 'pendingMessage')?.id ?? fallbackId
 
+const getChatItemCreatedAt = (item: ProviderChatItem): number | null =>
+  (item.type === 'message' || item.type === 'pendingMessage') &&
+  typeof item.createdAt === 'number' &&
+  Number.isFinite(item.createdAt)
+    ? item.createdAt
+    : null
+
+const getChatCommitMarkerPlacementTime = (marker: ChatCommitMarker): number =>
+  marker.finishedAt ?? marker.startedAt
+
 const compareChatsByCreatedAtDesc = (firstChat: ProviderChat, secondChat: ProviderChat): number => {
   if (secondChat.createdAt !== firstChat.createdAt) {
     return secondChat.createdAt - firstChat.createdAt
@@ -3540,6 +3550,11 @@ export const App: React.FC = () => {
     [usageProviderId]
   )
 
+  const resetAccountRateLimits = useCallback(
+    () => providerApi.resetRateLimits(usageProviderId),
+    [usageProviderId]
+  )
+
   useEffect(() => {
     let active = true
     const providerId = usageProviderId
@@ -5001,24 +5016,66 @@ export const App: React.FC = () => {
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
   const firstPendingChatItemId =
     visibleChatItems.find((item) => item.type === 'pendingMessage')?.id ?? null
-  const [chatCommitMarkersByAfterItemId, unanchoredChatCommitMarkers] = useMemo(() => {
+  const [
+    chatCommitMarkersByBeforeItemId,
+    chatCommitMarkersByAfterItemId,
+    trailingChatCommitMarkers
+  ] = useMemo(() => {
     const visibleItemsById = new Map(visibleChatItems.map((item) => [item.id, item]))
+    const visibleItemIndexesById = new Map(
+      visibleChatItems.map((item, itemIndex) => [item.id, itemIndex])
+    )
     const allItemIds = new Set(chatDetail?.items.map((item) => item.id) ?? [])
+    const markersByBeforeItemId = new Map<string, ChatCommitMarker[]>()
     const markersByAfterItemId = new Map<string, ChatCommitMarker[]>()
-    const unanchoredMarkers: ChatCommitMarker[] = []
+    const trailingMarkers: ChatCommitMarker[] = []
+
+    const placeMarkerByTime = (marker: ChatCommitMarker): void => {
+      const placementTime = getChatCommitMarkerPlacementTime(marker)
+      const nextItem = visibleChatItems.find((item) => {
+        const createdAt = getChatItemCreatedAt(item)
+        return createdAt !== null && createdAt > placementTime
+      })
+
+      if (!nextItem) {
+        trailingMarkers.push(marker)
+        return
+      }
+
+      const markersBeforeItem = markersByBeforeItemId.get(nextItem.id) ?? []
+      markersBeforeItem.push(marker)
+      markersByBeforeItemId.set(nextItem.id, markersBeforeItem)
+    }
 
     selectedChatCommitMarkers.forEach((marker) => {
       if (!marker.afterItemId) {
-        unanchoredMarkers.push(marker)
+        placeMarkerByTime(marker)
         return
       }
       const anchorItem = visibleItemsById.get(marker.afterItemId)
       if (!anchorItem) {
-        if (!allItemIds.has(marker.afterItemId)) unanchoredMarkers.push(marker)
+        if (!allItemIds.has(marker.afterItemId)) placeMarkerByTime(marker)
         return
       }
       if (anchorItem.type === 'pendingMessage') {
-        unanchoredMarkers.push(marker)
+        placeMarkerByTime(marker)
+        return
+      }
+
+      const anchorItemIndex = visibleItemIndexesById.get(marker.afterItemId)
+      const anchorTimelineTime =
+        marker.finishedAt !== null && anchorItemIndex !== undefined
+          ? visibleChatItems
+              .slice(0, anchorItemIndex + 1)
+              .findLast((item) => getChatItemCreatedAt(item) !== null)
+          : null
+      const anchorCreatedAt = anchorTimelineTime ? getChatItemCreatedAt(anchorTimelineTime) : null
+      if (
+        marker.finishedAt !== null &&
+        anchorCreatedAt !== null &&
+        anchorCreatedAt > marker.finishedAt
+      ) {
+        placeMarkerByTime(marker)
         return
       }
 
@@ -5027,7 +5084,7 @@ export const App: React.FC = () => {
       markersByAfterItemId.set(marker.afterItemId, anchoredMarkers)
     })
 
-    return [markersByAfterItemId, unanchoredMarkers] as const
+    return [markersByBeforeItemId, markersByAfterItemId, trailingMarkers] as const
   }, [chatDetail?.items, selectedChatCommitMarkers, visibleChatItems])
   const lastStreamingChatItem = chatHasActiveTurn
     ? visibleChatItems.findLast((item) => item.type !== 'pendingMessage')
@@ -6446,8 +6503,9 @@ export const App: React.FC = () => {
                     )}
                   {visibleChatItems.map((item) => (
                     <Fragment key={item.id}>
+                      {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
                       {item.id === firstPendingChatItemId &&
-                        unanchoredChatCommitMarkers.map(renderChatCommitMarker)}
+                        trailingChatCommitMarkers.map(renderChatCommitMarker)}
                       <ChatDetailItem
                         canEditOwnMessages={canEditOwnMessages}
                         item={item}
@@ -6466,8 +6524,7 @@ export const App: React.FC = () => {
                       {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
                     </Fragment>
                   ))}
-                  {!firstPendingChatItemId &&
-                    unanchoredChatCommitMarkers.map(renderChatCommitMarker)}
+                  {!firstPendingChatItemId && trailingChatCommitMarkers.map(renderChatCommitMarker)}
                 </div>
               </div>
             )}
@@ -6655,6 +6712,7 @@ export const App: React.FC = () => {
                   onSandboxModeChange={handleSandboxModeChange}
                   onStop={handleStopChat}
                   onUsageRefresh={refreshAccountUsage}
+                  onUsageReset={resetAccountRateLimits}
                   onSend={handleSendMessage}
                 />
               </div>
