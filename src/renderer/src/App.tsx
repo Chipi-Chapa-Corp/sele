@@ -3315,12 +3315,10 @@ export const App: React.FC = () => {
             : null
 
         if (selectedDetail) {
-          startTransition(() => {
-            applyChatDetail(event.providerId, selectedDetail)
-            setCommittedChatUpdate({
-              sequence: event.sequence,
-              detailApplied: true
-            })
+          applyChatDetail(event.providerId, selectedDetail)
+          setCommittedChatUpdate({
+            sequence: event.sequence,
+            detailApplied: true
           })
         } else {
           applyChatSummary(event.providerId, event.summary, event.turnCompleted)
@@ -3500,14 +3498,12 @@ export const App: React.FC = () => {
         if (!active) return
 
         const nextPlan = getLatestChatPlan(detail, contextKey)
-        startTransition(() => {
-          setExtractedChatPlan((currentPlan) =>
-            currentPlan?.contextKey === nextPlan?.contextKey &&
-            currentPlan?.signature === nextPlan?.signature
-              ? currentPlan
-              : nextPlan
-          )
-        })
+        setExtractedChatPlan((currentPlan) =>
+          currentPlan?.contextKey === nextPlan?.contextKey &&
+          currentPlan?.signature === nextPlan?.signature
+            ? currentPlan
+            : nextPlan
+        )
       }, 0)
     })
 
