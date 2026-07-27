@@ -4,6 +4,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { appIpcChannels, type AppColorScheme } from '../shared/app'
 import { disposeDatabase } from './database/sqlite'
+import { registerFreezeDiagnostics } from './freezeDiagnostics'
 import { disposeProviderAdapters } from './providers/providerService'
 import { registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
@@ -12,6 +13,8 @@ const getColorScheme = (): AppColorScheme => (nativeTheme.shouldUseDarkColors ? 
 
 const getWindowBackgroundColor = (scheme = getColorScheme()): string =>
   scheme === 'dark' ? '#141516' : '#f5f5f3'
+
+let disposeFreezeDiagnostics: (() => void) | null = null
 
 const updateAppColorScheme = (scheme: AppColorScheme): void => {
   BrowserWindow.getAllWindows().forEach((window) => {
@@ -57,6 +60,7 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.sele')
   registerAppIpc()
   registerProviderIpc()
+  disposeFreezeDiagnostics = registerFreezeDiagnostics()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -70,6 +74,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  disposeFreezeDiagnostics?.()
+  disposeFreezeDiagnostics = null
   disposeProviderAdapters()
   void disposeDatabase()
 })

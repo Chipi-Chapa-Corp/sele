@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
-import type { AppApi, AppColorScheme, AppWindowState } from '../shared/app'
+import type {
+  AppApi,
+  AppColorScheme,
+  AppDiagnosticsHeartbeat,
+  AppDiagnosticsInteraction,
+  AppDiagnosticsInteractionKind,
+  AppWindowState
+} from '../shared/app'
 import { appIpcChannels } from '../shared/app'
 import type { ProviderRendererApi, ProviderWindowChatUpdatedEvent } from '../shared/provider'
 import { providerIpcChannels } from '../shared/provider'
@@ -174,3 +181,90 @@ const providerApi: ProviderRendererApi = {
 
 contextBridge.exposeInMainWorld('appApi', appApi)
 contextBridge.exposeInMainWorld('providerApi', providerApi)
+
+type PerformanceWithMemory = Performance & {
+  memory?: {
+    usedJSHeapSize?: number
+    totalJSHeapSize?: number
+  }
+}
+
+const getFiniteNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null
+
+let lastInteractionAt: number | null = null
+let lastInteractionKind: AppDiagnosticsInteractionKind | null = null
+
+const sendDiagnosticsHeartbeat = (): void => {
+  const memory = (performance as PerformanceWithMemory).memory
+  const messageInput = document.querySelector<HTMLTextAreaElement>('#message-input')
+  const heartbeat = {
+    timestamp: Date.now(),
+    jsHeapUsedBytes: getFiniteNumber(memory?.usedJSHeapSize),
+    jsHeapTotalBytes: getFiniteNumber(memory?.totalJSHeapSize),
+    domNodeCount: document.querySelectorAll('*').length,
+    activeAnimationCount: document.getAnimations().length,
+    animatedIconCount: document.querySelectorAll('.chat-detail__animated-icon').length,
+    streamingMessageCount: document.querySelectorAll('[data-streaming="true"]').length,
+    workingSpinnerCount: document.querySelectorAll('.chat-detail__working-spinner').length,
+    messageInputLength: messageInput?.value.length ?? 0,
+    messageInputFocused: document.activeElement === messageInput,
+    openNotesCount: document.querySelectorAll('.cwd-notes button[aria-expanded="true"]').length,
+    openPlanCount: document.querySelectorAll('.chat-plan__toggle[aria-expanded="true"]').length,
+    openWorkingDetailsCount: document.querySelectorAll('details.chat-detail__working[open]').length,
+    lastInteractionAt,
+    lastInteractionKind,
+    visibilityState: document.visibilityState
+  } satisfies AppDiagnosticsHeartbeat
+
+  ipcRenderer.send(appIpcChannels.diagnosticsHeartbeat, heartbeat)
+}
+
+const getInteractionKind = (target: EventTarget | null): AppDiagnosticsInteractionKind | null => {
+  if (!(target instanceof Element)) return null
+  if (target.closest('.chat-plan__toggle')) return 'plan-toggle'
+  if (target.closest('.cwd-notes button')) return 'notes-toggle'
+  if (target.closest('[aria-label^="Edit "]')) return 'edit-message'
+  if (target.closest('[aria-label="Stop response"]')) return 'stop-response'
+  if (target.closest('#message-input')) return 'message-input'
+  return null
+}
+
+document.addEventListener(
+  'pointerdown',
+  (event) => {
+    const interactionKind = getInteractionKind(event.target)
+    if (!interactionKind) return
+
+    lastInteractionAt = Date.now()
+    lastInteractionKind = interactionKind
+    if (interactionKind !== 'message-input') {
+      ipcRenderer.send(appIpcChannels.diagnosticsInteraction, {
+        timestamp: lastInteractionAt,
+        kind: interactionKind
+      } satisfies AppDiagnosticsInteraction)
+    }
+  },
+  true
+)
+
+document.addEventListener(
+  'input',
+  (event) => {
+    if (getInteractionKind(event.target) !== 'message-input') return
+    lastInteractionAt = Date.now()
+    lastInteractionKind = 'message-input'
+  },
+  true
+)
+
+const startDiagnosticsHeartbeat = (): void => {
+  sendDiagnosticsHeartbeat()
+  window.setInterval(sendDiagnosticsHeartbeat, 2_000)
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startDiagnosticsHeartbeat, { once: true })
+} else {
+  startDiagnosticsHeartbeat()
+}

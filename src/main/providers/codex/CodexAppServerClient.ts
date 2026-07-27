@@ -35,6 +35,7 @@ const codexResourceMemoryHigh = '2G'
 type AppServerCommand = {
   command: string
   args: string[]
+  resourceUnitName: string | null
 }
 
 const getAppServerCommand = (binary: string): AppServerCommand => {
@@ -47,10 +48,12 @@ const getAppServerCommand = (binary: string): AppServerCommand => {
   if (!canUseSystemd) {
     return {
       command: binary,
-      args: appServerArgs
+      args: appServerArgs,
+      resourceUnitName: null
     }
   }
 
+  const resourceUnitName = `sele-codex-${process.pid}-${Date.now()}`
   return {
     command: 'systemd-run',
     args: [
@@ -59,16 +62,27 @@ const getAppServerCommand = (binary: string): AppServerCommand => {
       '--wait',
       '--collect',
       '--quiet',
-      `--unit=sele-codex-${process.pid}-${Date.now()}`,
+      `--unit=${resourceUnitName}`,
       '--property=CPUWeight=25',
       '--property=IOWeight=25',
       `--property=MemoryHigh=${codexResourceMemoryHigh}`,
       '--property=OOMScoreAdjust=500',
       binary,
       ...appServerArgs
-    ]
+    ],
+    resourceUnitName
   }
 }
+
+export type CodexResourceIdentity = {
+  pid: number
+  systemdUnitName: string | null
+}
+
+let codexResourceIdentity: CodexResourceIdentity | null = null
+
+export const getCodexResourceIdentity = (): CodexResourceIdentity | null =>
+  codexResourceIdentity ? { ...codexResourceIdentity } : null
 
 export class CodexAppServerClient {
   private process: ChildProcessWithoutNullStreams | null = null
@@ -105,6 +119,7 @@ export class CodexAppServerClient {
   dispose = (): void => {
     this.process?.kill()
     this.process = null
+    codexResourceIdentity = null
     this.startPromise = null
     this.rejectPending(new Error('Codex app-server stopped'))
   }
@@ -129,6 +144,12 @@ export class CodexAppServerClient {
     })
 
     this.process = child
+    if (child.pid) {
+      codexResourceIdentity = {
+        pid: child.pid,
+        systemdUnitName: appServerCommand.resourceUnitName
+      }
+    }
     this.stderr = ''
 
     createInterface({ input: child.stdout }).on('line', this.handleLine)
@@ -253,6 +274,7 @@ export class CodexAppServerClient {
   }
 
   private handleProcessEnd = (error: Error): void => {
+    if (codexResourceIdentity?.pid === this.process?.pid) codexResourceIdentity = null
     this.process = null
     this.startPromise = null
     this.rejectPending(error)

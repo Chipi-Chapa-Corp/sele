@@ -18,6 +18,33 @@ export type AppWindowState = {
   isMaximized: boolean
 }
 
+export type AppDiagnosticsInteractionKind =
+  'edit-message' | 'message-input' | 'notes-toggle' | 'plan-toggle' | 'stop-response'
+
+export type AppDiagnosticsInteraction = {
+  timestamp: number
+  kind: AppDiagnosticsInteractionKind
+}
+
+export type AppDiagnosticsHeartbeat = {
+  timestamp: number
+  jsHeapUsedBytes: number | null
+  jsHeapTotalBytes: number | null
+  domNodeCount: number
+  activeAnimationCount: number
+  animatedIconCount: number
+  streamingMessageCount: number
+  workingSpinnerCount: number
+  messageInputLength: number
+  messageInputFocused: boolean
+  openNotesCount: number
+  openPlanCount: number
+  openWorkingDetailsCount: number
+  lastInteractionAt: number | null
+  lastInteractionKind: AppDiagnosticsInteractionKind | null
+  visibilityState: string
+}
+
 export type AppGitChangeSource = 'branch' | 'uncommitted'
 
 export type AppGitChangeKind = 'edit' | 'create' | 'delete' | 'rename' | 'untracked'
@@ -242,5 +269,7 @@ export const appIpcChannels = {
   pushGitChanges: 'app:push-git-changes',
   selectFolder: 'app:select-folder',
   getProjectIcon: 'app:get-project-icon',
-  selectProjectIcon: 'app:select-project-icon'
+  selectProjectIcon: 'app:select-project-icon',
+  diagnosticsHeartbeat: 'app:diagnostics-heartbeat',
+  diagnosticsInteraction: 'app:diagnostics-interaction'
 } as const

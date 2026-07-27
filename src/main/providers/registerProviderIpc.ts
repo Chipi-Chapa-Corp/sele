@@ -56,6 +56,33 @@ type ChatUpdateDeliveryState = {
 
 const chatUpdateDeliveryByWebContentsId = new Map<number, ChatUpdateDeliveryState>()
 let nextChatUpdateSequence = 1
+let queuedChatUpdateCount = 0
+let sentChatUpdateCount = 0
+let acknowledgedChatUpdateCount = 0
+let lastChatUpdateQueuedAt: number | null = null
+let lastChatUpdateSentAt: number | null = null
+let lastChatUpdateAcknowledgedAt: number | null = null
+
+export const getProviderIpcDiagnostics = (): Record<string, unknown> => ({
+  queuedChatUpdateCount,
+  sentChatUpdateCount,
+  acknowledgedChatUpdateCount,
+  lastChatUpdateQueuedAt,
+  lastChatUpdateSentAt,
+  lastChatUpdateAcknowledgedAt,
+  windows: Array.from(chatUpdateDeliveryByWebContentsId.entries()).map(
+    ([webContentsId, state]) => ({
+      webContentsId,
+      ready: state.ready,
+      hasViewedChat: state.viewedChatKey !== null,
+      inFlightSequence: state.inFlightUpdate?.sequence ?? null,
+      inFlightItemCount: state.inFlightUpdate?.detail?.items.length ?? null,
+      acknowledgedItemCount: state.acknowledgedDetail?.detail.items.length ?? null,
+      pendingChatCount: state.pendingByChatKey.size,
+      trackedChatCount: state.latestUpdateAtByChatKey.size
+    })
+  )
+})
 
 const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
   `${providerId}:${chatId}`
@@ -186,6 +213,8 @@ const sendChatUpdate = (
     chatKey,
     detail: update.detail
   }
+  sentChatUpdateCount += 1
+  lastChatUpdateSentAt = Date.now()
   webContents.send(providerIpcChannels.chatUpdated, {
     ...update,
     detail: detailUpdate,
@@ -213,6 +242,8 @@ const queueChatUpdateForWindow = (
 ): void => {
   if (webContents.isDestroyed()) return
 
+  queuedChatUpdateCount += 1
+  lastChatUpdateQueuedAt = Date.now()
   const state = getChatUpdateDeliveryState(webContents)
   const chatKey = getProviderChatKey(event.providerId, event.chatId)
   const latestUpdateAt = state.latestUpdateAtByChatKey.get(chatKey)
@@ -497,6 +528,8 @@ export const registerProviderIpc = (): void => {
       const state = getChatUpdateDeliveryState(event.sender)
       const inFlightUpdate = state.inFlightUpdate
       if (!inFlightUpdate || inFlightUpdate.sequence !== sequenceValue) return
+      acknowledgedChatUpdateCount += 1
+      lastChatUpdateAcknowledgedAt = Date.now()
 
       if (
         detailAppliedValue &&
