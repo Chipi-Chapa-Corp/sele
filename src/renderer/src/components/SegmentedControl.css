@@ -10,9 +10,17 @@
   box-shadow: var(--control-shadow);
 }
 
+:where(.ui-segmented-control__item) {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  border-radius: calc(var(--control-radius) - 4px);
+}
+
 :where(.ui-segmented-control__option) {
   appearance: none;
   display: inline-grid;
+  width: 100%;
   min-width: 0;
   min-height: calc(var(--control-height) - 8px);
   grid-auto-flow: column;
@@ -32,10 +40,22 @@
     background 140ms ease;
 }
 
+:where(.ui-segmented-control__option--with-action) {
+  padding-right: 34px;
+}
+
+:where(.ui-segmented-control--small .ui-segmented-control__item) {
+  border-radius: calc(var(--control-radius-small) - 2px);
+}
+
 :where(.ui-segmented-control--small .ui-segmented-control__option) {
   min-height: var(--control-height-small);
   padding: 0 9px;
   border-radius: calc(var(--control-radius-small) - 2px);
+}
+
+:where(.ui-segmented-control--small .ui-segmented-control__option--with-action) {
+  padding-right: 29px;
 }
 
 :where(.ui-segmented-control__option:hover:not(:disabled)),
@@ -58,6 +78,70 @@
   opacity: 0.62;
 }
 
+:where(.ui-segmented-control__action) {
+  appearance: none;
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--quiet);
+  cursor: pointer;
+  background: transparent;
+  opacity: 0;
+  outline: 0;
+  transform: translateY(-50%);
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    opacity 140ms ease;
+}
+
+:where(.ui-segmented-control--small .ui-segmented-control__action) {
+  right: 4px;
+  width: 21px;
+  height: 21px;
+}
+
+:where(
+  .ui-segmented-control__item:hover .ui-segmented-control__action,
+  .ui-segmented-control__item--active .ui-segmented-control__action,
+  .ui-segmented-control__action:focus-visible
+) {
+  opacity: 1;
+}
+
+:where(.ui-segmented-control__action:hover, .ui-segmented-control__action:focus-visible) {
+  color: var(--ink);
+  background: var(--control-surface-hover);
+}
+
+:where(.ui-segmented-control__action:focus-visible) {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+:where(.ui-segmented-control__action:disabled) {
+  cursor: default;
+  opacity: 0.32;
+}
+
+:where(.ui-segmented-control__action > span) {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+}
+
+:where(.ui-segmented-control__action svg) {
+  width: 14px;
+  height: 14px;
+}
+
 :where(.ui-segmented-control__icon) {
   display: grid;
   width: var(--control-icon-size);
@@ -76,4 +160,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  :where(.ui-segmented-control__action) {
+    opacity: 1;
+  }
 }

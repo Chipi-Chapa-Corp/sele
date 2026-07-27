@@ -190,6 +190,8 @@ const terminalApi: TerminalRendererApi = {
     ipcRenderer.send(terminalIpcChannels.resize, sessionId, cols, rows),
   setPaused: (sessionId, paused) =>
     ipcRenderer.send(terminalIpcChannels.setPaused, sessionId, paused),
+  getProcessStatus: (sessionId) =>
+    ipcRenderer.invoke(terminalIpcChannels.getProcessStatus, sessionId),
   closeSession: (sessionId) => ipcRenderer.invoke(terminalIpcChannels.closeSession, sessionId),
   onData: (listener): (() => void) => {
     const handleData = (_: IpcRendererEvent, event: TerminalDataEvent): void => {

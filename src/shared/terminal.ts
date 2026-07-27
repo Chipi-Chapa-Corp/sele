@@ -23,11 +23,17 @@ export type TerminalExitEvent = {
   signal?: number
 }
 
+export type TerminalProcessStatus = {
+  hasActiveProcess: boolean
+  processName: string | null
+}
+
 export type TerminalRendererApi = {
   createSession: (options: TerminalCreateOptions) => Promise<TerminalSession>
   write: (sessionId: string, data: string) => void
   resize: (sessionId: string, cols: number, rows: number) => void
   setPaused: (sessionId: string, paused: boolean) => void
+  getProcessStatus: (sessionId: string) => Promise<TerminalProcessStatus>
   closeSession: (sessionId: string) => Promise<void>
   onData: (listener: (event: TerminalDataEvent) => void) => () => void
   onExit: (listener: (event: TerminalExitEvent) => void) => () => void
@@ -38,6 +44,7 @@ export const terminalIpcChannels = {
   write: 'terminal:write',
   resize: 'terminal:resize',
   setPaused: 'terminal:set-paused',
+  getProcessStatus: 'terminal:get-process-status',
   closeSession: 'terminal:close-session',
   data: 'terminal:data',
   exit: 'terminal:exit'

@@ -4,6 +4,10 @@ import './SegmentedControl.css'
 export type SegmentedControlOption<TValue extends string = string> = {
   value: TValue
   label: ReactNode
+  actionAriaLabel?: string
+  actionCallback?: () => Promise<void> | void
+  actionIcon?: ReactNode
+  actionTitle?: string
   ariaLabel?: string
   icon?: ReactNode
   title?: string
@@ -44,27 +48,59 @@ export const SegmentedControl = <TValue extends string>({
     >
       {options.map((option) => {
         const selected = option.value === value
+        const hasAction = Boolean(option.actionIcon && option.actionCallback)
+        const actionEnabled = hasAction && !disabled && !option.disabled
 
         return (
-          <button
-            className={`ui-segmented-control__option${
-              selected ? ' ui-segmented-control__option--active' : ''
+          <div
+            className={`ui-segmented-control__item${
+              selected ? ' ui-segmented-control__item--active' : ''
             }`}
-            type="button"
-            aria-label={option.ariaLabel}
-            aria-pressed={selected}
-            title={option.title}
-            disabled={disabled || option.disabled}
             key={option.value}
-            onClick={() => onChange(option.value)}
+            onMouseDown={(event) => {
+              if (event.button === 1 && actionEnabled) event.preventDefault()
+            }}
+            onAuxClick={(event) => {
+              if (event.button !== 1 || !actionEnabled) return
+              event.preventDefault()
+              void option.actionCallback?.()
+            }}
           >
-            {option.icon && (
-              <span className="ui-segmented-control__icon" aria-hidden="true">
-                {option.icon}
-              </span>
+            <button
+              className={[
+                'ui-segmented-control__option',
+                selected ? 'ui-segmented-control__option--active' : null,
+                hasAction ? 'ui-segmented-control__option--with-action' : null
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              type="button"
+              aria-label={option.ariaLabel}
+              aria-pressed={selected}
+              title={option.title}
+              disabled={disabled || option.disabled}
+              onClick={() => onChange(option.value)}
+            >
+              {option.icon && (
+                <span className="ui-segmented-control__icon" aria-hidden="true">
+                  {option.icon}
+                </span>
+              )}
+              {option.label && <span className="ui-segmented-control__label">{option.label}</span>}
+            </button>
+            {hasAction && (
+              <button
+                className="ui-segmented-control__action"
+                type="button"
+                aria-label={option.actionAriaLabel ?? option.actionTitle ?? 'Option action'}
+                title={option.actionTitle}
+                disabled={disabled || option.disabled}
+                onClick={() => void option.actionCallback?.()}
+              >
+                <span aria-hidden="true">{option.actionIcon}</span>
+              </button>
             )}
-            {option.label && <span className="ui-segmented-control__label">{option.label}</span>}
-          </button>
+          </div>
         )
       })}
     </div>

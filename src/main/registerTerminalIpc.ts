@@ -6,7 +6,11 @@ import { app, ipcMain } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
 import { spawn } from '@lydell/node-pty'
 import type { IDisposable, IPty } from '@lydell/node-pty'
-import type { TerminalCreateOptions, TerminalSession } from '../shared/terminal'
+import type {
+  TerminalCreateOptions,
+  TerminalProcessStatus,
+  TerminalSession
+} from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
 
 const minimumColumns = 2
@@ -24,6 +28,7 @@ type ManagedTerminalSession = {
   outputCharacters: number
   outputTimer: NodeJS.Timeout | null
   paused: boolean
+  shell: string
   dataListener: IDisposable
   exitListener: IDisposable
 }
@@ -97,6 +102,33 @@ const getShell = (): { file: string; args: string[] } => {
     ) ?? '/bin/sh'
 
   return { file, args: [] }
+}
+
+const normalizeProcessName = (value: string): string =>
+  basename(value.trim())
+    .replace(/^-/, '')
+    .replace(/\.exe$/i, '')
+    .toLocaleLowerCase()
+
+const getProcessStatus = (session: ManagedTerminalSession): TerminalProcessStatus => {
+  let processName: string | null = null
+
+  try {
+    processName = session.pty.process?.trim() || null
+  } catch {
+    // Process lookup can race with PTY shutdown.
+  }
+
+  const normalizedProcessName = processName ? normalizeProcessName(processName) : null
+  const normalizedShellName = normalizeProcessName(session.shell)
+
+  return {
+    hasActiveProcess:
+      normalizedProcessName !== null &&
+      normalizedProcessName !== normalizedShellName &&
+      normalizedProcessName !== 'xterm-256color',
+    processName
+  }
 }
 
 const flushOutput = (session: ManagedTerminalSession): void => {
@@ -205,6 +237,7 @@ const createSession = async (
     outputCharacters: 0,
     outputTimer: null,
     paused: false,
+    shell: basename(shell.file),
     dataListener: { dispose: () => {} },
     exitListener: { dispose: () => {} }
   }
@@ -269,6 +302,11 @@ export const registerTerminalIpc = (): void => {
     session.paused = paused
     if (paused) session.pty.pause()
     else session.pty.resume()
+  })
+
+  ipcMain.handle(terminalIpcChannels.getProcessStatus, (event, sessionId: unknown) => {
+    const session = getOwnedSession(event, sessionId)
+    return session ? getProcessStatus(session) : { hasActiveProcess: false, processName: null }
   })
 
   ipcMain.handle(terminalIpcChannels.closeSession, (event, sessionId: unknown) => {

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ITheme, Terminal as XtermTerminal } from '@xterm/xterm'
-import { RefreshCw } from 'lucide-react'
+import { Plus, RefreshCw, Terminal as TerminalIcon, X } from 'lucide-react'
 import { terminalApi } from '../terminalApi'
 import { Button } from './Button'
+import { SegmentedControl } from './SegmentedControl'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPanel.css'
 
@@ -10,7 +11,25 @@ type TerminalPanelProps = {
   cwd: string | null
 }
 
-type TerminalState = 'starting' | 'exited' | 'error'
+type TerminalState = 'starting' | 'running' | 'exited' | 'error'
+
+type TerminalTab = {
+  id: string
+  label: string
+}
+
+type TerminalSessionProps = {
+  cwd: string | null
+  label: string
+  tabId: string
+  visible: boolean
+  onStateChange: (tabId: string, state: TerminalState, sessionId: string) => void
+}
+
+type TerminalTabRuntime = {
+  sessionId: string
+  state: TerminalState
+}
 
 const outputPauseThreshold = 512 * 1024
 const outputResumeThreshold = 64 * 1024
@@ -71,12 +90,40 @@ const getTerminalTheme = (): ITheme =>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Unable to start the terminal.'
 
-export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
+const createTerminalTab = (number: number): TerminalTab => ({
+  id: crypto.randomUUID(),
+  label: `Terminal ${number}`
+})
+
+const TerminalSession: React.FC<TerminalSessionProps> = ({
+  cwd,
+  label,
+  tabId,
+  visible,
+  onStateChange
+}) => {
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<XtermTerminal | null>(null)
+  const fitRef = useRef<(() => void) | null>(null)
+  const visibleRef = useRef(visible)
   const [generation, setGeneration] = useState(0)
   const [state, setState] = useState<TerminalState>('starting')
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    visibleRef.current = visible
+  }, [visible])
+
+  useEffect(() => {
+    if (!visible) return
+
+    const frame = requestAnimationFrame(() => {
+      fitRef.current?.()
+      terminalRef.current?.focus()
+    })
+
+    return () => cancelAnimationFrame(frame)
+  }, [visible])
 
   useEffect(() => {
     const host = hostRef.current
@@ -99,7 +146,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
     let lastColumns = 0
     let lastRows = 0
 
-    setState('starting')
+    const updateState = (nextState: TerminalState): void => {
+      if (!active) return
+      setState(nextState)
+      onStateChange(tabId, nextState, sessionId)
+    }
+
+    updateState('starting')
     setError(null)
     host.replaceChildren()
 
@@ -150,7 +203,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
           drawBoldTextInBrightColors: true,
           fontFamily:
             '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, Consolas, monospace',
-          fontSize: 17,
+          fontSize: 18,
           letterSpacing: 0,
           lineHeight: 1.15,
           macOptionIsMeta: true,
@@ -224,7 +277,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
               event.signal == null ? '' : `, signal ${event.signal}`
             }]\u001b[0m\r\n`
           )
-          if (active) setState('exited')
+          updateState('exited')
         })
 
         const fitAndResize = (): void => {
@@ -240,6 +293,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
             terminalApi.resize(sessionId, terminal.cols, terminal.rows)
           }
         }
+        fitRef.current = fitAndResize
 
         resizeObserver = new ResizeObserver(() => {
           if (resizeFrame == null) resizeFrame = requestAnimationFrame(fitAndResize)
@@ -266,16 +320,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
         sessionCreated = true
         terminal.options.disableStdin = false
         if (ptyPaused) terminalApi.setPaused(sessionId, true)
+        updateState('running')
 
         terminal.onData((data) => {
           if (sessionCreated) terminalApi.write(sessionId, data)
         })
-        terminal.focus()
+        if (visibleRef.current) terminal.focus()
       } catch (startError) {
         if (!active) return
         const message = getErrorMessage(startError)
         setError(message)
-        setState('error')
+        updateState('error')
         terminal?.writeln(`\r\n\u001b[31m${message}\u001b[0m`)
       }
     }
@@ -290,14 +345,20 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
       themeObserver?.disconnect()
       removeDataListener?.()
       removeExitListener?.()
+      fitRef.current = null
       terminalRef.current = null
       terminal?.dispose()
       if (sessionCreated) void terminalApi.closeSession(sessionId)
     }
-  }, [cwd, generation])
+  }, [cwd, generation, onStateChange, tabId])
 
   return (
-    <section className="terminal-panel" aria-label="Terminal">
+    <div
+      className={`terminal-panel__session${visible ? ' terminal-panel__session--active' : ''}`}
+      role="region"
+      aria-label={label}
+      hidden={!visible}
+    >
       {(state === 'exited' || state === 'error') && (
         <div className="terminal-panel__restart">
           <Button
@@ -312,6 +373,144 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
       )}
       <div className="terminal-panel__surface" onPointerDown={() => terminalRef.current?.focus()}>
         <div className="terminal-panel__host" ref={hostRef} />
+      </div>
+    </div>
+  )
+}
+
+export const TerminalPanel: React.FC<TerminalPanelProps> = ({ cwd }) => {
+  const nextTabNumberRef = useRef(2)
+  const closingTabsRef = useRef(new Set<string>())
+  const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
+  const [workspace, setWorkspace] = useState(() => {
+    const initialTab = createTerminalTab(1)
+    return {
+      activeTabId: initialTab.id as string | null,
+      tabs: [initialTab]
+    }
+  })
+
+  const handleTabStateChange = useCallback(
+    (tabId: string, state: TerminalState, sessionId: string): void => {
+      tabRuntimesRef.current.set(tabId, { sessionId, state })
+    },
+    []
+  )
+
+  const handleAddTab = (): void => {
+    const tab = createTerminalTab(nextTabNumberRef.current)
+    nextTabNumberRef.current += 1
+    setWorkspace((currentWorkspace) => ({
+      activeTabId: tab.id,
+      tabs: [...currentWorkspace.tabs, tab]
+    }))
+  }
+
+  const focusTab = (tabId: string): void => {
+    setWorkspace((currentWorkspace) => ({
+      ...currentWorkspace,
+      activeTabId: tabId
+    }))
+  }
+
+  const handleCloseTab = async (tab: TerminalTab): Promise<void> => {
+    if (closingTabsRef.current.has(tab.id)) return
+    closingTabsRef.current.add(tab.id)
+
+    try {
+      const runtime = tabRuntimesRef.current.get(tab.id)
+      if (runtime?.state === 'running') {
+        const processStatus = await terminalApi
+          .getProcessStatus(runtime.sessionId)
+          .catch(() => null)
+
+        if (
+          processStatus?.hasActiveProcess &&
+          !window.confirm(
+            processStatus.processName
+              ? `${processStatus.processName} is still running in ${tab.label}. Close it anyway?`
+              : `A process is still running in ${tab.label}. Close it anyway?`
+          )
+        ) {
+          return
+        }
+      }
+
+      tabRuntimesRef.current.delete(tab.id)
+      setWorkspace((currentWorkspace) => {
+        const closingIndex = currentWorkspace.tabs.findIndex(
+          (currentTab) => currentTab.id === tab.id
+        )
+        if (closingIndex < 0) return currentWorkspace
+
+        return {
+          activeTabId:
+            currentWorkspace.activeTabId === tab.id
+              ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
+                currentWorkspace.tabs[closingIndex - 1]?.id ??
+                null)
+              : currentWorkspace.activeTabId,
+          tabs: currentWorkspace.tabs.filter((currentTab) => currentTab.id !== tab.id)
+        }
+      })
+    } finally {
+      closingTabsRef.current.delete(tab.id)
+    }
+  }
+
+  return (
+    <section className="terminal-panel" aria-label="Terminal">
+      <div className="terminal-panel__toolbar">
+        <SegmentedControl
+          aria-label="Terminal tabs"
+          className="terminal-panel__tabs"
+          options={workspace.tabs.map((tab) => ({
+            value: tab.id,
+            label: tab.label,
+            ariaLabel: tab.label,
+            title: tab.label,
+            icon: <TerminalIcon aria-hidden="true" />,
+            actionAriaLabel: `Close ${tab.label}`,
+            actionTitle: `Close ${tab.label}`,
+            actionIcon: <X aria-hidden="true" />,
+            actionCallback: () => handleCloseTab(tab)
+          }))}
+          value={workspace.activeTabId ?? ''}
+          onChange={focusTab}
+        />
+        <Button
+          theme="transparent"
+          size="small"
+          aria-label="New terminal"
+          title="New terminal"
+          callback={handleAddTab}
+          icon={<Plus aria-hidden="true" />}
+        />
+      </div>
+      <div className="terminal-panel__workspace">
+        {workspace.tabs.length === 0 && (
+          <div className="terminal-panel__empty">
+            <TerminalIcon aria-hidden="true" />
+            <p>No terminal tabs open.</p>
+            <Button
+              theme="secondary"
+              size="small"
+              label="New terminal"
+              callback={handleAddTab}
+              icon={<Plus aria-hidden="true" />}
+            />
+          </div>
+        )}
+        {workspace.tabs.map((tab) => (
+          <TerminalSession
+            cwd={cwd}
+            key={tab.id}
+            label={tab.label}
+            tabId={tab.id}
+            visible={tab.id === workspace.activeTabId}
+            onStateChange={handleTabStateChange}
+          />
+        ))}
       </div>
     </section>
   )

@@ -1,11 +1,49 @@
 .terminal-panel {
   position: relative;
+  display: flex;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
+  flex-direction: column;
   overflow: hidden;
   background: transparent;
+}
+
+.terminal-panel__toolbar {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 var(--changes-sidebar-x, 14px) 8px;
+  user-select: none;
+}
+
+.terminal-panel__tabs {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height);
+  flex: 1;
+}
+
+.terminal-panel__workspace {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.terminal-panel__session {
+  position: absolute;
+  inset: 0;
+  display: none;
+  min-width: 0;
+  min-height: 0;
+}
+
+.terminal-panel__session--active {
+  display: block;
 }
 
 .terminal-panel__restart {
@@ -23,6 +61,26 @@
   overflow: hidden;
   padding: 4px 2px 0 8px;
   background: transparent;
+}
+
+.terminal-panel__empty {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--quiet);
+}
+
+.terminal-panel__empty > svg {
+  width: 28px;
+  height: 28px;
+}
+
+.terminal-panel__empty > p {
+  margin: 0;
 }
 
 .terminal-panel__host,
