@@ -1,0 +1,1 @@
+This tracked fixture will be renamed to preview the rename change type.
