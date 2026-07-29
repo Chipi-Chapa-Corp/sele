@@ -7303,6 +7303,7 @@ export const App: React.FC = () => {
                     providerUpdateInProgress || Boolean(selectedChatAiCommitAction)
                   }
                   pending={sendState === 'sending'}
+                  projectCwd={changesProjectCwd}
                   reasoningEffort={reasoningEffort}
                   sandboxMode={sandboxMode}
                   sandboxModes={sandboxModes}
@@ -7316,6 +7317,7 @@ export const App: React.FC = () => {
                       : undefined
                   }
                   onOpenAttachment={changesCwd ? handleOpenAttachment : undefined}
+                  onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
                   onReasoningEffortChange={handleReasoningEffortChange}
                   onSelectedReviewChange={handleSelectedReviewChange}
                   onSandboxModeChange={handleSandboxModeChange}

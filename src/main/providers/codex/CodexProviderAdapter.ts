@@ -3073,14 +3073,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
       previous.items,
       next.items
     )
-    const previousItems = new Map(previousCarriedItems.map((item) => [item.id, item]))
-    const nextItemIds = new Set(next.items.map((item) => item.id))
+    const nextItems = new Map(next.items.map((item) => [item.id, item]))
+    const previousItemIds = new Set(previousCarriedItems.map((item) => item.id))
     const mergedItems = [
-      ...next.items.map((item) => {
-        const previousItem = previousItems.get(item.id)
-        return previousItem ? this.mergeItem(previousItem, item) : item
+      ...previousCarriedItems.map((item) => {
+        const nextItem = nextItems.get(item.id)
+        return nextItem ? this.mergeItem(item, nextItem) : item
       }),
-      ...previousCarriedItems.filter((item) => !nextItemIds.has(item.id))
+      // Completion notifications can contain only the final item. Keep the streamed order so
+      // that partial snapshots cannot move the final response ahead of the turn's user message.
+      ...next.items.filter((item) => !previousItemIds.has(item.id))
     ]
 
     return {

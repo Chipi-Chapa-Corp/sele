@@ -77,7 +77,7 @@
 }
 
 .chat-detail__message-attachment-review {
-  cursor: default;
+  cursor: pointer;
 }
 
 .chat-detail__message-attachment-review > svg {
@@ -90,20 +90,24 @@
   cursor: pointer;
 }
 
-.chat-detail__message-attachment-file:not(:disabled):hover {
+.chat-detail__message-attachment-file:not(:disabled):hover,
+.chat-detail__message-attachment-review:hover,
+.chat-detail__message-attachment-review[aria-expanded='true'] {
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
   transform: translateY(-1px);
 }
 
-.chat-detail__message-attachment-file:not(:disabled):active {
+.chat-detail__message-attachment-file:not(:disabled):active,
+.chat-detail__message-attachment-review:active {
   background: var(--secondary-surface-active);
   box-shadow: none;
   transform: none;
 }
 
-.chat-detail__message-attachment-file:focus-visible {
+.chat-detail__message-attachment-file:focus-visible,
+.chat-detail__message-attachment-review:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }

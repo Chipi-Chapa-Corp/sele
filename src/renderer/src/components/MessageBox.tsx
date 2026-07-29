@@ -10,7 +10,6 @@ import {
   FolderPen,
   Gauge,
   ListPlus,
-  MessageSquare,
   Paperclip,
   RotateCcw,
   ShieldQuestionMark,
@@ -43,6 +42,7 @@ import { CwdNotesButton } from './CwdNotesButton'
 import { DisclosureToggle } from './DisclosureToggle'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { ImageLightbox } from './ImageLightbox'
+import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { SegmentedControl } from './SegmentedControl'
 import './MessageBox.css'
 
@@ -59,6 +59,7 @@ type MessageBoxProps = {
   models: ProviderModel[]
   operationsDisabled?: boolean
   pending?: boolean
+  projectCwd?: string | null
   reasoningEffort: ProviderReasoningEffort
   sandboxMode: ProviderSandboxMode
   sandboxModes: ProviderSandboxModeOption[]
@@ -75,6 +76,7 @@ type MessageBoxProps = {
   onModelChange: (model: ProviderModelId) => void
   onNotesChange?: (notes: ProviderCwdNote[]) => void
   onOpenAttachment?: (attachment: AppSelectedAttachment) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
   onReasoningEffortChange: (reasoningEffort: ProviderReasoningEffort) => void
   onSelectedReviewChange?: (review: Omit<ProviderReview, 'prompt'> | null) => void
   onSandboxModeChange: (sandboxMode: ProviderSandboxMode) => void
@@ -336,6 +338,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   models,
   operationsDisabled = false,
   pending = false,
+  projectCwd,
   reasoningEffort,
   sandboxMode,
   sandboxModes,
@@ -345,6 +348,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   onModelChange,
   onNotesChange,
   onOpenAttachment,
+  onOpenFileLink,
   onReasoningEffortChange,
   onSelectedReviewChange,
   onSandboxModeChange,
@@ -953,12 +957,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                     className="message-box__attachment-preview message-box__attachment-preview--review"
                     role="listitem"
                   >
-                    <div className="message-box__review-tile">
-                      <MessageSquare aria-hidden="true" />
-                      <span>
-                        Review <span aria-hidden="true">·</span> {selectedReview.comments.length}
-                      </span>
-                    </div>
+                    <ReviewCommentsButton
+                      className="message-box__review-tile"
+                      comments={selectedReview.comments}
+                      onOpenFileLink={onOpenFileLink}
+                      projectCwd={projectCwd}
+                    />
                     <Button
                       aria-label="Remove review"
                       callback={() => onSelectedReviewChange?.(null)}

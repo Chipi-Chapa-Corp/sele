@@ -54,7 +54,6 @@ import {
   Image as ImageIcon,
   ListChecks,
   LoaderCircle,
-  MessageSquare,
   Package,
   Pencil,
   Play,
@@ -83,6 +82,7 @@ import { appApi } from '../appApi'
 import { Button } from './Button'
 import { HighlightedCode } from './HighlightedCode'
 import { ImageLightbox } from './ImageLightbox'
+import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
 
@@ -806,7 +806,8 @@ const GeneratedImageThumbnail: React.FC<{
 const MessageAttachments: React.FC<{
   attachments: ProviderMessageAttachment[]
   onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
-}> = ({ attachments, onOpenFileLink }) => {
+  projectCwd?: string | null
+}> = ({ attachments, onOpenFileLink, projectCwd }) => {
   const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image')
   const otherAttachments = attachments.filter((attachment) => attachment.kind !== 'image')
 
@@ -846,15 +847,12 @@ const MessageAttachments: React.FC<{
                 key={`${attachment.kind}:${attachment.id}:${index}`}
                 role="listitem"
               >
-                <div
+                <ReviewCommentsButton
                   className="chat-detail__message-attachment-link chat-detail__message-attachment-review"
-                  title={`${attachment.comments.length} review comment${attachment.comments.length === 1 ? '' : 's'}`}
-                >
-                  <MessageSquare aria-hidden="true" />
-                  <span>
-                    Review <span aria-hidden="true">·</span> {attachment.comments.length}
-                  </span>
-                </div>
+                  comments={attachment.comments}
+                  onOpenFileLink={onOpenFileLink}
+                  projectCwd={projectCwd}
+                />
               </div>
             ) : (
               <div
@@ -1847,7 +1845,11 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       <div className={messageBlockClassName}>
         {messageLabel && <span className="chat-detail__pending-message-label">{messageLabel}</span>}
         {attachments.length > 0 && (
-          <MessageAttachments attachments={attachments} onOpenFileLink={onOpenFileLink} />
+          <MessageAttachments
+            attachments={attachments}
+            onOpenFileLink={onOpenFileLink}
+            projectCwd={projectCwd}
+          />
         )}
         {item.content.trim() && (
           <MarkdownMessage
