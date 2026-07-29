@@ -1,1 +1,0 @@
-This tracked fixture will be deleted to preview the delete change type.

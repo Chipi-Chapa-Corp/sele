@@ -25,6 +25,8 @@ type RolloutPayload = {
   arguments?: unknown
   output?: unknown
   message?: string
+  images?: unknown
+  local_images?: unknown
   last_agent_message?: string
   phase?: 'commentary' | 'final_answer' | null
   changes?: Record<string, RolloutPatchChange>
@@ -81,6 +83,11 @@ const getRecordValue = (value: unknown): Record<string, unknown> | null =>
 
 const getStringValue = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null
+
+const getStringArray = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    : []
 
 const getPayloadModel = (payload: RolloutPayload): string | null => {
   const directModel = getStringValue(payload.model)
@@ -428,13 +435,19 @@ const createStandalonePatchItem = (entry: RolloutEntry): CodexThreadItem => ({
 })
 
 const createUserMessageItem = (entry: RolloutEntry): CodexThreadItem | null => {
-  const message = entry.payload.message?.trim()
-  if (!message) return null
+  const message = entry.payload.message?.trim() ?? ''
+  const images = getStringArray(entry.payload.images)
+  const localImages = getStringArray(entry.payload.local_images)
+  if (!message && images.length === 0 && localImages.length === 0) return null
 
   return {
     type: 'userMessage',
     id: entry.payload.client_id ?? entry.payload.id ?? `user:${entry.index}`,
-    content: [{ type: 'text', text: message }],
+    content: [
+      ...(message ? [{ type: 'text' as const, text: message }] : []),
+      ...images.map((url) => ({ type: 'image' as const, url })),
+      ...localImages.map((path) => ({ type: 'localImage' as const, path }))
+    ],
     rawToolData: [entry.record]
   }
 }

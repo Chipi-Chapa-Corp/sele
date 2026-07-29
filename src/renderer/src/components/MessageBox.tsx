@@ -1,4 +1,5 @@
 import { type CSSProperties, type ReactNode, useEffect, useId, useRef, useState } from 'react'
+import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
 import {
   ArrowUp,
   BadgeCheck,
@@ -9,14 +10,18 @@ import {
   FolderPen,
   Gauge,
   ListPlus,
+  MessageSquare,
+  Paperclip,
   RotateCcw,
   ShieldQuestionMark,
   SlidersHorizontal,
   Sparkles,
   Square,
   UnlockKeyhole,
+  X,
   Zap
 } from 'lucide-react'
+import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
   ProviderActiveSendMode,
   ProviderApprovalMode,
@@ -27,14 +32,17 @@ import type {
   ProviderModel,
   ProviderModelId,
   ProviderReasoningEffort,
+  ProviderReview,
   ProviderSandboxMode,
   ProviderSandboxModeOption,
   ProviderUsageOptions
 } from '../../../shared/provider'
+import { appApi } from '../appApi'
 import { Button } from './Button'
 import { CwdNotesButton } from './CwdNotesButton'
 import { DisclosureToggle } from './DisclosureToggle'
 import { Dropdown, type DropdownOption } from './Dropdown'
+import { ImageLightbox } from './ImageLightbox'
 import { SegmentedControl } from './SegmentedControl'
 import './MessageBox.css'
 
@@ -54,6 +62,7 @@ type MessageBoxProps = {
   reasoningEffort: ProviderReasoningEffort
   sandboxMode: ProviderSandboxMode
   sandboxModes: ProviderSandboxModeOption[]
+  selectedReview?: Omit<ProviderReview, 'prompt'> | null
   accountUsage: ProviderAccountUsage | null
   accountUsageError: string | null
   accountUsageState: 'idle' | 'loading' | 'ready' | 'error'
@@ -65,12 +74,19 @@ type MessageBoxProps = {
   onCancelEdit?: () => void
   onModelChange: (model: ProviderModelId) => void
   onNotesChange?: (notes: ProviderCwdNote[]) => void
+  onOpenAttachment?: (attachment: AppSelectedAttachment) => void
   onReasoningEffortChange: (reasoningEffort: ProviderReasoningEffort) => void
+  onSelectedReviewChange?: (review: Omit<ProviderReview, 'prompt'> | null) => void
   onSandboxModeChange: (sandboxMode: ProviderSandboxMode) => void
   onStop?: () => Promise<void> | void
   onUsageRefresh?: (options?: ProviderUsageOptions) => Promise<void> | void
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
-  onSend: (message: string, activeMode?: ProviderActiveSendMode) => Promise<void> | void
+  onSend: (
+    message: string,
+    activeMode?: ProviderActiveSendMode,
+    attachments?: AppSelectedAttachment[],
+    review?: Omit<ProviderReview, 'prompt'> | null
+  ) => Promise<void> | void
 }
 
 type MessageBoxContextUsage = {
@@ -84,6 +100,7 @@ type AccountRateLimit = ProviderAccountUsage['rateLimits'][number]
 
 const minTextareaHeight = 44
 const maxTextareaHeight = 180
+const maxSelectedAttachmentCount = 10
 const selectedControlIconClassName = 'message-box__selected-control-icon'
 const numberFormatter = new Intl.NumberFormat(undefined)
 const compactNumberFormatter = new Intl.NumberFormat(undefined, {
@@ -322,11 +339,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   reasoningEffort,
   sandboxMode,
   sandboxModes,
+  selectedReview = null,
   onApprovalModeChange,
   onCancelEdit,
   onModelChange,
   onNotesChange,
+  onOpenAttachment,
   onReasoningEffortChange,
+  onSelectedReviewChange,
   onSandboxModeChange,
   onStop,
   onUsageRefresh,
@@ -335,6 +355,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 }) => {
   const usagePopoverId = useId().replace(/:/g, '')
   const [message, setMessage] = useState('')
+  const [selectedAttachments, setSelectedAttachments] = useState<AppSelectedAttachment[]>([])
+  const [openedImage, setOpenedImage] = useState<Extract<
+    AppSelectedAttachment,
+    { kind: 'image' }
+  > | null>(null)
+  const [attachmentSelectionPending, setAttachmentSelectionPending] = useState(false)
+  const [attachmentSelectionError, setAttachmentSelectionError] = useState<string | null>(null)
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageView, setUsageView] = useState<UsagePopoverView>('usage')
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
@@ -342,7 +369,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
   const editSessionIdRef = useRef<string | null>(null)
   const messageRef = useRef(message)
+  const selectedAttachmentsRef = useRef(selectedAttachments)
   const messageBeforeEditRef = useRef<string | null>(null)
+  const attachmentsBeforeEditRef = useRef<AppSelectedAttachment[] | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const usageControlRef = useRef<HTMLDivElement>(null)
   const editing = Boolean(editSession)
@@ -453,6 +482,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [message])
 
   useEffect(() => {
+    selectedAttachmentsRef.current = selectedAttachments
+  }, [selectedAttachments])
+
+  useEffect(() => {
     if (!usageMenuOpen) return
 
     const handleClick = (event: MouseEvent): void => {
@@ -479,6 +512,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     if (!editSession) {
       editSessionIdRef.current = null
       messageBeforeEditRef.current = null
+      attachmentsBeforeEditRef.current = null
       return
     }
 
@@ -486,7 +520,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
     editSessionIdRef.current = editSession.id
     messageBeforeEditRef.current = messageRef.current
+    attachmentsBeforeEditRef.current = selectedAttachmentsRef.current
     setMessage(editSession.content)
+    setSelectedAttachments([])
+    setAttachmentSelectionError(null)
 
     const animationFrame = window.requestAnimationFrame(() => {
       textareaRef.current?.focus({ preventScroll: true })
@@ -506,6 +543,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [autoFocus, operationsDisabled, disabled, pending])
 
   useEffect(() => {
+    if (!selectedReview || editing) return
+    const frame = window.requestAnimationFrame(() =>
+      textareaRef.current?.focus({ preventScroll: true })
+    )
+    return () => window.cancelAnimationFrame(frame)
+  }, [editing, selectedReview])
+
+  useEffect(() => {
     const textarea = textareaRef.current
     if (!textarea) return
 
@@ -519,21 +564,33 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
   const submitMessage = (activeMode: ProviderActiveSendMode = activePrimaryMode): void => {
     const nextMessage = message.trim()
-    if (!nextMessage || operationsDisabled || (!active && (disabled || pending))) return
+    const submittingReview = editing ? null : selectedReview
+    if (
+      (!nextMessage && selectedAttachments.length === 0 && !submittingReview) ||
+      operationsDisabled ||
+      (!active && (disabled || pending))
+    ) {
+      return
+    }
 
     if (editing) {
       void Promise.resolve(onSend(nextMessage))
         .then(() => {
           setMessage(messageBeforeEditRef.current ?? '')
+          setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
           editSessionIdRef.current = null
           messageBeforeEditRef.current = null
+          attachmentsBeforeEditRef.current = null
         })
         .catch(() => {})
       return
     }
 
     setMessage('')
-    void onSend(nextMessage, active ? activeMode : undefined)
+    setSelectedAttachments([])
+    onSelectedReviewChange?.(null)
+    setAttachmentSelectionError(null)
+    void onSend(nextMessage, active ? activeMode : undefined, selectedAttachments, submittingReview)
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {
@@ -548,9 +605,101 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
   const handleCancelEdit = (): void => {
     setMessage(messageBeforeEditRef.current ?? '')
+    setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
     editSessionIdRef.current = null
     messageBeforeEditRef.current = null
+    attachmentsBeforeEditRef.current = null
     onCancelEdit?.()
+  }
+
+  const handleSelectAttachments = async (): Promise<void> => {
+    if (attachmentSelectionPending || textareaDisabled || editing) return
+
+    setAttachmentSelectionPending(true)
+    setAttachmentSelectionError(null)
+
+    try {
+      const attachments = await appApi.selectMessageAttachments()
+      if (attachments.length === 0) return
+
+      setSelectedAttachments((currentAttachments) => {
+        const existingPaths = new Set(currentAttachments.map((attachment) => attachment.path))
+        const nextAttachments = [
+          ...currentAttachments,
+          ...attachments.filter((attachment) => !existingPaths.has(attachment.path))
+        ]
+
+        if (nextAttachments.length > maxSelectedAttachmentCount) {
+          setAttachmentSelectionError(
+            `Attach up to ${maxSelectedAttachmentCount} files per message.`
+          )
+        }
+
+        return nextAttachments.slice(0, maxSelectedAttachmentCount)
+      })
+      textareaRef.current?.focus({ preventScroll: true })
+    } catch (selectionError) {
+      setAttachmentSelectionError(
+        selectionError instanceof Error ? selectionError.message : 'Unable to attach files.'
+      )
+    } finally {
+      setAttachmentSelectionPending(false)
+    }
+  }
+
+  const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
+    const hasImage = Array.from(event.clipboardData.items).some(
+      (item) => item.kind === 'file' && item.type.startsWith('image/')
+    )
+    if (!hasImage) return
+
+    event.preventDefault()
+    if (attachmentSelectionPending || textareaDisabled || editing) return
+    if (selectedAttachments.length >= maxSelectedAttachmentCount) {
+      setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
+      return
+    }
+
+    setAttachmentSelectionPending(true)
+    setAttachmentSelectionError(null)
+
+    try {
+      const image = await appApi.getClipboardImage()
+      if (!image) throw new Error('Unable to read the pasted image.')
+
+      setSelectedAttachments((currentAttachments) => {
+        if (currentAttachments.length >= maxSelectedAttachmentCount) {
+          setAttachmentSelectionError(
+            `Attach up to ${maxSelectedAttachmentCount} files per message.`
+          )
+          return currentAttachments
+        }
+        return [...currentAttachments, image]
+      })
+    } catch (pasteError) {
+      setAttachmentSelectionError(
+        pasteError instanceof Error ? pasteError.message : 'Unable to paste this image.'
+      )
+    } finally {
+      setAttachmentSelectionPending(false)
+    }
+  }
+
+  const handleRemoveAttachment = (path: string): void => {
+    setSelectedAttachments((attachments) =>
+      attachments.filter((attachment) => attachment.path !== path)
+    )
+    setAttachmentSelectionError(null)
+    textareaRef.current?.focus({ preventScroll: true })
+  }
+
+  const handleOpenAttachment = (attachment: AppSelectedAttachment): void => {
+    if (attachment.kind === 'image') {
+      setOpenedImage(attachment)
+      return
+    }
+
+    onOpenAttachment?.(attachment)
   }
 
   const handleMessageKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -570,9 +719,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     submitMessage()
   }
 
-  const hasMessage = Boolean(message.trim())
-  const activeWithMessage = active && hasMessage
-  const buttonLabel = activeWithMessage
+  const hasContent =
+    Boolean(message.trim()) || selectedAttachments.length > 0 || Boolean(selectedReview && !editing)
+  const activeWithContent = active && hasContent
+  const buttonLabel = activeWithContent
     ? activePrimaryLabel
     : active
       ? 'Stop response'
@@ -581,7 +731,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         : 'Send message'
   const selectorsDisabled = operationsDisabled || (!active && pending)
   const approvalSelectorDisabled = selectorsDisabled || fullAccessSelected
-  const activeDropdownActions = activeWithMessage
+  const activeDropdownActions = activeWithContent
     ? [
         ...(activePrimaryMode === 'steer'
           ? [
@@ -671,6 +821,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
   const renderRateLimit = (limit: AccountRateLimit, key: string): ReactNode => {
     const usedPercent = clampPercent(limit.usedPercent)
+    const roundedUsedPercent = Math.round(usedPercent)
     const resetTime = formatResetTime(limit.resetsAt)
     const windowLabel = formatWindowLabel(limit.windowMinutes)
     const limitLabel = `${limit.label} ${windowLabel}${
@@ -681,7 +832,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       <div className="message-box__limit" key={key}>
         <div className="message-box__usage-row">
           <span>{limitLabel}</span>
-          <strong>{formatPercent(usedPercent)}</strong>
+          <strong>
+            {formatPercent(roundedUsedPercent)} · {formatPercent(100 - roundedUsedPercent)} left
+          </strong>
         </div>
         <div className="message-box__usage-meter" aria-hidden="true">
           <span style={{ width: `${usedPercent}%` }} />
@@ -696,11 +849,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     )
   }
 
+  const selectedImages = selectedAttachments.filter((attachment) => attachment.kind === 'image')
+  const selectedFiles = selectedAttachments.filter((attachment) => attachment.kind === 'file')
+  const showSelectedReview = Boolean(selectedReview && !editing)
+
   return (
     <form className="message-box" aria-busy={pending} onSubmit={handleSubmit}>
-      {error && (
+      {(attachmentSelectionError || error) && (
         <p className="message-box__error" role="status">
-          {error}
+          {attachmentSelectionError ?? error}
         </p>
       )}
       <label className="sr-only" htmlFor="message-input">
@@ -719,6 +876,104 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         Reasoning effort
       </label>
       <div className="message-box__input">
+        {(selectedAttachments.length > 0 || showSelectedReview) && (
+          <div className="message-box__attachment-previews">
+            {selectedImages.length > 0 && (
+              <div
+                className="message-box__attachment-preview-group message-box__attachment-preview-group--images"
+                aria-label="Selected images"
+                role="list"
+              >
+                {selectedImages.map((attachment) => (
+                  <div
+                    className="message-box__attachment-preview message-box__attachment-preview--image"
+                    key={attachment.path}
+                    role="listitem"
+                  >
+                    <button
+                      type="button"
+                      className="message-box__attachment-open"
+                      aria-label={`Open ${attachment.name}`}
+                      title={`Open ${attachment.name}`}
+                      onClick={() => handleOpenAttachment(attachment)}
+                    >
+                      <img src={attachment.dataUrl} alt="" />
+                    </button>
+                    <Button
+                      aria-label={`Remove ${attachment.name}`}
+                      callback={() => handleRemoveAttachment(attachment.path)}
+                      disabled={textareaDisabled || editing}
+                      icon={<X aria-hidden="true" />}
+                      size="small"
+                      theme="secondary"
+                      title={`Remove ${attachment.name}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            {(selectedFiles.length > 0 || showSelectedReview) && (
+              <div
+                className="message-box__attachment-preview-group message-box__attachment-preview-group--other"
+                aria-label="Other selected attachments"
+                role="list"
+              >
+                {selectedFiles.map((attachment) => (
+                  <div
+                    className="message-box__attachment-preview message-box__attachment-preview--file"
+                    key={attachment.path}
+                    role="listitem"
+                  >
+                    <button
+                      type="button"
+                      className="message-box__attachment-open message-box__file-tile"
+                      aria-label={`Open ${attachment.name}`}
+                      title={`Open ${attachment.name}`}
+                      disabled={!onOpenAttachment}
+                      onClick={() => handleOpenAttachment(attachment)}
+                    >
+                      <span className="message-box__file-tile-icon" aria-hidden="true">
+                        <SymbolsFileIcon fileName={attachment.name} autoAssign />
+                      </span>
+                      <span className="message-box__attachment-label">{attachment.name}</span>
+                    </button>
+                    <Button
+                      aria-label={`Remove ${attachment.name}`}
+                      callback={() => handleRemoveAttachment(attachment.path)}
+                      disabled={textareaDisabled || editing}
+                      icon={<X aria-hidden="true" />}
+                      size="small"
+                      theme="transparent"
+                      title={`Remove ${attachment.name}`}
+                    />
+                  </div>
+                ))}
+                {selectedReview && showSelectedReview && (
+                  <div
+                    className="message-box__attachment-preview message-box__attachment-preview--review"
+                    role="listitem"
+                  >
+                    <div className="message-box__review-tile">
+                      <MessageSquare aria-hidden="true" />
+                      <span>
+                        Review <span aria-hidden="true">·</span> {selectedReview.comments.length}
+                      </span>
+                    </div>
+                    <Button
+                      aria-label="Remove review"
+                      callback={() => onSelectedReviewChange?.(null)}
+                      disabled={textareaDisabled || editing}
+                      icon={<X aria-hidden="true" />}
+                      size="small"
+                      theme="transparent"
+                      title="Remove review"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           id="message-input"
@@ -728,8 +983,28 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           placeholder="Message the assistant"
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={handleMessageKeyDown}
+          onPaste={(event) => void handlePaste(event)}
         />
         <div className="message-box__controls">
+          <div className="message-box__attachment-controls">
+            <Button
+              aria-label="Attach files"
+              title={
+                selectedAttachments.length > 0
+                  ? `${selectedAttachments.length} file${selectedAttachments.length === 1 ? '' : 's'} attached`
+                  : 'Attach files'
+              }
+              disabled={
+                textareaDisabled ||
+                editing ||
+                attachmentSelectionPending ||
+                selectedAttachments.length >= maxSelectedAttachmentCount
+              }
+              callback={handleSelectAttachments}
+              icon={<Paperclip aria-hidden="true" />}
+              theme="secondary"
+            />
+          </div>
           <div className="message-box__selectors">
             <span className="message-box__select message-box__sandbox">
               <Dropdown
@@ -802,21 +1077,19 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               />
             )}
             <div className="message-box__usage-control" ref={usageControlRef}>
-              <button
-                type="button"
-                className={`message-box__usage-button${
-                  contextPercent == null ? ' message-box__usage-button--unknown' : ''
-                }`}
-                style={usageButtonStyle}
+              <Button
                 aria-label={usageButtonLabel}
                 aria-controls={`message-usage-${usagePopoverId}`}
                 aria-expanded={usageMenuOpen}
+                callback={handleUsageToggle}
+                data-pressed={usageMenuOpen ? 'true' : undefined}
                 disabled={usageDisabled}
+                icon={<span className="message-box__usage-ring" />}
+                size="small"
+                style={usageButtonStyle}
+                theme="secondary"
                 title={usageButtonLabel}
-                onClick={handleUsageToggle}
-              >
-                <span className="message-box__usage-ring" aria-hidden="true" />
-              </button>
+              />
               {usageMenuOpen && (
                 <div
                   className="message-box__usage-popover"
@@ -997,9 +1270,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               title={buttonLabel}
               disabled={
                 operationsDisabled ||
-                (activeWithMessage ? false : active ? false : disabled || pending || !hasMessage)
+                (activeWithContent ? false : active ? false : disabled || pending || !hasContent)
               }
-              callback={activeWithMessage ? submitMessage : active ? handleStop : submitMessage}
+              callback={activeWithContent ? submitMessage : active ? handleStop : submitMessage}
               dropdownActions={activeDropdownActions}
               dropdownLabel="Message actions"
               dropdownMenuAlign="end"
@@ -1007,9 +1280,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               icon={
                 editingPendingMessage ? (
                   <ListPlus aria-hidden="true" />
-                ) : activeWithMessage && activePrimaryMode === 'steer' ? (
+                ) : activeWithContent && activePrimaryMode === 'steer' ? (
                   <CornerDownRight aria-hidden="true" />
-                ) : activeWithMessage ? (
+                ) : activeWithContent ? (
                   <ArrowUp aria-hidden="true" />
                 ) : active ? (
                   <Square aria-hidden="true" />
@@ -1019,7 +1292,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               }
               theme="primary"
             />
-            {activeWithMessage && (
+            {activeWithContent && (
               <Button
                 aria-label="Stop response"
                 title="Stop response"
@@ -1032,6 +1305,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           </div>
         </div>
       </div>
+      {openedImage && (
+        <ImageLightbox
+          dataUrl={openedImage.dataUrl}
+          name={openedImage.name}
+          path={openedImage.path}
+          onClose={() => setOpenedImage(null)}
+        />
+      )}
     </form>
   )
 }

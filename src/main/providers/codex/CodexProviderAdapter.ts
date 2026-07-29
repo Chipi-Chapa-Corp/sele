@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import { basename } from 'node:path'
 import type {
   ProviderModel,
+  ProviderMessageAttachment,
   ProviderReasoningEffortOption,
   ProviderChatListOptions,
   ProviderChatPage,
@@ -35,7 +37,14 @@ import {
 } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
 import { CodexAppServerClient, type RpcNotification, type RpcRequest } from './CodexAppServerClient'
-import { getChatItems, type CodexThreadItem, type CodexTurn } from './CodexItemRenderers'
+import {
+  createCodexFileAttachmentInput,
+  getChatItems,
+  hasCodexUserInputAttachments,
+  type CodexThreadItem,
+  type CodexTurn,
+  type CodexUserInput
+} from './CodexItemRenderers'
 import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProviderUpdate'
 import { loadRolloutContextUsage, loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
@@ -583,6 +592,33 @@ const shouldUseRolloutTurnItems = (structuredTurn: CodexTurn, rolloutTurn: Codex
   return rolloutTextCount >= structuredTextCount
 }
 
+const restoreStructuredUserMessageAttachments = (
+  structuredItems: CodexThreadItem[],
+  rolloutItems: CodexThreadItem[]
+): CodexThreadItem[] => {
+  const rolloutUserMessages = rolloutItems.filter((item) => item.type === 'userMessage')
+  let userMessageIndex = 0
+
+  return structuredItems.map((item) => {
+    if (item.type !== 'userMessage') return item
+
+    const rolloutItem = rolloutUserMessages[userMessageIndex]
+    userMessageIndex += 1
+    if (
+      !rolloutItem?.content ||
+      hasCodexUserInputAttachments(item.content) ||
+      !hasCodexUserInputAttachments(rolloutItem.content)
+    ) {
+      return item
+    }
+
+    return {
+      ...item,
+      content: rolloutItem.content
+    }
+  })
+}
+
 const mergeStructuredAndRolloutTurn = (
   structuredTurn: CodexTurn,
   rolloutTurn: CodexTurn
@@ -594,7 +630,7 @@ const mergeStructuredAndRolloutTurn = (
   completedAt: structuredTurn.completedAt ?? rolloutTurn.completedAt,
   items: shouldUseRolloutTurnItems(structuredTurn, rolloutTurn)
     ? rolloutTurn.items
-    : structuredTurn.items
+    : restoreStructuredUserMessageAttachments(structuredTurn.items, rolloutTurn.items)
 })
 
 const mergeStructuredAndRolloutTurns = (
@@ -738,6 +774,49 @@ const createUserTextInput = (
 ): Array<{ type: 'text'; text: string; text_elements: [] }> => [
   { type: 'text', text, text_elements: [] }
 ]
+
+const createUserInput = (
+  text: string,
+  images: ProviderTurnOptions['images'] = [],
+  files: ProviderTurnOptions['files'] = []
+): CodexUserInput[] => {
+  const fileAttachmentText = (files ?? [])
+    .map((file) => createCodexFileAttachmentInput(file.path))
+    .map((input) => (input.type === 'text' ? input.text : ''))
+    .filter(Boolean)
+    .join('\n')
+  const combinedText = [text, fileAttachmentText].filter(Boolean).join('\n')
+
+  return [
+    ...(combinedText ? createUserTextInput(combinedText) : []),
+    ...(images ?? []).map((image) => ({
+      type: 'localImage' as const,
+      path: image.path
+    }))
+  ]
+}
+
+const hasAttachmentInput = (options?: ProviderTurnOptions): boolean =>
+  Boolean(options?.images?.length || options?.files?.length)
+
+const getMessageAttachments = (
+  options?: ProviderTurnOptions
+): ProviderMessageAttachment[] | undefined => {
+  const attachments: ProviderMessageAttachment[] = [
+    ...(options?.images ?? []).map((image) => ({
+      kind: 'image' as const,
+      name: basename(image.path),
+      path: image.path
+    })),
+    ...(options?.files ?? []).map((file) => ({
+      kind: 'file' as const,
+      name: basename(file.path),
+      path: file.path
+    }))
+  ]
+
+  return attachments.length > 0 ? attachments : undefined
+}
 
 const truncateTitle = (value: string, maxLength: number): string => {
   if (value.length <= maxLength) return value
@@ -1282,7 +1361,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     onChatCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text) throw new Error('Cannot start a chat with an empty message')
+    if (!text && !hasAttachmentInput(options)) {
+      throw new Error('Cannot start a chat with an empty message')
+    }
 
     const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
       cwd: options?.cwd,
@@ -1312,7 +1393,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const startedTurn = await this.client.request<TurnStartResponse>('turn/start', {
         threadId: thread.id,
         cwd: options?.cwd,
-        input: createUserTextInput(text),
+        input: createUserInput(text, options?.images, options?.files),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -1325,7 +1406,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw error
     }
 
-    this.startThreadTitleGeneration(thread.id, text, cwd)
+    this.startThreadTitleGeneration(thread.id, text || 'File attachment', cwd)
 
     const detail = this.getCachedChatDetail(thread.id)
     if (!detail) throw new Error('Unable to start chat')
@@ -1340,7 +1421,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text) throw new Error('Cannot continue a chat with an empty message')
+    if (!text && !hasAttachmentInput(options)) {
+      throw new Error('Cannot continue a chat with an empty message')
+    }
 
     const pendingTurn = this.addPendingTurn(chatId, text, options)
     if (pendingTurn) this.emitChatUpdated(chatId)
@@ -1351,7 +1434,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       const started = await this.client.request<TurnStartResponse>('turn/start', {
         threadId: chatId,
-        input: createUserTextInput(text),
+        input: createUserInput(text, options?.images, options?.files),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -1378,7 +1461,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     onForkCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text) throw new Error('Cannot continue a chat with an empty message')
+    if (!text && !hasAttachmentInput(options)) {
+      throw new Error('Cannot continue a chat with an empty message')
+    }
 
     if (!this.threads.has(chatId)) await this.getChat(chatId)
     const sourceThread = this.threads.get(chatId)
@@ -1413,7 +1498,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     try {
       const started = await this.client.request<TurnStartResponse>('turn/start', {
         threadId: forkedThread.id,
-        input: createUserTextInput(text),
+        input: createUserInput(text, options?.images, options?.files),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -1467,7 +1552,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text) throw new Error('Cannot edit a pending message to empty content')
+    if (!text && !hasAttachmentInput(options)) {
+      throw new Error('Cannot edit a pending message to empty content')
+    }
     if (!this.threads.has(chatId)) await this.getChat(chatId)
 
     const editedSteeringMessage = this.editSteeringMessage(chatId, messageId, text, options)
@@ -1514,7 +1601,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text) throw new Error('Cannot edit a message to empty content')
+    if (!text && !hasAttachmentInput(options)) {
+      throw new Error('Cannot edit a message to empty content')
+    }
 
     if (!this.threads.has(chatId)) {
       await this.getChat(chatId)
@@ -1558,7 +1647,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     try {
       const started = await this.client.request<TurnStartResponse>('turn/start', {
         threadId: chatId,
-        input: createUserTextInput(text),
+        input: createUserInput(text, options?.images, options?.files),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -1653,7 +1742,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text) throw new Error('Cannot steer a chat with an empty message')
+    if (!text && !hasAttachmentInput(options)) {
+      throw new Error('Cannot steer a chat with an empty message')
+    }
 
     if (!this.threads.has(chatId)) await this.getChat(chatId)
 
@@ -1716,7 +1807,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
             threadId: chatId,
             expectedTurnId,
             clientUserMessageId: steeringMessage.itemId,
-            input: createUserTextInput(steeringMessage.text)
+            input: createUserInput(
+              steeringMessage.text,
+              steeringMessage.options?.images,
+              steeringMessage.options?.files
+            )
           })
           const acceptedTurnId = getSteerResponseTurnId(response) ?? expectedTurnId
           if (acceptedTurnId !== expectedTurnId) {
@@ -1757,7 +1852,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text) throw new Error('Cannot queue an empty message')
+    if (!text && !hasAttachmentInput(options)) throw new Error('Cannot queue an empty message')
 
     if (!this.threads.has(chatId)) await this.getChat(chatId)
     if (!this.getActiveTurnId(chatId)) return this.continueChat(chatId, text, options)
@@ -1779,7 +1874,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text) throw new Error('Cannot interrupt with an empty message')
+    if (!text && !hasAttachmentInput(options)) {
+      throw new Error('Cannot interrupt with an empty message')
+    }
 
     if (!this.threads.has(chatId)) await this.getChat(chatId)
     if (this.getActiveTurnId(chatId)) {
@@ -1800,7 +1897,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const started = await this.client.request<TurnStartResponse>('turn/start', {
       threadId: chatId,
-      input: createUserTextInput(text),
+      input: createUserInput(text, options?.images, options?.files),
       ...getTurnModelOptions(options),
       ...getTurnAccessOptions(options)
     })
@@ -2336,7 +2433,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       {
         type: 'userMessage',
         id: `${turnId}:user`,
-        content: [{ type: 'text', text }]
+        content: createUserInput(text, options?.images, options?.files)
       }
     ]
   })
@@ -2495,7 +2592,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
           ? {
               ...turn,
               text,
-              options: options ? { ...options } : turn.options
+              options: options
+                ? {
+                    ...options,
+                    files: options.files ?? turn.options?.files,
+                    images: options.images ?? turn.options?.images
+                  }
+                : turn.options
             }
           : turn
       )
@@ -2661,7 +2764,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
           ? {
               ...message,
               text,
-              options: options ? { ...options } : message.options
+              options: options
+                ? {
+                    ...options,
+                    files: options.files ?? message.options?.files,
+                    images: options.images ?? message.options?.images
+                  }
+                : message.options
             }
           : message
       )
@@ -2735,6 +2844,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           id: steeringMessage.id,
           kind: 'steering' as const,
           content: steeringMessage.text,
+          attachments: getMessageAttachments(steeringMessage.options),
           createdAt: steeringMessage.createdAt
         })),
       ...queuedTurns
@@ -2744,6 +2854,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           id: queuedTurn.id,
           kind: 'queued' as const,
           content: queuedTurn.text,
+          attachments: getMessageAttachments(queuedTurn.options),
           createdAt: queuedTurn.createdAt
         }))
     ]

@@ -40,6 +40,11 @@ const appApi: AppApi = {
   selectFolder: (options) => ipcRenderer.invoke(appIpcChannels.selectFolder, options),
   getProjectIcon: (options) => ipcRenderer.invoke(appIpcChannels.getProjectIcon, options),
   selectProjectIcon: (options) => ipcRenderer.invoke(appIpcChannels.selectProjectIcon, options),
+  selectMessageAttachments: () => ipcRenderer.invoke(appIpcChannels.selectMessageAttachments),
+  getClipboardImage: () => ipcRenderer.invoke(appIpcChannels.getClipboardImage),
+  getLocalImage: (options) => ipcRenderer.invoke(appIpcChannels.getLocalImage, options),
+  copyLocalImage: (options) => ipcRenderer.invoke(appIpcChannels.copyLocalImage, options),
+  saveLocalImage: (options) => ipcRenderer.invoke(appIpcChannels.saveLocalImage, options),
   onColorSchemeUpdated: (listener): (() => void) => {
     const handleColorSchemeUpdated = (_: IpcRendererEvent, scheme: AppColorScheme): void => {
       listener(scheme)

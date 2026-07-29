@@ -1,6 +1,6 @@
 import { ChevronDown } from 'lucide-react'
-import type { ButtonHTMLAttributes, CSSProperties, FC, ReactNode } from 'react'
-import { useEffect, useId, useRef, useState } from 'react'
+import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react'
+import { forwardRef, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import './Button.css'
 
@@ -17,7 +17,7 @@ export type ButtonDropdownAction = {
 
 type NativeButtonProps = Omit<
   ButtonHTMLAttributes<HTMLButtonElement>,
-  'children' | 'className' | 'onClick' | 'style' | 'type'
+  'children' | 'className' | 'onClick' | 'type'
 >
 
 type ButtonProps = NativeButtonProps & {
@@ -89,20 +89,23 @@ const renderIcon = (icon: ReactNode, className: string): ReactNode =>
     </span>
   ) : null
 
-export const Button: FC<ButtonProps> = ({
-  callback,
-  disabled = false,
-  dropdownActions,
-  dropdownLabel = 'More actions',
-  dropdownMenuAlign = 'start',
-  dropdownPlacement = 'bottom',
-  icon = null,
-  label = null,
-  theme = 'secondary',
-  size = 'normal',
-  fill = false,
-  ...buttonProps
-}) => {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    callback,
+    disabled = false,
+    dropdownActions,
+    dropdownLabel = 'More actions',
+    dropdownMenuAlign = 'start',
+    dropdownPlacement = 'bottom',
+    icon = null,
+    label = null,
+    theme = 'secondary',
+    size = 'normal',
+    fill = false,
+    ...buttonProps
+  },
+  forwardedRef
+) {
   const reactId = useId().replace(/:/g, '')
   const buttonId = buttonProps.id ?? `button-${reactId}`
   const menuId = `${buttonId}-menu`
@@ -288,6 +291,7 @@ export const Button: FC<ButtonProps> = ({
           className={getButtonClassName(theme, size, icon, label, false, 'main')}
           disabled={disabled}
           id={buttonId}
+          ref={forwardedRef}
           type="button"
           onClick={handleClick}
         >
@@ -327,6 +331,7 @@ export const Button: FC<ButtonProps> = ({
       className={getButtonClassName(theme, size, icon, label, fill)}
       disabled={disabled}
       id={buttonProps.id}
+      ref={forwardedRef}
       type="button"
       onClick={handleClick}
     >
@@ -334,4 +339,4 @@ export const Button: FC<ButtonProps> = ({
       {label && <span className="ui-button__label">{label}</span>}
     </button>
   )
-}
+})

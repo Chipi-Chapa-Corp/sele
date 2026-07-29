@@ -15,6 +15,7 @@ export type AppSettings = {
     theme: AppThemePreference
   }
   chat: {
+    continuePrompt: string
     recentChatCacheLimit: number
     hidePlans: boolean
     updateExistingChats: boolean
@@ -27,6 +28,8 @@ export type AppSettings = {
 }
 
 export const appSettingsStorageKey = 'sele:app-settings:v1'
+
+export const defaultStoppedTurnContinuePrompt = 'Continue from where you left off'
 
 export const defaultAppGitCommitPromptSettings: AppGitCommitPromptSettings = {
   instructions: [
@@ -107,6 +110,7 @@ export const defaultAppSettings: AppSettings = {
     theme: 'system'
   },
   chat: {
+    continuePrompt: defaultStoppedTurnContinuePrompt,
     recentChatCacheLimit: 10,
     hidePlans: false,
     updateExistingChats: true,
@@ -182,6 +186,10 @@ export const readStoredAppSettings = (): AppSettings => {
           : defaultAppSettings.appearance.theme
       },
       chat: {
+        continuePrompt:
+          typeof chat.continuePrompt === 'string'
+            ? chat.continuePrompt
+            : defaultAppSettings.chat.continuePrompt,
         recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
         hidePlans:
           typeof chat.hidePlans === 'boolean' ? chat.hidePlans : defaultAppSettings.chat.hidePlans,
@@ -233,6 +241,9 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
 
     const storedChat: Partial<AppSettings['chat']> = {}
+    if (settings.chat.continuePrompt !== defaultAppSettings.chat.continuePrompt) {
+      storedChat.continuePrompt = settings.chat.continuePrompt
+    }
     if (settings.chat.recentChatCacheLimit !== defaultAppSettings.chat.recentChatCacheLimit) {
       storedChat.recentChatCacheLimit = settings.chat.recentChatCacheLimit
     }

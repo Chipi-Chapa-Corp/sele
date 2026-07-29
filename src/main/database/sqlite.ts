@@ -42,6 +42,14 @@ export type LocalDatabase = {
     image_path: string
     updated_at: number
   }
+  message_reviews: {
+    id: string
+    chat_id: string
+    prompt: string
+    serialized_content: string
+    comments_json: string
+    created_at: number
+  }
 }
 
 let database: Kysely<LocalDatabase> | null = null
@@ -99,6 +107,24 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('cwd_key', 'text', (column) => column.primaryKey())
     .addColumn('image_path', 'text', (column) => column.notNull())
     .addColumn('updated_at', 'integer', (column) => column.notNull())
+    .execute()
+
+  await db.schema
+    .createTable('message_reviews')
+    .ifNotExists()
+    .addColumn('id', 'text', (column) => column.primaryKey())
+    .addColumn('chat_id', 'text', (column) => column.notNull())
+    .addColumn('prompt', 'text', (column) => column.notNull())
+    .addColumn('serialized_content', 'text', (column) => column.notNull())
+    .addColumn('comments_json', 'text', (column) => column.notNull())
+    .addColumn('created_at', 'integer', (column) => column.notNull())
+    .execute()
+
+  await db.schema
+    .createIndex('message_reviews_chat_id_created_at')
+    .ifNotExists()
+    .on('message_reviews')
+    .columns(['chat_id', 'created_at'])
     .execute()
 
   await ensureColumn(db, 'cwd_metadata', 'project_cwd', () =>

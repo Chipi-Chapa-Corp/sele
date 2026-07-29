@@ -29,7 +29,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: var(--glass-edge) transparent;
-  scrollbar-gutter: stable both-edges;
 }
 
 .cwd-notes-menu__items::-webkit-scrollbar {

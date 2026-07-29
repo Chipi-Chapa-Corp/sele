@@ -12,6 +12,31 @@ export type AppProjectIcon = {
   updatedAt: number
 }
 
+export type AppLocalImageOptions = {
+  cwd?: string | null
+  path: string
+}
+
+export type AppLocalImage = {
+  dataUrl: string
+  updatedAt: number
+}
+
+export type AppSelectedImage = {
+  kind: 'image'
+  dataUrl: string
+  name: string
+  path: string
+}
+
+export type AppSelectedFile = {
+  kind: 'file'
+  name: string
+  path: string
+}
+
+export type AppSelectedAttachment = AppSelectedImage | AppSelectedFile
+
 export type AppColorScheme = 'dark' | 'light'
 
 export type AppWindowState = {
@@ -117,6 +142,7 @@ export type AppFileContentsOptions = {
 
 export type AppFileContentsResult = {
   contents: string
+  editable: boolean
   version: string
 }
 
@@ -241,6 +267,11 @@ export type AppApi = {
   selectFolder: (options?: FolderSelectionOptions) => Promise<string | null>
   getProjectIcon: (options: AppProjectIconOptions) => Promise<AppProjectIcon | null>
   selectProjectIcon: (options: AppProjectIconOptions) => Promise<AppProjectIcon | null>
+  selectMessageAttachments: () => Promise<AppSelectedAttachment[]>
+  getClipboardImage: () => Promise<AppSelectedImage | null>
+  getLocalImage: (options: AppLocalImageOptions) => Promise<AppLocalImage>
+  copyLocalImage: (options: AppLocalImageOptions) => Promise<void>
+  saveLocalImage: (options: AppLocalImageOptions) => Promise<string | null>
   onColorSchemeUpdated: (listener: (scheme: AppColorScheme) => void) => () => void
   onWindowStateUpdated: (listener: (state: AppWindowState) => void) => () => void
 }
@@ -270,6 +301,11 @@ export const appIpcChannels = {
   selectFolder: 'app:select-folder',
   getProjectIcon: 'app:get-project-icon',
   selectProjectIcon: 'app:select-project-icon',
+  selectMessageAttachments: 'app:select-message-attachments',
+  getClipboardImage: 'app:get-clipboard-image',
+  getLocalImage: 'app:get-local-image',
+  copyLocalImage: 'app:copy-local-image',
+  saveLocalImage: 'app:save-local-image',
   diagnosticsHeartbeat: 'app:diagnostics-heartbeat',
   diagnosticsInteraction: 'app:diagnostics-interaction'
 } as const

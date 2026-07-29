@@ -335,11 +335,45 @@ export type ProviderCapabilities = {
   activeMessages: boolean
 }
 
+export type ProviderReviewComment = {
+  id: string
+  path: string
+  comment: string
+  line: number
+  endLine?: number
+  side: 'old' | 'new'
+}
+
+export type ProviderReview = {
+  id: string
+  prompt: string
+  comments: ProviderReviewComment[]
+}
+
+export type ProviderMessageAttachment =
+  | {
+      kind: 'image'
+      name: string
+      path?: string | null
+      dataUrl?: string | null
+    }
+  | {
+      kind: 'file'
+      name: string
+      path?: string | null
+    }
+  | {
+      kind: 'review'
+      id: string
+      comments: ProviderReviewComment[]
+    }
+
 export type ProviderMessage = {
   type: 'message'
   id: string
   role: 'user' | 'assistant'
   content: string
+  attachments?: ProviderMessageAttachment[]
   createdAt?: number | null
   label?: string | null
   model?: ProviderModelId | null
@@ -372,12 +406,19 @@ export type ProviderToolActivity =
 
 export type ProviderWorkingToolStatus = 'running' | 'finished'
 
+export type ProviderToolIcon = 'image-view' | 'image-generation' | 'openai-docs' | 'plan'
+
+export type ProviderToolImage = {
+  path: string
+}
+
 export type ProviderWorkingTool = {
   type: 'tool'
   id: string
   toolId: string
   status: ProviderWorkingToolStatus
   activity: ProviderToolActivity
+  icon: ProviderToolIcon | null
   label: string
   command: string | null
   stdout: string | null
@@ -386,6 +427,7 @@ export type ProviderWorkingTool = {
   finishedBackgroundSessionId: string | null
   rawInput: unknown
   rawOutput: unknown
+  images: ProviderToolImage[]
 }
 
 export type ProviderWorkingToolGroup = {
@@ -412,6 +454,7 @@ export type ProviderPendingMessage = {
   id: string
   kind: ProviderPendingMessageKind
   content: string
+  attachments?: ProviderMessageAttachment[]
   createdAt?: number | null
 }
 
@@ -478,12 +521,23 @@ export type ProviderWindowChatUpdatedEvent = Omit<ProviderChatUpdatedEvent, 'det
   sequence: number
 }
 
+export type ProviderImageInput = {
+  path: string
+}
+
+export type ProviderFileInput = {
+  path: string
+}
+
 export type ProviderTurnOptions = {
   approvalPolicy: ProviderApprovalPolicy
   approvalsReviewer: ProviderApprovalsReviewer
   cwd?: string
+  files?: ProviderFileInput[]
+  images?: ProviderImageInput[]
   model: ProviderModelId
   reasoningEffort: ProviderReasoningEffort
+  review?: ProviderReview
   sandboxMode: ProviderSandboxMode
 }
 

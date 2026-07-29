@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path'
+import { extname, isAbsolute } from 'node:path'
 import { BrowserWindow, ipcMain, type WebContents } from 'electron'
 import type {
   ProviderApprovalDecision,
@@ -10,8 +10,11 @@ import type {
   ProviderChatPurpose,
   ProviderChatUpdatedEvent,
   ProviderCwdNote,
+  ProviderFileInput,
   ProviderId,
+  ProviderImageInput,
   ProviderOneShotOptions,
+  ProviderReview,
   ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
   ProviderUsageOptions,
@@ -398,8 +401,119 @@ const requireUsageOptions = (value: unknown): ProviderUsageOptions | undefined =
 }
 
 const requireMessage = (value: unknown): string => {
-  if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid message')
+  if (typeof value !== 'string') throw new Error('Invalid message')
   return value
+}
+
+const providerImageExtensions = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
+const maxProviderAttachmentCount = 10
+const maxReviewCommentCount = 200
+const maxReviewPathLength = 4_096
+const maxReviewCommentLength = 20_000
+
+const requireReview = (value: unknown): ProviderReview | undefined => {
+  if (value == null) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid review')
+  }
+
+  const review = value as { id?: unknown; prompt?: unknown; comments?: unknown }
+  if (
+    typeof review.id !== 'string' ||
+    !/^[A-Za-z0-9:_-]{1,200}$/.test(review.id) ||
+    typeof review.prompt !== 'string' ||
+    review.prompt.length > maxReviewCommentLength ||
+    !Array.isArray(review.comments) ||
+    review.comments.length === 0 ||
+    review.comments.length > maxReviewCommentCount
+  ) {
+    throw new Error('Invalid review')
+  }
+
+  const comments: ProviderReview['comments'] = review.comments.map((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('Invalid review comment')
+    }
+
+    const { id, path, comment, line, side } = candidate as {
+      id?: unknown
+      path?: unknown
+      comment?: unknown
+      line?: unknown
+      side?: unknown
+    }
+    if (
+      typeof id !== 'string' ||
+      !/^[A-Za-z0-9:_-]{1,200}$/.test(id) ||
+      typeof path !== 'string' ||
+      path.length === 0 ||
+      path.length > maxReviewPathLength ||
+      path.includes('\0') ||
+      typeof comment !== 'string' ||
+      comment.trim().length === 0 ||
+      comment.length > maxReviewCommentLength ||
+      typeof line !== 'number' ||
+      !Number.isInteger(line) ||
+      line < 1 ||
+      line > 10_000_000 ||
+      (side !== 'old' && side !== 'new')
+    ) {
+      throw new Error('Invalid review comment')
+    }
+
+    return { id, path, comment: comment.trim(), line, side: side === 'old' ? 'old' : 'new' }
+  })
+
+  return { id: review.id, prompt: review.prompt, comments }
+}
+
+const requireImageInputs = (value: unknown): ProviderImageInput[] | undefined => {
+  if (value == null) return undefined
+  if (!Array.isArray(value) || value.length > maxProviderAttachmentCount) {
+    throw new Error('Invalid image inputs')
+  }
+
+  const paths = new Set<string>()
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('Invalid image input')
+    }
+
+    const path = (candidate as { path?: unknown }).path
+    if (
+      typeof path !== 'string' ||
+      !isAbsolute(path) ||
+      path.includes('\0') ||
+      !providerImageExtensions.has(extname(path).toLocaleLowerCase())
+    ) {
+      throw new Error('Invalid image input')
+    }
+    paths.add(path)
+  }
+
+  return Array.from(paths, (path) => ({ path }))
+}
+
+const requireFileInputs = (value: unknown): ProviderFileInput[] | undefined => {
+  if (value == null) return undefined
+  if (!Array.isArray(value) || value.length > maxProviderAttachmentCount) {
+    throw new Error('Invalid file inputs')
+  }
+
+  const paths = new Set<string>()
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('Invalid file input')
+    }
+
+    const path = (candidate as { path?: unknown }).path
+    if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) {
+      throw new Error('Invalid file input')
+    }
+    paths.add(path)
+  }
+
+  return Array.from(paths, (path) => ({ path }))
 }
 
 const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => {
@@ -410,8 +524,11 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     approvalPolicy?: unknown
     approvalsReviewer?: unknown
     cwd?: unknown
+    files?: unknown
+    images?: unknown
     model?: unknown
     reasoningEffort?: unknown
+    review?: unknown
     sandboxMode?: unknown
   }
   const approvalPolicy = options.approvalPolicy
@@ -436,12 +553,21 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   const reasoningEffort = options.reasoningEffort ?? 'xhigh'
   if (!isProviderReasoningEffort(reasoningEffort)) throw new Error('Invalid reasoning effort')
 
+  const files = requireFileInputs(options.files)
+  const images = requireImageInputs(options.images)
+  if ((files?.length ?? 0) + (images?.length ?? 0) > maxProviderAttachmentCount) {
+    throw new Error('Invalid attachment inputs')
+  }
+
   return {
     approvalPolicy,
     approvalsReviewer,
     cwd: cwd ?? undefined,
+    files,
+    images,
     model,
     reasoningEffort,
+    review: requireReview(options.review),
     sandboxMode
   }
 }

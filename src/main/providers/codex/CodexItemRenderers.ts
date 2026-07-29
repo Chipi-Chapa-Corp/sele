@@ -2,7 +2,10 @@ import type {
   ProviderChatItem,
   ProviderFileDiff,
   ProviderMessage,
+  ProviderMessageAttachment,
   ProviderToolActivity,
+  ProviderToolIcon,
+  ProviderToolImage,
   ProviderWorkingItem,
   ProviderWorkingStep,
   ProviderWorkingToolStatus
@@ -10,9 +13,10 @@ import type {
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
 
 export type CodexUserInput =
-  | { type: 'text'; text: string }
-  | { type: 'image' | 'localImage' }
-  | { type: 'skill' | 'mention'; name: string }
+  | { type: 'text'; text: string; text_elements?: unknown[] }
+  | { type: 'image'; url?: string }
+  | { type: 'localImage'; path?: string }
+  | { type: 'skill' | 'mention'; name: string; path?: string }
 
 export type CodexThreadItem = {
   type: string
@@ -34,6 +38,7 @@ export type CodexThreadItem = {
   }[]
   aggregatedOutput?: string | null
   result?: unknown
+  savedPath?: string
   error?: unknown
   customToolName?: string
   customToolInput?: string | null
@@ -68,10 +73,12 @@ type WorkingItemRenderResult =
       command: string | null
       stdout: string | null
       diffs: ProviderFileDiff[]
+      icon: ProviderToolIcon | null
       backgroundSessionId: string | null
       finishedBackgroundSessionId: string | null
       rawInput: unknown
       rawOutput: unknown
+      images: ProviderToolImage[]
     }
 
 type WorkingItemRenderMatcher = {
@@ -88,6 +95,65 @@ const truncate = (value: string, length = 120): string =>
   value.length > length ? `${value.slice(0, length - 1)}…` : value
 
 const getFileName = (path: string): string => path.split(/[/\\]/).pop() || path
+
+const codexFileAttachmentOpenTag = '<file_attachment>'
+const codexFileAttachmentCloseTag = '</file_attachment>'
+const codexFileAttachmentPattern = /<file_attachment>(.+?)<\/file_attachment>/g
+
+const parseCodexFileAttachmentPayload = (
+  value: string
+): Extract<ProviderMessageAttachment, { kind: 'file' }> | null => {
+  try {
+    const payload = JSON.parse(value) as { name?: unknown; path?: unknown }
+    if (typeof payload.name !== 'string' || typeof payload.path !== 'string') return null
+    if (!payload.name || !payload.path) return null
+
+    return {
+      kind: 'file',
+      name: payload.name,
+      path: payload.path
+    }
+  } catch {
+    return null
+  }
+}
+
+const getCodexFileAttachmentsFromText = (
+  text: string
+): Extract<ProviderMessageAttachment, { kind: 'file' }>[] =>
+  Array.from(text.matchAll(codexFileAttachmentPattern), (match) =>
+    parseCodexFileAttachmentPayload(match[1] ?? '')
+  ).filter(
+    (attachment): attachment is Extract<ProviderMessageAttachment, { kind: 'file' }> =>
+      attachment !== null
+  )
+
+const stripCodexFileAttachmentsFromText = (text: string): string =>
+  text
+    .replace(codexFileAttachmentPattern, (marker, payload: string) =>
+      parseCodexFileAttachmentPayload(payload) ? '' : marker
+    )
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+export const createCodexFileAttachmentInput = (path: string): CodexUserInput => ({
+  type: 'text',
+  text: `${codexFileAttachmentOpenTag}${JSON.stringify({
+    name: getFileName(path),
+    path
+  })}${codexFileAttachmentCloseTag}`,
+  text_elements: []
+})
+
+export const hasCodexUserInputAttachments = (inputs: CodexUserInput[] | undefined): boolean =>
+  Boolean(
+    inputs?.some(
+      (input) =>
+        input.type === 'image' ||
+        input.type === 'localImage' ||
+        (input.type === 'text' && getCodexFileAttachmentsFromText(input.text).length > 0)
+    )
+  )
 
 const tokenizeShellCommand = (command: string): ShellToken[] => {
   const tokens: ShellToken[] = []
@@ -939,7 +1005,9 @@ const renderTool = (
   stdout: string | null = null,
   diffs: ProviderFileDiff[] = [],
   toolId = getToolId(item),
-  rawOutput: unknown | typeof defaultRawToolOutput = defaultRawToolOutput
+  rawOutput: unknown | typeof defaultRawToolOutput = defaultRawToolOutput,
+  images: ProviderToolImage[] = [],
+  icon: ProviderToolIcon | null = null
 ): WorkingItemRenderResult => {
   const showRawValues = activity === 'other'
 
@@ -948,6 +1016,7 @@ const renderTool = (
     toolId,
     status: item.status ?? 'finished',
     activity,
+    icon,
     label,
     command: truncateToolText(command, maxToolCommandLength),
     stdout: truncateToolText(stdout, maxToolOutputLength),
@@ -959,12 +1028,14 @@ const renderTool = (
       ? getBoundedRawToolValue(
           rawOutput === defaultRawToolOutput ? getRawToolOutput(item) : rawOutput
         )
-      : null
+      : null,
+    images
   }
 }
 
 type ToolPresentation = {
   activity: ProviderToolActivity
+  icon?: ProviderToolIcon
   label: string
 }
 
@@ -981,11 +1052,73 @@ const isOpenAiDeveloperDocsToolName = (name: string | null | undefined): boolean
 const exactToolPresentations = new Map<string, ToolPresentation>([
   ['webSearch', { activity: 'search', label: 'Searched the web' }],
   ['web_search', { activity: 'search', label: 'Searched the web' }],
-  ['imageView', { activity: 'other', label: 'Viewed image' }],
-  ['view_image', { activity: 'other', label: 'Viewed image' }],
-  ['imageGeneration', { activity: 'other', label: 'Generated image' }],
-  ['image_gen__imagegen', { activity: 'other', label: 'Generated image' }]
+  ['imageView', { activity: 'other', icon: 'image-view', label: 'Viewed image' }],
+  ['view_image', { activity: 'other', icon: 'image-view', label: 'Viewed image' }],
+  ['imageGeneration', { activity: 'other', icon: 'image-generation', label: 'Generated image' }],
+  [
+    'image_gen__imagegen',
+    { activity: 'other', icon: 'image-generation', label: 'Generated image' }
+  ],
+  ['image_gen/imagegen', { activity: 'other', icon: 'image-generation', label: 'Generated image' }],
+  ['imagegen', { activity: 'other', icon: 'image-generation', label: 'Generated image' }]
 ])
+
+const generatedImageToolNames = new Set([
+  'imageGeneration',
+  'image_gen__imagegen',
+  'image_gen/imagegen',
+  'imagegen'
+])
+const generatedImageExtensions = /\.(?:avif|gif|jpe?g|png|webp)$/i
+const generatedImagePathPattern = /(?:[A-Za-z]:[\\/]|\/)[^\s"'`<>]+?\.(?:avif|gif|jpe?g|png|webp)/gi
+const generatedImagePathKeys = new Set(['path', 'saved_path', 'savedPath'])
+const generatedImageTextKeys = new Set(['output_hint', 'text'])
+const generatedImageSkippedKeys = new Set(['image_url', 'result'])
+
+const isAbsoluteGeneratedImagePath = (value: string): boolean =>
+  /^(?:[A-Za-z]:[\\/]|\/)/.test(value) && generatedImageExtensions.test(value)
+
+const getGeneratedImagePaths = (item: CodexThreadItem): ProviderToolImage[] => {
+  const imagePaths = new Set<string>()
+  const seen = new WeakSet<object>()
+
+  const addPath = (value: string): void => {
+    const path = value.trim().replace(/[),.;]+$/, '')
+    if (isAbsoluteGeneratedImagePath(path)) imagePaths.add(path)
+  }
+
+  const addPathsFromText = (value: string): void => {
+    for (const match of value.matchAll(generatedImagePathPattern)) addPath(match[0])
+  }
+
+  const visit = (value: unknown, depth = 0): void => {
+    if (!value || typeof value !== 'object' || depth > 8 || seen.has(value)) return
+    seen.add(value)
+
+    if (Array.isArray(value)) {
+      value.forEach((entry) => visit(entry, depth + 1))
+      return
+    }
+
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (generatedImagePathKeys.has(key) && typeof entry === 'string') {
+        addPath(entry)
+        continue
+      }
+      if (generatedImageTextKeys.has(key) && typeof entry === 'string') {
+        addPathsFromText(entry)
+        continue
+      }
+      if (!generatedImageSkippedKeys.has(key)) visit(entry, depth + 1)
+    }
+  }
+
+  if (item.savedPath) addPath(item.savedPath)
+  visit(item.customToolOutput)
+  visit(item.rawToolData)
+
+  return [...imagePaths].map((path) => ({ path }))
+}
 
 const getToolNameCandidates = (item: CodexThreadItem): string[] => {
   const names = [
@@ -1007,7 +1140,7 @@ const getMappedToolPresentation = (item: CodexThreadItem): ToolPresentation | nu
     item.namespace === 'openaiDeveloperDocs' ||
     names.some(isOpenAiDeveloperDocsToolName)
   ) {
-    return { activity: 'other', label: 'Checked OpenAI docs' }
+    return { activity: 'other', icon: 'openai-docs', label: 'Checked OpenAI docs' }
   }
 
   for (const name of names) {
@@ -1025,7 +1158,23 @@ const renderMappedTool = (
   const presentation = getMappedToolPresentation(item)
   if (!presentation) return null
 
-  return renderTool(item, presentation.activity, presentation.label, null, null, [], toolId)
+  const isGeneratedImage = getToolNameCandidates(item).some((name) =>
+    generatedImageToolNames.has(name)
+  )
+  const images = isGeneratedImage ? getGeneratedImagePaths(item) : []
+
+  return renderTool(
+    item,
+    presentation.activity,
+    presentation.label,
+    null,
+    null,
+    [],
+    toolId,
+    images.length > 0 ? null : defaultRawToolOutput,
+    images,
+    presentation.icon ?? null
+  )
 }
 
 const getCustomToolArgument = (item: CodexThreadItem, key: string): string | null =>
@@ -1071,7 +1220,9 @@ const renderKnownCustomTool = (item: CodexThreadItem): WorkingItemRenderResult |
       null,
       [],
       name,
-      getToolStdout(item.customToolOutput) ?? getRawToolOutput(item)
+      getToolStdout(item.customToolOutput) ?? getRawToolOutput(item),
+      [],
+      'plan'
     )
   }
 
@@ -1245,11 +1396,40 @@ const renderWorkingItems = (item: CodexThreadItem, turnId: string): ProviderWork
 }
 
 const getUserInputText = (input: CodexUserInput): string => {
-  if (input.type === 'text') return input.text
+  if (input.type === 'text') return stripCodexFileAttachmentsFromText(input.text)
   if (input.type === 'skill') return `$${input.name}`
   if (input.type === 'mention') return `@${input.name}`
-  return '[Image]'
+  return ''
 }
+
+const getUserInputAttachments = (input: CodexUserInput): ProviderMessageAttachment[] => {
+  if (input.type === 'text') return getCodexFileAttachmentsFromText(input.text)
+
+  if (input.type === 'localImage') {
+    return [
+      {
+        kind: 'image',
+        name: input.path ? getFileName(input.path) : 'Image',
+        path: input.path ?? null
+      }
+    ]
+  }
+
+  if (input.type === 'image') {
+    return [
+      {
+        kind: 'image',
+        name: 'Image',
+        dataUrl: input.url?.startsWith('data:') ? input.url : null
+      }
+    ]
+  }
+
+  return []
+}
+
+const collectUserInputAttachments = (inputs: CodexUserInput[]): ProviderMessageAttachment[] =>
+  inputs.flatMap(getUserInputAttachments)
 
 const shouldShowCommandText = (activity: ProviderToolActivity): boolean => activity !== 'script'
 
@@ -1317,7 +1497,11 @@ const toMilliseconds = (seconds: number | null | undefined): number | null =>
 
 const hasUserMessageContent = (item: CodexThreadItem): boolean =>
   item.type === 'userMessage' &&
-  Boolean(item.content?.map(getUserInputText).filter(Boolean).join('\n').trim())
+  Boolean(
+    item.content &&
+    (item.content.map(getUserInputText).filter(Boolean).join('\n').trim() ||
+      collectUserInputAttachments(item.content).length > 0)
+  )
 
 const isContextCompactionItem = (item: CodexThreadItem): boolean =>
   item.type === 'contextCompaction' ||
@@ -1411,7 +1595,8 @@ const renderChatItems = (
 
       if (item.type === 'userMessage' && item.content) {
         const content = item.content.map(getUserInputText).filter(Boolean).join('\n').trim()
-        if (content) {
+        const attachments = collectUserInputAttachments(item.content)
+        if (content || attachments.length > 0) {
           const itemId = `${turn.id}:${item.id}`
 
           if (hasSeenInitialUserMessage) {
@@ -1424,6 +1609,7 @@ const renderChatItems = (
                   id: itemId,
                   kind: 'steering',
                   content,
+                  attachments,
                   createdAt: toMilliseconds(startedAt)
                 })
               }
@@ -1433,6 +1619,7 @@ const renderChatItems = (
                 id: itemId,
                 role: 'user',
                 content,
+                attachments,
                 label: 'Steering with',
                 createdAt: toMilliseconds(startedAt),
                 model: turn.model ?? null
@@ -1444,6 +1631,7 @@ const renderChatItems = (
               id: itemId,
               role: 'user',
               content,
+              attachments,
               createdAt: toMilliseconds(startedAt),
               model: turn.model ?? null
             })

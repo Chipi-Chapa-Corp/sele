@@ -20,10 +20,7 @@ import {
   ChevronUp,
   Check,
   Download,
-  FileCode2,
   Files,
-  FilePlus2,
-  FileText,
   FolderKanban,
   FolderPlus,
   GitBranch,
@@ -37,8 +34,6 @@ import {
   Minus,
   Monitor,
   Moon,
-  Package,
-  Pencil,
   RefreshCw,
   Search,
   Settings,
@@ -47,9 +42,7 @@ import {
   SquarePen,
   Sun,
   Terminal,
-  Trash2,
   Upload,
-  Wrench,
   X
 } from 'lucide-react'
 import {
@@ -63,6 +56,7 @@ import {
   FolderIcon as SymbolsFolderIcon
 } from '@react-symbols/icons/utils'
 import type {
+  AppSelectedAttachment,
   AppFileTreeResult,
   AppGitBranchesResult,
   AppGitChangeKind,
@@ -100,8 +94,11 @@ import type {
   ProviderModel,
   ProviderModelId,
   ProviderToolActivity,
+  ProviderToolIcon,
   ProviderAccountUsage,
   ProviderReasoningEffort,
+  ProviderReview,
+  ProviderReviewComment,
   ProviderSandboxMode,
   ProviderSandboxModeOption,
   ProviderTurnOptions,
@@ -191,7 +188,6 @@ type ChangesPaneView = 'git' | 'files' | 'terminal'
 type GitCommitPromptAction = AppGitCommitAction
 type GitSyncAction = 'pull' | 'push' | 'pullAndPush'
 type GitSyncStep = Exclude<GitSyncAction, 'pullAndPush'>
-type CommitActivitySource = 'ai' | 'git'
 type GitSyncRecoveryState = {
   cwd: string
   requestedAction: GitSyncAction
@@ -202,11 +198,7 @@ type GitSyncRecoveryState = {
 type CommitActivityAction = {
   label: string
   activity: ProviderToolActivity
-}
-type CommitActivityDisplay = {
-  source: CommitActivitySource
-  commitAction: GitCommitPromptAction
-  currentAction: CommitActivityAction
+  icon?: ProviderToolIcon | null
 }
 type ScopedCommitActivity = {
   source: 'ai'
@@ -318,7 +310,10 @@ type MessageBoxSelection = {
   sandboxMode: ProviderSandboxMode
 }
 type StoredMessageBoxSelection = Partial<MessageBoxSelection>
-type ChatBooleanSettingKey = Exclude<keyof AppSettings['chat'], 'recentChatCacheLimit'>
+type ChatBooleanSettingKey = Exclude<
+  keyof AppSettings['chat'],
+  'continuePrompt' | 'recentChatCacheLimit'
+>
 type RecentChatCacheEntry = {
   detail: ProviderChatDetail
   updatedAt: number
@@ -462,6 +457,12 @@ const providerToolActivities = new Set<ProviderToolActivity>([
   'command',
   'other'
 ])
+const providerToolIcons = new Set<ProviderToolIcon>([
+  'image-view',
+  'image-generation',
+  'openai-docs',
+  'plan'
+])
 const chatCommitMarkerStatuses = new Set<ChatCommitMarkerStatus>([
   'pending',
   'finished',
@@ -508,6 +509,8 @@ const readStoredScopedCommitActivities = (): Record<string, ScopedCommitActivity
         !currentAction ||
         typeof currentAction.label !== 'string' ||
         !providerToolActivities.has(currentAction.activity as ProviderToolActivity) ||
+        (currentAction.icon != null &&
+          !providerToolIcons.has(currentAction.icon as ProviderToolIcon)) ||
         typeof candidate.startedAt !== 'number' ||
         !Number.isFinite(candidate.startedAt)
       ) {
@@ -524,7 +527,8 @@ const readStoredScopedCommitActivities = (): Record<string, ScopedCommitActivity
         commitAction: candidate.commitAction,
         currentAction: {
           label: currentAction.label,
-          activity: currentAction.activity as ProviderToolActivity
+          activity: currentAction.activity as ProviderToolActivity,
+          icon: (currentAction.icon as ProviderToolIcon | null | undefined) ?? null
         },
         startedAt: candidate.startedAt
       } satisfies ScopedCommitActivity
@@ -653,45 +657,6 @@ const ChangesAnimatedIcon: React.FC<{
       animateOnHover={false}
       aria-hidden="true"
     />
-  )
-}
-
-const CommitActivityActionIcon: React.FC<{ activity: ProviderToolActivity }> = ({ activity }) => {
-  if (activity === 'read') return <FileText aria-hidden="true" />
-  if (activity === 'search') return <Search aria-hidden="true" />
-  if (activity === 'git') return <GitBranch aria-hidden="true" />
-  if (activity === 'edit') return <Pencil aria-hidden="true" />
-  if (activity === 'create') return <FilePlus2 aria-hidden="true" />
-  if (activity === 'delete') return <Trash2 aria-hidden="true" />
-  if (activity === 'npm' || activity === 'npx') return <Package aria-hidden="true" />
-  if (activity === 'script') return <FileCode2 aria-hidden="true" />
-  if (activity === 'command') return <Terminal aria-hidden="true" />
-
-  return <Wrench aria-hidden="true" />
-}
-
-const CommitActivityRow: React.FC<{
-  activity: CommitActivityDisplay
-}> = ({ activity }) => {
-  const commitActionName = commitActionLabels[activity.commitAction]
-  const commitActionLabel = commitActionName
-  const title = `${commitActionLabel} · ${activity.currentAction.label}`
-
-  return (
-    <div className="changes-sidebar__commit-activity">
-      <span className="changes-sidebar__commit-activity-badge">
-        <ChangesAnimatedIcon Icon={AnimatedGitCommitHorizontalIcon} active />
-        <span>{commitActionLabel}</span>
-      </span>
-      <span className="changes-sidebar__commit-activity-detail" title={title}>
-        <span className="changes-sidebar__commit-activity-tool-icon">
-          <CommitActivityActionIcon activity={activity.currentAction.activity} />
-        </span>
-        <span className="changes-sidebar__commit-activity-action">
-          {activity.currentAction.label}
-        </span>
-      </span>
-    </div>
   )
 }
 
@@ -896,11 +861,7 @@ const getScrollBottomTop = (element: HTMLElement): number =>
   Math.max(0, element.scrollHeight - element.clientHeight)
 
 const isScrolledToBottom = (element: HTMLElement): boolean =>
-  getScrollBottomTop(element) - element.scrollTop <= 1
-
-const scrollToBottom = (element: HTMLElement): void => {
-  element.scrollTop = getScrollBottomTop(element)
-}
+  element.scrollTop >= getScrollBottomTop(element)
 
 const resetDocumentScroll = (): void => {
   window.scrollTo(0, 0)
@@ -1593,12 +1554,22 @@ const getChatFromUpdateSummary = (
     pendingApproval: summary.pendingApproval,
     pinned: summary.pinned,
     done: summary.done,
-    seenUpdatedAt: summary.seenUpdatedAt,
+    seenUpdatedAt:
+      existingChat?.seenUpdatedAt == null
+        ? summary.seenUpdatedAt
+        : summary.seenUpdatedAt == null
+          ? existingChat.seenUpdatedAt
+          : Math.max(existingChat.seenUpdatedAt, summary.seenUpdatedAt),
     purpose: summary.purpose
   }
 }
 
-const getOptimisticItems = (items: ProviderChatItem[], message: string): ProviderChatItem[] => {
+const getOptimisticItems = (
+  items: ProviderChatItem[],
+  message: string,
+  attachments: AppSelectedAttachment[] = [],
+  review?: Omit<ProviderReview, 'prompt'> | null
+): ProviderChatItem[] => {
   const createdAt = Date.now()
   const id = `optimistic:${createdAt}`
 
@@ -1608,7 +1579,32 @@ const getOptimisticItems = (items: ProviderChatItem[], message: string): Provide
       type: 'message',
       id: `${id}:user`,
       role: 'user',
-      content: message,
+      content: message.trim(),
+      attachments: [
+        ...attachments.map((attachment) =>
+          attachment.kind === 'image'
+            ? {
+                kind: attachment.kind,
+                name: attachment.name,
+                path: attachment.path,
+                dataUrl: attachment.dataUrl
+              }
+            : {
+                kind: attachment.kind,
+                name: attachment.name,
+                path: attachment.path
+              }
+        ),
+        ...(review
+          ? [
+              {
+                kind: 'review' as const,
+                id: review.id,
+                comments: review.comments
+              }
+            ]
+          : [])
+      ] satisfies NonNullable<ProviderMessage['attachments']>,
       createdAt
     },
     {
@@ -1620,11 +1616,61 @@ const getOptimisticItems = (items: ProviderChatItem[], message: string): Provide
   ]
 }
 
+const formatReviewComments = (comments: ProviderReviewComment[]): string => {
+  const commentsByPath = new Map<string, string[]>()
+
+  comments.forEach(({ path, comment, line, endLine }) => {
+    const normalizedEndLine = Math.max(line, endLine ?? line)
+    const location =
+      normalizedEndLine === line ? `Line ${line}` : `Lines ${line}-${normalizedEndLine}`
+    const locatedComment = `${location}: ${comment}`
+    const pathComments = commentsByPath.get(path)
+    if (pathComments) pathComments.push(locatedComment)
+    else commentsByPath.set(path, [locatedComment])
+  })
+
+  return Array.from(commentsByPath, ([path, pathComments]) =>
+    pathComments.length === 1
+      ? `${path}: ${pathComments[0]}`
+      : `${path}:\n${pathComments.map((comment) => `- ${comment.replace(/\n/g, '\n  ')}`).join('\n')}`
+  ).join('\n\n')
+}
+
+const serializeReviewMessage = (prompt: string, review: Omit<ProviderReview, 'prompt'>): string =>
+  [prompt.trim(), formatReviewComments(review.comments)].filter(Boolean).join('\n\n')
+
 const hasActiveWorkingStep = (detail: ProviderChatDetail | null): boolean =>
   detail?.items.some((item) => item.type === 'working' && item.status === 'working') ?? false
 
 const hasPendingSteeringMessage = (detail: ProviderChatDetail | null): boolean =>
   detail?.items.some((item) => item.type === 'pendingMessage' && item.kind === 'steering') ?? false
+
+const getWorkingStepTurnId = (item: ProviderWorkingStep): string | null =>
+  item.id.match(/^(.*):working(?::\d+)?$/)?.[1] ?? null
+
+const getStoppedTurnRetryMessages = (
+  items: ProviderChatItem[]
+): ReadonlyMap<string, ProviderMessage> => {
+  const retryMessages = new Map<string, ProviderMessage>()
+
+  items.forEach((item, itemIndex) => {
+    if (item.type !== 'working' || item.status !== 'stopped') return
+
+    const turnId = getWorkingStepTurnId(item)
+    if (!turnId) return
+
+    const userMessage = items.find(
+      (candidate, candidateIndex): candidate is ProviderMessage =>
+        candidateIndex < itemIndex &&
+        candidate.type === 'message' &&
+        candidate.role === 'user' &&
+        candidate.id.startsWith(`${turnId}:`)
+    )
+    if (userMessage) retryMessages.set(item.id, userMessage)
+  })
+
+  return retryMessages
+}
 
 const getWorkingItemEstimateText = (item: ProviderWorkingItem): string => {
   if (item.type === 'message') return item.content
@@ -1653,10 +1699,12 @@ const activeCommitActivityLabelReplacements: Array<[RegExp, string]> = [
 
 const getCommitActivityActionFromLabel = (
   label: string,
-  activity: ProviderToolActivity
+  activity: ProviderToolActivity,
+  icon?: ProviderToolIcon | null
 ): CommitActivityAction => ({
   label: getActiveCommitActivityLabel(label) ?? 'Working',
-  activity
+  activity,
+  icon
 })
 
 const getActiveCommitActivityLabel = (label: string): string | null => {
@@ -1671,7 +1719,7 @@ const getActiveCommitActivityLabel = (label: string): string | null => {
 }
 
 const getActiveCommitToolAction = (tool: ProviderWorkingTool): CommitActivityAction => {
-  return getCommitActivityActionFromLabel(tool.label, tool.activity)
+  return getCommitActivityActionFromLabel(tool.label, tool.activity, tool.icon)
 }
 
 const getWorkingItemTools = (item: ProviderWorkingItem): ProviderWorkingTool[] => {
@@ -2243,6 +2291,8 @@ export const App: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('appearance')
   const [fileEditorTarget, setFileEditorTarget] = useState<FileEditorTarget | null>(null)
+  const [selectedReview, setSelectedReview] = useState<Omit<ProviderReview, 'prompt'> | null>(null)
+  const [reviewCommentsDraft, setReviewCommentsDraft] = useState<ProviderReviewComment[]>([])
   const [terminalCwd, setTerminalCwd] = useState<string | null | undefined>(undefined)
   const [chats, setChats] = useState<ProviderChat[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
@@ -2374,6 +2424,9 @@ export const App: React.FC = () => {
   const gitBranchRequestIdRef = useRef(0)
   const chatAutoScrollEnabledRef = useRef(true)
   const chatAutoScrollFrameRef = useRef<number | null>(null)
+  const chatAutoScrollTargetRef = useRef<{ element: HTMLElement; top: number } | null>(null)
+  const chatUserScrollIntentRef = useRef(false)
+  const chatUserScrollIntentFrameRef = useRef<number | null>(null)
   const selectedChatKeyRef = useRef<string | null>(null)
   const selectedChatUpdatedAtRef = useRef<number | null>(null)
   const recentChatCacheLimitRef = useRef(appSettings.chat.recentChatCacheLimit)
@@ -2391,6 +2444,38 @@ export const App: React.FC = () => {
   const approvalModeBeforeFullAccessRef = useRef<ProviderApprovalMode | null>(null)
   const collapsedFileTreeFoldersByCwdRef = useRef(new Map<string, Record<string, boolean>>())
   const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
+
+  const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
+    const top = getScrollBottomTop(contentElement)
+    chatAutoScrollTargetRef.current = { element: contentElement, top }
+    contentElement.scrollTop = top
+  }, [])
+
+  const scheduleChatAutoScroll = useCallback(
+    (contentElement: HTMLElement | null = contentRef.current): void => {
+      if (
+        !contentElement ||
+        !chatAutoScrollEnabledRef.current ||
+        chatAutoScrollFrameRef.current !== null
+      ) {
+        return
+      }
+
+      chatAutoScrollTargetRef.current = {
+        element: contentElement,
+        top: contentElement.scrollTop
+      }
+      chatAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
+        chatAutoScrollFrameRef.current = null
+        if (contentRef.current !== contentElement || !chatAutoScrollEnabledRef.current) {
+          return
+        }
+
+        scrollChatContentToBottom(contentElement)
+      })
+    },
+    [scrollChatContentToBottom]
+  )
 
   const resetChatSearch = useCallback((): void => {
     setChatSearchOpen(false)
@@ -2635,6 +2720,9 @@ export const App: React.FC = () => {
     () => () => {
       if (chatAutoScrollFrameRef.current !== null) {
         window.cancelAnimationFrame(chatAutoScrollFrameRef.current)
+      }
+      if (chatUserScrollIntentFrameRef.current !== null) {
+        window.cancelAnimationFrame(chatUserScrollIntentFrameRef.current)
       }
     },
     []
@@ -3696,29 +3784,47 @@ export const App: React.FC = () => {
     const contentElement = contentRef.current
     if (!contentElement || !chatAutoScrollEnabledRef.current) return
 
-    if (chatAutoScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(chatAutoScrollFrameRef.current)
+    if (!isActiveChatStatus(chatDetail.status)) {
+      scrollChatContentToBottom(contentElement)
     }
-    if (!isActiveChatStatus(chatDetail.status)) scrollToBottom(contentElement)
-
-    chatAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
-      chatAutoScrollFrameRef.current = null
-      if (contentRef.current !== contentElement) return
-
-      scrollToBottom(contentElement)
-      chatAutoScrollEnabledRef.current = true
-    })
-  }, [chatDetail, selectedChatCommitMarkers])
+    scheduleChatAutoScroll(contentElement)
+  }, [chatDetail, scheduleChatAutoScroll, scrollChatContentToBottom, selectedChatCommitMarkers])
 
   useEffect(() => {
     chatAutoScrollEnabledRef.current = true
+    chatAutoScrollTargetRef.current = null
+    scheduleChatAutoScroll()
     resetDocumentScroll()
-  }, [selectedProviderId, selectedChatId])
+  }, [scheduleChatAutoScroll, selectedProviderId, selectedChatId])
+
+  useEffect(() => {
+    if (!selectedChatKey) return
+
+    const contentElement = contentRef.current
+    const contentInnerElement = chatSearchContentRef.current
+    if (!contentElement || !contentInnerElement) return
+
+    const observer = new ResizeObserver(() => {
+      if (
+        contentRef.current !== contentElement ||
+        chatSearchContentRef.current !== contentInnerElement
+      ) {
+        return
+      }
+
+      scheduleChatAutoScroll(contentElement)
+    })
+    observer.observe(contentElement)
+    observer.observe(contentInnerElement)
+
+    return () => observer.disconnect()
+  }, [scheduleChatAutoScroll, selectedChatKey])
 
   useEffect(() => {
     if (selectedChat) return
 
     chatAutoScrollEnabledRef.current = true
+    chatAutoScrollTargetRef.current = null
     contentRef.current?.scrollTo({ top: 0 })
     resetDocumentScroll()
   }, [selectedChat])
@@ -3736,11 +3842,16 @@ export const App: React.FC = () => {
 
     const contentElement = contentRef.current
     chatAutoScrollEnabledRef.current = contentElement ? isScrolledToBottom(contentElement) : true
+    if (chatAutoScrollEnabledRef.current) {
+      scheduleChatAutoScroll(contentElement)
+    } else {
+      chatAutoScrollTargetRef.current = null
+    }
 
     window.requestAnimationFrame(() => {
       if (returnFocusElement?.isConnected) returnFocusElement.focus({ preventScroll: true })
     })
-  }, [resetChatSearch])
+  }, [resetChatSearch, scheduleChatAutoScroll])
 
   const openChatSearch = useCallback((): void => {
     if (!selectedChatKey) return
@@ -3820,6 +3931,7 @@ export const App: React.FC = () => {
       setChatSearchActiveIndex(activeIndex)
       setChatSearchHighlights(matches, activeIndex)
       chatAutoScrollEnabledRef.current = false
+      chatAutoScrollTargetRef.current = null
 
       if (resetActiveMatch && matches[activeIndex]) {
         scrollChatSearchMatchIntoView(
@@ -4380,6 +4492,11 @@ export const App: React.FC = () => {
   }
 
   const handleBack = (): void => {
+    if (selectedChat) {
+      markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
+    }
+    selectedChatKeyRef.current = null
+    selectedChatUpdatedAtRef.current = null
     resetChatSearch()
     chatDetailRef.current = null
     setSelectedChat(null)
@@ -4390,16 +4507,25 @@ export const App: React.FC = () => {
   }
 
   const handleNewChat = (): void => {
-    showNewChatView(
-      selectedChat
-        ? getChatProjectCwd(chatDetail?.id === selectedChat.id ? chatDetail : selectedChat)
-        : undefined
-    )
+    const projectCwd = selectedChat
+      ? getChatProjectCwd(chatDetail?.id === selectedChat.id ? chatDetail : selectedChat)
+      : undefined
+    if (selectedChat) {
+      markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
+    }
+    selectedChatKeyRef.current = null
+    selectedChatUpdatedAtRef.current = null
+    showNewChatView(projectCwd)
   }
 
   const handleNewChatInCwd = (group: ChatListGroupData): void => {
     if (group.kind !== 'cwd') return
 
+    if (selectedChat) {
+      markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
+    }
+    selectedChatKeyRef.current = null
+    selectedChatUpdatedAtRef.current = null
     showNewChatView(group.cwd)
   }
 
@@ -4418,6 +4544,7 @@ export const App: React.FC = () => {
     setChatSearchActiveIndex(activeIndex)
     setChatSearchHighlights(matches, activeIndex)
     chatAutoScrollEnabledRef.current = false
+    chatAutoScrollTargetRef.current = null
 
     const activeMatch = matches[activeIndex]
     const scrollContainer = contentRef.current
@@ -4469,6 +4596,16 @@ export const App: React.FC = () => {
       chat: {
         ...currentSettings.chat,
         recentChatCacheLimit
+      }
+    }))
+  }
+
+  const handleContinuePromptChange = (continuePrompt: string): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      chat: {
+        ...currentSettings.chat,
+        continuePrompt
       }
     }))
   }
@@ -4761,12 +4898,37 @@ export const App: React.FC = () => {
   const handleSendMessage = async (
     message: string,
     activeMode?: ProviderActiveSendMode,
+    attachments: AppSelectedAttachment[] = [],
+    review?: Omit<ProviderReview, 'prompt'> | null,
     turnOptionsOverride?: ProviderTurnOptions
   ): Promise<void> => {
     if (providerUpdateInProgress || sendInFlightRef.current) return
     sendInFlightRef.current = true
     chatAutoScrollEnabledRef.current = true
-    const turnOptions = turnOptionsOverride ?? getCurrentTurnOptions()
+    const serializedMessage = review ? serializeReviewMessage(message, review) : message
+    const baseTurnOptions = {
+      ...(turnOptionsOverride ?? getCurrentTurnOptions()),
+      review: review
+        ? {
+            ...review,
+            prompt: message.trim()
+          }
+        : undefined
+    }
+    const imagePaths = attachments
+      .filter((attachment) => attachment.kind === 'image')
+      .map((attachment) => attachment.path)
+    const filePaths = attachments
+      .filter((attachment) => attachment.kind === 'file')
+      .map((attachment) => attachment.path)
+    const turnOptions =
+      attachments.length > 0
+        ? {
+            ...baseTurnOptions,
+            files: filePaths.length > 0 ? filePaths.map((path) => ({ path })) : undefined,
+            images: imagePaths.length > 0 ? imagePaths.map((path) => ({ path })) : undefined
+          }
+        : baseTurnOptions
 
     if (editingMessage) {
       if (!selectedChat) {
@@ -4783,14 +4945,14 @@ export const App: React.FC = () => {
                 selectedChat.providerId,
                 selectedChat.id,
                 editingMessage.id,
-                message,
+                serializedMessage,
                 turnOptions
               )
             : await providerApi.editMessage(
                 selectedChat.providerId,
                 selectedChat.id,
                 editingMessage.id,
-                message,
+                serializedMessage,
                 turnOptions
               )
         applyViewedChatDetail(selectedChat.providerId, detail)
@@ -4810,7 +4972,7 @@ export const App: React.FC = () => {
       setSendState('sending')
 
       try {
-        const detail = await providerApi.startChat(newSessionProvider, message, {
+        const detail = await providerApi.startChat(newSessionProvider, serializedMessage, {
           ...turnOptions,
           cwd: newSessionCwd ?? undefined
         })
@@ -4834,7 +4996,7 @@ export const App: React.FC = () => {
         const summary = await providerApi.sendActiveChatMessageSummary(
           providerId,
           chatId,
-          message,
+          serializedMessage,
           activeMode ?? 'steer',
           turnOptions
         )
@@ -4855,7 +5017,7 @@ export const App: React.FC = () => {
         ...chatDetail,
         status: 'active',
         contextUsage: chatDetail.contextUsage,
-        items: getOptimisticItems(chatDetail.items, message)
+        items: getOptimisticItems(chatDetail.items, message, attachments, review)
       })
     }
 
@@ -4863,7 +5025,7 @@ export const App: React.FC = () => {
       const summary = await providerApi.continueChatSummary(
         providerId,
         chatId,
-        message,
+        serializedMessage,
         turnOptions
       )
       applyChatSummary(providerId, summary, false)
@@ -4879,6 +5041,87 @@ export const App: React.FC = () => {
       sendInFlightRef.current = false
     }
   }
+
+  const handleContinueStoppedTurn = (prompt: string): Promise<void> => handleSendMessage(prompt)
+
+  const handleRetryStoppedTurn = useCallback(
+    async (message: ProviderMessage): Promise<void> => {
+      if (
+        providerUpdateInProgress ||
+        !selectedProviderId ||
+        !selectedChatId ||
+        !chatDetail?.capabilities.editMessages ||
+        sendInFlightRef.current
+      ) {
+        return
+      }
+
+      const attachments = message.attachments ?? []
+      const imagePaths = attachments.flatMap((attachment) =>
+        attachment.kind === 'image' && attachment.path ? [attachment.path] : []
+      )
+      const filePaths = attachments.flatMap((attachment) =>
+        attachment.kind === 'file' && attachment.path ? [attachment.path] : []
+      )
+      const reviewAttachment = attachments.find(
+        (attachment): attachment is Extract<(typeof attachments)[number], { kind: 'review' }> =>
+          attachment.kind === 'review'
+      )
+      const review = reviewAttachment
+        ? {
+            id: reviewAttachment.id,
+            comments: reviewAttachment.comments
+          }
+        : null
+      const turnOptions: ProviderTurnOptions = {
+        ...getApprovalAccessOptions(approvalMode, sandboxMode),
+        model,
+        reasoningEffort,
+        sandboxMode,
+        review: review
+          ? {
+              ...review,
+              prompt: message.content
+            }
+          : undefined,
+        images: imagePaths.length > 0 ? imagePaths.map((path) => ({ path })) : undefined,
+        files: filePaths.length > 0 ? filePaths.map((path) => ({ path })) : undefined
+      }
+
+      sendInFlightRef.current = true
+      chatAutoScrollEnabledRef.current = true
+      setSendState('sending')
+
+      try {
+        const detail = await providerApi.editMessage(
+          selectedProviderId,
+          selectedChatId,
+          message.id,
+          review ? serializeReviewMessage(message.content, review) : message.content,
+          turnOptions
+        )
+        applyViewedChatDetail(selectedProviderId, detail)
+        markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
+        setSendState('idle')
+      } catch {
+        setSendState('error')
+      } finally {
+        sendInFlightRef.current = false
+      }
+    },
+    [
+      approvalMode,
+      applyViewedChatDetail,
+      chatDetail?.capabilities.editMessages,
+      markChatSeenAt,
+      model,
+      providerUpdateInProgress,
+      reasoningEffort,
+      sandboxMode,
+      selectedChatId,
+      selectedProviderId
+    ]
+  )
 
   const resolveChatApproval = async (
     chat: ProviderChat,
@@ -5000,7 +5243,40 @@ export const App: React.FC = () => {
     const contentElement = contentRef.current
     if (!contentElement) return
 
-    chatAutoScrollEnabledRef.current = isScrolledToBottom(contentElement)
+    if (isScrolledToBottom(contentElement)) {
+      chatAutoScrollEnabledRef.current = true
+      chatUserScrollIntentRef.current = false
+      chatAutoScrollTargetRef.current = {
+        element: contentElement,
+        top: contentElement.scrollTop
+      }
+      return
+    }
+
+    const autoScrollTarget = chatAutoScrollTargetRef.current
+    if (
+      !chatUserScrollIntentRef.current &&
+      chatAutoScrollEnabledRef.current &&
+      autoScrollTarget?.element === contentElement &&
+      autoScrollTarget.top === contentElement.scrollTop
+    ) {
+      scheduleChatAutoScroll(contentElement)
+      return
+    }
+
+    chatAutoScrollEnabledRef.current = false
+    chatAutoScrollTargetRef.current = null
+    chatUserScrollIntentRef.current = false
+  }
+
+  const handleChatContentWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    chatUserScrollIntentRef.current = event.deltaY < 0
+    if (!chatUserScrollIntentRef.current || chatUserScrollIntentFrameRef.current !== null) return
+
+    chatUserScrollIntentFrameRef.current = window.requestAnimationFrame(() => {
+      chatUserScrollIntentFrameRef.current = null
+      chatUserScrollIntentRef.current = false
+    })
   }
 
   const renderChatGroup = (group: ChatListGroupData, contentId: string): React.ReactElement => {
@@ -5054,6 +5330,18 @@ export const App: React.FC = () => {
     !editingMessage
   )
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
+  const stoppedTurnRetryMessages = useMemo(
+    () => getStoppedTurnRetryMessages(visibleChatItems),
+    [visibleChatItems]
+  )
+  const canRetryStoppedTurns = Boolean(selectedChat && chatDetail?.capabilities.editMessages)
+  const stoppedTurnActionDisabled =
+    chatLoadState !== 'ready' ||
+    sendState === 'sending' ||
+    providerUpdateInProgress ||
+    chatHasActiveTurn ||
+    Boolean(editingMessage) ||
+    Boolean(selectedChatAiCommitAction)
   const firstPendingChatItemId =
     visibleChatItems.find((item) => item.type === 'pendingMessage')?.id ?? null
   const [
@@ -5287,6 +5575,19 @@ export const App: React.FC = () => {
   const changedFiles = useMemo(
     () => getTreeFilesWithDisplayPaths(rawChangedFiles, changedFilesDisplayRoot),
     [changedFilesDisplayRoot, rawChangedFiles]
+  )
+  const fileEditorDiffTargets = useMemo<FileEditorTarget[]>(
+    () =>
+      changesCwd
+        ? changedFiles.map((file) => ({
+            cwd: changesCwd,
+            path: file.path,
+            displayPath: getChangedFileDisplayPath(file),
+            kind: file.kind,
+            previousPath: file.previousPath ?? null
+          }))
+        : [],
+    [changedFiles, changesCwd]
   )
   const gitSyncMetadata = changesCwd && gitChangesScope?.cwd === changesCwd ? gitChanges : null
   const unpulledCount = gitSyncMetadata?.unpulledCount ?? 0
@@ -5543,8 +5844,43 @@ export const App: React.FC = () => {
     [changesCwd]
   )
 
+  const handleOpenAttachment = useCallback(
+    (attachment: AppSelectedAttachment): void => {
+      if (!changesCwd) return
+
+      setFileEditorTarget({
+        cwd: changesCwd,
+        path: attachment.path,
+        displayPath: attachment.name
+      })
+    },
+    [changesCwd]
+  )
+
   const handleCloseFileEditor = useCallback((): void => {
     setFileEditorTarget(null)
+  }, [])
+  const handleReviewCommentsChange = useCallback((comments: ProviderReviewComment[]): void => {
+    setReviewCommentsDraft(comments)
+    setSelectedReview((review) => (review ? { ...review, comments } : null))
+  }, [])
+  const handleContinueReview = useCallback((comments: ProviderReviewComment[]): void => {
+    setReviewCommentsDraft(comments)
+    setSelectedReview((review) => ({
+      id: review?.id ?? crypto.randomUUID(),
+      comments
+    }))
+    setFileEditorTarget(null)
+  }, [])
+  const handleSelectedReviewChange = useCallback(
+    (review: Omit<ProviderReview, 'prompt'> | null): void => {
+      setSelectedReview(review)
+      setReviewCommentsDraft(review?.comments ?? [])
+    },
+    []
+  )
+  const handleSelectFileEditorTarget = useCallback((target: FileEditorTarget): void => {
+    setFileEditorTarget(target)
   }, [])
 
   const renderTreeNode = <TFile extends TreeFile>(
@@ -6073,6 +6409,8 @@ export const App: React.FC = () => {
     await handleSendMessage(
       getGitAiResolutionPrompt(recovery, rememberStrategy),
       undefined,
+      [],
+      null,
       getGitTurnOptions()
     )
   }
@@ -6155,6 +6493,22 @@ export const App: React.FC = () => {
               />
               <span className="settings-switch__control" aria-hidden="true" />
             </label>
+          </div>
+          <div className="settings-dialog__field settings-dialog__field--stack">
+            <label
+              className="settings-dialog__field-header"
+              htmlFor="settings-chat-continue-prompt"
+            >
+              <h3>Stopped-turn continue prompt</h3>
+              <p>Sent as a new message when Continue is selected on a stopped turn.</p>
+            </label>
+            <textarea
+              id="settings-chat-continue-prompt"
+              className="settings-dialog__prompt-textarea"
+              rows={3}
+              value={appSettings.chat.continuePrompt}
+              onChange={(event) => handleContinuePromptChange(event.currentTarget.value)}
+            />
           </div>
           <div className="settings-dialog__field">
             <label className="settings-dialog__field-header" htmlFor="settings-chat-cache-limit">
@@ -6271,16 +6625,15 @@ export const App: React.FC = () => {
               value={settingsTab}
               onChange={setSettingsTab}
             />
-            <button
+            <Button
               ref={settingsCloseButtonRef}
-              className="settings-dialog__close"
-              type="button"
               aria-label="Close settings"
+              callback={() => setSettingsOpen(false)}
+              icon={<X aria-hidden="true" />}
+              size="small"
+              theme="transparent"
               title="Close settings"
-              onClick={() => setSettingsOpen(false)}
-            >
-              <X aria-hidden="true" />
-            </button>
+            />
           </header>
           <div className="settings-dialog__body">{renderSettingsPanel()}</div>
         </section>
@@ -6328,7 +6681,15 @@ export const App: React.FC = () => {
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
       {fileEditorTarget && (
-        <FileEditorDialog target={fileEditorTarget} onClose={handleCloseFileEditor} />
+        <FileEditorDialog
+          diffTargets={fileEditorTarget.kind ? fileEditorDiffTargets : []}
+          initialReviewComments={reviewCommentsDraft}
+          target={fileEditorTarget}
+          onClose={handleCloseFileEditor}
+          onContinueReview={handleContinueReview}
+          onReviewCommentsChange={handleReviewCommentsChange}
+          onSelectTarget={handleSelectFileEditorTarget}
+        />
       )}
       <div className="chat__panels" ref={panelsRef} style={panelsStyle}>
         <div className="chat__sidebar-panel" data-panel="true" id="sidebar">
@@ -6525,6 +6886,7 @@ export const App: React.FC = () => {
                 className="chat-detail__messages"
                 ref={contentRef}
                 onScroll={handleChatContentScroll}
+                onWheel={handleChatContentWheel}
               >
                 <div
                   className="chat-detail__messages-inner"
@@ -6548,6 +6910,8 @@ export const App: React.FC = () => {
                         trailingChatCommitMarkers.map(renderChatCommitMarker)}
                       <ChatDetailItem
                         canEditOwnMessages={canEditOwnMessages}
+                        continuePrompt={appSettings.chat.continuePrompt}
+                        continueStoppedTurnDisabled={stoppedTurnActionDisabled}
                         item={item}
                         modelLabelsById={modelLabelsById}
                         onDeletePendingMessage={handleDeletePendingMessage}
@@ -6555,9 +6919,19 @@ export const App: React.FC = () => {
                         onInterruptPendingMessage={
                           chatHasActiveTurn ? handleInterruptPendingMessage : undefined
                         }
+                        onContinueStoppedTurn={
+                          item.type === 'working' && item.status === 'stopped'
+                            ? handleContinueStoppedTurn
+                            : undefined
+                        }
                         onEditMessage={handleEditMessage}
                         onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+                        onRetryStoppedTurn={handleRetryStoppedTurn}
                         projectCwd={changesProjectCwd}
+                        retryMessage={
+                          canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null
+                        }
+                        retryStoppedTurnDisabled={stoppedTurnActionDisabled}
                         selectedModelId={model}
                         streaming={item.id === streamingChatItemId}
                       />
@@ -6740,6 +7114,7 @@ export const App: React.FC = () => {
                   reasoningEffort={reasoningEffort}
                   sandboxMode={sandboxMode}
                   sandboxModes={sandboxModes}
+                  selectedReview={selectedReview}
                   onApprovalModeChange={handleApprovalModeChange}
                   onCancelEdit={handleCancelEditMessage}
                   onModelChange={handleModelChange}
@@ -6748,7 +7123,9 @@ export const App: React.FC = () => {
                       ? (notes) => handleCwdNotesChange(messageBoxNotesGroup, notes)
                       : undefined
                   }
+                  onOpenAttachment={changesCwd ? handleOpenAttachment : undefined}
                   onReasoningEffortChange={handleReasoningEffortChange}
+                  onSelectedReviewChange={handleSelectedReviewChange}
                   onSandboxModeChange={handleSandboxModeChange}
                   onStop={handleStopChat}
                   onUsageRefresh={refreshAccountUsage}
@@ -6918,17 +7295,6 @@ export const App: React.FC = () => {
             </div>
             {changesPaneView === 'git' && (
               <footer className="changes-sidebar__footer">
-                <div
-                  className="changes-sidebar__commit-activity-list"
-                  role="status"
-                  aria-label="Commit activity"
-                >
-                  {currentProjectCommitActivities
-                    .filter((activity) => activity.source === 'git')
-                    .map((activity) => (
-                      <CommitActivityRow activity={activity} key={activity.id} />
-                    ))}
-                </div>
                 <div className="changes-sidebar__input-row">
                   <label className="changes-sidebar__commit-message">
                     <span className="sr-only">{commitInputLabel}</span>

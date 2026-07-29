@@ -204,7 +204,10 @@
   box-shadow: var(--secondary-before-shadow);
 }
 
-:where(.ui-button--secondary:not(:disabled):hover, .ui-button--secondary[data-pressed]:not(:disabled)) {
+:where(
+  .ui-button--secondary:not(:disabled):hover,
+  .ui-button--secondary[data-pressed]:not(:disabled)
+) {
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
@@ -232,13 +235,19 @@
   transform: translateY(0);
 }
 
-:where(.ui-button--primary:not(:disabled):active, .ui-button--primary[data-pressed]:not(:disabled)) {
+:where(
+  .ui-button--primary:not(:disabled):active,
+  .ui-button--primary[data-pressed]:not(:disabled)
+) {
   background: var(--primary-surface-hover);
   box-shadow: var(--primary-shadow-active);
   transform: none;
 }
 
-:where(.ui-button--secondary:not(:disabled):active, .ui-button--secondary[data-pressed]:not(:disabled)) {
+:where(
+  .ui-button--secondary:not(:disabled):active,
+  .ui-button--secondary[data-pressed]:not(:disabled)
+) {
   background: var(--secondary-surface-active);
   box-shadow: none;
   transform: none;
@@ -258,18 +267,19 @@
 }
 
 :where(.ui-button--primary:disabled) {
-  border-color: var(--primary-border);
+  border-color: #553d2a;
   color: var(--accent-ink);
-  background: var(--primary-surface);
+  background: #553d2a;
   box-shadow: none;
-  opacity: 0.64;
+  opacity: 1;
 }
 
 :where(.ui-button--secondary:disabled) {
-  color: var(--ink);
-  background: var(--secondary-surface);
+  border-color: var(--control-border);
+  color: var(--control-disabled-color);
+  background: var(--control-surface);
   box-shadow: none;
-  opacity: 0.64;
+  opacity: 1;
 }
 
 .ui-button-menu-root {

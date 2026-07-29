@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   copyFile,
   lstat,
@@ -12,8 +12,8 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { extname, isAbsolute, join, relative, resolve } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
+import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme } from 'electron'
 import type {
   AppColorScheme,
   AppFileContentsOptions,
@@ -35,8 +35,12 @@ import type {
   AppGitRecoverableFailure,
   AppGitSwitchBranchOptions,
   AppGitUncommittedPatchChangesOptions,
+  AppLocalImage,
+  AppLocalImageOptions,
   AppProjectIcon,
   AppProjectIconOptions,
+  AppSelectedAttachment,
+  AppSelectedImage,
   AppWriteFileContentsOptions,
   AppWindowState
 } from '../shared/app'
@@ -78,6 +82,9 @@ const imageMimeTypes = {
   '.webp': 'image/webp'
 } satisfies Record<string, string>
 const maxProjectIconBytes = 8 * 1024 * 1024
+const maxLocalImageBytes = 32 * 1024 * 1024
+const maxMessageAttachmentCount = 10
+const messageImageExtensions = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const automaticProjectIconPaths = [
   '.idea/icon.svg',
   'favicon.svg',
@@ -122,23 +129,73 @@ const getProjectIconOptions = (value: unknown): AppProjectIconOptions => {
   }
 }
 
+const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid local image options')
+  }
+
+  const options = value as { cwd?: unknown; path?: unknown }
+  if (
+    typeof options.path !== 'string' ||
+    options.path.length === 0 ||
+    options.path.includes('\0')
+  ) {
+    throw new Error('Invalid local image path')
+  }
+
+  const cwd = getOptionalCwd(options.cwd)
+  if (!isAbsolute(options.path) && !cwd)
+    throw new Error('A cwd is required for relative image paths')
+
+  return { cwd, path: options.path }
+}
+
 const getImageMimeType = (imagePath: string): string | null =>
   imageMimeTypes[extname(imagePath).toLocaleLowerCase()] ?? null
 
-const getProjectIconFile = async (
-  imagePath: string
+const getImageFile = async (
+  imagePath: string,
+  maxBytes: number
 ): Promise<{ dataUrl: string; updatedAt: number } | null> => {
   const mimeType = getImageMimeType(imagePath)
   if (!mimeType) return null
 
   const imageStat = await stat(imagePath)
-  if (!imageStat.isFile() || imageStat.size > maxProjectIconBytes) return null
+  if (!imageStat.isFile() || imageStat.size > maxBytes) return null
 
   const file = await readFile(imagePath)
   return {
     dataUrl: `data:${mimeType};base64,${file.toString('base64')}`,
     updatedAt: imageStat.mtimeMs
   }
+}
+
+const getProjectIconFile = async (
+  imagePath: string
+): Promise<{ dataUrl: string; updatedAt: number } | null> =>
+  getImageFile(imagePath, maxProjectIconBytes)
+
+const resolveLocalImagePath = async (cwd: string | null, path: string): Promise<string> => {
+  let imagePath = path
+
+  if (!isAbsolute(imagePath)) {
+    const repositoryRoot = await runGit(
+      cwd ?? process.cwd(),
+      ['rev-parse', '--show-toplevel'],
+      true
+    )
+    if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+    imagePath = resolve(repositoryRoot, imagePath)
+  }
+
+  return imagePath
+}
+
+const getLocalImage = async (cwd: string | null, path: string): Promise<AppLocalImage> => {
+  const imagePath = await resolveLocalImagePath(cwd, path)
+  const image = await getImageFile(imagePath, maxLocalImageBytes)
+  if (!image) throw new Error('Unable to load this image.')
+  return image
 }
 
 const getAppProjectIcon = async (cwd: string | null): Promise<AppProjectIcon | null> => {
@@ -881,54 +938,79 @@ const maxEditableFileBytes = 2 * 1024 * 1024
 const getFileVersion = (contents: Buffer | string): string =>
   createHash('sha256').update(contents).digest('hex')
 
+const isPathInsideDirectory = (directoryPath: string, filePath: string): boolean => {
+  const relativePath = relative(directoryPath, filePath)
+  const normalizedRelativePath = relativePath.replace(/\\/g, '/')
+
+  return Boolean(
+    normalizedRelativePath &&
+    normalizedRelativePath !== '..' &&
+    !normalizedRelativePath.startsWith('../') &&
+    !isAbsolute(relativePath)
+  )
+}
+
+const resolveReadableFile = async (
+  cwd: string,
+  path: string
+): Promise<{
+  absolutePath: string
+  editable: boolean
+  isSymbolicLink: boolean
+  size: number
+}> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+
+  const absolutePath = isAbsolute(path) ? path : resolve(repositoryRoot, path)
+  const [fileStat, resolvedFileStat, repositoryRealPath, fileRealPath] = await Promise.all([
+    lstat(absolutePath),
+    stat(absolutePath),
+    realpath(repositoryRoot),
+    realpath(absolutePath)
+  ])
+  const isSymbolicLink = fileStat.isSymbolicLink()
+
+  if (!resolvedFileStat.isFile()) throw new Error('Choose a regular file to open.')
+  if (resolvedFileStat.size > maxEditableFileBytes) {
+    throw new Error('Files larger than 2 MB cannot be opened.')
+  }
+
+  return {
+    absolutePath,
+    editable: !isSymbolicLink && isPathInsideDirectory(repositoryRealPath, fileRealPath),
+    isSymbolicLink,
+    size: resolvedFileStat.size
+  }
+}
+
 const resolveEditableFile = async (
   cwd: string,
   path: string
 ): Promise<{ absolutePath: string; size: number }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const file = await resolveReadableFile(cwd, path)
 
-  const relativePath = normalizePatchPath(repositoryRoot, path)
-  const absolutePath = resolve(repositoryRoot, relativePath)
-  const [fileStat, repositoryRealPath, fileRealPath] = await Promise.all([
-    lstat(absolutePath),
-    realpath(repositoryRoot),
-    realpath(absolutePath)
-  ])
-  const realRelativePath = relative(repositoryRealPath, fileRealPath)
-  const normalizedRealRelativePath = realRelativePath.replace(/\\/g, '/')
+  if (file.isSymbolicLink) throw new Error('Symbolic links cannot be edited.')
+  if (!file.editable) throw new Error('Files outside the repository cannot be edited.')
 
-  if (fileStat.isSymbolicLink()) throw new Error('Symbolic links cannot be edited.')
-  if (
-    !normalizedRealRelativePath ||
-    normalizedRealRelativePath === '..' ||
-    normalizedRealRelativePath.startsWith('../') ||
-    isAbsolute(realRelativePath)
-  ) {
-    throw new Error('Files outside the repository cannot be edited.')
-  }
-  if (!fileStat.isFile()) throw new Error('Choose a regular file to edit.')
-  if (fileStat.size > maxEditableFileBytes) {
-    throw new Error('Files larger than 2 MB cannot be edited.')
-  }
-
-  return { absolutePath, size: fileStat.size }
+  return { absolutePath: file.absolutePath, size: file.size }
 }
 
-const readEditableFile = async (
+const readFileContents = async (
   cwd: string,
   path: string
-): Promise<{ contents: string; version: string }> => {
-  const { absolutePath } = await resolveEditableFile(cwd, path)
+): Promise<{ contents: string; editable: boolean; version: string }> => {
+  const { absolutePath, editable } = await resolveReadableFile(cwd, path)
   const file = await readFile(absolutePath)
   const contents = file.toString('utf8')
 
   if (!Buffer.from(contents, 'utf8').equals(file)) {
-    throw new Error('Binary files cannot be edited.')
+    throw new Error('Binary files cannot be opened.')
   }
 
   return {
     contents,
+    editable,
     version: getFileVersion(file)
   }
 }
@@ -1548,7 +1630,7 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.getFileContents, async (_event, value: unknown) => {
     const options = getFileContentsOptions(value)
-    return readEditableFile(options.cwd ?? process.cwd(), options.path)
+    return readFileContents(options.cwd ?? process.cwd(), options.path)
   })
 
   ipcMain.handle(appIpcChannels.writeFileContents, async (_event, value: unknown) => {
@@ -1651,5 +1733,100 @@ export const registerAppIpc = (): void => {
     const copiedPath = await copyProjectIcon(sourcePath)
     await setStoredProjectIcon(options.cwd ?? null, copiedPath)
     return getAppProjectIcon(options.cwd ?? null)
+  })
+
+  ipcMain.handle(appIpcChannels.selectMessageAttachments, async (event) => {
+    const browserWindow = BrowserWindow.fromWebContents(event.sender)
+    const dialogOptions = {
+      properties: ['openFile', 'multiSelections']
+    } satisfies Electron.OpenDialogOptions
+    const result = browserWindow
+      ? await dialog.showOpenDialog(browserWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions)
+
+    if (result.canceled) return []
+    if (result.filePaths.length > maxMessageAttachmentCount) {
+      throw new Error(`Choose up to ${maxMessageAttachmentCount} files at a time.`)
+    }
+
+    return Promise.all(
+      result.filePaths.map(async (path): Promise<AppSelectedAttachment> => {
+        const name = basename(path)
+        if (!messageImageExtensions.has(extname(path).toLocaleLowerCase())) {
+          return { kind: 'file', name, path }
+        }
+
+        const image = await getImageFile(path, maxLocalImageBytes)
+        if (!image) {
+          throw new Error('Choose PNG, JPEG, GIF, or WebP images smaller than 32 MB.')
+        }
+
+        return {
+          kind: 'image',
+          dataUrl: image.dataUrl,
+          name,
+          path
+        }
+      })
+    )
+  })
+
+  ipcMain.handle(appIpcChannels.getClipboardImage, async () => {
+    const clipboardImage = clipboard.readImage()
+    if (clipboardImage.isEmpty()) return null
+
+    const imageFile = clipboardImage.toPNG()
+    if (imageFile.byteLength > maxLocalImageBytes) {
+      throw new Error('Paste an image smaller than 32 MB.')
+    }
+
+    const imageDirectory = join(app.getPath('temp'), 'sele-message-images')
+    const imageName = 'Pasted image.png'
+    const imagePath = join(imageDirectory, `pasted-image-${randomUUID()}.png`)
+    await mkdir(imageDirectory, { recursive: true })
+    await writeFile(imagePath, imageFile)
+
+    return {
+      kind: 'image',
+      dataUrl: `data:image/png;base64,${imageFile.toString('base64')}`,
+      name: imageName,
+      path: imagePath
+    } satisfies AppSelectedImage
+  })
+
+  ipcMain.handle(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
+    const options = getLocalImageOptions(value)
+    return getLocalImage(options.cwd ?? null, options.path)
+  })
+
+  ipcMain.handle(appIpcChannels.copyLocalImage, async (_event, value: unknown) => {
+    const options = getLocalImageOptions(value)
+    const image = await getLocalImage(options.cwd ?? null, options.path)
+    const clipboardImage = nativeImage.createFromDataURL(image.dataUrl)
+    if (clipboardImage.isEmpty()) throw new Error('Unable to copy this image.')
+    clipboard.writeImage(clipboardImage)
+  })
+
+  ipcMain.handle(appIpcChannels.saveLocalImage, async (event, value: unknown) => {
+    const options = getLocalImageOptions(value)
+    const sourcePath = await resolveLocalImagePath(options.cwd ?? null, options.path)
+    const image = await getImageFile(sourcePath, maxLocalImageBytes)
+    if (!image) throw new Error('Unable to save this image.')
+
+    const extension = extname(sourcePath).slice(1)
+    const dialogOptions = {
+      defaultPath: join(app.getPath('downloads'), basename(sourcePath)),
+      filters: extension ? [{ name: 'Image', extensions: [extension] }] : undefined
+    } satisfies Electron.SaveDialogOptions
+    const browserWindow = BrowserWindow.fromWebContents(event.sender)
+    const result = browserWindow
+      ? await dialog.showSaveDialog(browserWindow, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions)
+
+    if (result.canceled || !result.filePath) return null
+    if (resolve(result.filePath) !== resolve(sourcePath)) {
+      await copyFile(sourcePath, result.filePath)
+    }
+    return result.filePath
   })
 }

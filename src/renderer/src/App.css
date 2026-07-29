@@ -182,8 +182,8 @@
 
 .changes-sidebar {
   --changes-sidebar-x: 14px;
-  --changes-modified: var(--warning);
-  --changes-added: #2f8f5b;
+  --changes-modified: var(--menu-option-selected-color);
+  --changes-added: var(--success);
   --changes-deleted: var(--error);
   --changes-renamed: var(--info);
   --changes-untracked: var(--changes-added);
@@ -195,10 +195,6 @@
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
   background: transparent;
-}
-
-:root[data-color-scheme='dark'] .changes-sidebar {
-  --changes-added: #68c58e;
 }
 
 .changes-sidebar__header {
@@ -392,12 +388,12 @@
   --changes-row-color: var(--changes-modified);
 }
 
-.changes-sidebar__tree-item--changed .changes-sidebar__tree-row--file {
-  background: color-mix(in srgb, var(--changes-row-color) 14%, transparent);
+.changes-sidebar__tree-row--folder .changes-sidebar__tree-name {
+  color: var(--lead);
 }
 
-.changes-sidebar__tree-item--changed .changes-sidebar__tree-row--file:hover {
-  background: color-mix(in srgb, var(--changes-row-color) 20%, transparent);
+.changes-sidebar__tree-item--changed .changes-sidebar__tree-row--file .changes-sidebar__tree-name {
+  color: var(--changes-row-color);
 }
 
 .changes-sidebar__tree-row:focus-visible {
@@ -478,89 +474,6 @@
 .changes-sidebar__commit-message {
   display: block;
   min-width: 0;
-}
-
-.changes-sidebar__commit-activity-list {
-  --commit-activity-protrusion: calc(var(--changes-sidebar-x) * 3);
-
-  display: grid;
-  position: relative;
-  z-index: 1;
-  width: max-content;
-  min-width: calc(100% / 1.5);
-  max-width: 100%;
-  gap: 8px;
-  margin: 0 0 0 calc(var(--commit-activity-protrusion) * -1);
-  pointer-events: none;
-}
-
-.changes-sidebar__commit-activity {
-  display: flex;
-  min-width: 0;
-  min-height: 54px;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 14px 12px calc(14px + var(--changes-sidebar-x) + 6px);
-  border: 1px solid var(--control-border);
-  border-radius: 12px;
-  background: var(--control-surface);
-  box-shadow: var(--control-shadow);
-}
-
-.changes-sidebar__commit-activity-badge {
-  display: inline-flex;
-  min-width: 0;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-  color: var(--lead);
-  font-weight: 700;
-  line-height: 1.35;
-  white-space: nowrap;
-}
-
-.changes-sidebar__commit-activity-badge .changes-sidebar__animated-icon {
-  width: 17px;
-  height: 17px;
-  color: var(--menu-option-check-color);
-}
-
-.changes-sidebar__commit-activity-badge .changes-sidebar__animated-icon > svg {
-  width: 17px;
-  height: 17px;
-}
-
-.changes-sidebar__commit-activity-detail {
-  display: inline-flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  line-height: 1.5;
-}
-
-.changes-sidebar__commit-activity-tool-icon {
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  color: var(--menu-option-check-color);
-}
-
-.changes-sidebar__commit-activity-tool-icon > svg {
-  width: 16px;
-  height: 16px;
-}
-
-.changes-sidebar__commit-activity-action {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--lead);
 }
 
 .changes-sidebar__commit-row {
@@ -1037,46 +950,8 @@
   height: 34px;
 }
 
-.settings-dialog__close {
-  appearance: none;
+.settings-dialog__header > .ui-button {
   justify-self: end;
-  display: grid;
-  width: 34px;
-  height: 34px;
-  flex: none;
-  place-items: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  color: var(--lead);
-  cursor: pointer;
-  background: transparent;
-  outline: 0;
-  transition:
-    color 140ms ease,
-    background 140ms ease,
-    border-color 140ms ease,
-    transform 140ms ease;
-}
-
-.settings-dialog__close:hover {
-  border-color: var(--control-border);
-  background: var(--glass-subtle);
-}
-
-.settings-dialog__close:active {
-  transform: translateY(1px);
-}
-
-.settings-dialog__close:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.settings-dialog__close svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 2.2;
 }
 
 .settings-dialog__body {

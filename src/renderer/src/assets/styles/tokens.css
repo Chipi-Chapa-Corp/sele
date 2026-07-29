@@ -73,6 +73,7 @@
   --error: #b9473f;
   --warning: #936522;
   --info: #4d6f88;
+  --success: #2f8f5b;
   color: var(--ink);
   background: var(--bg);
   font-family:
@@ -158,4 +159,5 @@
   --error: #f08379;
   --warning: #d8a451;
   --info: #8db6d1;
+  --success: #68c58e;
 }

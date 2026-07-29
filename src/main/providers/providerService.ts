@@ -7,6 +7,7 @@ import type {
   ProviderChatUpdateSummary,
   ProviderChatUpdatedEvent,
   ProviderId,
+  ProviderReview,
   ProviderUsageOptions,
   ProviderWorkingItem,
   ProviderWorkingStep
@@ -21,6 +22,11 @@ import {
   setChatsDone
 } from '../database/chat'
 import { getCwdNotes, setCwdNotes } from '../database/cwdNotes'
+import {
+  deleteMessageReview,
+  getMessageReviews,
+  setMessageReview
+} from '../database/messageReviews'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
 import type { ProviderAdapter } from './ProviderAdapter'
@@ -57,10 +63,23 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
   const metadataById = await getChatMetadataByIds(chats.map((chat) => chat.id))
   return Promise.all(
     chats.map(async (chat) => {
-      const cwdMetadata = await getCwdMetadata(chat.cwd)
+      const [cwdMetadata, reviews] = await Promise.all([
+        getCwdMetadata(chat.cwd),
+        getMessageReviews(chat.id)
+      ])
+      const previewReview = reviews.find(
+        (review) =>
+          Boolean(chat.preview) &&
+          (review.serializedContent === chat.preview ||
+            review.serializedContent.startsWith(chat.preview) ||
+            chat.preview.startsWith(review.serializedContent))
+      )
 
       return {
         ...applyMetadataToChat(chat, metadataById.get(chat.id)),
+        preview: previewReview
+          ? previewReview.prompt || `Review · ${previewReview.comments.length}`
+          : chat.preview,
         cwdKind: cwdMetadata.kind,
         projectCwd: cwdMetadata.projectCwd,
         branchName: cwdMetadata.branchName
@@ -70,10 +89,19 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
 }
 
 const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<ProviderChatDetail> => {
-  const [metadata, cwdMetadata] = await Promise.all([
+  const [metadata, cwdMetadata, reviews] = await Promise.all([
     getChatMetadata(detail.id),
-    getCwdMetadata(detail.cwd)
+    getCwdMetadata(detail.cwd),
+    getMessageReviews(detail.id)
   ])
+  const reviewsByContent = new Map<string, typeof reviews>()
+
+  reviews.forEach((review) => {
+    const matchingReviews = reviewsByContent.get(review.serializedContent)
+    if (matchingReviews) matchingReviews.push(review)
+    else reviewsByContent.set(review.serializedContent, [review])
+  })
+
   return {
     ...detail,
     cwdKind: cwdMetadata.kind,
@@ -82,7 +110,43 @@ const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<Provid
     pinned: metadata.pinned,
     done: metadata.done,
     seenUpdatedAt: metadata.seenUpdatedAt,
-    purpose: metadata.purpose
+    purpose: metadata.purpose,
+    items: detail.items.map((item) => {
+      if (item.type !== 'message' && item.type !== 'pendingMessage') return item
+
+      const review = reviewsByContent.get(item.content)?.shift()
+      if (!review || review.comments.length === 0) return item
+
+      return {
+        ...item,
+        content: review.prompt,
+        attachments: [
+          ...(item.attachments ?? []).filter((attachment) => attachment.kind !== 'review'),
+          {
+            kind: 'review' as const,
+            id: review.id,
+            comments: review.comments
+          }
+        ]
+      }
+    })
+  }
+}
+
+const runWithStoredReview = async (
+  chatId: string,
+  serializedContent: string,
+  review: ProviderReview | undefined,
+  run: () => Promise<ProviderChatDetail>
+): Promise<ProviderChatDetail> => {
+  if (!review) return run()
+
+  await setMessageReview(chatId, serializedContent, review.prompt, review)
+  try {
+    return await run()
+  } catch (error) {
+    await deleteMessageReview(review.id).catch(() => {})
+    throw error
   }
 }
 
@@ -208,52 +272,72 @@ export const providerApi: ProviderApi = {
     adapters[providerId].generateOneShot(message, options),
   cancelOneShot: (providerId, generationId) => adapters[providerId].cancelOneShot(generationId),
   startChat: async (providerId, message, options, purpose) => {
-    const detail = await adapters[providerId].startChat(
-      message,
-      options,
-      purpose
-        ? async (chatId) => {
-            await setChatPurpose(chatId, purpose)
-          }
-        : undefined
-    )
-    return applyMetadataToDetail(detail)
+    try {
+      const detail = await adapters[providerId].startChat(
+        message,
+        options,
+        purpose || options?.review
+          ? async (chatId) => {
+              await Promise.all([
+                purpose ? setChatPurpose(chatId, purpose) : Promise.resolve(),
+                options?.review
+                  ? setMessageReview(chatId, message, options.review.prompt, options.review)
+                  : Promise.resolve()
+              ])
+            }
+          : undefined
+      )
+      return applyMetadataToDetail(detail)
+    } catch (error) {
+      if (options?.review) await deleteMessageReview(options.review.id).catch(() => {})
+      throw error
+    }
   },
   continueChat: (providerId, chatId, message, options) =>
-    adapters[providerId]
-      .continueChat(chatId, message, options)
-      .then((detail) => applyMetadataToDetail(detail)),
+    runWithStoredReview(chatId, message, options?.review, () =>
+      adapters[providerId].continueChat(chatId, message, options)
+    ).then((detail) => applyMetadataToDetail(detail)),
   continueChatInFork: async (providerId, chatId, message, purpose, options) => {
-    const detail = await adapters[providerId].continueChatInFork(
-      chatId,
-      message,
-      options,
-      async (forkedChatId) => {
-        await setChatPurpose(forkedChatId, purpose)
-      }
-    )
-    return applyMetadataToDetail(detail)
+    try {
+      const detail = await adapters[providerId].continueChatInFork(
+        chatId,
+        message,
+        options,
+        async (forkedChatId) => {
+          await Promise.all([
+            setChatPurpose(forkedChatId, purpose),
+            options?.review
+              ? setMessageReview(forkedChatId, message, options.review.prompt, options.review)
+              : Promise.resolve()
+          ])
+        }
+      )
+      return applyMetadataToDetail(detail)
+    } catch (error) {
+      if (options?.review) await deleteMessageReview(options.review.id).catch(() => {})
+      throw error
+    }
   },
   sendActiveChatMessage: (providerId, chatId, message, mode, options) =>
-    adapters[providerId]
-      .sendActiveChatMessage(chatId, message, mode, options)
-      .then((detail) => applyMetadataToDetail(detail)),
+    runWithStoredReview(chatId, message, options?.review, () =>
+      adapters[providerId].sendActiveChatMessage(chatId, message, mode, options)
+    ).then((detail) => applyMetadataToDetail(detail)),
   deletePendingMessage: (providerId, chatId, messageId) =>
     adapters[providerId]
       .deletePendingMessage(chatId, messageId)
       .then((detail) => applyMetadataToDetail(detail)),
   editPendingMessage: (providerId, chatId, messageId, message, options) =>
-    adapters[providerId]
-      .editPendingMessage(chatId, messageId, message, options)
-      .then((detail) => applyMetadataToDetail(detail)),
+    runWithStoredReview(chatId, message, options?.review, () =>
+      adapters[providerId].editPendingMessage(chatId, messageId, message, options)
+    ).then((detail) => applyMetadataToDetail(detail)),
   interruptPendingMessage: (providerId, chatId, messageId) =>
     adapters[providerId]
       .interruptPendingMessage(chatId, messageId)
       .then((detail) => applyMetadataToDetail(detail)),
   editMessage: (providerId, chatId, messageId, message, options) =>
-    adapters[providerId]
-      .editMessage(chatId, messageId, message, options)
-      .then((detail) => applyMetadataToDetail(detail)),
+    runWithStoredReview(chatId, message, options?.review, () =>
+      adapters[providerId].editMessage(chatId, messageId, message, options)
+    ).then((detail) => applyMetadataToDetail(detail)),
   resolveApproval: (providerId, chatId, decision) =>
     adapters[providerId]
       .resolveApproval(chatId, decision)

@@ -22,33 +22,45 @@ import type {
 import {
   ActivityIcon as AnimatedActivityIcon,
   BoxIcon as AnimatedBoxIcon,
+  BookTextIcon as AnimatedBookTextIcon,
   BrainIcon as AnimatedBrainIcon,
   DeleteIcon as AnimatedDeleteIcon,
+  EyeIcon as AnimatedEyeIcon,
   FilePenLineIcon as AnimatedFilePenLineIcon,
   FileStackIcon as AnimatedFileStackIcon,
   FileTextIcon as AnimatedFileTextIcon,
   GitBranchIcon as AnimatedGitBranchIcon,
   HourglassIcon as AnimatedHourglassIcon,
+  ListIcon as AnimatedListIcon,
   LoaderPinwheelIcon as AnimatedLoaderPinwheelIcon,
   PenToolIcon as AnimatedPenToolIcon,
   SearchIcon as AnimatedSearchIcon,
+  SparklesIcon as AnimatedSparklesIcon,
   TerminalIcon as AnimatedTerminalIcon,
   WrenchIcon as AnimatedWrenchIcon
 } from 'lucide-animated'
 import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
 import {
   ArrowUp,
+  BookOpenText,
   Check,
   ChevronRight,
   Copy,
+  Eye,
   FilePlus2,
   FileCode2,
   FileText,
   GitBranch,
+  Image as ImageIcon,
+  ListChecks,
   LoaderCircle,
+  MessageSquare,
   Package,
   Pencil,
+  Play,
+  RefreshCw,
   Search,
+  Sparkles,
   Square,
   Terminal,
   Trash2,
@@ -58,20 +70,26 @@ import Markdown from 'markdown-to-jsx'
 import type {
   ProviderChatItem,
   ProviderMessage,
+  ProviderMessageAttachment,
   ProviderModelId,
   ProviderPendingMessage,
   ProviderToolActivity,
+  ProviderToolIcon,
   ProviderWorkingItem,
   ProviderWorkingStep,
   ProviderWorkingTool
 } from '../../../shared/provider'
+import { appApi } from '../appApi'
 import { Button } from './Button'
 import { HighlightedCode } from './HighlightedCode'
+import { ImageLightbox } from './ImageLightbox'
 import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
 
 type ChatDetailItemProps = {
   canEditOwnMessages?: boolean
+  continuePrompt?: string
+  continueStoppedTurnDisabled?: boolean
   item: ProviderChatItem
   modelLabelsById?: ReadonlyMap<ProviderModelId, string>
   onDeletePendingMessage?: (message: ProviderPendingMessage) => void
@@ -79,7 +97,11 @@ type ChatDetailItemProps = {
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
   onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onContinueStoppedTurn?: (prompt: string) => Promise<void> | void
+  onRetryStoppedTurn?: (message: ProviderMessage) => void
   projectCwd?: string | null
+  retryMessage?: ProviderMessage | null
+  retryStoppedTurnDisabled?: boolean
   selectedModelId?: ProviderModelId
   streaming?: boolean
 }
@@ -134,11 +156,14 @@ const areWorkingToolsEqual = (first: ProviderWorkingTool, second: ProviderWorkin
   first.toolId === second.toolId &&
   first.status === second.status &&
   first.activity === second.activity &&
+  first.icon === second.icon &&
   first.label === second.label &&
   first.command === second.command &&
   first.stdout === second.stdout &&
   first.backgroundSessionId === second.backgroundSessionId &&
   first.finishedBackgroundSessionId === second.finishedBackgroundSessionId &&
+  first.images.length === second.images.length &&
+  first.images.every((image, index) => image.path === second.images[index]?.path) &&
   areFileDiffsEqual(first.diffs, second.diffs) &&
   areUnknownValuesEqual(first.rawInput, second.rawInput) &&
   areUnknownValuesEqual(first.rawOutput, second.rawOutput)
@@ -171,6 +196,7 @@ const areChatItemsEqual = (first: ProviderChatItem, second: ProviderChatItem): b
       second.type === 'message' &&
       first.role === second.role &&
       first.content === second.content &&
+      areUnknownValuesEqual(first.attachments, second.attachments) &&
       first.createdAt === second.createdAt &&
       first.label === second.label &&
       first.model === second.model
@@ -181,6 +207,7 @@ const areChatItemsEqual = (first: ProviderChatItem, second: ProviderChatItem): b
       second.type === 'pendingMessage' &&
       first.kind === second.kind &&
       first.content === second.content &&
+      areUnknownValuesEqual(first.attachments, second.attachments) &&
       first.createdAt === second.createdAt
     )
   }
@@ -202,13 +229,19 @@ const areChatDetailItemPropsEqual = (
   second: ChatDetailItemProps
 ): boolean =>
   first.canEditOwnMessages === second.canEditOwnMessages &&
+  first.continuePrompt === second.continuePrompt &&
+  first.continueStoppedTurnDisabled === second.continueStoppedTurnDisabled &&
   first.modelLabelsById === second.modelLabelsById &&
   first.onDeletePendingMessage === second.onDeletePendingMessage &&
   first.onEditPendingMessage === second.onEditPendingMessage &&
   first.onInterruptPendingMessage === second.onInterruptPendingMessage &&
   first.onEditMessage === second.onEditMessage &&
   first.onOpenFileLink === second.onOpenFileLink &&
+  first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
+  first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
   first.projectCwd === second.projectCwd &&
+  first.retryMessage === second.retryMessage &&
+  first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
   first.selectedModelId === second.selectedModelId &&
   first.streaming === second.streaming &&
   areChatItemsEqual(first.item, second.item)
@@ -271,6 +304,13 @@ const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent>
   script: AnimatedPenToolIcon,
   command: AnimatedTerminalIcon,
   other: AnimatedWrenchIcon
+}
+
+const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
+  'image-view': AnimatedEyeIcon,
+  'image-generation': AnimatedSparklesIcon,
+  'openai-docs': AnimatedBookTextIcon,
+  plan: AnimatedListIcon
 }
 
 const placeholderOptions = [
@@ -581,7 +621,15 @@ const RawContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) => (
   </div>
 )
 
-const ToolTypeIcon: React.FC<{ activity: ProviderToolActivity }> = ({ activity }) => {
+const ToolTypeIcon: React.FC<{
+  activity: ProviderToolActivity
+  icon?: ProviderToolIcon | null
+}> = ({ activity, icon }) => {
+  if (icon === 'image-view') return <Eye aria-hidden="true" />
+  if (icon === 'image-generation') return <Sparkles aria-hidden="true" />
+  if (icon === 'openai-docs') return <BookOpenText aria-hidden="true" />
+  if (icon === 'plan') return <ListChecks aria-hidden="true" />
+
   if (activity === 'read') return <FileText aria-hidden="true" />
   if (activity === 'search') return <Search aria-hidden="true" />
   if (activity === 'git') return <GitBranch aria-hidden="true" />
@@ -629,15 +677,17 @@ const LoopingAnimatedIcon: React.FC<{
   )
 }
 
-const ToolStatusIcon: React.FC<{ activity: ProviderToolActivity; active: boolean }> = ({
-  activity,
-  active
-}) => {
+const ToolStatusIcon: React.FC<{
+  activity: ProviderToolActivity
+  active: boolean
+  icon?: ProviderToolIcon | null
+}> = ({ activity, active, icon }) => {
   if (active) {
-    return <LoopingAnimatedIcon Icon={animatedActivityIcons[activity]} active={active} />
+    const Icon = icon ? animatedToolIcons[icon] : animatedActivityIcons[activity]
+    return <LoopingAnimatedIcon Icon={Icon} active={active} />
   }
 
-  return <ToolTypeIcon activity={activity} />
+  return <ToolTypeIcon activity={activity} icon={icon} />
 }
 
 const Activity: React.FC<{
@@ -661,7 +711,7 @@ const Activity: React.FC<{
     >
       <summary>
         <span className="chat-detail__tool-icon">
-          <ToolStatusIcon activity={activity} active={active} />
+          <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
         </span>
         <span className="chat-detail__tool-label">{detailLabel}</span>
         <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
@@ -685,6 +735,187 @@ const Activity: React.FC<{
 
 const getToolsFromToolItem = (item: ProviderToolItem): ProviderWorkingTool[] =>
   item.type === 'toolGroup' ? item.tools : [item]
+
+const hasToolDetails = (tool: ProviderWorkingTool): boolean =>
+  Boolean(
+    tool.command ||
+    tool.stdout ||
+    tool.diffs.length > 0 ||
+    tool.rawInput != null ||
+    tool.rawOutput != null
+  )
+
+const GeneratedImageThumbnail: React.FC<{
+  path?: string | null
+  initialDataUrl?: string | null
+  name?: string
+}> = ({ path, initialDataUrl, name = 'Generated image' }) => {
+  const [dataUrl, setDataUrl] = useState<string | null>(initialDataUrl ?? null)
+  const [failed, setFailed] = useState(!initialDataUrl && !path)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (initialDataUrl || !path) return undefined
+
+    let current = true
+
+    void appApi
+      .getLocalImage({ path })
+      .then((image) => {
+        if (current) setDataUrl(image.dataUrl)
+      })
+      .catch(() => {
+        if (current) setFailed(true)
+      })
+
+    return () => {
+      current = false
+    }
+  }, [initialDataUrl, path])
+
+  if (failed) {
+    return (
+      <span className="chat-detail__generated-image-error" title={path ?? name}>
+        {name} unavailable
+      </span>
+    )
+  }
+
+  if (!dataUrl) {
+    return <span className="chat-detail__generated-image-loading" aria-label="Loading image" />
+  }
+
+  return (
+    <>
+      <button
+        className="chat-detail__generated-image-thumbnail"
+        type="button"
+        title={`Open ${name}`}
+        aria-label={`Open ${name}`}
+        onClick={() => setOpen(true)}
+      >
+        <img src={dataUrl} alt={name} />
+      </button>
+      {open && (
+        <ImageLightbox dataUrl={dataUrl} name={name} path={path} onClose={() => setOpen(false)} />
+      )}
+    </>
+  )
+}
+
+const MessageAttachments: React.FC<{
+  attachments: ProviderMessageAttachment[]
+  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+}> = ({ attachments, onOpenFileLink }) => {
+  const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image')
+  const otherAttachments = attachments.filter((attachment) => attachment.kind !== 'image')
+
+  return (
+    <div className="chat-detail__message-attachments">
+      {imageAttachments.length > 0 && (
+        <div
+          className="chat-detail__message-attachment-group chat-detail__message-attachment-group--images"
+          role="list"
+          aria-label="Message images"
+        >
+          {imageAttachments.map((attachment, index) => (
+            <div
+              className="chat-detail__message-attachment"
+              key={`${attachment.kind}:${attachment.path ?? attachment.name}:${index}`}
+              role="listitem"
+            >
+              <GeneratedImageThumbnail
+                path={attachment.path}
+                initialDataUrl={attachment.dataUrl}
+                name={attachment.name}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {otherAttachments.length > 0 && (
+        <div
+          className="chat-detail__message-attachment-group chat-detail__message-attachment-group--other"
+          role="list"
+          aria-label="Other message attachments"
+        >
+          {otherAttachments.map((attachment, index) =>
+            attachment.kind === 'review' ? (
+              <div
+                className="chat-detail__message-attachment"
+                key={`${attachment.kind}:${attachment.id}:${index}`}
+                role="listitem"
+              >
+                <div
+                  className="chat-detail__message-attachment-link chat-detail__message-attachment-review"
+                  title={`${attachment.comments.length} review comment${attachment.comments.length === 1 ? '' : 's'}`}
+                >
+                  <MessageSquare aria-hidden="true" />
+                  <span>
+                    Review <span aria-hidden="true">·</span> {attachment.comments.length}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div
+                className="chat-detail__message-attachment"
+                key={`${attachment.kind}:${attachment.path ?? attachment.name}:${index}`}
+                role="listitem"
+              >
+                <button
+                  className="chat-detail__message-attachment-link chat-detail__message-attachment-file"
+                  type="button"
+                  disabled={!attachment.path || !onOpenFileLink}
+                  title={attachment.path ?? attachment.name}
+                  onClick={() => {
+                    if (attachment.path) onOpenFileLink?.(attachment.path, attachment.name)
+                  }}
+                >
+                  <span className="chat-detail__message-attachment-icon" aria-hidden="true">
+                    <SymbolsFileIcon fileName={attachment.name} autoAssign />
+                  </span>
+                  <span className="chat-detail__message-attachment-label">{attachment.name}</span>
+                </button>
+              </div>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const GeneratedImageTool: React.FC<{
+  active: boolean
+  label: string
+  tools: ProviderWorkingTool[]
+}> = ({ active, label, tools }) => {
+  const paths = [...new Set(tools.flatMap((tool) => tool.images.map((image) => image.path)))]
+
+  return (
+    <div
+      className={`chat-detail__generated-image-tool${
+        active ? ' chat-detail__generated-image-tool--active' : ''
+      }`}
+    >
+      <div className="chat-detail__generated-image-heading">
+        <span className="chat-detail__tool-icon">
+          {active ? (
+            <ToolStatusIcon activity="other" active icon={tools[0]?.icon} />
+          ) : (
+            <ImageIcon aria-hidden="true" />
+          )}
+        </span>
+        <span className="chat-detail__tool-label">{label}</span>
+      </div>
+      <div className="chat-detail__generated-image-gallery">
+        {paths.map((path) => (
+          <GeneratedImageThumbnail path={path} key={path} />
+        ))}
+      </div>
+    </div>
+  )
+}
 
 type MarkdownFence = {
   marker: '`' | '~'
@@ -916,11 +1147,15 @@ const ToolItem: React.FC<{
   const rawLabel = item.label || tools[0]?.toolId || 'Tool use'
   const label = getToolDisplayLabel(rawLabel, activity, active)
 
-  if (activity === 'read') {
+  if (tools.some((tool) => tool.images.length > 0)) {
+    return <GeneratedImageTool active={active} label={label} tools={tools} />
+  }
+
+  if (activity === 'read' || !tools.some(hasToolDetails)) {
     return (
       <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>
         <span className="chat-detail__tool-icon">
-          <ToolStatusIcon activity="read" active={active} />
+          <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
         </span>
         <span className="chat-detail__tool-label">{label}</span>
       </div>
@@ -1175,13 +1410,15 @@ type PlaceholderState = {
 const getToolSignature = (tool: ProviderWorkingTool): string =>
   [
     tool.id,
+    tool.icon,
     tool.label,
     tool.status,
     tool.command?.length ?? 0,
     tool.stdout?.length ?? 0,
     tool.diffs.map((diff) => `${diff.path}:${diff.diff.length}`).join(','),
     tool.backgroundSessionId,
-    tool.finishedBackgroundSessionId
+    tool.finishedBackgroundSessionId,
+    tool.images.map((image) => image.path).join(',')
   ].join(':')
 
 const getWorkingItemSignature = (item: ProviderWorkingItem): string => {
@@ -1268,12 +1505,54 @@ const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] => {
   return blocks
 }
 
+const partitionGeneratedImageItems = (
+  items: ProviderWorkingItem[]
+): { generatedImages: ProviderToolItem[]; remaining: ProviderWorkingItem[] } => {
+  const generatedImages: ProviderToolItem[] = []
+  const remaining: ProviderWorkingItem[] = []
+
+  for (const item of items) {
+    if (item.type === 'message') {
+      remaining.push(item)
+      continue
+    }
+
+    if (item.type === 'tool') {
+      if (item.images.length > 0) generatedImages.push(item)
+      else remaining.push(item)
+      continue
+    }
+
+    const imageTools = item.tools.filter((tool) => tool.images.length > 0)
+    const remainingTools = item.tools.filter((tool) => tool.images.length === 0)
+    generatedImages.push(...imageTools)
+
+    if (remainingTools.length === 1) remaining.push(remainingTools[0])
+    else if (remainingTools.length > 1) remaining.push({ ...item, tools: remainingTools })
+  }
+
+  return { generatedImages, remaining }
+}
+
 const WorkingStep: React.FC<{
+  continueDisabled?: boolean
   item: ProviderWorkingStep
+  onContinue?: () => Promise<void> | void
   onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onRetry?: () => void
   projectCwd?: string | null
-}> = ({ item, onOpenFileLink, projectCwd }) => {
-  const blocks = groupWorkingItems(item.items)
+  retryDisabled?: boolean
+}> = ({
+  continueDisabled = false,
+  item,
+  onContinue,
+  onOpenFileLink,
+  onRetry,
+  projectCwd,
+  retryDisabled = false
+}) => {
+  const { generatedImages, remaining } = partitionGeneratedImageItems(item.items)
+  const blocks = groupWorkingItems(remaining)
   const lastWorkingItem = item.items.at(-1)
   const signature = useMemo(
     () => `${item.status}:${item.items.map(getWorkingItemSignature).join('|')}`,
@@ -1281,7 +1560,8 @@ const WorkingStep: React.FC<{
   )
   const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
   const active = item.status === 'working'
-  const [open, setOpen] = useState(active)
+  const [openState, setOpenState] = useState({ status: item.status, open: active })
+  const open = openState.status === item.status ? openState.open : active
   const showPlaceholder = useSilencePlaceholder(
     signature,
     active && (!lastWorkingItem || lastWorkingItem.type === 'message'),
@@ -1301,68 +1581,128 @@ const WorkingStep: React.FC<{
       <span>{label}</span>
     </span>
   )
+  const renderedGeneratedImages = generatedImages.map((imageItem) => (
+    <ToolItem
+      item={imageItem}
+      activeToolIds={activeToolIds}
+      key={imageItem.id}
+      projectCwd={projectCwd}
+    />
+  ))
+  const stoppedTurnActions =
+    item.status === 'stopped' && (onRetry || onContinue) ? (
+      <div className="chat-detail__working-actions">
+        {onRetry && (
+          <Button
+            theme="secondary"
+            size="small"
+            aria-label="Retry stopped turn"
+            title="Retry"
+            disabled={retryDisabled}
+            callback={onRetry}
+            icon={<RefreshCw aria-hidden="true" />}
+            label={<span>Retry</span>}
+          />
+        )}
+        {onContinue && (
+          <Button
+            theme="secondary"
+            size="small"
+            aria-label="Continue stopped turn"
+            title="Continue"
+            disabled={continueDisabled}
+            callback={onContinue}
+            icon={<Play aria-hidden="true" />}
+            label={<span>Continue</span>}
+          />
+        )}
+      </div>
+    ) : null
 
   if (blocks.length === 0) {
+    if (item.status !== 'stopped' && !showPlaceholder && renderedGeneratedImages.length > 0) {
+      return (
+        <>
+          {stoppedTurnActions}
+          {renderedGeneratedImages}
+        </>
+      )
+    }
+
     if (showPlaceholder) {
-      return <WorkingPlaceholder id={item.id} />
+      return (
+        <>
+          <WorkingPlaceholder id={item.id} />
+          {stoppedTurnActions}
+          {renderedGeneratedImages}
+        </>
+      )
     }
 
     return (
-      <div
-        className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
-      >
-        <div className="chat-detail__working-heading">{heading}</div>
-      </div>
+      <>
+        <div
+          className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
+        >
+          <div className="chat-detail__working-heading">{heading}</div>
+        </div>
+        {stoppedTurnActions}
+        {renderedGeneratedImages}
+      </>
     )
   }
 
   return (
-    <details
-      className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>
-        {heading}
-        <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
-      </summary>
-      {open && (
-        <div className="chat-detail__step-content">
-          {blocks.map((block, blockIndex) =>
-            block.type === 'tools' ? (
-              block.items.length > 1 &&
-              (blockIndex < blocks.length - 1 || item.status !== 'working' || showPlaceholder) ? (
-                <ToolSequence
-                  items={block.items}
-                  activeToolIds={activeToolIds}
-                  key={block.items[0]?.id}
-                  projectCwd={projectCwd}
-                />
-              ) : (
-                block.items.map((toolItem) => (
-                  <ToolItem
-                    item={toolItem}
+    <>
+      <details
+        className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
+        open={open}
+        onToggle={(event) => setOpenState({ status: item.status, open: event.currentTarget.open })}
+      >
+        <summary>
+          {heading}
+          <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
+        </summary>
+        {open && (
+          <div className="chat-detail__step-content">
+            {blocks.map((block, blockIndex) =>
+              block.type === 'tools' ? (
+                block.items.length > 1 &&
+                (blockIndex < blocks.length - 1 || item.status !== 'working' || showPlaceholder) ? (
+                  <ToolSequence
+                    items={block.items}
                     activeToolIds={activeToolIds}
-                    expanded={active && toolItem === lastWorkingItem}
-                    key={toolItem.id}
+                    key={block.items[0]?.id}
                     projectCwd={projectCwd}
                   />
-                ))
+                ) : (
+                  block.items.map((toolItem) => (
+                    <ToolItem
+                      item={toolItem}
+                      activeToolIds={activeToolIds}
+                      expanded={active && toolItem === lastWorkingItem}
+                      key={toolItem.id}
+                      projectCwd={projectCwd}
+                    />
+                  ))
+                )
+              ) : (
+                <MarkdownMessage
+                  className="chat-detail__working-message"
+                  content={block.item.content}
+                  key={block.item.id}
+                  onOpenFileLink={onOpenFileLink}
+                  streaming={active && block.item === lastWorkingItem}
+                />
               )
-            ) : (
-              <MarkdownMessage
-                className="chat-detail__working-message"
-                content={block.item.content}
-                key={block.item.id}
-                onOpenFileLink={onOpenFileLink}
-                streaming={active && block.item === lastWorkingItem}
-              />
-            )
-          )}
-          {showPlaceholder && <WorkingPlaceholder id={`${item.id}:${item.items.length}`} />}
-        </div>
-      )}
-    </details>
+            )}
+            {showPlaceholder && <WorkingPlaceholder id={`${item.id}:${item.items.length}`} />}
+          </div>
+        )}
+      </details>
+      {stoppedTurnActions}
+      {renderedGeneratedImages}
+    </>
   )
 }
 
@@ -1374,6 +1714,8 @@ const getPendingMessageActionLabel = (message: ProviderPendingMessage): string =
 
 const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   canEditOwnMessages = false,
+  continuePrompt = '',
+  continueStoppedTurnDisabled = false,
   item,
   modelLabelsById,
   onDeletePendingMessage,
@@ -1381,7 +1723,11 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onInterruptPendingMessage,
   onEditMessage,
   onOpenFileLink,
+  onContinueStoppedTurn,
+  onRetryStoppedTurn,
   projectCwd,
+  retryMessage,
+  retryStoppedTurnDisabled = false,
   selectedModelId,
   streaming = false
 }) => {
@@ -1413,6 +1759,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     const canInterrupt = pending && Boolean(onInterruptPendingMessage)
     const timestamp = formatMessageTimestamp(item.createdAt)
     const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById)
+    const attachments = item.attachments ?? []
     const handleCopyMessage = async (): Promise<void> => {
       await copyTextToClipboard(item.content)
       setCopied(true)
@@ -1499,12 +1846,17 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     return (
       <div className={messageBlockClassName}>
         {messageLabel && <span className="chat-detail__pending-message-label">{messageLabel}</span>}
-        <MarkdownMessage
-          className={`chat-detail__message chat-detail__message--${role}`}
-          content={role === 'user' ? withPromptMarkdownLineBreaks(item.content) : item.content}
-          onOpenFileLink={onOpenFileLink}
-          streaming={!pending && role === 'assistant' && streaming}
-        />
+        {attachments.length > 0 && (
+          <MessageAttachments attachments={attachments} onOpenFileLink={onOpenFileLink} />
+        )}
+        {item.content.trim() && (
+          <MarkdownMessage
+            className={`chat-detail__message chat-detail__message--${role}`}
+            content={role === 'user' ? withPromptMarkdownLineBreaks(item.content) : item.content}
+            onOpenFileLink={onOpenFileLink}
+            streaming={!pending && role === 'assistant' && streaming}
+          />
+        )}
         <div className="chat-detail__message-footer">
           {role === 'user' && messageDate}
           {messageActions}
@@ -1514,7 +1866,21 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     )
   }
 
-  return <WorkingStep item={item} onOpenFileLink={onOpenFileLink} projectCwd={projectCwd} />
+  return (
+    <WorkingStep
+      continueDisabled={continueStoppedTurnDisabled || !continuePrompt.trim()}
+      item={item}
+      onContinue={
+        onContinueStoppedTurn ? () => onContinueStoppedTurn(continuePrompt.trim()) : undefined
+      }
+      onOpenFileLink={onOpenFileLink}
+      onRetry={
+        retryMessage && onRetryStoppedTurn ? () => onRetryStoppedTurn(retryMessage) : undefined
+      }
+      projectCwd={projectCwd}
+      retryDisabled={retryStoppedTurnDisabled}
+    />
+  )
 }
 
 export const ChatDetailItem = memo(ChatDetailItemComponent, areChatDetailItemPropsEqual)
