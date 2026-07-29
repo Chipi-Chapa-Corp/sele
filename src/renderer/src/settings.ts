@@ -10,6 +10,11 @@ export type AppGitCommitPromptSettings = {
   extraInstructionsPrefix: string
 }
 
+export type AppGitCommitMessageGenerationSettings = {
+  prompt: string
+  aiInstructionsPrefix: string
+}
+
 export type AppSettings = {
   appearance: {
     theme: AppThemePreference
@@ -24,6 +29,7 @@ export type AppSettings = {
   git: {
     commitModel: ProviderModelId | null
     commitPrompt: AppGitCommitPromptSettings
+    commitMessageGeneration: AppGitCommitMessageGenerationSettings
   }
 }
 
@@ -69,6 +75,15 @@ export const defaultAppGitCommitPromptSettings: AppGitCommitPromptSettings = {
   commitStep: '9. `git commit -m "<appropriate message>"`',
   amendStep: '9. `git commit --amend` (amend last commit instead of creating a new one)',
   extraInstructionsPrefix: 'Extra user instructions:'
+}
+
+export const defaultAppGitCommitMessageGenerationSettings: AppGitCommitMessageGenerationSettings = {
+  prompt: [
+    'Generate a concise Git commit name for the supplied diff.',
+    'Match the style and conventions of the recent commit names.',
+    'Return only one single-line commit name, with no quotes, Markdown, or explanation.'
+  ].join('\n'),
+  aiInstructionsPrefix: 'AI instructions:'
 }
 
 const legacyDefaultGitCommitPromptSettings: Partial<
@@ -118,7 +133,8 @@ export const defaultAppSettings: AppSettings = {
   },
   git: {
     commitModel: null,
-    commitPrompt: defaultAppGitCommitPromptSettings
+    commitPrompt: defaultAppGitCommitPromptSettings,
+    commitMessageGeneration: defaultAppGitCommitMessageGenerationSettings
   }
 }
 
@@ -150,6 +166,16 @@ const readPromptField = (
   return storedValue
 }
 
+const readCommitMessageGenerationField = (
+  storedSettings: Record<string, unknown>,
+  key: keyof AppGitCommitMessageGenerationSettings
+): string => {
+  const storedValue = storedSettings[key]
+  return typeof storedValue === 'string'
+    ? storedValue
+    : defaultAppGitCommitMessageGenerationSettings[key]
+}
+
 export const readStoredAppSettings = (): AppSettings => {
   try {
     const storedValue = window.localStorage.getItem(appSettingsStorageKey)
@@ -177,6 +203,12 @@ export const readStoredAppSettings = (): AppSettings => {
     const commitPrompt =
       git.commitPrompt && typeof git.commitPrompt === 'object' && !Array.isArray(git.commitPrompt)
         ? (git.commitPrompt as Record<string, unknown>)
+        : {}
+    const commitMessageGeneration =
+      git.commitMessageGeneration &&
+      typeof git.commitMessageGeneration === 'object' &&
+      !Array.isArray(git.commitMessageGeneration)
+        ? (git.commitMessageGeneration as Record<string, unknown>)
         : {}
 
     return {
@@ -215,6 +247,13 @@ export const readStoredAppSettings = (): AppSettings => {
           commitStep: readPromptField(commitPrompt, 'commitStep'),
           amendStep: readPromptField(commitPrompt, 'amendStep'),
           extraInstructionsPrefix: readPromptField(commitPrompt, 'extraInstructionsPrefix')
+        },
+        commitMessageGeneration: {
+          prompt: readCommitMessageGenerationField(commitMessageGeneration, 'prompt'),
+          aiInstructionsPrefix: readCommitMessageGenerationField(
+            commitMessageGeneration,
+            'aiInstructionsPrefix'
+          )
         }
       }
     }
@@ -231,6 +270,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       git?: {
         commitModel?: ProviderModelId | null
         commitPrompt?: Partial<AppGitCommitPromptSettings>
+        commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
       }
     } = {}
 
@@ -261,6 +301,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     const storedGit: {
       commitModel?: ProviderModelId | null
       commitPrompt?: Partial<AppGitCommitPromptSettings>
+      commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
     } = {}
     if (settings.git.commitModel !== defaultAppSettings.git.commitModel) {
       storedGit.commitModel = settings.git.commitModel
@@ -276,6 +317,21 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
     if (Object.keys(storedCommitPrompt).length > 0) {
       storedGit.commitPrompt = storedCommitPrompt
+    }
+
+    const storedCommitMessageGeneration: Partial<AppGitCommitMessageGenerationSettings> = {}
+    for (const key of Object.keys(
+      defaultAppGitCommitMessageGenerationSettings
+    ) as (keyof AppGitCommitMessageGenerationSettings)[]) {
+      if (
+        settings.git.commitMessageGeneration[key] !==
+        defaultAppGitCommitMessageGenerationSettings[key]
+      ) {
+        storedCommitMessageGeneration[key] = settings.git.commitMessageGeneration[key]
+      }
+    }
+    if (Object.keys(storedCommitMessageGeneration).length > 0) {
+      storedGit.commitMessageGeneration = storedCommitMessageGeneration
     }
     if (Object.keys(storedGit).length > 0) storedSettings.git = storedGit
 

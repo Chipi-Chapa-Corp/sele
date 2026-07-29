@@ -466,7 +466,7 @@
 .changes-sidebar__input-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: stretch;
 }
@@ -479,7 +479,7 @@
 .changes-sidebar__commit-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -978,6 +978,31 @@
   scrollbar-color: var(--glass-edge) transparent;
 }
 
+.settings-dialog__section {
+  display: flex;
+  width: min(100%, 680px);
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-dialog__section + .settings-dialog__section {
+  margin-top: 24px;
+}
+
+.settings-dialog__section-heading {
+  margin: 0;
+  color: var(--lead);
+  font: inherit;
+  font-weight: 400;
+}
+
+.settings-dialog__section-cards {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
 .settings-dialog__field {
   display: grid;
   width: min(100%, 680px);
@@ -1010,6 +1035,16 @@
 .settings-dialog__field--stack {
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
+  gap: 10px;
+}
+
+.settings-dialog__field--prompt-groups {
+  gap: 18px;
+}
+
+.settings-dialog__prompt-group {
+  display: grid;
+  min-width: 0;
   gap: 10px;
 }
 

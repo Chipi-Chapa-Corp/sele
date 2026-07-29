@@ -129,6 +129,7 @@ import { TerminalPanel } from './components/TerminalPanel'
 import { appApi } from './appApi'
 import { providerApi } from './providerApi'
 import {
+  type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
   type AppSettings,
   type AppThemePreference,
@@ -2226,6 +2227,48 @@ const getScopedChatCommitPrompt = (
     .join('\n')
 }
 
+const getCommitMessageGenerationPrompt = (
+  diff: string,
+  recentCommitMessages: string[],
+  aiInstructions: string,
+  settings: AppGitCommitMessageGenerationSettings
+): string => {
+  const instructions = aiInstructions.trim()
+  const instructionsPrefix = settings.aiInstructionsPrefix.trim()
+  const formattedInstructions = instructions
+    ? instructionsPrefix
+      ? `${instructionsPrefix} ${JSON.stringify(instructions)}`
+      : JSON.stringify(instructions)
+    : null
+  const recentCommitNames =
+    recentCommitMessages.length > 0
+      ? recentCommitMessages.map((message) => `- ${message}`).join('\n')
+      : '(No recent commits)'
+
+  return [
+    settings.prompt.trim(),
+    ['Recent commit names:', recentCommitNames].join('\n'),
+    ['Git diff:', diff.trim()].join('\n'),
+    formattedInstructions
+  ]
+    .filter((section): section is string => Boolean(section))
+    .join('\n\n')
+}
+
+const normalizeGeneratedCommitMessage = (message: string): string => {
+  const firstLine = message
+    .trim()
+    .replace(/^```(?:text)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .split(/\r?\n/)
+    .find((line) => line.trim())
+    ?.trim()
+
+  if (!firstLine) return ''
+
+  return firstLine.replace(/^(["'`])(.+)\1$/, '$2').trim()
+}
+
 const getErrorMessage = (error: unknown, fallback: string): string => {
   if (!(error instanceof Error)) return fallback
 
@@ -2386,6 +2429,8 @@ export const App: React.FC = () => {
   )
   const [commitInput, setCommitInput] = useState('')
   const [commitState, setCommitState] = useState<SendState>('idle')
+  const [commitMessageGenerationState, setCommitMessageGenerationState] =
+    useState<SendState>('idle')
   const [commitError, setCommitError] = useState<string | null>(null)
   const [scopedCommitActivities, setScopedCommitActivities] = useState<
     Record<string, ScopedCommitActivity>
@@ -2421,6 +2466,7 @@ export const App: React.FC = () => {
   const settingsCloseButtonRef = useRef<HTMLButtonElement>(null)
   const sendInFlightRef = useRef(false)
   const commitInFlightRef = useRef(false)
+  const commitMessageGenerationInFlightRef = useRef(false)
   const gitBranchRequestIdRef = useRef(0)
   const chatAutoScrollEnabledRef = useRef(true)
   const chatAutoScrollFrameRef = useRef<number | null>(null)
@@ -4636,6 +4682,22 @@ export const App: React.FC = () => {
     }))
   }
 
+  const handleGitCommitMessageGenerationChange = (
+    key: keyof AppGitCommitMessageGenerationSettings,
+    value: string
+  ): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      git: {
+        ...currentSettings.git,
+        commitMessageGeneration: {
+          ...currentSettings.git.commitMessageGeneration,
+          [key]: value
+        }
+      }
+    }))
+  }
+
   const handleSelectNewSessionFolder = async (): Promise<void> => {
     try {
       const folder = await appApi.selectFolder({ defaultPath: newSessionCwd })
@@ -5616,6 +5678,7 @@ export const App: React.FC = () => {
   const commitInputValue = commitInput.trim()
   const commitFiles = useMemo(() => getCommitFiles(changedFiles), [changedFiles])
   const syncInProgress = syncState === 'sending'
+  const commitMessageGenerationInProgress = commitMessageGenerationState === 'sending'
   const visibleSyncRecovery = syncRecovery && syncRecovery.cwd === changesCwd ? syncRecovery : null
   const currentProjectCommitActivities = useMemo(() => {
     const currentProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
@@ -5645,6 +5708,7 @@ export const App: React.FC = () => {
     commitFiles.length === 0 ||
     changesLoadState !== 'ready' ||
     commitState === 'sending' ||
+    commitMessageGenerationInProgress ||
     projectCommitInProgress ||
     syncInProgress
   const getCommitActionDisabled = (
@@ -5658,18 +5722,28 @@ export const App: React.FC = () => {
     uncommittedChangedFiles.length === 0 ||
     changesLoadState !== 'ready' ||
     commitState === 'sending' ||
+    commitMessageGenerationInProgress ||
     directProjectCommitInProgress ||
     currentChatAiCommitInProgress ||
     syncInProgress ||
     aiCommitUnavailable
   const getAiCommitActionDisabled = (): boolean => aiCommitBaseDisabled
-  const aiCommitDisabled = getAiCommitActionDisabled()
+  const commitMessageGenerationDisabled =
+    providerUpdateInProgress ||
+    !changesCwd ||
+    uncommittedChangedFiles.length === 0 ||
+    changesLoadState !== 'ready' ||
+    commitState === 'sending' ||
+    commitMessageGenerationInProgress ||
+    projectCommitInProgress ||
+    syncInProgress
   const commitInputLabel = 'Commit message or AI instructions'
   const syncDisabled =
     providerUpdateInProgress ||
     !changesCwd ||
     syncInProgress ||
     commitState === 'sending' ||
+    commitMessageGenerationInProgress ||
     projectCommitInProgress
   const branchSwitchDisabled =
     providerUpdateInProgress ||
@@ -5677,6 +5751,7 @@ export const App: React.FC = () => {
     gitBranchActionState === 'sending' ||
     syncInProgress ||
     commitState === 'sending' ||
+    commitMessageGenerationInProgress ||
     projectCommitInProgress ||
     chatIsBusy
   const syncDropdownActions: ButtonDropdownAction[] = [
@@ -6149,6 +6224,52 @@ export const App: React.FC = () => {
     }
   }
 
+  const handleGenerateCommitMessage = async (): Promise<boolean> => {
+    if (commitMessageGenerationDisabled || !changesCwd) return false
+    if (commitMessageGenerationInFlightRef.current) return false
+
+    const generationCwd = changesCwd
+    const providerId = selectedChat?.providerId ?? newSessionProvider
+    commitMessageGenerationInFlightRef.current = true
+    setCommitMessageGenerationState('sending')
+    setCommitState('idle')
+    setCommitError(null)
+
+    try {
+      const [{ diff }, { messages }] = await Promise.all([
+        appApi.getUncommittedGitDiff({ cwd: generationCwd }),
+        appApi.getRecentGitCommitMessages({ cwd: generationCwd, limit: 5 })
+      ])
+      if (!diff.trim()) throw new Error('There is no uncommitted diff to describe.')
+
+      const generatedMessage = await providerApi.generateOneShot(
+        providerId,
+        getCommitMessageGenerationPrompt(
+          diff,
+          messages,
+          commitInputValue,
+          appSettings.git.commitMessageGeneration
+        ),
+        {
+          ...getGitTurnOptions(),
+          cwd: generationCwd
+        }
+      )
+      const commitMessage = normalizeGeneratedCommitMessage(generatedMessage)
+      if (!commitMessage) throw new Error('AI did not return a commit name.')
+
+      if (changesCwdRef.current === generationCwd) setCommitInput(commitMessage)
+      setCommitMessageGenerationState('idle')
+      return true
+    } catch (error) {
+      setCommitMessageGenerationState('error')
+      setCommitError(getErrorMessage(error, 'Unable to generate a commit name.'))
+      return false
+    } finally {
+      commitMessageGenerationInFlightRef.current = false
+    }
+  }
+
   const handleCommitChangedFiles = async (
     action: GitCommitPromptAction = 'commit',
     message = commitInputValue
@@ -6543,40 +6664,111 @@ export const App: React.FC = () => {
           role="tabpanel"
           aria-label="Git settings"
         >
-          <div className="settings-dialog__field settings-dialog__field--inline">
-            <div className="settings-dialog__field-header">
-              <h3>Commit model</h3>
-            </div>
-            <Dropdown
-              id="settings-git-commit-model"
-              aria-label="Commit model"
-              menuAlign="end"
-              options={gitCommitModelOptions}
-              value={gitCommitModelValue}
-              onChange={handleGitCommitModelChange}
-            />
-          </div>
-          {gitCommitPromptFieldOptions.map((field) => {
-            const fieldId = `settings-git-commit-prompt-${field.key}`
-
-            return (
-              <div className="settings-dialog__field settings-dialog__field--stack" key={field.key}>
-                <label className="settings-dialog__field-header" htmlFor={fieldId}>
-                  <h3>{field.label}</h3>
-                </label>
-                <textarea
-                  id={fieldId}
-                  className="settings-dialog__prompt-textarea"
-                  rows={field.rows}
-                  spellCheck={false}
-                  value={appSettings.git.commitPrompt[field.key]}
-                  onChange={(event) =>
-                    handleGitCommitPromptChange(field.key, event.currentTarget.value)
-                  }
+          <section className="settings-dialog__section" aria-labelledby="settings-git-model">
+            <h2 className="settings-dialog__section-heading" id="settings-git-model">
+              AI model
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Commit model</h3>
+                </div>
+                <Dropdown
+                  id="settings-git-commit-model"
+                  aria-label="Commit model"
+                  menuAlign="end"
+                  options={gitCommitModelOptions}
+                  value={gitCommitModelValue}
+                  onChange={handleGitCommitModelChange}
                 />
               </div>
-            )
-          })}
+            </div>
+          </section>
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-git-ai-chat-commit"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-git-ai-chat-commit">
+              AI Chat Commit
+            </h2>
+            <div className="settings-dialog__section-cards">
+              {gitCommitPromptFieldOptions.map((field) => {
+                const fieldId = `settings-git-commit-prompt-${field.key}`
+
+                return (
+                  <div
+                    className="settings-dialog__field settings-dialog__field--stack"
+                    key={field.key}
+                  >
+                    <label className="settings-dialog__field-header" htmlFor={fieldId}>
+                      <h3>{field.label}</h3>
+                    </label>
+                    <textarea
+                      id={fieldId}
+                      className="settings-dialog__prompt-textarea"
+                      rows={field.rows}
+                      spellCheck={false}
+                      value={appSettings.git.commitPrompt[field.key]}
+                      onChange={(event) =>
+                        handleGitCommitPromptChange(field.key, event.currentTarget.value)
+                      }
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-git-commit-name-generation"
+          >
+            <h2
+              className="settings-dialog__section-heading"
+              id="settings-git-commit-name-generation"
+            >
+              Commit name generation
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--stack settings-dialog__field--prompt-groups">
+                <div className="settings-dialog__prompt-group">
+                  <label
+                    className="settings-dialog__field-header"
+                    htmlFor="settings-git-commit-generation-prompt"
+                  >
+                    <h3>Generation prompt</h3>
+                  </label>
+                  <textarea
+                    id="settings-git-commit-generation-prompt"
+                    className="settings-dialog__prompt-textarea"
+                    rows={4}
+                    spellCheck={false}
+                    value={appSettings.git.commitMessageGeneration.prompt}
+                    onChange={(event) =>
+                      handleGitCommitMessageGenerationChange('prompt', event.currentTarget.value)
+                    }
+                  />
+                </div>
+                <div className="settings-dialog__prompt-group">
+                  <label
+                    className="settings-dialog__field-header"
+                    htmlFor="settings-git-ai-instructions-prefix"
+                  >
+                    <h3>AI instructions prefix</h3>
+                  </label>
+                  <Input
+                    id="settings-git-ai-instructions-prefix"
+                    value={appSettings.git.commitMessageGeneration.aiInstructionsPrefix}
+                    onChange={(event) =>
+                      handleGitCommitMessageGenerationChange(
+                        'aiInstructionsPrefix',
+                        event.currentTarget.value
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
         </section>
       )
     }
@@ -7305,11 +7497,13 @@ export const App: React.FC = () => {
                       disabled={
                         providerUpdateInProgress ||
                         commitState === 'sending' ||
+                        commitMessageGenerationInProgress ||
                         directProjectCommitInProgress ||
                         currentChatAiCommitInProgress
                       }
                       onChange={(event) => {
                         setCommitState('idle')
+                        setCommitMessageGenerationState('idle')
                         setCommitError(null)
                         setCommitInput(event.target.value)
                       }}
@@ -7320,6 +7514,23 @@ export const App: React.FC = () => {
                       }}
                     />
                   </label>
+                  <Button
+                    aria-label={
+                      commitMessageGenerationInProgress
+                        ? 'Generating commit name'
+                        : 'Generate commit name with AI'
+                    }
+                    aria-busy={commitMessageGenerationInProgress}
+                    title={
+                      commitMessageGenerationInProgress
+                        ? 'Generating commit name…'
+                        : 'Generate commit name with AI'
+                    }
+                    disabled={commitMessageGenerationDisabled}
+                    callback={() => void handleGenerateCommitMessage()}
+                    icon={<Sparkles aria-hidden="true" />}
+                    theme="secondary"
+                  />
                 </div>
                 <div className="changes-sidebar__commit-row">
                   <Button
@@ -7330,7 +7541,22 @@ export const App: React.FC = () => {
                         id: 'amend',
                         label: commitActionLabels.amend,
                         disabled: getCommitActionDisabled('amend'),
+                        icon: <GitCommitHorizontal aria-hidden="true" />,
                         callback: () => void handleCommitChangedFiles('amend')
+                      },
+                      {
+                        id: 'ai-chat-commit',
+                        label: 'AI Chat Commit',
+                        disabled: getAiCommitActionDisabled(),
+                        icon: <Sparkles aria-hidden="true" />,
+                        callback: () => void handleAiCommitChangedFiles('commit')
+                      },
+                      {
+                        id: 'ai-chat-amend',
+                        label: 'AI Chat Amend',
+                        disabled: getAiCommitActionDisabled(),
+                        icon: <Sparkles aria-hidden="true" />,
+                        callback: () => void handleAiCommitChangedFiles('amend')
                       }
                     ]}
                     dropdownLabel="Commit actions"
@@ -7345,31 +7571,6 @@ export const App: React.FC = () => {
                     }
                     label={<span>{commitActionLabels.commit}</span>}
                     theme="primary"
-                    fill
-                  />
-                  <Button
-                    disabled={aiCommitDisabled}
-                    callback={() => void handleAiCommitChangedFiles('commit')}
-                    dropdownActions={[
-                      {
-                        id: 'ai-amend',
-                        label: 'AI Amend',
-                        disabled: getAiCommitActionDisabled(),
-                        callback: () => void handleAiCommitChangedFiles('amend')
-                      }
-                    ]}
-                    dropdownLabel="AI commit actions"
-                    dropdownMenuAlign="end"
-                    dropdownPlacement="top"
-                    icon={
-                      commitState === 'sending' ? (
-                        <ChangesAnimatedIcon Icon={AnimatedGitCommitHorizontalIcon} active />
-                      ) : (
-                        <Sparkles aria-hidden="true" />
-                      )
-                    }
-                    label={<span>AI Commit</span>}
-                    theme="secondary"
                     fill
                   />
                 </div>
@@ -7499,7 +7700,7 @@ export const App: React.FC = () => {
                     </div>
                   </section>
                 )}
-                {commitState === 'error' && (
+                {(commitState === 'error' || commitMessageGenerationState === 'error') && (
                   <p className="changes-sidebar__commit-error" role="status">
                     {commitError ?? 'Unable to commit these files.'}
                   </p>
