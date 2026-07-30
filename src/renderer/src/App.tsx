@@ -34,6 +34,7 @@ import {
   GitCommitHorizontal,
   GitMerge,
   GitPullRequestArrow,
+  Link2,
   ListChevronsDownUp,
   ListChevronsUpDown,
   Maximize2,
@@ -157,6 +158,7 @@ import {
   type AppGitCommitPromptSettings,
   type AppChatDropdownSettings,
   type AppChatUsageDisplay,
+  type AppExternalLinkBehavior,
   type AppSettings,
   type AppThemePreference,
   appChatManualDropdownValue,
@@ -269,7 +271,7 @@ type DirectCommitActivity = {
 type GitSyncRecoveryActionOptions = {
   rememberStrategy?: boolean
 }
-type SettingsTab = 'appearance' | 'chat' | 'performance' | 'git'
+type SettingsTab = 'appearance' | 'chat' | 'links' | 'performance' | 'git'
 type CachedPatchChangedFiles = {
   cwd: string
   source: PatchChangeSource
@@ -1244,6 +1246,11 @@ const settingsTabOptions = [
     icon: <MessageSquare aria-hidden="true" />
   },
   {
+    value: 'links',
+    label: 'Links',
+    icon: <Link2 aria-hidden="true" />
+  },
+  {
     value: 'performance',
     label: 'Performance',
     icon: <Gauge aria-hidden="true" />
@@ -1279,6 +1286,24 @@ const themeOptions = [
   value: AppThemePreference
   label: string
   icon: React.ReactNode
+}[]
+
+const externalLinkOptions = [
+  {
+    value: 'manual',
+    label: 'Manual'
+  },
+  {
+    value: 'copy',
+    label: 'Copy'
+  },
+  {
+    value: 'open',
+    label: 'Open'
+  }
+] satisfies readonly {
+  value: AppExternalLinkBehavior
+  label: string
 }[]
 
 const chatUsageDisplayOptions = [
@@ -2965,6 +2990,46 @@ export const App: React.FC = () => {
     writeStoredAppSettings(appSettings)
     setThemePreference(appSettings.appearance.theme)
   }, [appSettings])
+
+  useEffect(() => {
+    const handleLinkClick = (event: MouseEvent): void => {
+      if (event.defaultPrevented || event.button !== 0) return
+
+      const target = event.target
+      const anchor = target instanceof Element ? target.closest<HTMLAnchorElement>('a[href]') : null
+      if (!anchor) return
+
+      let url: URL
+      try {
+        url = new URL(anchor.href)
+      } catch {
+        return
+      }
+      if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) return
+
+      event.preventDefault()
+      const behavior = appSettings.links.behavior
+      void appApi
+        .handleExternalLink({
+          url: url.toString(),
+          action: behavior === 'manual' ? undefined : behavior
+        })
+        .then((result) => {
+          if (!result?.always || behavior !== 'manual') return
+
+          setAppSettings((currentSettings) => ({
+            ...currentSettings,
+            links: {
+              behavior: result.action
+            }
+          }))
+        })
+        .catch(() => {})
+    }
+
+    document.addEventListener('click', handleLinkClick)
+    return () => document.removeEventListener('click', handleLinkClick)
+  }, [appSettings.links])
 
   useLayoutEffect(() => {
     applyShadowPreference(appSettings.performance.disableShadows)
@@ -5118,6 +5183,15 @@ export const App: React.FC = () => {
       appearance: {
         ...currentSettings.appearance,
         theme
+      }
+    }))
+  }
+
+  const handleExternalLinkBehaviorChange = (behavior: AppExternalLinkBehavior): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      links: {
+        behavior
       }
     }))
   }
@@ -7531,6 +7605,37 @@ export const App: React.FC = () => {
       )
     }
 
+    if (settingsTab === 'links') {
+      return (
+        <section
+          className="settings-dialog__panel"
+          id="settings-panel-links"
+          role="tabpanel"
+          aria-label="Link settings"
+        >
+          <section className="settings-dialog__section" aria-labelledby="settings-links-handling">
+            <h2 className="settings-dialog__section-heading" id="settings-links-handling">
+              External Links
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Behavior</h3>
+                  <p>Manual asks each time. Copy and Open always use that action.</p>
+                </div>
+                <SegmentedControl
+                  aria-label="External link behavior"
+                  options={externalLinkOptions}
+                  value={appSettings.links.behavior}
+                  onChange={handleExternalLinkBehaviorChange}
+                />
+              </div>
+            </div>
+          </section>
+        </section>
+      )
+    }
+
     return (
       <section
         className="settings-dialog__panel"
@@ -7566,25 +7671,72 @@ export const App: React.FC = () => {
         }}
       >
         <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="Settings">
-          <header className="settings-dialog__header">
-            <span className="settings-dialog__header-spacer" aria-hidden="true" />
-            <SegmentedControl
+          <aside className="settings-dialog__sidebar">
+            <div className="settings-dialog__sidebar-top">
+              <h2>Settings</h2>
+              <Button
+                ref={settingsCloseButtonRef}
+                aria-label="Close settings"
+                callback={() => setSettingsOpen(false)}
+                icon={<X aria-hidden="true" />}
+                size="small"
+                theme="transparent"
+                title="Close settings"
+              />
+            </div>
+            <nav
+              className="settings-dialog__nav"
               aria-label="Settings sections"
-              className="settings-dialog__tabs"
-              options={settingsTabOptions}
-              value={settingsTab}
-              onChange={setSettingsTab}
-            />
-            <Button
-              ref={settingsCloseButtonRef}
-              aria-label="Close settings"
-              callback={() => setSettingsOpen(false)}
-              icon={<X aria-hidden="true" />}
-              size="small"
-              theme="transparent"
-              title="Close settings"
-            />
-          </header>
+              aria-orientation="vertical"
+              role="tablist"
+            >
+              {settingsTabOptions.map((option, index) => {
+                const selected = option.value === settingsTab
+
+                return (
+                  <button
+                    className={`settings-dialog__nav-item${
+                      selected ? ' settings-dialog__nav-item--active' : ''
+                    }`}
+                    id={`settings-tab-${option.value}`}
+                    key={option.value}
+                    type="button"
+                    role="tab"
+                    aria-controls={`settings-panel-${option.value}`}
+                    aria-selected={selected}
+                    tabIndex={selected ? 0 : -1}
+                    onClick={() => setSettingsTab(option.value)}
+                    onKeyDown={(event) => {
+                      let nextIndex: number | null = null
+                      if (event.key === 'ArrowDown') {
+                        nextIndex = (index + 1) % settingsTabOptions.length
+                      } else if (event.key === 'ArrowUp') {
+                        nextIndex =
+                          (index - 1 + settingsTabOptions.length) % settingsTabOptions.length
+                      } else if (event.key === 'Home') {
+                        nextIndex = 0
+                      } else if (event.key === 'End') {
+                        nextIndex = settingsTabOptions.length - 1
+                      }
+                      if (nextIndex === null) return
+
+                      event.preventDefault()
+                      const nextTab = settingsTabOptions[nextIndex]
+                      setSettingsTab(nextTab.value)
+                      document
+                        .getElementById(`settings-tab-${nextTab.value}`)
+                        ?.focus({ preventScroll: true })
+                    }}
+                  >
+                    <span className="settings-dialog__nav-icon" aria-hidden="true">
+                      {option.icon}
+                    </span>
+                    <span>{option.label}</span>
+                  </button>
+                )
+              })}
+            </nav>
+          </aside>
           <div className="settings-dialog__body">{renderSettingsPanel()}</div>
         </section>
       </div>

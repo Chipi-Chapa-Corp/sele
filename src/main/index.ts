@@ -49,6 +49,8 @@ const createWindow = (): void => {
   mainWindow.on('enter-full-screen', () => sendAppWindowState(mainWindow))
   mainWindow.on('leave-full-screen', () => sendAppWindowState(mainWindow))
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {

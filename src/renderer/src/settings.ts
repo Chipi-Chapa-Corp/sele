@@ -10,6 +10,7 @@ import {
   isProviderSandboxMode,
   isProviderServiceTier
 } from '../../shared/provider'
+import type { AppExternalLinkAction } from '../../shared/app'
 import type { AppAction } from './actions'
 import { normalizeAppActions } from './actions'
 
@@ -53,6 +54,12 @@ export type AppPerformanceSettings = {
   disableShadows: boolean
 }
 
+export type AppExternalLinkBehavior = 'manual' | AppExternalLinkAction
+
+export type AppExternalLinkSettings = {
+  behavior: AppExternalLinkBehavior
+}
+
 export type AppSettings = {
   actions: AppAction[]
   lastActionId: string | null
@@ -69,6 +76,7 @@ export type AppSettings = {
     updateExistingChats: boolean
     updateNewChats: boolean
   } & AppChatDropdownSettings
+  links: AppExternalLinkSettings
   performance: AppPerformanceSettings
   git: {
     commitModel: ProviderModelId | null
@@ -202,6 +210,9 @@ export const defaultAppSettings: AppSettings = {
     ...defaultAppChatDropdownSettings,
     ...defaultAppChatThoughtSettings
   },
+  links: {
+    behavior: 'manual'
+  },
   performance: defaultAppPerformanceSettings,
   git: {
     commitModel: null,
@@ -212,6 +223,12 @@ export const defaultAppSettings: AppSettings = {
 
 export const isAppThemePreference = (value: unknown): value is AppThemePreference =>
   value === 'system' || value === 'light' || value === 'dark'
+
+const isAppExternalLinkAction = (value: unknown): value is AppExternalLinkAction =>
+  value === 'copy' || value === 'open'
+
+const isAppExternalLinkBehavior = (value: unknown): value is AppExternalLinkBehavior =>
+  value === 'manual' || isAppExternalLinkAction(value)
 
 const isAppChatUsageDisplay = (value: unknown): value is AppChatUsageDisplay =>
   value === 'chatContext' || value === 'global'
@@ -300,6 +317,12 @@ export const readStoredAppSettings = (): AppSettings => {
       parsedValue.chat && typeof parsedValue.chat === 'object' && !Array.isArray(parsedValue.chat)
         ? (parsedValue.chat as Record<string, unknown>)
         : {}
+    const links =
+      parsedValue.links &&
+      typeof parsedValue.links === 'object' &&
+      !Array.isArray(parsedValue.links)
+        ? (parsedValue.links as Record<string, unknown>)
+        : {}
     const performance =
       parsedValue.performance &&
       typeof parsedValue.performance === 'object' &&
@@ -356,6 +379,15 @@ export const readStoredAppSettings = (): AppSettings => {
         expandStoppedTurns: getStoredChatBoolean(chat, 'expandStoppedTurns'),
         collapseStoppedOnNextTurn: getStoredChatBoolean(chat, 'collapseStoppedOnNextTurn')
       },
+      links: {
+        behavior: isAppExternalLinkBehavior(links.behavior)
+          ? links.behavior
+          : links.always === true && isAppExternalLinkAction(links.action)
+            ? links.action
+            : isAppExternalLinkAction(appearance.externalLinks)
+              ? appearance.externalLinks
+              : defaultAppSettings.links.behavior
+      },
       performance: {
         disableShadows: getStoredPerformanceBoolean(performance, 'disableShadows')
       },
@@ -394,6 +426,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       lastActionId?: string
       appearance?: Partial<AppSettings['appearance']>
       chat?: Partial<AppSettings['chat']>
+      links?: Partial<AppExternalLinkSettings>
       performance?: Partial<AppPerformanceSettings>
       git?: {
         commitModel?: ProviderModelId | null
@@ -410,11 +443,11 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       storedSettings.lastActionId = storedLastActionId
     }
 
+    const storedAppearance: Partial<AppSettings['appearance']> = {}
     if (settings.appearance.theme !== defaultAppSettings.appearance.theme) {
-      storedSettings.appearance = {
-        theme: settings.appearance.theme
-      }
+      storedAppearance.theme = settings.appearance.theme
     }
+    if (Object.keys(storedAppearance).length > 0) storedSettings.appearance = storedAppearance
 
     const storedChat: Partial<AppSettings['chat']> = {}
     if (settings.chat.continuePrompt !== defaultAppSettings.chat.continuePrompt) {
@@ -479,6 +512,12 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       storedChat.collapseStoppedOnNextTurn = settings.chat.collapseStoppedOnNextTurn
     }
     if (Object.keys(storedChat).length > 0) storedSettings.chat = storedChat
+
+    const storedLinks: Partial<AppExternalLinkSettings> = {}
+    if (settings.links.behavior !== defaultAppSettings.links.behavior) {
+      storedLinks.behavior = settings.links.behavior
+    }
+    if (Object.keys(storedLinks).length > 0) storedSettings.links = storedLinks
 
     const storedPerformance: Partial<AppPerformanceSettings> = {}
     if (settings.performance.disableShadows !== defaultAppSettings.performance.disableShadows) {

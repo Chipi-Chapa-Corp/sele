@@ -39,6 +39,18 @@ export type AppSelectedAttachment = AppSelectedImage | AppSelectedFile
 
 export type AppColorScheme = 'dark' | 'light'
 
+export type AppExternalLinkAction = 'copy' | 'open'
+
+export type AppExternalLinkOptions = {
+  url: string
+  action?: AppExternalLinkAction
+}
+
+export type AppExternalLinkResult = {
+  action: AppExternalLinkAction
+  always: boolean
+}
+
 export type AppWindowState = {
   isMaximized: boolean
 }
@@ -246,6 +258,7 @@ export type AppApi = {
   minimizeWindow: () => Promise<void>
   toggleWindowMaximized: () => Promise<AppWindowState>
   closeWindow: () => Promise<void>
+  handleExternalLink: (options: AppExternalLinkOptions) => Promise<AppExternalLinkResult | null>
   getDefaultCwd: () => Promise<string>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
@@ -284,6 +297,7 @@ export const appIpcChannels = {
   minimizeWindow: 'app:minimize-window',
   toggleWindowMaximized: 'app:toggle-window-maximized',
   closeWindow: 'app:close-window',
+  handleExternalLink: 'app:handle-external-link',
   getDefaultCwd: 'app:get-default-cwd',
   getGitChanges: 'app:get-git-changes',
   getGitBranches: 'app:get-git-branches',

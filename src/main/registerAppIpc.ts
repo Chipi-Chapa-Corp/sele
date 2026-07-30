@@ -13,9 +13,21 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeImage,
+  nativeTheme,
+  shell
+} from 'electron'
 import type {
   AppColorScheme,
+  AppExternalLinkAction,
+  AppExternalLinkOptions,
+  AppExternalLinkResult,
   AppFileContentsOptions,
   AppFileTreeFile,
   AppFileTreeOptions,
@@ -69,6 +81,58 @@ const getDefaultPath = (value: unknown): string | undefined => {
   if (value == null) return undefined
   if (typeof value !== 'string' || !isAbsolute(value)) throw new Error('Invalid folder path')
   return value
+}
+
+const externalLinkProtocols = new Set(['http:', 'https:', 'mailto:', 'tel:'])
+const maxExternalLinkLength = 8_192
+
+const isExternalLinkAction = (value: unknown): value is AppExternalLinkAction =>
+  value === 'copy' || value === 'open'
+
+const getExternalLinkOptions = (value: unknown): AppExternalLinkOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid external link options')
+  }
+
+  const options = value as { url?: unknown; action?: unknown }
+  if (
+    typeof options.url !== 'string' ||
+    options.url.length === 0 ||
+    options.url.length > maxExternalLinkLength
+  ) {
+    throw new Error('Invalid external link')
+  }
+
+  let url: URL
+  try {
+    url = new URL(options.url)
+  } catch {
+    throw new Error('Invalid external link')
+  }
+
+  if (!externalLinkProtocols.has(url.protocol)) {
+    throw new Error('Unsupported external link')
+  }
+  if (options.action !== undefined && !isExternalLinkAction(options.action)) {
+    throw new Error('Invalid external link action')
+  }
+
+  return {
+    url: url.toString(),
+    action: options.action
+  }
+}
+
+const performExternalLinkAction = async (
+  action: AppExternalLinkAction,
+  url: string
+): Promise<void> => {
+  if (action === 'copy') {
+    clipboard.writeText(url)
+    return
+  }
+
+  await shell.openExternal(url)
 }
 
 const imageMimeTypes = {
@@ -1602,6 +1666,35 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.closeWindow, (event) => {
     getBrowserWindow(event).close()
+  })
+
+  ipcMain.handle(appIpcChannels.handleExternalLink, async (event, value: unknown) => {
+    const options = getExternalLinkOptions(value)
+    let action = options.action
+    let always = false
+
+    if (!action) {
+      const browserWindow = getBrowserWindow(event)
+      const result = await dialog.showMessageBox(browserWindow, {
+        type: 'question',
+        title: 'External link',
+        message: 'Copy or open this link?',
+        detail: options.url,
+        buttons: ['Copy', 'Open', 'Cancel'],
+        defaultId: 1,
+        cancelId: 2,
+        checkboxLabel: 'Always',
+        checkboxChecked: false,
+        noLink: true
+      })
+
+      if (result.response === 2) return null
+      action = result.response === 0 ? 'copy' : 'open'
+      always = result.checkboxChecked
+    }
+
+    await performExternalLinkAction(action, options.url)
+    return { action, always } satisfies AppExternalLinkResult
   })
 
   ipcMain.handle(appIpcChannels.getGitChanges, async (_event, value: unknown) => {

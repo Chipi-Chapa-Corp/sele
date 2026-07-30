@@ -20,6 +20,7 @@ const appApi: AppApi = {
   minimizeWindow: () => ipcRenderer.invoke(appIpcChannels.minimizeWindow),
   toggleWindowMaximized: () => ipcRenderer.invoke(appIpcChannels.toggleWindowMaximized),
   closeWindow: () => ipcRenderer.invoke(appIpcChannels.closeWindow),
+  handleExternalLink: (options) => ipcRenderer.invoke(appIpcChannels.handleExternalLink, options),
   getDefaultCwd: () => ipcRenderer.invoke(appIpcChannels.getDefaultCwd),
   getGitChanges: (options) => ipcRenderer.invoke(appIpcChannels.getGitChanges, options),
   getGitBranches: (options) => ipcRenderer.invoke(appIpcChannels.getGitBranches, options),
