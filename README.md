@@ -58,12 +58,14 @@ must be enabled with **GitHub Actions** as its source in the repository settings
 Sele is a host-integrated development tool rather than a sandboxed document app. Its Flatpak
 uses `flatpak-spawn --host` for Codex, Git, and terminal processes, and therefore requires the
 `org.freedesktop.Flatpak` D-Bus permission. Install and authenticate the Codex CLI on the host
-before starting Sele. If Codex is installed through a version manager and is not on the desktop
-session's `PATH`, point the Flatpak at it explicitly:
+before starting Sele. Sele resolves host tools through common install locations and the host
+shell, so Codex, Git, and terminal commands should work without extra Flatpak configuration.
+If a custom shell setup still causes an `ENOENT` error, expose your host shell `PATH` to the
+Flatpak explicitly:
 
 ```bash
 flatpak override --user \
-  --env=CODEX_BINARY_PATH="$(command -v codex)" \
+  --env=PATH="$PATH" \
   com.chipichapa.sele
 ```
 
@@ -80,6 +82,24 @@ be opened after installing it from this repository, remove the download quaranti
 ```bash
 sudo xattr -dr com.apple.quarantine /Applications/Sele.app
 open /Applications/Sele.app
+```
+
+If Sele opens but a bundled workflow fails with an `ENOENT` error, make sure the command works
+in Terminal first. For example:
+
+```bash
+codex --version
+git --version
+```
+
+Sele checks common macOS install locations such as Homebrew, Volta, pnpm, npm global bins,
+asdf, mise, and nvm, then asks your shell where commands live. If your tools are installed
+somewhere custom and still fail, publish your Terminal `PATH` to GUI apps, quit Sele, and
+start it again:
+
+```bash
+launchctl setenv PATH "$PATH"
+open -a Sele
 ```
 
 ## CI and releases

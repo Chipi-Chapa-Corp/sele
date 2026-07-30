@@ -796,10 +796,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     showActions && onActionsChange && onLastActionChange && onRunAction
   )
   const workspaceControlsVisible = notesButtonVisible || actionsButtonVisible
+  const promptControlsVisible = selectorsVisible || workspaceControlsVisible
   const controlsClassName = [
     'message-box__controls',
-    selectorsVisible ? null : 'message-box__controls--no-selectors',
-    workspaceControlsVisible ? null : 'message-box__controls--no-workspace'
+    promptControlsVisible ? null : 'message-box__controls--no-selectors'
   ]
     .filter(Boolean)
     .join(' ')
@@ -1828,89 +1828,89 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               theme="secondary"
             />
           </div>
-          {selectorsVisible && (
+          {promptControlsVisible && (
             <div className="message-box__selectors">
-              {showAccessSelector && (
-                <span className="message-box__select message-box__sandbox">
-                  <Dropdown
-                    id="sandbox-mode"
-                    disabled={selectorsDisabled}
-                    icon={sandboxModeIcons[sandboxMode]}
-                    options={displayedSandboxModeOptions}
-                    placement="top"
-                    value={sandboxMode}
-                    title={selectedSandboxModeTitle}
-                    onChange={onSandboxModeChange}
-                  />
-                </span>
+              {selectorsVisible && (
+                <>
+                  {showAccessSelector && (
+                    <span className="message-box__select message-box__sandbox">
+                      <Dropdown
+                        id="sandbox-mode"
+                        disabled={selectorsDisabled}
+                        icon={sandboxModeIcons[sandboxMode]}
+                        options={displayedSandboxModeOptions}
+                        placement="top"
+                        value={sandboxMode}
+                        title={selectedSandboxModeTitle}
+                        onChange={onSandboxModeChange}
+                      />
+                    </span>
+                  )}
+                  {showReviewSelector && (
+                    <span className="message-box__select message-box__approval">
+                      <Dropdown
+                        id="approval-mode"
+                        disabled={approvalSelectorDisabled}
+                        icon={approvalModeIcons[effectiveApprovalMode]}
+                        options={displayedApprovalModeOptions}
+                        placement="top"
+                        value={effectiveApprovalMode}
+                        title={
+                          fullAccessSelected
+                            ? 'Full access runs without approval prompts.'
+                            : selectedApprovalModeTitle
+                        }
+                        onChange={onApprovalModeChange}
+                      />
+                    </span>
+                  )}
+                  {showModelSelector && (
+                    <span className="message-box__select message-box__model">
+                      <Dropdown
+                        id="model-mode"
+                        disabled={selectorsDisabled}
+                        icon={<Bot aria-hidden="true" />}
+                        options={displayedModelOptions}
+                        placement="top"
+                        value={model}
+                        title={selectedModelTitle}
+                        onChange={onModelChange}
+                      />
+                    </span>
+                  )}
+                  {showReasoningSelector && (
+                    <span className="message-box__select message-box__reasoning">
+                      <Dropdown
+                        id="reasoning-effort"
+                        disabled={selectorsDisabled}
+                        icon={getReasoningEffortIcon(reasoningEffort)}
+                        options={displayedReasoningEffortOptions}
+                        placement="top"
+                        value={reasoningEffort}
+                        title={`${selectedReasoningEffortLabel} reasoning`}
+                        onChange={onReasoningEffortChange}
+                      />
+                    </span>
+                  )}
+                  {showSpeedSelector && (
+                    <span className="message-box__select message-box__speed">
+                      <Dropdown
+                        id="service-tier"
+                        aria-label="Speed"
+                        disabled={selectorsDisabled}
+                        icon={selectedServiceTierOption?.icon}
+                        options={displayedServiceTierOptions}
+                        placement="top"
+                        value={selectedServiceTier ?? standardServiceTierValue}
+                        title={`${selectedServiceTierOption?.label ?? 'Standard'} speed`}
+                        onChange={(value) =>
+                          onServiceTierChange(value === standardServiceTierValue ? null : value)
+                        }
+                      />
+                    </span>
+                  )}
+                </>
               )}
-              {showReviewSelector && (
-                <span className="message-box__select message-box__approval">
-                  <Dropdown
-                    id="approval-mode"
-                    disabled={approvalSelectorDisabled}
-                    icon={approvalModeIcons[effectiveApprovalMode]}
-                    options={displayedApprovalModeOptions}
-                    placement="top"
-                    value={effectiveApprovalMode}
-                    title={
-                      fullAccessSelected
-                        ? 'Full access runs without approval prompts.'
-                        : selectedApprovalModeTitle
-                    }
-                    onChange={onApprovalModeChange}
-                  />
-                </span>
-              )}
-              {showModelSelector && (
-                <span className="message-box__select message-box__model">
-                  <Dropdown
-                    id="model-mode"
-                    disabled={selectorsDisabled}
-                    icon={<Bot aria-hidden="true" />}
-                    options={displayedModelOptions}
-                    placement="top"
-                    value={model}
-                    title={selectedModelTitle}
-                    onChange={onModelChange}
-                  />
-                </span>
-              )}
-              {showReasoningSelector && (
-                <span className="message-box__select message-box__reasoning">
-                  <Dropdown
-                    id="reasoning-effort"
-                    disabled={selectorsDisabled}
-                    icon={getReasoningEffortIcon(reasoningEffort)}
-                    options={displayedReasoningEffortOptions}
-                    placement="top"
-                    value={reasoningEffort}
-                    title={`${selectedReasoningEffortLabel} reasoning`}
-                    onChange={onReasoningEffortChange}
-                  />
-                </span>
-              )}
-              {showSpeedSelector && (
-                <span className="message-box__select message-box__speed">
-                  <Dropdown
-                    id="service-tier"
-                    aria-label="Speed"
-                    disabled={selectorsDisabled}
-                    icon={selectedServiceTierOption?.icon}
-                    options={displayedServiceTierOptions}
-                    placement="top"
-                    value={selectedServiceTier ?? standardServiceTierValue}
-                    title={`${selectedServiceTierOption?.label ?? 'Standard'} speed`}
-                    onChange={(value) =>
-                      onServiceTierChange(value === standardServiceTierValue ? null : value)
-                    }
-                  />
-                </span>
-              )}
-            </div>
-          )}
-          {workspaceControlsVisible && (
-            <div className="message-box__workspace-controls">
               {notesButtonVisible && (
                 <CwdNotesButton
                   key={notesContextKey}

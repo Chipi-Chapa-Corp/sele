@@ -13,6 +13,8 @@ import {
   useState
 } from 'react'
 import {
+  Apple,
+  AppWindow,
   ArrowLeft,
   BadgeCheck,
   BellOff,
@@ -42,6 +44,8 @@ import {
   Minus,
   Monitor,
   Moon,
+  PanelLeft,
+  PanelRight,
   RefreshCw,
   Rocket,
   Search,
@@ -154,6 +158,8 @@ import { appApi } from './appApi'
 import { providerApi } from './providerApi'
 import { terminalApi } from './terminalApi'
 import {
+  type AppAppearancePositionPreference,
+  type AppAppearanceStylePreference,
   type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
   type AppChatDropdownSettings,
@@ -1234,6 +1240,29 @@ const applyShadowPreference = (disableShadows: boolean): void => {
   }
 }
 
+const getEffectiveAppearancePosition = (
+  preference: AppAppearancePositionPreference
+): Exclude<AppAppearancePositionPreference, 'system'> => {
+  if (preference !== 'system') return preference
+
+  return document.documentElement.dataset.platform === 'darwin' ? 'left' : 'right'
+}
+
+const getEffectiveAppearanceStyle = (
+  preference: AppAppearanceStylePreference
+): Exclude<AppAppearanceStylePreference, 'system'> => {
+  if (preference !== 'system') return preference
+
+  return document.documentElement.dataset.platform === 'darwin' ? 'macos' : 'sele'
+}
+
+const applyWindowControlAppearancePreferences = (appearance: AppSettings['appearance']): void => {
+  const root = document.documentElement
+
+  root.dataset.windowControlPosition = getEffectiveAppearancePosition(appearance.position)
+  root.dataset.windowControlStyle = getEffectiveAppearanceStyle(appearance.style)
+}
+
 const settingsTabOptions = [
   {
     value: 'appearance',
@@ -1284,6 +1313,50 @@ const themeOptions = [
   }
 ] satisfies readonly {
   value: AppThemePreference
+  label: string
+  icon: React.ReactNode
+}[]
+
+const appearancePositionOptions = [
+  {
+    value: 'left',
+    label: 'Left',
+    icon: <PanelLeft aria-hidden="true" />
+  },
+  {
+    value: 'right',
+    label: 'Right',
+    icon: <PanelRight aria-hidden="true" />
+  },
+  {
+    value: 'system',
+    label: 'System',
+    icon: <Monitor aria-hidden="true" />
+  }
+] satisfies readonly {
+  value: AppAppearancePositionPreference
+  label: string
+  icon: React.ReactNode
+}[]
+
+const appearanceStyleOptions = [
+  {
+    value: 'sele',
+    label: 'Sele',
+    icon: <AppWindow aria-hidden="true" />
+  },
+  {
+    value: 'macos',
+    label: 'macOS',
+    icon: <Apple aria-hidden="true" />
+  },
+  {
+    value: 'system',
+    label: 'System',
+    icon: <Monitor aria-hidden="true" />
+  }
+] satisfies readonly {
+  value: AppAppearanceStylePreference
   label: string
   icon: React.ReactNode
 }[]
@@ -3034,6 +3107,10 @@ export const App: React.FC = () => {
   useLayoutEffect(() => {
     applyShadowPreference(appSettings.performance.disableShadows)
   }, [appSettings.performance.disableShadows])
+
+  useLayoutEffect(() => {
+    applyWindowControlAppearancePreferences(appSettings.appearance)
+  }, [appSettings.appearance])
 
   useEffect(() => {
     if (!settingsOpen) return
@@ -5183,6 +5260,26 @@ export const App: React.FC = () => {
       appearance: {
         ...currentSettings.appearance,
         theme
+      }
+    }))
+  }
+
+  const handleAppearancePositionChange = (position: AppAppearancePositionPreference): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      appearance: {
+        ...currentSettings.appearance,
+        position
+      }
+    }))
+  }
+
+  const handleAppearanceStyleChange = (style: AppAppearanceStylePreference): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      appearance: {
+        ...currentSettings.appearance,
+        style
       }
     }))
   }
@@ -7649,10 +7746,34 @@ export const App: React.FC = () => {
           </div>
           <SegmentedControl
             aria-label="Theme"
-            className="settings-dialog__theme-toggle"
+            className="settings-dialog__appearance-toggle"
             options={themeOptions}
             value={appSettings.appearance.theme}
             onChange={handleThemePreferenceChange}
+          />
+        </div>
+        <div className="settings-dialog__field settings-dialog__field--inline">
+          <div className="settings-dialog__field-header">
+            <h3>Position</h3>
+          </div>
+          <SegmentedControl
+            aria-label="Position"
+            className="settings-dialog__appearance-toggle"
+            options={appearancePositionOptions}
+            value={appSettings.appearance.position}
+            onChange={handleAppearancePositionChange}
+          />
+        </div>
+        <div className="settings-dialog__field settings-dialog__field--inline">
+          <div className="settings-dialog__field-header">
+            <h3>Style</h3>
+          </div>
+          <SegmentedControl
+            aria-label="Style"
+            className="settings-dialog__appearance-toggle"
+            options={appearanceStyleOptions}
+            value={appSettings.appearance.style}
+            onChange={handleAppearanceStyleChange}
           />
         </div>
       </section>
@@ -7779,6 +7900,16 @@ export const App: React.FC = () => {
     </div>
   )
 
+  const renderSettingsButton = (): React.ReactElement => (
+    <Button
+      theme="secondary"
+      aria-label="Settings"
+      title="Settings"
+      callback={() => setSettingsOpen(true)}
+      icon={<Settings aria-hidden="true" />}
+    />
+  )
+
   return (
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
@@ -7829,14 +7960,8 @@ export const App: React.FC = () => {
                 </>
               ) : (
                 <div className="chat-home__actions">
-                  <div className="chat-home__actions-left">
-                    <Button
-                      theme="secondary"
-                      aria-label="Settings"
-                      title="Settings"
-                      callback={() => setSettingsOpen(true)}
-                      icon={<Settings aria-hidden="true" />}
-                    />
+                  <div className="chat-home__actions-left chat-home__settings-action">
+                    {renderSettingsButton()}
                   </div>
                   <div className="chat-home__actions-right">
                     <Button
@@ -8311,6 +8436,7 @@ export const App: React.FC = () => {
                   value={changesPaneView}
                   onChange={handleChangesPaneViewChange}
                 />
+                <div className="changes-sidebar__settings-slot">{renderSettingsButton()}</div>
               </div>
               {changesPaneView !== 'terminal' && (
                 <div className="changes-sidebar__controls changes-sidebar__controls--files">

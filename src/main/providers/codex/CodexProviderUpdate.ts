@@ -23,11 +23,15 @@ const commandMaxBuffer = 2 * 1024 * 1024
 const versionCheckTimeoutMs = 20_000
 const updateTimeoutMs = 10 * 60_000
 
-const getCodexExecutable = (): string => process.env.CODEX_BINARY_PATH || 'codex'
+const runCommand = async (
+  file: string,
+  args: string[],
+  timeout: number,
+  env?: NodeJS.ProcessEnv
+): Promise<CommandResult> => {
+  const hostCommand = await getHostCommand(file, args, { env })
 
-const runCommand = (file: string, args: string[], timeout: number): Promise<CommandResult> =>
-  new Promise((resolve, reject) => {
-    const hostCommand = getHostCommand(file, args)
+  return new Promise((resolve, reject) => {
     execFile(
       hostCommand.file,
       hostCommand.args,
@@ -48,6 +52,7 @@ const runCommand = (file: string, args: string[], timeout: number): Promise<Comm
       }
     )
   })
+}
 
 const parseVersion = (value: string): string | null => {
   const match = /(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/.exec(value)
@@ -76,7 +81,7 @@ const compareVersions = (firstVersion: string, secondVersion: string): number =>
 }
 
 const getCurrentCodexVersion = async (): Promise<string> => {
-  const result = await runCommand(getCodexExecutable(), ['--version'], versionCheckTimeoutMs)
+  const result = await runCommand('codex', ['--version'], versionCheckTimeoutMs)
   const version = parseVersion(`${result.stdout}\n${result.stderr}`)
   if (!version) throw new Error('Unable to read Codex version.')
 
@@ -127,6 +132,6 @@ export const getCodexUpdateAvailability = async (): Promise<ProviderUpdateAvaila
 }
 
 export const updateCodexProvider = async (): Promise<ProviderUpdateAvailability | null> => {
-  await runCommand(getCodexExecutable(), ['update'], updateTimeoutMs)
+  await runCommand('codex', ['update'], updateTimeoutMs)
   return getCodexUpdateAvailability()
 }

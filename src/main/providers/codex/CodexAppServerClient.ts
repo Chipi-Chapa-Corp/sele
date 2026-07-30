@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { getHostCommand } from '../../hostProcess'
+import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 
 type RpcError = {
   code: number
@@ -43,6 +43,7 @@ const getAppServerCommand = (binary: string): AppServerCommand => {
   const appServerArgs = ['app-server', '--listen', 'stdio://']
   const canUseSystemd =
     process.platform === 'linux' &&
+    !isRunningInFlatpak() &&
     Boolean(process.env.DBUS_SESSION_BUS_ADDRESS) &&
     process.env.SELE_DISABLE_CODEX_RESOURCE_ISOLATION !== '1'
 
@@ -137,9 +138,8 @@ export class CodexAppServerClient {
   }
 
   private initialize = async (): Promise<void> => {
-    const binary = process.env.CODEX_BINARY_PATH || 'codex'
-    const appServerCommand = getAppServerCommand(binary)
-    const hostCommand = getHostCommand(appServerCommand.command, appServerCommand.args, {
+    const appServerCommand = getAppServerCommand('codex')
+    const hostCommand = await getHostCommand(appServerCommand.command, appServerCommand.args, {
       env: process.env
     })
     const child = spawn(hostCommand.file, hostCommand.args, {

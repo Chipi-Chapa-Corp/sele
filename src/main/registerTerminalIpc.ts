@@ -338,7 +338,7 @@ const createSession = async (
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'Sele'
   }
-  const hostCommand = getHostCommand(shell.file, shell.args, { cwd, env })
+  const hostCommand = await getHostCommand(shell.file, shell.args, { cwd, env })
   const pty = spawnPty(hostCommand.file, hostCommand.args, {
     name: 'xterm-256color',
     cols: options.cols,
@@ -395,7 +395,7 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
     ...process.env,
     TERM_PROGRAM: 'Sele'
   }
-  const hostCommand = getHostCommand(shell.file, shell.args, { cwd, env })
+  const hostCommand = await getHostCommand(shell.file, shell.args, { cwd, env })
   const child = spawnChildProcess(hostCommand.file, hostCommand.args, {
     cwd: hostCommand.cwd,
     detached: false,

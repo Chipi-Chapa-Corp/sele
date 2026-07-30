@@ -15,6 +15,8 @@ import type { AppAction } from './actions'
 import { normalizeAppActions } from './actions'
 
 export type AppThemePreference = 'system' | 'light' | 'dark'
+export type AppAppearancePositionPreference = 'system' | 'left' | 'right'
+export type AppAppearanceStylePreference = 'system' | 'sele' | 'macos'
 export type AppChatUsageDisplay = 'chatContext' | 'global'
 
 export type AppGitCommitPromptSettings = {
@@ -65,6 +67,8 @@ export type AppSettings = {
   lastActionId: string | null
   appearance: {
     theme: AppThemePreference
+    position: AppAppearancePositionPreference
+    style: AppAppearanceStylePreference
   }
   chat: AppChatThoughtSettings & {
     continuePrompt: string
@@ -196,7 +200,9 @@ export const defaultAppSettings: AppSettings = {
   actions: [],
   lastActionId: null,
   appearance: {
-    theme: 'system'
+    theme: 'system',
+    position: 'system',
+    style: 'system'
   },
   chat: {
     continuePrompt: defaultStoppedTurnContinuePrompt,
@@ -223,6 +229,16 @@ export const defaultAppSettings: AppSettings = {
 
 export const isAppThemePreference = (value: unknown): value is AppThemePreference =>
   value === 'system' || value === 'light' || value === 'dark'
+
+export const isAppAppearancePositionPreference = (
+  value: unknown
+): value is AppAppearancePositionPreference =>
+  value === 'system' || value === 'left' || value === 'right'
+
+export const isAppAppearanceStylePreference = (
+  value: unknown
+): value is AppAppearanceStylePreference =>
+  value === 'system' || value === 'sele' || value === 'macos'
 
 const isAppExternalLinkAction = (value: unknown): value is AppExternalLinkAction =>
   value === 'copy' || value === 'open'
@@ -352,7 +368,13 @@ export const readStoredAppSettings = (): AppSettings => {
       appearance: {
         theme: isAppThemePreference(appearance.theme)
           ? appearance.theme
-          : defaultAppSettings.appearance.theme
+          : defaultAppSettings.appearance.theme,
+        position: isAppAppearancePositionPreference(appearance.position)
+          ? appearance.position
+          : defaultAppSettings.appearance.position,
+        style: isAppAppearanceStylePreference(appearance.style)
+          ? appearance.style
+          : defaultAppSettings.appearance.style
       },
       chat: {
         continuePrompt:
@@ -446,6 +468,12 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     const storedAppearance: Partial<AppSettings['appearance']> = {}
     if (settings.appearance.theme !== defaultAppSettings.appearance.theme) {
       storedAppearance.theme = settings.appearance.theme
+    }
+    if (settings.appearance.position !== defaultAppSettings.appearance.position) {
+      storedAppearance.position = settings.appearance.position
+    }
+    if (settings.appearance.style !== defaultAppSettings.appearance.style) {
+      storedAppearance.style = settings.appearance.style
     }
     if (Object.keys(storedAppearance).length > 0) storedSettings.appearance = storedAppearance
 

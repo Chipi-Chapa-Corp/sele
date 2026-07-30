@@ -1,7 +1,17 @@
 .chat {
   --window-titlebar-height: 54px;
-  --window-controls-width: 112px;
-  --window-mac-controls-width: 112px;
+  --window-controls-edge-inset: 16px;
+  --window-controls-content-gap: var(--window-controls-edge-inset);
+  --window-controls-gap: 6px;
+  --window-control-size: 28px;
+  --window-control-hit-height: var(--window-control-size);
+  --window-control-icon-size: 14px;
+  --window-control-dot-size: 12px;
+  --window-controls-width: calc(
+    var(--window-control-size) + var(--window-control-size) + var(--window-control-size) +
+      var(--window-controls-gap) + var(--window-controls-gap) + var(--window-controls-edge-inset) +
+      var(--window-controls-content-gap)
+  );
   --chat-detail-header-height: 8px;
   --panel-bottom-inset: 14px;
   position: relative;
@@ -15,41 +25,45 @@
 .window-controls {
   position: absolute;
   top: 13px;
+  right: var(--window-controls-edge-inset);
   z-index: 100;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--window-controls-gap);
 }
 
-:root[data-platform='darwin'] .window-controls--darwin {
-  left: 16px;
+:root[data-window-control-position='left'] .window-controls,
+:root:not([data-window-control-position])[data-platform='darwin'] .window-controls {
+  right: auto;
+  left: var(--window-controls-edge-inset);
 }
 
-:root:not([data-platform='darwin']) .window-controls--default {
-  right: 16px;
-}
-
-:root:not([data-platform='darwin']) .window-controls--darwin,
-:root[data-platform='darwin'] .window-controls--default {
+:root[data-window-control-position='left'] .window-controls--default,
+:root[data-window-control-position='right'] .window-controls--darwin,
+:root:not([data-window-control-position])[data-platform='darwin'] .window-controls--default,
+:root:not([data-window-control-position]):not([data-platform='darwin']) .window-controls--darwin {
   display: none;
 }
 
-:root[data-platform='darwin'] .window-control--close {
+:root[data-window-control-style='macos'] .window-control--close,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control--close {
   order: 0;
 }
 
-:root[data-platform='darwin'] .window-control--minimize {
+:root[data-window-control-style='macos'] .window-control--minimize,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control--minimize {
   order: 1;
 }
 
-:root[data-platform='darwin'] .window-control--maximize {
+:root[data-window-control-style='macos'] .window-control--maximize,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control--maximize {
   order: 2;
 }
 
 .window-control {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: var(--window-control-size);
+  height: var(--window-control-hit-height);
   place-items: center;
   padding: 0;
   border: 1px solid transparent;
@@ -89,9 +103,83 @@
 }
 
 .window-control svg {
-  width: 14px;
-  height: 14px;
+  width: var(--window-control-icon-size);
+  height: var(--window-control-icon-size);
   stroke-width: 2.2;
+}
+
+:root[data-window-control-style='macos'] .chat,
+:root:not([data-window-control-style])[data-platform='darwin'] .chat {
+  --window-controls-gap: 3px;
+  --window-control-size: 24px;
+  --window-control-hit-height: 30px;
+  --window-control-icon-size: 8px;
+  --window-control-dot-size: 14px;
+}
+
+:root[data-window-control-style='macos'] .window-controls,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-controls {
+  gap: var(--window-controls-gap);
+}
+
+:root[data-window-control-style='macos'] .window-control,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control {
+  border: 0;
+  color: rgb(0 0 0 / 58%);
+  background: transparent;
+  transform: none;
+}
+
+:root[data-window-control-style='macos'] .window-control::before,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control::before {
+  content: '';
+  width: var(--window-control-dot-size);
+  height: var(--window-control-dot-size);
+  border-radius: 999px;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 14%),
+    0 1px 1px rgb(0 0 0 / 8%);
+}
+
+:root[data-window-control-style='macos'] .window-control--close::before,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control--close::before {
+  background: #ff5f57;
+}
+
+:root[data-window-control-style='macos'] .window-control--minimize::before,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control--minimize::before {
+  background: #febc2e;
+}
+
+:root[data-window-control-style='macos'] .window-control--maximize::before,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control--maximize::before {
+  background: #28c840;
+}
+
+:root[data-window-control-style='macos'] .window-control:hover,
+:root[data-window-control-style='macos'] .window-control:active,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control:hover,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control:active {
+  border-color: transparent;
+  background: transparent;
+  transform: none;
+}
+
+:root[data-window-control-style='macos'] .window-control svg,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control svg {
+  position: absolute;
+  opacity: 0;
+  stroke-width: 3;
+}
+
+:root[data-window-control-style='macos'] .window-controls:hover .window-control svg,
+:root[data-window-control-style='macos'] .window-control:focus-visible svg,
+:root:not([data-window-control-style])[data-platform='darwin']
+  .window-controls:hover
+  .window-control
+  svg,
+:root:not([data-window-control-style])[data-platform='darwin'] .window-control:focus-visible svg {
+  opacity: 1;
 }
 
 .chat__panels {
@@ -210,9 +298,34 @@
 }
 
 .changes-sidebar__titlebar {
-  display: flex;
+  display: grid;
   width: 100%;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.changes-sidebar__settings-slot {
+  display: none;
+  align-items: center;
+  justify-self: end;
+}
+
+:root[data-window-control-position='left'] .changes-sidebar__titlebar,
+:root:not([data-window-control-position])[data-platform='darwin'] .changes-sidebar__titlebar {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+:root[data-window-control-position='left'] .changes-sidebar__settings-slot,
+:root:not([data-window-control-position])[data-platform='darwin'] .changes-sidebar__settings-slot {
+  display: flex;
+}
+
+:root[data-window-control-position='left'] .chat-home__settings-action,
+:root:not([data-window-control-position])[data-platform='darwin'] .chat-home__settings-action {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .changes-sidebar__refresh-icon {
@@ -1142,7 +1255,7 @@
   line-height: 1.35;
 }
 
-.settings-dialog__theme-toggle {
+.settings-dialog__appearance-toggle {
   justify-self: end;
   width: auto;
   max-width: 100%;
@@ -1245,12 +1358,14 @@
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-:root[data-platform='darwin'] .chat-home__header {
-  padding-left: var(--window-mac-controls-width);
+:root[data-window-control-position='left'] .chat-home__header,
+:root:not([data-window-control-position])[data-platform='darwin'] .chat-home__header {
+  padding-left: var(--window-controls-width);
 }
 
-:root:not([data-platform='darwin']) .changes-sidebar__titlebar {
-  padding-right: var(--window-controls-width);
+:root[data-window-control-position='right'] .changes-sidebar__titlebar,
+:root:not([data-window-control-position]):not([data-platform='darwin']) .changes-sidebar__titlebar {
+  padding-right: calc(var(--window-controls-width) - var(--changes-sidebar-x));
 }
 
 .chat-detail__messages-inner {
@@ -1423,8 +1538,16 @@
     padding: 4px 4px 14px;
   }
 
-  :root[data-platform='darwin'] .chat-home__header {
-    padding-left: var(--window-mac-controls-width);
+  :root[data-window-control-position='left'] .chat-home__header,
+  :root:not([data-window-control-position])[data-platform='darwin'] .chat-home__header {
+    padding-left: var(--window-controls-width);
+  }
+
+  :root[data-window-control-position='left'] .chat-home__settings-action,
+  :root:not([data-window-control-position])[data-platform='darwin'] .chat-home__settings-action {
+    display: flex;
+    visibility: visible;
+    pointer-events: auto;
   }
 
   .chat-sidebar__body {

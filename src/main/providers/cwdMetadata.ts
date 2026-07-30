@@ -6,9 +6,10 @@ import { getHostCommand } from '../hostProcess'
 
 const cwdMetadataCache = new Map<string, Promise<ProviderChatCwdMetadata>>()
 
-const runGit = (cwd: string, args: string[]): Promise<string | null> =>
-  new Promise((resolve) => {
-    const hostCommand = getHostCommand('git', args, { cwd })
+const runGit = async (cwd: string, args: string[]): Promise<string | null> => {
+  const hostCommand = await getHostCommand('git', args, { cwd })
+
+  return new Promise((resolve) => {
     execFile(
       hostCommand.file,
       hostCommand.args,
@@ -24,6 +25,7 @@ const runGit = (cwd: string, args: string[]): Promise<string | null> =>
       }
     )
   })
+}
 
 const getNativeProjectCwd = (gitCommonDir: string): string | null =>
   basename(gitCommonDir) === '.git' ? dirname(gitCommonDir) : null

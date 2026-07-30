@@ -56,12 +56,12 @@ import type {
   AppWriteFileContentsOptions,
   AppWindowState
 } from '../shared/app'
-import { getHostCommand } from './hostProcess'
 import { appIpcChannels } from '../shared/app'
 import {
   getProjectIcon as getStoredProjectIcon,
   setProjectIcon as setStoredProjectIcon
 } from './database/projectIcons'
+import { getHostCommand } from './hostProcess'
 
 export const getAppWindowState = (window: BrowserWindow): AppWindowState => ({
   isMaximized: window.isMaximized()
@@ -330,15 +330,16 @@ type RunGitOptions = {
 const getRunGitOptions = (options: boolean | RunGitOptions): RunGitOptions =>
   typeof options === 'boolean' ? { required: options } : options
 
-const runGit = (
+const runGit = async (
   cwd: string,
   args: string[],
   options: boolean | RunGitOptions = false
-): Promise<string | null> =>
-  new Promise((resolve, reject) => {
-    const runOptions = getRunGitOptions(options)
-    const env = { ...process.env, GIT_MERGE_AUTOEDIT: 'no', ...runOptions.env }
-    const hostCommand = getHostCommand('git', args, { cwd, env })
+): Promise<string | null> => {
+  const runOptions = getRunGitOptions(options)
+  const env = { ...process.env, GIT_MERGE_AUTOEDIT: 'no', ...runOptions.env }
+  const hostCommand = await getHostCommand('git', args, { cwd, env })
+
+  return new Promise((resolve, reject) => {
     const child = execFile(
       hostCommand.file,
       hostCommand.args,
@@ -366,6 +367,7 @@ const runGit = (
       child.stdin?.end(runOptions.input)
     }
   })
+}
 
 const getGitErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
