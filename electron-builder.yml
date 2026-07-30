@@ -14,6 +14,7 @@ asarUnpack:
   - node_modules/@lydell/node-pty*/**
 win:
   executableName: sele
+  icon: build/icon.ico
   target:
     - nsis
 nsis:
@@ -22,6 +23,7 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  icon: build/icon.icns
   target:
     - dmg
   category: public.app-category.developer-tools
@@ -30,6 +32,7 @@ mac:
 dmg:
   artifactName: ${name}-macos-${arch}.${ext}
 linux:
+  icon: build/icons
   target:
     - flatpak
   category: Development
