@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.chipichapa.sele</id>
+  <name>Sele</name>
+  <summary>A focused desktop workspace for Codex</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+
+  <developer id="com.chipichapa">
+    <name>Chipi Chapa Corp</name>
+  </developer>
+
+  <description>
+    <p>
+      Sele is a desktop AI harness for working with Codex across local projects.
+      It brings conversations, project context, code changes, file editing, and
+      terminal sessions together in one focused workspace.
+    </p>
+    <p>
+      Review changes as you work, move between projects and conversations, and
+      keep the tools needed for agent-assisted development close at hand.
+    </p>
+    <p>
+      The Flatpak uses host command execution so that Codex, Git, shells, and
+      developer tools installed on the computer remain available to Sele.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">com.chipichapa.sele.desktop</launchable>
+  <provides>
+    <binary>sele</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/Chipi-Chapa-Corp/sele</url>
+  <url type="bugtracker">https://github.com/Chipi-Chapa-Corp/sele/issues</url>
+  <url type="vcs-browser">https://github.com/Chipi-Chapa-Corp/sele</url>
+
+  <categories>
+    <category>Development</category>
+  </categories>
+  <keywords>
+    <keyword>AI</keyword>
+    <keyword>Codex</keyword>
+    <keyword>developer</keyword>
+    <keyword>terminal</keyword>
+  </keywords>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-07-30">
+      <description>
+        <p>Initial public release of Sele.</p>
+      </description>
+    </release>
+  </releases>
+</component>

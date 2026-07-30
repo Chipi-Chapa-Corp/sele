@@ -56,6 +56,7 @@ import type {
   AppWriteFileContentsOptions,
   AppWindowState
 } from '../shared/app'
+import { getHostCommand } from './hostProcess'
 import { appIpcChannels } from '../shared/app'
 import {
   getProjectIcon as getStoredProjectIcon,
@@ -336,13 +337,15 @@ const runGit = (
 ): Promise<string | null> =>
   new Promise((resolve, reject) => {
     const runOptions = getRunGitOptions(options)
+    const env = { ...process.env, GIT_MERGE_AUTOEDIT: 'no', ...runOptions.env }
+    const hostCommand = getHostCommand('git', args, { cwd, env })
     const child = execFile(
-      'git',
-      args,
+      hostCommand.file,
+      hostCommand.args,
       {
-        cwd,
+        cwd: hostCommand.cwd,
         encoding: 'utf8',
-        env: { ...process.env, GIT_MERGE_AUTOEDIT: 'no', ...runOptions.env },
+        env: hostCommand.env,
         maxBuffer: 10 * 1024 * 1024,
         timeout: 10_000
       },

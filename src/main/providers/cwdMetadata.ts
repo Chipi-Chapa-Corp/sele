@@ -2,17 +2,20 @@ import { execFile } from 'node:child_process'
 import { dirname, basename } from 'node:path'
 import type { ProviderChatCwdMetadata } from '../../shared/provider'
 import { getStoredCwdMetadata, setStoredCwdMetadata } from '../database/cwd'
+import { getHostCommand } from '../hostProcess'
 
 const cwdMetadataCache = new Map<string, Promise<ProviderChatCwdMetadata>>()
 
 const runGit = (cwd: string, args: string[]): Promise<string | null> =>
   new Promise((resolve) => {
+    const hostCommand = getHostCommand('git', args, { cwd })
     execFile(
-      'git',
-      args,
+      hostCommand.file,
+      hostCommand.args,
       {
-        cwd,
+        cwd: hostCommand.cwd,
         encoding: 'utf8',
+        env: hostCommand.env,
         maxBuffer: 1024 * 1024,
         timeout: 3_000
       },

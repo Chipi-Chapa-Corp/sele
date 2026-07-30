@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import type { ProviderUpdateAvailability } from '../../../shared/provider'
+import { getHostCommand } from '../../hostProcess'
 
 type CommandResult = {
   stdout: string
@@ -26,11 +27,13 @@ const getCodexExecutable = (): string => process.env.CODEX_BINARY_PATH || 'codex
 
 const runCommand = (file: string, args: string[], timeout: number): Promise<CommandResult> =>
   new Promise((resolve, reject) => {
+    const hostCommand = getHostCommand(file, args)
     execFile(
-      file,
-      args,
+      hostCommand.file,
+      hostCommand.args,
       {
         encoding: 'utf8',
+        env: hostCommand.env,
         maxBuffer: commandMaxBuffer,
         timeout
       },

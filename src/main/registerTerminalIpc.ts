@@ -15,6 +15,7 @@ import type {
   TerminalSession
 } from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
+import { getHostCommand, isRunningInFlatpak } from './hostProcess'
 
 const minimumColumns = 2
 const maximumColumns = 500
@@ -137,7 +138,9 @@ const getShell = (): { file: string; args: string[] } => {
   const file =
     [configuredUserShell, process.env.SHELL, '/bin/zsh', '/bin/bash', '/bin/sh'].find(
       (candidate): candidate is string =>
-        typeof candidate === 'string' && isAbsolute(candidate) && existsSync(candidate)
+        typeof candidate === 'string' &&
+        isAbsolute(candidate) &&
+        (isRunningInFlatpak() || existsSync(candidate))
     ) ?? '/bin/sh'
 
   return { file, args: [] }
@@ -328,17 +331,20 @@ const createSession = async (
   const shell = command
     ? getTerminalCommandShell(baseShell, command, Boolean(options.keepAliveOnCommandFinish))
     : baseShell
-  const pty = spawnPty(shell.file, shell.args, {
+  const cwd = options.cwd ?? app.getPath('home')
+  const env = {
+    ...process.env,
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    TERM_PROGRAM: 'Sele'
+  }
+  const hostCommand = getHostCommand(shell.file, shell.args, { cwd, env })
+  const pty = spawnPty(hostCommand.file, hostCommand.args, {
     name: 'xterm-256color',
     cols: options.cols,
     rows: options.rows,
-    cwd: options.cwd ?? app.getPath('home'),
-    env: {
-      ...process.env,
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      TERM_PROGRAM: 'Sele'
-    }
+    cwd: hostCommand.cwd ?? app.getPath('home'),
+    env: hostCommand.env ?? env
   })
 
   const session: ManagedTerminalSession = {
@@ -376,7 +382,7 @@ const createSession = async (
   return {
     id,
     pid: pty.pid,
-    cwd: options.cwd ?? app.getPath('home'),
+    cwd,
     shell: basename(baseShell.file)
   }
 }
@@ -384,13 +390,16 @@ const createSession = async (
 const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => {
   const options = await getRunCommandOptions(value)
   const shell = getCommandShell(options.command)
-  const child = spawnChildProcess(shell.file, shell.args, {
-    cwd: options.cwd ?? app.getPath('home'),
+  const cwd = options.cwd ?? app.getPath('home')
+  const env = {
+    ...process.env,
+    TERM_PROGRAM: 'Sele'
+  }
+  const hostCommand = getHostCommand(shell.file, shell.args, { cwd, env })
+  const child = spawnChildProcess(hostCommand.file, hostCommand.args, {
+    cwd: hostCommand.cwd,
     detached: false,
-    env: {
-      ...process.env,
-      TERM_PROGRAM: 'Sele'
-    },
+    env: hostCommand.env,
     stdio: 'ignore',
     windowsHide: true
   })

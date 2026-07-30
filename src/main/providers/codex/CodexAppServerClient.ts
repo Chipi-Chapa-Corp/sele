@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import { getHostCommand } from '../../hostProcess'
 
 type RpcError = {
   code: number
@@ -138,8 +139,11 @@ export class CodexAppServerClient {
   private initialize = async (): Promise<void> => {
     const binary = process.env.CODEX_BINARY_PATH || 'codex'
     const appServerCommand = getAppServerCommand(binary)
-    const child = spawn(appServerCommand.command, appServerCommand.args, {
-      env: process.env,
+    const hostCommand = getHostCommand(appServerCommand.command, appServerCommand.args, {
+      env: process.env
+    })
+    const child = spawn(hostCommand.file, hostCommand.args, {
+      env: hostCommand.env,
       stdio: ['pipe', 'pipe', 'pipe']
     })
 

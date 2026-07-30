@@ -164,7 +164,7 @@ jobs:
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install --yes flatpak flatpak-builder
+          sudo apt-get install --yes appstream flatpak flatpak-builder
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install --assumeyes --noninteractive flathub \
             org.freedesktop.Platform//25.08 \
@@ -174,11 +174,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate AppStream metadata
+        run: appstreamcli validate --strict --explain build/com.chipichapa.sele.metainfo.xml
+
       - name: Build Flatpak bundle
         run: npm run build:linux -- --x64 --publish never
 
+      - name: Build Flatpak update repository
+        run: npm run package:flatpak-repo
+
       - name: Verify artifact
-        run: test -f dist/sele-linux-x64.flatpak
+        run: |
+          test -f dist/sele-linux-x64.flatpak
+          test -f dist/flatpak-pages/flatpak/summary
+          test -f dist/flatpak-pages/flatpak/sele.flatpakref
+          flatpak remote-add --user --no-gpg-verify sele-build \
+            "file://${GITHUB_WORKSPACE}/dist/flatpak-pages/flatpak"
+          flatpak remote-info --user sele-build com.chipichapa.sele
 
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v7
@@ -187,6 +199,32 @@ jobs:
           path: dist/sele-linux-x64.flatpak
           if-no-files-found: error
           compression-level: 0
+
+      - name: Upload Flatpak repository for GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/flatpak-pages
+
+  flatpak-pages:
+    name: Publish Flatpak repository
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy Flatpak repository
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   release:
     name: Publish GitHub Release

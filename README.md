@@ -45,6 +45,28 @@ flatpak install --user dist/sele-linux-x64.flatpak
 flatpak run com.chipichapa.sele
 ```
 
+Release bundles include Sele's update repository. To install directly from that repository:
+
+```bash
+flatpak install --user https://chipi-chapa-corp.github.io/sele/flatpak/sele.flatpakref
+```
+
+The repository is published to GitHub Pages from `main`. It supplies AppStream metadata to
+software centers and allows installed Flatpaks to receive later Sele releases. GitHub Pages
+must be enabled with **GitHub Actions** as its source in the repository settings.
+
+Sele is a host-integrated development tool rather than a sandboxed document app. Its Flatpak
+uses `flatpak-spawn --host` for Codex, Git, and terminal processes, and therefore requires the
+`org.freedesktop.Flatpak` D-Bus permission. Install and authenticate the Codex CLI on the host
+before starting Sele. If Codex is installed through a version manager and is not on the desktop
+session's `PATH`, point the Flatpak at it explicitly:
+
+```bash
+flatpak override --user \
+  --env=CODEX_BINARY_PATH="$(command -v codex)" \
+  com.chipichapa.sele
+```
+
 Released macOS builds can be installed through this repository's Homebrew cask:
 
 ```bash
