@@ -1,4 +1,4 @@
-appId: com.sele.app
+appId: com.chipichapa.sele
 productName: Sele
 directories:
   buildResources: build
@@ -14,22 +14,42 @@ asarUnpack:
   - node_modules/@lydell/node-pty*/**
 win:
   executableName: sele
+  target:
+    - nsis
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: ${name}-windows-${arch}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  notarize: false
 dmg:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${name}-macos-${arch}.${ext}
 linux:
   target:
-    - AppImage
-    - snap
-    - deb
-  category: Utility
-appImage:
-  artifactName: ${name}-${version}.${ext}
+    - flatpak
+  category: Development
+  synopsis: Desktop AI harness for Codex
+flatpak:
+  artifactName: ${name}-linux-${arch}.${ext}
+  runtime: org.freedesktop.Platform
+  runtimeVersion: '25.08'
+  sdk: org.freedesktop.Sdk
+  base: org.electronjs.Electron2.BaseApp
+  baseVersion: '25.08'
+  branch: stable
+  useWaylandFlags: true
+  finishArgs:
+    - --socket=wayland
+    - --socket=fallback-x11
+    - --share=ipc
+    - --device=dri
+    - --socket=pulseaudio
+    - --filesystem=home
+    - --share=network
+    - --talk-name=org.freedesktop.Notifications
 npmRebuild: false

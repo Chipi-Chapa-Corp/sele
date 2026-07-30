@@ -2,6 +2,7 @@
   "name": "sele",
   "version": "1.0.0",
   "description": "A lightweight desktop AI harness",
+  "author": "ExposedCat",
   "main": "./out/main/index.js",
   "scripts": {
     "format": "prettier --write .",
@@ -14,9 +15,9 @@
     "build": "npm run typecheck && node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
-    "build:win": "npm run build && electron-builder --win",
-    "build:mac": "npm run build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:win": "npm run build && electron-builder --win nsis",
+    "build:mac": "npm run build && electron-builder --mac dmg",
+    "build:linux": "npm run build && electron-builder --linux flatpak"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
