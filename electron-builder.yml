@@ -35,7 +35,7 @@ linux:
   category: Development
   synopsis: Desktop AI harness for Codex
 flatpak:
-  artifactName: ${name}-linux-${arch}.${ext}
+  artifactName: ${name}-linux-x64.${ext}
   runtime: org.freedesktop.Platform
   runtimeVersion: '25.08'
   sdk: org.freedesktop.Sdk
