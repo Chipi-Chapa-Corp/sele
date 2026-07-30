@@ -10,6 +10,8 @@ cask "sele" do
   desc "Desktop AI harness for Codex"
   homepage "https://github.com/chipichapa/sele"
 
+  depends_on :macos
+
   app "Sele.app"
 
   zap trash: [
