@@ -34,6 +34,7 @@ linux:
     - flatpak
   category: Development
   synopsis: Desktop AI harness for Codex
+  syncDesktopName: true
 flatpak:
   artifactName: ${name}-linux-x64.${ext}
   runtime: org.freedesktop.Platform
