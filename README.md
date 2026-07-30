@@ -74,6 +74,14 @@ brew tap chipi-chapa-corp/sele https://github.com/Chipi-Chapa-Corp/sele.git
 brew install --cask chipi-chapa-corp/sele/sele
 ```
 
+macOS builds are unsigned. If Gatekeeper reports that Sele is damaged, corrupted, or cannot
+be opened after installing it from this repository, remove the download quarantine attribute:
+
+```bash
+sudo xattr -dr com.apple.quarantine /Applications/Sele.app
+open /Applications/Sele.app
+```
+
 ## CI and releases
 
 `.github/workflows/build.yml` validates the project and builds all three distributables on
@@ -84,9 +92,8 @@ Pushing a tag that matches the package version (for example, `v1.0.0`) also crea
 Release with the Windows installer, macOS disk image, and the Flatpak bundle. The Homebrew
 cask follows the latest non-prerelease GitHub Release.
 
-Unsigned packages are produced when signing secrets are absent. For production distribution,
-configure these GitHub Actions secrets:
+Unsigned macOS packages are expected unless Apple Developer ID signing is configured later.
+Proper signed and notarized macOS distribution requires a paid Apple Developer Program
+membership. Windows signing is optional and uses these GitHub Actions secrets when available:
 
 - Windows: `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD`
-- macOS signing: `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`
-- macOS notarization: `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`
