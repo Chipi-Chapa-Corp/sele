@@ -1,15 +1,14 @@
 cask "sele" do
-  arch arm: "arm64", intel: "x64"
-
   version :latest
   sha256 :no_check
 
-  url "https://github.com/chipichapa/sele/releases/latest/download/sele-macos-#{arch}.dmg",
-      verified: "github.com/chipichapa/sele/"
+  url "https://github.com/Chipi-Chapa-Corp/sele/releases/latest/download/sele-macos-arm64.dmg",
+      verified: "github.com/Chipi-Chapa-Corp/sele/"
   name "Sele"
   desc "Desktop AI harness for Codex"
-  homepage "https://github.com/chipichapa/sele"
+  homepage "https://github.com/Chipi-Chapa-Corp/sele"
 
+  depends_on arch: :arm64
   depends_on :macos
 
   app "Sele.app"

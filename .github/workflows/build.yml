@@ -99,17 +99,9 @@ jobs:
           compression-level: 0
 
   macos:
-    name: macOS ${{ matrix.arch }}
+    name: macOS arm64
     needs: validate
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-15
-          - arch: x64
-            runner: macos-15-intel
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -142,16 +134,16 @@ jobs:
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
 
-          npm run build:mac -- --${{ matrix.arch }} --publish never
+          npm run build:mac -- --arm64 --publish never
 
       - name: Verify artifact
-        run: hdiutil verify "dist/sele-macos-${{ matrix.arch }}.dmg"
+        run: hdiutil verify "dist/sele-macos-arm64.dmg"
 
       - name: Upload macOS disk image
         uses: actions/upload-artifact@v7
         with:
-          name: sele-macos-${{ matrix.arch }}
-          path: dist/sele-macos-${{ matrix.arch }}.dmg
+          name: sele-macos-arm64
+          path: dist/sele-macos-arm64.dmg
           if-no-files-found: error
           compression-level: 0
 
@@ -221,7 +213,6 @@ jobs:
         run: |
           test -f release-artifacts/sele-windows-x64-setup.exe
           test -f release-artifacts/sele-macos-arm64.dmg
-          test -f release-artifacts/sele-macos-x64.dmg
           test -f release-artifacts/sele-linux-x64.flatpak
 
       - name: Create or update release
