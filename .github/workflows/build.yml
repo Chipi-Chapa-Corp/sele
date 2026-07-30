@@ -71,10 +71,17 @@ jobs:
         run: npm ci
 
       - name: Build NSIS installer
-        run: npm run build:win -- --x64
+        shell: pwsh
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) {
+            Remove-Item Env:WIN_CSC_LINK -ErrorAction SilentlyContinue
+            Remove-Item Env:WIN_CSC_KEY_PASSWORD -ErrorAction SilentlyContinue
+          }
+
+          npm run build:win -- --x64 --publish never
 
       - name: Verify artifact
         shell: pwsh
@@ -122,13 +129,20 @@ jobs:
           brew style Casks/sele.rb
 
       - name: Build DMG
-        run: npm run build:mac -- --${{ matrix.arch }}
+        shell: bash
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [[ -z "${CSC_LINK:-}" ]]; then
+            unset CSC_LINK CSC_KEY_PASSWORD
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+
+          npm run build:mac -- --${{ matrix.arch }} --publish never
 
       - name: Verify artifact
         run: hdiutil verify "dist/sele-macos-${{ matrix.arch }}.dmg"
@@ -169,7 +183,7 @@ jobs:
         run: npm ci
 
       - name: Build Flatpak bundle
-        run: npm run build:linux -- --x64
+        run: npm run build:linux -- --x64 --publish never
 
       - name: Verify artifact
         run: test -f dist/sele-linux-x64.flatpak
