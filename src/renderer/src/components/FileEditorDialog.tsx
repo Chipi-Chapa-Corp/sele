@@ -4,14 +4,20 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Code2,
+  Columns2,
   Copy,
+  Eye,
   FileCode2,
   FileDiff,
+  FileText,
   Image as ImageIcon,
   LoaderCircle,
   Maximize2,
   MessageSquare,
   Minimize2,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Save,
   WrapText,
@@ -21,10 +27,13 @@ import {
   FileIcon as SymbolsFileIcon,
   FolderIcon as SymbolsFolderIcon
 } from '@react-symbols/icons/utils'
+import DOMPurify from 'dompurify'
+import { marked } from 'marked'
 import type { AppGitChangeKind } from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { Button } from './Button'
+import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
 import { EditableUnifiedDiff, UnifiedDiff, type DiffReviewLocation } from './UnifiedDiff'
 import './FileEditorDialog.css'
 
@@ -33,6 +42,7 @@ export type FileEditorTarget = {
   path: string
   displayPath: string
   line?: number
+  endLine?: number
   kind?: AppGitChangeKind | null
   previousPath?: string | null
 }
@@ -50,6 +60,8 @@ type FileEditorDialogProps = {
 type LoadState = 'loading' | 'ready' | 'error'
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 type CopyState = 'idle' | 'copying' | 'copied' | 'error'
+type MarkdownViewMode = 'code' | 'split' | 'preview'
+type FileViewMode = 'diff' | 'contents'
 type LoadDiffOptions = {
   background?: boolean
 }
@@ -73,6 +85,51 @@ type MutableDiffTreeFolder = {
 }
 
 const imageFilePattern = /\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i
+const markdownFilePattern = /\.(?:markdown|mdown|mkdn|mkd|md)$/i
+const markdownViewOptions: readonly SegmentedControlOption<MarkdownViewMode>[] = [
+  {
+    value: 'code',
+    label: null,
+    ariaLabel: 'Code',
+    icon: <Code2 />,
+    title: 'Code'
+  },
+  {
+    value: 'split',
+    label: null,
+    ariaLabel: 'Split',
+    icon: <Columns2 />,
+    title: 'Split'
+  },
+  {
+    value: 'preview',
+    label: null,
+    ariaLabel: 'Preview',
+    icon: <Eye />,
+    title: 'Preview'
+  }
+]
+const fileViewOptions: readonly SegmentedControlOption<FileViewMode>[] = [
+  {
+    value: 'diff',
+    label: null,
+    ariaLabel: 'Diff',
+    icon: <FileDiff />,
+    title: 'Diff'
+  },
+  {
+    value: 'contents',
+    label: null,
+    ariaLabel: 'Regular contents',
+    icon: <FileText />,
+    title: 'Regular contents'
+  }
+]
+const markdownSplitPercentageStorageKey = 'sele:markdown-split-percentage:v1'
+const markdownSplitDefaultPercentage = 50
+const markdownSplitMinPercentage = 20
+const markdownSplitMaxPercentage = 80
+const markdownSplitStackedMedia = '(max-width: 760px)'
 const diffTreeWidthStorageKey = 'sele:file-diff-tree-width:v1'
 const diffTreeDefaultWidth = 240
 const diffTreeMinWidth = 180
@@ -81,6 +138,20 @@ const diffContentMinWidth = 480
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
+
+const readStoredMarkdownSplitPercentage = (): number => {
+  try {
+    const storedValue = window.localStorage.getItem(markdownSplitPercentageStorageKey)
+    if (storedValue === null) return markdownSplitDefaultPercentage
+
+    const storedPercentage = Number(storedValue)
+    return Number.isFinite(storedPercentage)
+      ? clamp(storedPercentage, markdownSplitMinPercentage, markdownSplitMaxPercentage)
+      : markdownSplitDefaultPercentage
+  } catch {
+    return markdownSplitDefaultPercentage
+  }
+}
 
 const getDiffTreeMaxWidth = (bodyWidth: number): number =>
   Math.max(diffTreeMinWidth, Math.min(diffTreeMaxWidth, bodyWidth - diffContentMinWidth))
@@ -188,18 +259,29 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [diffLoadStatePath, setDiffLoadStatePath] = useState(target.path)
   const [diffError, setDiffError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [diffTreeCollapsed, setDiffTreeCollapsed] = useState(false)
+  const [fileView, setFileView] = useState<FileViewMode>('diff')
   const [wordWrap, setWordWrap] = useState(false)
+  const [markdownView, setMarkdownView] = useState<MarkdownViewMode>('code')
+  const [markdownSplitPercentage, setMarkdownSplitPercentage] = useState(
+    readStoredMarkdownSplitPercentage
+  )
+  const [markdownSplitStacked, setMarkdownSplitStacked] = useState(
+    () => window.matchMedia(markdownSplitStackedMedia).matches
+  )
   const [collapsedDiffFolders, setCollapsedDiffFolders] = useState<Record<string, boolean>>({})
   const [diffTreeWidth, setDiffTreeWidth] = useState(readStoredDiffTreeWidth)
   const [reviewComments, setReviewComments] = useState<ProviderReviewComment[]>(() => [
     ...initialReviewComments
   ])
   const bodyRef = useRef<HTMLDivElement>(null)
+  const markdownSplitRef = useRef<HTMLDivElement>(null)
   const loadRequestRef = useRef(0)
   const diffLoadRequestRef = useRef(0)
   const copyFeedbackTimerRef = useRef<number | null>(null)
   const resizeCleanupRef = useRef<(() => void) | null>(null)
   const isImage = imageFilePattern.test(target.path)
+  const isMarkdown = markdownFilePattern.test(target.path)
   const canShowImage = isImage && target.kind !== 'delete'
   const canShowContents = !isImage && target.kind !== 'delete'
   const canOpenFile = canShowContents || canShowImage
@@ -208,8 +290,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     diffLoadStatePath === target.path ? diffLoadState : target.kind ? 'loading' : 'ready'
   const canEdit = canShowContents && visibleLoadState === 'ready' && editable === true
   const canShowDiff = Boolean(target.kind && !canShowImage && (target.kind === 'delete' || canEdit))
+  const showFileDiff = canShowDiff && fileView === 'diff'
   const isFileDiff = Boolean(target.kind)
-  const showDiffTree = isFileDiff && diffTargets.length > 0 && Boolean(onSelectTarget)
+  const hasDiffTree = isFileDiff && diffTargets.length > 0 && Boolean(onSelectTarget)
+  const showDiffTree = hasDiffTree && !diffTreeCollapsed
   const displayPath = useMemo(() => target.displayPath.replace(/\\/g, '/'), [target.displayPath])
   const displayPathParts = useMemo(() => displayPath.split('/').filter(Boolean), [displayPath])
   const fileName = displayPathParts.at(-1) ?? displayPath
@@ -247,6 +331,27 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         diff: ''
       },
     [renderedFileDiff, target.path]
+  )
+  const regularFileContents = useMemo<ProviderFileDiff>(
+    () => ({
+      path: target.path,
+      kind: 'edit',
+      diff: ''
+    }),
+    [target.path]
+  )
+  const displayedFileDiff = showFileDiff ? editableFileDiff : regularFileContents
+  const renderedMarkdown = useMemo(
+    () =>
+      isMarkdown
+        ? DOMPurify.sanitize(
+            marked.parse(contents, {
+              async: false,
+              gfm: true
+            })
+          )
+        : '',
+    [contents, isMarkdown]
   )
 
   const loadFile = useCallback(async (): Promise<void> => {
@@ -376,6 +481,26 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   }, [diffTreeWidth])
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        markdownSplitPercentageStorageKey,
+        String(markdownSplitPercentage)
+      )
+    } catch {
+      // The Markdown split remains resizable when persistent storage is unavailable.
+    }
+  }, [markdownSplitPercentage])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(markdownSplitStackedMedia)
+    const updateLayout = (): void => setMarkdownSplitStacked(mediaQuery.matches)
+
+    updateLayout()
+    mediaQuery.addEventListener('change', updateLayout)
+    return () => mediaQuery.removeEventListener('change', updateLayout)
+  }, [])
+
+  useEffect(() => {
     onReviewCommentsChange?.(reviewComments)
   }, [onReviewCommentsChange, reviewComments])
 
@@ -488,6 +613,61 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       window.addEventListener('pointercancel', stopResize)
     },
     [diffTreeWidth]
+  )
+  const resizeMarkdownSplitBy = useCallback((delta: number): void => {
+    setMarkdownSplitPercentage((currentPercentage) =>
+      clamp(currentPercentage + delta, markdownSplitMinPercentage, markdownSplitMaxPercentage)
+    )
+  }, [])
+  const startMarkdownSplitResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      if (event.button !== 0) return
+
+      const split = markdownSplitRef.current
+      if (!split) return
+
+      const bounds = split.getBoundingClientRect()
+      const splitSize = markdownSplitStacked ? bounds.height : bounds.width
+      if (splitSize <= 0) return
+
+      event.preventDefault()
+      resizeCleanupRef.current?.()
+
+      const startPosition = markdownSplitStacked ? event.clientY : event.clientX
+      const startPercentage = markdownSplitPercentage
+      const previousCursor = document.body.style.cursor
+      const previousUserSelect = document.body.style.userSelect
+
+      document.body.style.cursor = markdownSplitStacked ? 'row-resize' : 'col-resize'
+      document.body.style.userSelect = 'none'
+
+      const handlePointerMove = (moveEvent: PointerEvent): void => {
+        const position = markdownSplitStacked ? moveEvent.clientY : moveEvent.clientX
+        const deltaPercentage = ((position - startPosition) / splitSize) * 100
+        setMarkdownSplitPercentage(
+          clamp(
+            startPercentage + deltaPercentage,
+            markdownSplitMinPercentage,
+            markdownSplitMaxPercentage
+          )
+        )
+      }
+
+      const stopResize = (): void => {
+        document.body.style.cursor = previousCursor
+        document.body.style.userSelect = previousUserSelect
+        window.removeEventListener('pointermove', handlePointerMove)
+        window.removeEventListener('pointerup', stopResize)
+        window.removeEventListener('pointercancel', stopResize)
+        resizeCleanupRef.current = null
+      }
+
+      resizeCleanupRef.current = stopResize
+      window.addEventListener('pointermove', handlePointerMove)
+      window.addEventListener('pointerup', stopResize)
+      window.addEventListener('pointercancel', stopResize)
+    },
+    [markdownSplitPercentage, markdownSplitStacked]
   )
 
   const renderDiffTreeNode = (node: DiffTreeNode, depth: number): React.ReactElement => {
@@ -659,17 +839,66 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         className={`file-editor-dialog${expanded ? ' file-editor-dialog--expanded' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-label={`${canEdit ? 'Edit' : canShowDiff ? 'View changes to' : 'View'} ${displayPath}${target.line ? ` at line ${target.line}` : ''}`}
+        aria-label={`${canEdit ? 'Edit' : showFileDiff ? 'View changes to' : 'View'} ${displayPath}${
+          target.line
+            ? target.endLine && target.endLine > target.line
+              ? ` at lines ${target.line}-${target.endLine}`
+              : ` at line ${target.line}`
+            : ''
+        }`}
       >
         <header className="file-editor-dialog__header">
-          <span className="file-editor-dialog__file-icon" aria-hidden="true">
-            <SymbolsFileIcon fileName={fileName} autoAssign />
-          </span>
+          <div className="file-editor-dialog__header-leading">
+            {hasDiffTree && (
+              <Button
+                aria-controls="file-editor-diff-tree"
+                aria-expanded={!diffTreeCollapsed}
+                aria-label={
+                  diffTreeCollapsed
+                    ? 'Expand changed files sidebar'
+                    : 'Collapse changed files sidebar'
+                }
+                callback={() => setDiffTreeCollapsed((collapsed) => !collapsed)}
+                icon={diffTreeCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                size="small"
+                theme="transparent"
+                title={
+                  diffTreeCollapsed
+                    ? 'Expand changed files sidebar'
+                    : 'Collapse changed files sidebar'
+                }
+              />
+            )}
+            {canShowDiff && canShowContents && (
+              <SegmentedControl
+                aria-label="File view"
+                className="file-editor-dialog__file-view-switch"
+                options={fileViewOptions}
+                size="small"
+                value={fileView}
+                onChange={setFileView}
+              />
+            )}
+            <span className="file-editor-dialog__file-icon" aria-hidden="true">
+              <SymbolsFileIcon fileName={fileName} autoAssign />
+            </span>
+          </div>
           <div className="file-editor-dialog__title">
             <strong title={fileName}>{fileName}</strong>
             <span title={directoryName}>{directoryName}</span>
           </div>
           <div className="file-editor-dialog__actions">
+            {isMarkdown && canShowContents && (
+              <SegmentedControl
+                aria-label="Markdown view"
+                className="file-editor-dialog__markdown-view-switch"
+                disabled={visibleLoadState !== 'ready'}
+                options={markdownViewOptions}
+                size="small"
+                value={markdownView}
+                onChange={setMarkdownView}
+              />
+            )}
             {isFileDiff && reviewComments.length > 0 && onContinueReview && (
               <Button
                 callback={continueReview}
@@ -713,7 +942,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                 title="Save (Ctrl/Cmd+S)"
               />
             )}
-            {canShowContents && (
+            {canShowContents && (!isMarkdown || markdownView !== 'preview') && (
               <Button
                 aria-label={wordWrap ? 'Disable word wrap' : 'Enable word wrap'}
                 aria-pressed={wordWrap}
@@ -753,8 +982,13 @@ export const FileEditorDialog = memo(function FileEditorDialog({
               : undefined
           }
         >
-          {showDiffTree && (
-            <aside className="file-editor-dialog__tree-sidebar" aria-label="Changed files">
+          {hasDiffTree && (
+            <aside
+              className="file-editor-dialog__tree-sidebar"
+              id="file-editor-diff-tree"
+              aria-label="Changed files"
+              hidden={!showDiffTree}
+            >
               <div className="file-editor-dialog__tree-scroll">
                 <ul className="file-editor-dialog__tree" role="tree">
                   {diffTree.map((node) => renderDiffTreeNode(node, 0))}
@@ -787,7 +1021,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                 {editorError}
               </div>
             )}
-            {canShowDiff && !canEdit && (
+            {showFileDiff && !canEdit && (
               <div className="file-editor-dialog__diff-view">
                 {visibleDiffLoadState === 'loading' && (
                   <div className="file-editor-dialog__state" role="status">
@@ -814,6 +1048,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                       <UnifiedDiff
                         className="file-editor-dialog__diff"
                         comments={currentReviewComments}
+                        endLine={target.endLine}
                         fileDiff={renderedFileDiff}
                         line={target.line}
                         onAddComment={isFileDiff && onContinueReview ? addReviewComment : undefined}
@@ -836,13 +1071,13 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
             {canOpenFile &&
               (visibleLoadState === 'loading' ||
-                (canShowDiff && visibleDiffLoadState === 'loading')) && (
+                (showFileDiff && visibleDiffLoadState === 'loading')) && (
                 <div className="file-editor-dialog__state" role="status">
                   <LoaderCircle className="file-editor-dialog__spinner" aria-hidden="true" />
                   <span>
                     {canShowImage
                       ? 'Opening image…'
-                      : canShowDiff
+                      : showFileDiff
                         ? 'Opening editable diff…'
                         : 'Opening file…'}
                   </span>
@@ -851,11 +1086,11 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
             {canOpenFile &&
               (visibleLoadState === 'error' ||
-                (canShowDiff && visibleDiffLoadState === 'error')) && (
+                (showFileDiff && visibleDiffLoadState === 'error')) && (
                 <div className="file-editor-dialog__state" role="alert">
                   {canShowImage ? (
                     <ImageIcon aria-hidden="true" />
-                  ) : canShowDiff ? (
+                  ) : showFileDiff ? (
                     <FileDiff aria-hidden="true" />
                   ) : (
                     <FileCode2 aria-hidden="true" />
@@ -866,7 +1101,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                       if (canShowImage) void loadImage()
                       else {
                         void loadFile()
-                        if (canShowDiff) void loadDiff()
+                        if (showFileDiff) void loadDiff()
                       }
                     }}
                     icon={<RefreshCw />}
@@ -885,39 +1120,85 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
             {canShowContents &&
               visibleLoadState === 'ready' &&
-              (!canShowDiff || visibleDiffLoadState === 'ready') && (
-                <div className="file-editor-dialog__inline-diff">
+              (!showFileDiff || visibleDiffLoadState === 'ready') && (
+                <div
+                  className={[
+                    'file-editor-dialog__inline-diff',
+                    isMarkdown ? 'file-editor-dialog__inline-diff--markdown' : null,
+                    isMarkdown ? `file-editor-dialog__inline-diff--markdown-${markdownView}` : null
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  ref={markdownSplitRef}
+                  style={
+                    isMarkdown && markdownView === 'split'
+                      ? ({
+                          '--markdown-split-percentage': `${markdownSplitPercentage}%`
+                        } as CSSProperties)
+                      : undefined
+                  }
+                >
                   {editorError && (
                     <div className="file-editor-dialog__error" role="alert">
                       {editorError}
                     </div>
                   )}
-                  <EditableUnifiedDiff
-                    key={target.path}
-                    ariaLabel={`Contents of ${target.displayPath}`}
-                    baselineContents={savedContents}
-                    className="file-editor-dialog__diff"
-                    comments={currentReviewComments}
-                    contents={contents}
-                    fileDiff={editableFileDiff}
-                    line={target.line}
-                    onChange={(nextContents) => {
-                      setContents(nextContents)
-                      setSaveState('idle')
-                      setEditorError(null)
-                    }}
-                    onAddComment={isFileDiff && onContinueReview ? addReviewComment : undefined}
-                    onChangeComment={
-                      isFileDiff && onContinueReview ? changeReviewComment : undefined
-                    }
-                    onDeleteComment={
-                      isFileDiff && onContinueReview ? deleteReviewComment : undefined
-                    }
-                    onSave={() => void handleSave()}
-                    onToggleWordWrap={toggleWordWrap}
-                    readOnly={!canEdit}
-                    wordWrap={wordWrap}
-                  />
+                  <div className="file-editor-dialog__editor-pane">
+                    <EditableUnifiedDiff
+                      key={target.path}
+                      ariaLabel={`Contents of ${target.displayPath}`}
+                      baselineContents={showFileDiff ? savedContents : contents}
+                      className="file-editor-dialog__diff"
+                      comments={currentReviewComments}
+                      contents={contents}
+                      endLine={target.endLine}
+                      fileDiff={displayedFileDiff}
+                      line={target.line}
+                      onChange={(nextContents) => {
+                        setContents(nextContents)
+                        setSaveState('idle')
+                        setEditorError(null)
+                      }}
+                      onAddComment={isFileDiff && onContinueReview ? addReviewComment : undefined}
+                      onChangeComment={
+                        isFileDiff && onContinueReview ? changeReviewComment : undefined
+                      }
+                      onDeleteComment={
+                        isFileDiff && onContinueReview ? deleteReviewComment : undefined
+                      }
+                      onSave={() => void handleSave()}
+                      onToggleWordWrap={toggleWordWrap}
+                      readOnly={!canEdit}
+                      wordWrap={wordWrap}
+                    />
+                  </div>
+                  {isMarkdown && markdownView === 'split' && (
+                    <div
+                      className="file-editor-dialog__markdown-resize-handle"
+                      role="separator"
+                      aria-label="Resize Markdown editor and preview"
+                      aria-orientation={markdownSplitStacked ? 'horizontal' : 'vertical'}
+                      aria-valuemax={markdownSplitMaxPercentage}
+                      aria-valuemin={markdownSplitMinPercentage}
+                      aria-valuenow={Math.round(markdownSplitPercentage)}
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        const decreaseKey = markdownSplitStacked ? 'ArrowUp' : 'ArrowLeft'
+                        const increaseKey = markdownSplitStacked ? 'ArrowDown' : 'ArrowRight'
+                        if (event.key !== decreaseKey && event.key !== increaseKey) return
+                        event.preventDefault()
+                        resizeMarkdownSplitBy(event.key === decreaseKey ? -2 : 2)
+                      }}
+                      onPointerDown={startMarkdownSplitResize}
+                    />
+                  )}
+                  {isMarkdown && markdownView !== 'code' && (
+                    <article
+                      className="file-editor-dialog__markdown-preview"
+                      aria-label={`Preview of ${target.displayPath}`}
+                      dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
+                    />
+                  )}
                 </div>
               )}
           </div>

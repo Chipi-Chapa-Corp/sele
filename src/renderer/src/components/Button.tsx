@@ -1,17 +1,40 @@
 import { ChevronDown } from 'lucide-react'
-import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, CSSProperties, ReactElement, ReactNode } from 'react'
 import { forwardRef, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import './Button.css'
 
 export type ButtonTheme = 'primary' | 'secondary' | 'transparent'
 export type ButtonSize = 'normal' | 'small'
+export type ButtonDropdownInlineAction = {
+  id: string
+  ariaLabel: string
+  callback: () => Promise<void> | void
+  disabled?: boolean
+  icon: ReactNode
+  title?: string
+}
 export type ButtonDropdownAction = {
   id: string
   label: ReactNode
   callback: () => Promise<void> | void
+  buttonTheme?: ButtonTheme
   disabled?: boolean
   icon?: ReactNode
+  inlineActions?: readonly ButtonDropdownInlineAction[]
+  title?: string
+}
+
+export type ButtonMenuRowProps = {
+  className?: string
+  disabled?: boolean
+  icon?: ReactNode
+  inlineActionRole?: 'menuitem'
+  inlineActions?: readonly ButtonDropdownInlineAction[]
+  label: ReactNode
+  labelClassName?: string
+  mainRole?: 'menuitem'
+  onSelect?: () => Promise<void> | void
   title?: string
 }
 
@@ -88,6 +111,102 @@ const renderIcon = (icon: ReactNode, className: string): ReactNode =>
       {icon}
     </span>
   ) : null
+
+export const ButtonMenuRow = ({
+  className,
+  disabled = false,
+  icon = null,
+  inlineActionRole,
+  inlineActions = [],
+  label,
+  labelClassName,
+  mainRole,
+  onSelect,
+  title
+}: ButtonMenuRowProps): ReactElement => {
+  const interactive = Boolean(onSelect)
+  const rowClassName = [
+    'ui-button-menu__row',
+    interactive ? 'ui-button-menu__row--interactive' : 'ui-button-menu__row--static',
+    className
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const mainClassName = [
+    'ui-button-menu__item',
+    'ui-button-menu__item--row-main',
+    interactive ? null : 'ui-button-menu__item--row-static'
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const labelClassNames = ['ui-button-menu__label', labelClassName].filter(Boolean).join(' ')
+  const mainStyle =
+    inlineActions.length > 0
+      ? ({
+          '--ui-button-menu-row-main-padding-inline-end': `${
+            16 + inlineActions.length * 26 + Math.max(0, inlineActions.length - 1) * 2
+          }px`
+        } as CSSProperties)
+      : undefined
+
+  const handleSelect = (): void => {
+    if (!onSelect || disabled) return
+
+    void onSelect()
+  }
+
+  return (
+    <div className={rowClassName} role="presentation">
+      {interactive ? (
+        <button
+          className={mainClassName}
+          disabled={disabled}
+          role={mainRole}
+          style={mainStyle}
+          title={title}
+          type="button"
+          onClick={handleSelect}
+        >
+          {renderIcon(icon, 'ui-button-menu__icon')}
+          <span className={labelClassNames}>{label}</span>
+        </button>
+      ) : (
+        <span className={mainClassName} style={mainStyle} title={title}>
+          {renderIcon(icon, 'ui-button-menu__icon')}
+          <span className={labelClassNames}>{label}</span>
+        </span>
+      )}
+      {inlineActions.length > 0 && (
+        <span className="ui-button-menu__inline-actions" role="presentation">
+          {inlineActions.map((inlineAction) => (
+            <button
+              className={`${getButtonClassName(
+                'transparent',
+                'small',
+                inlineAction.icon,
+                null,
+                false
+              )} ui-button-menu__inline-action`}
+              disabled={inlineAction.disabled}
+              key={inlineAction.id}
+              type="button"
+              role={inlineActionRole}
+              aria-label={inlineAction.ariaLabel}
+              title={inlineAction.title}
+              onClick={() => {
+                if (inlineAction.disabled) return
+
+                void inlineAction.callback()
+              }}
+            >
+              {renderIcon(inlineAction.icon, 'ui-button__icon')}
+            </button>
+          ))}
+        </span>
+      )}
+    </div>
+  )
+}
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {
@@ -246,6 +365,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     void action.callback()
   }
 
+  const handleInlineActionClick = (action: ButtonDropdownInlineAction): void => {
+    if (action.disabled) return
+
+    closeMenu()
+    void action.callback()
+  }
+
   if (hasDropdownActions) {
     const menu =
       open && dropdownActions ? (
@@ -261,20 +387,56 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
             aria-labelledby={buttonId}
             onKeyDown={handleMenuKeyDown}
           >
-            {dropdownActions.map((action) => (
-              <button
-                className="ui-button-menu__item"
-                disabled={action.disabled}
-                key={action.id}
-                role="menuitem"
-                title={action.title}
-                type="button"
-                onClick={() => handleActionClick(action)}
-              >
-                {renderIcon(action.icon, 'ui-button-menu__icon')}
-                <span className="ui-button-menu__label">{action.label}</span>
-              </button>
-            ))}
+            {dropdownActions.map((action) =>
+              action.inlineActions?.length ? (
+                <ButtonMenuRow
+                  disabled={action.disabled}
+                  icon={action.icon}
+                  inlineActionRole="menuitem"
+                  inlineActions={action.inlineActions.map((inlineAction) => ({
+                    ...inlineAction,
+                    callback: () => handleInlineActionClick(inlineAction)
+                  }))}
+                  key={action.id}
+                  label={action.label}
+                  mainRole="menuitem"
+                  title={action.title}
+                  onSelect={() => handleActionClick(action)}
+                />
+              ) : action.buttonTheme ? (
+                <button
+                  className={`${getButtonClassName(
+                    action.buttonTheme,
+                    'small',
+                    action.icon,
+                    action.label,
+                    true
+                  )} ui-button-menu__button-item`}
+                  disabled={action.disabled}
+                  key={action.id}
+                  role="menuitem"
+                  title={action.title}
+                  type="button"
+                  onClick={() => handleActionClick(action)}
+                >
+                  {renderIcon(action.icon, 'ui-button__icon')}
+                  <span className="ui-button__label">{action.label}</span>
+                </button>
+              ) : (
+                <button
+                  className="ui-button-menu__item"
+                  disabled={action.disabled}
+                  key={action.id}
+                  role="menuitem"
+                  title={action.title}
+                  type="button"
+                  onClick={() => handleActionClick(action)}
+                >
+                  {renderIcon(action.icon, 'ui-button-menu__icon')}
+                  <span className="ui-button-menu__label">{action.label}</span>
+                </button>
+              )
+            )}
           </div>
         </div>
       ) : null

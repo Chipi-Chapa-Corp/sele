@@ -50,6 +50,36 @@ textarea:focus-visible {
   border: 0;
 }
 
+:root[data-disable-shadows='true'] {
+  --control-shadow: none;
+  --control-shadow-hover: none;
+  --control-shadow-active: none;
+  --secondary-shadow: none;
+  --secondary-shadow-hover: none;
+  --secondary-before-shadow: none;
+  --primary-shadow: none;
+  --primary-shadow-hover: none;
+  --primary-shadow-active: none;
+  --panel-shadow: none;
+  --menu-shadow: none;
+  --glass-shadow: none;
+  --glass-shadow-hover: none;
+  --subtle-shadow: none;
+  --message-shadow: none;
+}
+
+:root[data-disable-shadows='true'] *,
+:root[data-disable-shadows='true'] *::before,
+:root[data-disable-shadows='true'] *::after {
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+:root[data-disable-shadows='true'] :focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

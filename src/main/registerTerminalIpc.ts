@@ -1,14 +1,17 @@
 import { existsSync } from 'node:fs'
+import { spawn as spawnChildProcess } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { basename, isAbsolute } from 'node:path'
 import { app, ipcMain } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
-import { spawn } from '@lydell/node-pty'
+import { spawn as spawnPty } from '@lydell/node-pty'
 import type { IDisposable, IPty } from '@lydell/node-pty'
 import type {
   TerminalCreateOptions,
   TerminalProcessStatus,
+  TerminalRunCommandOptions,
+  TerminalRunCommandResult,
   TerminalSession
 } from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
@@ -19,6 +22,7 @@ const minimumRows = 1
 const maximumRows = 300
 const outputFlushDelayMs = 4
 const maximumOutputBatchCharacters = 64 * 1024
+const maximumCommandLength = 20_000
 
 type ManagedTerminalSession = {
   id: string
@@ -49,8 +53,17 @@ const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> 
     throw new Error('Invalid terminal options')
   }
 
-  const input = value as { sessionId?: unknown; cwd?: unknown; cols?: unknown; rows?: unknown }
+  const input = value as {
+    sessionId?: unknown
+    cwd?: unknown
+    cols?: unknown
+    rows?: unknown
+    initialCommand?: unknown
+    keepAliveOnCommandFinish?: unknown
+  }
   const cwd = input.cwd == null ? app.getPath('home') : input.cwd
+  const initialCommand =
+    typeof input.initialCommand === 'string' ? input.initialCommand.trim() : null
 
   if (
     typeof input.sessionId !== 'string' ||
@@ -69,13 +82,39 @@ const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> 
   if (!cwdStat?.isDirectory()) {
     throw new Error('Terminal working directory does not exist')
   }
+  if (initialCommand && initialCommand.length > maximumCommandLength) {
+    throw new Error('Command is too long')
+  }
 
   return {
     sessionId: input.sessionId,
     cwd,
     cols: getDimension(input.cols, minimumColumns, maximumColumns, 'columns'),
-    rows: getDimension(input.rows, minimumRows, maximumRows, 'rows')
+    rows: getDimension(input.rows, minimumRows, maximumRows, 'rows'),
+    initialCommand,
+    keepAliveOnCommandFinish: Boolean(input.keepAliveOnCommandFinish)
   }
+}
+
+const getRunCommandOptions = async (value: unknown): Promise<TerminalRunCommandOptions> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid command options')
+  }
+
+  const input = value as { command?: unknown; cwd?: unknown }
+  const command = typeof input.command === 'string' ? input.command.trim() : ''
+  const cwd = input.cwd == null ? app.getPath('home') : input.cwd
+
+  if (!command) throw new Error('Command is required')
+  if (command.length > maximumCommandLength) throw new Error('Command is too long')
+  if (typeof cwd !== 'string' || !isAbsolute(cwd)) throw new Error('Invalid command cwd')
+
+  const cwdStat = await stat(cwd).catch(() => null)
+  if (!cwdStat?.isDirectory()) {
+    throw new Error('Command working directory does not exist')
+  }
+
+  return { command, cwd }
 }
 
 const getShell = (): { file: string; args: string[] } => {
@@ -102,6 +141,75 @@ const getShell = (): { file: string; args: string[] } => {
     ) ?? '/bin/sh'
 
   return { file, args: [] }
+}
+
+const getCommandShell = (command: string): { file: string; args: string[] } => {
+  const shell = getShell()
+  const shellName = basename(shell.file).toLocaleLowerCase()
+
+  if (process.platform === 'win32') {
+    if (shellName.includes('powershell') || shellName === 'pwsh.exe') {
+      return {
+        file: shell.file,
+        args: [...shell.args, '-NoProfile', '-Command', command]
+      }
+    }
+
+    return {
+      file: shell.file,
+      args: ['/d', '/s', '/c', command]
+    }
+  }
+
+  return {
+    file: shell.file,
+    args: [...shell.args, '-c', command]
+  }
+}
+
+const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
+
+const getTerminalCommandShell = (
+  shell: { file: string; args: string[] },
+  command: string,
+  keepAlive: boolean
+): { file: string; args: string[] } => {
+  const shellName = basename(shell.file).toLocaleLowerCase()
+
+  if (process.platform === 'win32') {
+    if (shellName.includes('powershell') || shellName === 'pwsh.exe') {
+      return {
+        file: shell.file,
+        args: keepAlive
+          ? [...shell.args, '-NoExit', '-Command', command]
+          : [...shell.args, '-NoProfile', '-Command', command]
+      }
+    }
+
+    return {
+      file: shell.file,
+      args: keepAlive ? ['/d', '/s', '/k', command] : ['/d', '/s', '/c', command]
+    }
+  }
+
+  if (keepAlive && shellName === 'fish') {
+    return {
+      file: shell.file,
+      args: [...shell.args, '-C', command]
+    }
+  }
+
+  if (keepAlive) {
+    return {
+      file: shell.file,
+      args: [...shell.args, '-i', '-c', `${command}\nexec ${quotePosixShellArg(shell.file)} -i`]
+    }
+  }
+
+  return {
+    file: shell.file,
+    args: [...shell.args, '-c', command]
+  }
 }
 
 const normalizeProcessName = (value: string): string =>
@@ -213,10 +321,14 @@ const createSession = async (
   value: unknown
 ): Promise<TerminalSession> => {
   const options = await getCreateOptions(value)
-  const shell = getShell()
+  const baseShell = getShell()
   const id = options.sessionId
   if (sessions.has(id)) throw new Error('Terminal session already exists')
-  const pty = spawn(shell.file, shell.args, {
+  const command = options.initialCommand?.trim() || null
+  const shell = command
+    ? getTerminalCommandShell(baseShell, command, Boolean(options.keepAliveOnCommandFinish))
+    : baseShell
+  const pty = spawnPty(shell.file, shell.args, {
     name: 'xterm-256color',
     cols: options.cols,
     rows: options.rows,
@@ -237,7 +349,7 @@ const createSession = async (
     outputCharacters: 0,
     outputTimer: null,
     paused: false,
-    shell: basename(shell.file),
+    shell: basename(baseShell.file),
     dataListener: { dispose: () => {} },
     exitListener: { dispose: () => {} }
   }
@@ -265,12 +377,52 @@ const createSession = async (
     id,
     pid: pty.pid,
     cwd: options.cwd ?? app.getPath('home'),
-    shell: basename(shell.file)
+    shell: basename(baseShell.file)
   }
+}
+
+const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => {
+  const options = await getRunCommandOptions(value)
+  const shell = getCommandShell(options.command)
+  const child = spawnChildProcess(shell.file, shell.args, {
+    cwd: options.cwd ?? app.getPath('home'),
+    detached: false,
+    env: {
+      ...process.env,
+      TERM_PROGRAM: 'Sele'
+    },
+    stdio: 'ignore',
+    windowsHide: true
+  })
+  let settled = false
+
+  return new Promise((resolve, reject) => {
+    child.once('error', (error) => {
+      if (settled) return
+
+      settled = true
+      reject(error)
+    })
+
+    setImmediate(() => {
+      if (settled) return
+      if (typeof child.pid !== 'number') {
+        settled = true
+        reject(new Error('Unable to start command'))
+        return
+      }
+
+      settled = true
+      child.on('error', () => {})
+      child.unref()
+      resolve({ pid: child.pid })
+    })
+  })
 }
 
 export const registerTerminalIpc = (): void => {
   ipcMain.handle(terminalIpcChannels.createSession, createSession)
+  ipcMain.handle(terminalIpcChannels.runCommand, (_event, value: unknown) => runCommand(value))
 
   ipcMain.on(terminalIpcChannels.write, (event, sessionId: unknown, data: unknown) => {
     const session = getOwnedSession(event, sessionId)

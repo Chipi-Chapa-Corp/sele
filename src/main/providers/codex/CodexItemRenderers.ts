@@ -1,4 +1,5 @@
 import type {
+  ProviderAgentTerminalTarget,
   ProviderChatItem,
   ProviderFileDiff,
   ProviderMessage,
@@ -26,6 +27,8 @@ export type CodexThreadItem = {
   text?: string
   phase?: 'commentary' | 'final_answer' | null
   command?: string
+  cwd?: string
+  processId?: string | null
   server?: string
   tool?: string
   namespace?: string | null
@@ -71,6 +74,9 @@ type WorkingItemRenderResult =
       status: ProviderWorkingToolStatus
       label: string
       command: string | null
+      agentTerminal: ProviderAgentTerminalTarget | null
+      agentTerminalDisabledReason: string | null
+      cwd: string | null
       stdout: string | null
       diffs: ProviderFileDiff[]
       icon: ProviderToolIcon | null
@@ -988,6 +994,41 @@ const getFinishedBackgroundSessionId = (item: CodexThreadItem): string | null =>
   return getSessionIdFromText(searchText)
 }
 
+const getToolCwd = (item: CodexThreadItem): string | null => {
+  if (item.cwd?.trim()) return item.cwd
+  if (!item.customToolName || !item.customToolInput) return null
+
+  return (
+    getToolStringArgument(item.customToolInput, item.customToolName, 'workdir') ??
+    getToolStringArgument(item.customToolInput, item.customToolName, 'cwd')
+  )
+}
+
+const getAgentTerminalTarget = (
+  item: CodexThreadItem,
+  turnId: string
+): ProviderAgentTerminalTarget | null => {
+  if (item.type !== 'commandExecution') return null
+  const processId = item.processId?.trim()
+  if (!processId) return null
+
+  void turnId
+
+  // Codex app-server exposes commandExecution output and terminalInteraction
+  // notifications, but it does not expose a client request for writing stdin
+  // back to agent-owned commandExecution processes. `command/exec/write` only
+  // works for client-created `command/exec` sessions, so surfacing an
+  // interactive terminal button here would be misleading and fails at runtime.
+  return null
+}
+
+const getAgentTerminalDisabledReason = (item: CodexThreadItem): string | null => {
+  if (item.type !== 'commandExecution') return null
+  if (!item.processId?.trim()) return null
+
+  return 'Codex does not expose interactive attach for agent-owned terminals.'
+}
+
 const getFileDiffs = (item: CodexThreadItem): ProviderFileDiff[] =>
   (item.changes ?? []).map((change) => ({
     path: change.path,
@@ -1019,6 +1060,9 @@ const renderTool = (
     icon,
     label,
     command: truncateToolText(command, maxToolCommandLength),
+    agentTerminal: null,
+    agentTerminalDisabledReason: null,
+    cwd: getToolCwd(item),
     stdout: truncateToolText(stdout, maxToolOutputLength),
     diffs,
     backgroundSessionId: getStartedBackgroundSessionId(item),
@@ -1391,6 +1435,13 @@ const renderWorkingItems = (item: CodexThreadItem, turnId: string): ProviderWork
   const results = Array.isArray(result) ? result : [result]
   return results.map((workingItem, index) => ({
     ...workingItem,
+    ...(workingItem.type === 'tool'
+      ? {
+          agentTerminal: workingItem.agentTerminal ?? getAgentTerminalTarget(item, turnId),
+          agentTerminalDisabledReason:
+            workingItem.agentTerminalDisabledReason ?? getAgentTerminalDisabledReason(item)
+        }
+      : {}),
     id: `${turnId}:${item.id}${results.length > 1 ? `:${index}` : ''}`
   }))
 }
@@ -1400,6 +1451,23 @@ const getUserInputText = (input: CodexUserInput): string => {
   if (input.type === 'skill') return `$${input.name}`
   if (input.type === 'mention') return `@${input.name}`
   return ''
+}
+
+const getUserInputContent = (inputs: CodexUserInput[]): string => {
+  const text = inputs
+    .filter((input): input is Extract<CodexUserInput, { type: 'text' }> => input.type === 'text')
+    .map(getUserInputText)
+    .filter(Boolean)
+    .join('\n')
+  const references = inputs
+    .filter(
+      (input): input is Extract<CodexUserInput, { type: 'skill' | 'mention' }> =>
+        input.type === 'skill' || input.type === 'mention'
+    )
+    .map(getUserInputText)
+    .filter((reference) => !text.includes(reference))
+
+  return [text, ...references].filter(Boolean).join('\n').trim()
 }
 
 const getUserInputAttachments = (input: CodexUserInput): ProviderMessageAttachment[] => {
@@ -1499,8 +1567,7 @@ const hasUserMessageContent = (item: CodexThreadItem): boolean =>
   item.type === 'userMessage' &&
   Boolean(
     item.content &&
-    (item.content.map(getUserInputText).filter(Boolean).join('\n').trim() ||
-      collectUserInputAttachments(item.content).length > 0)
+    (getUserInputContent(item.content) || collectUserInputAttachments(item.content).length > 0)
   )
 
 const isContextCompactionItem = (item: CodexThreadItem): boolean =>
@@ -1594,7 +1661,7 @@ const renderChatItems = (
       }
 
       if (item.type === 'userMessage' && item.content) {
-        const content = item.content.map(getUserInputText).filter(Boolean).join('\n').trim()
+        const content = getUserInputContent(item.content)
         const attachments = collectUserInputAttachments(item.content)
         if (content || attachments.length > 0) {
           const itemId = `${turn.id}:${item.id}`

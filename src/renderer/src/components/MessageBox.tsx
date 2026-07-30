@@ -1,17 +1,29 @@
-import { type CSSProperties, type ReactNode, useEffect, useId, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
 import {
   ArrowUp,
   BadgeCheck,
+  Blocks,
   Bot,
+  BrainCircuit,
   CornerDownRight,
   FileLock,
   Flame,
   FolderPen,
   Gauge,
   ListPlus,
+  Package,
   Paperclip,
   RotateCcw,
+  Rocket,
   ShieldQuestionMark,
   SlidersHorizontal,
   Sparkles,
@@ -20,23 +32,34 @@ import {
   X,
   Zap
 } from 'lucide-react'
-import type { AppSelectedAttachment } from '../../../shared/app'
+import type { AppFileTreeFile, AppSelectedAttachment } from '../../../shared/app'
 import type {
   ProviderActiveSendMode,
+  ProviderApp,
+  ProviderAppInput,
   ProviderApprovalMode,
   ProviderApprovalModeOption,
   ProviderAccountRateLimitResetOutcome,
   ProviderAccountUsage,
   ProviderCwdNote,
+  ProviderId,
   ProviderModel,
   ProviderModelId,
   ProviderReasoningEffort,
+  ProviderServiceTier,
   ProviderReview,
   ProviderSandboxMode,
   ProviderSandboxModeOption,
+  ProviderSkill,
+  ProviderSkillInput,
   ProviderUsageOptions
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import type { AppAction } from '../actions'
+import { providerApi } from '../providerApi'
+import type { AppChatUsageDisplay } from '../settings'
+import { AttachmentChip } from './AttachmentChip'
+import { ActionsButton } from './ActionsButton'
 import { Button } from './Button'
 import { CwdNotesButton } from './CwdNotesButton'
 import { DisclosureToggle } from './DisclosureToggle'
@@ -51,6 +74,7 @@ type MessageBoxProps = {
   approvalModes: ProviderApprovalModeOption[]
   active?: boolean
   activePrimaryMode?: Extract<ProviderActiveSendMode, 'steer' | 'queue'>
+  activeSteeringEnabled?: boolean
   autoFocus?: boolean
   disabled?: boolean
   editSession?: { id: string; content: string; type?: 'message' | 'pending' } | null
@@ -59,25 +83,43 @@ type MessageBoxProps = {
   models: ProviderModel[]
   operationsDisabled?: boolean
   pending?: boolean
+  providerId: ProviderId
   projectCwd?: string | null
+  cwd?: string | null
   reasoningEffort: ProviderReasoningEffort
+  serviceTier: ProviderServiceTier | null
   sandboxMode: ProviderSandboxMode
   sandboxModes: ProviderSandboxModeOption[]
   selectedReview?: Omit<ProviderReview, 'prompt'> | null
   accountUsage: ProviderAccountUsage | null
   accountUsageError: string | null
   accountUsageState: 'idle' | 'loading' | 'ready' | 'error'
+  actions?: AppAction[]
   contextUsage: MessageBoxContextUsage
+  displayUsage: AppChatUsageDisplay
+  lastActionId?: string | null
   notes?: ProviderCwdNote[]
   notesContextKey?: string
   notesLabel?: string
+  showAccessSelector?: boolean
+  showActions?: boolean
+  showActionLabel?: boolean
+  showModelSelector?: boolean
+  showNotesButton?: boolean
+  showReasoningSelector?: boolean
+  showReviewSelector?: boolean
+  showSpeedSelector?: boolean
   onApprovalModeChange: (approvalMode: ProviderApprovalMode) => void
+  onActionsChange?: (actions: AppAction[]) => void
+  onLastActionChange?: (actionId: string | null) => void
   onCancelEdit?: () => void
   onModelChange: (model: ProviderModelId) => void
   onNotesChange?: (notes: ProviderCwdNote[]) => void
   onOpenAttachment?: (attachment: AppSelectedAttachment) => void
-  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onReasoningEffortChange: (reasoningEffort: ProviderReasoningEffort) => void
+  onServiceTierChange: (serviceTier: ProviderServiceTier | null) => void
+  onRunAction?: (action: AppAction) => Promise<void> | void
   onSelectedReviewChange?: (review: Omit<ProviderReview, 'prompt'> | null) => void
   onSandboxModeChange: (sandboxMode: ProviderSandboxMode) => void
   onStop?: () => Promise<void> | void
@@ -87,7 +129,9 @@ type MessageBoxProps = {
     message: string,
     activeMode?: ProviderActiveSendMode,
     attachments?: AppSelectedAttachment[],
-    review?: Omit<ProviderReview, 'prompt'> | null
+    review?: Omit<ProviderReview, 'prompt'> | null,
+    skills?: ProviderSkillInput[],
+    apps?: ProviderAppInput[]
   ) => Promise<void> | void
 }
 
@@ -103,6 +147,11 @@ type AccountRateLimit = ProviderAccountUsage['rateLimits'][number]
 const minTextareaHeight = 44
 const maxTextareaHeight = 180
 const maxSelectedAttachmentCount = 10
+const maxSelectedSkillCount = 20
+const standardServiceTierValue = '__standard__'
+const fastServiceTierIconClassName = 'message-box__fast-speed-icon'
+const maxSelectedAppCount = 20
+const maxFileMentionResultCount = 50
 const selectedControlIconClassName = 'message-box__selected-control-icon'
 const numberFormatter = new Intl.NumberFormat(undefined)
 const compactNumberFormatter = new Intl.NumberFormat(undefined, {
@@ -115,6 +164,193 @@ type ScrollSnapshot = {
   scrollLeft: number
   scrollTop: number
 }
+
+type FileMention = {
+  start: number
+  end: number
+  query: string
+}
+
+type SkillMention = {
+  start: number
+  end: number
+  query: string
+}
+
+type ProjectFileCache = {
+  cwd: string
+  files: AppFileTreeFile[]
+  repositoryRoot: string
+}
+
+type ComposerCache = {
+  cwd: string | null
+  providerId: ProviderId
+  skills: ProviderSkill[]
+  apps: ProviderApp[]
+}
+
+type ComposerResult = { kind: 'skill'; skill: ProviderSkill } | { kind: 'app'; app: ProviderApp }
+
+const getFileMentionAtCaret = (message: string, caret: number): FileMention | null => {
+  const prefix = message.slice(0, caret)
+  const match = /(^|[\s([{])@([^@\s]*)$/.exec(prefix)
+  if (!match) return null
+
+  const query = match[2] ?? ''
+  return {
+    start: caret - query.length - 1,
+    end: caret,
+    query
+  }
+}
+
+const getSkillMentionAtCaret = (message: string, caret: number): SkillMention | null => {
+  const prefix = message.slice(0, caret)
+  const match = /(^|[\s([{])\$([^$\s]*)$/.exec(prefix)
+  if (!match) return null
+
+  const query = match[2] ?? ''
+  return {
+    start: caret - query.length - 1,
+    end: caret,
+    query
+  }
+}
+
+const getMentionFileName = (path: string): string => path.split('/').pop() || path
+
+const getMentionAttachmentPath = (repositoryRoot: string, path: string): string => {
+  const separator = repositoryRoot.includes('\\') ? '\\' : '/'
+  return `${repositoryRoot.replace(/[\\/]+$/, '')}${separator}${path.replace(/[\\/]/g, separator)}`
+}
+
+const getFileMentionResults = (files: AppFileTreeFile[], query: string): AppFileTreeFile[] => {
+  const normalizedQuery = query.toLocaleLowerCase()
+
+  return files
+    .flatMap((file) => {
+      const normalizedPath = file.path.toLocaleLowerCase()
+      const normalizedName = getMentionFileName(file.path).toLocaleLowerCase()
+      if (normalizedQuery && !normalizedPath.includes(normalizedQuery)) return []
+
+      const rank =
+        !normalizedQuery || normalizedName === normalizedQuery
+          ? 0
+          : normalizedName.startsWith(normalizedQuery)
+            ? 1
+            : normalizedPath.startsWith(normalizedQuery)
+              ? 2
+              : normalizedName.includes(normalizedQuery)
+                ? 3
+                : 4
+
+      return [{ file, rank }]
+    })
+    .sort(
+      (firstResult, secondResult) =>
+        firstResult.rank - secondResult.rank ||
+        firstResult.file.path.localeCompare(secondResult.file.path)
+    )
+    .slice(0, maxFileMentionResultCount)
+    .map((result) => result.file)
+}
+
+const getComposerResultLabel = (result: ComposerResult): string =>
+  result.kind === 'skill' ? result.skill.displayName || result.skill.name : result.app.name
+
+const getFirstSentence = (value: string): string => {
+  const normalizedValue = value.replace(/\s+/g, ' ').trim()
+  if (!normalizedValue) return ''
+
+  return /^.*?[.!?](?=\s|$)/.exec(normalizedValue)?.[0] ?? normalizedValue
+}
+
+const getSkillSummary = (skill: ProviderSkill): string =>
+  getFirstSentence(skill.description || skill.shortDescription || '')
+
+const getComposerResults = (
+  skills: ProviderSkill[],
+  apps: ProviderApp[],
+  query: string
+): ComposerResult[] => {
+  const normalizedQuery = query.toLocaleLowerCase()
+
+  return [
+    ...skills.flatMap((skill): Array<{ result: ComposerResult; rank: number }> => {
+      const normalizedName = skill.name.toLocaleLowerCase()
+      const normalizedDisplayName = skill.displayName?.toLocaleLowerCase() ?? ''
+      const normalizedDescription = (
+        skill.shortDescription || skill.description
+      ).toLocaleLowerCase()
+      if (
+        normalizedQuery &&
+        !normalizedName.includes(normalizedQuery) &&
+        !normalizedDisplayName.includes(normalizedQuery) &&
+        !normalizedDescription.includes(normalizedQuery)
+      ) {
+        return []
+      }
+
+      const rank =
+        !normalizedQuery || normalizedName === normalizedQuery
+          ? 0
+          : normalizedName.startsWith(normalizedQuery)
+            ? 1
+            : normalizedDisplayName.startsWith(normalizedQuery)
+              ? 2
+              : normalizedName.includes(normalizedQuery)
+                ? 3
+                : 4
+
+      return [{ result: { kind: 'skill', skill }, rank }]
+    }),
+    ...apps.flatMap((app): Array<{ result: ComposerResult; rank: number }> => {
+      const normalizedName = app.name.toLocaleLowerCase()
+      const normalizedDescription = app.description.toLocaleLowerCase()
+      if (
+        normalizedQuery &&
+        !normalizedName.includes(normalizedQuery) &&
+        !normalizedDescription.includes(normalizedQuery)
+      ) {
+        return []
+      }
+
+      const rank =
+        !normalizedQuery || normalizedName === normalizedQuery
+          ? 0
+          : normalizedName.startsWith(normalizedQuery)
+            ? 1
+            : normalizedName.includes(normalizedQuery)
+              ? 2
+              : 3
+
+      return [{ result: { kind: 'app', app }, rank }]
+    })
+  ]
+    .sort(
+      (firstResult, secondResult) =>
+        firstResult.rank - secondResult.rank ||
+        getComposerResultLabel(firstResult.result).localeCompare(
+          getComposerResultLabel(secondResult.result)
+        )
+    )
+    .map((result) => result.result)
+}
+
+const escapeRegularExpression = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const getSelectedSkillInputs = (message: string, skills: ProviderSkill[]): ProviderSkillInput[] =>
+  skills
+    .flatMap((skill) =>
+      new RegExp(
+        `(^|[\\s([{])\\$${escapeRegularExpression(skill.name)}(?=$|[\\s)\\]},.!?;:])`
+      ).test(message)
+        ? [{ name: skill.name, path: skill.path }]
+        : []
+    )
+    .slice(0, maxSelectedSkillCount)
 
 const restoreAncestorScrollAfterNativeNavigation = (element: HTMLElement): void => {
   const snapshots: ScrollSnapshot[] = []
@@ -185,8 +421,8 @@ const reasoningEffortIcons = {
   medium: <SlidersHorizontal aria-hidden="true" />,
   high: <Zap aria-hidden="true" />,
   xhigh: <Flame className={selectedControlIconClassName} aria-hidden="true" />,
-  max: <Sparkles aria-hidden="true" />,
-  ultra: <Sparkles aria-hidden="true" />
+  max: <BrainCircuit className={selectedControlIconClassName} aria-hidden="true" />,
+  ultra: <Rocket className={selectedControlIconClassName} aria-hidden="true" />
 } satisfies Record<string, ReactNode>
 
 const getReasoningEffortLabel = (reasoningEffort: ProviderReasoningEffort): string => {
@@ -221,6 +457,11 @@ const formatOptionLabel = (value: string): string =>
     .filter(Boolean)
     .map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1))
     .join(' ') || value
+
+const isFastServiceTier = (id: string, label: string): boolean =>
+  id.toLocaleLowerCase() === 'fast' ||
+  id.toLocaleLowerCase() === 'priority' ||
+  label.toLocaleLowerCase() === 'fast'
 
 const getNumberValue = (value: number | string | null | undefined): number | null => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
@@ -322,7 +563,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   approvalMode,
   approvalModes,
   active = false,
-  activePrimaryMode = 'steer',
+  activePrimaryMode = 'queue',
+  activeSteeringEnabled = true,
   autoFocus = false,
   disabled = false,
   editSession = null,
@@ -330,26 +572,44 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   accountUsage,
   accountUsageError,
   accountUsageState,
+  actions = [],
   contextUsage,
+  displayUsage,
+  lastActionId,
   notes = [],
   notesContextKey,
   notesLabel,
+  showAccessSelector = true,
+  showActions = false,
+  showActionLabel = false,
+  showModelSelector = true,
+  showNotesButton = false,
+  showReasoningSelector = true,
+  showReviewSelector = true,
+  showSpeedSelector = true,
   model,
   models,
   operationsDisabled = false,
   pending = false,
+  providerId,
   projectCwd,
+  cwd = null,
   reasoningEffort,
+  serviceTier,
   sandboxMode,
   sandboxModes,
   selectedReview = null,
   onApprovalModeChange,
+  onActionsChange,
+  onLastActionChange,
   onCancelEdit,
   onModelChange,
   onNotesChange,
   onOpenAttachment,
   onOpenFileLink,
   onReasoningEffortChange,
+  onServiceTierChange,
+  onRunAction,
   onSelectedReviewChange,
   onSandboxModeChange,
   onStop,
@@ -358,8 +618,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   onSend
 }) => {
   const usagePopoverId = useId().replace(/:/g, '')
+  const fileMentionListboxId = useId().replace(/:/g, '')
+  const skillMentionListboxId = useId().replace(/:/g, '')
   const [message, setMessage] = useState('')
   const [selectedAttachments, setSelectedAttachments] = useState<AppSelectedAttachment[]>([])
+  const [selectedSkills, setSelectedSkills] = useState<ProviderSkill[]>([])
+  const [selectedApps, setSelectedApps] = useState<ProviderApp[]>([])
   const [openedImage, setOpenedImage] = useState<Extract<
     AppSelectedAttachment,
     { kind: 'image' }
@@ -371,11 +635,23 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
   const [rateLimitResetPending, setRateLimitResetPending] = useState(false)
   const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
+  const [fileMention, setFileMention] = useState<FileMention | null>(null)
+  const [projectFileCache, setProjectFileCache] = useState<ProjectFileCache | null>(null)
+  const [projectFilesErrorCwd, setProjectFilesErrorCwd] = useState<string | null>(null)
+  const [activeFileMentionIndex, setActiveFileMentionIndex] = useState(0)
+  const [skillMention, setSkillMention] = useState<SkillMention | null>(null)
+  const [composerCache, setComposerCache] = useState<ComposerCache | null>(null)
+  const [composerLoadErrorScope, setComposerLoadErrorScope] = useState<string | null>(null)
+  const [activeSkillMentionIndex, setActiveSkillMentionIndex] = useState(0)
   const editSessionIdRef = useRef<string | null>(null)
   const messageRef = useRef(message)
   const selectedAttachmentsRef = useRef(selectedAttachments)
+  const selectedSkillsRef = useRef(selectedSkills)
+  const selectedAppsRef = useRef(selectedApps)
   const messageBeforeEditRef = useRef<string | null>(null)
   const attachmentsBeforeEditRef = useRef<AppSelectedAttachment[] | null>(null)
+  const skillsBeforeEditRef = useRef<ProviderSkill[] | null>(null)
+  const appsBeforeEditRef = useRef<ProviderApp[] | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const usageControlRef = useRef<HTMLDivElement>(null)
   const editing = Boolean(editSession)
@@ -441,6 +717,40 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           icon: <Bot aria-hidden="true" />
         }
       ]
+  const serviceTierOptions: DropdownOption<string>[] = [
+    {
+      value: standardServiceTierValue,
+      label: 'Standard',
+      description: 'Standard response speed and credit usage',
+      icon: <Gauge aria-hidden="true" />
+    },
+    ...(selectedModel?.supportedServiceTiers ?? []).map((option) => ({
+      value: option.id,
+      label: option.label,
+      menuLabel: option.isDefault ? `${option.label} (default)` : option.label,
+      description: option.description || undefined,
+      icon: isFastServiceTier(option.id, option.label) ? (
+        <Zap className={fastServiceTierIconClassName} aria-hidden="true" />
+      ) : (
+        <Gauge aria-hidden="true" />
+      )
+    }))
+  ]
+  const displayedServiceTierOptions =
+    serviceTier == null || serviceTierOptions.some((option) => option.value === serviceTier)
+      ? serviceTierOptions
+      : [
+          ...serviceTierOptions,
+          {
+            value: serviceTier,
+            label: formatOptionLabel(serviceTier),
+            icon: <Gauge aria-hidden="true" />
+          }
+        ]
+  const selectedServiceTier = serviceTier == null ? null : serviceTier
+  const selectedServiceTierOption = displayedServiceTierOptions.find(
+    (option) => option.value === (selectedServiceTier ?? standardServiceTierValue)
+  )
   const supportedReasoningEfforts = selectedModel?.supportedReasoningEfforts ?? []
   const reasoningEffortOptions = supportedReasoningEfforts.map((option) => {
     const label = getReasoningEffortOptionLabel(option.id, option.label)
@@ -475,11 +785,92 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     ? `${selectedSandboxMode.label}: ${selectedSandboxMode.description}`
     : (selectedSandboxMode?.label ?? formatOptionLabel(sandboxMode))
   const selectedReasoningEffortLabel = getReasoningEffortLabel(reasoningEffort)
+  const selectorsVisible =
+    showAccessSelector ||
+    showReviewSelector ||
+    showModelSelector ||
+    showReasoningSelector ||
+    showSpeedSelector
+  const notesButtonVisible = Boolean(showNotesButton && notesLabel && onNotesChange)
+  const actionsButtonVisible = Boolean(
+    showActions && onActionsChange && onLastActionChange && onRunAction
+  )
+  const workspaceControlsVisible = notesButtonVisible || actionsButtonVisible
+  const controlsClassName = [
+    'message-box__controls',
+    selectorsVisible ? null : 'message-box__controls--no-selectors',
+    workspaceControlsVisible ? null : 'message-box__controls--no-workspace'
+  ]
+    .filter(Boolean)
+    .join(' ')
   const textareaDisabled = operationsDisabled || (active ? false : disabled || pending)
   const activePrimaryLabel = activePrimaryMode === 'queue' ? 'Queue message' : 'Steer current turn'
   const editingPendingMessage = editSession?.type === 'pending'
   const usageDisabled = operationsDisabled || (!active && (disabled || pending))
   const usageMenuOpen = usageOpen && !usageDisabled
+  const fileMentionMenuOpen = Boolean(
+    fileMention &&
+    !textareaDisabled &&
+    !editing &&
+    selectedAttachments.length < maxSelectedAttachmentCount
+  )
+  const fileMentionResults = useMemo(
+    () =>
+      getFileMentionResults(
+        projectCwd && projectFileCache?.cwd === projectCwd ? projectFileCache.files : [],
+        fileMention?.query ?? ''
+      ),
+    [fileMention?.query, projectCwd, projectFileCache]
+  )
+  const skillScope = `${providerId}\0${cwd ?? ''}`
+  const skillMentionMenuOpen = Boolean(
+    skillMention &&
+    !textareaDisabled &&
+    (selectedSkills.length < maxSelectedSkillCount || selectedApps.length < maxSelectedAppCount)
+  )
+  const composerResults = useMemo(
+    () =>
+      getComposerResults(
+        composerCache?.providerId === providerId && composerCache.cwd === cwd
+          ? composerCache.skills
+          : [],
+        composerCache?.providerId === providerId && composerCache.cwd === cwd
+          ? composerCache.apps
+          : [],
+        skillMention?.query ?? ''
+      ).filter((result) =>
+        result.kind === 'skill'
+          ? selectedSkills.length < maxSelectedSkillCount &&
+            !selectedSkills.some((selectedSkill) => selectedSkill.path === result.skill.path)
+          : selectedApps.length < maxSelectedAppCount &&
+            !selectedApps.some((selectedApp) => selectedApp.id === result.app.id)
+      ),
+    [composerCache, cwd, providerId, selectedApps, selectedSkills, skillMention?.query]
+  )
+  const mentionDropdownOptions = useMemo<DropdownOption<string>[]>(
+    () =>
+      skillMentionMenuOpen
+        ? composerResults.map((result, index) => {
+            const skill = result.kind === 'skill' ? result.skill : null
+            const app = result.kind === 'app' ? result.app : null
+
+            return {
+              value: String(index),
+              label: skill?.displayName || skill?.name || app?.name || '',
+              description: skill ? getSkillSummary(skill) : 'App',
+              icon: skill ? <Package aria-hidden="true" /> : <Blocks aria-hidden="true" />
+            }
+          })
+        : fileMentionMenuOpen
+          ? fileMentionResults.map((file, index) => ({
+              value: String(index),
+              label: getMentionFileName(file.path),
+              description: file.path,
+              icon: <SymbolsFileIcon fileName={getMentionFileName(file.path)} autoAssign />
+            }))
+          : [],
+    [composerResults, fileMentionMenuOpen, fileMentionResults, skillMentionMenuOpen]
+  )
 
   useEffect(() => {
     messageRef.current = message
@@ -488,6 +879,75 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   useEffect(() => {
     selectedAttachmentsRef.current = selectedAttachments
   }, [selectedAttachments])
+
+  useEffect(() => {
+    selectedSkillsRef.current = selectedSkills
+  }, [selectedSkills])
+
+  useEffect(() => {
+    selectedAppsRef.current = selectedApps
+  }, [selectedApps])
+
+  useEffect(() => {
+    if (!fileMentionMenuOpen || !projectCwd || projectFileCache?.cwd === projectCwd) return
+
+    let active = true
+
+    void appApi
+      .getFileTree({ cwd: projectCwd })
+      .then((result) => {
+        if (!active) return
+        setProjectFileCache({
+          cwd: projectCwd,
+          files: result.files,
+          repositoryRoot: result.repositoryRoot
+        })
+        setProjectFilesErrorCwd(null)
+      })
+      .catch(() => {
+        if (!active) return
+        setProjectFilesErrorCwd(projectCwd)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [fileMentionMenuOpen, projectCwd, projectFileCache?.cwd])
+
+  useEffect(() => {
+    if (
+      !skillMentionMenuOpen ||
+      (composerCache?.providerId === providerId && composerCache.cwd === cwd)
+    ) {
+      return
+    }
+
+    let active = true
+
+    void Promise.allSettled([
+      providerApi.getSkills(providerId, cwd),
+      providerApi.getApps(providerId)
+    ]).then(([skillsResult, appsResult]) => {
+      if (!active) return
+
+      if (skillsResult.status === 'rejected' && appsResult.status === 'rejected') {
+        setComposerLoadErrorScope(skillScope)
+        return
+      }
+
+      setComposerCache({
+        cwd,
+        providerId,
+        skills: skillsResult.status === 'fulfilled' ? skillsResult.value : [],
+        apps: appsResult.status === 'fulfilled' ? appsResult.value : []
+      })
+      setComposerLoadErrorScope(null)
+    })
+
+    return () => {
+      active = false
+    }
+  }, [composerCache, cwd, providerId, skillMentionMenuOpen, skillScope])
 
   useEffect(() => {
     if (!usageMenuOpen) return
@@ -517,6 +977,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       editSessionIdRef.current = null
       messageBeforeEditRef.current = null
       attachmentsBeforeEditRef.current = null
+      skillsBeforeEditRef.current = null
+      appsBeforeEditRef.current = null
       return
     }
 
@@ -525,8 +987,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     editSessionIdRef.current = editSession.id
     messageBeforeEditRef.current = messageRef.current
     attachmentsBeforeEditRef.current = selectedAttachmentsRef.current
+    skillsBeforeEditRef.current = selectedSkillsRef.current
+    appsBeforeEditRef.current = selectedAppsRef.current
     setMessage(editSession.content)
     setSelectedAttachments([])
+    setSelectedSkills([])
+    setSelectedApps([])
     setAttachmentSelectionError(null)
 
     const animationFrame = window.requestAnimationFrame(() => {
@@ -568,9 +1034,30 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
   const submitMessage = (activeMode: ProviderActiveSendMode = activePrimaryMode): void => {
     const nextMessage = message.trim()
+    const typedSkillInputs = getSelectedSkillInputs(
+      nextMessage,
+      composerCache?.providerId === providerId && composerCache.cwd === cwd
+        ? composerCache.skills
+        : []
+    )
+    const selectedSkillInputs = Array.from(
+      new Map(
+        [
+          ...selectedSkills.map((skill) => ({ name: skill.name, path: skill.path })),
+          ...typedSkillInputs
+        ].map((skill) => [skill.path, skill])
+      ).values()
+    ).slice(0, maxSelectedSkillCount)
+    const selectedAppInputs = selectedApps
+      .map((app) => ({ id: app.id, name: app.name }))
+      .slice(0, maxSelectedAppCount)
     const submittingReview = editing ? null : selectedReview
     if (
-      (!nextMessage && selectedAttachments.length === 0 && !submittingReview) ||
+      (!nextMessage &&
+        selectedAttachments.length === 0 &&
+        selectedSkillInputs.length === 0 &&
+        selectedAppInputs.length === 0 &&
+        !submittingReview) ||
       operationsDisabled ||
       (!active && (disabled || pending))
     ) {
@@ -578,13 +1065,19 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     }
 
     if (editing) {
-      void Promise.resolve(onSend(nextMessage))
+      void Promise.resolve(
+        onSend(nextMessage, undefined, [], undefined, selectedSkillInputs, selectedAppInputs)
+      )
         .then(() => {
           setMessage(messageBeforeEditRef.current ?? '')
           setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
+          setSelectedSkills(skillsBeforeEditRef.current ?? [])
+          setSelectedApps(appsBeforeEditRef.current ?? [])
           editSessionIdRef.current = null
           messageBeforeEditRef.current = null
           attachmentsBeforeEditRef.current = null
+          skillsBeforeEditRef.current = null
+          appsBeforeEditRef.current = null
         })
         .catch(() => {})
       return
@@ -592,9 +1085,18 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
     setMessage('')
     setSelectedAttachments([])
+    setSelectedSkills([])
+    setSelectedApps([])
     onSelectedReviewChange?.(null)
     setAttachmentSelectionError(null)
-    void onSend(nextMessage, active ? activeMode : undefined, selectedAttachments, submittingReview)
+    void onSend(
+      nextMessage,
+      active ? activeMode : undefined,
+      selectedAttachments,
+      submittingReview,
+      selectedSkillInputs,
+      selectedAppInputs
+    )
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {
@@ -610,9 +1112,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const handleCancelEdit = (): void => {
     setMessage(messageBeforeEditRef.current ?? '')
     setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
+    setSelectedSkills(skillsBeforeEditRef.current ?? [])
+    setSelectedApps(appsBeforeEditRef.current ?? [])
     editSessionIdRef.current = null
     messageBeforeEditRef.current = null
     attachmentsBeforeEditRef.current = null
+    skillsBeforeEditRef.current = null
+    appsBeforeEditRef.current = null
     onCancelEdit?.()
   }
 
@@ -697,6 +1203,16 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     textareaRef.current?.focus({ preventScroll: true })
   }
 
+  const handleRemoveSkill = (path: string): void => {
+    setSelectedSkills((skills) => skills.filter((skill) => skill.path !== path))
+    textareaRef.current?.focus({ preventScroll: true })
+  }
+
+  const handleRemoveApp = (id: string): void => {
+    setSelectedApps((apps) => apps.filter((app) => app.id !== id))
+    textareaRef.current?.focus({ preventScroll: true })
+  }
+
   const handleOpenAttachment = (attachment: AppSelectedAttachment): void => {
     if (attachment.kind === 'image') {
       setOpenedImage(attachment)
@@ -706,7 +1222,199 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     onOpenAttachment?.(attachment)
   }
 
+  const handleMessageChange = (event: React.ChangeEvent<HTMLTextAreaElement>): void => {
+    const nextMessage = event.currentTarget.value
+    setMessage(nextMessage)
+    setFileMention(getFileMentionAtCaret(nextMessage, event.currentTarget.selectionStart))
+    setSkillMention(getSkillMentionAtCaret(nextMessage, event.currentTarget.selectionStart))
+    setActiveFileMentionIndex(0)
+    setActiveSkillMentionIndex(0)
+  }
+
+  const handleMessageSelect = (event: React.SyntheticEvent<HTMLTextAreaElement>): void => {
+    const textarea = event.currentTarget
+    const nextFileMention = getFileMentionAtCaret(textarea.value, textarea.selectionStart)
+    const nextSkillMention = getSkillMentionAtCaret(textarea.value, textarea.selectionStart)
+    const fileMentionChanged =
+      nextFileMention?.start !== fileMention?.start ||
+      nextFileMention?.end !== fileMention?.end ||
+      nextFileMention?.query !== fileMention?.query
+    const skillMentionChanged =
+      nextSkillMention?.start !== skillMention?.start ||
+      nextSkillMention?.end !== skillMention?.end ||
+      nextSkillMention?.query !== skillMention?.query
+
+    setFileMention(nextFileMention)
+    setSkillMention(nextSkillMention)
+    if (fileMentionChanged) setActiveFileMentionIndex(0)
+    if (skillMentionChanged) setActiveSkillMentionIndex(0)
+  }
+
+  const handleSelectFileMention = (file: AppFileTreeFile): void => {
+    if (!fileMention || !projectCwd || projectFileCache?.cwd !== projectCwd) return
+
+    const attachmentPath = getMentionAttachmentPath(projectFileCache.repositoryRoot, file.path)
+    const attachmentAlreadySelected = selectedAttachments.some(
+      (attachment) => attachment.path === attachmentPath
+    )
+    if (!attachmentAlreadySelected && selectedAttachments.length >= maxSelectedAttachmentCount) {
+      setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
+      setFileMention(null)
+      return
+    }
+
+    const prefix = message.slice(0, fileMention.start)
+    const suffix = message.slice(fileMention.end)
+    const removeLeadingSuffixSpace =
+      suffix.startsWith(' ') && (prefix.length === 0 || prefix.endsWith(' '))
+    const nextSuffix = removeLeadingSuffixSpace ? suffix.slice(1) : suffix
+    const nextMessage = prefix + nextSuffix
+    const nextCaret = prefix.length
+
+    setMessage(nextMessage)
+    setFileMention(null)
+    setAttachmentSelectionError(null)
+    if (!attachmentAlreadySelected) {
+      setSelectedAttachments((currentAttachments) => [
+        ...currentAttachments,
+        {
+          kind: 'file',
+          name: getMentionFileName(file.path),
+          path: attachmentPath
+        }
+      ])
+    }
+
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      textarea.focus({ preventScroll: true })
+      textarea.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+
+  const handleSelectComposerMention = (result: ComposerResult): void => {
+    if (!skillMention) return
+
+    const prefix = message.slice(0, skillMention.start)
+    const suffix = message.slice(skillMention.end)
+    const removeLeadingSuffixSpace =
+      suffix.startsWith(' ') && (prefix.length === 0 || prefix.endsWith(' '))
+    const nextSuffix = removeLeadingSuffixSpace ? suffix.slice(1) : suffix
+    const nextMessage = prefix + nextSuffix
+    const nextCaret = prefix.length
+
+    setMessage(nextMessage)
+    setSkillMention(null)
+    if (result.kind === 'skill') {
+      setSelectedSkills((skills) =>
+        skills.some((selectedSkill) => selectedSkill.path === result.skill.path)
+          ? skills
+          : [...skills, result.skill].slice(0, maxSelectedSkillCount)
+      )
+    } else {
+      setSelectedApps((apps) =>
+        apps.some((selectedApp) => selectedApp.id === result.app.id)
+          ? apps
+          : [...apps, result.app].slice(0, maxSelectedAppCount)
+      )
+    }
+
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      textarea.focus({ preventScroll: true })
+      textarea.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+
+  const handleSelectMentionDropdown = (value: string): void => {
+    const index = Number(value)
+    if (!Number.isInteger(index) || index < 0) return
+
+    if (skillMentionMenuOpen) {
+      const result = composerResults[index]
+      if (result) handleSelectComposerMention(result)
+      return
+    }
+
+    const file = fileMentionResults[index]
+    if (file) handleSelectFileMention(file)
+  }
+
   const handleMessageKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (skillMentionMenuOpen && !event.nativeEvent.isComposing) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setSkillMention(null)
+        return
+      }
+
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (composerResults.length === 0) return
+
+        const direction = event.key === 'ArrowDown' ? 1 : -1
+        setActiveSkillMentionIndex(
+          (currentIndex) =>
+            (currentIndex + direction + composerResults.length) % composerResults.length
+        )
+        return
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        const selectedResult =
+          composerResults[Math.min(activeSkillMentionIndex, composerResults.length - 1)]
+        if (selectedResult) handleSelectComposerMention(selectedResult)
+        return
+      }
+
+      if (event.key === 'Tab' && composerResults.length > 0) {
+        event.preventDefault()
+        handleSelectComposerMention(
+          composerResults[Math.min(activeSkillMentionIndex, composerResults.length - 1)]
+        )
+        return
+      }
+    }
+
+    if (fileMentionMenuOpen && !event.nativeEvent.isComposing) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setFileMention(null)
+        return
+      }
+
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (fileMentionResults.length === 0) return
+
+        const direction = event.key === 'ArrowDown' ? 1 : -1
+        setActiveFileMentionIndex(
+          (currentIndex) =>
+            (currentIndex + direction + fileMentionResults.length) % fileMentionResults.length
+        )
+        return
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        const selectedFile =
+          fileMentionResults[Math.min(activeFileMentionIndex, fileMentionResults.length - 1)]
+        if (selectedFile) handleSelectFileMention(selectedFile)
+        return
+      }
+
+      if (event.key === 'Tab' && fileMentionResults.length > 0) {
+        event.preventDefault()
+        handleSelectFileMention(
+          fileMentionResults[Math.min(activeFileMentionIndex, fileMentionResults.length - 1)]
+        )
+        return
+      }
+    }
+
     if (
       event.key === 'PageUp' ||
       event.key === 'PageDown' ||
@@ -724,7 +1432,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const hasContent =
-    Boolean(message.trim()) || selectedAttachments.length > 0 || Boolean(selectedReview && !editing)
+    Boolean(message.trim()) ||
+    selectedAttachments.length > 0 ||
+    selectedSkills.length > 0 ||
+    selectedApps.length > 0 ||
+    Boolean(selectedReview && !editing)
   const activeWithContent = active && hasContent
   const buttonLabel = activeWithContent
     ? activePrimaryLabel
@@ -748,7 +1460,18 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 icon: <ListPlus aria-hidden="true" />
               }
             ]
-          : []),
+          : activeSteeringEnabled
+            ? [
+                {
+                  id: 'steer',
+                  label: 'Steer',
+                  title: 'Send this guidance to the current response',
+                  callback: () => submitMessage('steer'),
+                  disabled: operationsDisabled,
+                  icon: <CornerDownRight aria-hidden="true" />
+                }
+              ]
+            : []),
         {
           id: 'interrupt',
           label: 'Interrupt',
@@ -759,16 +1482,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         }
       ]
     : undefined
-  const contextPercent = getContextPercent(contextUsage)
-  const contextPercentLabel = contextPercent == null ? null : formatPercent(contextPercent)
-  const usageButtonLabel = contextPercentLabel
-    ? `Chat context ${contextPercentLabel} used`
-    : contextUsage.usedTokens
-      ? `Chat context ${formatTokenCount(contextUsage.usedTokens)} used`
-      : 'No chat context used'
-  const usageButtonStyle = {
-    '--message-box-usage-degrees': `${(contextPercent ?? 0) * 3.6}deg`
-  } as CSSProperties
   const accountUsageErrors = accountUsage?.errors ?? []
   const statisticsLoading =
     usageView === 'statistics' && accountUsageState === 'loading' && !accountUsage?.statisticsLoaded
@@ -781,6 +1494,26 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     mainRateLimits.length > 0
       ? rateLimits.filter((limit) => !isMainRateLimit(limit))
       : rateLimits.slice(1)
+  const globalRateLimit = visibleRateLimits[0] ?? null
+  const contextPercent = getContextPercent(contextUsage)
+  const contextPercentLabel = contextPercent == null ? null : formatPercent(contextPercent)
+  const globalPercent = globalRateLimit ? clampPercent(globalRateLimit.usedPercent) : null
+  const displayedUsagePercent = displayUsage === 'global' ? globalPercent : contextPercent
+  const usageButtonLabel =
+    displayUsage === 'global'
+      ? globalPercent == null
+        ? accountUsageState === 'loading'
+          ? 'Global usage loading'
+          : 'Global usage unavailable'
+        : `Global usage ${formatPercent(globalPercent)} used`
+      : contextPercentLabel
+        ? `Chat context ${contextPercentLabel} used`
+        : contextUsage.usedTokens
+          ? `Chat context ${formatTokenCount(contextUsage.usedTokens)} used`
+          : 'No chat context used'
+  const usageButtonStyle = {
+    '--message-box-usage-degrees': `${(displayedUsagePercent ?? 0) * 3.6}deg`
+  } as CSSProperties
   const availableRateLimitResets = accountUsage?.rateLimitResetCredits?.availableCount ?? 0
 
   const handleUsageToggle = (): void => {
@@ -856,6 +1589,23 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const selectedImages = selectedAttachments.filter((attachment) => attachment.kind === 'image')
   const selectedFiles = selectedAttachments.filter((attachment) => attachment.kind === 'file')
   const showSelectedReview = Boolean(selectedReview && !editing)
+  const mentionDropdownEmptyContent = skillMentionMenuOpen ? (
+    composerLoadErrorScope === skillScope ? (
+      <div className="message-box__file-mention-status">Unable to load skills and apps</div>
+    ) : composerCache?.providerId !== providerId || composerCache.cwd !== cwd ? (
+      <div className="message-box__file-mention-status">Loading skills and apps…</div>
+    ) : (
+      <div className="message-box__file-mention-status">No matching skills or apps</div>
+    )
+  ) : !projectCwd ? (
+    <div className="message-box__file-mention-status">No project selected</div>
+  ) : projectFilesErrorCwd === projectCwd ? (
+    <div className="message-box__file-mention-status">Unable to load files</div>
+  ) : projectFileCache?.cwd !== projectCwd ? (
+    <div className="message-box__file-mention-status">Searching files…</div>
+  ) : (
+    <div className="message-box__file-mention-status">No matching files</div>
+  )
 
   return (
     <form className="message-box" aria-busy={pending} onSubmit={handleSubmit}>
@@ -867,20 +1617,36 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       <label className="sr-only" htmlFor="message-input">
         Message
       </label>
-      <label className="sr-only" htmlFor="sandbox-mode">
-        Sandbox mode
-      </label>
-      <label className="sr-only" htmlFor="approval-mode">
-        Approval mode
-      </label>
-      <label className="sr-only" htmlFor="model-mode">
-        Model
-      </label>
-      <label className="sr-only" htmlFor="reasoning-effort">
-        Reasoning effort
-      </label>
+      {showAccessSelector && (
+        <label className="sr-only" htmlFor="sandbox-mode">
+          Sandbox mode
+        </label>
+      )}
+      {showReviewSelector && (
+        <label className="sr-only" htmlFor="approval-mode">
+          Approval mode
+        </label>
+      )}
+      {showModelSelector && (
+        <label className="sr-only" htmlFor="model-mode">
+          Model
+        </label>
+      )}
+      {showReasoningSelector && (
+        <label className="sr-only" htmlFor="reasoning-effort">
+          Reasoning effort
+        </label>
+      )}
+      {showSpeedSelector && (
+        <label className="sr-only" htmlFor="service-tier">
+          Speed
+        </label>
+      )}
       <div className="message-box__input">
-        {(selectedAttachments.length > 0 || showSelectedReview) && (
+        {(selectedAttachments.length > 0 ||
+          selectedSkills.length > 0 ||
+          selectedApps.length > 0 ||
+          showSelectedReview) && (
           <div className="message-box__attachment-previews">
             {selectedImages.length > 0 && (
               <div
@@ -916,80 +1682,135 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 ))}
               </div>
             )}
-            {(selectedFiles.length > 0 || showSelectedReview) && (
+            {(selectedFiles.length > 0 ||
+              selectedSkills.length > 0 ||
+              selectedApps.length > 0 ||
+              showSelectedReview) && (
               <div
                 className="message-box__attachment-preview-group message-box__attachment-preview-group--other"
-                aria-label="Other selected attachments"
+                aria-label="Selected context"
                 role="list"
               >
+                {selectedSkills.map((skill) => (
+                  <AttachmentChip
+                    key={skill.path}
+                    callback={() => textareaRef.current?.focus({ preventScroll: true })}
+                    callbackAriaLabel={`Selected skill ${skill.name}`}
+                    callbackDisabled
+                    callbackTitle={[skill.displayName || skill.name, getSkillSummary(skill)]
+                      .filter(Boolean)
+                      .join(' · ')}
+                    icon={<Package aria-hidden="true" />}
+                    label={`$${skill.displayName || skill.name}`}
+                    removeAriaLabel={`Remove ${skill.name} skill`}
+                    removeCallback={() => handleRemoveSkill(skill.path)}
+                    removeDisabled={textareaDisabled}
+                    removeTitle={`Remove ${skill.name} skill`}
+                  />
+                ))}
+                {selectedApps.map((app) => (
+                  <AttachmentChip
+                    key={app.id}
+                    callback={() => textareaRef.current?.focus({ preventScroll: true })}
+                    callbackAriaLabel={`Selected app ${app.name}`}
+                    callbackDisabled
+                    callbackTitle={app.description ? `${app.name} · ${app.description}` : app.name}
+                    icon={<Blocks aria-hidden="true" />}
+                    label={`$${app.name}`}
+                    removeAriaLabel={`Remove ${app.name} app`}
+                    removeCallback={() => handleRemoveApp(app.id)}
+                    removeDisabled={textareaDisabled}
+                    removeTitle={`Remove ${app.name} app`}
+                  />
+                ))}
                 {selectedFiles.map((attachment) => (
-                  <div
-                    className="message-box__attachment-preview message-box__attachment-preview--file"
+                  <AttachmentChip
                     key={attachment.path}
-                    role="listitem"
-                  >
-                    <button
-                      type="button"
-                      className="message-box__attachment-open message-box__file-tile"
-                      aria-label={`Open ${attachment.name}`}
-                      title={`Open ${attachment.name}`}
-                      disabled={!onOpenAttachment}
-                      onClick={() => handleOpenAttachment(attachment)}
-                    >
-                      <span className="message-box__file-tile-icon" aria-hidden="true">
-                        <SymbolsFileIcon fileName={attachment.name} autoAssign />
-                      </span>
-                      <span className="message-box__attachment-label">{attachment.name}</span>
-                    </button>
-                    <Button
-                      aria-label={`Remove ${attachment.name}`}
-                      callback={() => handleRemoveAttachment(attachment.path)}
-                      disabled={textareaDisabled || editing}
-                      icon={<X aria-hidden="true" />}
-                      size="small"
-                      theme="transparent"
-                      title={`Remove ${attachment.name}`}
-                    />
-                  </div>
+                    callback={() => handleOpenAttachment(attachment)}
+                    callbackAriaLabel={`Open ${attachment.name}`}
+                    callbackDisabled={!onOpenAttachment}
+                    callbackTitle={`Open ${attachment.name}`}
+                    icon={<SymbolsFileIcon fileName={attachment.name} autoAssign />}
+                    label={attachment.name}
+                    removeAriaLabel={`Remove ${attachment.name}`}
+                    removeCallback={() => handleRemoveAttachment(attachment.path)}
+                    removeDisabled={textareaDisabled || editing}
+                    removeTitle={`Remove ${attachment.name}`}
+                  />
                 ))}
                 {selectedReview && showSelectedReview && (
-                  <div
-                    className="message-box__attachment-preview message-box__attachment-preview--review"
-                    role="listitem"
-                  >
-                    <ReviewCommentsButton
-                      className="message-box__review-tile"
-                      comments={selectedReview.comments}
-                      onOpenFileLink={onOpenFileLink}
-                      projectCwd={projectCwd}
-                    />
-                    <Button
-                      aria-label="Remove review"
-                      callback={() => onSelectedReviewChange?.(null)}
-                      disabled={textareaDisabled || editing}
-                      icon={<X aria-hidden="true" />}
-                      size="small"
-                      theme="transparent"
-                      title="Remove review"
-                    />
-                  </div>
+                  <ReviewCommentsButton
+                    comments={selectedReview.comments}
+                    disabled={textareaDisabled || editing}
+                    onOpenFileLink={onOpenFileLink}
+                    onRemove={() => onSelectedReviewChange?.(null)}
+                    projectCwd={projectCwd}
+                  />
                 )}
               </div>
             )}
           </div>
         )}
-        <textarea
-          ref={textareaRef}
-          id="message-input"
-          disabled={textareaDisabled}
-          rows={1}
-          value={message}
-          placeholder="Message the assistant"
-          onChange={(event) => setMessage(event.target.value)}
-          onKeyDown={handleMessageKeyDown}
-          onPaste={(event) => void handlePaste(event)}
-        />
-        <div className="message-box__controls">
+        <div className="message-box__textarea-wrap">
+          {(skillMentionMenuOpen || fileMentionMenuOpen) && (
+            <div className="message-box__file-mention-menu">
+              <Dropdown
+                activeIndex={
+                  skillMentionMenuOpen ? activeSkillMentionIndex : activeFileMentionIndex
+                }
+                aria-label={skillMentionMenuOpen ? 'Skills and apps' : 'Files'}
+                emptyContent={mentionDropdownEmptyContent}
+                listboxId={skillMentionMenuOpen ? skillMentionListboxId : fileMentionListboxId}
+                menuOnly
+                options={mentionDropdownOptions}
+                value=""
+                onActiveIndexChange={
+                  skillMentionMenuOpen ? setActiveSkillMentionIndex : setActiveFileMentionIndex
+                }
+                onChange={handleSelectMentionDropdown}
+              />
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
+            id="message-input"
+            disabled={textareaDisabled}
+            rows={1}
+            value={message}
+            placeholder="Message the assistant"
+            aria-autocomplete="list"
+            aria-controls={
+              skillMentionMenuOpen
+                ? skillMentionListboxId
+                : fileMentionMenuOpen
+                  ? fileMentionListboxId
+                  : undefined
+            }
+            aria-expanded={skillMentionMenuOpen || fileMentionMenuOpen}
+            aria-activedescendant={
+              skillMentionMenuOpen && composerResults.length > 0
+                ? `${skillMentionListboxId}-option-${Math.min(
+                    activeSkillMentionIndex,
+                    composerResults.length - 1
+                  )}`
+                : fileMentionMenuOpen && fileMentionResults.length > 0
+                  ? `${fileMentionListboxId}-option-${Math.min(
+                      activeFileMentionIndex,
+                      fileMentionResults.length - 1
+                    )}`
+                  : undefined
+            }
+            onBlur={() => {
+              setFileMention(null)
+              setSkillMention(null)
+            }}
+            onChange={handleMessageChange}
+            onKeyDown={handleMessageKeyDown}
+            onPaste={(event) => void handlePaste(event)}
+            onSelect={handleMessageSelect}
+          />
+        </div>
+        <div className={controlsClassName}>
           <div className="message-box__attachment-controls">
             <Button
               aria-label="Attach files"
@@ -1009,68 +1830,110 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               theme="secondary"
             />
           </div>
-          <div className="message-box__selectors">
-            <span className="message-box__select message-box__sandbox">
-              <Dropdown
-                id="sandbox-mode"
-                disabled={selectorsDisabled}
-                icon={sandboxModeIcons[sandboxMode]}
-                options={displayedSandboxModeOptions}
-                placement="top"
-                value={sandboxMode}
-                title={selectedSandboxModeTitle}
-                onChange={onSandboxModeChange}
-              />
-            </span>
-            <span className="message-box__select message-box__approval">
-              <Dropdown
-                id="approval-mode"
-                disabled={approvalSelectorDisabled}
-                icon={approvalModeIcons[effectiveApprovalMode]}
-                options={displayedApprovalModeOptions}
-                placement="top"
-                value={effectiveApprovalMode}
-                title={
-                  fullAccessSelected
-                    ? 'Full access runs without approval prompts.'
-                    : selectedApprovalModeTitle
-                }
-                onChange={onApprovalModeChange}
-              />
-            </span>
-            <span className="message-box__select message-box__model">
-              <Dropdown
-                id="model-mode"
-                disabled={selectorsDisabled}
-                icon={<Bot aria-hidden="true" />}
-                options={displayedModelOptions}
-                placement="top"
-                value={model}
-                title={selectedModelTitle}
-                onChange={onModelChange}
-              />
-            </span>
-            <span className="message-box__select message-box__reasoning">
-              <Dropdown
-                id="reasoning-effort"
-                disabled={selectorsDisabled}
-                icon={getReasoningEffortIcon(reasoningEffort)}
-                options={displayedReasoningEffortOptions}
-                placement="top"
-                value={reasoningEffort}
-                title={`${selectedReasoningEffortLabel} reasoning`}
-                onChange={onReasoningEffortChange}
-              />
-            </span>
-            {notesLabel && onNotesChange && (
-              <CwdNotesButton
-                key={notesContextKey}
-                label={notesLabel}
-                notes={notes}
-                onNotesChange={onNotesChange}
-              />
-            )}
-          </div>
+          {selectorsVisible && (
+            <div className="message-box__selectors">
+              {showAccessSelector && (
+                <span className="message-box__select message-box__sandbox">
+                  <Dropdown
+                    id="sandbox-mode"
+                    disabled={selectorsDisabled}
+                    icon={sandboxModeIcons[sandboxMode]}
+                    options={displayedSandboxModeOptions}
+                    placement="top"
+                    value={sandboxMode}
+                    title={selectedSandboxModeTitle}
+                    onChange={onSandboxModeChange}
+                  />
+                </span>
+              )}
+              {showReviewSelector && (
+                <span className="message-box__select message-box__approval">
+                  <Dropdown
+                    id="approval-mode"
+                    disabled={approvalSelectorDisabled}
+                    icon={approvalModeIcons[effectiveApprovalMode]}
+                    options={displayedApprovalModeOptions}
+                    placement="top"
+                    value={effectiveApprovalMode}
+                    title={
+                      fullAccessSelected
+                        ? 'Full access runs without approval prompts.'
+                        : selectedApprovalModeTitle
+                    }
+                    onChange={onApprovalModeChange}
+                  />
+                </span>
+              )}
+              {showModelSelector && (
+                <span className="message-box__select message-box__model">
+                  <Dropdown
+                    id="model-mode"
+                    disabled={selectorsDisabled}
+                    icon={<Bot aria-hidden="true" />}
+                    options={displayedModelOptions}
+                    placement="top"
+                    value={model}
+                    title={selectedModelTitle}
+                    onChange={onModelChange}
+                  />
+                </span>
+              )}
+              {showReasoningSelector && (
+                <span className="message-box__select message-box__reasoning">
+                  <Dropdown
+                    id="reasoning-effort"
+                    disabled={selectorsDisabled}
+                    icon={getReasoningEffortIcon(reasoningEffort)}
+                    options={displayedReasoningEffortOptions}
+                    placement="top"
+                    value={reasoningEffort}
+                    title={`${selectedReasoningEffortLabel} reasoning`}
+                    onChange={onReasoningEffortChange}
+                  />
+                </span>
+              )}
+              {showSpeedSelector && (
+                <span className="message-box__select message-box__speed">
+                  <Dropdown
+                    id="service-tier"
+                    aria-label="Speed"
+                    disabled={selectorsDisabled}
+                    icon={selectedServiceTierOption?.icon}
+                    options={displayedServiceTierOptions}
+                    placement="top"
+                    value={selectedServiceTier ?? standardServiceTierValue}
+                    title={`${selectedServiceTierOption?.label ?? 'Standard'} speed`}
+                    onChange={(value) =>
+                      onServiceTierChange(value === standardServiceTierValue ? null : value)
+                    }
+                  />
+                </span>
+              )}
+            </div>
+          )}
+          {workspaceControlsVisible && (
+            <div className="message-box__workspace-controls">
+              {notesButtonVisible && (
+                <CwdNotesButton
+                  key={notesContextKey}
+                  label={notesLabel!}
+                  notes={notes}
+                  onNotesChange={onNotesChange!}
+                />
+              )}
+              {actionsButtonVisible && (
+                <ActionsButton
+                  actions={actions}
+                  label={notesLabel ?? 'Workspace'}
+                  lastActionId={lastActionId}
+                  showLabel={showActionLabel}
+                  onActionsChange={onActionsChange!}
+                  onLastActionChange={onLastActionChange!}
+                  onRunAction={onRunAction!}
+                />
+              )}
+            </div>
+          )}
           <div className="message-box__send-controls">
             {editing && (
               <Button
@@ -1287,7 +2150,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 ) : activeWithContent && activePrimaryMode === 'steer' ? (
                   <CornerDownRight aria-hidden="true" />
                 ) : activeWithContent ? (
-                  <ArrowUp aria-hidden="true" />
+                  <ListPlus aria-hidden="true" />
                 ) : active ? (
                   <Square aria-hidden="true" />
                 ) : (

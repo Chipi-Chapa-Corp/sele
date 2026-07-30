@@ -3,12 +3,15 @@ import { MessageSquare } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderReviewComment } from '../../../shared/provider'
+import { AttachmentChip } from './AttachmentChip'
 import './ReviewCommentsButton.css'
 
 type ReviewCommentsButtonProps = {
   className?: string
   comments: readonly ProviderReviewComment[]
-  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  disabled?: boolean
+  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
+  onRemove?: () => void
   projectCwd?: string | null
 }
 
@@ -71,17 +74,18 @@ const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
 
 const getLocationLabel = (comment: ProviderReviewComment): string => {
   const endLine = Math.max(comment.line, comment.endLine ?? comment.line)
-  const linePrefix = comment.side === 'old' ? 'Original line' : 'Line'
 
-  if (endLine === comment.line) return `${linePrefix} ${comment.line}`
+  if (endLine === comment.line) return `${comment.line}`
 
-  return `${linePrefix}s ${comment.line}–${endLine}`
+  return `${comment.line}-${endLine}`
 }
 
 export const ReviewCommentsButton: React.FC<ReviewCommentsButtonProps> = ({
   className,
   comments,
+  disabled = false,
   onOpenFileLink,
+  onRemove,
   projectCwd
 }) => {
   const reactId = useId().replace(/:/g, '')
@@ -169,11 +173,16 @@ export const ReviewCommentsButton: React.FC<ReviewCommentsButtonProps> = ({
     }
   }, [closeMenu, open, updateMenuPosition])
 
-  const handleOpenFile = (path: string, displayPath: string, line?: number): void => {
+  const handleOpenFile = (
+    path: string,
+    displayPath: string,
+    line?: number,
+    endLine?: number
+  ): void => {
     if (!onOpenFileLink) return
 
     closeMenu()
-    onOpenFileLink(path, displayPath, line)
+    onOpenFileLink(path, displayPath, line, endLine)
   }
 
   const menu = open ? (
@@ -242,17 +251,27 @@ export const ReviewCommentsButton: React.FC<ReviewCommentsButtonProps> = ({
                       <span className="review-comments-menu__location">
                         {getLocationLabel(comment)}
                       </span>
+                      <span className="review-comments-menu__separator" aria-hidden="true">
+                        ·
+                      </span>
                       <span className="review-comments-menu__text">{comment.comment}</span>
                     </>
                   )
+                  const endLine = Math.max(comment.line, comment.endLine ?? comment.line)
+                  const lineTitle =
+                    endLine === comment.line
+                      ? `line ${comment.line}`
+                      : `lines ${comment.line}-${endLine}`
 
                   return onOpenFileLink ? (
                     <button
                       className="review-comments-menu__comment review-comments-menu__comment--interactive"
                       key={`${comment.id}:${commentIndex}`}
                       type="button"
-                      title={`Open ${group.displayPath} at line ${comment.line}`}
-                      onClick={() => handleOpenFile(group.path, group.displayPath, comment.line)}
+                      title={`Open ${group.displayPath} at ${lineTitle}`}
+                      onClick={() =>
+                        handleOpenFile(group.path, group.displayPath, comment.line, endLine)
+                      }
                     >
                       {commentContent}
                     </button>
@@ -272,28 +291,53 @@ export const ReviewCommentsButton: React.FC<ReviewCommentsButtonProps> = ({
       </div>
     </div>
   ) : null
+  const handleTriggerClick = (): void => {
+    if (open) closeMenu()
+    else openMenu()
+  }
 
   return (
     <>
-      <button
-        ref={buttonRef}
-        className={className}
-        type="button"
-        aria-controls={open ? menuId : undefined}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        aria-label={`Show ${commentLabel}`}
-        title={commentLabel}
-        onClick={() => {
-          if (open) closeMenu()
-          else openMenu()
-        }}
-      >
-        <MessageSquare aria-hidden="true" />
-        <span>
-          Review <span aria-hidden="true">·</span> {comments.length}
-        </span>
-      </button>
+      {onRemove ? (
+        <AttachmentChip
+          active={open}
+          callback={handleTriggerClick}
+          callbackAriaLabel={`Show ${commentLabel}`}
+          callbackTitle={commentLabel}
+          icon={<MessageSquare aria-hidden="true" />}
+          label={
+            <>
+              Review <span aria-hidden="true">·</span> {comments.length}
+            </>
+          }
+          removeAriaLabel="Remove review"
+          removeCallback={onRemove}
+          removeDisabled={disabled}
+          removeTitle="Remove review"
+          triggerAriaControls={open ? menuId : undefined}
+          triggerAriaExpanded={open}
+          triggerAriaHasPopup="dialog"
+          triggerRef={buttonRef}
+        />
+      ) : (
+        <button
+          ref={buttonRef}
+          className={className}
+          type="button"
+          aria-controls={open ? menuId : undefined}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-label={`Show ${commentLabel}`}
+          disabled={disabled}
+          title={commentLabel}
+          onClick={handleTriggerClick}
+        >
+          <MessageSquare aria-hidden="true" />
+          <span>
+            Review <span aria-hidden="true">·</span> {comments.length}
+          </span>
+        </button>
+      )}
       {menu && createPortal(menu, document.body)}
     </>
   )

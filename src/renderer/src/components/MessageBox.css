@@ -19,7 +19,11 @@
   max-width: 100%;
 }
 
-.message-box__select .ui-dropdown__value-icon .message-box__selected-control-icon {
+.message-box__selected-control-icon {
+  color: var(--menu-option-check-color);
+}
+
+.message-box__fast-speed-icon {
   color: var(--menu-option-check-color);
 }
 
@@ -71,6 +75,7 @@
   background: var(--secondary-surface);
   box-shadow: var(--secondary-shadow);
   transition:
+    background 160ms ease,
     box-shadow 160ms ease,
     transform 160ms ease;
 }
@@ -82,72 +87,11 @@
   border-radius: 12px;
 }
 
-.message-box__attachment-preview--file,
-.message-box__attachment-preview--review {
-  width: auto;
-  min-height: 28px;
-  flex: 0 1 auto;
-  border-radius: 7px;
-}
-
-.message-box__review-tile {
-  appearance: none;
-  display: inline-flex;
-  width: auto;
-  height: 100%;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 0.36em;
-  padding: 0.12em 0.2em 0.12em 0.46em;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  background: transparent;
-  font: inherit;
-  font-weight: 500;
-  line-height: 1.25;
-  text-align: left;
-  transition: background 160ms ease;
-}
-
-.message-box__review-tile > svg {
-  width: 1.05em;
-  height: 1.05em;
-  flex: none;
-}
-
-.message-box__review-tile > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.message-box__review-tile:hover,
-.message-box__review-tile[aria-expanded='true'] {
-  background: var(--control-hover-bg);
-}
-
-.message-box__review-tile:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--focus-ring);
-  outline: none;
-}
-
-.message-box__attachment-preview:has(> .message-box__attachment-open:not(:disabled):hover),
-.message-box__attachment-preview:has(> .message-box__review-tile:hover) {
+.message-box__attachment-preview:has(> .message-box__attachment-open:not(:disabled):hover) {
   transform: translateY(-1px);
 }
 
 .message-box__attachment-preview--image:has(> .message-box__attachment-open:not(:disabled):hover) {
-  box-shadow: var(--secondary-shadow-hover);
-}
-
-.message-box__attachment-preview--file:has(> .message-box__attachment-open:not(:disabled):hover) {
-  box-shadow: var(--secondary-shadow-hover);
-}
-
-.message-box__attachment-preview--review:has(> .message-box__review-tile:hover) {
   box-shadow: var(--secondary-shadow-hover);
 }
 
@@ -184,47 +128,6 @@
   cursor: zoom-in;
 }
 
-.message-box__file-tile {
-  display: inline-flex;
-  width: auto;
-  height: 100%;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.36em;
-  padding: 0.12em 0.2em 0.12em 0.46em;
-  color: var(--ink);
-  font: inherit;
-  font-weight: 500;
-  line-height: 1.25;
-  transition: background 160ms ease;
-}
-
-.message-box__file-tile:not(:disabled):hover {
-  background: var(--control-hover-bg);
-}
-
-.message-box__file-tile-icon {
-  display: grid;
-  width: 1.05em;
-  height: 1.05em;
-  place-items: center;
-  flex: none;
-}
-
-.message-box__file-tile-icon svg {
-  width: 100%;
-  height: 100%;
-}
-
-.message-box__attachment-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .message-box__attachment-preview > .ui-button {
   position: absolute;
   top: 5px;
@@ -241,16 +144,14 @@
   height: 14px;
 }
 
-.message-box__attachment-preview--file > .ui-button,
-.message-box__attachment-preview--review > .ui-button {
-  position: static;
-  width: 22px;
-  height: 22px;
-  flex: none;
-  margin-right: 2px;
+.message-box__textarea-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 .message-box textarea {
+  display: block;
   width: 100%;
   min-width: 0;
   min-height: var(--control-height);
@@ -265,18 +166,69 @@
   overscroll-behavior: contain;
 }
 
+.message-box textarea:focus-visible {
+  outline: none;
+  outline-offset: 0;
+}
+
+:root[data-disable-shadows='true'] .message-box textarea:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+}
+
+.message-box__file-mention-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 80;
+  width: min(520px, 100%);
+}
+
+.chat-panel--empty .message-box__file-mention-menu {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+.message-box__file-mention-status {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--quiet);
+}
+
 .message-box__controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, max-content) minmax(0, 1fr);
+  min-width: 0;
+  grid-template-columns: auto auto auto auto;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.message-box__controls--no-selectors,
+.message-box__controls--no-workspace {
+  grid-template-columns: auto auto auto;
+}
+
+.message-box__controls--no-selectors.message-box__controls--no-workspace {
+  grid-template-columns: auto auto;
 }
 
 .message-box__attachment-controls {
   display: flex;
   min-width: 0;
+  flex: none;
   align-items: center;
-  justify-self: start;
+  gap: 8px;
+}
+
+.message-box__workspace-controls {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 8px;
 }
 
 .message-box__selectors {
@@ -294,7 +246,6 @@
   flex: none;
   align-items: center;
   justify-content: flex-end;
-  justify-self: end;
   gap: 8px;
 }
 
@@ -531,13 +482,18 @@
 @media (max-width: 900px) {
   .message-box__controls {
     grid-template-areas:
-      'selectors selectors'
-      'attachments send';
-    grid-template-columns: minmax(0, 1fr) auto;
+      'attachments selectors send'
+      'workspace workspace workspace';
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    justify-content: stretch;
   }
 
   .message-box__attachment-controls {
     grid-area: attachments;
+  }
+
+  .message-box__workspace-controls {
+    grid-area: workspace;
   }
 
   .message-box__selectors {
@@ -546,6 +502,23 @@
 
   .message-box__send-controls {
     grid-area: send;
+  }
+
+  .message-box__controls--no-workspace {
+    grid-template-areas: 'attachments selectors send';
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .message-box__controls--no-selectors {
+    grid-template-areas:
+      'attachments send'
+      'workspace workspace';
+    grid-template-columns: auto auto;
+  }
+
+  .message-box__controls--no-selectors.message-box__controls--no-workspace {
+    grid-template-areas: 'attachments send';
+    grid-template-columns: auto auto;
   }
 }
 

@@ -11,7 +11,7 @@ import {
   parseDiff,
   tokenize
 } from 'react-diff-view'
-import type { FileData, HunkData, HunkTokens } from 'react-diff-view'
+import type { ChangeData, FileData, HunkData, HunkTokens } from 'react-diff-view'
 import { refractor } from 'refractor'
 import jsx from 'refractor/jsx'
 import tsx from 'refractor/tsx'
@@ -346,6 +346,46 @@ type ReviewMarker = {
 const getReviewCommentEndLine = (comment: ProviderReviewComment): number =>
   Math.max(comment.line, comment.endLine ?? comment.line)
 
+const getChangeLineNumber = (
+  change: ChangeData,
+  side: ProviderReviewComment['side']
+): number | null => {
+  if (change.type === 'normal') {
+    return side === 'old' ? change.oldLineNumber : change.newLineNumber
+  }
+  if (change.type === 'delete') return side === 'old' ? change.lineNumber : null
+
+  return side === 'new' ? change.lineNumber : null
+}
+
+const getDiffLineTarget = (
+  files: readonly { file: FileData }[],
+  kind: ProviderFileDiff['kind'],
+  line: number | undefined,
+  endLine: number | undefined
+): { anchorChangeKey: string; changeKeys: string[]; fileIndex: number } | null => {
+  if (!line) return null
+
+  const normalizedEndLine = Math.max(line, endLine ?? line)
+  const side = kind === 'delete' ? 'old' : 'new'
+
+  for (const [fileIndex, { file }] of files.entries()) {
+    const changeKeys = file.hunks.flatMap((hunk) =>
+      hunk.changes.flatMap((change) => {
+        const lineNumber = getChangeLineNumber(change, side)
+        return lineNumber != null && lineNumber >= line && lineNumber <= normalizedEndLine
+          ? [getChangeKey(change)]
+          : []
+      })
+    )
+    if (changeKeys.length > 0) {
+      return { anchorChangeKey: changeKeys[0], changeKeys, fileIndex }
+    }
+  }
+
+  return null
+}
+
 const groupReviewComments = (comments: readonly ProviderReviewComment[]): ReviewCommentGroup[] => {
   const sortedComments = [...comments].sort(
     (first, second) =>
@@ -591,6 +631,7 @@ export const EditableUnifiedDiff = ({
   className,
   comments = [],
   contents,
+  endLine,
   fileDiff,
   line,
   onChange,
@@ -607,6 +648,7 @@ export const EditableUnifiedDiff = ({
   className?: string
   comments?: readonly ProviderReviewComment[]
   contents: string
+  endLine?: number
   fileDiff: ProviderFileDiff
   line?: number
   onChange: (contents: string) => void
@@ -633,6 +675,9 @@ export const EditableUnifiedDiff = ({
     modified: monaco.editor.IEditorDecorationsCollection
     original: monaco.editor.IEditorDecorationsCollection
   } | null>(null)
+  const targetDecorationCollectionRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(
+    null
+  )
   const editorStateRef = useRef<{
     editor: monaco.editor.IStandaloneDiffEditor
     modifiedEditor: monaco.editor.IStandaloneCodeEditor
@@ -775,6 +820,7 @@ export const EditableUnifiedDiff = ({
       modified: modifiedEditor.createDecorationsCollection(),
       original: originalEditor.createDecorationsCollection()
     }
+    targetDecorationCollectionRef.current = modifiedEditor.createDecorationsCollection()
 
     const changeSubscription = modifiedModel.onDidChangeContent(() => {
       onChangeRef.current(modifiedModel.getValue())
@@ -889,6 +935,7 @@ export const EditableUnifiedDiff = ({
       cancelScheduledReviewInput()
       editorStateRef.current = null
       reviewDecorationCollectionsRef.current = null
+      targetDecorationCollectionRef.current = null
       themeObserver.disconnect()
       changeSubscription.dispose()
       originalSelectionSubscription.dispose()
@@ -946,12 +993,33 @@ export const EditableUnifiedDiff = ({
 
   useEffect(() => {
     const modifiedEditor = editorStateRef.current?.modifiedEditor
-    if (!modifiedEditor || !line) return
+    const decorations = targetDecorationCollectionRef.current
+    if (!modifiedEditor || !decorations) return
+    if (!line) {
+      decorations.clear()
+      return
+    }
 
-    const lineNumber = Math.min(line, modifiedEditor.getModel()?.getLineCount() ?? line)
-    modifiedEditor.setPosition({ lineNumber, column: 1 })
-    modifiedEditor.revealLineInCenter(lineNumber, monaco.editor.ScrollType.Immediate)
-  }, [line])
+    const lineCount = modifiedEditor.getModel()?.getLineCount() ?? line
+    const startLineNumber = Math.max(1, Math.min(line, lineCount))
+    const endLineNumber = Math.max(
+      startLineNumber,
+      Math.min(Math.max(line, endLine ?? line), lineCount)
+    )
+    const range = new monaco.Range(startLineNumber, 1, endLineNumber, 1)
+
+    decorations.set([
+      {
+        range,
+        options: {
+          className: 'editable-unified-diff__target-line-highlight',
+          isWholeLine: true
+        }
+      }
+    ])
+    modifiedEditor.setPosition({ lineNumber: startLineNumber, column: 1 })
+    modifiedEditor.revealRangeInCenter(range, monaco.editor.ScrollType.Immediate)
+  }, [endLine, line])
 
   useEffect(() => {
     const editorState = editorStateRef.current
@@ -1008,6 +1076,7 @@ export const EditableUnifiedDiff = ({
 export const UnifiedDiff = ({
   className,
   comments = [],
+  endLine,
   fileDiff,
   line,
   onAddComment,
@@ -1016,6 +1085,7 @@ export const UnifiedDiff = ({
 }: {
   className?: string
   comments?: readonly ProviderReviewComment[]
+  endLine?: number
   fileDiff: ProviderFileDiff
   line?: number
   onAddComment?: (comment: string, location: DiffReviewLocation) => void
@@ -1098,19 +1168,10 @@ export const UnifiedDiff = ({
     [files, highlightedReviewComments]
   )
   const targetAnchorId = `unified-diff-target-${useId().replace(/:/g, '')}`
-  const lineTarget = useMemo(() => {
-    if (!line) return null
-
-    for (const [fileIndex, { file }] of files.entries()) {
-      const change =
-        fileDiff.kind === 'delete'
-          ? findChangeByOldLineNumber(file.hunks, line)
-          : findChangeByNewLineNumber(file.hunks, line)
-      if (change) return { fileIndex, changeKey: getChangeKey(change) }
-    }
-
-    return null
-  }, [fileDiff.kind, files, line])
+  const lineTarget = useMemo(
+    () => getDiffLineTarget(files, fileDiff.kind, line, endLine),
+    [endLine, fileDiff.kind, files, line]
+  )
   const diffClassName = ['unified-diff', className].filter(Boolean).join(' ')
 
   useEffect(() => {
@@ -1331,13 +1392,15 @@ export const UnifiedDiff = ({
       <pre className="unified-diff__fallback">{fileDiff.diff}</pre>
     ) : (
       files.map(({ file, tokens }, index) => {
-        const targetChangeKey = lineTarget?.fileIndex === index ? lineTarget.changeKey : undefined
+        const targetChangeKeys = lineTarget?.fileIndex === index ? lineTarget.changeKeys : undefined
+        const targetAnchorChangeKey =
+          lineTarget?.fileIndex === index ? lineTarget.anchorChangeKey : undefined
         const hoveredChangeKeys = highlightedChangeKeys[index] ?? []
         const selectedChanges =
           hoveredChangeKeys.length > 0
             ? hoveredChangeKeys
-            : targetChangeKey
-              ? [targetChangeKey]
+            : targetChangeKeys
+              ? targetChangeKeys
               : []
 
         return (
@@ -1345,9 +1408,9 @@ export const UnifiedDiff = ({
             className={diffClassName}
             diffType={file.type}
             generateAnchorID={
-              targetChangeKey
+              targetAnchorChangeKey
                 ? (change) =>
-                    getChangeKey(change) === targetChangeKey ? targetAnchorId : undefined
+                    getChangeKey(change) === targetAnchorChangeKey ? targetAnchorId : undefined
                 : undefined
             }
             hunks={file.hunks}

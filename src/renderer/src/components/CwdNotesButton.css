@@ -50,28 +50,17 @@
 }
 
 .cwd-notes-menu__item {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 8px;
-  padding: 8px 8px 8px 10px;
-  border: 1px solid var(--menu-border);
-  border-radius: 8px;
-  background: var(--glass-subtle);
+  color: var(--lead);
 }
 
-.cwd-notes-menu__text {
+.cwd-notes-menu__text.ui-button-menu__label {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: visible;
   color: var(--ink);
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
   line-height: 1.4;
-}
-
-.cwd-notes-menu__item .ui-button--small.ui-button--icon-only {
-  width: 26px;
-  height: 26px;
-  min-height: 26px;
 }
 
 .cwd-notes-menu__form {

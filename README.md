@@ -1,6 +1,6 @@
 # Sele
 
-A lightweight Electron, React, and TypeScript scaffold for an AI harness.
+UX-first AI Harness Wrapper.
 
 ## Setup
 

@@ -1,6 +1,20 @@
-import type { ProviderModelId } from '../../shared/provider'
+import type {
+  ProviderApprovalMode,
+  ProviderModelId,
+  ProviderReasoningEffort,
+  ProviderSandboxMode,
+  ProviderServiceTier
+} from '../../shared/provider'
+import {
+  isProviderApprovalMode,
+  isProviderSandboxMode,
+  isProviderServiceTier
+} from '../../shared/provider'
+import type { AppAction } from './actions'
+import { normalizeAppActions } from './actions'
 
 export type AppThemePreference = 'system' | 'light' | 'dark'
+export type AppChatUsageDisplay = 'chatContext' | 'global'
 
 export type AppGitCommitPromptSettings = {
   instructions: string
@@ -15,17 +29,47 @@ export type AppGitCommitMessageGenerationSettings = {
   aiInstructionsPrefix: string
 }
 
+export type AppChatThoughtSettings = {
+  expandThoughtsOnStart: boolean
+  collapseThoughtsOnFinish: boolean
+  collapseThoughtsOnNextTurn: boolean
+  expandStoppedTurns: boolean
+  collapseStoppedOnNextTurn: boolean
+}
+
+export const appChatManualDropdownValue = 'manual'
+export const appChatStandardSpeedValue = 'standard'
+
+export type AppChatDropdownSettings = {
+  forceAccess: typeof appChatManualDropdownValue | ProviderSandboxMode
+  forceReview: typeof appChatManualDropdownValue | ProviderApprovalMode
+  forceModel: typeof appChatManualDropdownValue | ProviderModelId
+  forceReasoning: typeof appChatManualDropdownValue | ProviderReasoningEffort
+  forceSpeed:
+    typeof appChatManualDropdownValue | typeof appChatStandardSpeedValue | ProviderServiceTier
+}
+
+export type AppPerformanceSettings = {
+  disableShadows: boolean
+}
+
 export type AppSettings = {
+  actions: AppAction[]
+  lastActionId: string | null
   appearance: {
     theme: AppThemePreference
   }
-  chat: {
+  chat: AppChatThoughtSettings & {
     continuePrompt: string
     recentChatCacheLimit: number
+    displayUsage: AppChatUsageDisplay
     hidePlans: boolean
+    enableActions: boolean
+    enableNotesButton: boolean
     updateExistingChats: boolean
     updateNewChats: boolean
-  }
+  } & AppChatDropdownSettings
+  performance: AppPerformanceSettings
   git: {
     commitModel: ProviderModelId | null
     commitPrompt: AppGitCommitPromptSettings
@@ -36,6 +80,26 @@ export type AppSettings = {
 export const appSettingsStorageKey = 'sele:app-settings:v1'
 
 export const defaultStoppedTurnContinuePrompt = 'Continue from where you left off'
+
+export const defaultAppChatThoughtSettings: AppChatThoughtSettings = {
+  expandThoughtsOnStart: true,
+  collapseThoughtsOnFinish: true,
+  collapseThoughtsOnNextTurn: false,
+  expandStoppedTurns: false,
+  collapseStoppedOnNextTurn: false
+}
+
+export const defaultAppChatDropdownSettings: AppChatDropdownSettings = {
+  forceAccess: appChatManualDropdownValue,
+  forceReview: appChatManualDropdownValue,
+  forceModel: appChatManualDropdownValue,
+  forceReasoning: appChatManualDropdownValue,
+  forceSpeed: appChatManualDropdownValue
+}
+
+export const defaultAppPerformanceSettings: AppPerformanceSettings = {
+  disableShadows: false
+}
 
 export const defaultAppGitCommitPromptSettings: AppGitCommitPromptSettings = {
   instructions: [
@@ -121,16 +185,24 @@ const legacyDefaultGitCommitPromptSettings: Partial<
 }
 
 export const defaultAppSettings: AppSettings = {
+  actions: [],
+  lastActionId: null,
   appearance: {
     theme: 'system'
   },
   chat: {
     continuePrompt: defaultStoppedTurnContinuePrompt,
     recentChatCacheLimit: 10,
+    displayUsage: 'chatContext',
     hidePlans: false,
+    enableActions: true,
+    enableNotesButton: true,
     updateExistingChats: true,
-    updateNewChats: true
+    updateNewChats: true,
+    ...defaultAppChatDropdownSettings,
+    ...defaultAppChatThoughtSettings
   },
+  performance: defaultAppPerformanceSettings,
   git: {
     commitModel: null,
     commitPrompt: defaultAppGitCommitPromptSettings,
@@ -141,8 +213,23 @@ export const defaultAppSettings: AppSettings = {
 export const isAppThemePreference = (value: unknown): value is AppThemePreference =>
   value === 'system' || value === 'light' || value === 'dark'
 
+const isAppChatUsageDisplay = (value: unknown): value is AppChatUsageDisplay =>
+  value === 'chatContext' || value === 'global'
+
 const isStoredModel = (value: unknown): value is ProviderModelId =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 128
+
+const isStoredReasoningEffort = (value: unknown): value is ProviderReasoningEffort =>
+  typeof value === 'string' && value.trim().length > 0 && value.length <= 64
+
+const getStoredForcedDropdown = <TValue extends string>(
+  value: unknown,
+  isValue: (candidate: unknown) => candidate is TValue
+): typeof appChatManualDropdownValue | TValue =>
+  value === appChatManualDropdownValue || isValue(value) ? value : appChatManualDropdownValue
+
+const getStoredActionId = (value: unknown, actions: AppAction[]): string | null =>
+  typeof value === 'string' && actions.some((action) => action.id === value) ? value : null
 
 const getStoredRecentChatCacheLimit = (value: unknown): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -151,6 +238,23 @@ const getStoredRecentChatCacheLimit = (value: unknown): number => {
 
   return Math.min(Math.max(Math.floor(value), 0), 50)
 }
+
+const getStoredChatBoolean = (
+  chat: Record<string, unknown>,
+  key:
+    | keyof AppChatThoughtSettings
+    | 'enableActions'
+    | 'enableNotesButton'
+    | 'hidePlans'
+    | 'updateExistingChats'
+    | 'updateNewChats'
+): boolean => (typeof chat[key] === 'boolean' ? chat[key] : defaultAppSettings.chat[key])
+
+const getStoredPerformanceBoolean = (
+  performance: Record<string, unknown>,
+  key: keyof AppPerformanceSettings
+): boolean =>
+  typeof performance[key] === 'boolean' ? performance[key] : defaultAppSettings.performance[key]
 
 const readPromptField = (
   storedPrompt: Record<string, unknown>,
@@ -196,6 +300,12 @@ export const readStoredAppSettings = (): AppSettings => {
       parsedValue.chat && typeof parsedValue.chat === 'object' && !Array.isArray(parsedValue.chat)
         ? (parsedValue.chat as Record<string, unknown>)
         : {}
+    const performance =
+      parsedValue.performance &&
+      typeof parsedValue.performance === 'object' &&
+      !Array.isArray(parsedValue.performance)
+        ? (parsedValue.performance as Record<string, unknown>)
+        : {}
     const git =
       parsedValue.git && typeof parsedValue.git === 'object' && !Array.isArray(parsedValue.git)
         ? (parsedValue.git as Record<string, unknown>)
@@ -211,7 +321,11 @@ export const readStoredAppSettings = (): AppSettings => {
         ? (git.commitMessageGeneration as Record<string, unknown>)
         : {}
 
+    const actions = normalizeAppActions(parsedValue.actions)
+
     return {
+      actions,
+      lastActionId: getStoredActionId(parsedValue.lastActionId, actions),
       appearance: {
         theme: isAppThemePreference(appearance.theme)
           ? appearance.theme
@@ -223,16 +337,27 @@ export const readStoredAppSettings = (): AppSettings => {
             ? chat.continuePrompt
             : defaultAppSettings.chat.continuePrompt,
         recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
-        hidePlans:
-          typeof chat.hidePlans === 'boolean' ? chat.hidePlans : defaultAppSettings.chat.hidePlans,
-        updateExistingChats:
-          typeof chat.updateExistingChats === 'boolean'
-            ? chat.updateExistingChats
-            : defaultAppSettings.chat.updateExistingChats,
-        updateNewChats:
-          typeof chat.updateNewChats === 'boolean'
-            ? chat.updateNewChats
-            : defaultAppSettings.chat.updateNewChats
+        displayUsage: isAppChatUsageDisplay(chat.displayUsage)
+          ? chat.displayUsage
+          : defaultAppSettings.chat.displayUsage,
+        hidePlans: getStoredChatBoolean(chat, 'hidePlans'),
+        enableActions: getStoredChatBoolean(chat, 'enableActions'),
+        enableNotesButton: getStoredChatBoolean(chat, 'enableNotesButton'),
+        updateExistingChats: getStoredChatBoolean(chat, 'updateExistingChats'),
+        updateNewChats: getStoredChatBoolean(chat, 'updateNewChats'),
+        forceAccess: getStoredForcedDropdown(chat.forceAccess, isProviderSandboxMode),
+        forceReview: getStoredForcedDropdown(chat.forceReview, isProviderApprovalMode),
+        forceModel: getStoredForcedDropdown(chat.forceModel, isStoredModel),
+        forceReasoning: getStoredForcedDropdown(chat.forceReasoning, isStoredReasoningEffort),
+        forceSpeed: getStoredForcedDropdown(chat.forceSpeed, isProviderServiceTier),
+        expandThoughtsOnStart: getStoredChatBoolean(chat, 'expandThoughtsOnStart'),
+        collapseThoughtsOnFinish: getStoredChatBoolean(chat, 'collapseThoughtsOnFinish'),
+        collapseThoughtsOnNextTurn: getStoredChatBoolean(chat, 'collapseThoughtsOnNextTurn'),
+        expandStoppedTurns: getStoredChatBoolean(chat, 'expandStoppedTurns'),
+        collapseStoppedOnNextTurn: getStoredChatBoolean(chat, 'collapseStoppedOnNextTurn')
+      },
+      performance: {
+        disableShadows: getStoredPerformanceBoolean(performance, 'disableShadows')
       },
       git: {
         commitModel:
@@ -265,14 +390,25 @@ export const readStoredAppSettings = (): AppSettings => {
 export const writeStoredAppSettings = (settings: AppSettings): void => {
   try {
     const storedSettings: {
+      actions?: AppAction[]
+      lastActionId?: string
       appearance?: Partial<AppSettings['appearance']>
       chat?: Partial<AppSettings['chat']>
+      performance?: Partial<AppPerformanceSettings>
       git?: {
         commitModel?: ProviderModelId | null
         commitPrompt?: Partial<AppGitCommitPromptSettings>
         commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
       }
     } = {}
+
+    if (settings.actions.length > 0) {
+      storedSettings.actions = normalizeAppActions(settings.actions)
+    }
+    const storedLastActionId = getStoredActionId(settings.lastActionId, settings.actions)
+    if (storedLastActionId) {
+      storedSettings.lastActionId = storedLastActionId
+    }
 
     if (settings.appearance.theme !== defaultAppSettings.appearance.theme) {
       storedSettings.appearance = {
@@ -287,8 +423,17 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (settings.chat.recentChatCacheLimit !== defaultAppSettings.chat.recentChatCacheLimit) {
       storedChat.recentChatCacheLimit = settings.chat.recentChatCacheLimit
     }
+    if (settings.chat.displayUsage !== defaultAppSettings.chat.displayUsage) {
+      storedChat.displayUsage = settings.chat.displayUsage
+    }
     if (settings.chat.hidePlans !== defaultAppSettings.chat.hidePlans) {
       storedChat.hidePlans = settings.chat.hidePlans
+    }
+    if (settings.chat.enableActions !== defaultAppSettings.chat.enableActions) {
+      storedChat.enableActions = settings.chat.enableActions
+    }
+    if (settings.chat.enableNotesButton !== defaultAppSettings.chat.enableNotesButton) {
+      storedChat.enableNotesButton = settings.chat.enableNotesButton
     }
     if (settings.chat.updateExistingChats !== defaultAppSettings.chat.updateExistingChats) {
       storedChat.updateExistingChats = settings.chat.updateExistingChats
@@ -296,7 +441,52 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (settings.chat.updateNewChats !== defaultAppSettings.chat.updateNewChats) {
       storedChat.updateNewChats = settings.chat.updateNewChats
     }
+    if (settings.chat.forceAccess !== defaultAppSettings.chat.forceAccess) {
+      storedChat.forceAccess = settings.chat.forceAccess
+    }
+    if (settings.chat.forceReview !== defaultAppSettings.chat.forceReview) {
+      storedChat.forceReview = settings.chat.forceReview
+    }
+    if (settings.chat.forceModel !== defaultAppSettings.chat.forceModel) {
+      storedChat.forceModel = settings.chat.forceModel
+    }
+    if (settings.chat.forceReasoning !== defaultAppSettings.chat.forceReasoning) {
+      storedChat.forceReasoning = settings.chat.forceReasoning
+    }
+    if (settings.chat.forceSpeed !== defaultAppSettings.chat.forceSpeed) {
+      storedChat.forceSpeed = settings.chat.forceSpeed
+    }
+    if (settings.chat.expandThoughtsOnStart !== defaultAppSettings.chat.expandThoughtsOnStart) {
+      storedChat.expandThoughtsOnStart = settings.chat.expandThoughtsOnStart
+    }
+    if (
+      settings.chat.collapseThoughtsOnFinish !== defaultAppSettings.chat.collapseThoughtsOnFinish
+    ) {
+      storedChat.collapseThoughtsOnFinish = settings.chat.collapseThoughtsOnFinish
+    }
+    if (
+      settings.chat.collapseThoughtsOnNextTurn !==
+      defaultAppSettings.chat.collapseThoughtsOnNextTurn
+    ) {
+      storedChat.collapseThoughtsOnNextTurn = settings.chat.collapseThoughtsOnNextTurn
+    }
+    if (settings.chat.expandStoppedTurns !== defaultAppSettings.chat.expandStoppedTurns) {
+      storedChat.expandStoppedTurns = settings.chat.expandStoppedTurns
+    }
+    if (
+      settings.chat.collapseStoppedOnNextTurn !== defaultAppSettings.chat.collapseStoppedOnNextTurn
+    ) {
+      storedChat.collapseStoppedOnNextTurn = settings.chat.collapseStoppedOnNextTurn
+    }
     if (Object.keys(storedChat).length > 0) storedSettings.chat = storedChat
+
+    const storedPerformance: Partial<AppPerformanceSettings> = {}
+    if (settings.performance.disableShadows !== defaultAppSettings.performance.disableShadows) {
+      storedPerformance.disableShadows = settings.performance.disableShadows
+    }
+    if (Object.keys(storedPerformance).length > 0) {
+      storedSettings.performance = storedPerformance
+    }
 
     const storedGit: {
       commitModel?: ProviderModelId | null

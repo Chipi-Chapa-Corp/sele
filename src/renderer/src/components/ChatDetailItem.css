@@ -830,8 +830,26 @@
   padding: 0;
 }
 
+.chat-detail__command-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.chat-detail__command-body {
+  min-width: 0;
+  flex: 1;
+}
+
 .chat-detail__activity-content--command pre {
   padding: 12px 14px;
+}
+
+.chat-detail__command-terminal-action {
+  display: flex;
+  flex: none;
+  margin: 4px 4px 0 0;
 }
 
 .chat-detail__command-divider {

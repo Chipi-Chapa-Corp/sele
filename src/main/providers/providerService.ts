@@ -9,6 +9,7 @@ import type {
   ProviderId,
   ProviderReview,
   ProviderUsageOptions,
+  ProviderAgentTerminalDataEvent,
   ProviderWorkingItem,
   ProviderWorkingStep
 } from '../../shared/provider'
@@ -42,6 +43,7 @@ const truncateChatUpdateText = (value: string, limit: number): string =>
   value.length <= limit ? value : `${value.slice(0, limit - 1)}…`
 
 const chatUpdatedListeners = new Set<(event: ProviderChatUpdatedEvent) => void>()
+const agentTerminalDataListeners = new Set<(event: ProviderAgentTerminalDataEvent) => void>()
 
 const normalizeCwd = (cwd: string | null | undefined): string | null => {
   const trimmedCwd = cwd?.trim()
@@ -247,6 +249,15 @@ for (const adapter of Object.values(adapters)) {
         console.error('Unable to apply chat metadata to update', error)
       })
   })
+
+  adapter.onAgentTerminalData((event) => {
+    agentTerminalDataListeners.forEach((listener) =>
+      listener({
+        ...event,
+        providerId: adapter.id
+      })
+    )
+  })
 }
 
 export const providerApi: ProviderApi = {
@@ -256,6 +267,8 @@ export const providerApi: ProviderApi = {
   getApprovalModes: (providerId) => adapters[providerId].getApprovalModes(),
   getSandboxModes: (providerId) => adapters[providerId].getSandboxModes(),
   getModels: (providerId) => adapters[providerId].getModels(),
+  getSkills: (providerId, cwd) => adapters[providerId].getSkills(cwd),
+  getApps: (providerId) => adapters[providerId].getApps(),
   getUsage: (providerId, options?: ProviderUsageOptions) => adapters[providerId].getUsage(options),
   resetRateLimits: (providerId) => adapters[providerId].resetRateLimits(),
   getChats: async (providerId, options) => {
@@ -344,6 +357,10 @@ export const providerApi: ProviderApi = {
       .then((detail) => applyMetadataToDetail(detail)),
   stopChat: (providerId, chatId) =>
     adapters[providerId].stopChat(chatId).then((detail) => applyMetadataToDetail(detail)),
+  writeAgentTerminalInput: (providerId, chatId, processId, data) =>
+    adapters[providerId].writeAgentTerminalInput(chatId, processId, data),
+  resizeAgentTerminal: (providerId, chatId, processId, cols, rows) =>
+    adapters[providerId].resizeAgentTerminal(chatId, processId, cols, rows),
   markChatDone: (_providerId, chatId, done = true) => setChatDone(chatId, done),
   markCwdChatsDone: async (providerId, cwd) =>
     setChatsDone(await collectProviderChatIdsByCwd(providerId, cwd), true),
@@ -354,6 +371,10 @@ export const providerApi: ProviderApi = {
   onChatUpdated: (listener) => {
     chatUpdatedListeners.add(listener)
     return () => chatUpdatedListeners.delete(listener)
+  },
+  onAgentTerminalData: (listener) => {
+    agentTerminalDataListeners.add(listener)
+    return () => agentTerminalDataListeners.delete(listener)
   }
 }
 

@@ -76,6 +76,9 @@ const providerApi: ProviderRendererApi = {
   getSandboxModes: (providerId) =>
     ipcRenderer.invoke(providerIpcChannels.getSandboxModes, providerId),
   getModels: (providerId) => ipcRenderer.invoke(providerIpcChannels.getModels, providerId),
+  getSkills: (providerId, cwd) =>
+    ipcRenderer.invoke(providerIpcChannels.getSkills, providerId, cwd),
+  getApps: (providerId) => ipcRenderer.invoke(providerIpcChannels.getApps, providerId),
   getUsage: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getUsage, providerId, options),
   resetRateLimits: (providerId) =>
@@ -155,6 +158,23 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.stopChat, providerId, chatId),
   stopChatSummary: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.stopChatSummary, providerId, chatId),
+  writeAgentTerminalInput: (providerId, chatId, processId, data) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.writeAgentTerminalInput,
+      providerId,
+      chatId,
+      processId,
+      data
+    ),
+  resizeAgentTerminal: (providerId, chatId, processId, cols, rows) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.resizeAgentTerminal,
+      providerId,
+      chatId,
+      processId,
+      cols,
+      rows
+    ),
   markChatDone: (providerId, chatId, done) =>
     ipcRenderer.invoke(providerIpcChannels.markChatDone, providerId, chatId, done),
   markCwdChatsDone: (providerId, cwd) =>
@@ -185,11 +205,24 @@ const providerApi: ProviderRendererApi = {
       ipcRenderer.removeListener(providerIpcChannels.chatUpdated, handleChatUpdated)
       ipcRenderer.send(providerIpcChannels.chatUpdatesStopped)
     }
+  },
+  onAgentTerminalData: (listener): (() => void) => {
+    const handleAgentTerminalData = (
+      _: IpcRendererEvent,
+      event: Parameters<typeof listener>[0]
+    ): void => {
+      listener(event)
+    }
+
+    ipcRenderer.on(providerIpcChannels.agentTerminalData, handleAgentTerminalData)
+    return () =>
+      ipcRenderer.removeListener(providerIpcChannels.agentTerminalData, handleAgentTerminalData)
   }
 }
 
 const terminalApi: TerminalRendererApi = {
   createSession: (options) => ipcRenderer.invoke(terminalIpcChannels.createSession, options),
+  runCommand: (options) => ipcRenderer.invoke(terminalIpcChannels.runCommand, options),
   write: (sessionId, data) => ipcRenderer.send(terminalIpcChannels.write, sessionId, data),
   resize: (sessionId, cols, rows) =>
     ipcRenderer.send(terminalIpcChannels.resize, sessionId, cols, rows),

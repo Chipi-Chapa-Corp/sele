@@ -13,6 +13,7 @@ export const providerReasoningEfforts = ['low', 'medium', 'high', 'xhigh'] as co
 export type ProviderId = (typeof providerIds)[number]
 export type ProviderModelId = string
 export type ProviderReasoningEffort = string
+export type ProviderServiceTier = string
 export type ProviderApprovalPolicy = 'on-request' | 'on-failure' | 'never'
 export type ProviderApprovalsReviewer = 'user' | 'auto_review'
 export type ProviderApprovalMode = 'ask-user' | 'auto-review' | 'never'
@@ -40,6 +41,13 @@ export type ProviderReasoningEffortOption = {
   isDefault: boolean
 }
 
+export type ProviderServiceTierOption = {
+  id: ProviderServiceTier
+  label: string
+  description: string
+  isDefault: boolean
+}
+
 export type ProviderModel = {
   id: ProviderModelId
   label: string
@@ -47,6 +55,27 @@ export type ProviderModel = {
   isDefault: boolean
   supportedReasoningEfforts: ProviderReasoningEffortOption[]
   defaultReasoningEffort: ProviderReasoningEffort
+  supportedServiceTiers?: ProviderServiceTierOption[]
+  defaultServiceTier?: ProviderServiceTier | null
+}
+
+export type ProviderSkillScope = 'user' | 'repo' | 'system' | 'admin'
+
+export type ProviderSkill = {
+  name: string
+  description: string
+  shortDescription: string | null
+  displayName: string | null
+  path: string
+  scope: ProviderSkillScope
+  enabled: boolean
+}
+
+export type ProviderApp = {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
 }
 
 const providerReasoningEffortDescriptions = {
@@ -55,6 +84,13 @@ const providerReasoningEffortDescriptions = {
   high: 'Greater reasoning depth for complex problems',
   xhigh: 'Extra high reasoning depth for complex problems'
 } satisfies Record<(typeof providerReasoningEfforts)[number], string>
+
+const fallbackFastServiceTier: ProviderServiceTierOption = {
+  id: 'fast',
+  label: 'Fast',
+  description: 'Faster responses with higher credit usage',
+  isDefault: false
+}
 
 export const fallbackProviderModels: ProviderModel[] = [
   {
@@ -68,7 +104,9 @@ export const fallbackProviderModels: ProviderModel[] = [
       description: providerReasoningEffortDescriptions[reasoningEffort],
       isDefault: reasoningEffort === 'low'
     })),
-    defaultReasoningEffort: 'low'
+    defaultReasoningEffort: 'low',
+    supportedServiceTiers: [fallbackFastServiceTier],
+    defaultServiceTier: null
   },
   {
     id: 'gpt-5.6-terra',
@@ -81,7 +119,9 @@ export const fallbackProviderModels: ProviderModel[] = [
       description: providerReasoningEffortDescriptions[reasoningEffort],
       isDefault: reasoningEffort === 'medium'
     })),
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    supportedServiceTiers: [fallbackFastServiceTier],
+    defaultServiceTier: null
   },
   {
     id: 'gpt-5.6-luna',
@@ -94,7 +134,9 @@ export const fallbackProviderModels: ProviderModel[] = [
       description: providerReasoningEffortDescriptions[reasoningEffort],
       isDefault: reasoningEffort === 'medium'
     })),
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    supportedServiceTiers: [fallbackFastServiceTier],
+    defaultServiceTier: null
   },
   {
     id: 'gpt-5.5',
@@ -107,7 +149,9 @@ export const fallbackProviderModels: ProviderModel[] = [
       description: providerReasoningEffortDescriptions[reasoningEffort],
       isDefault: reasoningEffort === 'medium'
     })),
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    supportedServiceTiers: [fallbackFastServiceTier],
+    defaultServiceTier: null
   },
   {
     id: 'gpt-5.4',
@@ -120,7 +164,9 @@ export const fallbackProviderModels: ProviderModel[] = [
       description: providerReasoningEffortDescriptions[reasoningEffort],
       isDefault: reasoningEffort === 'medium'
     })),
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    supportedServiceTiers: [fallbackFastServiceTier],
+    defaultServiceTier: null
   },
   {
     id: 'gpt-5.4-mini',
@@ -412,6 +458,22 @@ export type ProviderToolImage = {
   path: string
 }
 
+export type ProviderAgentTerminalTarget = {
+  turnId: string
+  itemId: string
+  processId: string
+}
+
+export type ProviderAgentTerminalDataEvent = {
+  providerId: ProviderId
+  chatId: string
+  turnId: string
+  itemId: string
+  processId: string | null
+  source: 'output' | 'input'
+  data: string
+}
+
 export type ProviderWorkingTool = {
   type: 'tool'
   id: string
@@ -421,6 +483,9 @@ export type ProviderWorkingTool = {
   icon: ProviderToolIcon | null
   label: string
   command: string | null
+  agentTerminal: ProviderAgentTerminalTarget | null
+  agentTerminalDisabledReason: string | null
+  cwd: string | null
   stdout: string | null
   diffs: ProviderFileDiff[]
   backgroundSessionId: string | null
@@ -529,6 +594,16 @@ export type ProviderFileInput = {
   path: string
 }
 
+export type ProviderSkillInput = {
+  name: string
+  path: string
+}
+
+export type ProviderAppInput = {
+  id: string
+  name: string
+}
+
 export type ProviderTurnOptions = {
   approvalPolicy: ProviderApprovalPolicy
   approvalsReviewer: ProviderApprovalsReviewer
@@ -537,8 +612,10 @@ export type ProviderTurnOptions = {
   images?: ProviderImageInput[]
   model: ProviderModelId
   reasoningEffort: ProviderReasoningEffort
+  serviceTier: ProviderServiceTier | null
   review?: ProviderReview
   sandboxMode: ProviderSandboxMode
+  skills?: ProviderSkillInput[]
 }
 
 export type ProviderOneShotOptions = ProviderTurnOptions & {
@@ -554,6 +631,8 @@ export type ProviderApi = {
   getApprovalModes: (providerId: ProviderId) => Promise<ProviderApprovalModeOption[]>
   getSandboxModes: (providerId: ProviderId) => Promise<ProviderSandboxModeOption[]>
   getModels: (providerId: ProviderId) => Promise<ProviderModel[]>
+  getSkills: (providerId: ProviderId, cwd?: string | null) => Promise<ProviderSkill[]>
+  getApps: (providerId: ProviderId) => Promise<ProviderApp[]>
   getUsage: (
     providerId: ProviderId,
     options?: ProviderUsageOptions
@@ -623,6 +702,19 @@ export type ProviderApi = {
     decision: ProviderApprovalDecision
   ) => Promise<ProviderChatDetail>
   stopChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
+  writeAgentTerminalInput: (
+    providerId: ProviderId,
+    chatId: string,
+    processId: string,
+    data: string
+  ) => Promise<void>
+  resizeAgentTerminal: (
+    providerId: ProviderId,
+    chatId: string,
+    processId: string,
+    cols: number,
+    rows: number
+  ) => Promise<void>
   markChatDone: (
     providerId: ProviderId,
     chatId: string,
@@ -646,9 +738,10 @@ export type ProviderApi = {
     pinned: boolean
   ) => Promise<ProviderChatMetadata>
   onChatUpdated: (listener: (event: ProviderChatUpdatedEvent) => void) => () => void
+  onAgentTerminalData: (listener: (event: ProviderAgentTerminalDataEvent) => void) => () => void
 }
 
-export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
+export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated' | 'onAgentTerminalData'> & {
   continueChatSummary: (
     providerId: ProviderId,
     chatId: string,
@@ -666,6 +759,7 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
   setViewedChat: (providerId: ProviderId | null, chatId: string | null) => void
   acknowledgeChatUpdate: (sequence: number, detailApplied: boolean) => void
   onChatUpdated: (listener: (event: ProviderWindowChatUpdatedEvent) => void) => () => void
+  onAgentTerminalData: (listener: (event: ProviderAgentTerminalDataEvent) => void) => () => void
 }
 
 export const providerIpcChannels = {
@@ -675,6 +769,8 @@ export const providerIpcChannels = {
   getApprovalModes: 'provider:get-approval-modes',
   getSandboxModes: 'provider:get-sandbox-modes',
   getModels: 'provider:get-models',
+  getSkills: 'provider:get-skills',
+  getApps: 'provider:get-apps',
   getUsage: 'provider:get-usage',
   resetRateLimits: 'provider:reset-rate-limits',
   getChats: 'provider:get-chats',
@@ -691,6 +787,9 @@ export const providerIpcChannels = {
   editMessage: 'provider:edit-message',
   resolveApproval: 'provider:resolve-approval',
   stopChat: 'provider:stop-chat',
+  writeAgentTerminalInput: 'provider:write-agent-terminal-input',
+  resizeAgentTerminal: 'provider:resize-agent-terminal',
+  agentTerminalData: 'provider:agent-terminal-data',
   markChatDone: 'provider:mark-chat-done',
   markCwdChatsDone: 'provider:mark-cwd-chats-done',
   getCwdNotes: 'provider:get-cwd-notes',
@@ -730,3 +829,6 @@ export const isProviderModelId = (value: unknown): value is ProviderModelId =>
 
 export const isProviderReasoningEffort = (value: unknown): value is ProviderReasoningEffort =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 64
+
+export const isProviderServiceTier = (value: unknown): value is ProviderServiceTier =>
+  typeof value === 'string' && value.trim().length > 0 && value.length <= 128

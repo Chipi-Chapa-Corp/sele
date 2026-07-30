@@ -4,6 +4,7 @@ import type {
   ProviderModel,
   ProviderMessageAttachment,
   ProviderReasoningEffortOption,
+  ProviderServiceTierOption,
   ProviderChatListOptions,
   ProviderChatPage,
   ProviderChatDetail,
@@ -11,6 +12,7 @@ import type {
   ProviderCapabilities,
   ProviderLoginResult,
   ProviderActiveSendMode,
+  ProviderAgentTerminalDataEvent,
   ProviderApprovalDecision,
   ProviderPendingApproval,
   ProviderPendingMessage,
@@ -26,6 +28,8 @@ import type {
   ProviderUpdateAvailability,
   ProviderApprovalModeOption,
   ProviderSandboxModeOption,
+  ProviderApp,
+  ProviderSkill,
   ProviderTurnOptions,
   ProviderOneShotOptions
 } from '../../../shared/provider'
@@ -93,6 +97,12 @@ type CodexReasoningEffortOption = {
   description?: string | null
 }
 
+type CodexServiceTierOption = {
+  id: string
+  name?: string
+  description?: string
+}
+
 type CodexModel = {
   id: string
   model?: string
@@ -101,12 +111,44 @@ type CodexModel = {
   hidden?: boolean
   supportedReasoningEfforts?: CodexReasoningEffortOption[]
   defaultReasoningEffort?: string
+  additionalSpeedTiers?: string[]
+  serviceTiers?: CodexServiceTierOption[]
+  defaultServiceTier?: string | null
   isDefault?: boolean
 }
 
 type ModelListResponse = {
   data: CodexModel[]
   nextCursor: string | null
+}
+
+type CodexSkillMetadata = {
+  name: string
+  description?: string
+  shortDescription?: string
+  interface?: {
+    displayName?: string
+    shortDescription?: string
+  }
+  path?: string | null
+  scope?: ProviderSkill['scope']
+  enabled?: boolean
+}
+
+type SkillsListResponse = {
+  data: Array<{
+    cwd: string
+    skills: CodexSkillMetadata[]
+  }>
+}
+
+type AppsInstalledResponse = {
+  apps: Array<{
+    id: string
+    runtimeName?: string | null
+    enabled: boolean
+    callable: boolean
+  }>
 }
 
 type AccountUsageResponse = {
@@ -164,6 +206,7 @@ type CodexThreadAccessOptions = {
 
 type CodexThreadModelOptions = {
   model: ProviderTurnOptions['model']
+  serviceTier: ProviderTurnOptions['serviceTier']
 }
 
 type CodexTurnAccessOptions = {
@@ -178,6 +221,7 @@ type CodexTurnAccessOptions = {
 type CodexTurnModelOptions = {
   model: ProviderTurnOptions['model']
   reasoningEffort: ProviderTurnOptions['reasoningEffort']
+  serviceTier: ProviderTurnOptions['serviceTier']
 }
 
 type ThreadNotificationParams = {
@@ -215,6 +259,11 @@ type FileChangePatchParams = {
   turnId?: unknown
   itemId?: unknown
   changes?: unknown
+}
+
+type TerminalInteractionParams = AgentMessageDeltaParams & {
+  processId?: unknown
+  stdin?: unknown
 }
 
 type RawResponseItemParams = {
@@ -640,17 +689,14 @@ const mergeStructuredAndRolloutTurns = (
   if (structuredTurns.length === 0) return rolloutTurns
   if (rolloutTurns.length === 0) return structuredTurns
 
-  const structuredTurnsById = new Map(structuredTurns.map((turn) => [turn.id, turn]))
-  const usedStructuredTurnIds = new Set<string>()
-  const mergedTurns = rolloutTurns.map((rolloutTurn) => {
-    const structuredTurn = structuredTurnsById.get(rolloutTurn.id)
-    if (!structuredTurn) return rolloutTurn
+  // Rollout is append-only and can still contain turns removed by message edits. Use it
+  // to enrich the current structured turns, but do not resurrect rollout-only turns.
+  const rolloutTurnsById = new Map(rolloutTurns.map((turn) => [turn.id, turn]))
 
-    usedStructuredTurnIds.add(structuredTurn.id)
-    return mergeStructuredAndRolloutTurn(structuredTurn, rolloutTurn)
+  return structuredTurns.map((structuredTurn) => {
+    const rolloutTurn = rolloutTurnsById.get(structuredTurn.id)
+    return rolloutTurn ? mergeStructuredAndRolloutTurn(structuredTurn, rolloutTurn) : structuredTurn
   })
-
-  return [...mergedTurns, ...structuredTurns.filter((turn) => !usedStructuredTurnIds.has(turn.id))]
 }
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1_000)
@@ -778,7 +824,8 @@ const createUserTextInput = (
 const createUserInput = (
   text: string,
   images: ProviderTurnOptions['images'] = [],
-  files: ProviderTurnOptions['files'] = []
+  files: ProviderTurnOptions['files'] = [],
+  skills: ProviderTurnOptions['skills'] = []
 ): CodexUserInput[] => {
   const fileAttachmentText = (files ?? [])
     .map((file) => createCodexFileAttachmentInput(file.path))
@@ -792,12 +839,17 @@ const createUserInput = (
     ...(images ?? []).map((image) => ({
       type: 'localImage' as const,
       path: image.path
+    })),
+    ...(skills ?? []).map((skill) => ({
+      type: 'skill' as const,
+      name: skill.name,
+      path: skill.path
     }))
   ]
 }
 
 const hasAttachmentInput = (options?: ProviderTurnOptions): boolean =>
-  Boolean(options?.images?.length || options?.files?.length)
+  Boolean(options?.images?.length || options?.files?.length || options?.skills?.length)
 
 const getMessageAttachments = (
   options?: ProviderTurnOptions
@@ -928,6 +980,21 @@ const mapCodexReasoningEffort = (
   }
 }
 
+const mapCodexServiceTier = (
+  option: CodexServiceTierOption,
+  defaultServiceTier: string | null
+): ProviderServiceTierOption | null => {
+  const id = option.id.trim()
+  if (!id) return null
+
+  return {
+    id,
+    label: option.name?.trim() || normalizeReasoningEffortLabel(id),
+    description: option.description?.trim() ?? '',
+    isDefault: id === defaultServiceTier
+  }
+}
+
 const mapCodexModel = (model: CodexModel): ProviderModel | null => {
   const id = model.id.trim()
   if (!id || model.hidden) return null
@@ -937,6 +1004,17 @@ const mapCodexModel = (model: CodexModel): ProviderModel | null => {
     model.supportedReasoningEfforts
       ?.map((option) => mapCodexReasoningEffort(option, defaultReasoningEffort))
       .filter((option): option is ProviderReasoningEffortOption => Boolean(option)) ?? []
+  const defaultServiceTier = model.defaultServiceTier?.trim() || null
+  const catalogServiceTiers =
+    model.serviceTiers ??
+    model.additionalSpeedTiers?.map((id) => ({
+      id,
+      name: normalizeReasoningEffortLabel(id)
+    })) ??
+    []
+  const supportedServiceTiers = catalogServiceTiers
+    .map((option) => mapCodexServiceTier(option, defaultServiceTier))
+    .filter((option): option is ProviderServiceTierOption => Boolean(option))
 
   return {
     id,
@@ -944,7 +1022,9 @@ const mapCodexModel = (model: CodexModel): ProviderModel | null => {
     description: model.description?.trim() ?? '',
     isDefault: Boolean(model.isDefault),
     supportedReasoningEfforts,
-    defaultReasoningEffort
+    defaultReasoningEffort,
+    supportedServiceTiers,
+    defaultServiceTier
   }
 }
 
@@ -959,12 +1039,14 @@ const getSandboxMode = (options?: ProviderTurnOptions): ProviderTurnOptions['san
   options?.sandboxMode ?? 'workspace-write'
 
 const getThreadModelOptions = (options?: ProviderTurnOptions): CodexThreadModelOptions => ({
-  model: options?.model ?? 'gpt-5.5'
+  model: options?.model ?? 'gpt-5.5',
+  serviceTier: options?.serviceTier ?? null
 })
 
 const getTurnModelOptions = (options?: ProviderTurnOptions): CodexTurnModelOptions => ({
   model: options?.model ?? 'gpt-5.5',
-  reasoningEffort: options?.reasoningEffort ?? 'xhigh'
+  reasoningEffort: options?.reasoningEffort ?? 'xhigh',
+  serviceTier: options?.serviceTier ?? null
 })
 
 const getThreadAccessOptions = (options?: ProviderTurnOptions): CodexThreadAccessOptions => {
@@ -1007,6 +1089,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
+  private agentTerminalDataListeners = new Set<(event: ProviderAgentTerminalDataEvent) => void>()
   private threads = new Map<string, CodexThread>()
   private pendingTurnIds = new Map<string, string>()
   private activeTurnIds = new Map<string, string>()
@@ -1094,6 +1177,69 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     return models.length > 0 ? models : fallbackProviderModels
+  }
+
+  getSkills = async (cwd?: string | null): Promise<ProviderSkill[]> => {
+    try {
+      await this.client.request('plugin/list', {
+        ...(cwd ? { cwds: [cwd] } : {}),
+        forceRefetch: false
+      })
+    } catch {
+      // Local and system skills remain available when plugin discovery is unavailable.
+    }
+
+    const response = await this.client.request<SkillsListResponse>('skills/list', {
+      ...(cwd ? { cwds: [cwd] } : {}),
+      forceReload: true
+    })
+    const entry = cwd
+      ? (response.data.find((candidate) => candidate.cwd === cwd) ?? response.data[0])
+      : response.data[0]
+
+    return (entry?.skills ?? [])
+      .flatMap((skill): ProviderSkill[] => {
+        const name = skill.name.trim()
+        const path = skill.path?.trim()
+        if (!name || !path || skill.enabled === false) return []
+
+        return [
+          {
+            name,
+            description: skill.description?.trim() ?? '',
+            shortDescription:
+              skill.interface?.shortDescription?.trim() || skill.shortDescription?.trim() || null,
+            displayName: skill.interface?.displayName?.trim() || null,
+            path,
+            scope: skill.scope ?? 'user',
+            enabled: true
+          }
+        ]
+      })
+      .sort((firstSkill, secondSkill) => firstSkill.name.localeCompare(secondSkill.name))
+  }
+
+  getApps = async (): Promise<ProviderApp[]> => {
+    const response = await this.client.request<AppsInstalledResponse>('app/installed', {
+      forceRefresh: false
+    })
+
+    return response.apps
+      .flatMap((app): ProviderApp[] => {
+        const id = app.id.trim()
+        const name = app.runtimeName?.trim()
+        if (!id || !name || !app.enabled || !app.callable) return []
+
+        return [
+          {
+            id,
+            name,
+            description: 'Connected app',
+            enabled: true
+          }
+        ]
+      })
+      .sort((firstApp, secondApp) => firstApp.name.localeCompare(secondApp.name))
   }
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
@@ -1257,6 +1403,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
         cwd: options?.cwd,
         model: options?.model,
+        serviceTier: options?.serviceTier ?? null,
         approvalPolicy: 'never',
         sandbox: 'read-only',
         config: {
@@ -1293,6 +1440,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         sandboxPolicy: { type: 'readOnly', networkAccess: false },
         model: options?.model,
         effort: options?.reasoningEffort,
+        serviceTier: options?.serviceTier ?? null,
         summary: null
       })
       if (generation) generation.turnId = startedTurn.turn.id
@@ -1393,7 +1541,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const startedTurn = await this.client.request<TurnStartResponse>('turn/start', {
         threadId: thread.id,
         cwd: options?.cwd,
-        input: createUserInput(text, options?.images, options?.files),
+        input: createUserInput(text, options?.images, options?.files, options?.skills),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -1434,7 +1582,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       const started = await this.client.request<TurnStartResponse>('turn/start', {
         threadId: chatId,
-        input: createUserInput(text, options?.images, options?.files),
+        input: createUserInput(text, options?.images, options?.files, options?.skills),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -1498,7 +1646,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     try {
       const started = await this.client.request<TurnStartResponse>('turn/start', {
         threadId: forkedThread.id,
-        input: createUserInput(text, options?.images, options?.files),
+        input: createUserInput(text, options?.images, options?.files, options?.skills),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -1647,7 +1795,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     try {
       const started = await this.client.request<TurnStartResponse>('turn/start', {
         threadId: chatId,
-        input: createUserInput(text, options?.images, options?.files),
+        input: createUserInput(text, options?.images, options?.files, options?.skills),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -1697,11 +1845,46 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
+  writeAgentTerminalInput = async (
+    chatId: string,
+    processId: string,
+    data: string
+  ): Promise<void> => {
+    void data
+
+    if (!this.hasAgentTerminalProcess(chatId, processId)) {
+      throw new Error('Agent terminal is no longer available')
+    }
+
+    throw new Error(
+      'Codex app-server does not expose stdin control for agent commandExecution processes'
+    )
+  }
+
+  resizeAgentTerminal = async (
+    chatId: string,
+    processId: string,
+    cols: number,
+    rows: number
+  ): Promise<void> => {
+    void cols
+    void rows
+
+    if (!this.hasAgentTerminalProcess(chatId, processId)) return
+  }
+
   onChatUpdated = (
     listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   ): (() => void) => {
     this.chatUpdatedListeners.add(listener)
     return () => this.chatUpdatedListeners.delete(listener)
+  }
+
+  onAgentTerminalData = (
+    listener: (event: ProviderAgentTerminalDataEvent) => void
+  ): (() => void) => {
+    this.agentTerminalDataListeners.add(listener)
+    return () => this.agentTerminalDataListeners.delete(listener)
   }
 
   dispose = (): void => {
@@ -1715,6 +1898,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationIds.clear()
     this.canceledOneShotGenerationTimers.forEach((timer) => clearTimeout(timer))
     this.canceledOneShotGenerationTimers.clear()
+    this.agentTerminalDataListeners.clear()
     this.steeringMessagesByThread.clear()
     this.hiddenPendingMessageIdsByThread.clear()
     this.queuedTurnsByThread.clear()
@@ -1810,7 +1994,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
             input: createUserInput(
               steeringMessage.text,
               steeringMessage.options?.images,
-              steeringMessage.options?.files
+              steeringMessage.options?.files,
+              steeringMessage.options?.skills
             )
           })
           const acceptedTurnId = getSteerResponseTurnId(response) ?? expectedTurnId
@@ -1897,7 +2082,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const started = await this.client.request<TurnStartResponse>('turn/start', {
       threadId: chatId,
-      input: createUserInput(text, options?.images, options?.files),
+      input: createUserInput(text, options?.images, options?.files, options?.skills),
       ...getTurnModelOptions(options),
       ...getTurnAccessOptions(options)
     })
@@ -2433,7 +2618,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       {
         type: 'userMessage',
         id: `${turnId}:user`,
-        content: createUserInput(text, options?.images, options?.files)
+        content: createUserInput(text, options?.images, options?.files, options?.skills)
       }
     ]
   })
@@ -2920,6 +3105,37 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return this.activeTurnIds.get(threadId) ?? null
   }
 
+  private getAgentTerminalItem = (
+    threadId: string,
+    turnId: string,
+    itemId: string
+  ): CodexThreadItem | null =>
+    this.threads
+      .get(threadId)
+      ?.turns.find((turn) => turn.id === turnId)
+      ?.items.find((item) => item.id === itemId) ?? null
+
+  private hasAgentTerminalProcess = (threadId: string, processId: string): boolean =>
+    Boolean(
+      this.threads
+        .get(threadId)
+        ?.turns.some((turn) =>
+          turn.items.some(
+            (item) => item.type === 'commandExecution' && item.processId === processId
+          )
+        )
+    )
+
+  private emitAgentTerminalData = (
+    event: Omit<ProviderAgentTerminalDataEvent, 'providerId'>
+  ): void => {
+    const providerEvent = {
+      ...event,
+      providerId: this.id
+    }
+    this.agentTerminalDataListeners.forEach((listener) => listener(providerEvent))
+  }
+
   private markTurnInterrupted = (threadId: string, turnId: string): void => {
     this.updateThread(threadId, (thread) => ({
       ...thread,
@@ -2945,10 +3161,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       next.content && next.content.length > 0 ? next.content : (previous.content ?? next.content),
     text: next.text ?? previous.text,
     command: next.command ?? previous.command,
+    processId: next.processId ?? previous.processId,
     server: next.server ?? previous.server,
     tool: next.tool ?? previous.tool,
     namespace: next.namespace ?? previous.namespace,
     query: next.query ?? previous.query,
+    cwd: next.cwd ?? previous.cwd,
     aggregatedOutput: next.aggregatedOutput ?? previous.aggregatedOutput,
     result: next.result ?? previous.result,
     error: next.error ?? previous.error,
@@ -3394,7 +3612,34 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       return item
     })
+    const item = this.getAgentTerminalItem(threadId, turnId, itemId)
+    this.emitAgentTerminalData({
+      chatId: threadId,
+      turnId,
+      itemId,
+      processId: item?.processId ?? null,
+      source: 'output',
+      data: delta
+    })
     this.scheduleChatUpdated(threadId)
+  }
+
+  private handleTerminalInteraction = (params: TerminalInteractionParams): void => {
+    const threadId = getThreadId(params)
+    const turnId = getTurnId(params)
+    const itemId = getItemId(params)
+    const processId = getOptionalStringValue(params.processId)
+    const stdin = typeof params.stdin === 'string' ? params.stdin : null
+    if (!threadId || !turnId || !itemId || stdin == null) return
+
+    this.emitAgentTerminalData({
+      chatId: threadId,
+      turnId,
+      itemId,
+      processId,
+      source: 'input',
+      data: stdin
+    })
   }
 
   private handleFileChangePatchUpdated = (params: FileChangePatchParams): void => {
@@ -3608,6 +3853,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (notification.method === 'item/commandExecution/outputDelta') {
       this.handleCommandOutputDelta(params as AgentMessageDeltaParams)
+      return
+    }
+
+    if (notification.method === 'item/commandExecution/terminalInteraction') {
+      this.handleTerminalInteraction(params as TerminalInteractionParams)
       return
     }
 

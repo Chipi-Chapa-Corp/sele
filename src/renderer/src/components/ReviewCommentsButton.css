@@ -118,12 +118,9 @@ button.review-comments-menu__file:focus-visible {
 
 .review-comments-menu__comment {
   appearance: none;
-  display: flex;
+  display: block;
   width: 100%;
   min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
   padding: 9px 10px;
   border: 0;
   border-top: 1px solid var(--menu-border);
@@ -150,13 +147,14 @@ button.review-comments-menu__file:focus-visible {
 }
 
 .review-comments-menu__location {
-  color: var(--quiet);
-  font-size: 0.82em;
-  font-weight: 600;
+  white-space: nowrap;
+}
+
+.review-comments-menu__separator {
+  padding: 0 0.32em;
 }
 
 .review-comments-menu__text {
-  min-width: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }

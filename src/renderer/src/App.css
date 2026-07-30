@@ -920,7 +920,8 @@
 
 .settings-dialog {
   display: grid;
-  width: min(920px, calc(100vw - 40px));
+  width: min(960px, calc(100vw - 40px));
+  min-width: min(760px, calc(100vw - 40px));
   max-height: min(900px, calc(100vh - 40px));
   min-height: 560px;
   grid-template-rows: auto minmax(0, 1fr);
@@ -962,7 +963,8 @@
 }
 
 .settings-dialog__tabs {
-  width: min(100%, 520px);
+  width: min(100%, 680px);
+  min-width: min(100%, 620px);
   justify-self: center;
 }
 
@@ -987,6 +989,11 @@
 }
 
 .settings-dialog__section + .settings-dialog__section {
+  margin-top: 24px;
+}
+
+.settings-dialog__field + .settings-dialog__section,
+.settings-dialog__section + .settings-dialog__field {
   margin-top: 24px;
 }
 

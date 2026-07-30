@@ -116,7 +116,8 @@
   height: 100%;
 }
 
-.editable-unified-diff__review-line-highlight {
+.editable-unified-diff__review-line-highlight,
+.editable-unified-diff__target-line-highlight {
   background: var(--accent-soft);
   box-shadow: inset 3px 0 var(--accent);
 }

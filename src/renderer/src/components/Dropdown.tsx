@@ -2,6 +2,7 @@ import { Check, ChevronDown } from 'lucide-react'
 import {
   type CSSProperties,
   type ReactNode,
+  type SetStateAction,
   useEffect,
   useId,
   useMemo,
@@ -9,6 +10,7 @@ import {
   useState
 } from 'react'
 import { createPortal } from 'react-dom'
+import { MenuSurface } from './MenuSurface'
 import './Dropdown.css'
 
 export type DropdownOption<TValue extends string = string> = {
@@ -35,6 +37,9 @@ type DropdownSize = 'normal' | 'small' | 'large'
 type DropdownValueDisplay = 'label' | 'icon'
 
 type DropdownProps<TValue extends string = string> = {
+  activeIndex?: number
+  className?: string
+  emptyContent?: ReactNode
   id?: string
   appearance?: DropdownAppearance
   disabled?: boolean
@@ -42,6 +47,8 @@ type DropdownProps<TValue extends string = string> = {
   icon?: ReactNode
   menuAlign?: DropdownMenuAlign
   menuActions?: readonly DropdownMenuAction[]
+  menuOnly?: boolean
+  listboxId?: string
   options: readonly DropdownOption<TValue>[]
   placement?: 'bottom' | 'top'
   size?: DropdownSize
@@ -49,6 +56,7 @@ type DropdownProps<TValue extends string = string> = {
   value: TValue
   valueDisplay?: DropdownValueDisplay
   'aria-label'?: string
+  onActiveIndexChange?: (index: number) => void
   onChange: (value: TValue) => void
 }
 
@@ -71,6 +79,9 @@ const getOptionClassName = (
     .join(' ')
 
 export const Dropdown = <TValue extends string>({
+  activeIndex: controlledActiveIndex,
+  className,
+  emptyContent = null,
   id,
   appearance = 'glass',
   disabled = false,
@@ -78,6 +89,8 @@ export const Dropdown = <TValue extends string>({
   icon = null,
   menuAlign = 'start',
   menuActions = [],
+  menuOnly = false,
+  listboxId: providedListboxId,
   options,
   placement = 'bottom',
   size = 'normal',
@@ -85,25 +98,33 @@ export const Dropdown = <TValue extends string>({
   value,
   valueDisplay = 'label',
   'aria-label': ariaLabel,
+  onActiveIndexChange,
   onChange
 }: DropdownProps<TValue>): React.ReactElement => {
   const reactId = useId().replace(/:/g, '')
   const buttonId = id ?? `dropdown-${reactId}`
-  const listboxId = `${buttonId}-listbox`
+  const listboxId = providedListboxId ?? `${buttonId}-listbox`
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const pointerActivatedIndexRef = useRef<number | null>(null)
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
   const [inFloatingPane, setInFloatingPane] = useState(false)
   const selectedIndex = options.findIndex((option) => option.value === value)
   const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null
   const selectedIcon = icon ?? selectedOption?.icon
-  const [activeIndex, setActiveIndex] = useState(selectedIndex)
-  const menuOpen = open && !disabled
+  const [internalActiveIndex, setInternalActiveIndex] = useState(selectedIndex)
+  const activeIndex = controlledActiveIndex ?? internalActiveIndex
+  const menuOpen = (menuOnly || open) && !disabled
   const optionsHaveIcons = options.some((option) => Boolean(option.icon))
   const optionsHaveDescriptions = options.some((option) => Boolean(option.description))
   const enabledMenuActionCount = menuActions.filter((action) => !action.disabled).length
+  const updateActiveIndex = (nextIndex: SetStateAction<number>): void => {
+    const resolvedIndex = typeof nextIndex === 'function' ? nextIndex(activeIndex) : nextIndex
+    if (controlledActiveIndex === undefined) setInternalActiveIndex(resolvedIndex)
+    onActiveIndexChange?.(resolvedIndex)
+  }
 
   const enabledIndexes = useMemo(
     () =>
@@ -119,7 +140,7 @@ export const Dropdown = <TValue extends string>({
   }, [])
 
   useEffect(() => {
-    if (!menuOpen) return
+    if (!menuOpen || menuOnly) return
 
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target as Node
@@ -133,10 +154,36 @@ export const Dropdown = <TValue extends string>({
     document.addEventListener('pointerdown', handlePointerDown)
 
     return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [menuOpen])
+  }, [menuOnly, menuOpen])
 
   useEffect(() => {
-    if (!menuOpen) return
+    if (!menuOpen || activeIndex < 0) return
+    if (pointerActivatedIndexRef.current === activeIndex) {
+      pointerActivatedIndexRef.current = null
+      return
+    }
+    pointerActivatedIndexRef.current = null
+
+    const frame = window.requestAnimationFrame(() => {
+      const menu = menuRef.current?.querySelector<HTMLElement>('.ui-dropdown__menu')
+      const activeOption = menu?.querySelector<HTMLElement>(`#${listboxId}-option-${activeIndex}`)
+      if (!menu || !activeOption) return
+
+      const menuBounds = menu.getBoundingClientRect()
+      const optionBounds = activeOption.getBoundingClientRect()
+      const scrollPadding = 7
+      if (optionBounds.top < menuBounds.top + scrollPadding) {
+        menu.scrollTop -= menuBounds.top + scrollPadding - optionBounds.top
+      } else if (optionBounds.bottom > menuBounds.bottom - scrollPadding) {
+        menu.scrollTop += optionBounds.bottom - menuBounds.bottom + scrollPadding
+      }
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeIndex, listboxId, menuOpen, options.length])
+
+  useEffect(() => {
+    if (!menuOpen || menuOnly) return
 
     const closeMenu = (): void => {
       setOpen(false)
@@ -162,7 +209,7 @@ export const Dropdown = <TValue extends string>({
       window.removeEventListener('resize', closeMenu)
       window.removeEventListener('scroll', handleScroll, true)
     }
-  }, [menuOpen])
+  }, [menuOnly, menuOpen])
 
   const getEnabledIndex = (index: number): number => {
     if (enabledIndexes.length === 0) return -1
@@ -224,7 +271,7 @@ export const Dropdown = <TValue extends string>({
     if (!buttonRect) return
 
     setMenuStyle(getMenuStyle(buttonRect))
-    setActiveIndex(getEnabledIndex(index))
+    updateActiveIndex(getEnabledIndex(index))
     setOpen(true)
   }
 
@@ -232,6 +279,8 @@ export const Dropdown = <TValue extends string>({
     if (option.disabled) return
 
     onChange(option.value)
+    if (menuOnly) return
+
     setOpen(false)
     setMenuStyle(null)
     buttonRef.current?.focus({ preventScroll: true })
@@ -258,7 +307,7 @@ export const Dropdown = <TValue extends string>({
         return
       }
 
-      setActiveIndex((currentIndex) => getAdjacentEnabledIndex(currentIndex, direction))
+      updateActiveIndex((currentIndex) => getAdjacentEnabledIndex(currentIndex, direction))
       return
     }
 
@@ -273,7 +322,7 @@ export const Dropdown = <TValue extends string>({
         return
       }
 
-      setActiveIndex(nextIndex)
+      updateActiveIndex(nextIndex)
       return
     }
 
@@ -323,7 +372,9 @@ export const Dropdown = <TValue extends string>({
     menuOpen ? 'ui-dropdown--open' : null,
     disabled ? 'ui-dropdown--disabled' : null,
     optionsHaveDescriptions ? 'ui-dropdown--descriptive' : null,
-    inFloatingPane ? 'ui-dropdown--floating-pane' : null
+    inFloatingPane ? 'ui-dropdown--floating-pane' : null,
+    menuOnly ? 'ui-dropdown--menu-only' : null,
+    className
   ]
     .filter(Boolean)
     .join(' ')
@@ -351,105 +402,134 @@ export const Dropdown = <TValue extends string>({
     setMenuStyle(null)
     buttonRef.current?.focus({ preventScroll: true })
   }
-  const menu = menuOpen ? (
-    <div
-      ref={menuRef}
-      className={rootClassName}
-      data-dropdown-menu-root="true"
-      style={menuStyle ?? undefined}
-    >
-      <div className="ui-dropdown__menu">
-        {menuActions.length > 0 && (
-          <div className="ui-dropdown__actions" role="presentation">
-            {menuActions.map((action) => (
-              <button
-                className="ui-dropdown__action"
-                disabled={action.disabled}
-                key={action.id}
-                title={action.title}
-                type="button"
-                onBlur={handleActionBlur}
-                onClick={() => selectMenuAction(action)}
-                onKeyDown={handleActionKeyDown}
-                onMouseDown={(event) => event.preventDefault()}
-              >
-                {action.icon && (
-                  <span className="ui-dropdown__action-icon" aria-hidden="true">
-                    {action.icon}
-                  </span>
-                )}
-                <span className="ui-dropdown__action-label">{action.label}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {menuActions.length > 0 && options.length > 0 && (
-          <div className="ui-dropdown__separator" role="presentation" />
-        )}
-        <div
-          className="ui-dropdown__listbox"
-          id={listboxId}
-          role="listbox"
-          aria-labelledby={buttonId}
-        >
-          {options.map((option, index) => {
-            const selected = option.value === value
-            const optionId = `${listboxId}-option-${index}`
-            const optionIcon = optionsHaveIcons ? (
-              <span className="ui-dropdown__option-icon" aria-hidden="true">
-                {option.icon}
-              </span>
-            ) : null
-            const optionLabel = (
-              <span className="ui-dropdown__option-label">{option.menuLabel ?? option.label}</span>
-            )
-            const optionCheck = selected ? (
-              <Check className="ui-dropdown__check" aria-hidden="true" />
-            ) : null
-
-            return (
-              <div
-                key={option.value}
-                id={optionId}
-                className={getOptionClassName(
-                  activeIndex === index,
-                  selected,
-                  Boolean(option.disabled),
-                  optionsHaveIcons,
-                  Boolean(option.description)
-                )}
-                role="option"
-                aria-disabled={option.disabled || undefined}
-                aria-selected={selected}
-                onClick={() => selectOption(option)}
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseEnter={() => {
-                  if (!option.disabled) setActiveIndex(index)
-                }}
-              >
-                {option.description ? (
-                  <span className="ui-dropdown__option-body">
-                    <span className="ui-dropdown__option-row">
-                      {optionIcon}
-                      {optionLabel}
-                      {optionCheck}
-                    </span>
-                    <span className="ui-dropdown__option-description">{option.description}</span>
-                  </span>
-                ) : (
-                  <>
-                    {optionIcon}
-                    <span className="ui-dropdown__option-body">{optionLabel}</span>
-                    {optionCheck}
-                  </>
-                )}
-              </div>
-            )
-          })}
+  const menuSurface = (
+    <MenuSurface className="ui-dropdown__menu">
+      {menuActions.length > 0 && (
+        <div className="ui-dropdown__actions" role="presentation">
+          {menuActions.map((action) => (
+            <button
+              className="ui-dropdown__action"
+              disabled={action.disabled}
+              key={action.id}
+              title={action.title}
+              type="button"
+              onBlur={handleActionBlur}
+              onClick={() => selectMenuAction(action)}
+              onKeyDown={handleActionKeyDown}
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              {action.icon && (
+                <span className="ui-dropdown__action-icon" aria-hidden="true">
+                  {action.icon}
+                </span>
+              )}
+              <span className="ui-dropdown__action-label">{action.label}</span>
+            </button>
+          ))}
         </div>
+      )}
+      {menuActions.length > 0 && options.length > 0 && (
+        <div className="ui-dropdown__separator" role="presentation" />
+      )}
+      <div
+        className="ui-dropdown__listbox"
+        id={listboxId}
+        role="listbox"
+        aria-label={menuOnly ? ariaLabel : undefined}
+        aria-labelledby={menuOnly ? undefined : buttonId}
+      >
+        {options.length === 0
+          ? emptyContent
+          : options.map((option, index) => {
+              const selected = option.value === value
+              const optionId = `${listboxId}-option-${index}`
+              const optionIcon = optionsHaveIcons ? (
+                <span className="ui-dropdown__option-icon" aria-hidden="true">
+                  {option.icon}
+                </span>
+              ) : null
+              const optionLabel = (
+                <span className="ui-dropdown__option-label">
+                  {option.menuLabel ?? option.label}
+                </span>
+              )
+              const optionCheck = selected ? (
+                <Check className="ui-dropdown__check" aria-hidden="true" />
+              ) : null
+
+              return (
+                <div
+                  key={option.value}
+                  id={optionId}
+                  className={getOptionClassName(
+                    activeIndex === index,
+                    selected,
+                    Boolean(option.disabled),
+                    optionsHaveIcons,
+                    Boolean(option.description)
+                  )}
+                  role="option"
+                  aria-disabled={option.disabled || undefined}
+                  aria-selected={selected}
+                  onClick={() => selectOption(option)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onPointerMove={() => {
+                    if (!option.disabled) {
+                      pointerActivatedIndexRef.current = index
+                      updateActiveIndex(index)
+                    }
+                  }}
+                >
+                  {option.description ? (
+                    <span className="ui-dropdown__option-body">
+                      <span className="ui-dropdown__option-row">
+                        {optionIcon}
+                        {optionLabel}
+                        {optionCheck}
+                      </span>
+                      <span className="ui-dropdown__option-description">{option.description}</span>
+                    </span>
+                  ) : (
+                    <>
+                      {optionIcon}
+                      <span className="ui-dropdown__option-body">{optionLabel}</span>
+                      {optionCheck}
+                    </>
+                  )}
+                </div>
+              )
+            })}
       </div>
-    </div>
+    </MenuSurface>
+  )
+  const menu = menuOpen ? (
+    menuOnly ? (
+      menuSurface
+    ) : (
+      <div
+        ref={menuRef}
+        className={rootClassName}
+        data-dropdown-menu-root="true"
+        style={menuStyle ?? undefined}
+      >
+        {menuSurface}
+      </div>
+    )
   ) : null
+
+  if (menuOnly) {
+    return (
+      <div
+        className={rootClassName}
+        ref={(element) => {
+          rootRef.current = element
+          menuRef.current = element
+        }}
+      >
+        {menu}
+      </div>
+    )
+  }
 
   return (
     <div className={rootClassName} ref={rootRef}>

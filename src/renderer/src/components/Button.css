@@ -289,9 +289,12 @@
 }
 
 .ui-button-menu {
+  display: flex;
   min-width: 100%;
   max-width: min(360px, calc(100vw - 24px));
   max-height: min(420px, 56vh);
+  flex-direction: column;
+  gap: 6px;
   overflow: auto;
   padding: 7px;
   border: 1px solid var(--menu-border);
@@ -324,8 +327,81 @@
     background 160ms ease;
 }
 
-.ui-button-menu__item:not(:disabled):hover,
-.ui-button-menu__item:focus-visible {
+.ui-button-menu__row {
+  display: grid;
+  min-width: 0;
+  min-height: 54px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 8px;
+  border-radius: 7px;
+  transition:
+    color 160ms ease,
+    background 160ms ease;
+}
+
+.ui-button-menu__row--interactive:hover,
+.ui-button-menu__row--interactive:focus-within {
+  color: var(--ink);
+  background: var(--menu-option-active-bg);
+}
+
+.ui-button-menu__item--row-main {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  min-height: 54px;
+  align-self: stretch;
+  padding: 8px var(--ui-button-menu-row-main-padding-inline-end, 10px) 8px 10px;
+  border-radius: 7px;
+  color: inherit;
+  font-weight: inherit;
+}
+
+.ui-button-menu__item--row-main:not(.ui-button-menu__item--row-static):not(:disabled):hover,
+.ui-button-menu__item--row-main:not(.ui-button-menu__item--row-static):focus-visible {
+  color: var(--ink);
+  background: transparent;
+  outline: 0;
+}
+
+.ui-button-menu__item--row-static {
+  cursor: default;
+}
+
+.ui-button-menu__row .ui-button-menu__label {
+  white-space: nowrap;
+}
+
+.ui-button-menu__inline-actions {
+  pointer-events: none;
+  z-index: 1;
+  grid-row: 1;
+  grid-column: 2;
+  display: inline-flex;
+  align-self: stretch;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 8px 8px 0;
+}
+
+.ui-button-menu__inline-action.ui-button--small.ui-button--icon-only {
+  pointer-events: auto;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+}
+
+.ui-button-menu__button-item.ui-button--small {
+  min-height: 38px;
+}
+
+.ui-button-menu__item:not(.ui-button-menu__item--row-main):not(
+    .ui-button-menu__item--row-static
+  ):not(:disabled):hover,
+.ui-button-menu__item:not(.ui-button-menu__item--row-main):not(
+    .ui-button-menu__item--row-static
+  ):focus-visible {
   color: var(--ink);
   background: var(--menu-option-active-bg);
   outline: 0;

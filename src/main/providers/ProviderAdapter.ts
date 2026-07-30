@@ -8,13 +8,16 @@ import type {
   ProviderUpdateAvailability,
   ProviderApprovalModeOption,
   ProviderSandboxModeOption,
+  ProviderApp,
+  ProviderSkill,
   ProviderModel,
   ProviderAccountRateLimitResetOutcome,
   ProviderAccountUsage,
   ProviderUsageOptions,
   ProviderActiveSendMode,
   ProviderTurnOptions,
-  ProviderOneShotOptions
+  ProviderOneShotOptions,
+  ProviderAgentTerminalDataEvent
 } from '../../shared/provider'
 
 export type ProviderChatUpdateMetadata = {
@@ -29,6 +32,8 @@ export type ProviderAdapter = {
   getApprovalModes: () => Promise<ProviderApprovalModeOption[]>
   getSandboxModes: () => Promise<ProviderSandboxModeOption[]>
   getModels: () => Promise<ProviderModel[]>
+  getSkills: (cwd?: string | null) => Promise<ProviderSkill[]>
+  getApps: () => Promise<ProviderApp[]>
   getUsage: (options?: ProviderUsageOptions) => Promise<ProviderAccountUsage>
   resetRateLimits: () => Promise<ProviderAccountRateLimitResetOutcome>
   getChats: (options?: ProviderChatListOptions) => Promise<ProviderChatPage>
@@ -76,8 +81,16 @@ export type ProviderAdapter = {
     decision: ProviderApprovalDecision
   ) => Promise<ProviderChatDetail>
   stopChat: (chatId: string) => Promise<ProviderChatDetail>
+  writeAgentTerminalInput: (chatId: string, processId: string, data: string) => Promise<void>
+  resizeAgentTerminal: (
+    chatId: string,
+    processId: string,
+    cols: number,
+    rows: number
+  ) => Promise<void>
   onChatUpdated: (
     listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   ) => () => void
+  onAgentTerminalData: (listener: (event: ProviderAgentTerminalDataEvent) => void) => () => void
   dispose: () => void
 }

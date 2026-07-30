@@ -3,6 +3,17 @@ export type TerminalCreateOptions = {
   cwd?: string | null
   cols: number
   rows: number
+  initialCommand?: string | null
+  keepAliveOnCommandFinish?: boolean
+}
+
+export type TerminalRunCommandOptions = {
+  command: string
+  cwd?: string | null
+}
+
+export type TerminalRunCommandResult = {
+  pid: number
 }
 
 export type TerminalSession = {
@@ -30,6 +41,7 @@ export type TerminalProcessStatus = {
 
 export type TerminalRendererApi = {
   createSession: (options: TerminalCreateOptions) => Promise<TerminalSession>
+  runCommand: (options: TerminalRunCommandOptions) => Promise<TerminalRunCommandResult>
   write: (sessionId: string, data: string) => void
   resize: (sessionId: string, cols: number, rows: number) => void
   setPaused: (sessionId: string, paused: boolean) => void
@@ -41,6 +53,7 @@ export type TerminalRendererApi = {
 
 export const terminalIpcChannels = {
   createSession: 'terminal:create-session',
+  runCommand: 'terminal:run-command',
   write: 'terminal:write',
   resize: 'terminal:resize',
   setPaused: 'terminal:set-paused',

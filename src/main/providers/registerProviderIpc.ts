@@ -15,6 +15,7 @@ import type {
   ProviderImageInput,
   ProviderOneShotOptions,
   ProviderReview,
+  ProviderSkillInput,
   ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
   ProviderUsageOptions,
@@ -29,6 +30,7 @@ import {
   isProviderModelId,
   isProviderReasoningEffort,
   isProviderSandboxMode,
+  isProviderServiceTier,
   providerIpcChannels
 } from '../../shared/provider'
 import { getChatUpdateSummary, providerApi } from './providerService'
@@ -298,6 +300,30 @@ const requireGenerationId = (value: unknown): string => {
   return value
 }
 
+const requireProcessId = (value: unknown): string => {
+  if (typeof value !== 'string' || !value.trim() || value.includes('\0')) {
+    throw new Error('Invalid process ID')
+  }
+
+  return value
+}
+
+const requireTerminalInput = (value: unknown): string => {
+  if (typeof value !== 'string' || value.length > 1_000_000) {
+    throw new Error('Invalid terminal input')
+  }
+
+  return value
+}
+
+const requireTerminalDimension = (value: unknown, label: string): number => {
+  if (!Number.isInteger(value) || typeof value !== 'number' || value < 1 || value > 1000) {
+    throw new Error(`Invalid terminal ${label}`)
+  }
+
+  return value
+}
+
 const requireOptionalCwd = (value: unknown): string | null => {
   if (value == null) return null
   if (typeof value !== 'string') throw new Error('Invalid cwd')
@@ -407,6 +433,7 @@ const requireMessage = (value: unknown): string => {
 
 const providerImageExtensions = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const maxProviderAttachmentCount = 10
+const maxProviderSkillCount = 20
 const maxReviewCommentCount = 200
 const maxReviewPathLength = 4_096
 const maxReviewCommentLength = 20_000
@@ -435,11 +462,12 @@ const requireReview = (value: unknown): ProviderReview | undefined => {
       throw new Error('Invalid review comment')
     }
 
-    const { id, path, comment, line, side } = candidate as {
+    const { id, path, comment, line, endLine, side } = candidate as {
       id?: unknown
       path?: unknown
       comment?: unknown
       line?: unknown
+      endLine?: unknown
       side?: unknown
     }
     if (
@@ -456,12 +484,24 @@ const requireReview = (value: unknown): ProviderReview | undefined => {
       !Number.isInteger(line) ||
       line < 1 ||
       line > 10_000_000 ||
+      (endLine !== undefined &&
+        (typeof endLine !== 'number' ||
+          !Number.isInteger(endLine) ||
+          endLine < line ||
+          endLine > 10_000_000)) ||
       (side !== 'old' && side !== 'new')
     ) {
       throw new Error('Invalid review comment')
     }
 
-    return { id, path, comment: comment.trim(), line, side: side === 'old' ? 'old' : 'new' }
+    return {
+      id,
+      path,
+      comment: comment.trim(),
+      line,
+      endLine: typeof endLine === 'number' ? endLine : undefined,
+      side: side === 'old' ? 'old' : 'new'
+    }
   })
 
   return { id: review.id, prompt: review.prompt, comments }
@@ -516,6 +556,35 @@ const requireFileInputs = (value: unknown): ProviderFileInput[] | undefined => {
   return Array.from(paths, (path) => ({ path }))
 }
 
+const requireSkillInputs = (value: unknown): ProviderSkillInput[] | undefined => {
+  if (value == null) return undefined
+  if (!Array.isArray(value) || value.length > maxProviderSkillCount) {
+    throw new Error('Invalid skill inputs')
+  }
+
+  const skills = new Map<string, ProviderSkillInput>()
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('Invalid skill input')
+    }
+
+    const { name, path } = candidate as { name?: unknown; path?: unknown }
+    if (
+      typeof name !== 'string' ||
+      !name.trim() ||
+      name.length > 256 ||
+      typeof path !== 'string' ||
+      !isAbsolute(path) ||
+      path.includes('\0')
+    ) {
+      throw new Error('Invalid skill input')
+    }
+    skills.set(path, { name: name.trim(), path })
+  }
+
+  return Array.from(skills.values())
+}
+
 const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => {
   if (value == null) return undefined
   if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid turn options')
@@ -528,8 +597,10 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     images?: unknown
     model?: unknown
     reasoningEffort?: unknown
+    serviceTier?: unknown
     review?: unknown
     sandboxMode?: unknown
+    skills?: unknown
   }
   const approvalPolicy = options.approvalPolicy
   if (!isProviderApprovalPolicy(approvalPolicy)) throw new Error('Invalid approval policy')
@@ -553,6 +624,11 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   const reasoningEffort = options.reasoningEffort ?? 'xhigh'
   if (!isProviderReasoningEffort(reasoningEffort)) throw new Error('Invalid reasoning effort')
 
+  const serviceTier = options.serviceTier
+  if (serviceTier != null && !isProviderServiceTier(serviceTier)) {
+    throw new Error('Invalid service tier')
+  }
+
   const files = requireFileInputs(options.files)
   const images = requireImageInputs(options.images)
   if ((files?.length ?? 0) + (images?.length ?? 0) > maxProviderAttachmentCount) {
@@ -567,8 +643,10 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     images,
     model,
     reasoningEffort,
+    serviceTier: serviceTier ?? null,
     review: requireReview(options.review),
-    sandboxMode
+    sandboxMode,
+    skills: requireSkillInputs(options.skills)
   }
 }
 
@@ -592,6 +670,14 @@ export const registerProviderIpc = (): void => {
   providerApi.onChatUpdated((event) => {
     BrowserWindow.getAllWindows().forEach((window) => {
       queueChatUpdateForWindow(window.webContents, event)
+    })
+  })
+
+  providerApi.onAgentTerminalData((event) => {
+    BrowserWindow.getAllWindows().forEach((window) => {
+      if (!window.webContents.isDestroyed()) {
+        window.webContents.send(providerIpcChannels.agentTerminalData, event)
+      }
     })
   })
 
@@ -700,6 +786,14 @@ export const registerProviderIpc = (): void => {
 
   ipcMain.handle(providerIpcChannels.getModels, (_, providerId: unknown) =>
     providerApi.getModels(requireProviderId(providerId))
+  )
+
+  ipcMain.handle(providerIpcChannels.getSkills, (_, providerId: unknown, cwd: unknown) =>
+    providerApi.getSkills(requireProviderId(providerId), requireOptionalCwd(cwd))
+  )
+
+  ipcMain.handle(providerIpcChannels.getApps, (_, providerId: unknown) =>
+    providerApi.getApps(requireProviderId(providerId))
   )
 
   ipcMain.handle(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) =>
@@ -881,6 +975,29 @@ export const registerProviderIpc = (): void => {
 
   ipcMain.handle(providerIpcChannels.stopChat, (_, providerId: unknown, chatId: unknown) =>
     providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.writeAgentTerminalInput,
+    (_, providerId: unknown, chatId: unknown, processId: unknown, data: unknown) =>
+      providerApi.writeAgentTerminalInput(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireProcessId(processId),
+        requireTerminalInput(data)
+      )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.resizeAgentTerminal,
+    (_, providerId: unknown, chatId: unknown, processId: unknown, cols: unknown, rows: unknown) =>
+      providerApi.resizeAgentTerminal(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireProcessId(processId),
+        requireTerminalDimension(cols, 'columns'),
+        requireTerminalDimension(rows, 'rows')
+      )
   )
 
   ipcMain.handle(

@@ -47,6 +47,7 @@ import {
   ChevronRight,
   Copy,
   Eye,
+  ExternalLink,
   FilePlus2,
   FileCode2,
   FileText,
@@ -79,6 +80,7 @@ import type {
   ProviderWorkingTool
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { defaultAppChatThoughtSettings, type AppChatThoughtSettings } from '../settings'
 import { Button } from './Button'
 import { HighlightedCode } from './HighlightedCode'
 import { ImageLightbox } from './ImageLightbox'
@@ -90,13 +92,15 @@ type ChatDetailItemProps = {
   canEditOwnMessages?: boolean
   continuePrompt?: string
   continueStoppedTurnDisabled?: boolean
+  hasNextWorkingStep?: boolean
   item: ProviderChatItem
   modelLabelsById?: ReadonlyMap<ProviderModelId, string>
   onDeletePendingMessage?: (message: ProviderPendingMessage) => void
   onEditPendingMessage?: (message: ProviderPendingMessage) => void
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
-  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
+  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   onContinueStoppedTurn?: (prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => void
   projectCwd?: string | null
@@ -104,6 +108,26 @@ type ChatDetailItemProps = {
   retryStoppedTurnDisabled?: boolean
   selectedModelId?: ProviderModelId
   streaming?: boolean
+  thoughtSettings?: AppChatThoughtSettings
+}
+
+const getThoughtSettings = (settings?: AppChatThoughtSettings): AppChatThoughtSettings =>
+  settings ?? defaultAppChatThoughtSettings
+
+const areThoughtSettingsEqual = (
+  first?: AppChatThoughtSettings,
+  second?: AppChatThoughtSettings
+): boolean => {
+  const normalizedFirst = getThoughtSettings(first)
+  const normalizedSecond = getThoughtSettings(second)
+
+  return (
+    normalizedFirst.expandThoughtsOnStart === normalizedSecond.expandThoughtsOnStart &&
+    normalizedFirst.collapseThoughtsOnFinish === normalizedSecond.collapseThoughtsOnFinish &&
+    normalizedFirst.collapseThoughtsOnNextTurn === normalizedSecond.collapseThoughtsOnNextTurn &&
+    normalizedFirst.expandStoppedTurns === normalizedSecond.expandStoppedTurns &&
+    normalizedFirst.collapseStoppedOnNextTurn === normalizedSecond.collapseStoppedOnNextTurn
+  )
 }
 
 const areUnknownValuesEqual = (
@@ -159,6 +183,11 @@ const areWorkingToolsEqual = (first: ProviderWorkingTool, second: ProviderWorkin
   first.icon === second.icon &&
   first.label === second.label &&
   first.command === second.command &&
+  first.agentTerminal?.turnId === second.agentTerminal?.turnId &&
+  first.agentTerminal?.itemId === second.agentTerminal?.itemId &&
+  first.agentTerminal?.processId === second.agentTerminal?.processId &&
+  first.agentTerminalDisabledReason === second.agentTerminalDisabledReason &&
+  first.cwd === second.cwd &&
   first.stdout === second.stdout &&
   first.backgroundSessionId === second.backgroundSessionId &&
   first.finishedBackgroundSessionId === second.finishedBackgroundSessionId &&
@@ -231,12 +260,14 @@ const areChatDetailItemPropsEqual = (
   first.canEditOwnMessages === second.canEditOwnMessages &&
   first.continuePrompt === second.continuePrompt &&
   first.continueStoppedTurnDisabled === second.continueStoppedTurnDisabled &&
+  first.hasNextWorkingStep === second.hasNextWorkingStep &&
   first.modelLabelsById === second.modelLabelsById &&
   first.onDeletePendingMessage === second.onDeletePendingMessage &&
   first.onEditPendingMessage === second.onEditPendingMessage &&
   first.onInterruptPendingMessage === second.onInterruptPendingMessage &&
   first.onEditMessage === second.onEditMessage &&
   first.onOpenFileLink === second.onOpenFileLink &&
+  first.onOpenAgentTerminal === second.onOpenAgentTerminal &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
   first.projectCwd === second.projectCwd &&
@@ -244,6 +275,7 @@ const areChatDetailItemPropsEqual = (
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
   first.selectedModelId === second.selectedModelId &&
   first.streaming === second.streaming &&
+  areThoughtSettingsEqual(first.thoughtSettings, second.thoughtSettings) &&
   areChatItemsEqual(first.item, second.item)
 
 type ProviderToolItem = Exclude<ProviderWorkingItem, { type: 'message' }>
@@ -332,7 +364,7 @@ type MarkdownFileTarget = {
 }
 
 type MarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
-  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
 }
 
 const externalLinkPattern = /^(?:https?|mailto|tel):/i
@@ -452,7 +484,7 @@ const MarkdownTable: React.FC<TableHTMLAttributes<HTMLTableElement>> = ({ childr
 )
 
 const getMarkdownOptions = (
-  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
 ) =>
   ({
     disableParsingRawHTML: true,
@@ -537,23 +569,60 @@ const DiffContent: React.FC<{
   </div>
 )
 
-const CommandContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) => (
+const CommandContent: React.FC<{
+  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
+  tools: ProviderWorkingTool[]
+}> = ({ onOpenAgentTerminal, tools }) => (
   <div className="chat-detail__activity-content chat-detail__activity-content--command">
-    {tools.map((tool) => (
-      <section key={tool.id}>
-        {tool.command && (
-          <HighlightedCode language={getInputLanguage(tool.command)}>
-            {tool.command}
-          </HighlightedCode>
-        )}
-        {tool.command && tool.stdout && (
-          <span className="chat-detail__command-divider" aria-hidden="true" />
-        )}
-        {tool.stdout && (
-          <HighlightedCode language={getOutputLanguage(tool.stdout)}>{tool.stdout}</HighlightedCode>
-        )}
-      </section>
-    ))}
+    {tools.map((tool) => {
+      const terminalAction =
+        tool.command &&
+        (tool.agentTerminal || tool.agentTerminalDisabledReason) &&
+        onOpenAgentTerminal ? (
+          <span
+            className="chat-detail__command-terminal-action"
+            title={tool.agentTerminalDisabledReason ?? 'Pop out command terminal'}
+          >
+            <Button
+              theme="transparent"
+              aria-label={
+                tool.agentTerminalDisabledReason
+                  ? `Terminal pop-out unavailable: ${tool.agentTerminalDisabledReason}`
+                  : 'Pop out command terminal'
+              }
+              disabled={Boolean(tool.agentTerminalDisabledReason) || !tool.agentTerminal}
+              callback={() => {
+                if (!tool.agentTerminal || tool.agentTerminalDisabledReason) return
+                onOpenAgentTerminal(tool)
+              }}
+              icon={<ExternalLink aria-hidden="true" />}
+            />
+          </span>
+        ) : null
+
+      return (
+        <section key={tool.id}>
+          {tool.command && (
+            <div className="chat-detail__command-row">
+              <div className="chat-detail__command-body">
+                <HighlightedCode language={getInputLanguage(tool.command)}>
+                  {tool.command}
+                </HighlightedCode>
+              </div>
+              {terminalAction}
+            </div>
+          )}
+          {tool.command && tool.stdout && (
+            <span className="chat-detail__command-divider" aria-hidden="true" />
+          )}
+          {tool.stdout && (
+            <HighlightedCode language={getOutputLanguage(tool.stdout)}>
+              {tool.stdout}
+            </HighlightedCode>
+          )}
+        </section>
+      )
+    })}
   </div>
 )
 
@@ -695,8 +764,9 @@ const Activity: React.FC<{
   tools: ProviderWorkingTool[]
   active: boolean
   expanded: boolean
+  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   projectCwd?: string | null
-}> = ({ label, tools, active, expanded, projectCwd }) => {
+}> = ({ label, tools, active, expanded, onOpenAgentTerminal, projectCwd }) => {
   const [openState, setOpenState] = useState({ expanded, open: expanded })
   const open = openState.expanded === expanded ? openState.open : expanded
   const activity = tools[0]?.activity ?? 'other'
@@ -725,7 +795,7 @@ const Activity: React.FC<{
           activity === 'npm' ||
           activity === 'npx' ||
           activity === 'script' ? (
-          <CommandContent tools={tools} />
+          <CommandContent onOpenAgentTerminal={onOpenAgentTerminal} tools={tools} />
         ) : (
           <RawContent tools={tools} />
         ))}
@@ -739,6 +809,7 @@ const getToolsFromToolItem = (item: ProviderToolItem): ProviderWorkingTool[] =>
 const hasToolDetails = (tool: ProviderWorkingTool): boolean =>
   Boolean(
     tool.command ||
+    tool.agentTerminal ||
     tool.stdout ||
     tool.diffs.length > 0 ||
     tool.rawInput != null ||
@@ -805,7 +876,7 @@ const GeneratedImageThumbnail: React.FC<{
 
 const MessageAttachments: React.FC<{
   attachments: ProviderMessageAttachment[]
-  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   projectCwd?: string | null
 }> = ({ attachments, onOpenFileLink, projectCwd }) => {
   const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image')
@@ -1137,8 +1208,9 @@ const ToolItem: React.FC<{
   item: ProviderToolItem
   activeToolIds: Set<string>
   expanded?: boolean
+  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   projectCwd?: string | null
-}> = ({ item, activeToolIds, expanded = false, projectCwd }) => {
+}> = ({ item, activeToolIds, expanded = false, onOpenAgentTerminal, projectCwd }) => {
   const tools = getToolsFromToolItem(item)
   const activity = tools[0]?.activity ?? 'other'
   const active = tools.some((tool) => activeToolIds.has(tool.id))
@@ -1166,6 +1238,7 @@ const ToolItem: React.FC<{
       tools={tools}
       active={active}
       expanded={expanded}
+      onOpenAgentTerminal={onOpenAgentTerminal}
       projectCwd={projectCwd}
     />
   )
@@ -1174,7 +1247,7 @@ const ToolItem: React.FC<{
 const MarkdownMessageComponent: React.FC<{
   className: string
   content: string
-  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   streaming?: boolean
 }> = ({ className, content, onOpenFileLink, streaming = false }) => {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1349,8 +1422,9 @@ const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolActivity
 const ToolSequence: React.FC<{
   items: ProviderToolItem[]
   activeToolIds: Set<string>
+  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   projectCwd?: string | null
-}> = ({ items, activeToolIds, projectCwd }) => {
+}> = ({ items, activeToolIds, onOpenAgentTerminal, projectCwd }) => {
   const [open, setOpen] = useState(false)
   const tools = items.flatMap(getToolsFromToolItem)
   const activeTools = tools.filter((tool) => activeToolIds.has(tool.id))
@@ -1378,6 +1452,7 @@ const ToolSequence: React.FC<{
               item={item}
               activeToolIds={activeToolIds}
               key={item.id}
+              onOpenAgentTerminal={onOpenAgentTerminal}
               projectCwd={projectCwd}
             />
           ))}
@@ -1412,6 +1487,10 @@ const getToolSignature = (tool: ProviderWorkingTool): string =>
     tool.label,
     tool.status,
     tool.command?.length ?? 0,
+    tool.agentTerminal?.turnId ?? '',
+    tool.agentTerminal?.itemId ?? '',
+    tool.agentTerminal?.processId ?? '',
+    tool.agentTerminalDisabledReason ?? '',
     tool.stdout?.length ?? 0,
     tool.diffs.map((diff) => `${diff.path}:${diff.diff.length}`).join(','),
     tool.backgroundSessionId,
@@ -1532,22 +1611,57 @@ const partitionGeneratedImageItems = (
   return { generatedImages, remaining }
 }
 
+const getWorkingStepDefaultOpen = (
+  status: ProviderWorkingStep['status'],
+  thoughtSettings: AppChatThoughtSettings,
+  hasNextWorkingStep: boolean
+): boolean => {
+  if (status === 'working') {
+    return (
+      thoughtSettings.expandThoughtsOnStart &&
+      !(hasNextWorkingStep && thoughtSettings.collapseThoughtsOnNextTurn)
+    )
+  }
+
+  if (status === 'stopped') {
+    return (
+      thoughtSettings.expandStoppedTurns &&
+      !(hasNextWorkingStep && thoughtSettings.collapseStoppedOnNextTurn)
+    )
+  }
+
+  if (status === 'worked') {
+    return (
+      !thoughtSettings.collapseThoughtsOnFinish &&
+      !(hasNextWorkingStep && thoughtSettings.collapseThoughtsOnNextTurn)
+    )
+  }
+
+  return false
+}
+
 const WorkingStep: React.FC<{
   continueDisabled?: boolean
+  hasNextWorkingStep?: boolean
   item: ProviderWorkingStep
   onContinue?: () => Promise<void> | void
-  onOpenFileLink?: (path: string, displayPath: string, line?: number) => void
+  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
+  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   onRetry?: () => void
   projectCwd?: string | null
   retryDisabled?: boolean
+  thoughtSettings: AppChatThoughtSettings
 }> = ({
   continueDisabled = false,
+  hasNextWorkingStep = false,
   item,
   onContinue,
   onOpenFileLink,
+  onOpenAgentTerminal,
   onRetry,
   projectCwd,
-  retryDisabled = false
+  retryDisabled = false,
+  thoughtSettings
 }) => {
   const { generatedImages, remaining } = partitionGeneratedImageItems(item.items)
   const blocks = groupWorkingItems(remaining)
@@ -1558,8 +1672,18 @@ const WorkingStep: React.FC<{
   )
   const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
   const active = item.status === 'working'
-  const [openState, setOpenState] = useState({ status: item.status, open: active })
-  const open = openState.status === item.status ? openState.open : active
+  const defaultOpen = getWorkingStepDefaultOpen(item.status, thoughtSettings, hasNextWorkingStep)
+  const openControlKey = [
+    item.status,
+    hasNextWorkingStep ? 'next' : 'latest',
+    thoughtSettings.expandThoughtsOnStart,
+    thoughtSettings.collapseThoughtsOnFinish,
+    thoughtSettings.collapseThoughtsOnNextTurn,
+    thoughtSettings.expandStoppedTurns,
+    thoughtSettings.collapseStoppedOnNextTurn
+  ].join(':')
+  const [openState, setOpenState] = useState({ key: openControlKey, open: defaultOpen })
+  const open = openState.key === openControlKey ? openState.open : defaultOpen
   const showPlaceholder = useSilencePlaceholder(
     signature,
     active && (!lastWorkingItem || lastWorkingItem.type === 'message'),
@@ -1584,6 +1708,7 @@ const WorkingStep: React.FC<{
       item={imageItem}
       activeToolIds={activeToolIds}
       key={imageItem.id}
+      onOpenAgentTerminal={onOpenAgentTerminal}
       projectCwd={projectCwd}
     />
   ))
@@ -1655,7 +1780,7 @@ const WorkingStep: React.FC<{
       <details
         className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
         open={open}
-        onToggle={(event) => setOpenState({ status: item.status, open: event.currentTarget.open })}
+        onToggle={(event) => setOpenState({ key: openControlKey, open: event.currentTarget.open })}
       >
         <summary>
           {heading}
@@ -1671,6 +1796,7 @@ const WorkingStep: React.FC<{
                     items={block.items}
                     activeToolIds={activeToolIds}
                     key={block.items[0]?.id}
+                    onOpenAgentTerminal={onOpenAgentTerminal}
                     projectCwd={projectCwd}
                   />
                 ) : (
@@ -1680,6 +1806,7 @@ const WorkingStep: React.FC<{
                       activeToolIds={activeToolIds}
                       expanded={active && toolItem === lastWorkingItem}
                       key={toolItem.id}
+                      onOpenAgentTerminal={onOpenAgentTerminal}
                       projectCwd={projectCwd}
                     />
                   ))
@@ -1714,6 +1841,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   canEditOwnMessages = false,
   continuePrompt = '',
   continueStoppedTurnDisabled = false,
+  hasNextWorkingStep = false,
   item,
   modelLabelsById,
   onDeletePendingMessage,
@@ -1721,15 +1849,18 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onInterruptPendingMessage,
   onEditMessage,
   onOpenFileLink,
+  onOpenAgentTerminal,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
   projectCwd,
   retryMessage,
   retryStoppedTurnDisabled = false,
   selectedModelId,
-  streaming = false
+  streaming = false,
+  thoughtSettings
 }) => {
   const [copied, setCopied] = useState(false)
+  const resolvedThoughtSettings = getThoughtSettings(thoughtSettings)
 
   useEffect(() => {
     if (!copied) return undefined
@@ -1871,16 +2002,19 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   return (
     <WorkingStep
       continueDisabled={continueStoppedTurnDisabled || !continuePrompt.trim()}
+      hasNextWorkingStep={hasNextWorkingStep}
       item={item}
       onContinue={
         onContinueStoppedTurn ? () => onContinueStoppedTurn(continuePrompt.trim()) : undefined
       }
       onOpenFileLink={onOpenFileLink}
+      onOpenAgentTerminal={onOpenAgentTerminal}
       onRetry={
         retryMessage && onRetryStoppedTurn ? () => onRetryStoppedTurn(retryMessage) : undefined
       }
       projectCwd={projectCwd}
       retryDisabled={retryStoppedTurnDisabled}
+      thoughtSettings={resolvedThoughtSettings}
     />
   )
 }

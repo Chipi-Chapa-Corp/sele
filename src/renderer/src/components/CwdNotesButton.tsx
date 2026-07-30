@@ -11,7 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderCwdNote } from '../../../shared/provider'
-import { Button } from './Button'
+import { Button, ButtonMenuRow } from './Button'
 import { Input } from './Input'
 import './CwdNotesButton.css'
 
@@ -170,17 +170,22 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
           <p className="cwd-notes-menu__empty">No notes yet</p>
         ) : (
           notes.map((note) => (
-            <div className="cwd-notes-menu__item" key={note.id}>
-              <span className="cwd-notes-menu__text">{note.text}</span>
-              <Button
-                theme="transparent"
-                size="small"
-                aria-label="Remove note"
-                title="Remove note"
-                callback={() => handleRemoveNote(note.id)}
-                icon={<X aria-hidden="true" />}
-              />
-            </div>
+            <ButtonMenuRow
+              className="cwd-notes-menu__item"
+              inlineActions={[
+                {
+                  id: `remove-${note.id}`,
+                  ariaLabel: 'Remove note',
+                  title: 'Remove note',
+                  callback: () => handleRemoveNote(note.id),
+                  icon: <X aria-hidden="true" />
+                }
+              ]}
+              key={note.id}
+              label={note.text}
+              labelClassName="cwd-notes-menu__text"
+              title={note.text}
+            />
           ))
         )}
       </div>

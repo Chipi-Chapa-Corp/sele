@@ -7,22 +7,29 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
 } from 'react'
 import {
   ArrowLeft,
+  BadgeCheck,
   BellOff,
   Bot,
+  BrainCircuit,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   Check,
   Download,
+  FileLock,
   Files,
+  Flame,
   FolderKanban,
+  FolderPen,
   FolderPlus,
+  Gauge,
   GitBranch,
   GitCommitHorizontal,
   GitMerge,
@@ -35,15 +42,20 @@ import {
   Monitor,
   Moon,
   RefreshCw,
+  Rocket,
   Search,
   Settings,
   MessageSquare,
+  ShieldQuestionMark,
+  SlidersHorizontal,
   Sparkles,
   SquarePen,
   Sun,
   Terminal,
   Upload,
-  X
+  UnlockKeyhole,
+  X,
+  Zap
 } from 'lucide-react'
 import {
   DownloadIcon as AnimatedDownloadIcon,
@@ -97,10 +109,13 @@ import type {
   ProviderToolIcon,
   ProviderAccountUsage,
   ProviderReasoningEffort,
+  ProviderServiceTier,
   ProviderReview,
   ProviderReviewComment,
   ProviderSandboxMode,
   ProviderSandboxModeOption,
+  ProviderAppInput,
+  ProviderSkillInput,
   ProviderTurnOptions,
   ProviderUsageOptions,
   ProviderUpdateAvailability
@@ -113,7 +128,8 @@ import {
   isProviderApprovalMode,
   isProviderApprovalPolicy,
   isProviderApprovalsReviewer,
-  isProviderSandboxMode
+  isProviderSandboxMode,
+  isProviderServiceTier
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
@@ -125,14 +141,26 @@ import { FileEditorDialog, type FileEditorTarget } from './components/FileEditor
 import { Input } from './components/Input'
 import { MessageBox } from './components/MessageBox'
 import { SegmentedControl } from './components/SegmentedControl'
-import { TerminalPanel } from './components/TerminalPanel'
+import {
+  TerminalPanel,
+  type AgentTerminalSnapshot,
+  type TerminalCommandLaunchRequest,
+  type TerminalLaunchRequest
+} from './components/TerminalPanel'
+import type { AppAction } from './actions'
+import { getAppActionKeybindingFromEvent } from './actions'
 import { appApi } from './appApi'
 import { providerApi } from './providerApi'
+import { terminalApi } from './terminalApi'
 import {
   type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
+  type AppChatDropdownSettings,
+  type AppChatUsageDisplay,
   type AppSettings,
   type AppThemePreference,
+  appChatManualDropdownValue,
+  appChatStandardSpeedValue,
   readStoredAppSettings,
   writeStoredAppSettings
 } from './settings'
@@ -241,7 +269,7 @@ type DirectCommitActivity = {
 type GitSyncRecoveryActionOptions = {
   rememberStrategy?: boolean
 }
-type SettingsTab = 'appearance' | 'chat' | 'git'
+type SettingsTab = 'appearance' | 'chat' | 'performance' | 'git'
 type CachedPatchChangedFiles = {
   cwd: string
   source: PatchChangeSource
@@ -309,12 +337,69 @@ type MessageBoxSelection = {
   model: ProviderModelId
   reasoningEffort: ProviderReasoningEffort
   sandboxMode: ProviderSandboxMode
+  serviceTier: ProviderServiceTier | null
 }
 type StoredMessageBoxSelection = Partial<MessageBoxSelection>
-type ChatBooleanSettingKey = Exclude<
-  keyof AppSettings['chat'],
-  'continuePrompt' | 'recentChatCacheLimit'
->
+type ChatBooleanSettingKey = {
+  [Key in keyof AppSettings['chat']]: AppSettings['chat'][Key] extends boolean ? Key : never
+}[keyof AppSettings['chat']]
+type ChatBooleanSettingField = {
+  key: ChatBooleanSettingKey
+  label: string
+  description?: string
+  id: string
+}
+const chatPromptBoxSettingFields = [
+  {
+    key: 'hidePlans',
+    label: 'Hide plans in chats',
+    description: 'Hide the expandable plan panel above the message box.',
+    id: 'settings-chat-hide-plans'
+  },
+  {
+    key: 'enableNotesButton',
+    label: 'Enable notes button',
+    description: 'Show workspace notes beside the prompt controls.',
+    id: 'settings-chat-enable-notes'
+  },
+  {
+    key: 'enableActions',
+    label: 'Enable actions',
+    description: 'Show saved workspace actions beside the prompt controls.',
+    id: 'settings-chat-enable-actions'
+  }
+] satisfies ChatBooleanSettingField[]
+const chatDropdownSettingFields = [
+  { key: 'updateExistingChats', label: 'Update all existing chats', id: 'settings-chat-existing' },
+  { key: 'updateNewChats', label: 'Update all new chats', id: 'settings-chat-new' }
+] satisfies ChatBooleanSettingField[]
+const chatThoughtSettingFields = [
+  {
+    key: 'expandThoughtsOnStart',
+    label: 'Expand thoughts on start',
+    id: 'settings-chat-thought-expand-start'
+  },
+  {
+    key: 'collapseThoughtsOnFinish',
+    label: 'Collapse thoughts on finish',
+    id: 'settings-chat-thought-collapse-finish'
+  },
+  {
+    key: 'collapseThoughtsOnNextTurn',
+    label: 'Collapse thoughts on next turn',
+    id: 'settings-chat-thought-collapse-next-turn'
+  },
+  {
+    key: 'expandStoppedTurns',
+    label: 'Expand stopped turns',
+    id: 'settings-chat-thought-expand-stopped'
+  },
+  {
+    key: 'collapseStoppedOnNextTurn',
+    label: 'Collapse stopped on next turn',
+    id: 'settings-chat-thought-collapse-stopped-next-turn'
+  }
+] satisfies ChatBooleanSettingField[]
 type RecentChatCacheEntry = {
   detail: ProviderChatDetail
   updatedAt: number
@@ -1064,6 +1149,9 @@ const readStoredMessageBoxSelection = (): StoredMessageBoxSelection => {
     if (isStoredSelectionString(parsedValue.reasoningEffort)) {
       selection.reasoningEffort = parsedValue.reasoningEffort
     }
+    if (parsedValue.serviceTier == null || isProviderServiceTier(parsedValue.serviceTier)) {
+      selection.serviceTier = parsedValue.serviceTier ?? null
+    }
 
     return selection
   } catch {
@@ -1083,6 +1171,67 @@ const providerOptions = getDropdownOptions(providerLabels)
 
 const formatModelLabel = (label: string): string => label.replace(/-/g, ' ')
 
+const formatSelectionLabel = (value: string): string =>
+  value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1))
+    .join(' ') || value
+
+const highlightedControlIconClassName = 'message-box__selected-control-icon'
+
+const chatApprovalModeIcons = {
+  'ask-user': <ShieldQuestionMark aria-hidden="true" />,
+  'auto-review': <Sparkles aria-hidden="true" />,
+  never: <BadgeCheck aria-hidden="true" />
+} satisfies Record<ProviderApprovalMode, React.ReactNode>
+
+const chatSandboxModeIcons = {
+  'read-only': <FileLock aria-hidden="true" />,
+  'workspace-write': <FolderPen aria-hidden="true" />,
+  'danger-full-access': (
+    <UnlockKeyhole className={highlightedControlIconClassName} aria-hidden="true" />
+  )
+} satisfies Record<ProviderSandboxMode, React.ReactNode>
+
+const getChatReasoningEffortIcon = (reasoningEffort: ProviderReasoningEffort): React.ReactNode => {
+  if (reasoningEffort === 'none' || reasoningEffort === 'minimal' || reasoningEffort === 'low') {
+    return <Gauge aria-hidden="true" />
+  }
+  if (reasoningEffort === 'medium') return <SlidersHorizontal aria-hidden="true" />
+  if (reasoningEffort === 'high') return <Zap aria-hidden="true" />
+  if (reasoningEffort === 'xhigh') {
+    return <Flame className={highlightedControlIconClassName} aria-hidden="true" />
+  }
+  if (reasoningEffort === 'max') {
+    return <BrainCircuit className={highlightedControlIconClassName} aria-hidden="true" />
+  }
+  if (reasoningEffort === 'ultra') {
+    return <Rocket className={highlightedControlIconClassName} aria-hidden="true" />
+  }
+
+  return <SlidersHorizontal aria-hidden="true" />
+}
+
+const getChatServiceTierIcon = (id: string, label = id): React.ReactNode =>
+  id.toLocaleLowerCase() === 'fast' ||
+  id.toLocaleLowerCase() === 'priority' ||
+  label.toLocaleLowerCase() === 'fast' ? (
+    <Zap className="message-box__fast-speed-icon" aria-hidden="true" />
+  ) : (
+    <Gauge aria-hidden="true" />
+  )
+
+const applyShadowPreference = (disableShadows: boolean): void => {
+  const root = document.documentElement
+
+  if (disableShadows) {
+    root.dataset.disableShadows = 'true'
+  } else {
+    delete root.dataset.disableShadows
+  }
+}
+
 const settingsTabOptions = [
   {
     value: 'appearance',
@@ -1093,6 +1242,11 @@ const settingsTabOptions = [
     value: 'chat',
     label: 'Chat',
     icon: <MessageSquare aria-hidden="true" />
+  },
+  {
+    value: 'performance',
+    label: 'Performance',
+    icon: <Gauge aria-hidden="true" />
   },
   {
     value: 'git',
@@ -1125,6 +1279,20 @@ const themeOptions = [
   value: AppThemePreference
   label: string
   icon: React.ReactNode
+}[]
+
+const chatUsageDisplayOptions = [
+  {
+    value: 'chatContext',
+    label: 'Chat context'
+  },
+  {
+    value: 'global',
+    label: 'Global'
+  }
+] satisfies readonly {
+  value: AppChatUsageDisplay
+  label: string
 }[]
 
 const gitCommitPromptFieldOptions = [
@@ -1192,6 +1360,14 @@ const modelSupportsReasoningEffort = (
   !model ||
   model.supportedReasoningEfforts.length === 0 ||
   model.supportedReasoningEfforts.some((option) => option.id === reasoningEffort)
+
+const modelSupportsServiceTier = (
+  model: ProviderModel | undefined,
+  serviceTier: ProviderServiceTier | null
+): boolean =>
+  serviceTier == null ||
+  !model ||
+  Boolean(model.supportedServiceTiers?.some((option) => option.id === serviceTier))
 
 const getChatKey = (chat: Pick<ProviderChat, 'providerId' | 'id'>): string =>
   `${chat.providerId}:${chat.id}`
@@ -1639,6 +1815,32 @@ const formatReviewComments = (comments: ProviderReviewComment[]): string => {
 
 const serializeReviewMessage = (prompt: string, review: Omit<ProviderReview, 'prompt'>): string =>
   [prompt.trim(), formatReviewComments(review.comments)].filter(Boolean).join('\n\n')
+
+const escapeSkillName = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const escapeAppLinkLabel = (value: string): string => value.replace(/[\\[\]]/g, '\\$&')
+
+const serializeComposerMessage = (
+  message: string,
+  skills: ProviderSkillInput[],
+  apps: ProviderAppInput[]
+): string => {
+  const missingSkillMentions = skills
+    .filter(
+      (skill) =>
+        !new RegExp(`(^|[\\s([{])\\$${escapeSkillName(skill.name)}(?=$|[\\s)\\]},.!?;:])`).test(
+          message
+        )
+    )
+    .map((skill) => `$${skill.name}`)
+  const missingAppMentions = apps
+    .filter((app) => !message.includes(`app://${app.id}`))
+    .map((app) => `[$${escapeAppLinkLabel(app.name)}](app://${app.id})`)
+
+  return [[...missingSkillMentions, ...missingAppMentions].join(' '), message]
+    .filter(Boolean)
+    .join('\n')
+}
 
 const hasActiveWorkingStep = (detail: ProviderChatDetail | null): boolean =>
   detail?.items.some((item) => item.type === 'working' && item.status === 'working') ?? false
@@ -2328,6 +2530,16 @@ const getProviderUpdateSummary = (suggestion: ProviderUpdateSuggestion): string 
     suggestion.latestVersion
   }`
 
+const isAppActionShortcutTargetBlocked = (target: EventTarget | null): boolean => {
+  if (!(target instanceof Element)) return false
+
+  return Boolean(
+    target.closest(
+      'input, textarea, select, [contenteditable="true"], [role="dialog"], .terminal-panel'
+    )
+  )
+}
+
 export const App: React.FC = () => {
   const storedMessageBoxSelection = useMemo(() => readStoredMessageBoxSelection(), [])
   const [appSettings, setAppSettings] = useState<AppSettings>(readStoredAppSettings)
@@ -2337,6 +2549,11 @@ export const App: React.FC = () => {
   const [selectedReview, setSelectedReview] = useState<Omit<ProviderReview, 'prompt'> | null>(null)
   const [reviewCommentsDraft, setReviewCommentsDraft] = useState<ProviderReviewComment[]>([])
   const [terminalCwd, setTerminalCwd] = useState<string | null | undefined>(undefined)
+  const [terminalLaunchRequest, setTerminalLaunchRequest] = useState<TerminalLaunchRequest | null>(
+    null
+  )
+  const [terminalCommandLaunchRequest, setTerminalCommandLaunchRequest] =
+    useState<TerminalCommandLaunchRequest | null>(null)
   const [chats, setChats] = useState<ProviderChat[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
@@ -2365,6 +2582,9 @@ export const App: React.FC = () => {
   )
   const [reasoningEffort, setReasoningEffort] = useState<ProviderReasoningEffort>(
     storedMessageBoxSelection.reasoningEffort ?? fallbackInitialReasoningEffort
+  )
+  const [serviceTier, setServiceTier] = useState<ProviderServiceTier | null>(
+    storedMessageBoxSelection.serviceTier ?? null
   )
   const [approvalResolution, setApprovalResolution] = useState<ApprovalResolutionState>({
     approvalId: null,
@@ -2746,6 +2966,10 @@ export const App: React.FC = () => {
     setThemePreference(appSettings.appearance.theme)
   }, [appSettings])
 
+  useLayoutEffect(() => {
+    applyShadowPreference(appSettings.performance.disableShadows)
+  }, [appSettings.performance.disableShadows])
+
   useEffect(() => {
     if (!settingsOpen) return
 
@@ -2775,8 +2999,14 @@ export const App: React.FC = () => {
   )
 
   useEffect(() => {
-    writeStoredMessageBoxSelection({ approvalMode, model, reasoningEffort, sandboxMode })
-  }, [approvalMode, model, reasoningEffort, sandboxMode])
+    writeStoredMessageBoxSelection({
+      approvalMode,
+      model,
+      reasoningEffort,
+      sandboxMode,
+      serviceTier
+    })
+  }, [approvalMode, model, reasoningEffort, sandboxMode, serviceTier])
 
   useEffect(() => {
     if (sandboxMode !== 'danger-full-access' || approvalMode === 'never') return
@@ -3149,6 +3379,12 @@ export const App: React.FC = () => {
 
       return getDefaultReasoningEffort(selectedModel)
     })
+
+    setServiceTier((currentServiceTier) =>
+      modelSupportsServiceTier(selectedModel, currentServiceTier)
+        ? currentServiceTier
+        : (selectedModel.defaultServiceTier ?? null)
+    )
   }, [model, models])
 
   const removeRecentChatCacheEntry = useCallback((providerId: ProviderId, chatId: string): void => {
@@ -3212,6 +3448,9 @@ export const App: React.FC = () => {
       const detailKey = getProviderChatKey(providerId, detail.id)
       if (options.select || selectedChatKeyRef.current === detailKey) {
         chatDetailRef.current = detail
+        selectedChatUpdatedAtRef.current = options.select
+          ? updatedAt
+          : Math.max(selectedChatUpdatedAtRef.current ?? 0, updatedAt)
       }
       cacheRecentChatDetail(providerId, detail, updatedAt, options.select)
 
@@ -3261,6 +3500,12 @@ export const App: React.FC = () => {
       }
 
       const summaryKey = getProviderChatKey(providerId, summary.id)
+      if (selectedChatKeyRef.current === summaryKey) {
+        selectedChatUpdatedAtRef.current = Math.max(
+          selectedChatUpdatedAtRef.current ?? 0,
+          summary.updatedAt
+        )
+      }
       if (selectedChatKeyRef.current === summaryKey && chatDetailRef.current?.id === summary.id) {
         chatDetailRef.current = getChatDetailFromUpdateSummary(chatDetailRef.current, summary)
         setChatDetail((currentDetail) =>
@@ -3427,6 +3672,22 @@ export const App: React.FC = () => {
     },
     [applyChatMetadata, applySeenUpdatedAt]
   )
+
+  const markSelectedChatSeen = useCallback((): void => {
+    if (!selectedChat) return
+
+    const cacheEntry = recentChatCacheRef.current.get(getChatKey(selectedChat))
+    markChatSeenAt(
+      selectedChat.providerId,
+      selectedChat.id,
+      Math.max(
+        Date.now(),
+        selectedChat.updatedAt,
+        selectedChatUpdatedAtRef.current ?? 0,
+        cacheEntry?.updatedAt ?? 0
+      )
+    )
+  }, [markChatSeenAt, selectedChat])
 
   const applyViewedChatDetail = useCallback(
     (
@@ -3672,6 +3933,67 @@ export const App: React.FC = () => {
     )
   }, [changesPaneView, handleChangesPaneViewChange])
 
+  const handleOpenAgentTerminal = useCallback(
+    (tool: ProviderWorkingTool): void => {
+      if (!selectedChat || !tool.agentTerminal) return
+
+      const targetCwd = tool.cwd ?? changesCwd
+      setTerminalCwd((currentCwd) => (currentCwd === undefined ? targetCwd : currentCwd))
+      setTerminalLaunchRequest({
+        id: crypto.randomUUID(),
+        providerId: selectedChat.providerId,
+        chatId: selectedChat.id,
+        turnId: tool.agentTerminal.turnId,
+        itemId: tool.agentTerminal.itemId,
+        processId: tool.agentTerminal.processId,
+        command: tool.command ?? tool.label,
+        cwd: targetCwd,
+        output: tool.stdout,
+        status: tool.status
+      })
+      handleChangesPaneViewChange('terminal')
+    },
+    [changesCwd, handleChangesPaneViewChange, selectedChat]
+  )
+
+  const handleRunAction = useCallback(
+    async (action: AppAction): Promise<void> => {
+      const targetCwd = changesCwd
+      const markActionUsed = (): void => {
+        setAppSettings((currentSettings) =>
+          currentSettings.lastActionId === action.id
+            ? currentSettings
+            : {
+                ...currentSettings,
+                lastActionId: action.id
+              }
+        )
+      }
+
+      if (action.openInTerminal) {
+        setTerminalCwd((currentCwd) => (currentCwd === undefined ? targetCwd : currentCwd))
+        setTerminalCommandLaunchRequest({
+          id: crypto.randomUUID(),
+          command: action.command,
+          cwd: targetCwd,
+          label: action.name,
+          focus: true,
+          closeOnFinish: action.closeTerminalOnFinish
+        })
+        handleChangesPaneViewChange('terminal')
+        markActionUsed()
+        return
+      }
+
+      await terminalApi.runCommand({
+        command: action.command,
+        cwd: targetCwd
+      })
+      markActionUsed()
+    },
+    [changesCwd, handleChangesPaneViewChange]
+  )
+
   useEffect(() => {
     const handleTerminalShortcut = (event: KeyboardEvent): void => {
       if (settingsOpen || fileEditorTarget) return
@@ -3693,6 +4015,28 @@ export const App: React.FC = () => {
     document.addEventListener('keydown', handleTerminalShortcut, true)
     return () => document.removeEventListener('keydown', handleTerminalShortcut, true)
   }, [fileEditorTarget, handleToggleTerminal, settingsOpen])
+
+  useEffect(() => {
+    const handleActionShortcut = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.repeat || settingsOpen || fileEditorTarget) return
+      if (isAppActionShortcutTargetBlocked(event.target)) return
+
+      const keybinding = getAppActionKeybindingFromEvent(event)
+      if (!keybinding) return
+
+      const action = appSettings.actions.find(
+        (candidateAction) => candidateAction.keybinding === keybinding
+      )
+      if (!action) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      void handleRunAction(action)
+    }
+
+    document.addEventListener('keydown', handleActionShortcut, true)
+    return () => document.removeEventListener('keydown', handleActionShortcut, true)
+  }, [appSettings.actions, fileEditorTarget, handleRunAction, settingsOpen])
   const changesProjectCwd = selectedChat
     ? (chatDetail?.projectCwd ?? selectedChat.projectCwd ?? changesCwd)
     : newSessionCwd
@@ -4426,6 +4770,155 @@ export const App: React.FC = () => {
       ...modelOptions
     ]
   }, [models])
+  const effectiveSandboxMode =
+    appSettings.chat.forceAccess === appChatManualDropdownValue
+      ? sandboxMode
+      : appSettings.chat.forceAccess
+  const configuredApprovalMode =
+    appSettings.chat.forceReview === appChatManualDropdownValue
+      ? approvalMode
+      : appSettings.chat.forceReview
+  const effectiveApprovalMode =
+    effectiveSandboxMode === 'danger-full-access' ? 'never' : configuredApprovalMode
+  const effectiveModel =
+    appSettings.chat.forceModel === appChatManualDropdownValue ? model : appSettings.chat.forceModel
+  const selectedEffectiveModel = models.find(
+    (candidateModel) => candidateModel.id === effectiveModel
+  )
+  const configuredServiceTier =
+    appSettings.chat.forceSpeed === appChatManualDropdownValue
+      ? serviceTier
+      : appSettings.chat.forceSpeed === appChatStandardSpeedValue
+        ? null
+        : appSettings.chat.forceSpeed
+  const effectiveServiceTier = modelSupportsServiceTier(
+    selectedEffectiveModel,
+    configuredServiceTier
+  )
+    ? configuredServiceTier
+    : (selectedEffectiveModel?.defaultServiceTier ?? null)
+  const configuredReasoningEffort =
+    appSettings.chat.forceReasoning === appChatManualDropdownValue
+      ? reasoningEffort
+      : appSettings.chat.forceReasoning
+  const effectiveReasoningEffort = modelSupportsReasoningEffort(
+    selectedEffectiveModel,
+    configuredReasoningEffort
+  )
+    ? configuredReasoningEffort
+    : getDefaultReasoningEffort(selectedEffectiveModel)
+  const hasForcedChatDropdown =
+    appSettings.chat.forceAccess !== appChatManualDropdownValue ||
+    appSettings.chat.forceReview !== appChatManualDropdownValue ||
+    appSettings.chat.forceModel !== appChatManualDropdownValue ||
+    appSettings.chat.forceReasoning !== appChatManualDropdownValue ||
+    appSettings.chat.forceSpeed !== appChatManualDropdownValue
+  const forceAccessOptions: DropdownOption<AppChatDropdownSettings['forceAccess']>[] = [
+    {
+      value: appChatManualDropdownValue,
+      label: 'Manual',
+      description: 'Use the access selected manually in the chat.',
+      icon: <MessageSquare aria-hidden="true" />
+    },
+    ...sandboxModes.map((mode) => ({
+      value: mode.id,
+      label: mode.label,
+      description: mode.description || undefined,
+      icon: chatSandboxModeIcons[mode.id]
+    }))
+  ]
+  const forceReviewOptions: DropdownOption<AppChatDropdownSettings['forceReview']>[] = [
+    {
+      value: appChatManualDropdownValue,
+      label: 'Manual',
+      description: 'Use the review mode selected manually in the chat.',
+      icon: <MessageSquare aria-hidden="true" />
+    },
+    ...approvalModes.map((mode) => ({
+      value: mode.id,
+      label: mode.label,
+      description: mode.description || undefined,
+      icon: chatApprovalModeIcons[mode.id]
+    }))
+  ]
+  const forceModelOptions: DropdownOption<AppChatDropdownSettings['forceModel']>[] = [
+    {
+      value: appChatManualDropdownValue,
+      label: 'Manual',
+      description: 'Use the model selected manually in the chat.',
+      icon: <MessageSquare aria-hidden="true" />
+    },
+    ...models.map((candidateModel) => ({
+      value: candidateModel.id,
+      label: formatModelLabel(candidateModel.label),
+      description: candidateModel.description || undefined,
+      icon: <Bot aria-hidden="true" />
+    }))
+  ]
+  if (
+    appSettings.chat.forceModel !== appChatManualDropdownValue &&
+    !forceModelOptions.some((option) => option.value === appSettings.chat.forceModel)
+  ) {
+    forceModelOptions.push({
+      value: appSettings.chat.forceModel,
+      label: formatModelLabel(appSettings.chat.forceModel),
+      icon: <Bot aria-hidden="true" />
+    })
+  }
+  const forceReasoningOptions: DropdownOption<AppChatDropdownSettings['forceReasoning']>[] = [
+    {
+      value: appChatManualDropdownValue,
+      label: 'Manual',
+      description: 'Use the reasoning effort selected manually in the chat.',
+      icon: <MessageSquare aria-hidden="true" />
+    },
+    ...(selectedEffectiveModel?.supportedReasoningEfforts ?? []).map((option) => ({
+      value: option.id,
+      label: formatSelectionLabel(option.label || option.id),
+      description: option.description || undefined,
+      icon: getChatReasoningEffortIcon(option.id)
+    }))
+  ]
+  if (
+    appSettings.chat.forceReasoning !== appChatManualDropdownValue &&
+    !forceReasoningOptions.some((option) => option.value === appSettings.chat.forceReasoning)
+  ) {
+    forceReasoningOptions.push({
+      value: appSettings.chat.forceReasoning,
+      label: formatSelectionLabel(appSettings.chat.forceReasoning),
+      icon: getChatReasoningEffortIcon(appSettings.chat.forceReasoning)
+    })
+  }
+  const forceSpeedOptions: DropdownOption<AppChatDropdownSettings['forceSpeed']>[] = [
+    {
+      value: appChatManualDropdownValue,
+      label: 'Manual',
+      description: 'Use the speed selected manually in the chat.',
+      icon: <MessageSquare aria-hidden="true" />
+    },
+    {
+      value: appChatStandardSpeedValue,
+      label: 'Standard',
+      description: 'Standard response speed and credit usage',
+      icon: getChatServiceTierIcon(appChatStandardSpeedValue)
+    },
+    ...(selectedEffectiveModel?.supportedServiceTiers ?? []).map((option) => ({
+      value: option.id,
+      label: option.label,
+      description: option.description || undefined,
+      icon: getChatServiceTierIcon(option.id, option.label)
+    }))
+  ]
+  if (
+    appSettings.chat.forceSpeed !== appChatManualDropdownValue &&
+    !forceSpeedOptions.some((option) => option.value === appSettings.chat.forceSpeed)
+  ) {
+    forceSpeedOptions.push({
+      value: appSettings.chat.forceSpeed,
+      label: formatSelectionLabel(appSettings.chat.forceSpeed),
+      icon: getChatServiceTierIcon(appSettings.chat.forceSpeed)
+    })
+  }
 
   const handleToggleCwdGroup = (groupKey: string): void => {
     setCollapsedCwdGroups((currentGroups) => ({
@@ -4506,10 +4999,11 @@ export const App: React.FC = () => {
     setSearchQuery('')
 
     if (selectingCurrentChat && chatLoadState === 'ready' && chatDetail?.id === chat.id) {
-      markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
+      markSelectedChatSeen()
       return
     }
 
+    markSelectedChatSeen()
     selectedChatKeyRef.current = getChatKey(chat)
     selectedChatUpdatedAtRef.current = chat.updatedAt
     chatDetailRef.current = null
@@ -4538,9 +5032,7 @@ export const App: React.FC = () => {
   }
 
   const handleBack = (): void => {
-    if (selectedChat) {
-      markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
-    }
+    markSelectedChatSeen()
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
     resetChatSearch()
@@ -4556,9 +5048,7 @@ export const App: React.FC = () => {
     const projectCwd = selectedChat
       ? getChatProjectCwd(chatDetail?.id === selectedChat.id ? chatDetail : selectedChat)
       : undefined
-    if (selectedChat) {
-      markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
-    }
+    markSelectedChatSeen()
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
     showNewChatView(projectCwd)
@@ -4567,9 +5057,7 @@ export const App: React.FC = () => {
   const handleNewChatInCwd = (group: ChatListGroupData): void => {
     if (group.kind !== 'cwd') return
 
-    if (selectedChat) {
-      markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
-    }
+    markSelectedChatSeen()
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
     showNewChatView(group.cwd)
@@ -4603,6 +5091,27 @@ export const App: React.FC = () => {
     setAppSettings((currentSettings) => update(currentSettings))
   }
 
+  const handleActionsChange = (actions: AppAction[]): void => {
+    updateAppSettings((currentSettings) => {
+      const lastActionId = actions.some((action) => action.id === currentSettings.lastActionId)
+        ? currentSettings.lastActionId
+        : null
+
+      return {
+        ...currentSettings,
+        actions,
+        lastActionId
+      }
+    })
+  }
+
+  const handleLastActionChange = (actionId: string | null): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      lastActionId: actionId
+    }))
+  }
+
   const handleThemePreferenceChange = (theme: AppThemePreference): void => {
     updateAppSettings((currentSettings) => ({
       ...currentSettings,
@@ -4613,11 +5122,47 @@ export const App: React.FC = () => {
     }))
   }
 
+  const handleChatUsageDisplayChange = (displayUsage: AppChatUsageDisplay): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      chat: {
+        ...currentSettings.chat,
+        displayUsage
+      }
+    }))
+  }
+
   const handleChatDropdownPreferenceChange = (key: ChatBooleanSettingKey, value: boolean): void => {
     updateAppSettings((currentSettings) => ({
       ...currentSettings,
       chat: {
         ...currentSettings.chat,
+        [key]: value
+      }
+    }))
+  }
+
+  const handleChatForcedDropdownChange = <Key extends keyof AppChatDropdownSettings>(
+    key: Key,
+    value: AppChatDropdownSettings[Key]
+  ): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      chat: {
+        ...currentSettings.chat,
+        [key]: value
+      }
+    }))
+  }
+
+  const handlePerformancePreferenceChange = (
+    key: keyof AppSettings['performance'],
+    value: boolean
+  ): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      performance: {
+        ...currentSettings.performance,
         [key]: value
       }
     }))
@@ -4931,10 +5476,11 @@ export const App: React.FC = () => {
   }, [])
 
   const getCurrentTurnOptions = (): ProviderTurnOptions => ({
-    ...getApprovalAccessOptions(approvalMode, sandboxMode),
-    model,
-    reasoningEffort,
-    sandboxMode
+    ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
+    model: effectiveModel,
+    reasoningEffort: effectiveReasoningEffort,
+    sandboxMode: effectiveSandboxMode,
+    serviceTier: effectiveServiceTier
   })
 
   const getGitTurnOptions = (): ProviderTurnOptions => {
@@ -4953,7 +5499,10 @@ export const App: React.FC = () => {
         turnOptions.reasoningEffort
       )
         ? turnOptions.reasoningEffort
-        : getDefaultReasoningEffort(resolvedCommitModel)
+        : getDefaultReasoningEffort(resolvedCommitModel),
+      serviceTier: modelSupportsServiceTier(resolvedCommitModel, turnOptions.serviceTier)
+        ? turnOptions.serviceTier
+        : (resolvedCommitModel.defaultServiceTier ?? null)
     }
   }
 
@@ -4962,20 +5511,26 @@ export const App: React.FC = () => {
     activeMode?: ProviderActiveSendMode,
     attachments: AppSelectedAttachment[] = [],
     review?: Omit<ProviderReview, 'prompt'> | null,
+    skills: ProviderSkillInput[] = [],
+    apps: ProviderAppInput[] = [],
     turnOptionsOverride?: ProviderTurnOptions
   ): Promise<void> => {
     if (providerUpdateInProgress || sendInFlightRef.current) return
     sendInFlightRef.current = true
     chatAutoScrollEnabledRef.current = true
-    const serializedMessage = review ? serializeReviewMessage(message, review) : message
+    const messageWithComposerMentions = serializeComposerMessage(message, skills, apps)
+    const serializedMessage = review
+      ? serializeReviewMessage(messageWithComposerMentions, review)
+      : messageWithComposerMentions
     const baseTurnOptions = {
       ...(turnOptionsOverride ?? getCurrentTurnOptions()),
       review: review
         ? {
             ...review,
-            prompt: message.trim()
+            prompt: messageWithComposerMentions.trim()
           }
-        : undefined
+        : undefined,
+      skills: skills.length > 0 ? skills : undefined
     }
     const imagePaths = attachments
       .filter((attachment) => attachment.kind === 'image')
@@ -5059,7 +5614,7 @@ export const App: React.FC = () => {
           providerId,
           chatId,
           serializedMessage,
-          activeMode ?? 'steer',
+          activeMode ?? 'queue',
           turnOptions
         )
         applyChatSummary(providerId, summary, false)
@@ -5079,7 +5634,12 @@ export const App: React.FC = () => {
         ...chatDetail,
         status: 'active',
         contextUsage: chatDetail.contextUsage,
-        items: getOptimisticItems(chatDetail.items, message, attachments, review)
+        items: getOptimisticItems(
+          chatDetail.items,
+          messageWithComposerMentions,
+          attachments,
+          review
+        )
       })
     }
 
@@ -5136,10 +5696,11 @@ export const App: React.FC = () => {
           }
         : null
       const turnOptions: ProviderTurnOptions = {
-        ...getApprovalAccessOptions(approvalMode, sandboxMode),
-        model,
-        reasoningEffort,
-        sandboxMode,
+        ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
+        model: effectiveModel,
+        reasoningEffort: effectiveReasoningEffort,
+        sandboxMode: effectiveSandboxMode,
+        serviceTier: effectiveServiceTier,
         review: review
           ? {
               ...review,
@@ -5172,14 +5733,15 @@ export const App: React.FC = () => {
       }
     },
     [
-      approvalMode,
       applyViewedChatDetail,
       chatDetail?.capabilities.editMessages,
+      effectiveApprovalMode,
+      effectiveModel,
+      effectiveReasoningEffort,
+      effectiveSandboxMode,
+      effectiveServiceTier,
       markChatSeenAt,
-      model,
       providerUpdateInProgress,
-      reasoningEffort,
-      sandboxMode,
       selectedChatId,
       selectedProviderId
     ]
@@ -5392,6 +5954,41 @@ export const App: React.FC = () => {
     !editingMessage
   )
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
+  const agentTerminalSnapshots = useMemo((): AgentTerminalSnapshot[] => {
+    if (!selectedChat) return []
+
+    const snapshots: AgentTerminalSnapshot[] = []
+    const addTool = (tool: ProviderWorkingTool): void => {
+      if (!tool.agentTerminal) return
+
+      snapshots.push({
+        providerId: selectedChat.providerId,
+        chatId: selectedChat.id,
+        turnId: tool.agentTerminal.turnId,
+        itemId: tool.agentTerminal.itemId,
+        processId: tool.agentTerminal.processId,
+        command: tool.command ?? tool.label,
+        cwd: tool.cwd ?? changesCwd,
+        output: tool.stdout,
+        status: tool.status
+      })
+    }
+
+    visibleChatItems.forEach((item) => {
+      if (item.type !== 'working') return
+
+      item.items.forEach((workingItem) => {
+        if (workingItem.type === 'tool') {
+          addTool(workingItem)
+          return
+        }
+
+        if (workingItem.type === 'toolGroup') workingItem.tools.forEach(addTool)
+      })
+    })
+
+    return snapshots
+  }, [changesCwd, selectedChat, visibleChatItems])
   const stoppedTurnRetryMessages = useMemo(
     () => getStoppedTurnRetryMessages(visibleChatItems),
     [visibleChatItems]
@@ -5404,6 +6001,20 @@ export const App: React.FC = () => {
     chatHasActiveTurn ||
     Boolean(editingMessage) ||
     Boolean(selectedChatAiCommitAction)
+  const workingStepIdsWithNextWorkingStep = useMemo(() => {
+    const ids = new Set<string>()
+    let hasLaterWorkingStep = false
+
+    for (let itemIndex = visibleChatItems.length - 1; itemIndex >= 0; itemIndex -= 1) {
+      const item = visibleChatItems[itemIndex]
+      if (item.type !== 'working') continue
+
+      if (hasLaterWorkingStep) ids.add(item.id)
+      hasLaterWorkingStep = true
+    }
+
+    return ids
+  }, [visibleChatItems])
   const firstPendingChatItemId =
     visibleChatItems.find((item) => item.type === 'pendingMessage')?.id ?? null
   const [
@@ -5900,7 +6511,7 @@ export const App: React.FC = () => {
   }
 
   const handleOpenFileLink = useCallback(
-    (path: string, displayPath: string, line?: number): void => {
+    (path: string, displayPath: string, line?: number, endLine?: number): void => {
       if (!changesCwd) return
 
       const normalizedCwd = changesCwd.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -5913,7 +6524,8 @@ export const App: React.FC = () => {
         cwd: changesCwd,
         path,
         displayPath: relativeDisplayPath,
-        line
+        line,
+        endLine
       })
     },
     [changesCwd]
@@ -6532,6 +7144,8 @@ export const App: React.FC = () => {
       undefined,
       [],
       null,
+      [],
+      [],
       getGitTurnOptions()
     )
   }
@@ -6552,6 +7166,27 @@ export const App: React.FC = () => {
   }
 
   const renderSettingsPanel = (): React.ReactElement => {
+    const renderChatBooleanSettingField = (field: ChatBooleanSettingField): React.ReactElement => (
+      <div className="settings-dialog__field" key={field.key}>
+        <div className="settings-dialog__field-header">
+          <h3 id={field.id}>{field.label}</h3>
+          {field.description && <p>{field.description}</p>}
+        </div>
+        <label className="settings-switch">
+          <input
+            type="checkbox"
+            role="switch"
+            aria-labelledby={field.id}
+            checked={appSettings.chat[field.key]}
+            onChange={(event) =>
+              handleChatDropdownPreferenceChange(field.key, event.currentTarget.checked)
+            }
+          />
+          <span className="settings-switch__control" aria-hidden="true" />
+        </label>
+      </div>
+    )
+
     if (settingsTab === 'chat') {
       return (
         <section
@@ -6560,98 +7195,221 @@ export const App: React.FC = () => {
           role="tabpanel"
           aria-label="Chat settings"
         >
-          <div className="settings-dialog__field">
-            <div className="settings-dialog__field-header">
-              <h3 id="settings-chat-existing-label">Update all existing chats</h3>
+          <section className="settings-dialog__section" aria-labelledby="settings-chat-prompt-box">
+            <h2 className="settings-dialog__section-heading" id="settings-chat-prompt-box">
+              Prompt Box
+            </h2>
+            <div className="settings-dialog__section-cards">
+              {chatPromptBoxSettingFields.map(renderChatBooleanSettingField)}
             </div>
-            <label className="settings-switch">
-              <input
-                type="checkbox"
-                role="switch"
-                aria-labelledby="settings-chat-existing-label"
-                checked={appSettings.chat.updateExistingChats}
-                onChange={(event) =>
-                  handleChatDropdownPreferenceChange(
-                    'updateExistingChats',
-                    event.currentTarget.checked
-                  )
-                }
-              />
-              <span className="settings-switch__control" aria-hidden="true" />
-            </label>
-          </div>
-          <div className="settings-dialog__field">
-            <div className="settings-dialog__field-header">
-              <h3 id="settings-chat-new-label">Update all new chats</h3>
+          </section>
+          <section className="settings-dialog__section" aria-labelledby="settings-chat-limits">
+            <h2 className="settings-dialog__section-heading" id="settings-chat-limits">
+              Limits
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Display usage</h3>
+                </div>
+                <SegmentedControl
+                  aria-label="Display usage"
+                  options={chatUsageDisplayOptions}
+                  value={appSettings.chat.displayUsage}
+                  onChange={handleChatUsageDisplayChange}
+                />
+              </div>
             </div>
-            <label className="settings-switch">
-              <input
-                type="checkbox"
-                role="switch"
-                aria-labelledby="settings-chat-new-label"
-                checked={appSettings.chat.updateNewChats}
-                onChange={(event) =>
-                  handleChatDropdownPreferenceChange('updateNewChats', event.currentTarget.checked)
-                }
-              />
-              <span className="settings-switch__control" aria-hidden="true" />
-            </label>
-          </div>
-          <div className="settings-dialog__field">
-            <div className="settings-dialog__field-header">
-              <h3 id="settings-chat-hide-plans-label">Hide plans in chats</h3>
-              <p>Hide the expandable plan panel above the message box.</p>
+          </section>
+          <section className="settings-dialog__section" aria-labelledby="settings-chat-dropdowns">
+            <h2 className="settings-dialog__section-heading" id="settings-chat-dropdowns">
+              Dropdowns
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Force access</h3>
+                  <p>Hide the chat dropdown and always use this access mode.</p>
+                </div>
+                <Dropdown
+                  id="settings-chat-force-access"
+                  aria-label="Force access"
+                  menuAlign="end"
+                  options={forceAccessOptions}
+                  value={appSettings.chat.forceAccess}
+                  onChange={(value) => handleChatForcedDropdownChange('forceAccess', value)}
+                />
+              </div>
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Force review</h3>
+                  <p>Hide the chat dropdown and always use this review mode.</p>
+                </div>
+                <Dropdown
+                  id="settings-chat-force-review"
+                  aria-label="Force review"
+                  menuAlign="end"
+                  options={forceReviewOptions}
+                  value={appSettings.chat.forceReview}
+                  onChange={(value) => handleChatForcedDropdownChange('forceReview', value)}
+                />
+              </div>
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Force model</h3>
+                  <p>Hide the chat dropdown and always use this model.</p>
+                </div>
+                <Dropdown
+                  id="settings-chat-force-model"
+                  aria-label="Force model"
+                  menuAlign="end"
+                  options={forceModelOptions}
+                  value={appSettings.chat.forceModel}
+                  onChange={(value) => handleChatForcedDropdownChange('forceModel', value)}
+                />
+              </div>
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Force reasoning</h3>
+                  <p>Hide the chat dropdown and always use this reasoning effort.</p>
+                </div>
+                <Dropdown
+                  id="settings-chat-force-reasoning"
+                  aria-label="Force reasoning"
+                  menuAlign="end"
+                  options={forceReasoningOptions}
+                  value={appSettings.chat.forceReasoning}
+                  onChange={(value) => handleChatForcedDropdownChange('forceReasoning', value)}
+                />
+              </div>
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Force speed</h3>
+                  <p>Hide the chat dropdown and always use this speed.</p>
+                </div>
+                <Dropdown
+                  id="settings-chat-force-speed"
+                  aria-label="Force speed"
+                  menuAlign="end"
+                  options={forceSpeedOptions}
+                  value={appSettings.chat.forceSpeed}
+                  onChange={(value) => handleChatForcedDropdownChange('forceSpeed', value)}
+                />
+              </div>
+              {chatDropdownSettingFields.map(renderChatBooleanSettingField)}
             </div>
-            <label className="settings-switch">
-              <input
-                type="checkbox"
-                role="switch"
-                aria-labelledby="settings-chat-hide-plans-label"
-                checked={appSettings.chat.hidePlans}
-                onChange={(event) =>
-                  handleChatDropdownPreferenceChange('hidePlans', event.currentTarget.checked)
-                }
-              />
-              <span className="settings-switch__control" aria-hidden="true" />
-            </label>
-          </div>
-          <div className="settings-dialog__field settings-dialog__field--stack">
-            <label
-              className="settings-dialog__field-header"
-              htmlFor="settings-chat-continue-prompt"
-            >
-              <h3>Stopped-turn continue prompt</h3>
-              <p>Sent as a new message when Continue is selected on a stopped turn.</p>
-            </label>
-            <textarea
-              id="settings-chat-continue-prompt"
-              className="settings-dialog__prompt-textarea"
-              rows={3}
-              value={appSettings.chat.continuePrompt}
-              onChange={(event) => handleContinuePromptChange(event.currentTarget.value)}
-            />
-          </div>
-          <div className="settings-dialog__field">
-            <label className="settings-dialog__field-header" htmlFor="settings-chat-cache-limit">
-              <h3>Cache recent chats</h3>
-              <p>
-                Keep this many recent chats that haven’t been marked done in memory. Use 0 to
-                disable.
-              </p>
-            </label>
-            <Input
-              className="settings-dialog__number-input"
-              id="settings-chat-cache-limit"
-              type="number"
-              min={0}
-              max={50}
-              step={1}
-              value={appSettings.chat.recentChatCacheLimit}
-              onChange={(event) =>
-                handleRecentChatCacheLimitChange(event.currentTarget.valueAsNumber)
-              }
-            />
-          </div>
+          </section>
+          <section className="settings-dialog__section" aria-labelledby="settings-chat-thoughts">
+            <h2 className="settings-dialog__section-heading" id="settings-chat-thoughts">
+              Thoughts
+            </h2>
+            <div className="settings-dialog__section-cards">
+              {chatThoughtSettingFields.map(renderChatBooleanSettingField)}
+            </div>
+          </section>
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-chat-stopped-turns"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-chat-stopped-turns">
+              Stopped Turns
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--stack">
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-chat-continue-prompt"
+                >
+                  <h3>Continue prompt</h3>
+                  <p>Sent as a new message when Continue is selected on a stopped turn.</p>
+                </label>
+                <textarea
+                  id="settings-chat-continue-prompt"
+                  className="settings-dialog__prompt-textarea"
+                  rows={3}
+                  value={appSettings.chat.continuePrompt}
+                  onChange={(event) => handleContinuePromptChange(event.currentTarget.value)}
+                />
+              </div>
+            </div>
+          </section>
+        </section>
+      )
+    }
+
+    if (settingsTab === 'performance') {
+      return (
+        <section
+          className="settings-dialog__panel"
+          id="settings-panel-performance"
+          role="tabpanel"
+          aria-label="Performance settings"
+        >
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-performance-rendering"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-performance-rendering">
+              Rendering
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field">
+                <div className="settings-dialog__field-header">
+                  <h3 id="settings-performance-disable-shadows">Disable shadows</h3>
+                  <p>Remove box shadows throughout the app.</p>
+                </div>
+                <label className="settings-switch">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-labelledby="settings-performance-disable-shadows"
+                    checked={appSettings.performance.disableShadows}
+                    onChange={(event) =>
+                      handlePerformancePreferenceChange(
+                        'disableShadows',
+                        event.currentTarget.checked
+                      )
+                    }
+                  />
+                  <span className="settings-switch__control" aria-hidden="true" />
+                </label>
+              </div>
+            </div>
+          </section>
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-performance-chat-cache"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-performance-chat-cache">
+              Chat Cache
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field">
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-chat-cache-limit"
+                >
+                  <h3>Cache recent chats</h3>
+                  <p>
+                    Keep this many recent chats that haven’t been marked done in memory. Use 0 to
+                    disable.
+                  </p>
+                </label>
+                <Input
+                  className="settings-dialog__number-input"
+                  id="settings-chat-cache-limit"
+                  type="number"
+                  min={0}
+                  max={50}
+                  step={1}
+                  value={appSettings.chat.recentChatCacheLimit}
+                  onChange={(event) =>
+                    handleRecentChatCacheLimitChange(event.currentTarget.valueAsNumber)
+                  }
+                />
+              </div>
+            </div>
+          </section>
         </section>
       )
     }
@@ -7104,6 +7862,7 @@ export const App: React.FC = () => {
                         canEditOwnMessages={canEditOwnMessages}
                         continuePrompt={appSettings.chat.continuePrompt}
                         continueStoppedTurnDisabled={stoppedTurnActionDisabled}
+                        hasNextWorkingStep={workingStepIdsWithNextWorkingStep.has(item.id)}
                         item={item}
                         modelLabelsById={modelLabelsById}
                         onDeletePendingMessage={handleDeletePendingMessage}
@@ -7118,6 +7877,7 @@ export const App: React.FC = () => {
                         }
                         onEditMessage={handleEditMessage}
                         onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+                        onOpenAgentTerminal={handleOpenAgentTerminal}
                         onRetryStoppedTurn={handleRetryStoppedTurn}
                         projectCwd={changesProjectCwd}
                         retryMessage={
@@ -7126,6 +7886,7 @@ export const App: React.FC = () => {
                         retryStoppedTurnDisabled={stoppedTurnActionDisabled}
                         selectedModelId={model}
                         streaming={item.id === streamingChatItemId}
+                        thoughtSettings={appSettings.chat}
                       />
                       {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
                     </Fragment>
@@ -7279,8 +8040,10 @@ export const App: React.FC = () => {
                 )}
                 <MessageBox
                   active={editingMessage ? false : chatHasActiveTurn}
-                  activePrimaryMode={chatHasPendingSteeringMessage ? 'queue' : 'steer'}
-                  approvalMode={approvalMode}
+                  activePrimaryMode="queue"
+                  activeSteeringEnabled={!chatHasPendingSteeringMessage}
+                  actions={appSettings.actions}
+                  approvalMode={effectiveApprovalMode}
                   approvalModes={approvalModes}
                   autoFocus={!selectedChat && newChatOpen}
                   disabled={messageBoxDisabled}
@@ -7290,7 +8053,9 @@ export const App: React.FC = () => {
                   accountUsageError={accountUsageError}
                   accountUsageState={accountUsageState}
                   contextUsage={messageBoxContextUsage}
-                  model={model}
+                  displayUsage={appSettings.chat.displayUsage}
+                  lastActionId={appSettings.lastActionId}
+                  model={effectiveModel}
                   models={models}
                   notesContextKey={messageBoxNotesGroup?.key}
                   notes={
@@ -7303,11 +8068,26 @@ export const App: React.FC = () => {
                     providerUpdateInProgress || Boolean(selectedChatAiCommitAction)
                   }
                   pending={sendState === 'sending'}
+                  providerId={selectedChat?.providerId ?? newSessionProvider}
                   projectCwd={changesProjectCwd}
-                  reasoningEffort={reasoningEffort}
-                  sandboxMode={sandboxMode}
+                  cwd={changesCwd}
+                  reasoningEffort={effectiveReasoningEffort}
+                  sandboxMode={effectiveSandboxMode}
                   sandboxModes={sandboxModes}
                   selectedReview={selectedReview}
+                  serviceTier={effectiveServiceTier}
+                  showAccessSelector={appSettings.chat.forceAccess === appChatManualDropdownValue}
+                  showActions={appSettings.chat.enableActions}
+                  showActionLabel={hasForcedChatDropdown}
+                  showModelSelector={appSettings.chat.forceModel === appChatManualDropdownValue}
+                  showNotesButton={appSettings.chat.enableNotesButton}
+                  showReasoningSelector={
+                    appSettings.chat.forceReasoning === appChatManualDropdownValue
+                  }
+                  showReviewSelector={appSettings.chat.forceReview === appChatManualDropdownValue}
+                  showSpeedSelector={appSettings.chat.forceSpeed === appChatManualDropdownValue}
+                  onActionsChange={handleActionsChange}
+                  onLastActionChange={handleLastActionChange}
                   onApprovalModeChange={handleApprovalModeChange}
                   onCancelEdit={handleCancelEditMessage}
                   onModelChange={handleModelChange}
@@ -7319,6 +8099,8 @@ export const App: React.FC = () => {
                   onOpenAttachment={changesCwd ? handleOpenAttachment : undefined}
                   onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
                   onReasoningEffortChange={handleReasoningEffortChange}
+                  onRunAction={handleRunAction}
+                  onServiceTierChange={setServiceTier}
                   onSelectedReviewChange={handleSelectedReviewChange}
                   onSandboxModeChange={handleSandboxModeChange}
                   onStop={handleStopChat}
@@ -7483,7 +8265,12 @@ export const App: React.FC = () => {
                   }`}
                   aria-hidden={changesPaneView !== 'terminal'}
                 >
-                  <TerminalPanel cwd={terminalCwd} />
+                  <TerminalPanel
+                    agentTerminalSnapshots={agentTerminalSnapshots}
+                    commandLaunchRequest={terminalCommandLaunchRequest}
+                    cwd={terminalCwd}
+                    launchRequest={terminalLaunchRequest}
+                  />
                 </div>
               )}
             </div>
