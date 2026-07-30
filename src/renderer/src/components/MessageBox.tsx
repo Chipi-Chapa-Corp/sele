@@ -1569,9 +1569,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       <div className="message-box__limit" key={key}>
         <div className="message-box__usage-row">
           <span>{limitLabel}</span>
-          <strong>
-            {formatPercent(roundedUsedPercent)} · {formatPercent(100 - roundedUsedPercent)} left
-          </strong>
+          <strong>{formatPercent(100 - roundedUsedPercent)} left</strong>
         </div>
         <div className="message-box__usage-meter" aria-hidden="true">
           <span style={{ width: `${usedPercent}%` }} />
