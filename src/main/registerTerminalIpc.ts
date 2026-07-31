@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs'
 import { spawn as spawnChildProcess } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
@@ -15,7 +14,7 @@ import type {
   TerminalSession
 } from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
-import { getHostCommand, isRunningInFlatpak } from './hostProcess'
+import { getHostCommand } from './hostProcess'
 
 const minimumColumns = 2
 const maximumColumns = 500
@@ -120,7 +119,9 @@ const getRunCommandOptions = async (value: unknown): Promise<TerminalRunCommandO
 
 const getShell = (): { file: string; args: string[] } => {
   if (process.platform === 'win32') {
-    const file = process.env.COMSPEC || 'powershell.exe'
+    const file = process.env.COMSPEC ?? process.env.ComSpec ?? process.env.SHELL
+    if (!file) throw new Error('Unable to determine terminal shell from environment.')
+
     const shellName = basename(file).toLocaleLowerCase()
     return {
       file,
@@ -135,13 +136,10 @@ const getShell = (): { file: string; args: string[] } => {
       return null
     }
   })()
-  const file =
-    [configuredUserShell, process.env.SHELL, '/bin/zsh', '/bin/bash', '/bin/sh'].find(
-      (candidate): candidate is string =>
-        typeof candidate === 'string' &&
-        isAbsolute(candidate) &&
-        (isRunningInFlatpak() || existsSync(candidate))
-    ) ?? '/bin/sh'
+  const file = [configuredUserShell, process.env.SHELL].find(
+    (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0
+  )
+  if (!file) throw new Error('Unable to determine terminal shell from user or environment.')
 
   return { file, args: [] }
 }

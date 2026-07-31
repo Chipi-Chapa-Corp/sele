@@ -122,6 +122,7 @@ import type {
   ProviderUpdateAvailability
 } from '../../shared/provider'
 import {
+  fallbackCopilotModels,
   fallbackProviderApprovalModes,
   fallbackProviderModels,
   fallbackProviderSandboxModes,
@@ -130,7 +131,8 @@ import {
   isProviderApprovalPolicy,
   isProviderApprovalsReviewer,
   isProviderSandboxMode,
-  isProviderServiceTier
+  isProviderServiceTier,
+  providerIds
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
@@ -462,8 +464,12 @@ const fallbackDefaultSandboxMode =
 const refreshIconReplayMs = 1_050
 
 const providerLabels = {
-  codex: 'Codex'
+  codex: 'Codex',
+  copilot: 'Copilot'
 } satisfies Record<ProviderId, string>
+
+const getFallbackModels = (providerId: ProviderId): ProviderModel[] =>
+  providerId === 'copilot' ? fallbackCopilotModels : fallbackProviderModels
 
 const getProviderUpdatePreference = (
   preferences: ProviderUpdatePreferences,
@@ -2703,6 +2709,7 @@ export const App: React.FC = () => {
   const [newChatOpen, setNewChatOpen] = useState(true)
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null)
   const [newSessionProvider, setNewSessionProvider] = useState<ProviderId>('codex')
+  const configProviderId = selectedChat?.providerId ?? newSessionProvider
   const [projectHistory, setProjectHistory] = useState<ProjectOptionData[]>([])
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -3326,19 +3333,21 @@ export const App: React.FC = () => {
     let active = true
 
     const loadInitialChats = async (): Promise<void> => {
-      try {
-        const page = await providerApi.getChats('codex', {
-          cursor: null,
-          limit: chatPageSize
-        })
+      const results = await Promise.allSettled(
+        providerIds.map((providerId) =>
+          providerApi.getChats(providerId, {
+            cursor: null,
+            limit: chatPageSize
+          })
+        )
+      )
+      if (!active) return
 
-        if (!active) return
-
-        setChats((currentChats) => mergeChats(currentChats, page.chats))
-        setLoadState('ready')
-      } catch {
-        if (active) setLoadState('error')
-      }
+      const loadedChats = results.flatMap((result) =>
+        result.status === 'fulfilled' ? result.value.chats : []
+      )
+      setChats((currentChats) => mergeChats(currentChats, loadedChats))
+      setLoadState(results.some((result) => result.status === 'fulfilled') ? 'ready' : 'error')
     }
 
     void loadInitialChats()
@@ -3354,37 +3363,35 @@ export const App: React.FC = () => {
     const loadProjectHistory = async (): Promise<void> => {
       const projectsByCwd = new Map<string, ProjectOptionData>()
       const loadedChats: ProviderChat[] = []
-      let cursor: string | null = null
 
-      try {
-        do {
-          const page = await providerApi.getChats('codex', {
-            cursor,
-            limit: 100
-          })
+      await Promise.allSettled(
+        providerIds.map(async (providerId) => {
+          let cursor: string | null = null
+          do {
+            const page = await providerApi.getChats(providerId, {
+              cursor,
+              limit: 100
+            })
+            if (!active) return
 
-          if (!active) return
+            loadedChats.push(...page.chats)
+            page.chats.forEach((chat) => {
+              const cwd = getChatProjectCwd(chat)
+              if (!cwd) return
 
-          loadedChats.push(...page.chats)
-          page.chats.forEach((chat) => {
-            const cwd = getChatProjectCwd(chat)
-            if (!cwd) return
+              const existingProject = projectsByCwd.get(cwd)
+              if (!existingProject || chat.updatedAt > existingProject.updatedAt) {
+                projectsByCwd.set(cwd, { cwd, updatedAt: chat.updatedAt })
+              }
+            })
+            cursor = page.nextCursor
+          } while (cursor)
+        })
+      )
 
-            const existingProject = projectsByCwd.get(cwd)
-            if (!existingProject || chat.updatedAt > existingProject.updatedAt) {
-              projectsByCwd.set(cwd, { cwd, updatedAt: chat.updatedAt })
-            }
-          })
-
-          cursor = page.nextCursor
-        } while (cursor)
-
-        if (active) {
-          setProjectHistory(Array.from(projectsByCwd.values()))
-          setChats((currentChats) => mergeChats(currentChats, loadedChats))
-        }
-      } catch {
-        // The visible chat list still provides project options if this background load fails.
+      if (active) {
+        setProjectHistory(Array.from(projectsByCwd.values()))
+        setChats((currentChats) => mergeChats(currentChats, loadedChats))
       }
     }
 
@@ -3399,7 +3406,7 @@ export const App: React.FC = () => {
     let active = true
 
     providerApi
-      .getApprovalModes('codex')
+      .getApprovalModes(configProviderId)
       .then((nextApprovalModes) => {
         if (!active || nextApprovalModes.length === 0) return
 
@@ -3412,7 +3419,7 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [])
+  }, [configProviderId])
 
   useEffect(() => {
     if (approvalModes.length === 0) return
@@ -3440,7 +3447,7 @@ export const App: React.FC = () => {
     let active = true
 
     providerApi
-      .getSandboxModes('codex')
+      .getSandboxModes(configProviderId)
       .then((nextSandboxModes) => {
         if (!active || nextSandboxModes.length === 0) return
 
@@ -3453,7 +3460,7 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [])
+  }, [configProviderId])
 
   useEffect(() => {
     if (sandboxModes.length === 0) return
@@ -3477,22 +3484,27 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     let active = true
+    const fallbackModels = getFallbackModels(configProviderId)
+
+    queueMicrotask(() => {
+      if (active) setModels(fallbackModels)
+    })
 
     providerApi
-      .getModels('codex')
+      .getModels(configProviderId)
       .then((nextModels) => {
         if (!active || nextModels.length === 0) return
 
         setModels(nextModels)
       })
       .catch(() => {
-        if (active) setModels(fallbackProviderModels)
+        if (active) setModels(fallbackModels)
       })
 
     return () => {
       active = false
     }
-  }, [])
+  }, [configProviderId])
 
   useEffect(() => {
     if (models.length === 0) return
@@ -4924,8 +4936,11 @@ export const App: React.FC = () => {
       : appSettings.chat.forceReview
   const effectiveApprovalMode =
     effectiveSandboxMode === 'danger-full-access' ? 'never' : configuredApprovalMode
-  const effectiveModel =
+  const configuredModel =
     appSettings.chat.forceModel === appChatManualDropdownValue ? model : appSettings.chat.forceModel
+  const effectiveModel = models.some((candidateModel) => candidateModel.id === configuredModel)
+    ? configuredModel
+    : getDefaultModel(models).id
   const selectedEffectiveModel = models.find(
     (candidateModel) => candidateModel.id === effectiveModel
   )
@@ -8825,14 +8840,14 @@ export const App: React.FC = () => {
                     </div>
                     <div className="changes-sidebar__sync-recovery-ai">
                       <Button
-                        title="Ask Codex to resolve this Git sync issue once"
+                        title={`Ask ${providerLabels[configProviderId]} to resolve this Git sync issue once`}
                         disabled={gitAiResolutionDisabled}
                         callback={() => void handleGitAiResolution()}
                         dropdownActions={[
                           {
                             id: 'ai-remember',
                             label: 'Make it remember',
-                            title: 'Ask Codex to configure a repo-local pull strategy, then sync',
+                            title: `Ask ${providerLabels[configProviderId]} to configure a repo-local pull strategy, then sync`,
                             callback: () => void handleGitAiResolution(true)
                           }
                         ]}

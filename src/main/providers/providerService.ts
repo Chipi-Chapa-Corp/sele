@@ -29,11 +29,13 @@ import {
   setMessageReview
 } from '../database/messageReviews'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
+import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
 import type { ProviderAdapter } from './ProviderAdapter'
 
 const adapters: Record<ProviderId, ProviderAdapter> = {
-  codex: new CodexProviderAdapter()
+  codex: new CodexProviderAdapter(),
+  copilot: new CopilotProviderAdapter()
 }
 
 const chatUpdatePreviewLimit = 500

@@ -1,4 +1,4 @@
-export const providerIds = ['codex'] as const
+export const providerIds = ['codex', 'copilot'] as const
 export const providerModelIds = [
   'gpt-5.6-sol',
   'gpt-5.6-terra',
@@ -193,6 +193,17 @@ export const fallbackProviderModels: ProviderModel[] = [
       isDefault: reasoningEffort === 'high'
     })),
     defaultReasoningEffort: 'high'
+  }
+]
+
+export const fallbackCopilotModels: ProviderModel[] = [
+  {
+    id: 'auto',
+    label: 'Auto',
+    description: 'Let GitHub Copilot choose an available model.',
+    isDefault: true,
+    supportedReasoningEfforts: [],
+    defaultReasoningEffort: 'medium'
   }
 ]
 

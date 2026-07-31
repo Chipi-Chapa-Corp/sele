@@ -3,6 +3,7 @@
   "version": "0.1.1",
   "description": "A lightweight desktop AI harness",
   "author": "ExposedCat",
+  "license": "GPL-3.0-only",
   "desktopName": "com.chipichapa.sele.desktop",
   "main": "./out/main/index.js",
   "scripts": {
@@ -23,6 +24,7 @@
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
+    "@github/copilot-sdk": "^1.0.8",
     "@lydell/node-pty": "^1.1.0",
     "@react-symbols/icons": "^1.4.1",
     "@xterm/addon-fit": "^0.11.0",

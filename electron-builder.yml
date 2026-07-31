@@ -11,6 +11,7 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+  - node_modules/@github/copilot*/**
   - node_modules/@lydell/node-pty*/**
 win:
   executableName: sele
@@ -36,7 +37,7 @@ linux:
   target:
     - flatpak
   category: Development
-  synopsis: Desktop AI harness for Codex
+  synopsis: Desktop AI harness for coding agents
   syncDesktopName: true
 flatpak:
   artifactName: ${name}-linux-x64.${ext}
@@ -50,14 +51,13 @@ flatpak:
   files:
     - - build/com.chipichapa.sele.metainfo.xml
       - /share/metainfo/com.chipichapa.sele.metainfo.xml
+    - - LICENSE
+      - /share/licenses/com.chipichapa.sele/LICENSE
   finishArgs:
     - --socket=wayland
     - --socket=fallback-x11
     - --share=ipc
     - --device=dri
-    - --socket=pulseaudio
-    - --filesystem=home
     - --share=network
     - --talk-name=org.freedesktop.Flatpak
-    - --talk-name=org.freedesktop.Notifications
 npmRebuild: false

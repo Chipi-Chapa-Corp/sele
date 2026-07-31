@@ -191,6 +191,11 @@ jobs:
           flatpak remote-add --user --no-gpg-verify sele-build \
             "file://${GITHUB_WORKSPACE}/dist/flatpak-pages/flatpak"
           flatpak remote-info --user sele-build com.chipichapa.sele
+          flatpak install --user --assumeyes --noninteractive --no-deps \
+            sele-build com.chipichapa.sele
+          app_location="$(flatpak info --user --show-location com.chipichapa.sele)"
+          cmp LICENSE \
+            "${app_location}/files/share/licenses/com.chipichapa.sele/LICENSE"
 
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v7

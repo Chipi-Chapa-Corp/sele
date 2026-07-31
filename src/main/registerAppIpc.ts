@@ -924,7 +924,11 @@ const getGitChanges = async (
   const { unpulledCount, unpushedCount } = await getUpstreamCommitCounts(repositoryRoot)
 
   if (source === 'uncommitted') {
-    const status = await runGit(repositoryRoot, ['status', '--porcelain=v1', '-z'], true)
+    const status = await runGit(
+      repositoryRoot,
+      ['status', '--porcelain=v1', '--untracked-files=all', '-z'],
+      true
+    )
 
     return {
       repositoryRoot,

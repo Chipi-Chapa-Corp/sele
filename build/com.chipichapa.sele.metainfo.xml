@@ -2,10 +2,10 @@
 <component type="desktop-application">
   <id>com.chipichapa.sele</id>
   <name>Sele</name>
-  <summary>A focused desktop workspace for Codex</summary>
+  <summary>A focused desktop workspace for AI coding agents</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>LicenseRef-proprietary</project_license>
+  <project_license>GPL-3.0-only</project_license>
 
   <developer id="com.chipichapa">
     <name>Chipi Chapa Corp</name>
@@ -13,7 +13,8 @@
 
   <description>
     <p>
-      Sele is a desktop AI harness for working with Codex across local projects.
+      Sele is a desktop AI harness for working with Codex and GitHub Copilot
+      across local projects.
       It brings conversations, project context, code changes, file editing, and
       terminal sessions together in one focused workspace.
     </p>
@@ -42,6 +43,7 @@
   <keywords>
     <keyword>AI</keyword>
     <keyword>Codex</keyword>
+    <keyword>Copilot</keyword>
     <keyword>developer</keyword>
     <keyword>terminal</keyword>
   </keywords>
@@ -51,6 +53,15 @@
     <control>pointing</control>
   </supports>
   <content_rating type="oars-1.1" />
+
+  <screenshots>
+    <screenshot type="default">
+      <image type="source" width="1745" height="984">
+        https://raw.githubusercontent.com/Chipi-Chapa-Corp/sele/main/screenshots/sele-main.png
+      </image>
+      <caption>Work with an AI coding agent alongside project files and code changes</caption>
+    </screenshot>
+  </screenshots>
 
   <releases>
     <release version="0.1.1" date="2026-07-31">
