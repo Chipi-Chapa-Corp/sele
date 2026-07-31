@@ -17,6 +17,15 @@ const getWindowBackgroundColor = (scheme = getColorScheme()): string =>
 
 let disposeFreezeDiagnostics: (() => void) | null = null
 
+const isProviderCliInvocation = (): boolean => {
+  const args = process.argv.slice(1)
+  const hasArg = (argument: string): boolean => args.includes(argument)
+  const isCodexInvocation = hasArg('app-server') || hasArg('update') || hasArg('--version')
+  const isCopilotRuntimeInvocation = hasArg('--headless') && (hasArg('--stdio') || hasArg('--port'))
+
+  return isCodexInvocation || isCopilotRuntimeInvocation || hasArg('-V')
+}
+
 const updateAppColorScheme = (scheme: AppColorScheme): void => {
   BrowserWindow.getAllWindows().forEach((window) => {
     window.setBackgroundColor(getWindowBackgroundColor(scheme))
@@ -58,25 +67,51 @@ const createWindow = (): void => {
   }
 }
 
-app.whenReady().then(() => {
-  nativeTheme.themeSource = 'system'
-  nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
-  electronApp.setAppUserModelId('com.sele')
-  registerAppIpc()
-  registerProviderIpc()
-  registerTerminalIpc()
-  disposeFreezeDiagnostics = registerFreezeDiagnostics()
+const focusExistingWindow = (): void => {
+  const existingWindow = BrowserWindow.getAllWindows()[0]
+  if (!existingWindow) return
 
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
+  if (existingWindow.isMinimized()) existingWindow.restore()
+  existingWindow.show()
+  existingWindow.focus()
+}
+
+const startApp = (): void => {
+  app.whenReady().then(() => {
+    nativeTheme.themeSource = 'system'
+    nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
+    electronApp.setAppUserModelId('com.sele')
+    registerAppIpc()
+    registerProviderIpc()
+    registerTerminalIpc()
+    disposeFreezeDiagnostics = registerFreezeDiagnostics()
+
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
+
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
   })
+}
 
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
+if (isProviderCliInvocation()) {
+  console.error(
+    [
+      'A coding-agent CLI invocation resolved to Sele itself.',
+      'Check the provider executable path or shell PATH configuration.'
+    ].join(' ')
+  )
+  app.exit(1)
+} else if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', focusExistingWindow)
+  startApp()
+}
 
 app.on('before-quit', () => {
   disposeFreezeDiagnostics?.()

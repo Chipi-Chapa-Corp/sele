@@ -37,6 +37,7 @@ import type {
   AppGitBranchesResult,
   AppGitDiffOptions,
   AppGitFileDiffOptions,
+  AppGitChangesResult,
   AppGitChangeKind,
   AppGitChangesOptions,
   AppGitFileChange,
@@ -699,8 +700,14 @@ const getCurrentBranchName = async (cwd: string): Promise<string | null> => {
 }
 
 const getGitBranches = async (cwd: string): Promise<AppGitBranchesResult> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'])
+  if (!repositoryRoot) {
+    return {
+      repositoryRoot: cwd,
+      currentBranch: null,
+      branches: []
+    }
+  }
 
   const [currentBranch, branchOutput] = await Promise.all([
     getCurrentBranchName(repositoryRoot),
@@ -909,16 +916,18 @@ const parseGitPathList = (output: string): string[] =>
 const getGitChanges = async (
   cwd: string,
   source: AppGitChangeSource
-): Promise<{
-  repositoryRoot: string
-  branchName: string | null
-  baseRef: string | null
-  unpulledCount: number
-  unpushedCount: number
-  files: AppGitFileChange[]
-}> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+): Promise<AppGitChangesResult> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'])
+  if (!repositoryRoot) {
+    return {
+      repositoryRoot: cwd,
+      branchName: null,
+      baseRef: null,
+      unpulledCount: 0,
+      unpushedCount: 0,
+      files: []
+    }
+  }
 
   const branchName = await getCurrentBranchName(repositoryRoot)
   const { unpulledCount, unpushedCount } = await getUpstreamCommitCounts(repositoryRoot)

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
+import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
 
 type RpcError = {
   code: number
@@ -138,9 +139,11 @@ export class CodexAppServerClient {
   }
 
   private initialize = async (): Promise<void> => {
-    const appServerCommand = getAppServerCommand('codex')
+    const appServerCommand = getAppServerCommand(getCodexExecutable())
     const hostCommand = await getHostCommand(appServerCommand.command, appServerCommand.args, {
       env: process.env
+    }).catch((error: unknown) => {
+      throw getCodexExecutableError(error)
     })
     const child = spawn(hostCommand.file, hostCommand.args, {
       env: hostCommand.env,

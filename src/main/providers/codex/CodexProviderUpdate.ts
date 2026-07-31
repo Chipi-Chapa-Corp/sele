@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import type { ProviderUpdateAvailability } from '../../../shared/provider'
 import { getHostCommand } from '../../hostProcess'
+import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
 
 type CommandResult = {
   stdout: string
@@ -81,7 +82,11 @@ const compareVersions = (firstVersion: string, secondVersion: string): number =>
 }
 
 const getCurrentCodexVersion = async (): Promise<string> => {
-  const result = await runCommand('codex', ['--version'], versionCheckTimeoutMs)
+  const result = await runCommand(getCodexExecutable(), ['--version'], versionCheckTimeoutMs).catch(
+    (error: unknown) => {
+      throw getCodexExecutableError(error)
+    }
+  )
   const version = parseVersion(`${result.stdout}\n${result.stderr}`)
   if (!version) throw new Error('Unable to read Codex version.')
 
@@ -132,6 +137,8 @@ export const getCodexUpdateAvailability = async (): Promise<ProviderUpdateAvaila
 }
 
 export const updateCodexProvider = async (): Promise<ProviderUpdateAvailability | null> => {
-  await runCommand('codex', ['update'], updateTimeoutMs)
+  await runCommand(getCodexExecutable(), ['update'], updateTimeoutMs).catch((error: unknown) => {
+    throw getCodexExecutableError(error)
+  })
   return getCodexUpdateAvailability()
 }

@@ -42,6 +42,15 @@ codex --version
 copilot --version
 ```
 
+Desktop process environments may not include the same `PATH` as your interactive terminal.
+If Sele cannot find Codex, or the provider lookup resolves back to Sele and opens duplicate
+windows, point Sele at the real Codex executable explicitly:
+
+```bash
+flatpak override --user --env=SELE_CODEX_PATH="$(command -v codex)" com.chipichapa.sele
+launchctl setenv SELE_CODEX_PATH "$(command -v codex)"
+```
+
 For Copilot, start `copilot` once and use `/login` if the CLI is not already authenticated.
 
 ## Development

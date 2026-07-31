@@ -39,6 +39,8 @@ const forwardedEnvironmentVariables = new Set([
   'OPENAI_ORG_ID',
   'OPENAI_PROJECT_ID',
   'PATH',
+  'SELE_CODEX_PATH',
+  'SELE_DISABLE_CODEX_RESOURCE_ISOLATION',
   'TERM',
   'TERM_PROGRAM',
   'all_proxy',
