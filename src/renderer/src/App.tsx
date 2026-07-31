@@ -1981,16 +1981,6 @@ const getStoppedTurnRetryMessages = (
   return retryMessages
 }
 
-const getWorkingItemEstimateText = (item: ProviderWorkingItem): string => {
-  if (item.type === 'message') return item.content
-  if (item.type === 'tool') {
-    return [item.label, item.command, item.stdout].filter(Boolean).join('\n')
-  }
-  if (item.type === 'toolGroup') return item.tools.map(getWorkingItemEstimateText).join('\n')
-
-  return ''
-}
-
 const activeCommitActivityLabelReplacements: Array<[RegExp, string]> = [
   [/^Read\b/, 'Reading'],
   [/^Searched\b/, 'Searching'],
@@ -2110,13 +2100,13 @@ const getPlanFromTool = (tool: ProviderWorkingTool, contextKey: string): ChatPla
 }
 
 const getLatestChatPlan = (
-  detail: ProviderChatDetail | null,
+  items: readonly ProviderChatItem[] | null | undefined,
   contextKey: string | null
 ): ChatPlanData | null => {
-  if (!detail || !contextKey) return null
+  if (!items || !contextKey) return null
 
-  for (let itemIndex = detail.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
-    const item = detail.items[itemIndex]
+  for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = items[itemIndex]
     if (item.type !== 'working') continue
 
     for (
@@ -2187,26 +2177,65 @@ const getDirectCommitActivityAction = (action: GitCommitPromptAction): CommitAct
     'git'
   )
 
-const getChatItemEstimateText = (item: ProviderChatItem): string => {
-  if (item.type === 'message') return item.content
-  if (item.type === 'pendingMessage') return item.content
-  if (item.type === 'working') return item.items.map(getWorkingItemEstimateText).join('\n')
+const isAsciiWhitespaceCode = (code: number): boolean =>
+  code === 9 || code === 10 || code === 11 || code === 12 || code === 13 || code === 32
 
-  return ''
+const getTrimmedAsciiLength = (text: string): number => {
+  let startIndex = 0
+  let endIndex = text.length
+
+  while (startIndex < endIndex && isAsciiWhitespaceCode(text.charCodeAt(startIndex))) {
+    startIndex += 1
+  }
+  while (endIndex > startIndex && isAsciiWhitespaceCode(text.charCodeAt(endIndex - 1))) {
+    endIndex -= 1
+  }
+
+  return endIndex - startIndex
 }
 
 const estimateTokenCount = (text: string): number => {
-  const normalizedText = text.trim()
-  if (!normalizedText) return 0
+  const normalizedLength = getTrimmedAsciiLength(text)
+  if (normalizedLength === 0) return 0
 
-  return Math.max(1, Math.ceil(normalizedText.length / 4))
+  return Math.max(1, Math.ceil(normalizedLength / 4))
 }
 
-const getEstimatedContextTokens = (detail: ProviderChatDetail | null): number | null => {
-  if (!detail) return null
+const getWorkingItemEstimatedTokens = (item: ProviderWorkingItem): number => {
+  if (item.type === 'message') return estimateTokenCount(item.content)
+  if (item.type === 'tool') {
+    return (
+      estimateTokenCount(item.label) +
+      estimateTokenCount(item.command ?? '') +
+      estimateTokenCount(item.stdout ?? '')
+    )
+  }
+  if (item.type === 'toolGroup') {
+    return item.tools.reduce((total, tool) => total + getWorkingItemEstimatedTokens(tool), 0)
+  }
 
-  const text = detail.items.map(getChatItemEstimateText).filter(Boolean).join('\n')
-  return estimateTokenCount(text)
+  return 0
+}
+
+const getChatItemEstimatedTokens = (item: ProviderChatItem): number => {
+  if (item.type === 'message') return estimateTokenCount(item.content)
+  if (item.type === 'pendingMessage') return estimateTokenCount(item.content)
+  if (item.type === 'working') {
+    return item.items.reduce(
+      (total, workingItem) => total + getWorkingItemEstimatedTokens(workingItem),
+      0
+    )
+  }
+
+  return 0
+}
+
+const getEstimatedContextTokens = (
+  items: readonly ProviderChatItem[] | null | undefined
+): number | null => {
+  if (!items) return null
+
+  return items.reduce((total, item) => total + getChatItemEstimatedTokens(item), 0)
 }
 
 const mergeAccountUsage = (
@@ -2381,16 +2410,21 @@ const getPatchChangedFiles = (workingSteps: ProviderWorkingStep[]): ChangedFile[
   return sortChangedFiles(Array.from(filesByPath.values()))
 }
 
-const getChatWorkingSteps = (detail: ProviderChatDetail | null): ProviderWorkingStep[] =>
-  detail?.items.filter((item): item is ProviderWorkingStep => item.type === 'working') ?? []
+const getChatWorkingSteps = (
+  items: readonly ProviderChatItem[] | null | undefined
+): ProviderWorkingStep[] =>
+  items?.filter((item): item is ProviderWorkingStep => item.type === 'working') ?? []
 
-const getLastTurnChangedFiles = (detail: ProviderChatDetail | null): ChangedFile[] => {
-  const lastWorkingStep = getChatWorkingSteps(detail).at(-1)
+const getLastTurnChangedFiles = (
+  items: readonly ProviderChatItem[] | null | undefined
+): ChangedFile[] => {
+  const lastWorkingStep = getChatWorkingSteps(items).at(-1)
   return lastWorkingStep ? getPatchChangedFiles([lastWorkingStep]) : []
 }
 
-const getChatChangedFiles = (detail: ProviderChatDetail | null): ChangedFile[] =>
-  getPatchChangedFiles(getChatWorkingSteps(detail))
+const getChatChangedFiles = (
+  items: readonly ProviderChatItem[] | null | undefined
+): ChangedFile[] => getPatchChangedFiles(getChatWorkingSteps(items))
 
 const getGitChangedFiles = (result: AppGitChangesResult | null): ChangedFile[] =>
   sortChangedFiles(
@@ -2430,8 +2464,32 @@ const isPatchChangeSource = (source: ChangeSource): source is PatchChangeSource 
 const getPatchChangeKey = (patch: AppGitPatchChange): string =>
   [patch.path, patch.kind, patch.diff].join('\0')
 
-const getPatchFilterSignature = (patches: AppGitPatchChange[]): string =>
-  patches.map(getPatchChangeKey).join('\0\0')
+const addStringToHash = (hash: number, value: string): number => {
+  let nextHash = hash
+  for (let index = 0; index < value.length; index += 1) {
+    nextHash ^= value.charCodeAt(index)
+    nextHash = Math.imul(nextHash, 16_777_619)
+  }
+
+  return nextHash
+}
+
+const getPatchFilterSignature = (patches: AppGitPatchChange[]): string => {
+  let hash = 2_166_136_261
+  let totalLength = 0
+
+  for (const patch of patches) {
+    hash = addStringToHash(hash, patch.path)
+    hash = addStringToHash(hash, '\0')
+    hash = addStringToHash(hash, patch.kind)
+    hash = addStringToHash(hash, '\0')
+    hash = addStringToHash(hash, patch.diff)
+    hash = addStringToHash(hash, '\0\0')
+    totalLength += patch.path.length + patch.kind.length + patch.diff.length
+  }
+
+  return `${patches.length}:${totalLength}:${(hash >>> 0).toString(36)}`
+}
 
 const isPatchFilterScope = (
   scope: PatchFilterScope | null,
@@ -4045,13 +4103,13 @@ export const App: React.FC = () => {
 
     let active = true
     let timeoutId: number | null = null
-    const detail = chatDetail
+    const items = chatDetail.items
     const contextKey = selectedChatKey
     const animationFrame = window.requestAnimationFrame(() => {
       timeoutId = window.setTimeout(() => {
         if (!active) return
 
-        const nextPlan = getLatestChatPlan(detail, contextKey)
+        const nextPlan = getLatestChatPlan(items, contextKey)
         setExtractedChatPlan((currentPlan) =>
           currentPlan?.contextKey === nextPlan?.contextKey &&
           currentPlan?.signature === nextPlan?.signature
@@ -4066,7 +4124,13 @@ export const App: React.FC = () => {
       window.cancelAnimationFrame(animationFrame)
       if (timeoutId !== null) window.clearTimeout(timeoutId)
     }
-  }, [appSettings.chat.hidePlans, chatDetail, selectedChatId, selectedChatKey])
+  }, [
+    appSettings.chat.hidePlans,
+    chatDetail?.id,
+    chatDetail?.items,
+    selectedChatId,
+    selectedChatKey
+  ])
   const usageProviderId = selectedProviderId ?? newSessionProvider
   const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
 
@@ -4640,8 +4704,8 @@ export const App: React.FC = () => {
 
     const sourceFiles =
       changeSource === 'chat'
-        ? getChatChangedFiles(chatDetail)
-        : getLastTurnChangedFiles(chatDetail)
+        ? getChatChangedFiles(chatDetail?.items)
+        : getLastTurnChangedFiles(chatDetail?.items)
     const patches = getCommitPatches(sourceFiles)
     const scope: PatchFilterScope = {
       cwd: changesCwd,
@@ -4681,7 +4745,7 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [changeSource, changesCwd, chatDetail, gitChangeLoadRequest])
+  }, [changeSource, changesCwd, chatDetail?.items, gitChangeLoadRequest])
 
   useEffect(() => {
     if (changesPaneView !== 'files' || !changesCwd) return
@@ -6311,35 +6375,51 @@ export const App: React.FC = () => {
     lastStreamingChatItem?.type === 'message' && lastStreamingChatItem.role === 'assistant'
       ? lastStreamingChatItem.id
       : null
+  useEffect(() => {
+    let recentChatCacheItemCount = 0
+    for (const entry of recentChatCacheRef.current.values()) {
+      recentChatCacheItemCount += entry.detail.items.length
+    }
+
+    const rootDataset = document.documentElement.dataset
+    rootDataset.selectedChatItemCount = String(chatDetail?.items.length ?? 0)
+    rootDataset.recentChatCacheEntryCount = String(recentChatCacheRef.current.size)
+    rootDataset.recentChatCacheItemCount = String(recentChatCacheItemCount)
+    rootDataset.chatSearchOpen = chatSearchOpen ? 'true' : 'false'
+
+    return () => {
+      delete rootDataset.selectedChatItemCount
+      delete rootDataset.recentChatCacheEntryCount
+      delete rootDataset.recentChatCacheItemCount
+      delete rootDataset.chatSearchOpen
+    }
+  }, [chatDetail?.items.length, chatSearchOpen, selectedChatKey])
+
   const messageBoxContextUsage = useMemo(() => {
-    if (chatDetail?.contextUsage) {
+    const contextUsage = chatDetail?.contextUsage ?? null
+    if (contextUsage) {
       return {
         source: 'exact' as const,
-        usedTokens: chatDetail.contextUsage.usedTokens,
-        maxTokens: chatDetail.contextUsage.maxTokens
+        usedTokens: contextUsage.usedTokens,
+        maxTokens: contextUsage.maxTokens
       }
     }
 
-    const estimatedTokens = getEstimatedContextTokens(chatDetail)
+    const estimatedTokens = getEstimatedContextTokens(chatDetail?.items)
     return {
       source: estimatedTokens == null ? ('unavailable' as const) : ('estimated' as const),
       usedTokens: estimatedTokens,
       maxTokens: null
     }
-  }, [chatDetail])
+  }, [chatDetail?.contextUsage, chatDetail?.items])
   const chatPanelOpen = Boolean(selectedChat) || newChatOpen
-  const lastTurnChangedFiles = useMemo(() => getLastTurnChangedFiles(chatDetail), [chatDetail])
-  const chatChangedFiles = useMemo(() => getChatChangedFiles(chatDetail), [chatDetail])
   const patchChangeSourceSelected = isPatchChangeSource(changeSource)
-  const patchSourceChangedFiles = useMemo(
-    () =>
-      changeSource === 'chat'
-        ? chatChangedFiles
-        : changeSource === 'lastTurn'
-          ? lastTurnChangedFiles
-          : [],
-    [changeSource, chatChangedFiles, lastTurnChangedFiles]
-  )
+  const patchSourceChangedFiles = useMemo(() => {
+    if (changeSource === 'chat') return getChatChangedFiles(visibleChatItems)
+    if (changeSource === 'lastTurn') return getLastTurnChangedFiles(visibleChatItems)
+
+    return []
+  }, [changeSource, visibleChatItems])
   const patchSourcePatches = useMemo(
     () => getCommitPatches(patchSourceChangedFiles),
     [patchSourceChangedFiles]

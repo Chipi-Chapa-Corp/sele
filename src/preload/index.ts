@@ -264,6 +264,14 @@ type PerformanceWithMemory = Performance & {
 const getFiniteNumber = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null
 
+const getDocumentDatasetCount = (key: string): number => {
+  const value = Number(document.documentElement.dataset[key] ?? 0)
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+const getDocumentDatasetBoolean = (key: string): boolean =>
+  document.documentElement.dataset[key] === 'true'
+
 let lastInteractionAt: number | null = null
 let lastInteractionKind: AppDiagnosticsInteractionKind | null = null
 
@@ -279,6 +287,10 @@ const sendDiagnosticsHeartbeat = (): void => {
     animatedIconCount: document.querySelectorAll('.chat-detail__animated-icon').length,
     streamingMessageCount: document.querySelectorAll('[data-streaming="true"]').length,
     workingSpinnerCount: document.querySelectorAll('.chat-detail__working-spinner').length,
+    selectedChatItemCount: getDocumentDatasetCount('selectedChatItemCount'),
+    recentChatCacheEntryCount: getDocumentDatasetCount('recentChatCacheEntryCount'),
+    recentChatCacheItemCount: getDocumentDatasetCount('recentChatCacheItemCount'),
+    chatSearchOpen: getDocumentDatasetBoolean('chatSearchOpen'),
     messageInputLength: messageInput?.value.length ?? 0,
     messageInputFocused: document.activeElement === messageInput,
     openNotesCount: document.querySelectorAll('.cwd-notes button[aria-expanded="true"]').length,

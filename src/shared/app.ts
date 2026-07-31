@@ -72,6 +72,10 @@ export type AppDiagnosticsHeartbeat = {
   animatedIconCount: number
   streamingMessageCount: number
   workingSpinnerCount: number
+  selectedChatItemCount: number
+  recentChatCacheEntryCount: number
+  recentChatCacheItemCount: number
+  chatSearchOpen: boolean
   messageInputLength: number
   messageInputFocused: boolean
   openNotesCount: number

@@ -189,6 +189,9 @@ const getHeartbeat = (event: IpcMainEvent, value: unknown): RendererHeartbeat | 
   const animatedIconCount = getBoundedCount(heartbeat.animatedIconCount)
   const streamingMessageCount = getBoundedCount(heartbeat.streamingMessageCount)
   const workingSpinnerCount = getBoundedCount(heartbeat.workingSpinnerCount)
+  const selectedChatItemCount = getBoundedCount(heartbeat.selectedChatItemCount)
+  const recentChatCacheEntryCount = getBoundedCount(heartbeat.recentChatCacheEntryCount)
+  const recentChatCacheItemCount = getBoundedCount(heartbeat.recentChatCacheItemCount)
   const messageInputLength = getBoundedCount(heartbeat.messageInputLength)
   const openNotesCount = getBoundedCount(heartbeat.openNotesCount)
   const openPlanCount = getBoundedCount(heartbeat.openPlanCount)
@@ -200,6 +203,10 @@ const getHeartbeat = (event: IpcMainEvent, value: unknown): RendererHeartbeat | 
     animatedIconCount === null ||
     streamingMessageCount === null ||
     workingSpinnerCount === null ||
+    selectedChatItemCount === null ||
+    recentChatCacheEntryCount === null ||
+    recentChatCacheItemCount === null ||
+    typeof heartbeat.chatSearchOpen !== 'boolean' ||
     messageInputLength === null ||
     typeof heartbeat.messageInputFocused !== 'boolean' ||
     openNotesCount === null ||
@@ -225,6 +232,10 @@ const getHeartbeat = (event: IpcMainEvent, value: unknown): RendererHeartbeat | 
     animatedIconCount,
     streamingMessageCount,
     workingSpinnerCount,
+    selectedChatItemCount,
+    recentChatCacheEntryCount,
+    recentChatCacheItemCount,
+    chatSearchOpen: heartbeat.chatSearchOpen,
     messageInputLength,
     messageInputFocused: heartbeat.messageInputFocused,
     openNotesCount,
