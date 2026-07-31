@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.0" date="2026-07-31">
+      <description>
+        <p>Added GitHub Copilot support, improved host path resolution, and refreshed application metadata.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-07-31">
       <description>
         <p>Improved controls, settings, host command handling, and cross-platform packaging.</p>
