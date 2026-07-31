@@ -1,5 +1,6 @@
 import { Check, ChevronDown } from 'lucide-react'
 import {
+  Fragment,
   type CSSProperties,
   type ReactNode,
   type SetStateAction,
@@ -22,6 +23,12 @@ export type DropdownOption<TValue extends string = string> = {
   disabled?: boolean
 }
 
+export type DropdownOptionGroup<TValue extends string = string> = {
+  id: string
+  label?: string
+  options: readonly DropdownOption<TValue>[]
+}
+
 export type DropdownMenuAction = {
   id: string
   label: ReactNode
@@ -39,6 +46,7 @@ type DropdownValueDisplay = 'label' | 'icon'
 type DropdownProps<TValue extends string = string> = {
   activeIndex?: number
   className?: string
+  closeOnSelect?: boolean
   emptyContent?: ReactNode
   id?: string
   appearance?: DropdownAppearance
@@ -49,11 +57,14 @@ type DropdownProps<TValue extends string = string> = {
   menuActions?: readonly DropdownMenuAction[]
   menuOnly?: boolean
   listboxId?: string
-  options: readonly DropdownOption<TValue>[]
+  optionGroups?: readonly DropdownOptionGroup<TValue>[]
+  options?: readonly DropdownOption<TValue>[]
   placement?: 'bottom' | 'top'
+  selectedValues?: readonly TValue[]
   size?: DropdownSize
   title?: string
   value: TValue
+  valueContent?: ReactNode
   valueDisplay?: DropdownValueDisplay
   'aria-label'?: string
   onActiveIndexChange?: (index: number) => void
@@ -81,6 +92,7 @@ const getOptionClassName = (
 export const Dropdown = <TValue extends string>({
   activeIndex: controlledActiveIndex,
   className,
+  closeOnSelect = true,
   emptyContent = null,
   id,
   appearance = 'glass',
@@ -91,11 +103,14 @@ export const Dropdown = <TValue extends string>({
   menuActions = [],
   menuOnly = false,
   listboxId: providedListboxId,
-  options,
+  optionGroups,
+  options = [],
   placement = 'bottom',
+  selectedValues,
   size = 'normal',
   title,
   value,
+  valueContent,
   valueDisplay = 'label',
   'aria-label': ariaLabel,
   onActiveIndexChange,
@@ -111,14 +126,30 @@ export const Dropdown = <TValue extends string>({
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
   const [inFloatingPane, setInFloatingPane] = useState(false)
-  const selectedIndex = options.findIndex((option) => option.value === value)
-  const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null
+  const groupedOptions = useMemo<readonly DropdownOptionGroup<TValue>[]>(
+    () => optionGroups ?? [{ id: 'options', options }],
+    [optionGroups, options]
+  )
+  const flattenedOptions = useMemo(
+    () => groupedOptions.flatMap((group) => group.options),
+    [groupedOptions]
+  )
+  const selectedValueSet = useMemo(
+    () => (selectedValues ? new Set<TValue>(selectedValues) : null),
+    [selectedValues]
+  )
+  const isOptionSelected = (option: DropdownOption<TValue>): boolean =>
+    selectedValueSet ? selectedValueSet.has(option.value) : option.value === value
+  const selectedIndex = flattenedOptions.findIndex((option) => isOptionSelected(option))
+  const selectedOption =
+    flattenedOptions.find((option) => option.value === value) ??
+    (selectedIndex >= 0 ? flattenedOptions[selectedIndex] : null)
   const selectedIcon = icon ?? selectedOption?.icon
   const [internalActiveIndex, setInternalActiveIndex] = useState(selectedIndex)
   const activeIndex = controlledActiveIndex ?? internalActiveIndex
   const menuOpen = (menuOnly || open) && !disabled
-  const optionsHaveIcons = options.some((option) => Boolean(option.icon))
-  const optionsHaveDescriptions = options.some((option) => Boolean(option.description))
+  const optionsHaveIcons = flattenedOptions.some((option) => Boolean(option.icon))
+  const optionsHaveDescriptions = flattenedOptions.some((option) => Boolean(option.description))
   const enabledMenuActionCount = menuActions.filter((action) => !action.disabled).length
   const updateActiveIndex = (nextIndex: SetStateAction<number>): void => {
     const resolvedIndex = typeof nextIndex === 'function' ? nextIndex(activeIndex) : nextIndex
@@ -128,11 +159,11 @@ export const Dropdown = <TValue extends string>({
 
   const enabledIndexes = useMemo(
     () =>
-      options.reduce<number[]>((indexes, option, index) => {
+      flattenedOptions.reduce<number[]>((indexes, option, index) => {
         if (!option.disabled) indexes.push(index)
         return indexes
       }, []),
-    [options]
+    [flattenedOptions]
   )
 
   useEffect(() => {
@@ -169,18 +200,25 @@ export const Dropdown = <TValue extends string>({
       const activeOption = menu?.querySelector<HTMLElement>(`#${listboxId}-option-${activeIndex}`)
       if (!menu || !activeOption) return
 
-      const menuBounds = menu.getBoundingClientRect()
-      const optionBounds = activeOption.getBoundingClientRect()
       const scrollPadding = 7
-      if (optionBounds.top < menuBounds.top + scrollPadding) {
-        menu.scrollTop -= menuBounds.top + scrollPadding - optionBounds.top
-      } else if (optionBounds.bottom > menuBounds.bottom - scrollPadding) {
-        menu.scrollTop += optionBounds.bottom - menuBounds.bottom + scrollPadding
+      const scrollIntoView = (container: HTMLElement): void => {
+        const containerBounds = container.getBoundingClientRect()
+        const optionBounds = activeOption.getBoundingClientRect()
+        if (optionBounds.top < containerBounds.top + scrollPadding) {
+          container.scrollTop -= containerBounds.top + scrollPadding - optionBounds.top
+        } else if (optionBounds.bottom > containerBounds.bottom - scrollPadding) {
+          container.scrollTop += optionBounds.bottom - containerBounds.bottom + scrollPadding
+        }
       }
+      const optionGroup = activeOption.closest('.ui-dropdown__option-group-options')
+      if (optionGroup instanceof HTMLElement) {
+        scrollIntoView(optionGroup)
+      }
+      scrollIntoView(menu)
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [activeIndex, listboxId, menuOpen, options.length])
+  }, [activeIndex, flattenedOptions.length, listboxId, menuOpen])
 
   useEffect(() => {
     if (!menuOpen || menuOnly) return
@@ -279,7 +317,7 @@ export const Dropdown = <TValue extends string>({
     if (option.disabled) return
 
     onChange(option.value)
-    if (menuOnly) return
+    if (menuOnly || !closeOnSelect) return
 
     setOpen(false)
     setMenuStyle(null)
@@ -334,7 +372,7 @@ export const Dropdown = <TValue extends string>({
         return
       }
 
-      const activeOption = options[activeIndex]
+      const activeOption = flattenedOptions[activeIndex]
       if (activeOption) selectOption(activeOption)
       return
     }
@@ -372,6 +410,7 @@ export const Dropdown = <TValue extends string>({
     menuOpen ? 'ui-dropdown--open' : null,
     disabled ? 'ui-dropdown--disabled' : null,
     optionsHaveDescriptions ? 'ui-dropdown--descriptive' : null,
+    optionGroups ? 'ui-dropdown--grouped' : null,
     inFloatingPane ? 'ui-dropdown--floating-pane' : null,
     menuOnly ? 'ui-dropdown--menu-only' : null,
     className
@@ -379,7 +418,7 @@ export const Dropdown = <TValue extends string>({
     .filter(Boolean)
     .join(' ')
   const activeOptionId =
-    menuOpen && activeIndex >= 0 && options[activeIndex]
+    menuOpen && activeIndex >= 0 && flattenedOptions[activeIndex]
       ? `${listboxId}-option-${activeIndex}`
       : undefined
   const handleActionBlur = (event: React.FocusEvent<HTMLButtonElement>): void => {
@@ -402,6 +441,64 @@ export const Dropdown = <TValue extends string>({
     setMenuStyle(null)
     buttonRef.current?.focus({ preventScroll: true })
   }
+  const renderOption = (option: DropdownOption<TValue>, index: number): React.ReactElement => {
+    const selected = isOptionSelected(option)
+    const optionId = `${listboxId}-option-${index}`
+    const optionIcon = optionsHaveIcons ? (
+      <span className="ui-dropdown__option-icon" aria-hidden="true">
+        {option.icon}
+      </span>
+    ) : null
+    const optionLabel = (
+      <span className="ui-dropdown__option-label">{option.menuLabel ?? option.label}</span>
+    )
+    const optionCheck = selected ? (
+      <Check className="ui-dropdown__check" aria-hidden="true" />
+    ) : null
+
+    return (
+      <div
+        key={option.value}
+        id={optionId}
+        className={getOptionClassName(
+          activeIndex === index,
+          selected,
+          Boolean(option.disabled),
+          optionsHaveIcons,
+          Boolean(option.description)
+        )}
+        role="option"
+        aria-disabled={option.disabled || undefined}
+        aria-selected={selected}
+        onClick={() => selectOption(option)}
+        onMouseDown={(event) => event.preventDefault()}
+        onPointerMove={() => {
+          if (!option.disabled) {
+            pointerActivatedIndexRef.current = index
+            updateActiveIndex(index)
+          }
+        }}
+      >
+        {option.description ? (
+          <span className="ui-dropdown__option-body">
+            <span className="ui-dropdown__option-row">
+              {optionIcon}
+              {optionLabel}
+              {optionCheck}
+            </span>
+            <span className="ui-dropdown__option-description">{option.description}</span>
+          </span>
+        ) : (
+          <>
+            {optionIcon}
+            <span className="ui-dropdown__option-body">{optionLabel}</span>
+            {optionCheck}
+          </>
+        )}
+      </div>
+    )
+  }
+  let optionIndex = 0
   const menuSurface = (
     <MenuSurface className="ui-dropdown__menu">
       {menuActions.length > 0 && (
@@ -428,7 +525,7 @@ export const Dropdown = <TValue extends string>({
           ))}
         </div>
       )}
-      {menuActions.length > 0 && options.length > 0 && (
+      {menuActions.length > 0 && flattenedOptions.length > 0 && (
         <div className="ui-dropdown__separator" role="presentation" />
       )}
       <div
@@ -438,67 +535,25 @@ export const Dropdown = <TValue extends string>({
         aria-label={menuOnly ? ariaLabel : undefined}
         aria-labelledby={menuOnly ? undefined : buttonId}
       >
-        {options.length === 0
+        {flattenedOptions.length === 0
           ? emptyContent
-          : options.map((option, index) => {
-              const selected = option.value === value
-              const optionId = `${listboxId}-option-${index}`
-              const optionIcon = optionsHaveIcons ? (
-                <span className="ui-dropdown__option-icon" aria-hidden="true">
-                  {option.icon}
-                </span>
-              ) : null
-              const optionLabel = (
-                <span className="ui-dropdown__option-label">
-                  {option.menuLabel ?? option.label}
-                </span>
-              )
-              const optionCheck = selected ? (
-                <Check className="ui-dropdown__check" aria-hidden="true" />
-              ) : null
-
-              return (
-                <div
-                  key={option.value}
-                  id={optionId}
-                  className={getOptionClassName(
-                    activeIndex === index,
-                    selected,
-                    Boolean(option.disabled),
-                    optionsHaveIcons,
-                    Boolean(option.description)
+          : optionGroups
+            ? groupedOptions.map((group, groupIndex) => (
+                <Fragment key={group.id}>
+                  {groupIndex > 0 && (
+                    <div
+                      className="ui-dropdown__separator ui-dropdown__separator--group"
+                      role="presentation"
+                    />
                   )}
-                  role="option"
-                  aria-disabled={option.disabled || undefined}
-                  aria-selected={selected}
-                  onClick={() => selectOption(option)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onPointerMove={() => {
-                    if (!option.disabled) {
-                      pointerActivatedIndexRef.current = index
-                      updateActiveIndex(index)
-                    }
-                  }}
-                >
-                  {option.description ? (
-                    <span className="ui-dropdown__option-body">
-                      <span className="ui-dropdown__option-row">
-                        {optionIcon}
-                        {optionLabel}
-                        {optionCheck}
-                      </span>
-                      <span className="ui-dropdown__option-description">{option.description}</span>
-                    </span>
-                  ) : (
-                    <>
-                      {optionIcon}
-                      <span className="ui-dropdown__option-body">{optionLabel}</span>
-                      {optionCheck}
-                    </>
-                  )}
-                </div>
-              )
-            })}
+                  <div className="ui-dropdown__option-group" role="group" aria-label={group.label}>
+                    <div className="ui-dropdown__option-group-options">
+                      {group.options.map((option) => renderOption(option, optionIndex++))}
+                    </div>
+                  </div>
+                </Fragment>
+              ))
+            : flattenedOptions.map((option, index) => renderOption(option, index))}
       </div>
     </MenuSurface>
   )
@@ -567,12 +622,16 @@ export const Dropdown = <TValue extends string>({
         onKeyDown={handleKeyDown}
       >
         <span className="ui-dropdown__value">
-          {selectedIcon && (
-            <span className="ui-dropdown__value-icon" aria-hidden="true">
-              {selectedIcon}
-            </span>
+          {valueContent ?? (
+            <>
+              {selectedIcon && (
+                <span className="ui-dropdown__value-icon" aria-hidden="true">
+                  {selectedIcon}
+                </span>
+              )}
+              <span className="ui-dropdown__value-label">{selectedOption?.label ?? value}</span>
+            </>
           )}
-          <span className="ui-dropdown__value-label">{selectedOption?.label ?? value}</span>
         </span>
         <ChevronDown className="ui-dropdown__chevron" aria-hidden="true" />
       </button>

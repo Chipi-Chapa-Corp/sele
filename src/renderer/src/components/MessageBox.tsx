@@ -1,31 +1,33 @@
 import {
   type CSSProperties,
   type ReactNode,
+  useCallback,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState
 } from 'react'
+import { createPortal } from 'react-dom'
 import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
 import {
   ArrowUp,
   BadgeCheck,
   Blocks,
   Bot,
-  BrainCircuit,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CornerDownRight,
   FileLock,
-  Flame,
   FolderPen,
   Gauge,
   ListPlus,
   Package,
   Paperclip,
   RotateCcw,
-  Rocket,
   ShieldQuestionMark,
-  SlidersHorizontal,
   Sparkles,
   Square,
   UnlockKeyhole,
@@ -57,6 +59,7 @@ import type {
 import { appApi } from '../appApi'
 import type { AppAction } from '../actions'
 import { providerApi } from '../providerApi'
+import { getReasoningEffortPresentation } from '../reasoningEffortPresentation'
 import type { AppChatUsageDisplay } from '../settings'
 import { AttachmentChip } from './AttachmentChip'
 import { ActionsButton } from './ActionsButton'
@@ -65,6 +68,7 @@ import { CwdNotesButton } from './CwdNotesButton'
 import { DisclosureToggle } from './DisclosureToggle'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { ImageLightbox } from './ImageLightbox'
+import { MenuSurface } from './MenuSurface'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { SegmentedControl } from './SegmentedControl'
 import './MessageBox.css'
@@ -191,6 +195,360 @@ type ComposerCache = {
 }
 
 type ComposerResult = { kind: 'skill'; skill: ProviderSkill } | { kind: 'app'; app: ProviderApp }
+type SelectorIconItem = {
+  icon: ReactNode
+  key: string
+  title?: string
+}
+type ChatConfigSectionId = 'model' | 'reasoning' | 'access' | 'speed'
+
+type ChatConfigOptionGroup = {
+  id: string
+  label?: string
+  options: readonly DropdownOption<string>[]
+  selectedValue: string
+  onChange: (value: string) => void
+}
+
+type ChatConfigSection = {
+  id: ChatConfigSectionId
+  icon: ReactNode
+  label: string
+  groups: readonly ChatConfigOptionGroup[]
+}
+
+type ChatConfigDropdownProps = {
+  disabled: boolean
+  id: string
+  modelLabel: string
+  reasoningLabel: string
+  sections: readonly ChatConfigSection[]
+  statusIcons: readonly SelectorIconItem[]
+  title: string
+}
+
+type ChatConfigMenuStyle = CSSProperties & {
+  '--chat-config-menu-max-height': string
+}
+
+const getChatConfigMenuStyle = (buttonRect: DOMRect): ChatConfigMenuStyle => {
+  const viewportInset = 12
+  const menuOffset = 6
+  const maxMenuHeight = 760
+  const menuWidth = Math.min(360, Math.max(260, window.innerWidth - viewportInset * 2))
+  const maxLeft = Math.max(viewportInset, window.innerWidth - menuWidth - viewportInset)
+  const spaceAbove = Math.max(0, buttonRect.top - menuOffset - viewportInset)
+  const spaceBelow = Math.max(
+    0,
+    window.innerHeight - buttonRect.bottom - menuOffset - viewportInset
+  )
+  const openUp = spaceAbove >= spaceBelow
+  const availableHeight = Math.min(maxMenuHeight, openUp ? spaceAbove : spaceBelow)
+
+  const menuStyle: ChatConfigMenuStyle = {
+    '--chat-config-menu-max-height': `${availableHeight}px`,
+    left: Math.min(Math.max(viewportInset, buttonRect.left), maxLeft),
+    minWidth: buttonRect.width,
+    width: menuWidth
+  }
+
+  if (openUp) {
+    menuStyle.bottom = window.innerHeight - buttonRect.top + menuOffset
+  } else {
+    menuStyle.top = buttonRect.bottom + menuOffset
+  }
+
+  return menuStyle
+}
+
+const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
+  disabled,
+  id,
+  modelLabel,
+  reasoningLabel,
+  sections,
+  statusIcons,
+  title
+}) => {
+  const reactId = useId().replace(/:/g, '')
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
+  const [activeSectionId, setActiveSectionId] = useState<ChatConfigSectionId | null>(null)
+  const menuId = `${id}-${reactId}-menu`
+  const menuOpen = open && sections.length > 0
+  const activeSection = sections.find((section) => section.id === activeSectionId) ?? null
+
+  const closeMenu = useCallback((): void => {
+    setOpen(false)
+    setMenuStyle(null)
+    setActiveSectionId(null)
+  }, [])
+
+  const focusFirstMenuButton = useCallback((): void => {
+    window.requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+    })
+  }, [])
+
+  const updateMenuPosition = useCallback((): void => {
+    const buttonRect = buttonRef.current?.getBoundingClientRect()
+    if (!buttonRect) return
+
+    setMenuStyle(getChatConfigMenuStyle(buttonRect))
+  }, [])
+
+  const openMenu = useCallback((): void => {
+    if (disabled || sections.length === 0) return
+
+    updateMenuPosition()
+    setActiveSectionId(null)
+    setOpen(true)
+    focusFirstMenuButton()
+  }, [disabled, focusFirstMenuButton, sections.length, updateMenuPosition])
+
+  useEffect(() => {
+    if (!menuOpen) return
+
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target as Node
+      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return
+
+      closeMenu()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    const handleScroll = (event: Event): void => {
+      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return
+
+      updateMenuPosition()
+    }
+
+    window.addEventListener('resize', updateMenuPosition)
+    window.addEventListener('scroll', handleScroll, true)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('resize', updateMenuPosition)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [closeMenu, menuOpen, updateMenuPosition])
+
+  useEffect(() => {
+    if (!open || sections.length > 0) return
+
+    const frame = window.requestAnimationFrame(closeMenu)
+    return () => window.cancelAnimationFrame(frame)
+  }, [closeMenu, open, sections.length])
+
+  const handleTriggerClick = (): void => {
+    if (menuOpen) {
+      closeMenu()
+      return
+    }
+
+    openMenu()
+  }
+
+  const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowUp') {
+      if (event.key !== 'ArrowDown') return
+    }
+
+    event.preventDefault()
+    openMenu()
+  }
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeMenu()
+      buttonRef.current?.focus({ preventScroll: true })
+      return
+    }
+
+    if ((event.key === 'ArrowLeft' || event.key === 'Backspace') && activeSection) {
+      event.preventDefault()
+      setActiveSectionId(null)
+      focusFirstMenuButton()
+    }
+  }
+
+  const renderSectionRoot = (): ReactNode => (
+    <div className="message-box__chat-config-sections">
+      {sections.map((section) => (
+        <button
+          className="message-box__chat-config-section-button"
+          disabled={disabled}
+          key={section.id}
+          type="button"
+          onClick={() => {
+            setActiveSectionId(section.id)
+            focusFirstMenuButton()
+          }}
+        >
+          <span className="message-box__chat-config-section-icon" aria-hidden="true">
+            {section.icon}
+          </span>
+          <span className="message-box__chat-config-section-label">{section.label}</span>
+          <ChevronRight className="message-box__chat-config-section-chevron" aria-hidden="true" />
+        </button>
+      ))}
+    </div>
+  )
+
+  const renderSectionOptions = (section: ChatConfigSection): ReactNode => (
+    <>
+      <div className="message-box__chat-config-header">
+        <button
+          className="message-box__chat-config-back"
+          type="button"
+          onClick={() => {
+            setActiveSectionId(null)
+            focusFirstMenuButton()
+          }}
+        >
+          <ChevronLeft aria-hidden="true" />
+          <span>Back</span>
+        </button>
+      </div>
+      <div className="message-box__chat-config-option-groups">
+        {section.groups.map((group, groupIndex) => (
+          <div
+            className="message-box__chat-config-option-group"
+            key={group.id}
+            role="group"
+            aria-label={group.label}
+          >
+            {groupIndex > 0 && (
+              <div className="message-box__chat-config-separator" role="presentation" />
+            )}
+            {group.options.map((option) => {
+              const selected = option.value === group.selectedValue
+
+              return (
+                <button
+                  className={[
+                    'message-box__chat-config-option',
+                    option.icon ? 'message-box__chat-config-option--has-icon' : null,
+                    option.description ? 'message-box__chat-config-option--has-description' : null,
+                    selected ? 'message-box__chat-config-option--selected' : null
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  disabled={disabled || option.disabled}
+                  key={option.value}
+                  type="button"
+                  aria-pressed={selected}
+                  title={option.description}
+                  onClick={() => group.onChange(option.value)}
+                >
+                  {option.description ? (
+                    <span className="message-box__chat-config-option-copy">
+                      <span className="message-box__chat-config-option-row">
+                        {option.icon && (
+                          <span className="message-box__chat-config-option-icon" aria-hidden="true">
+                            {option.icon}
+                          </span>
+                        )}
+                        <span className="message-box__chat-config-option-label">
+                          {option.menuLabel ?? option.label}
+                        </span>
+                        {selected && (
+                          <Check className="message-box__chat-config-check" aria-hidden="true" />
+                        )}
+                      </span>
+                      <span className="message-box__chat-config-option-description">
+                        {option.description}
+                      </span>
+                    </span>
+                  ) : (
+                    <>
+                      {option.icon && (
+                        <span className="message-box__chat-config-option-icon" aria-hidden="true">
+                          {option.icon}
+                        </span>
+                      )}
+                      <span className="message-box__chat-config-option-copy">
+                        <span className="message-box__chat-config-option-label">
+                          {option.menuLabel ?? option.label}
+                        </span>
+                      </span>
+                      {selected && (
+                        <Check className="message-box__chat-config-check" aria-hidden="true" />
+                      )}
+                    </>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+    </>
+  )
+
+  const menu = menuOpen ? (
+    <div
+      ref={menuRef}
+      className="message-box__chat-config-menu-root"
+      style={menuStyle ?? undefined}
+      onKeyDown={handleMenuKeyDown}
+    >
+      <MenuSurface
+        className="message-box__chat-config-menu"
+        id={menuId}
+        role="dialog"
+        aria-label="Chat settings"
+      >
+        {activeSection ? renderSectionOptions(activeSection) : renderSectionRoot()}
+      </MenuSurface>
+    </div>
+  ) : null
+
+  return (
+    <span className="message-box__chat-config">
+      <button
+        ref={buttonRef}
+        className="message-box__chat-config-trigger"
+        id={id}
+        type="button"
+        aria-controls={menuOpen ? menuId : undefined}
+        aria-expanded={menuOpen}
+        aria-haspopup="dialog"
+        disabled={(disabled && !menuOpen) || sections.length === 0}
+        title={title}
+        onClick={handleTriggerClick}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        <span className="message-box__chat-config-value">
+          {statusIcons.length > 0 && (
+            <span className="message-box__chat-config-status-icons">
+              {statusIcons.map((item) => (
+                <span
+                  className="message-box__chat-config-status-icon"
+                  key={item.key}
+                  title={item.title}
+                  aria-label={item.title}
+                >
+                  {item.icon}
+                </span>
+              ))}
+            </span>
+          )}
+          <span className="message-box__chat-config-label">
+            <span className="message-box__chat-config-label-part">{modelLabel}</span>
+            <span className="message-box__chat-config-dot" aria-hidden="true" />
+            <span className="message-box__chat-config-label-part">{reasoningLabel}</span>
+          </span>
+        </span>
+        <ChevronDown className="message-box__chat-config-trigger-chevron" aria-hidden="true" />
+      </button>
+      {menu && createPortal(menu, document.body)}
+    </span>
+  )
+}
 
 const getFileMentionAtCaret = (message: string, caret: number): FileMention | null => {
   const prefix = message.slice(0, caret)
@@ -389,17 +747,6 @@ const restoreAncestorScrollAfterNativeNavigation = (element: HTMLElement): void 
   })
 }
 
-const reasoningEffortLabels = {
-  none: 'None',
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'X High',
-  max: 'Max',
-  ultra: 'Ultra'
-} satisfies Record<string, string>
-
 const approvalModeIcons = {
   'ask-user': <ShieldQuestionMark aria-hidden="true" />,
   'auto-review': <Sparkles aria-hidden="true" />,
@@ -414,40 +761,17 @@ const sandboxModeIcons = {
   )
 } satisfies Record<ProviderSandboxMode, ReactNode>
 
-const reasoningEffortIcons = {
-  none: <Gauge aria-hidden="true" />,
-  minimal: <Gauge aria-hidden="true" />,
-  low: <Gauge aria-hidden="true" />,
-  medium: <SlidersHorizontal aria-hidden="true" />,
-  high: <Zap aria-hidden="true" />,
-  xhigh: <Flame className={selectedControlIconClassName} aria-hidden="true" />,
-  max: <BrainCircuit className={selectedControlIconClassName} aria-hidden="true" />,
-  ultra: <Rocket className={selectedControlIconClassName} aria-hidden="true" />
-} satisfies Record<string, ReactNode>
-
-const getReasoningEffortLabel = (reasoningEffort: ProviderReasoningEffort): string => {
-  const fallbackLabel =
-    reasoningEffort
-      .split(/[-_\s]+/)
-      .filter(Boolean)
-      .map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1))
-      .join(' ') || reasoningEffort
-
-  return reasoningEffortLabels[reasoningEffort] ?? fallbackLabel
-}
-
 const getReasoningEffortOptionLabel = (
   reasoningEffort: ProviderReasoningEffort,
   label: string
 ): string => {
-  if (reasoningEffortLabels[reasoningEffort]) return reasoningEffortLabels[reasoningEffort]
+  const presentation = getReasoningEffortPresentation(reasoningEffort)
+
+  if (presentation.isKnown) return presentation.label
   if (label && label !== reasoningEffort) return label
 
-  return getReasoningEffortLabel(reasoningEffort)
+  return presentation.label
 }
-
-const getReasoningEffortIcon = (reasoningEffort: ProviderReasoningEffort): ReactNode =>
-  reasoningEffortIcons[reasoningEffort] ?? <SlidersHorizontal aria-hidden="true" />
 
 const formatModelLabel = (label: string): string => label.replace(/-/g, ' ')
 
@@ -656,6 +980,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const usageControlRef = useRef<HTMLDivElement>(null)
   const editing = Boolean(editSession)
   const fullAccessSelected = sandboxMode === 'danger-full-access'
+  const reviewSelectorVisible = showReviewSelector && !fullAccessSelected
   const effectiveApprovalMode = fullAccessSelected ? 'never' : approvalMode
   const selectedApprovalMode = approvalModes.find((mode) => mode.id === effectiveApprovalMode)
   const approvalModeOptions = approvalModes.map((mode): DropdownOption<ProviderApprovalMode> => ({
@@ -753,6 +1078,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   )
   const supportedReasoningEfforts = selectedModel?.supportedReasoningEfforts ?? []
   const reasoningEffortOptions = supportedReasoningEfforts.map((option) => {
+    const presentation = getReasoningEffortPresentation(option.id)
     const label = getReasoningEffortOptionLabel(option.id, option.label)
 
     return {
@@ -760,9 +1086,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       label,
       menuLabel: option.isDefault ? `${label} (default)` : label,
       description: option.description || undefined,
-      icon: getReasoningEffortIcon(option.id)
+      icon: presentation.icon
     } satisfies DropdownOption<ProviderReasoningEffort>
   })
+  const selectedReasoningEffortPresentation = getReasoningEffortPresentation(reasoningEffort)
   const displayedReasoningEffortOptions = reasoningEffortOptions.some(
     (option) => option.value === reasoningEffort
   )
@@ -771,23 +1098,160 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         ...reasoningEffortOptions,
         {
           value: reasoningEffort,
-          label: getReasoningEffortLabel(reasoningEffort),
-          icon: getReasoningEffortIcon(reasoningEffort)
+          label: selectedReasoningEffortPresentation.label,
+          icon: selectedReasoningEffortPresentation.icon
         }
       ]
-  const selectedModelTitle = selectedModel?.description
-    ? `${formatModelLabel(selectedModel.label)}: ${selectedModel.description}`
-    : formatModelLabel(selectedModel?.label ?? model)
   const selectedApprovalModeTitle = selectedApprovalMode?.description
     ? `${selectedApprovalMode.label}: ${selectedApprovalMode.description}`
     : (selectedApprovalMode?.label ?? formatOptionLabel(effectiveApprovalMode))
-  const selectedSandboxModeTitle = selectedSandboxMode?.description
-    ? `${selectedSandboxMode.label}: ${selectedSandboxMode.description}`
-    : (selectedSandboxMode?.label ?? formatOptionLabel(sandboxMode))
-  const selectedReasoningEffortLabel = getReasoningEffortLabel(reasoningEffort)
+  const selectedReasoningEffortLabel = selectedReasoningEffortPresentation.label
+  const selectorsDisabled = operationsDisabled || (!active && pending)
+  const approvalSelectorDisabled = selectorsDisabled || fullAccessSelected
+  const selectedServiceTierValue = selectedServiceTier ?? standardServiceTierValue
+  const selectedModelLabel = formatModelLabel(selectedModel?.label ?? model)
+  const selectedSandboxModeLabel = selectedSandboxMode?.label ?? formatOptionLabel(sandboxMode)
+  const selectedServiceTierLabel = selectedServiceTierOption?.label ?? 'Standard'
+  const chatConfigSections: ChatConfigSection[] = [
+    ...(showModelSelector
+      ? [
+          {
+            id: 'model',
+            icon: <Bot aria-hidden="true" />,
+            label: 'Model',
+            groups: [
+              {
+                id: 'model',
+                options: displayedModelOptions,
+                selectedValue: model,
+                onChange: (value: string) => onModelChange(value as ProviderModelId)
+              }
+            ]
+          } satisfies ChatConfigSection
+        ]
+      : []),
+    ...(showReasoningSelector
+      ? [
+          {
+            id: 'reasoning',
+            icon: selectedReasoningEffortPresentation.icon,
+            label: 'Reasoning',
+            groups: [
+              {
+                id: 'reasoning',
+                options: displayedReasoningEffortOptions,
+                selectedValue: reasoningEffort,
+                onChange: (value: string) =>
+                  onReasoningEffortChange(value as ProviderReasoningEffort)
+              }
+            ]
+          } satisfies ChatConfigSection
+        ]
+      : []),
+    ...(showAccessSelector || reviewSelectorVisible
+      ? [
+          {
+            id: 'access',
+            icon: showAccessSelector
+              ? sandboxModeIcons[sandboxMode]
+              : approvalModeIcons[effectiveApprovalMode],
+            label: 'Access',
+            groups: [
+              ...(showAccessSelector
+                ? [
+                    {
+                      id: 'access',
+                      label: reviewSelectorVisible ? 'Access' : undefined,
+                      options: displayedSandboxModeOptions,
+                      selectedValue: sandboxMode,
+                      onChange: (value: string) => onSandboxModeChange(value as ProviderSandboxMode)
+                    } satisfies ChatConfigOptionGroup
+                  ]
+                : []),
+              ...(reviewSelectorVisible
+                ? [
+                    {
+                      id: 'review',
+                      label: 'Review',
+                      options: displayedApprovalModeOptions.map((option) => ({
+                        ...option,
+                        disabled:
+                          approvalSelectorDisabled ||
+                          ('disabled' in option ? option.disabled : false)
+                      })),
+                      selectedValue: effectiveApprovalMode,
+                      onChange: (value: string) =>
+                        onApprovalModeChange(value as ProviderApprovalMode)
+                    } satisfies ChatConfigOptionGroup
+                  ]
+                : [])
+            ]
+          } satisfies ChatConfigSection
+        ]
+      : []),
+    ...(showSpeedSelector
+      ? [
+          {
+            id: 'speed',
+            icon: selectedServiceTierOption?.icon ?? <Gauge aria-hidden="true" />,
+            label: 'Speed',
+            groups: [
+              {
+                id: 'speed',
+                options: displayedServiceTierOptions,
+                selectedValue: selectedServiceTierValue,
+                onChange: (value: string) =>
+                  onServiceTierChange(value === standardServiceTierValue ? null : value)
+              }
+            ]
+          } satisfies ChatConfigSection
+        ]
+      : [])
+  ]
+  const chatConfigSelectorTitle = [
+    `Model: ${selectedModelLabel}`,
+    `Reasoning: ${selectedReasoningEffortLabel}`,
+    showAccessSelector ? `Access: ${selectedSandboxModeLabel}` : null,
+    reviewSelectorVisible ? `Review: ${selectedApprovalModeTitle}` : null,
+    showSpeedSelector ? `Speed: ${selectedServiceTierLabel}` : null
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const fastSpeedSelected =
+    selectedServiceTier != null &&
+    isFastServiceTier(selectedServiceTierValue, selectedServiceTierOption?.label ?? '')
+  const chatConfigStatusIcons: SelectorIconItem[] = [
+    ...(fullAccessSelected
+      ? [
+          {
+            key: 'full-access',
+            title: 'Full access',
+            icon: sandboxModeIcons[sandboxMode]
+          } satisfies SelectorIconItem
+        ]
+      : []),
+    ...(selectedReasoningEffortPresentation.showStatusIcon
+      ? [
+          {
+            key: 'reasoning',
+            title: `${selectedReasoningEffortLabel} reasoning`,
+            icon: selectedReasoningEffortPresentation.icon
+          } satisfies SelectorIconItem
+        ]
+      : []),
+    ...(fastSpeedSelected
+      ? [
+          {
+            key: 'speed',
+            title: `${selectedServiceTierLabel} speed`,
+            icon: <Zap className={fastServiceTierIconClassName} aria-hidden="true" />
+          } satisfies SelectorIconItem
+        ]
+      : [])
+  ]
   const selectorsVisible =
     showAccessSelector ||
-    showReviewSelector ||
+    reviewSelectorVisible ||
     showModelSelector ||
     showReasoningSelector ||
     showSpeedSelector
@@ -1445,8 +1909,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       : editing
         ? 'Save edit'
         : 'Send message'
-  const selectorsDisabled = operationsDisabled || (!active && pending)
-  const approvalSelectorDisabled = selectorsDisabled || fullAccessSelected
   const activeDropdownActions = activeWithContent
     ? [
         ...(activePrimaryMode === 'steer'
@@ -1615,29 +2077,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       <label className="sr-only" htmlFor="message-input">
         Message
       </label>
-      {showAccessSelector && (
-        <label className="sr-only" htmlFor="sandbox-mode">
-          Sandbox mode
-        </label>
-      )}
-      {showReviewSelector && (
-        <label className="sr-only" htmlFor="approval-mode">
-          Approval mode
-        </label>
-      )}
-      {showModelSelector && (
-        <label className="sr-only" htmlFor="model-mode">
-          Model
-        </label>
-      )}
-      {showReasoningSelector && (
-        <label className="sr-only" htmlFor="reasoning-effort">
-          Reasoning effort
-        </label>
-      )}
-      {showSpeedSelector && (
-        <label className="sr-only" htmlFor="service-tier">
-          Speed
+      {selectorsVisible && (
+        <label className="sr-only" htmlFor="chat-config-mode">
+          Chat settings
         </label>
       )}
       <div className="message-box__input">
@@ -1831,85 +2273,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           {promptControlsVisible && (
             <div className="message-box__selectors">
               {selectorsVisible && (
-                <>
-                  {showAccessSelector && (
-                    <span className="message-box__select message-box__sandbox">
-                      <Dropdown
-                        id="sandbox-mode"
-                        disabled={selectorsDisabled}
-                        icon={sandboxModeIcons[sandboxMode]}
-                        options={displayedSandboxModeOptions}
-                        placement="top"
-                        value={sandboxMode}
-                        title={selectedSandboxModeTitle}
-                        onChange={onSandboxModeChange}
-                      />
-                    </span>
-                  )}
-                  {showReviewSelector && (
-                    <span className="message-box__select message-box__approval">
-                      <Dropdown
-                        id="approval-mode"
-                        disabled={approvalSelectorDisabled}
-                        icon={approvalModeIcons[effectiveApprovalMode]}
-                        options={displayedApprovalModeOptions}
-                        placement="top"
-                        value={effectiveApprovalMode}
-                        title={
-                          fullAccessSelected
-                            ? 'Full access runs without approval prompts.'
-                            : selectedApprovalModeTitle
-                        }
-                        onChange={onApprovalModeChange}
-                      />
-                    </span>
-                  )}
-                  {showModelSelector && (
-                    <span className="message-box__select message-box__model">
-                      <Dropdown
-                        id="model-mode"
-                        disabled={selectorsDisabled}
-                        icon={<Bot aria-hidden="true" />}
-                        options={displayedModelOptions}
-                        placement="top"
-                        value={model}
-                        title={selectedModelTitle}
-                        onChange={onModelChange}
-                      />
-                    </span>
-                  )}
-                  {showReasoningSelector && (
-                    <span className="message-box__select message-box__reasoning">
-                      <Dropdown
-                        id="reasoning-effort"
-                        disabled={selectorsDisabled}
-                        icon={getReasoningEffortIcon(reasoningEffort)}
-                        options={displayedReasoningEffortOptions}
-                        placement="top"
-                        value={reasoningEffort}
-                        title={`${selectedReasoningEffortLabel} reasoning`}
-                        onChange={onReasoningEffortChange}
-                      />
-                    </span>
-                  )}
-                  {showSpeedSelector && (
-                    <span className="message-box__select message-box__speed">
-                      <Dropdown
-                        id="service-tier"
-                        aria-label="Speed"
-                        disabled={selectorsDisabled}
-                        icon={selectedServiceTierOption?.icon}
-                        options={displayedServiceTierOptions}
-                        placement="top"
-                        value={selectedServiceTier ?? standardServiceTierValue}
-                        title={`${selectedServiceTierOption?.label ?? 'Standard'} speed`}
-                        onChange={(value) =>
-                          onServiceTierChange(value === standardServiceTierValue ? null : value)
-                        }
-                      />
-                    </span>
-                  )}
-                </>
+                <ChatConfigDropdown
+                  disabled={selectorsDisabled}
+                  id="chat-config-mode"
+                  modelLabel={selectedModelLabel}
+                  reasoningLabel={selectedReasoningEffortLabel}
+                  sections={chatConfigSections}
+                  statusIcons={chatConfigStatusIcons}
+                  title={chatConfigSelectorTitle}
+                />
               )}
               {notesButtonVisible && (
                 <CwdNotesButton

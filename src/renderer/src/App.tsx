@@ -19,7 +19,6 @@ import {
   BadgeCheck,
   BellOff,
   Bot,
-  BrainCircuit,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -27,7 +26,6 @@ import {
   Download,
   FileLock,
   Files,
-  Flame,
   FolderKanban,
   FolderPen,
   FolderPlus,
@@ -47,12 +45,10 @@ import {
   PanelLeft,
   PanelRight,
   RefreshCw,
-  Rocket,
   Search,
   Settings,
   MessageSquare,
   ShieldQuestionMark,
-  SlidersHorizontal,
   Sparkles,
   SquarePen,
   Sun,
@@ -143,6 +139,7 @@ import { Button, type ButtonDropdownAction } from './components/Button'
 import { ChatPlan, type ChatPlanData, type ChatPlanItem } from './components/ChatPlan'
 import { Dropdown, type DropdownOption } from './components/Dropdown'
 import { FileEditorDialog, type FileEditorTarget } from './components/FileEditorDialog'
+import { getReasoningEffortPresentation } from './reasoningEffortPresentation'
 import { Input } from './components/Input'
 import { MessageBox } from './components/MessageBox'
 import { SegmentedControl } from './components/SegmentedControl'
@@ -159,6 +156,7 @@ import { providerApi } from './providerApi'
 import { terminalApi } from './terminalApi'
 import {
   type AppAppearancePositionPreference,
+  type AppAppearanceControlStylePreference,
   type AppAppearanceStylePreference,
   type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
@@ -1202,25 +1200,6 @@ const chatSandboxModeIcons = {
   )
 } satisfies Record<ProviderSandboxMode, React.ReactNode>
 
-const getChatReasoningEffortIcon = (reasoningEffort: ProviderReasoningEffort): React.ReactNode => {
-  if (reasoningEffort === 'none' || reasoningEffort === 'minimal' || reasoningEffort === 'low') {
-    return <Gauge aria-hidden="true" />
-  }
-  if (reasoningEffort === 'medium') return <SlidersHorizontal aria-hidden="true" />
-  if (reasoningEffort === 'high') return <Zap aria-hidden="true" />
-  if (reasoningEffort === 'xhigh') {
-    return <Flame className={highlightedControlIconClassName} aria-hidden="true" />
-  }
-  if (reasoningEffort === 'max') {
-    return <BrainCircuit className={highlightedControlIconClassName} aria-hidden="true" />
-  }
-  if (reasoningEffort === 'ultra') {
-    return <Rocket className={highlightedControlIconClassName} aria-hidden="true" />
-  }
-
-  return <SlidersHorizontal aria-hidden="true" />
-}
-
 const getChatServiceTierIcon = (id: string, label = id): React.ReactNode =>
   id.toLocaleLowerCase() === 'fast' ||
   id.toLocaleLowerCase() === 'priority' ||
@@ -1261,6 +1240,12 @@ const applyWindowControlAppearancePreferences = (appearance: AppSettings['appear
 
   root.dataset.windowControlPosition = getEffectiveAppearancePosition(appearance.position)
   root.dataset.windowControlStyle = getEffectiveAppearanceStyle(appearance.style)
+  root.dataset.controlStyle = appearance.controlStyle
+  if (appearance.buttonElevation) {
+    delete root.dataset.buttonElevation
+  } else {
+    root.dataset.buttonElevation = 'false'
+  }
 }
 
 const settingsTabOptions = [
@@ -1357,6 +1342,23 @@ const appearanceStyleOptions = [
   }
 ] satisfies readonly {
   value: AppAppearanceStylePreference
+  label: string
+  icon: React.ReactNode
+}[]
+
+const appearanceControlStyleOptions = [
+  {
+    value: 'bordered',
+    label: 'Bordered',
+    icon: <AppWindow aria-hidden="true" />
+  },
+  {
+    value: 'transparent',
+    label: 'Transparent',
+    icon: <Sparkles aria-hidden="true" />
+  }
+] satisfies readonly {
+  value: AppAppearanceControlStylePreference
   label: string
   icon: React.ReactNode
 }[]
@@ -5014,21 +5016,28 @@ export const App: React.FC = () => {
       description: 'Use the reasoning effort selected manually in the chat.',
       icon: <MessageSquare aria-hidden="true" />
     },
-    ...(selectedEffectiveModel?.supportedReasoningEfforts ?? []).map((option) => ({
-      value: option.id,
-      label: formatSelectionLabel(option.label || option.id),
-      description: option.description || undefined,
-      icon: getChatReasoningEffortIcon(option.id)
-    }))
+    ...(selectedEffectiveModel?.supportedReasoningEfforts ?? []).map((option) => {
+      const presentation = getReasoningEffortPresentation(option.id)
+
+      return {
+        value: option.id,
+        label: presentation.isKnown
+          ? presentation.label
+          : formatSelectionLabel(option.label || option.id),
+        description: option.description || undefined,
+        icon: presentation.icon
+      }
+    })
   ]
   if (
     appSettings.chat.forceReasoning !== appChatManualDropdownValue &&
     !forceReasoningOptions.some((option) => option.value === appSettings.chat.forceReasoning)
   ) {
+    const presentation = getReasoningEffortPresentation(appSettings.chat.forceReasoning)
     forceReasoningOptions.push({
       value: appSettings.chat.forceReasoning,
-      label: formatSelectionLabel(appSettings.chat.forceReasoning),
-      icon: getChatReasoningEffortIcon(appSettings.chat.forceReasoning)
+      label: presentation.label,
+      icon: presentation.icon
     })
   }
   const forceSpeedOptions: DropdownOption<AppChatDropdownSettings['forceSpeed']>[] = [
@@ -5280,6 +5289,28 @@ export const App: React.FC = () => {
       appearance: {
         ...currentSettings.appearance,
         style
+      }
+    }))
+  }
+
+  const handleAppearanceControlStyleChange = (
+    controlStyle: AppAppearanceControlStylePreference
+  ): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      appearance: {
+        ...currentSettings.appearance,
+        controlStyle
+      }
+    }))
+  }
+
+  const handleAppearanceButtonElevationChange = (buttonElevation: boolean): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      appearance: {
+        ...currentSettings.appearance,
+        buttonElevation
       }
     }))
   }
@@ -7752,30 +7783,76 @@ export const App: React.FC = () => {
             onChange={handleThemePreferenceChange}
           />
         </div>
-        <div className="settings-dialog__field settings-dialog__field--inline">
-          <div className="settings-dialog__field-header">
-            <h3>Position</h3>
+        <section
+          className="settings-dialog__section"
+          aria-labelledby="settings-appearance-window-controls"
+        >
+          <h2 className="settings-dialog__section-heading" id="settings-appearance-window-controls">
+            Window Controls
+          </h2>
+          <div className="settings-dialog__section-cards">
+            <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className="settings-dialog__field-header">
+                <h3>Position</h3>
+              </div>
+              <SegmentedControl
+                aria-label="Position"
+                className="settings-dialog__appearance-toggle"
+                options={appearancePositionOptions}
+                value={appSettings.appearance.position}
+                onChange={handleAppearancePositionChange}
+              />
+            </div>
+            <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className="settings-dialog__field-header">
+                <h3>Style</h3>
+              </div>
+              <SegmentedControl
+                aria-label="Window control style"
+                className="settings-dialog__appearance-toggle"
+                options={appearanceStyleOptions}
+                value={appSettings.appearance.style}
+                onChange={handleAppearanceStyleChange}
+              />
+            </div>
           </div>
-          <SegmentedControl
-            aria-label="Position"
-            className="settings-dialog__appearance-toggle"
-            options={appearancePositionOptions}
-            value={appSettings.appearance.position}
-            onChange={handleAppearancePositionChange}
-          />
-        </div>
-        <div className="settings-dialog__field settings-dialog__field--inline">
-          <div className="settings-dialog__field-header">
-            <h3>Style</h3>
+        </section>
+        <section className="settings-dialog__section" aria-labelledby="settings-appearance-buttons">
+          <h2 className="settings-dialog__section-heading" id="settings-appearance-buttons">
+            Buttons
+          </h2>
+          <div className="settings-dialog__section-cards">
+            <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className="settings-dialog__field-header">
+                <h3>Style</h3>
+              </div>
+              <SegmentedControl
+                aria-label="Button style"
+                className="settings-dialog__appearance-toggle"
+                options={appearanceControlStyleOptions}
+                value={appSettings.appearance.controlStyle}
+                onChange={handleAppearanceControlStyleChange}
+              />
+            </div>
+            <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className="settings-dialog__field-header">
+                <h3 id="settings-appearance-button-elevation">Elevation</h3>
+              </div>
+              <label className="settings-switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-labelledby="settings-appearance-button-elevation"
+                  checked={appSettings.appearance.buttonElevation}
+                  onChange={(event) =>
+                    handleAppearanceButtonElevationChange(event.currentTarget.checked)
+                  }
+                />
+                <span className="settings-switch__control" aria-hidden="true" />
+              </label>
+            </div>
           </div>
-          <SegmentedControl
-            aria-label="Style"
-            className="settings-dialog__appearance-toggle"
-            options={appearanceStyleOptions}
-            value={appSettings.appearance.style}
-            onChange={handleAppearanceStyleChange}
-          />
-        </div>
+        </section>
       </section>
     )
   }
@@ -7900,9 +7977,12 @@ export const App: React.FC = () => {
     </div>
   )
 
+  const chromeControlTheme =
+    appSettings.appearance.controlStyle === 'transparent' ? 'transparent' : 'secondary'
+
   const renderSettingsButton = (): React.ReactElement => (
     <Button
-      theme="secondary"
+      theme={chromeControlTheme}
       aria-label="Settings"
       title="Settings"
       callback={() => setSettingsOpen(true)}
@@ -7950,7 +8030,7 @@ export const App: React.FC = () => {
                     />
                   </div>
                   <Button
-                    theme="secondary"
+                    theme={chromeControlTheme}
                     aria-label="Close search"
                     aria-controls="chat-search"
                     title="Close search"
@@ -7965,14 +8045,14 @@ export const App: React.FC = () => {
                   </div>
                   <div className="chat-home__actions-right">
                     <Button
-                      theme="secondary"
+                      theme={chromeControlTheme}
                       aria-label="New chat"
                       title="New chat"
                       callback={handleNewChat}
                       icon={<SquarePen aria-hidden="true" />}
                     />
                     <Button
-                      theme="secondary"
+                      theme={chromeControlTheme}
                       aria-label="Search conversations"
                       aria-expanded={false}
                       title="Search conversations"
@@ -8130,7 +8210,7 @@ export const App: React.FC = () => {
                     selectedChatCommitMarkers.length === 0 && (
                       <p className="chat__status">No messages found.</p>
                     )}
-                  {visibleChatItems.map((item) => (
+                  {visibleChatItems.map((item, itemIndex) => (
                     <Fragment key={item.id}>
                       {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
                       {item.id === firstPendingChatItemId &&
@@ -8156,6 +8236,7 @@ export const App: React.FC = () => {
                         onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
                         onOpenAgentTerminal={handleOpenAgentTerminal}
                         onRetryStoppedTurn={handleRetryStoppedTurn}
+                        previousItem={visibleChatItems[itemIndex - 1] ?? null}
                         projectCwd={changesProjectCwd}
                         retryMessage={
                           canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null

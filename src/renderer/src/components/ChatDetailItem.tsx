@@ -103,6 +103,7 @@ type ChatDetailItemProps = {
   onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   onContinueStoppedTurn?: (prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => void
+  previousItem?: ProviderChatItem | null
   projectCwd?: string | null
   retryMessage?: ProviderMessage | null
   retryStoppedTurnDisabled?: boolean
@@ -253,6 +254,9 @@ const areChatItemsEqual = (first: ProviderChatItem, second: ProviderChatItem): b
   )
 }
 
+const isQueuedPendingMessage = (item: ProviderChatItem | null | undefined): boolean =>
+  item?.type === 'pendingMessage' && item.kind === 'queued'
+
 const areChatDetailItemPropsEqual = (
   first: ChatDetailItemProps,
   second: ChatDetailItemProps
@@ -270,6 +274,7 @@ const areChatDetailItemPropsEqual = (
   first.onOpenAgentTerminal === second.onOpenAgentTerminal &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
+  isQueuedPendingMessage(first.previousItem) === isQueuedPendingMessage(second.previousItem) &&
   first.projectCwd === second.projectCwd &&
   first.retryMessage === second.retryMessage &&
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
@@ -1852,6 +1857,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onOpenAgentTerminal,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
+  previousItem,
   projectCwd,
   retryMessage,
   retryStoppedTurnDisabled = false,
@@ -1880,7 +1886,12 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   if (item.type === 'message' || item.type === 'pendingMessage') {
     const pending = item.type === 'pendingMessage'
     const role = pending ? 'user' : item.role
-    const messageLabel = pending ? getPendingMessageLabel(item) : (item.label ?? null)
+    const messageLabel =
+      pending && item.kind === 'queued' && isQueuedPendingMessage(previousItem)
+        ? null
+        : pending
+          ? getPendingMessageLabel(item)
+          : (item.label ?? null)
     const pendingActionLabel = pending ? getPendingMessageActionLabel(item) : 'pending'
     const canEdit = !pending && role === 'user' && canEditOwnMessages && Boolean(onEditMessage)
     const canEditPending = pending && Boolean(onEditPendingMessage)

@@ -338,8 +338,37 @@
 
 :where(.ui-dropdown__listbox) {
   display: flex;
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
+}
+
+:where(.ui-dropdown--grouped .ui-dropdown__menu) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+:where(.ui-dropdown__option-group) {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+}
+
+:where(.ui-dropdown__option-group-options) {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  max-height: var(--dropdown-option-group-max-height, none);
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-color: var(--glass-edge) transparent;
+}
+
+:where(.ui-dropdown__option-group-options > .ui-dropdown__option) {
+  flex: none;
 }
 
 :where(.ui-dropdown--descriptive .ui-dropdown__menu) {

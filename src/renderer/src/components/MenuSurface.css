@@ -1,5 +1,5 @@
 .ui-menu-surface {
-  max-height: min(420px, 56vh);
+  max-height: var(--menu-surface-max-height, min(420px, 56vh));
   overflow: auto;
   padding: 0 7px;
   border: 1px solid var(--menu-border);

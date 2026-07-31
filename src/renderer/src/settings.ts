@@ -17,6 +17,7 @@ import { normalizeAppActions } from './actions'
 export type AppThemePreference = 'system' | 'light' | 'dark'
 export type AppAppearancePositionPreference = 'system' | 'left' | 'right'
 export type AppAppearanceStylePreference = 'system' | 'sele' | 'macos'
+export type AppAppearanceControlStylePreference = 'bordered' | 'transparent'
 export type AppChatUsageDisplay = 'chatContext' | 'global'
 
 export type AppGitCommitPromptSettings = {
@@ -69,6 +70,8 @@ export type AppSettings = {
     theme: AppThemePreference
     position: AppAppearancePositionPreference
     style: AppAppearanceStylePreference
+    controlStyle: AppAppearanceControlStylePreference
+    buttonElevation: boolean
   }
   chat: AppChatThoughtSettings & {
     continuePrompt: string
@@ -196,14 +199,21 @@ const legacyDefaultGitCommitPromptSettings: Partial<
   commitStep: new Set(['9. `git commit -m "..."`'])
 }
 
+const isMacPlatform = (): boolean =>
+  typeof navigator !== 'undefined' && navigator.platform.toLocaleLowerCase().includes('mac')
+
+export const defaultAppAppearanceSettings: AppSettings['appearance'] = {
+  theme: 'system',
+  position: isMacPlatform() ? 'left' : 'system',
+  style: isMacPlatform() ? 'macos' : 'system',
+  controlStyle: 'bordered',
+  buttonElevation: true
+}
+
 export const defaultAppSettings: AppSettings = {
   actions: [],
   lastActionId: null,
-  appearance: {
-    theme: 'system',
-    position: 'system',
-    style: 'system'
-  },
+  appearance: defaultAppAppearanceSettings,
   chat: {
     continuePrompt: defaultStoppedTurnContinuePrompt,
     recentChatCacheLimit: 10,
@@ -239,6 +249,10 @@ export const isAppAppearanceStylePreference = (
   value: unknown
 ): value is AppAppearanceStylePreference =>
   value === 'system' || value === 'sele' || value === 'macos'
+
+export const isAppAppearanceControlStylePreference = (
+  value: unknown
+): value is AppAppearanceControlStylePreference => value === 'bordered' || value === 'transparent'
 
 const isAppExternalLinkAction = (value: unknown): value is AppExternalLinkAction =>
   value === 'copy' || value === 'open'
@@ -374,7 +388,14 @@ export const readStoredAppSettings = (): AppSettings => {
           : defaultAppSettings.appearance.position,
         style: isAppAppearanceStylePreference(appearance.style)
           ? appearance.style
-          : defaultAppSettings.appearance.style
+          : defaultAppSettings.appearance.style,
+        controlStyle: isAppAppearanceControlStylePreference(appearance.controlStyle)
+          ? appearance.controlStyle
+          : defaultAppSettings.appearance.controlStyle,
+        buttonElevation:
+          typeof appearance.buttonElevation === 'boolean'
+            ? appearance.buttonElevation
+            : defaultAppSettings.appearance.buttonElevation
       },
       chat: {
         continuePrompt:
@@ -474,6 +495,12 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
     if (settings.appearance.style !== defaultAppSettings.appearance.style) {
       storedAppearance.style = settings.appearance.style
+    }
+    if (settings.appearance.controlStyle !== defaultAppSettings.appearance.controlStyle) {
+      storedAppearance.controlStyle = settings.appearance.controlStyle
+    }
+    if (settings.appearance.buttonElevation !== defaultAppSettings.appearance.buttonElevation) {
+      storedAppearance.buttonElevation = settings.appearance.buttonElevation
     }
     if (Object.keys(storedAppearance).length > 0) storedSettings.appearance = storedAppearance
 
