@@ -1,3 +1,5 @@
+import type { AppContainerTarget } from './app'
+
 export const providerIds = ['codex', 'copilot'] as const
 export const providerModelIds = [
   'gpt-5.6-sol',
@@ -320,7 +322,11 @@ export type ProviderAccountUsage = {
   errors: string[]
 }
 
-export type ProviderUsageOptions = {
+export type ProviderSourceOptions = {
+  container?: AppContainerTarget | null
+}
+
+export type ProviderUsageOptions = ProviderSourceOptions & {
   includeStatistics?: boolean
 }
 
@@ -350,6 +356,7 @@ export type ProviderChatMetadata = {
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
+  container: AppContainerTarget | null
 }
 
 export type ProviderCwdNote = {
@@ -375,9 +382,10 @@ export type ProviderChat = {
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
+  container: AppContainerTarget | null
 }
 
-export type ProviderChatListOptions = {
+export type ProviderChatListOptions = ProviderSourceOptions & {
   cursor?: string | null
   limit?: number | null
 }
@@ -554,6 +562,7 @@ export type ProviderChatDetail = {
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
+  container: AppContainerTarget | null
   capabilities: ProviderCapabilities
   pendingApproval: ProviderPendingApproval | null
   contextUsage: ProviderChatContextUsage | null
@@ -618,6 +627,7 @@ export type ProviderAppInput = {
 export type ProviderTurnOptions = {
   approvalPolicy: ProviderApprovalPolicy
   approvalsReviewer: ProviderApprovalsReviewer
+  container?: AppContainerTarget | null
   cwd?: string
   files?: ProviderFileInput[]
   images?: ProviderImageInput[]
@@ -636,19 +646,32 @@ export type ProviderOneShotOptions = ProviderTurnOptions & {
 export const providerOneShotGenerationCanceledMessage = 'One-shot generation canceled'
 
 export type ProviderApi = {
-  login: (providerId: ProviderId) => Promise<ProviderLoginResult>
-  getUpdateAvailability: (providerId: ProviderId) => Promise<ProviderUpdateAvailability | null>
-  updateProvider: (providerId: ProviderId) => Promise<ProviderUpdateAvailability | null>
+  login: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderLoginResult>
+  getUpdateAvailability: (
+    providerId: ProviderId,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderUpdateAvailability | null>
+  updateProvider: (
+    providerId: ProviderId,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderUpdateAvailability | null>
   getApprovalModes: (providerId: ProviderId) => Promise<ProviderApprovalModeOption[]>
   getSandboxModes: (providerId: ProviderId) => Promise<ProviderSandboxModeOption[]>
-  getModels: (providerId: ProviderId) => Promise<ProviderModel[]>
-  getSkills: (providerId: ProviderId, cwd?: string | null) => Promise<ProviderSkill[]>
-  getApps: (providerId: ProviderId) => Promise<ProviderApp[]>
+  getModels: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderModel[]>
+  getSkills: (
+    providerId: ProviderId,
+    cwd?: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderSkill[]>
+  getApps: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderApp[]>
   getUsage: (
     providerId: ProviderId,
     options?: ProviderUsageOptions
   ) => Promise<ProviderAccountUsage>
-  resetRateLimits: (providerId: ProviderId) => Promise<ProviderAccountRateLimitResetOutcome>
+  resetRateLimits: (
+    providerId: ProviderId,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAccountRateLimitResetOutcome>
   getChats: (providerId: ProviderId, options?: ProviderChatListOptions) => Promise<ProviderChatPage>
   getChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
   generateOneShot: (

@@ -19,10 +19,13 @@ import {
   BadgeCheck,
   BellOff,
   Bot,
+  Box,
+  Boxes,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   Check,
+  Container,
   Download,
   FileLock,
   Files,
@@ -53,6 +56,7 @@ import {
   SquarePen,
   Sun,
   Terminal,
+  ToolCase,
   Upload,
   UnlockKeyhole,
   X,
@@ -69,7 +73,11 @@ import {
   FolderIcon as SymbolsFolderIcon
 } from '@react-symbols/icons/utils'
 import type {
+  AppContainerSuggestion,
+  AppContainerTarget,
+  AppContainerTool,
   AppSelectedAttachment,
+  AppSourceAvailability,
   AppFileTreeResult,
   AppGitBranchesResult,
   AppGitChangeKind,
@@ -167,8 +175,11 @@ import {
   type AppExternalLinkBehavior,
   type AppSettings,
   type AppThemePreference,
+  appAppearanceZoomLevelMax,
+  appAppearanceZoomLevelMin,
   appChatManualDropdownValue,
   appChatStandardSpeedValue,
+  normalizeAppAppearanceZoomLevel,
   readStoredAppSettings,
   writeStoredAppSettings
 } from './settings'
@@ -279,14 +290,17 @@ type GitSyncRecoveryActionOptions = {
 }
 type SettingsTab = 'appearance' | 'chat' | 'links' | 'performance' | 'git'
 type CachedPatchChangedFiles = {
+  containerKey: string
   cwd: string
   source: PatchChangeSource
   files: ChangedFile[]
 }
 type FileTreeScope = {
+  containerKey: string
   cwd: string
 }
 type GitBranchesScope = {
+  sourceKey: string
   cwd: string
 }
 type ChangedFile = {
@@ -414,13 +428,19 @@ type RecentChatCacheEntry = {
 }
 type ChatResizeEdge = 'left' | 'right'
 type GitChangesScope = {
+  sourceKey: string
   cwd: string
   source: GitChangeSource
 }
 type PatchFilterScope = {
+  containerKey: string
   cwd: string
   source: PatchChangeSource
   signature: string
+}
+type SourceAvailabilityState = {
+  containerKey: string
+  availability: AppSourceAvailability
 }
 type UncommittedPatchFilter = {
   scope: PatchFilterScope
@@ -443,6 +463,11 @@ const chatPaneDefaultReferenceWidth = 1200
 const chatPanePreferenceStorageKey = 'sele:chat-pane-preference:v1'
 const messageBoxSelectionStorageKey = 'sele:message-box-selection:v1'
 const providerUpdatePreferenceStorageKey = 'sele:provider-update-preferences:v1'
+const legacyContainerSelectionStorageKeys = [
+  'sele:container-selection:v2',
+  'sele:container-selection:v1'
+]
+const containerSelectionStorageKey = 'sele:container-selection:v3'
 const scopedCommitActivitiesStorageKey = 'sele:scoped-commit-activities:v1'
 const chatCommitMarkersStorageKey = 'sele:chat-commit-markers:v1'
 const gitCurrentChatModelValue = '__sele_current_chat_model__'
@@ -450,6 +475,7 @@ const pinnedGroupKey = 'pinned'
 const unknownCwdGroupKey = 'cwd:unknown'
 const doneGroupKey = 'done'
 const newSessionProjectPlaceholderValue = '__sele_new_session_project_placeholder__'
+const hostContainerValue = 'host'
 const fallbackDefaultModel = fallbackProviderModels.find((model) => model.isDefault)
 const fallbackInitialModel = fallbackDefaultModel ?? fallbackProviderModels[0]!
 const fallbackInitialReasoningEffort = fallbackInitialModel?.defaultReasoningEffort ?? 'medium'
@@ -526,6 +552,115 @@ const writeStoredProviderUpdatePreferences = (preferences: ProviderUpdatePrefere
     window.localStorage.setItem(providerUpdatePreferenceStorageKey, JSON.stringify(preferences))
   } catch {
     // Update suggestion preferences are non-critical; ignore unavailable storage.
+  }
+}
+
+const isContainerTool = (value: unknown): value is AppContainerTool =>
+  value === 'distrobox' || value === 'toolbox' || value === 'podman' || value === 'docker'
+
+const normalizeContainerTarget = (
+  container: AppContainerTarget | null | undefined
+): AppContainerTarget => {
+  if (!container || container.kind === 'host') return { kind: 'host' }
+  return { kind: 'container', tool: container.tool, name: container.name }
+}
+
+const getContainerTargetKey = (container: AppContainerTarget | null | undefined): string => {
+  const normalizedContainer = normalizeContainerTarget(container)
+  return normalizedContainer.kind === 'container'
+    ? `${normalizedContainer.tool}:${normalizedContainer.name}`
+    : hostContainerValue
+}
+
+const getContainerTargetFromSuggestion = (
+  suggestion: AppContainerSuggestion
+): AppContainerTarget => ({
+  kind: 'container',
+  tool: suggestion.tool,
+  name: suggestion.name
+})
+
+const getContainerToolIcon = (tool: AppContainerTool): React.ReactNode => {
+  if (tool === 'distrobox') return <Box aria-hidden="true" />
+  if (tool === 'toolbox') return <ToolCase aria-hidden="true" />
+  if (tool === 'podman') return <Boxes aria-hidden="true" />
+
+  return <Container aria-hidden="true" />
+}
+
+const getContainerSuggestionState = (suggestion: AppContainerSuggestion): string =>
+  suggestion.status?.trim() || (suggestion.current ? 'Running' : 'Unknown')
+
+const isContainerTargetAvailable = (
+  container: AppContainerTarget,
+  suggestions: AppContainerSuggestion[]
+): boolean =>
+  container.kind === 'host' ||
+  suggestions.some(
+    (suggestion) => suggestion.tool === container.tool && suggestion.name === container.name
+  )
+
+const parseStoredContainerSelection = (
+  storedValue: string | null,
+  options: { allowHost: boolean }
+): AppContainerTarget | null => {
+  if (!storedValue) return null
+
+  try {
+    const parsedValue = JSON.parse(storedValue) as Partial<AppContainerTarget> | null
+    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
+      return null
+    }
+    if (parsedValue.kind === 'host') return options.allowHost ? { kind: 'host' } : null
+    if (
+      parsedValue.kind === 'container' &&
+      isContainerTool(parsedValue.tool) &&
+      typeof parsedValue.name === 'string' &&
+      parsedValue.name.trim()
+    ) {
+      return {
+        kind: 'container',
+        tool: parsedValue.tool,
+        name: parsedValue.name.trim()
+      }
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+const readStoredContainerSelection = (): AppContainerTarget | null => {
+  try {
+    const storedSelection = parseStoredContainerSelection(
+      window.localStorage.getItem(containerSelectionStorageKey),
+      { allowHost: true }
+    )
+    if (storedSelection) return storedSelection
+
+    for (const legacyStorageKey of legacyContainerSelectionStorageKeys) {
+      const legacySelection = parseStoredContainerSelection(
+        window.localStorage.getItem(legacyStorageKey),
+        { allowHost: false }
+      )
+      if (legacySelection) return legacySelection
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+const writeStoredContainerSelection = (container: AppContainerTarget): void => {
+  try {
+    window.localStorage.setItem(
+      containerSelectionStorageKey,
+      JSON.stringify(normalizeContainerTarget(container))
+    )
+  } catch {
+    // Container selection is a convenience preference; ignore unavailable storage.
   }
 }
 
@@ -838,6 +973,18 @@ const ChangesSidebarGitState: React.FC<{ active: boolean; label: string }> = ({
     ) : (
       <GitBranch className="changes-sidebar__git-state-icon" aria-hidden="true" />
     )}
+    <span className="sr-only">{label}</span>
+  </div>
+)
+
+const ChatSidebarLoadingState: React.FC<{ label: string }> = ({ label }) => (
+  <div className="chat-sidebar__loading-state" role="status">
+    <ChangesAnimatedIcon
+      Icon={AnimatedGitBranchIcon}
+      active
+      className="chat-sidebar__loading-icon"
+      size={72}
+    />
     <span className="sr-only">{label}</span>
   </div>
 )
@@ -1247,11 +1394,6 @@ const applyWindowControlAppearancePreferences = (appearance: AppSettings['appear
   root.dataset.windowControlPosition = getEffectiveAppearancePosition(appearance.position)
   root.dataset.windowControlStyle = getEffectiveAppearanceStyle(appearance.style)
   root.dataset.controlStyle = appearance.controlStyle
-  if (appearance.buttonElevation) {
-    delete root.dataset.buttonElevation
-  } else {
-    root.dataset.buttonElevation = 'false'
-  }
 }
 
 const settingsTabOptions = [
@@ -1684,7 +1826,8 @@ const getChatFromDetail = (
   seenUpdatedAt: detail.seenUpdatedAt ?? existingChat?.seenUpdatedAt ?? null,
   pinned: detail.pinned ?? existingChat?.pinned ?? false,
   done: detail.done ?? existingChat?.done ?? false,
-  purpose: detail.purpose ?? existingChat?.purpose ?? null
+  purpose: detail.purpose ?? existingChat?.purpose ?? null,
+  container: detail.container ?? existingChat?.container ?? null
 })
 
 const getWorkingStepFromUpdate = (
@@ -1766,7 +1909,8 @@ const getChatDetailFromUpdateSummary = (
   pinned: summary.pinned,
   done: summary.done,
   seenUpdatedAt: summary.seenUpdatedAt,
-  purpose: summary.purpose
+  purpose: summary.purpose,
+  container: summary.container
 })
 
 const arePendingApprovalsEqual = (
@@ -1782,6 +1926,17 @@ const arePendingApprovalsEqual = (
     first?.cwd === second?.cwd &&
     first?.reason === second?.reason &&
     first?.startedAt === second?.startedAt)
+
+const areContainerTargetsEqual = (
+  first: ProviderChat['container'],
+  second: ProviderChat['container']
+): boolean =>
+  first === second ||
+  ((!first || first.kind === 'host') && (!second || second.kind === 'host')) ||
+  (first?.kind === 'container' &&
+    second?.kind === 'container' &&
+    first.tool === second.tool &&
+    first.name === second.name)
 
 const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.id === second.id &&
@@ -1799,7 +1954,8 @@ const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.pinned === second.pinned &&
   first.done === second.done &&
   first.seenUpdatedAt === second.seenUpdatedAt &&
-  first.purpose === second.purpose
+  first.purpose === second.purpose &&
+  areContainerTargetsEqual(first.container, second.container)
 
 const getChatFromUpdateSummary = (
   providerId: ProviderId,
@@ -1819,7 +1975,8 @@ const getChatFromUpdateSummary = (
     existingChat.pinned !== summary.pinned ||
     existingChat.done !== summary.done ||
     existingChat.seenUpdatedAt !== summary.seenUpdatedAt ||
-    existingChat.purpose !== summary.purpose
+    existingChat.purpose !== summary.purpose ||
+    !areContainerTargetsEqual(existingChat.container, summary.container)
 
   return {
     id: summary.id,
@@ -1843,7 +2000,8 @@ const getChatFromUpdateSummary = (
         : summary.seenUpdatedAt == null
           ? existingChat.seenUpdatedAt
           : Math.max(existingChat.seenUpdatedAt, summary.seenUpdatedAt),
-    purpose: summary.purpose
+    purpose: summary.purpose,
+    container: summary.container
   }
 }
 
@@ -2493,6 +2651,7 @@ const getPatchFilterSignature = (patches: AppGitPatchChange[]): string => {
 
 const isPatchFilterScope = (
   scope: PatchFilterScope | null,
+  containerKey: string,
   cwd: string | null,
   source: ChangeSource,
   signature: string
@@ -2501,6 +2660,7 @@ const isPatchFilterScope = (
     scope &&
     cwd &&
     isPatchChangeSource(source) &&
+    scope.containerKey === containerKey &&
     scope.cwd === cwd &&
     scope.source === source &&
     scope.signature === signature
@@ -2645,12 +2805,24 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
 
 const isGitChangesScope = (
   scope: GitChangesScope | null,
+  sourceKey: string,
   cwd: string | null,
   source: GitChangeSource | null
-): boolean => Boolean(scope && cwd && source && scope.cwd === cwd && scope.source === source)
+): boolean =>
+  Boolean(
+    scope &&
+    cwd &&
+    source &&
+    scope.sourceKey === sourceKey &&
+    scope.cwd === cwd &&
+    scope.source === source
+  )
 
-const isFileTreeScope = (scope: FileTreeScope | null, cwd: string | null): boolean =>
-  Boolean(scope && cwd && scope.cwd === cwd)
+const isFileTreeScope = (
+  scope: FileTreeScope | null,
+  containerKey: string,
+  cwd: string | null
+): boolean => Boolean(scope && cwd && scope.containerKey === containerKey && scope.cwd === cwd)
 
 const getChangesEmptyMessage = (
   source: ChangeSource,
@@ -2707,12 +2879,36 @@ const isAppActionShortcutTargetBlocked = (target: EventTarget | null): boolean =
 export const App: React.FC = () => {
   const storedMessageBoxSelection = useMemo(() => readStoredMessageBoxSelection(), [])
   const [appSettings, setAppSettings] = useState<AppSettings>(readStoredAppSettings)
+  const [appearanceZoomLevelInputDraft, setAppearanceZoomLevelInputDraft] = useState<string | null>(
+    null
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('appearance')
+  const updateAppearanceZoomLevel = useCallback((value: number): void => {
+    const zoomLevel = normalizeAppAppearanceZoomLevel(value)
+
+    setAppearanceZoomLevelInputDraft(null)
+    setAppSettings((currentSettings) =>
+      currentSettings.appearance.zoomLevel === zoomLevel
+        ? currentSettings
+        : {
+            ...currentSettings,
+            appearance: {
+              ...currentSettings.appearance,
+              zoomLevel
+            }
+          }
+    )
+  }, [])
+  const appearanceZoomLevelInput =
+    appearanceZoomLevelInputDraft ?? String(appSettings.appearance.zoomLevel)
   const [fileEditorTarget, setFileEditorTarget] = useState<FileEditorTarget | null>(null)
   const [selectedReview, setSelectedReview] = useState<Omit<ProviderReview, 'prompt'> | null>(null)
   const [reviewCommentsDraft, setReviewCommentsDraft] = useState<ProviderReviewComment[]>([])
   const [terminalCwd, setTerminalCwd] = useState<string | null | undefined>(undefined)
+  const [terminalContainer, setTerminalContainer] = useState<AppContainerTarget | null | undefined>(
+    undefined
+  )
   const [terminalLaunchRequest, setTerminalLaunchRequest] = useState<TerminalLaunchRequest | null>(
     null
   )
@@ -2761,13 +2957,39 @@ export const App: React.FC = () => {
   const [providerUpdateError, setProviderUpdateError] = useState<string | null>(null)
   const [providerUpdatePreferences, setProviderUpdatePreferences] =
     useState<ProviderUpdatePreferences>(readStoredProviderUpdatePreferences)
+  const [containerSuggestions, setContainerSuggestions] = useState<AppContainerSuggestion[]>([])
+  const [storedContainerSelection] = useState<AppContainerTarget | null>(
+    readStoredContainerSelection
+  )
+  const [containerSelectionReady, setContainerSelectionReady] = useState(false)
+  const [newSessionContainer, setNewSessionContainer] = useState<AppContainerTarget>(
+    () => storedContainerSelection ?? { kind: 'host' }
+  )
+  const newSessionContainerKey = getContainerTargetKey(newSessionContainer)
+  const [newSessionSourceAvailability, setNewSessionSourceAvailability] =
+    useState<SourceAvailabilityState | null>(null)
   const [accountUsage, setAccountUsage] = useState<ProviderAccountUsage | null>(null)
   const [accountUsageState, setAccountUsageState] = useState<UsageLoadState>('idle')
   const [accountUsageError, setAccountUsageError] = useState<string | null>(null)
   const [newChatOpen, setNewChatOpen] = useState(true)
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null)
   const [newSessionProvider, setNewSessionProvider] = useState<ProviderId>('codex')
+  const newSessionAvailableProviderIds = useMemo(
+    () =>
+      newSessionSourceAvailability?.containerKey === newSessionContainerKey
+        ? newSessionSourceAvailability.availability.providers.flatMap((provider) =>
+            provider.available ? [provider.providerId] : []
+          )
+        : [],
+    [newSessionContainerKey, newSessionSourceAvailability]
+  )
+  const newSessionProviderAvailable = newSessionAvailableProviderIds.includes(newSessionProvider)
+  const newSessionSourceAvailabilityReady =
+    newSessionSourceAvailability?.containerKey === newSessionContainerKey
   const configProviderId = selectedChat?.providerId ?? newSessionProvider
+  const configProviderHasSelectedChat = Boolean(selectedChat)
+  const configProviderContainer = selectedChat ? selectedChat.container : newSessionContainer
+  const configProviderContainerKey = getContainerTargetKey(configProviderContainer)
   const [projectHistory, setProjectHistory] = useState<ProjectOptionData[]>([])
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -2796,6 +3018,10 @@ export const App: React.FC = () => {
   const [gitBranchLoadRequest, setGitBranchLoadRequest] = useState(0)
   const [gitBranchActionState, setGitBranchActionState] = useState<SendState>('idle')
   const [gitBranchError, setGitBranchError] = useState<string | null>(null)
+  const [gitSourceAvailability, setGitSourceAvailability] =
+    useState<SourceAvailabilityState | null>(null)
+  const [lastGitAvailable, setLastGitAvailable] = useState<boolean | null>(null)
+  const [gitAvailabilityChangeId, setGitAvailabilityChangeId] = useState(0)
   const [uncommittedPatchFilter, setUncommittedPatchFilter] =
     useState<UncommittedPatchFilter | null>(null)
   const [uncommittedPatchFilterState, setUncommittedPatchFilterState] = useState<LoadState>('ready')
@@ -2863,6 +3089,10 @@ export const App: React.FC = () => {
   const recentChatCacheLimitRef = useRef(appSettings.chat.recentChatCacheLimit)
   const recentChatCacheRef = useRef(new Map<string, RecentChatCacheEntry>())
   const changesCwdRef = useRef<string | null>(null)
+  const changesContainerRef = useRef<AppContainerTarget | null>(null)
+  const changeSourceRef = useRef(changeSource)
+  const gitAvailableRef = useRef<boolean | null>(null)
+  const containerSelectionReadyRef = useRef(false)
   const initialChatCommitMarkersRef = useRef(chatCommitMarkers)
   const scopedCommitActivitiesRef =
     useRef<Record<string, ScopedCommitActivity>>(scopedCommitActivities)
@@ -3132,6 +3362,10 @@ export const App: React.FC = () => {
   }, [appSettings])
 
   useEffect(() => {
+    void appApi.setWindowZoomLevel(appSettings.appearance.zoomLevel).catch(() => {})
+  }, [appSettings.appearance.zoomLevel])
+
+  useEffect(() => {
     const handleLinkClick = (event: MouseEvent): void => {
       if (event.defaultPrevented || event.button !== 0) return
 
@@ -3249,6 +3483,108 @@ export const App: React.FC = () => {
   }, [providerUpdatePreferences])
 
   useEffect(() => {
+    if (!containerSelectionReady) return
+
+    writeStoredContainerSelection(newSessionContainer)
+  }, [containerSelectionReady, newSessionContainer])
+
+  useEffect(() => {
+    let active = true
+
+    appApi
+      .getContainerSuggestions()
+      .then((suggestions) => {
+        if (!active) return
+
+        const currentSuggestion = suggestions.find((suggestion) => suggestion.current)
+        const currentSource = currentSuggestion
+          ? getContainerTargetFromSuggestion(currentSuggestion)
+          : ({ kind: 'host' } satisfies AppContainerTarget)
+
+        setContainerSuggestions(suggestions)
+        setNewSessionContainer((currentContainer) => {
+          if (!containerSelectionReadyRef.current) {
+            const initialContainer = storedContainerSelection ?? currentSource
+            return isContainerTargetAvailable(initialContainer, suggestions)
+              ? initialContainer
+              : currentSource
+          }
+
+          return isContainerTargetAvailable(currentContainer, suggestions)
+            ? currentContainer
+            : currentSource
+        })
+        containerSelectionReadyRef.current = true
+        setContainerSelectionReady(true)
+      })
+      .catch(() => {
+        if (!active) return
+
+        setContainerSuggestions([])
+        if (!containerSelectionReadyRef.current) {
+          setNewSessionContainer(storedContainerSelection ?? { kind: 'host' })
+        } else {
+          setNewSessionContainer({ kind: 'host' })
+        }
+        containerSelectionReadyRef.current = true
+        setContainerSelectionReady(true)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [storedContainerSelection])
+
+  useEffect(() => {
+    let active = true
+    const container = normalizeContainerTarget(newSessionContainer)
+    const containerKey = getContainerTargetKey(container)
+
+    queueMicrotask(() => {
+      if (!active) return
+      setNewSessionSourceAvailability((currentAvailability) =>
+        currentAvailability?.containerKey === containerKey ? currentAvailability : null
+      )
+    })
+
+    appApi
+      .getSourceAvailability({ container })
+      .then((availability) => {
+        if (!active) return
+
+        setNewSessionSourceAvailability({ containerKey, availability })
+      })
+      .catch(() => {
+        if (!active) return
+
+        setNewSessionSourceAvailability({
+          containerKey,
+          availability: {
+            gitAvailable: false,
+            providers: providerIds.map((providerId) => ({ providerId, available: false }))
+          }
+        })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [newSessionContainer, newSessionContainerKey])
+
+  useEffect(() => {
+    if (newSessionAvailableProviderIds.length === 0 || newSessionProviderAvailable) return
+
+    let active = true
+    queueMicrotask(() => {
+      if (active) setNewSessionProvider(newSessionAvailableProviderIds[0]!)
+    })
+
+    return () => {
+      active = false
+    }
+  }, [newSessionAvailableProviderIds, newSessionProviderAvailable])
+
+  useEffect(() => {
     const queueProviderUpdateClear = (): void => {
       queueMicrotask(() => {
         setProviderUpdateSuggestion(null)
@@ -3256,12 +3592,13 @@ export const App: React.FC = () => {
       })
     }
 
-    if (selectedChat || !newChatOpen) {
+    if (selectedChat || !newChatOpen || !newSessionProviderAvailable) {
       queueProviderUpdateClear()
       return undefined
     }
 
     const providerId = newSessionProvider
+    const container = normalizeContainerTarget(newSessionContainer)
     const preference = getProviderUpdatePreference(providerUpdatePreferences, providerId)
     if (preference.neverSuggest) {
       queueProviderUpdateClear()
@@ -3280,7 +3617,7 @@ export const App: React.FC = () => {
     })
 
     providerApi
-      .getUpdateAvailability(providerId)
+      .getUpdateAvailability(providerId, { container })
       .then((availability) => {
         if (!active) return
 
@@ -3298,7 +3635,14 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [newChatOpen, newSessionProvider, providerUpdatePreferences, selectedChat])
+  }, [
+    newChatOpen,
+    newSessionContainer,
+    newSessionProvider,
+    newSessionProviderAvailable,
+    providerUpdatePreferences,
+    selectedChat
+  ])
 
   useEffect(() => {
     const panels = panelsRef.current
@@ -3391,9 +3735,19 @@ export const App: React.FC = () => {
     let active = true
 
     const loadInitialChats = async (): Promise<void> => {
+      if (!newSessionSourceAvailabilityReady) return
+
+      if (newSessionAvailableProviderIds.length === 0) {
+        setLoadState('ready')
+        return
+      }
+
+      const container = normalizeContainerTarget(newSessionContainer)
+      setLoadState('loading')
       const results = await Promise.allSettled(
-        providerIds.map((providerId) =>
+        newSessionAvailableProviderIds.map((providerId) =>
           providerApi.getChats(providerId, {
+            container,
             cursor: null,
             limit: chatPageSize
           })
@@ -3413,20 +3767,29 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [])
+  }, [newSessionAvailableProviderIds, newSessionContainer, newSessionSourceAvailabilityReady])
 
   useEffect(() => {
     let active = true
 
     const loadProjectHistory = async (): Promise<void> => {
+      if (!newSessionSourceAvailabilityReady) return
+
+      if (newSessionAvailableProviderIds.length === 0) {
+        setProjectHistory([])
+        return
+      }
+
+      const container = normalizeContainerTarget(newSessionContainer)
       const projectsByCwd = new Map<string, ProjectOptionData>()
       const loadedChats: ProviderChat[] = []
 
       await Promise.allSettled(
-        providerIds.map(async (providerId) => {
+        newSessionAvailableProviderIds.map(async (providerId) => {
           let cursor: string | null = null
           do {
             const page = await providerApi.getChats(providerId, {
+              container,
               cursor,
               limit: 100
             })
@@ -3458,7 +3821,7 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [])
+  }, [newSessionAvailableProviderIds, newSessionContainer, newSessionSourceAvailabilityReady])
 
   useEffect(() => {
     let active = true
@@ -3544,12 +3907,26 @@ export const App: React.FC = () => {
     let active = true
     const fallbackModels = getFallbackModels(configProviderId)
 
+    if (
+      !configProviderHasSelectedChat &&
+      (!newSessionSourceAvailabilityReady || !newSessionProviderAvailable)
+    ) {
+      queueMicrotask(() => {
+        if (active) setModels([])
+      })
+
+      return () => {
+        active = false
+      }
+    }
+
+    const container = normalizeContainerTarget(configProviderContainer)
     queueMicrotask(() => {
       if (active) setModels(fallbackModels)
     })
 
     providerApi
-      .getModels(configProviderId)
+      .getModels(configProviderId, { container })
       .then((nextModels) => {
         if (!active || nextModels.length === 0) return
 
@@ -3562,7 +3939,14 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [configProviderId])
+  }, [
+    configProviderContainer,
+    configProviderContainerKey,
+    configProviderHasSelectedChat,
+    configProviderId,
+    newSessionProviderAvailable,
+    newSessionSourceAvailabilityReady
+  ])
 
   useEffect(() => {
     if (models.length === 0) return
@@ -3751,7 +4135,7 @@ export const App: React.FC = () => {
   )
 
   const showNewChatView = useCallback(
-    (projectCwd?: string | null): void => {
+    (projectCwd?: string | null, container?: AppContainerTarget | null): void => {
       resetChatSearch()
       chatDetailRef.current = null
       setSelectedChat(null)
@@ -3762,9 +4146,17 @@ export const App: React.FC = () => {
       setSearchOpen(false)
       setSearchQuery('')
       if (projectCwd !== undefined) setNewSessionCwd(projectCwd)
+      if (container !== undefined) {
+        const normalizedContainer = normalizeContainerTarget(container)
+        setNewSessionContainer(
+          isContainerTargetAvailable(normalizedContainer, containerSuggestions)
+            ? normalizedContainer
+            : { kind: 'host' }
+        )
+      }
       setNewChatOpen(true)
     },
-    [resetChatSearch]
+    [containerSuggestions, resetChatSearch]
   )
 
   const applyChatMetadata = useCallback((metadataList: ProviderChatMetadata[]): void => {
@@ -3787,7 +4179,8 @@ export const App: React.FC = () => {
           pinned: metadata.pinned,
           done: metadata.done,
           seenUpdatedAt: metadata.seenUpdatedAt,
-          purpose: metadata.purpose
+          purpose: metadata.purpose,
+          container: metadata.container
         }
       })
     }
@@ -3801,7 +4194,8 @@ export const App: React.FC = () => {
               pinned: metadata.pinned,
               done: metadata.done,
               seenUpdatedAt: metadata.seenUpdatedAt,
-              purpose: metadata.purpose
+              purpose: metadata.purpose,
+              container: metadata.container
             }
           : chat
       })
@@ -3816,7 +4210,8 @@ export const App: React.FC = () => {
             pinned: metadata.pinned,
             done: metadata.done,
             seenUpdatedAt: metadata.seenUpdatedAt,
-            purpose: metadata.purpose
+            purpose: metadata.purpose,
+            container: metadata.container
           }
         : currentChat
     })
@@ -3830,7 +4225,8 @@ export const App: React.FC = () => {
             pinned: metadata.pinned,
             done: metadata.done,
             seenUpdatedAt: metadata.seenUpdatedAt,
-            purpose: metadata.purpose
+            purpose: metadata.purpose,
+            container: metadata.container
           }
         : currentDetail
     })
@@ -4133,18 +4529,81 @@ export const App: React.FC = () => {
   ])
   const usageProviderId = selectedProviderId ?? newSessionProvider
   const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
+  const changesContainer = selectedChat
+    ? (chatDetail?.container ?? selectedChat.container)
+    : newSessionContainer
+  const changesContainerKey = getContainerTargetKey(changesContainer)
+  const gitAvailableForCurrentSource =
+    gitSourceAvailability?.containerKey === changesContainerKey
+      ? gitSourceAvailability.availability.gitAvailable
+      : lastGitAvailable
+  const gitAvailabilityScopeKey = gitAvailableForCurrentSource === false ? 'missing' : 'available'
+
+  useEffect(() => {
+    changesContainerRef.current = changesContainer
+  }, [changesContainer])
+
+  useEffect(() => {
+    changeSourceRef.current = changeSource
+  }, [changeSource])
+
+  useEffect(() => {
+    let active = true
+    const container = normalizeContainerTarget(changesContainer)
+    const containerKey = getContainerTargetKey(container)
+
+    appApi
+      .getSourceAvailability({ container })
+      .then((availability) => {
+        if (!active) return
+
+        setGitSourceAvailability({ containerKey, availability })
+        setLastGitAvailable(availability.gitAvailable)
+        setGitAvailabilityChangeId((currentChangeId) => {
+          const previousAvailable = gitAvailableRef.current
+          gitAvailableRef.current = availability.gitAvailable
+          return previousAvailable === availability.gitAvailable
+            ? currentChangeId
+            : currentChangeId + 1
+        })
+      })
+      .catch(() => {
+        if (!active) return
+
+        setGitSourceAvailability({
+          containerKey,
+          availability: {
+            gitAvailable: false,
+            providers: providerIds.map((providerId) => ({ providerId, available: false }))
+          }
+        })
+        setLastGitAvailable(false)
+        setGitAvailabilityChangeId((currentChangeId) => {
+          const previousAvailable = gitAvailableRef.current
+          gitAvailableRef.current = false
+          return previousAvailable === false ? currentChangeId : currentChangeId + 1
+        })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [changesContainer, changesContainerKey, gitBranchLoadRequest, gitChangeLoadRequest])
 
   const handleChangesPaneViewChange = useCallback(
     (view: ChangesPaneView): void => {
       if (view === 'terminal') {
         setTerminalCwd((currentCwd) => (currentCwd === undefined ? changesCwd : currentCwd))
+        setTerminalContainer((currentContainer) =>
+          currentContainer === undefined ? changesContainer : currentContainer
+        )
       } else {
         lastNonTerminalChangesPaneViewRef.current = view
       }
 
       setChangesPaneView(view)
     },
-    [changesCwd]
+    [changesContainer, changesCwd]
   )
 
   const handleToggleTerminal = useCallback((): void => {
@@ -4159,6 +4618,9 @@ export const App: React.FC = () => {
 
       const targetCwd = tool.cwd ?? changesCwd
       setTerminalCwd((currentCwd) => (currentCwd === undefined ? targetCwd : currentCwd))
+      setTerminalContainer((currentContainer) =>
+        currentContainer === undefined ? changesContainer : currentContainer
+      )
       setTerminalLaunchRequest({
         id: crypto.randomUUID(),
         providerId: selectedChat.providerId,
@@ -4173,7 +4635,7 @@ export const App: React.FC = () => {
       })
       handleChangesPaneViewChange('terminal')
     },
-    [changesCwd, handleChangesPaneViewChange, selectedChat]
+    [changesContainer, changesCwd, handleChangesPaneViewChange, selectedChat]
   )
 
   const handleRunAction = useCallback(
@@ -4192,9 +4654,13 @@ export const App: React.FC = () => {
 
       if (action.openInTerminal) {
         setTerminalCwd((currentCwd) => (currentCwd === undefined ? targetCwd : currentCwd))
+        setTerminalContainer((currentContainer) =>
+          currentContainer === undefined ? changesContainer : currentContainer
+        )
         setTerminalCommandLaunchRequest({
           id: crypto.randomUUID(),
           command: action.command,
+          container: changesContainer,
           cwd: targetCwd,
           label: action.name,
           focus: true,
@@ -4207,11 +4673,17 @@ export const App: React.FC = () => {
 
       await terminalApi.runCommand({
         command: action.command,
+        container: changesContainer,
         cwd: targetCwd
       })
       markActionUsed()
     },
-    [changesCwd, handleChangesPaneViewChange]
+    [changesContainer, changesCwd, handleChangesPaneViewChange]
+  )
+
+  useEffect(
+    () => appApi.onWindowZoomLevelUpdated((level) => updateAppearanceZoomLevel(level)),
+    [updateAppearanceZoomLevel]
   )
 
   useEffect(() => {
@@ -4273,11 +4745,12 @@ export const App: React.FC = () => {
   const refreshAccountUsage = useCallback(
     async (options: ProviderUsageOptions = {}): Promise<void> => {
       const providerId = usageProviderId
+      const container = normalizeContainerTarget(changesContainer)
       setAccountUsageState('loading')
       setAccountUsageError(null)
 
       try {
-        const usage = await providerApi.getUsage(providerId, options)
+        const usage = await providerApi.getUsage(providerId, { ...options, container })
         setAccountUsage((currentUsage) => mergeAccountUsage(currentUsage, usage))
         setAccountUsageState('ready')
       } catch (error) {
@@ -4285,17 +4758,21 @@ export const App: React.FC = () => {
         setAccountUsageError(getErrorMessage(error, 'Unable to load usage.'))
       }
     },
-    [usageProviderId]
+    [changesContainer, usageProviderId]
   )
 
   const resetAccountRateLimits = useCallback(
-    () => providerApi.resetRateLimits(usageProviderId),
-    [usageProviderId]
+    () =>
+      providerApi.resetRateLimits(usageProviderId, {
+        container: normalizeContainerTarget(changesContainer)
+      }),
+    [changesContainer, usageProviderId]
   )
 
   useEffect(() => {
     let active = true
     const providerId = usageProviderId
+    const container = normalizeContainerTarget(changesContainer)
 
     queueMicrotask(() => {
       if (!active) return
@@ -4304,7 +4781,7 @@ export const App: React.FC = () => {
     })
 
     providerApi
-      .getUsage(providerId)
+      .getUsage(providerId, { container })
       .then((usage) => {
         if (!active) return
         setAccountUsage(usage)
@@ -4319,7 +4796,7 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [usageProviderId])
+  }, [changesContainer, usageProviderId])
 
   useEffect(() => {
     if (!selectedProviderId || !selectedChatId) return
@@ -4621,7 +5098,21 @@ export const App: React.FC = () => {
       }
     }
 
-    const scope: GitBranchesScope = { cwd: changesCwd }
+    const scope: GitBranchesScope = { sourceKey: gitAvailabilityScopeKey, cwd: changesCwd }
+
+    if (gitAvailableForCurrentSource === false) {
+      queueMicrotask(() => {
+        if (!active || gitBranchRequestIdRef.current !== requestId) return
+        setGitBranches(null)
+        setGitBranchesScope(scope)
+        setGitBranchLoadState('error')
+        setGitBranchError('Git is not available in this source.')
+      })
+
+      return () => {
+        active = false
+      }
+    }
 
     queueMicrotask(() => {
       if (!active || gitBranchRequestIdRef.current !== requestId) return
@@ -4630,7 +5121,7 @@ export const App: React.FC = () => {
     })
 
     appApi
-      .getGitBranches({ cwd: changesCwd })
+      .getGitBranches({ container: changesContainerRef.current, cwd: changesCwd })
       .then((result) => {
         if (!active || gitBranchRequestIdRef.current !== requestId) return
         setGitBranches(result)
@@ -4646,7 +5137,13 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [changesCwd, gitBranchLoadRequest])
+  }, [
+    changesCwd,
+    gitAvailabilityChangeId,
+    gitAvailabilityScopeKey,
+    gitAvailableForCurrentSource,
+    gitBranchLoadRequest
+  ])
 
   useEffect(() => {
     if (!changesCwd) return
@@ -4654,11 +5151,25 @@ export const App: React.FC = () => {
     let active = true
     const gitChangeSource: GitChangeSource = 'uncommitted'
     const gitChangeScope: GitChangesScope = {
+      sourceKey: gitAvailabilityScopeKey,
       cwd: changesCwd,
       source: gitChangeSource
     }
+    const visibleChangeSource = changeSourceRef.current
 
-    if (changeSource === 'uncommitted') {
+    if (gitAvailableForCurrentSource === false) {
+      queueMicrotask(() => {
+        if (!active) return
+        setGitChangeLoadScope(gitChangeScope)
+        if (visibleChangeSource === 'uncommitted') setGitChangeLoadState('error')
+      })
+
+      return () => {
+        active = false
+      }
+    }
+
+    if (visibleChangeSource === 'uncommitted') {
       queueMicrotask(() => {
         if (!active) return
         setGitChangeLoadScope(gitChangeScope)
@@ -4668,6 +5179,7 @@ export const App: React.FC = () => {
 
     appApi
       .getGitChanges({
+        container: changesContainerRef.current,
         cwd: changesCwd,
         source: gitChangeSource
       })
@@ -4676,18 +5188,24 @@ export const App: React.FC = () => {
         setGitChanges(result)
         setGitChangesScope(gitChangeScope)
         setGitChangeLoadScope(gitChangeScope)
-        if (changeSource === 'uncommitted') setGitChangeLoadState('ready')
+        if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('ready')
       })
       .catch(() => {
         if (!active) return
         setGitChangeLoadScope(gitChangeScope)
-        if (changeSource === 'uncommitted') setGitChangeLoadState('error')
+        if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('error')
       })
 
     return () => {
       active = false
     }
-  }, [changeSource, changesCwd, gitChangeLoadRequest])
+  }, [
+    changesCwd,
+    gitAvailabilityChangeId,
+    gitAvailabilityScopeKey,
+    gitAvailableForCurrentSource,
+    gitChangeLoadRequest
+  ])
 
   useEffect(() => {
     let active = true
@@ -4708,6 +5226,7 @@ export const App: React.FC = () => {
         : getLastTurnChangedFiles(chatDetail?.items)
     const patches = getCommitPatches(sourceFiles)
     const scope: PatchFilterScope = {
+      containerKey: changesContainerKey,
       cwd: changesCwd,
       source: changeSource,
       signature: getPatchFilterSignature(patches)
@@ -4731,7 +5250,7 @@ export const App: React.FC = () => {
     })
 
     appApi
-      .getUncommittedGitPatchChanges({ cwd: changesCwd, patches })
+      .getUncommittedGitPatchChanges({ container: changesContainer, cwd: changesCwd, patches })
       .then((result) => {
         if (!active) return
 
@@ -4745,13 +5264,20 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [changeSource, changesCwd, chatDetail?.items, gitChangeLoadRequest])
+  }, [
+    changeSource,
+    changesContainer,
+    changesContainerKey,
+    changesCwd,
+    chatDetail?.items,
+    gitChangeLoadRequest
+  ])
 
   useEffect(() => {
     if (changesPaneView !== 'files' || !changesCwd) return
 
     let active = true
-    const nextFileTreeScope: FileTreeScope = { cwd: changesCwd }
+    const nextFileTreeScope: FileTreeScope = { containerKey: changesContainerKey, cwd: changesCwd }
 
     queueMicrotask(() => {
       if (!active) return
@@ -4760,7 +5286,7 @@ export const App: React.FC = () => {
     })
 
     appApi
-      .getFileTree({ cwd: changesCwd })
+      .getFileTree({ container: changesContainer, cwd: changesCwd })
       .then((result) => {
         if (!active) return
         setFileTree(result)
@@ -4786,7 +5312,7 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [changesCwd, changesPaneView, fileTreeLoadRequest])
+  }, [changesContainer, changesContainerKey, changesCwd, changesPaneView, fileTreeLoadRequest])
 
   const searchTerms = searchQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
   const filteredChats =
@@ -4954,6 +5480,44 @@ export const App: React.FC = () => {
     return options
   }, [chats, newSessionCwd, projectHistory, projectIconsByGroup])
   const newSessionProjectValue = newSessionCwd ?? newSessionProjectPlaceholderValue
+  const containerOptions = useMemo<DropdownOption<string>[]>(
+    () => [
+      {
+        value: hostContainerValue,
+        label: 'Host',
+        icon: <Monitor aria-hidden="true" />
+      },
+      ...containerSuggestions.map((container) => ({
+        value: container.id,
+        label: container.name,
+        menuLabel: `${container.name} · ${getContainerSuggestionState(container)}`,
+        icon: getContainerToolIcon(container.tool)
+      }))
+    ],
+    [containerSuggestions]
+  )
+  const newSessionProviderOptions = useMemo<DropdownOption<ProviderId>[]>(
+    () =>
+      providerOptions.filter((option) =>
+        newSessionAvailableProviderIds.includes(option.value as ProviderId)
+      ),
+    [newSessionAvailableProviderIds]
+  )
+  const newSessionProviderValueContent = !newSessionSourceAvailabilityReady
+    ? 'Checking'
+    : newSessionProviderOptions.length === 0
+      ? 'No providers found'
+      : undefined
+  const newSessionContainerValue = getContainerTargetKey(newSessionContainer)
+  const handleNewSessionContainerChange = (value: string): void => {
+    if (value === hostContainerValue) {
+      setNewSessionContainer({ kind: 'host' })
+      return
+    }
+
+    const suggestion = containerSuggestions.find((container) => container.id === value)
+    if (suggestion) setNewSessionContainer(getContainerTargetFromSuggestion(suggestion))
+  }
   const savedGitCommitModel = appSettings.git.commitModel
   const savedGitCommitModelOption = savedGitCommitModel
     ? models.find((candidateModel) => candidateModel.id === savedGitCommitModel)
@@ -5275,13 +5839,17 @@ export const App: React.FC = () => {
   }
 
   const handleNewChat = (): void => {
-    const projectCwd = selectedChat
-      ? getChatProjectCwd(chatDetail?.id === selectedChat.id ? chatDetail : selectedChat)
-      : undefined
+    const currentChat = selectedChat
+      ? chatDetail?.id === selectedChat.id
+        ? chatDetail
+        : selectedChat
+      : null
+    const projectCwd = currentChat ? getChatProjectCwd(currentChat) : undefined
+    const projectContainer = currentChat?.container ?? undefined
     markSelectedChatSeen()
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
-    showNewChatView(projectCwd)
+    showNewChatView(projectCwd, projectContainer)
   }
 
   const handleNewChatInCwd = (group: ChatListGroupData): void => {
@@ -5352,6 +5920,22 @@ export const App: React.FC = () => {
     }))
   }
 
+  const handleAppearanceZoomLevelInputChange = (value: string): void => {
+    setAppearanceZoomLevelInputDraft(value)
+
+    const trimmedValue = value.trim()
+    if (!trimmedValue || trimmedValue === '-' || trimmedValue === '+') return
+
+    const zoomLevel = Number(trimmedValue)
+    if (!Number.isFinite(zoomLevel)) return
+
+    updateAppearanceZoomLevel(zoomLevel)
+  }
+
+  const handleAppearanceZoomLevelInputBlur = (): void => {
+    setAppearanceZoomLevelInputDraft(null)
+  }
+
   const handleAppearancePositionChange = (position: AppAppearancePositionPreference): void => {
     updateAppSettings((currentSettings) => ({
       ...currentSettings,
@@ -5380,16 +5964,6 @@ export const App: React.FC = () => {
       appearance: {
         ...currentSettings.appearance,
         controlStyle
-      }
-    }))
-  }
-
-  const handleAppearanceButtonElevationChange = (buttonElevation: boolean): void => {
-    updateAppSettings((currentSettings) => ({
-      ...currentSettings,
-      appearance: {
-        ...currentSettings.appearance,
-        buttonElevation
       }
     }))
   }
@@ -5633,7 +6207,9 @@ export const App: React.FC = () => {
     setProviderUpdateError(null)
 
     try {
-      const availability = await providerApi.updateProvider(suggestion.providerId)
+      const availability = await providerApi.updateProvider(suggestion.providerId, {
+        container: normalizeContainerTarget(newSessionContainer)
+      })
       setProviderUpdateSuggestion(
         availability &&
           shouldSuggestProviderUpdate(
@@ -5662,7 +6238,7 @@ export const App: React.FC = () => {
       if (metadata.done) removeRecentChatCacheEntry(chat.providerId, chat.id)
 
       if (done && selectedChat?.providerId === chat.providerId && selectedChat.id === chat.id) {
-        showNewChatView()
+        showNewChatView(undefined, chatDetail?.container ?? selectedChat.container)
       }
     } catch {
       // Leave the chat as-is if local metadata cannot be updated.
@@ -5709,7 +6285,7 @@ export const App: React.FC = () => {
         !selectedChat.done &&
         getChatCwdGroupKey(getChatProjectCwd(selectedChat)) === getChatCwdGroupKey(group.cwd)
       ) {
-        showNewChatView()
+        showNewChatView(undefined, chatDetail?.container ?? selectedChat.container)
       }
     } catch {
       // Leave the group as-is if local metadata cannot be updated.
@@ -5758,6 +6334,7 @@ export const App: React.FC = () => {
 
   const getCurrentTurnOptions = (): ProviderTurnOptions => ({
     ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
+    container: changesContainer,
     model: effectiveModel,
     reasoningEffort: effectiveReasoningEffort,
     sandboxMode: effectiveSandboxMode,
@@ -6220,12 +6797,13 @@ export const App: React.FC = () => {
   const chatHasPendingSteeringMessage = hasPendingSteeringMessage(chatDetail)
   const chatIsBusy =
     chatHasActiveTurn || (sendState === 'sending' && hasActiveWorkingStep(chatDetail))
+  const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const messageBoxDisabled = selectedChat
     ? providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
       Boolean(selectedChatAiCommitAction) ||
       (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
-    : providerUpdateInProgress
+    : providerUpdateInProgress || !newSessionProviderAvailable
   const canEditOwnMessages = Boolean(
     selectedChat &&
     chatDetail?.capabilities.editMessages &&
@@ -6430,6 +7008,7 @@ export const App: React.FC = () => {
   )
   const patchFilterMatches = isPatchFilterScope(
     uncommittedPatchFilter?.scope ?? null,
+    changesContainerKey,
     changesCwd,
     changeSource,
     patchFilterSignature
@@ -6451,6 +7030,7 @@ export const App: React.FC = () => {
     queueMicrotask(() => {
       if (!active) return
       setCachedPatchChangedFiles({
+        containerKey: changesContainerKey,
         cwd: changesCwd,
         source: changeSource,
         files: patchChangedFiles
@@ -6460,11 +7040,12 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [changeSource, changesCwd, patchChangedFiles, patchFilterMatches])
+  }, [changeSource, changesContainerKey, changesCwd, patchChangedFiles, patchFilterMatches])
   const currentGitChangeSource: GitChangeSource | null =
     changeSource === 'uncommitted' ? 'uncommitted' : null
   const gitChangesMatchCurrentSource = isGitChangesScope(
     gitChangesScope,
+    gitAvailabilityScopeKey,
     changesCwd,
     currentGitChangeSource
   )
@@ -6475,6 +7056,7 @@ export const App: React.FC = () => {
   )
   const uncommittedGitChangesMatchCurrentCwd = isGitChangesScope(
     gitChangesScope,
+    gitAvailabilityScopeKey,
     changesCwd,
     'uncommitted'
   )
@@ -6483,7 +7065,7 @@ export const App: React.FC = () => {
       changesCwd && uncommittedGitChangesMatchCurrentCwd ? getGitChangedFiles(gitChanges) : [],
     [changesCwd, gitChanges, uncommittedGitChangesMatchCurrentCwd]
   )
-  const fileTreeMatchesCurrentCwd = isFileTreeScope(fileTreeScope, changesCwd)
+  const fileTreeMatchesCurrentCwd = isFileTreeScope(fileTreeScope, changesContainerKey, changesCwd)
   const displayedFileTree = fileTreeMatchesCurrentCwd ? fileTree : null
   const rawRepositoryFiles = useMemo(
     () => (changesCwd ? getRepositoryFiles(displayedFileTree) : []),
@@ -6497,6 +7079,7 @@ export const App: React.FC = () => {
   )
   const gitChangeLoadMatchesCurrentSource = isGitChangesScope(
     gitChangeLoadScope,
+    gitAvailabilityScopeKey,
     changesCwd,
     currentGitChangeSource
   )
@@ -6510,7 +7093,11 @@ export const App: React.FC = () => {
         : gitChangeLoadMatchesCurrentSource
           ? gitChangeLoadState
           : 'loading'
-  const fileTreeLoadMatchesCurrentCwd = isFileTreeScope(fileTreeLoadScope, changesCwd)
+  const fileTreeLoadMatchesCurrentCwd = isFileTreeScope(
+    fileTreeLoadScope,
+    changesContainerKey,
+    changesCwd
+  )
   const filesLoadState = !changesCwd
     ? 'ready'
     : fileTreeLoadMatchesCurrentCwd
@@ -6522,6 +7109,7 @@ export const App: React.FC = () => {
     cachedPatchChangedFiles &&
     changesCwd &&
     isPatchChangeSource(changeSource) &&
+    cachedPatchChangedFiles.containerKey === changesContainerKey &&
     cachedPatchChangedFiles.cwd === changesCwd &&
     cachedPatchChangedFiles.source === changeSource
   )
@@ -6529,9 +7117,13 @@ export const App: React.FC = () => {
     changesLoadState === 'loading' && cachedPatchChangedFilesMatch
       ? (cachedPatchChangedFiles?.files ?? [])
       : patchChangedFiles
+  const preserveDisplayedGitChanges =
+    changeSource === 'uncommitted' && displayedGitChanges !== null && changesLoadState !== 'ready'
   const visibleChangesLoadState =
-    changesLoadState === 'loading' &&
-    (displayedGitChanges || (patchChangeSourceSelected && displayedPatchChangedFiles.length > 0))
+    preserveDisplayedGitChanges ||
+    (changesLoadState === 'loading' &&
+      patchChangeSourceSelected &&
+      displayedPatchChangedFiles.length > 0)
       ? 'ready'
       : changesLoadState
   const rawChangedFiles =
@@ -6649,6 +7241,7 @@ export const App: React.FC = () => {
   const syncDisabled =
     providerUpdateInProgress ||
     !changesCwd ||
+    gitAvailableForCurrentSource === false ||
     syncInProgress ||
     commitState === 'sending' ||
     commitMessageGenerationInProgress ||
@@ -6656,6 +7249,7 @@ export const App: React.FC = () => {
   const branchSwitchDisabled =
     providerUpdateInProgress ||
     !changesCwd ||
+    gitAvailableForCurrentSource === false ||
     gitBranchActionState === 'sending' ||
     syncInProgress ||
     commitState === 'sending' ||
@@ -6753,10 +7347,15 @@ export const App: React.FC = () => {
     setGitBranchError(null)
 
     try {
-      const result = await appApi.switchGitBranch({ cwd, branchName, create })
+      const result = await appApi.switchGitBranch({
+        branchName,
+        container: changesContainer,
+        create,
+        cwd
+      })
       if (gitBranchRequestIdRef.current === requestId) {
         setGitBranches(result)
-        setGitBranchesScope({ cwd })
+        setGitBranchesScope({ sourceKey: gitAvailabilityScopeKey, cwd })
         setGitBranchLoadState('ready')
         setGitBranchActionState('idle')
         setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
@@ -7146,8 +7745,12 @@ export const App: React.FC = () => {
 
     try {
       const [{ diff }, { messages }] = await Promise.all([
-        appApi.getUncommittedGitDiff({ cwd: generationCwd }),
-        appApi.getRecentGitCommitMessages({ cwd: generationCwd, limit: 5 })
+        appApi.getUncommittedGitDiff({ container: changesContainer, cwd: generationCwd }),
+        appApi.getRecentGitCommitMessages({
+          container: changesContainer,
+          cwd: generationCwd,
+          limit: 5
+        })
       ])
       if (!diff.trim()) throw new Error('There is no uncommitted diff to describe.')
 
@@ -7209,8 +7812,9 @@ export const App: React.FC = () => {
       }))
 
       await appApi.commitGitChanges({
-        cwd: changesCwd,
         action,
+        container: changesContainer,
+        cwd: changesCwd,
         files: commitFiles,
         message: action === 'amend' ? null : commitMessage
       })
@@ -7353,6 +7957,7 @@ export const App: React.FC = () => {
       if (action === 'pull' || action === 'pullAndPush') {
         currentAction = 'pull'
         const pullResult = await appApi.pullGitChanges({
+          container: changesContainer,
           cwd,
           rememberStrategy: options.rememberStrategy,
           strategy: options.pullStrategy
@@ -7366,7 +7971,7 @@ export const App: React.FC = () => {
 
       if (action === 'push' || action === 'pullAndPush') {
         currentAction = 'push'
-        const pushResult = await appApi.pushGitChanges({ cwd })
+        const pushResult = await appApi.pushGitChanges({ container: changesContainer, cwd })
 
         if (pushResult.failure) {
           showRecoverableGitFailure(cwd, action, 'push', pushResult.failure)
@@ -7866,18 +8471,46 @@ export const App: React.FC = () => {
         role="tabpanel"
         aria-label="Appearance settings"
       >
-        <div className="settings-dialog__field settings-dialog__field--inline">
-          <div className="settings-dialog__field-header">
-            <h3>Theme</h3>
+        <section className="settings-dialog__section" aria-labelledby="settings-appearance-window">
+          <h2 className="settings-dialog__section-heading" id="settings-appearance-window">
+            Window
+          </h2>
+          <div className="settings-dialog__section-cards">
+            <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className="settings-dialog__field-header">
+                <h3>Theme</h3>
+              </div>
+              <SegmentedControl
+                aria-label="Theme"
+                className="settings-dialog__appearance-toggle"
+                options={themeOptions}
+                value={appSettings.appearance.theme}
+                onChange={handleThemePreferenceChange}
+              />
+            </div>
+            <div className="settings-dialog__field settings-dialog__field--inline">
+              <label
+                className="settings-dialog__field-header"
+                htmlFor="settings-appearance-zoom-level"
+              >
+                <h3>Zoom</h3>
+              </label>
+              <Input
+                className="settings-dialog__number-input"
+                id="settings-appearance-zoom-level"
+                type="number"
+                min={appAppearanceZoomLevelMin}
+                max={appAppearanceZoomLevelMax}
+                step={1}
+                value={appearanceZoomLevelInput}
+                onBlur={handleAppearanceZoomLevelInputBlur}
+                onChange={(event) =>
+                  handleAppearanceZoomLevelInputChange(event.currentTarget.value)
+                }
+              />
+            </div>
           </div>
-          <SegmentedControl
-            aria-label="Theme"
-            className="settings-dialog__appearance-toggle"
-            options={themeOptions}
-            value={appSettings.appearance.theme}
-            onChange={handleThemePreferenceChange}
-          />
-        </div>
+        </section>
         <section
           className="settings-dialog__section"
           aria-labelledby="settings-appearance-window-controls"
@@ -7928,23 +8561,6 @@ export const App: React.FC = () => {
                 value={appSettings.appearance.controlStyle}
                 onChange={handleAppearanceControlStyleChange}
               />
-            </div>
-            <div className="settings-dialog__field settings-dialog__field--inline">
-              <div className="settings-dialog__field-header">
-                <h3 id="settings-appearance-button-elevation">Elevation</h3>
-              </div>
-              <label className="settings-switch">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-labelledby="settings-appearance-button-elevation"
-                  checked={appSettings.appearance.buttonElevation}
-                  onChange={(event) =>
-                    handleAppearanceButtonElevationChange(event.currentTarget.checked)
-                  }
-                />
-                <span className="settings-switch__control" aria-hidden="true" />
-              </label>
             </div>
           </div>
         </section>
@@ -8159,7 +8775,9 @@ export const App: React.FC = () => {
               )}
             </header>
             <div className="chat-sidebar__body">
-              {loadState === 'loading' && <p className="chat__status">Loading chats…</p>}
+              {loadState === 'loading' && chats.length === 0 && (
+                <ChatSidebarLoadingState label="Loading conversations" />
+              )}
               {loadState === 'error' && <p className="chat__status">Unable to load chats.</p>}
               {loadState === 'ready' && chats.length === 0 && (
                 <p className="chat__status">No chats found.</p>
@@ -8419,7 +9037,6 @@ export const App: React.FC = () => {
                     <span>New session in</span>
                     <Dropdown
                       aria-label="Project"
-                      appearance="inline"
                       title={newSessionCwd ?? 'Choose folder'}
                       disabled={providerUpdateInProgress || sendState === 'sending'}
                       menuActions={[
@@ -8440,14 +9057,33 @@ export const App: React.FC = () => {
                     <span>with</span>
                     <Dropdown
                       aria-label="Provider"
-                      appearance="inline"
-                      disabled={providerUpdateInProgress || sendState === 'sending'}
-                      options={providerOptions}
+                      disabled={
+                        providerUpdateInProgress ||
+                        sendState === 'sending' ||
+                        newSessionProviderOptions.length === 0
+                      }
+                      emptyContent="No providers found"
+                      options={newSessionProviderOptions}
                       placement="top"
                       size="small"
                       value={newSessionProvider}
+                      valueContent={newSessionProviderValueContent}
                       onChange={setNewSessionProvider}
                     />
+                    {containerSuggestions.length > 0 && (
+                      <>
+                        <span>from</span>
+                        <Dropdown
+                          aria-label="Runtime"
+                          disabled={providerUpdateInProgress || sendState === 'sending'}
+                          options={containerOptions}
+                          placement="top"
+                          size="small"
+                          value={newSessionContainerValue}
+                          onChange={handleNewSessionContainerChange}
+                        />
+                      </>
+                    )}
                   </div>
                 )}
                 {selectedChat && pendingApproval && (
@@ -8505,11 +9141,13 @@ export const App: React.FC = () => {
                   accountUsage={accountUsage}
                   accountUsageError={accountUsageError}
                   accountUsageState={accountUsageState}
+                  container={changesContainer}
                   contextUsage={messageBoxContextUsage}
                   displayUsage={appSettings.chat.displayUsage}
                   lastActionId={appSettings.lastActionId}
                   model={effectiveModel}
                   models={models}
+                  modelsUnavailable={!messageBoxProviderAvailable}
                   notesContextKey={messageBoxNotesGroup?.key}
                   notes={
                     messageBoxNotesGroup
@@ -8518,7 +9156,9 @@ export const App: React.FC = () => {
                   }
                   notesLabel={messageBoxNotesGroup?.label}
                   operationsDisabled={
-                    providerUpdateInProgress || Boolean(selectedChatAiCommitAction)
+                    providerUpdateInProgress ||
+                    Boolean(selectedChatAiCommitAction) ||
+                    !messageBoxProviderAvailable
                   }
                   pending={sendState === 'sending'}
                   providerId={selectedChat?.providerId ?? newSessionProvider}
@@ -8529,16 +9169,26 @@ export const App: React.FC = () => {
                   sandboxModes={sandboxModes}
                   selectedReview={selectedReview}
                   serviceTier={effectiveServiceTier}
-                  showAccessSelector={appSettings.chat.forceAccess === appChatManualDropdownValue}
+                  showAccessSelector={
+                    messageBoxProviderAvailable &&
+                    appSettings.chat.forceAccess === appChatManualDropdownValue
+                  }
                   showActions={appSettings.chat.enableActions}
                   showActionLabel={hasForcedChatDropdown}
                   showModelSelector={appSettings.chat.forceModel === appChatManualDropdownValue}
                   showNotesButton={appSettings.chat.enableNotesButton}
                   showReasoningSelector={
+                    messageBoxProviderAvailable &&
                     appSettings.chat.forceReasoning === appChatManualDropdownValue
                   }
-                  showReviewSelector={appSettings.chat.forceReview === appChatManualDropdownValue}
-                  showSpeedSelector={appSettings.chat.forceSpeed === appChatManualDropdownValue}
+                  showReviewSelector={
+                    messageBoxProviderAvailable &&
+                    appSettings.chat.forceReview === appChatManualDropdownValue
+                  }
+                  showSpeedSelector={
+                    messageBoxProviderAvailable &&
+                    appSettings.chat.forceSpeed === appChatManualDropdownValue
+                  }
                   onActionsChange={handleActionsChange}
                   onLastActionChange={handleLastActionChange}
                   onApprovalModeChange={handleApprovalModeChange}
@@ -8722,6 +9372,7 @@ export const App: React.FC = () => {
                   <TerminalPanel
                     agentTerminalSnapshots={agentTerminalSnapshots}
                     commandLaunchRequest={terminalCommandLaunchRequest}
+                    container={terminalContainer ?? null}
                     cwd={terminalCwd}
                     launchRequest={terminalLaunchRequest}
                   />

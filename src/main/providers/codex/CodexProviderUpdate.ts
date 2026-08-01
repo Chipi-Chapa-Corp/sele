@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import type { AppContainerTarget } from '../../../shared/app'
 import type { ProviderUpdateAvailability } from '../../../shared/provider'
 import { getHostCommand } from '../../hostProcess'
 import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
@@ -18,6 +19,11 @@ type NpmPackageVersionResponse = {
   version?: unknown
 }
 
+type CodexProviderUpdateOptions = {
+  container?: AppContainerTarget | null
+  env?: NodeJS.ProcessEnv
+}
+
 const codexPackageName = '@openai/codex'
 const codexPackageVersionUrl = 'https://registry.npmjs.org/@openai%2Fcodex/latest'
 const commandMaxBuffer = 2 * 1024 * 1024
@@ -28,9 +34,12 @@ const runCommand = async (
   file: string,
   args: string[],
   timeout: number,
-  env?: NodeJS.ProcessEnv
+  options: CodexProviderUpdateOptions = {}
 ): Promise<CommandResult> => {
-  const hostCommand = await getHostCommand(file, args, { env })
+  const hostCommand = await getHostCommand(file, args, {
+    container: options.container,
+    env: options.env
+  })
 
   return new Promise((resolve, reject) => {
     execFile(
@@ -81,12 +90,17 @@ const compareVersions = (firstVersion: string, secondVersion: string): number =>
   return first.patch - second.patch
 }
 
-const getCurrentCodexVersion = async (): Promise<string> => {
-  const result = await runCommand(getCodexExecutable(), ['--version'], versionCheckTimeoutMs).catch(
-    (error: unknown) => {
-      throw getCodexExecutableError(error)
-    }
-  )
+const getCurrentCodexVersion = async (
+  options: CodexProviderUpdateOptions = {}
+): Promise<string> => {
+  const result = await runCommand(
+    getCodexExecutable(),
+    ['--version'],
+    versionCheckTimeoutMs,
+    options
+  ).catch((error: unknown) => {
+    throw getCodexExecutableError(error)
+  })
   const version = parseVersion(`${result.stdout}\n${result.stderr}`)
   if (!version) throw new Error('Unable to read Codex version.')
 
@@ -127,18 +141,24 @@ const getUpdateAvailability = (
   }
 }
 
-export const getCodexUpdateAvailability = async (): Promise<ProviderUpdateAvailability | null> => {
+export const getCodexUpdateAvailability = async (
+  options: CodexProviderUpdateOptions = {}
+): Promise<ProviderUpdateAvailability | null> => {
   const [currentVersion, latestVersion] = await Promise.all([
-    getCurrentCodexVersion(),
+    getCurrentCodexVersion(options),
     getLatestCodexVersion()
   ])
 
   return getUpdateAvailability(currentVersion, latestVersion)
 }
 
-export const updateCodexProvider = async (): Promise<ProviderUpdateAvailability | null> => {
-  await runCommand(getCodexExecutable(), ['update'], updateTimeoutMs).catch((error: unknown) => {
-    throw getCodexExecutableError(error)
-  })
-  return getCodexUpdateAvailability()
+export const updateCodexProvider = async (
+  options: CodexProviderUpdateOptions = {}
+): Promise<ProviderUpdateAvailability | null> => {
+  await runCommand(getCodexExecutable(), ['update'], updateTimeoutMs, options).catch(
+    (error: unknown) => {
+      throw getCodexExecutableError(error)
+    }
+  )
+  return getCodexUpdateAvailability(options)
 }

@@ -107,7 +107,7 @@ export const Dropdown = <TValue extends string>({
   options = [],
   placement = 'bottom',
   selectedValues,
-  size = 'normal',
+  size,
   title,
   value,
   valueContent,
@@ -117,6 +117,7 @@ export const Dropdown = <TValue extends string>({
   onChange
 }: DropdownProps<TValue>): React.ReactElement => {
   const reactId = useId().replace(/:/g, '')
+  const effectiveSize = size ?? (appearance === 'inline' ? 'small' : 'normal')
   const buttonId = id ?? `dropdown-${reactId}`
   const listboxId = providedListboxId ?? `${buttonId}-listbox`
   const rootRef = useRef<HTMLDivElement>(null)
@@ -403,7 +404,7 @@ export const Dropdown = <TValue extends string>({
     'ui-dropdown',
     `ui-dropdown--${appearance === 'splitAction' ? 'split-action' : appearance}`,
     `ui-dropdown--${placement}`,
-    `ui-dropdown--${size}`,
+    `ui-dropdown--${effectiveSize}`,
     `ui-dropdown--menu-${menuAlign}`,
     `ui-dropdown--value-${valueDisplay}`,
     fill ? 'ui-dropdown--fill' : null,

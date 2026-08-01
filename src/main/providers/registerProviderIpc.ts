@@ -15,6 +15,7 @@ import type {
   ProviderImageInput,
   ProviderOneShotOptions,
   ProviderReview,
+  ProviderSourceOptions,
   ProviderSkillInput,
   ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
@@ -33,6 +34,7 @@ import {
   isProviderServiceTier,
   providerIpcChannels
 } from '../../shared/provider'
+import { requireContainerTarget } from '../containerTarget'
 import { getChatUpdateSummary, providerApi } from './providerService'
 
 type QueuedWindowChatUpdate = Omit<ProviderWindowChatUpdatedEvent, 'detail' | 'sequence'> & {
@@ -387,13 +389,28 @@ const requireActiveSendMode = (value: unknown): ProviderActiveSendMode => {
   return value
 }
 
+const requireSourceOptions = (value: unknown): ProviderSourceOptions | undefined => {
+  if (value == null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid provider source options')
+  }
+
+  const options = value as { container?: unknown }
+  const container =
+    options.container === undefined ? undefined : requireContainerTarget(options.container)
+
+  return container === undefined ? {} : { container }
+}
+
 const requireChatListOptions = (value: unknown): ProviderChatListOptions | undefined => {
   if (value == null) return undefined
   if (typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid chat list options')
   }
 
-  const options = value as { cursor?: unknown; limit?: unknown }
+  const options = value as { container?: unknown; cursor?: unknown; limit?: unknown }
+  const container =
+    options.container === undefined ? undefined : requireContainerTarget(options.container)
   const cursor = options.cursor
   if (cursor != null && typeof cursor !== 'string') throw new Error('Invalid chat list cursor')
 
@@ -406,6 +423,7 @@ const requireChatListOptions = (value: unknown): ProviderChatListOptions | undef
   }
 
   return {
+    ...(container !== undefined ? { container } : {}),
     cursor: cursor ?? null,
     limit: limit ?? null
   }
@@ -415,13 +433,16 @@ const requireUsageOptions = (value: unknown): ProviderUsageOptions | undefined =
   if (value == null) return undefined
   if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid usage options')
 
-  const options = value as { includeStatistics?: unknown }
+  const options = value as { container?: unknown; includeStatistics?: unknown }
+  const container =
+    options.container === undefined ? undefined : requireContainerTarget(options.container)
   const includeStatistics = options.includeStatistics
   if (includeStatistics != null && typeof includeStatistics !== 'boolean') {
     throw new Error('Invalid usage statistics option')
   }
 
   return {
+    ...(container !== undefined ? { container } : {}),
     includeStatistics: includeStatistics ?? false
   }
 }
@@ -592,6 +613,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   const options = value as {
     approvalPolicy?: unknown
     approvalsReviewer?: unknown
+    container?: unknown
     cwd?: unknown
     files?: unknown
     images?: unknown
@@ -638,6 +660,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   return {
     approvalPolicy,
     approvalsReviewer,
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: cwd ?? undefined,
     files,
     images,
@@ -764,16 +787,21 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  ipcMain.handle(providerIpcChannels.login, (_, providerId: unknown) =>
-    providerApi.login(requireProviderId(providerId))
+  ipcMain.handle(providerIpcChannels.login, (_, providerId: unknown, options: unknown) =>
+    providerApi.login(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  ipcMain.handle(providerIpcChannels.getUpdateAvailability, (_, providerId: unknown) =>
-    providerApi.getUpdateAvailability(requireProviderId(providerId))
+  ipcMain.handle(
+    providerIpcChannels.getUpdateAvailability,
+    (_, providerId: unknown, options: unknown) =>
+      providerApi.getUpdateAvailability(
+        requireProviderId(providerId),
+        requireSourceOptions(options)
+      )
   )
 
-  ipcMain.handle(providerIpcChannels.updateProvider, (_, providerId: unknown) =>
-    providerApi.updateProvider(requireProviderId(providerId))
+  ipcMain.handle(providerIpcChannels.updateProvider, (_, providerId: unknown, options: unknown) =>
+    providerApi.updateProvider(requireProviderId(providerId), requireSourceOptions(options))
   )
 
   ipcMain.handle(providerIpcChannels.getApprovalModes, (_, providerId: unknown) =>
@@ -784,24 +812,30 @@ export const registerProviderIpc = (): void => {
     providerApi.getSandboxModes(requireProviderId(providerId))
   )
 
-  ipcMain.handle(providerIpcChannels.getModels, (_, providerId: unknown) =>
-    providerApi.getModels(requireProviderId(providerId))
+  ipcMain.handle(providerIpcChannels.getModels, (_, providerId: unknown, options: unknown) =>
+    providerApi.getModels(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  ipcMain.handle(providerIpcChannels.getSkills, (_, providerId: unknown, cwd: unknown) =>
-    providerApi.getSkills(requireProviderId(providerId), requireOptionalCwd(cwd))
+  ipcMain.handle(
+    providerIpcChannels.getSkills,
+    (_, providerId: unknown, cwd: unknown, options: unknown) =>
+      providerApi.getSkills(
+        requireProviderId(providerId),
+        requireOptionalCwd(cwd),
+        requireSourceOptions(options)
+      )
   )
 
-  ipcMain.handle(providerIpcChannels.getApps, (_, providerId: unknown) =>
-    providerApi.getApps(requireProviderId(providerId))
+  ipcMain.handle(providerIpcChannels.getApps, (_, providerId: unknown, options: unknown) =>
+    providerApi.getApps(requireProviderId(providerId), requireSourceOptions(options))
   )
 
   ipcMain.handle(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) =>
     providerApi.getUsage(requireProviderId(providerId), requireUsageOptions(options))
   )
 
-  ipcMain.handle(providerIpcChannels.resetRateLimits, (_, providerId: unknown) =>
-    providerApi.resetRateLimits(requireProviderId(providerId))
+  ipcMain.handle(providerIpcChannels.resetRateLimits, (_, providerId: unknown, options: unknown) =>
+    providerApi.resetRateLimits(requireProviderId(providerId), requireSourceOptions(options))
   )
 
   ipcMain.handle(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) =>

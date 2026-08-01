@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import {
   CopilotClient,
+  RuntimeConnection,
   type CopilotSession,
   type ModelInfo,
   type PermissionRequest,
@@ -29,10 +30,16 @@ import type {
   ProviderReasoningEffort,
   ProviderSandboxModeOption,
   ProviderSkill,
+  ProviderSourceOptions,
   ProviderTokenUsageBreakdown,
   ProviderTurnOptions,
+  ProviderUsageOptions,
   ProviderUpdateAvailability
 } from '../../../shared/provider'
+import type { AppContainerTarget } from '../../../shared/app'
+import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
+import { getCurrentContainerHostBridge } from '../../currentContainer'
+import { getHostExecutableCommand } from '../../hostProcess'
 import { fallbackCopilotModels } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
 import { renderCopilotChatItems } from './CopilotItemRenderers'
@@ -46,6 +53,8 @@ type PendingPermission = {
 
 type CopilotSessionState = {
   id: string
+  client: CopilotClient | null
+  container: AppContainerTarget | null
   session: CopilotSession | null
   metadata: SessionMetadata | null
   events: SessionEvent[]
@@ -57,6 +66,12 @@ type CopilotSessionState = {
   options: ProviderTurnOptions | undefined
   pendingMessages: ProviderPendingMessage[]
   pendingPermissions: PendingPermission[]
+}
+
+type CopilotClientEntry = {
+  client: CopilotClient
+  container: AppContainerTarget | null
+  startPromise: Promise<void> | null
 }
 
 const copilotApprovalModes: ProviderApprovalModeOption[] = [
@@ -320,14 +335,19 @@ const hasMessageAttachments = (
   options: ProviderTurnOptions | ProviderOneShotOptions | undefined
 ): boolean => Boolean(options?.files?.length || options?.images?.length)
 
+const getRuntimeEnvironment = (env: NodeJS.ProcessEnv | undefined): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(env ?? process.env).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string'
+    )
+  )
+
 export class CopilotProviderAdapter implements ProviderAdapter {
   id = 'copilot' as const
 
-  private client = new CopilotClient({
-    mode: 'copilot-cli',
-    logLevel: 'error'
-  })
-  private startPromise: Promise<void> | null = null
+  private clientEntries = new Map<string, CopilotClientEntry>()
+  private clientEntryPromises = new Map<string, Promise<CopilotClientEntry>>()
+  private sessionContainers = new Map<string, AppContainerTarget | null>()
   private states = new Map<string, CopilotSessionState>()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
@@ -336,9 +356,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private oneShotSessions = new Map<string, CopilotSession>()
 
-  login = async (): Promise<ProviderLoginResult> => {
-    await this.ensureClient()
-    const status = await this.client.getAuthStatus()
+  login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
+    const client = await this.ensureClient(options.container)
+    const status = await client.getAuthStatus()
     if (!status.isAuthenticated) {
       throw new Error('GitHub Copilot is not authenticated. Run `copilot` and use `/login` first.')
     }
@@ -357,10 +377,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   getSandboxModes = async (): Promise<ProviderSandboxModeOption[]> => copilotSandboxModes
 
-  getModels = async (): Promise<ProviderModel[]> => {
+  getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> => {
     try {
-      await this.ensureClient()
-      const models = await this.client.listModels()
+      const client = await this.ensureClient(options.container)
+      const models = await client.listModels()
       const enabledModels = models.filter((model) => model.policy?.state !== 'disabled')
       if (enabledModels.length === 0) return fallbackCopilotModels
 
@@ -373,9 +393,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
   }
 
-  getSkills = async (cwd?: string | null): Promise<ProviderSkill[]> => {
-    await this.ensureClient()
-    const result = await this.client.rpc.skills.discover({
+  getSkills = async (
+    cwd?: string | null,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderSkill[]> => {
+    const client = await this.ensureClient(options.container)
+    const result = await client.rpc.skills.discover({
       ...(cwd ? { projectPaths: [cwd] } : {})
     })
 
@@ -399,10 +422,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   getApps = async (): Promise<ProviderApp[]> => []
 
-  getUsage = async (): Promise<ProviderAccountUsage> => {
-    await this.ensureClient()
+  getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
+    const client = await this.ensureClient(options.container)
     try {
-      const result = await this.client.rpc.account.getQuota({})
+      const result = await client.rpc.account.getQuota({})
       const rateLimits = Object.entries(result.quotaSnapshots)
         .filter((entry): entry is [string, NonNullable<(typeof entry)[1]>] => Boolean(entry[1]))
         .map(([id, quota], index) => ({
@@ -441,14 +464,16 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   resetRateLimits = async (): Promise<'nothingToReset'> => 'nothingToReset'
 
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {
-    await this.ensureClient()
-    const sessions = (await this.client.listSessions()).sort(
+    const normalizedContainer = normalizeContainerTarget(options.container)
+    const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
+    const client = await this.ensureClient(storedContainer)
+    const sessions = (await client.listSessions()).sort(
       (first, second) => toMilliseconds(second.modifiedTime) - toMilliseconds(first.modifiedTime)
     )
     const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0)
     const limit = Math.max(1, Math.min(options.limit ?? 50, 100))
     const page = sessions.slice(offset, offset + limit)
-    const chats = page.map((metadata) => this.createChatFromMetadata(metadata))
+    const chats = page.map((metadata) => this.createChatFromMetadata(metadata, storedContainer))
     const nextOffset = offset + page.length
 
     return {
@@ -457,8 +482,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
   }
 
-  getChat = async (chatId: string): Promise<ProviderChatDetail> => {
-    const state = await this.ensureSession(chatId)
+  getChat = async (
+    chatId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId, undefined, options.container)
     await this.loadEvents(state)
     return this.createChatDetail(state)
   }
@@ -484,7 +512,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       this.oneShotSessions.delete(generationId)
       const session = state.session
       if (session) await session.disconnect().catch(() => {})
-      await this.client.deleteSession(sessionId).catch(() => {})
+      await state.client?.deleteSession(sessionId).catch(() => {})
       this.states.delete(sessionId)
     }
   }
@@ -527,10 +555,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions,
     onForkCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
-    await this.ensureClient()
-    const fork = await this.client.rpc.sessions.fork({ sessionId: chatId })
+    const sourceState = await this.ensureSession(chatId, options)
+    const fork = await sourceState.client!.rpc.sessions.fork({ sessionId: chatId })
+    this.sessionContainers.set(fork.sessionId, sourceState.container)
     await onForkCreated?.(fork.sessionId)
-    const state = await this.ensureSession(fork.sessionId, options)
+    const state = await this.ensureSession(fork.sessionId, options, sourceState.container)
     await this.applyTurnOptions(state, options)
     state.active = true
     await state.session!.send(getMessageOptions(message, options))
@@ -647,7 +676,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.stopped = false
     state.failed = false
     state.metadata =
-      (await this.client.getSessionMetadata(chatId).catch(() => undefined)) ?? state.metadata
+      (await state.client?.getSessionMetadata(chatId).catch(() => undefined)) ?? state.metadata
     await this.loadEvents(state)
     await this.refreshPendingMessages(state)
     this.emitUpdate(state)
@@ -706,31 +735,116 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.states.forEach((state) => {
       state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
     })
-    void this.client.stop()
+    this.clientEntries.forEach((entry) => {
+      void entry.client.stop()
+    })
+    this.clientEntries.clear()
+    this.clientEntryPromises.clear()
+    this.sessionContainers.clear()
   }
 
-  private ensureClient = async (): Promise<void> => {
-    if (!this.startPromise) {
-      this.startPromise = this.client.start().catch((error: unknown) => {
-        this.startPromise = null
+  private getHostClientEntry = (): CopilotClientEntry => {
+    const key = getContainerTargetKey(null)
+    const existingEntry = this.clientEntries.get(key)
+    if (existingEntry) return existingEntry
+
+    const entry = {
+      client: new CopilotClient({
+        mode: 'copilot-cli',
+        logLevel: 'error'
+      }),
+      container: null,
+      startPromise: null
+    } satisfies CopilotClientEntry
+    this.clientEntries.set(key, entry)
+    return entry
+  }
+
+  private createClientEntry = async (
+    container: AppContainerTarget | null
+  ): Promise<CopilotClientEntry> => {
+    const normalizedContainer = normalizeContainerTarget(container)
+    if (normalizedContainer.kind !== 'container' && !(await getCurrentContainerHostBridge())) {
+      return this.getHostClientEntry()
+    }
+
+    const hostCommand = await getHostExecutableCommand('copilot', [], {
+      container: normalizedContainer.kind === 'container' ? normalizedContainer : null,
+      env: process.env
+    })
+    return {
+      client: new CopilotClient({
+        mode: 'copilot-cli',
+        logLevel: 'error',
+        connection: RuntimeConnection.forStdio({
+          path: hostCommand.file,
+          args: hostCommand.args,
+          env: getRuntimeEnvironment(hostCommand.env)
+        })
+      }),
+      container: normalizedContainer.kind === 'container' ? normalizedContainer : null,
+      startPromise: null
+    }
+  }
+
+  private getClientEntry = (
+    container: AppContainerTarget | null | undefined
+  ): Promise<CopilotClientEntry> => {
+    const normalizedContainer = normalizeContainerTarget(container)
+    const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
+    const key = getContainerTargetKey(storedContainer)
+    const existingEntry = this.clientEntries.get(key)
+    if (existingEntry) return Promise.resolve(existingEntry)
+
+    const existingPromise = this.clientEntryPromises.get(key)
+    if (existingPromise) return existingPromise
+
+    const promise = this.createClientEntry(storedContainer)
+      .then((entry) => {
+        this.clientEntries.set(key, entry)
+        return entry
+      })
+      .finally(() => {
+        this.clientEntryPromises.delete(key)
+      })
+    this.clientEntryPromises.set(key, promise)
+    return promise
+  }
+
+  private ensureClient = async (container?: AppContainerTarget | null): Promise<CopilotClient> => {
+    const entry = await this.getClientEntry(container)
+    if (!entry.startPromise) {
+      entry.startPromise = entry.client.start().catch((error: unknown) => {
+        entry.startPromise = null
         throw error
       })
     }
-    await this.startPromise
+    await entry.startPromise
+    return entry.client
   }
 
   private createState = (
     sessionId: string,
-    options?: ProviderTurnOptions | ProviderOneShotOptions
+    options?: ProviderTurnOptions | ProviderOneShotOptions,
+    container?: AppContainerTarget | null
   ): CopilotSessionState => {
     const existing = this.states.get(sessionId)
     if (existing) {
       if (options) existing.options = options
+      if (container !== undefined && !existing.session) {
+        const normalizedContainer = normalizeContainerTarget(container)
+        existing.container = normalizedContainer.kind === 'container' ? normalizedContainer : null
+        this.sessionContainers.set(sessionId, existing.container)
+      }
       return existing
     }
 
+    const normalizedContainer = normalizeContainerTarget(container ?? options?.container)
+    const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
     const state: CopilotSessionState = {
       id: sessionId,
+      client: null,
+      container: storedContainer,
       session: null,
       metadata: null,
       events: [],
@@ -743,16 +857,27 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       pendingMessages: [],
       pendingPermissions: []
     }
+    this.sessionContainers.set(sessionId, storedContainer)
     this.states.set(sessionId, state)
     return state
   }
+
+  private getSessionContainer = (
+    sessionId: string,
+    options?: { container?: AppContainerTarget | null }
+  ): AppContainerTarget | null =>
+    options?.container ??
+    this.states.get(sessionId)?.container ??
+    this.sessionContainers.get(sessionId) ??
+    null
 
   private createSession = async (
     state: CopilotSessionState,
     options?: ProviderTurnOptions | ProviderOneShotOptions
   ): Promise<CopilotSession> => {
-    await this.ensureClient()
-    const session = await this.client.createSession({
+    const client = await this.ensureClient(state.container)
+    state.client = client
+    const session = await client.createSession({
       sessionId: state.id,
       clientName: 'Sele',
       workingDirectory: options?.cwd,
@@ -765,25 +890,26 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       onPermissionRequest: (request) => this.handlePermission(state.id, request)
     })
     state.session = session
-    state.metadata = (await this.client.getSessionMetadata(state.id).catch(() => undefined)) ?? null
+    state.metadata = (await client.getSessionMetadata(state.id).catch(() => undefined)) ?? null
     await this.loadEvents(state)
     return session
   }
 
   private ensureSession = async (
     sessionId: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    container: AppContainerTarget | null = this.getSessionContainer(sessionId, options)
   ): Promise<CopilotSessionState> => {
-    await this.ensureClient()
-    const state = this.createState(sessionId, options)
+    const state = this.createState(sessionId, options, container)
+    const client = await this.ensureClient(state.container)
+    state.client = client
     if (options) state.options = options
     if (state.session) return state
 
-    state.metadata =
-      (await this.client.getSessionMetadata(sessionId).catch(() => undefined)) ?? null
+    state.metadata = (await client.getSessionMetadata(sessionId).catch(() => undefined)) ?? null
     if (!state.metadata) throw new Error(`Copilot session was not found: ${sessionId}`)
 
-    state.session = await this.client.resumeSession(sessionId, {
+    state.session = await client.resumeSession(sessionId, {
       clientName: 'Sele',
       workingDirectory: options?.cwd ?? state.metadata.context?.workingDirectory,
       model: options?.model,
@@ -977,6 +1103,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     done: false,
     seenUpdatedAt: null,
     purpose: null,
+    container: state.container,
     capabilities: {
       editMessages: true,
       activeMessages: true
@@ -990,9 +1117,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     })
   })
 
-  private createChatFromMetadata = (metadata: SessionMetadata): ProviderChat => {
+  private createChatFromMetadata = (
+    metadata: SessionMetadata,
+    container?: AppContainerTarget | null
+  ): ProviderChat => {
     const state = this.states.get(metadata.sessionId)
     const detail = state ? this.createChatDetail(state) : null
+    if (!state && container !== undefined) this.sessionContainers.set(metadata.sessionId, container)
     const preview =
       detail?.items.findLast((item) => item.type === 'message')?.content ?? metadata.summary ?? ''
 
@@ -1012,7 +1143,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       pinned: false,
       done: false,
       seenUpdatedAt: null,
-      purpose: null
+      purpose: null,
+      container:
+        detail?.container ?? this.sessionContainers.get(metadata.sessionId) ?? container ?? null
     }
   }
 }

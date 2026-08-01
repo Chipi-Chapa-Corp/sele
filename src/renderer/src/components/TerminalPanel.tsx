@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ITheme, Terminal as XtermTerminal } from '@xterm/xterm'
 import { Plus, RefreshCw, Terminal as TerminalIcon, X } from 'lucide-react'
+import type { AppContainerTarget } from '../../../shared/app'
 import type { ProviderId, ProviderWorkingToolStatus } from '../../../shared/provider'
 import { providerApi } from '../providerApi'
 import { terminalApi } from '../terminalApi'
@@ -25,6 +26,7 @@ export type TerminalLaunchRequest = {
 export type TerminalCommandLaunchRequest = {
   id: string
   command: string
+  container: AppContainerTarget | null
   cwd: string | null
   label: string | null
   focus: boolean
@@ -42,6 +44,7 @@ type AgentTerminalIdentity = {
 }
 
 type TerminalPanelProps = {
+  container: AppContainerTarget | null
   cwd: string | null
   commandLaunchRequest?: TerminalCommandLaunchRequest | null
   launchRequest?: TerminalLaunchRequest | null
@@ -54,6 +57,7 @@ type TerminalTab = {
   id: string
   kind: 'local'
   label: string
+  container: AppContainerTarget | null
   cwd: string | null
   initialCommand: string | null
   closeOnCommandFinish: boolean
@@ -73,6 +77,7 @@ type AnyTerminalTab = TerminalTab | AgentTerminalTab
 
 type TerminalSessionProps = {
   closeOnCommandFinish: boolean
+  container: AppContainerTarget | null
   cwd: string | null
   initialCommand: string | null
   label: string
@@ -147,10 +152,15 @@ const getTerminalTheme = (): ITheme =>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Unable to start the terminal.'
 
-const createTerminalTab = (number: number, cwd: string | null): TerminalTab => ({
+const createTerminalTab = (
+  number: number,
+  cwd: string | null,
+  container: AppContainerTarget | null
+): TerminalTab => ({
   id: crypto.randomUUID(),
   kind: 'local',
   label: `Terminal ${number}`,
+  container,
   cwd,
   initialCommand: null,
   closeOnCommandFinish: false
@@ -182,6 +192,7 @@ const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): Termin
   id: crypto.randomUUID(),
   kind: 'local',
   label: request.label?.trim() || getCommandTabLabel(request.command),
+  container: request.container,
   cwd: request.cwd,
   initialCommand: request.command,
   closeOnCommandFinish: request.closeOnFinish
@@ -189,6 +200,7 @@ const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): Termin
 
 const TerminalSession: React.FC<TerminalSessionProps> = ({
   closeOnCommandFinish,
+  container,
   cwd,
   initialCommand,
   label,
@@ -404,6 +416,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
 
         await terminalApi.createSession({
           sessionId,
+          container,
           cwd,
           cols: terminal.cols,
           rows: terminal.rows,
@@ -450,7 +463,16 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
       terminal?.dispose()
       if (sessionCreated) void terminalApi.closeSession(sessionId)
     }
-  }, [closeOnCommandFinish, cwd, generation, initialCommand, onCommandFinish, onStateChange, tabId])
+  }, [
+    closeOnCommandFinish,
+    container,
+    cwd,
+    generation,
+    initialCommand,
+    onCommandFinish,
+    onStateChange,
+    tabId
+  ])
 
   return (
     <div
@@ -784,6 +806,7 @@ const AgentTerminalSession: React.FC<AgentTerminalSessionProps> = ({
 }
 
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({
+  container,
   cwd,
   commandLaunchRequest = null,
   launchRequest = null,
@@ -797,7 +820,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const handledLaunchRequestIdsRef = useRef(new Set(launchRequest ? [launchRequest.id] : []))
   const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
   const [workspace, setWorkspace] = useState(() => {
-    const initialLocalTab = createTerminalTab(1, cwd)
+    const initialLocalTab = createTerminalTab(1, cwd, container)
     const tabs: AnyTerminalTab[] = [initialLocalTab]
     const initialCommandTab = commandLaunchRequest
       ? createCommandTerminalTab(commandLaunchRequest)
@@ -867,7 +890,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   }, [commandLaunchRequest])
 
   const handleAddTab = (): void => {
-    const tab = createTerminalTab(nextTabNumberRef.current, cwd)
+    const tab = createTerminalTab(nextTabNumberRef.current, cwd, container)
     nextTabNumberRef.current += 1
     setWorkspace((currentWorkspace) => ({
       activeTabId: tab.id,
@@ -1016,6 +1039,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           ) : (
             <TerminalSession
               closeOnCommandFinish={tab.closeOnCommandFinish}
+              container={tab.container}
               cwd={tab.cwd}
               initialCommand={tab.initialCommand}
               key={tab.id}

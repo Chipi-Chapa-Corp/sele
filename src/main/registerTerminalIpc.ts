@@ -14,7 +14,8 @@ import type {
   TerminalSession
 } from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
-import { getHostCommand } from './hostProcess'
+import { requireContainerTarget } from './containerTarget'
+import { getHostCommand, getHostTerminalCommand } from './hostProcess'
 
 const minimumColumns = 2
 const maximumColumns = 500
@@ -60,6 +61,7 @@ const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> 
     rows?: unknown
     initialCommand?: unknown
     keepAliveOnCommandFinish?: unknown
+    container?: unknown
   }
   const cwd = input.cwd == null ? app.getPath('home') : input.cwd
   const initialCommand =
@@ -89,6 +91,7 @@ const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> 
   return {
     sessionId: input.sessionId,
     cwd,
+    container: requireContainerTarget(input.container, { optional: true }),
     cols: getDimension(input.cols, minimumColumns, maximumColumns, 'columns'),
     rows: getDimension(input.rows, minimumRows, maximumRows, 'rows'),
     initialCommand,
@@ -101,7 +104,7 @@ const getRunCommandOptions = async (value: unknown): Promise<TerminalRunCommandO
     throw new Error('Invalid command options')
   }
 
-  const input = value as { command?: unknown; cwd?: unknown }
+  const input = value as { command?: unknown; container?: unknown; cwd?: unknown }
   const command = typeof input.command === 'string' ? input.command.trim() : ''
   const cwd = input.cwd == null ? app.getPath('home') : input.cwd
 
@@ -114,7 +117,7 @@ const getRunCommandOptions = async (value: unknown): Promise<TerminalRunCommandO
     throw new Error('Command working directory does not exist')
   }
 
-  return { command, cwd }
+  return { command, container: requireContainerTarget(input.container, { optional: true }), cwd }
 }
 
 const getShell = (): { file: string; args: string[] } => {
@@ -336,7 +339,17 @@ const createSession = async (
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'Sele'
   }
-  const hostCommand = await getHostCommand(shell.file, shell.args, { cwd, env })
+  const hostCommand =
+    options.container?.kind === 'container'
+      ? await getHostTerminalCommand({
+          command,
+          container: options.container,
+          cwd,
+          env,
+          keepAlive: Boolean(command && options.keepAliveOnCommandFinish),
+          shell: baseShell
+        })
+      : await getHostCommand(shell.file, shell.args, { cwd, env })
   const pty = spawnPty(hostCommand.file, hostCommand.args, {
     name: 'xterm-256color',
     cols: options.cols,
@@ -393,7 +406,14 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
     ...process.env,
     TERM_PROGRAM: 'Sele'
   }
-  const hostCommand = await getHostCommand(shell.file, shell.args, { cwd, env })
+  const hostCommand =
+    options.container?.kind === 'container'
+      ? await getHostCommand('sh', ['-lc', options.command], {
+          container: options.container,
+          cwd,
+          env
+        })
+      : await getHostCommand(shell.file, shell.args, { cwd, env })
   const child = spawnChildProcess(hostCommand.file, hostCommand.args, {
     cwd: hostCommand.cwd,
     detached: false,

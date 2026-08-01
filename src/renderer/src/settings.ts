@@ -10,6 +10,12 @@ import {
   isProviderSandboxMode,
   isProviderServiceTier
 } from '../../shared/provider'
+import {
+  appWindowZoomLevelDefault,
+  appWindowZoomLevelMax,
+  appWindowZoomLevelMin,
+  normalizeAppWindowZoomLevel
+} from '../../shared/app'
 import type { AppExternalLinkAction } from '../../shared/app'
 import type { AppAction } from './actions'
 import { normalizeAppActions } from './actions'
@@ -63,15 +69,20 @@ export type AppExternalLinkSettings = {
   behavior: AppExternalLinkBehavior
 }
 
+export const appAppearanceZoomLevelDefault = appWindowZoomLevelDefault
+export const appAppearanceZoomLevelMin = appWindowZoomLevelMin
+export const appAppearanceZoomLevelMax = appWindowZoomLevelMax
+export const normalizeAppAppearanceZoomLevel = normalizeAppWindowZoomLevel
+
 export type AppSettings = {
   actions: AppAction[]
   lastActionId: string | null
   appearance: {
     theme: AppThemePreference
+    zoomLevel: number
     position: AppAppearancePositionPreference
     style: AppAppearanceStylePreference
     controlStyle: AppAppearanceControlStylePreference
-    buttonElevation: boolean
   }
   chat: AppChatThoughtSettings & {
     continuePrompt: string
@@ -204,10 +215,10 @@ const isMacPlatform = (): boolean =>
 
 export const defaultAppAppearanceSettings: AppSettings['appearance'] = {
   theme: 'system',
+  zoomLevel: appAppearanceZoomLevelDefault,
   position: isMacPlatform() ? 'left' : 'system',
   style: isMacPlatform() ? 'macos' : 'system',
-  controlStyle: 'bordered',
-  buttonElevation: true
+  controlStyle: 'bordered'
 }
 
 export const defaultAppSettings: AppSettings = {
@@ -383,6 +394,7 @@ export const readStoredAppSettings = (): AppSettings => {
         theme: isAppThemePreference(appearance.theme)
           ? appearance.theme
           : defaultAppSettings.appearance.theme,
+        zoomLevel: normalizeAppAppearanceZoomLevel(appearance.zoomLevel),
         position: isAppAppearancePositionPreference(appearance.position)
           ? appearance.position
           : defaultAppSettings.appearance.position,
@@ -391,11 +403,7 @@ export const readStoredAppSettings = (): AppSettings => {
           : defaultAppSettings.appearance.style,
         controlStyle: isAppAppearanceControlStylePreference(appearance.controlStyle)
           ? appearance.controlStyle
-          : defaultAppSettings.appearance.controlStyle,
-        buttonElevation:
-          typeof appearance.buttonElevation === 'boolean'
-            ? appearance.buttonElevation
-            : defaultAppSettings.appearance.buttonElevation
+          : defaultAppSettings.appearance.controlStyle
       },
       chat: {
         continuePrompt:
@@ -490,6 +498,10 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (settings.appearance.theme !== defaultAppSettings.appearance.theme) {
       storedAppearance.theme = settings.appearance.theme
     }
+    const zoomLevel = normalizeAppAppearanceZoomLevel(settings.appearance.zoomLevel)
+    if (zoomLevel !== defaultAppSettings.appearance.zoomLevel) {
+      storedAppearance.zoomLevel = zoomLevel
+    }
     if (settings.appearance.position !== defaultAppSettings.appearance.position) {
       storedAppearance.position = settings.appearance.position
     }
@@ -498,9 +510,6 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
     if (settings.appearance.controlStyle !== defaultAppSettings.appearance.controlStyle) {
       storedAppearance.controlStyle = settings.appearance.controlStyle
-    }
-    if (settings.appearance.buttonElevation !== defaultAppSettings.appearance.buttonElevation) {
-      storedAppearance.buttonElevation = settings.appearance.buttonElevation
     }
     if (Object.keys(storedAppearance).length > 0) storedSettings.appearance = storedAppearance
 

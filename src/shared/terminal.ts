@@ -1,6 +1,9 @@
+import type { AppContainerTarget } from './app'
+
 export type TerminalCreateOptions = {
   sessionId: string
   cwd?: string | null
+  container?: AppContainerTarget | null
   cols: number
   rows: number
   initialCommand?: string | null
@@ -10,6 +13,7 @@ export type TerminalCreateOptions = {
 export type TerminalRunCommandOptions = {
   command: string
   cwd?: string | null
+  container?: AppContainerTarget | null
 }
 
 export type TerminalRunCommandResult = {

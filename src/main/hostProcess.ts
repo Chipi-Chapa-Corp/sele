@@ -1,16 +1,24 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { access } from 'node:fs/promises'
-import { homedir, userInfo } from 'node:os'
+import { access, chmod, mkdir, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir, userInfo } from 'node:os'
 import { basename, delimiter, extname, isAbsolute, join } from 'node:path'
 import { spawn as spawnPty } from '@lydell/node-pty'
+import type { AppContainerTarget, AppContainerTool } from '../shared/app'
+import {
+  getCurrentContainerHostBridge,
+  isCurrentContainerTarget,
+  type CurrentContainerHostBridge
+} from './currentContainer'
 
 type HostCommandOptions = {
+  container?: AppContainerTarget | null
   cwd?: string
   env?: NodeJS.ProcessEnv
 }
 
-type HostCommand = {
+export type HostCommand = {
   file: string
   args: string[]
   cwd?: string
@@ -54,6 +62,7 @@ const shellLookupMaxBuffer = 64 * 1024
 const hostEnvironmentTimeoutMs = 5_000
 const hostEnvironmentMaxBuffer = 512 * 1024
 const resolvedCommandCache = new Map<string, Promise<ResolvedHostFile>>()
+const hostBridgeExecutableCache = new Map<string, Promise<string>>()
 let flatpakHostEnvironment: Promise<NodeJS.ProcessEnv> | null = null
 
 export const isRunningInFlatpak = (): boolean => Boolean(process.env.FLATPAK_ID)
@@ -697,38 +706,287 @@ const getEnvironmentArguments = (
   })
 }
 
-export const getHostCommand = (
+const getShellEnvironmentAssignments = (env: NodeJS.ProcessEnv | undefined): string[] =>
+  Object.entries(getEnvironmentOverrides(env, { skipUnchangedPath: true })).flatMap(
+    ([key, value]) => (value == null ? [] : [`${key}=${quotePosixShellArg(value)}`])
+  )
+
+const getShellExecLine = (
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv | undefined,
+  rawTrailingArgs: string[] = []
+): string => {
+  const environmentAssignments = getShellEnvironmentAssignments(env)
+  const command = [...[file, ...args].map(quotePosixShellArg), ...rawTrailingArgs].join(' ')
+
+  return environmentAssignments.length
+    ? `exec env ${environmentAssignments.join(' ')} ${command}`
+    : `exec ${command}`
+}
+
+const getBridgeCommandScript = (
+  file: string,
+  args: string[],
+  options: HostCommandOptions
+): string => {
+  const lines = [
+    ...(options.cwd ? [`cd ${quotePosixShellArg(options.cwd)}`] : []),
+    getShellExecLine(file, args, options.env)
+  ]
+  return lines.join('\n')
+}
+
+const buildHostBridgeCommand = (
+  bridge: CurrentContainerHostBridge,
+  file: string,
+  args: string[],
+  options: HostCommandOptions = {}
+): HostCommand => ({
+  file: bridge.file,
+  args: [...bridge.argsPrefix, 'sh', '-lc', getBridgeCommandScript(file, args, options)],
+  env: process.env
+})
+
+const containerRuntimeExecutables = {
+  distrobox: 'distrobox',
+  toolbox: 'toolbox',
+  podman: 'podman',
+  docker: 'docker'
+} satisfies Record<AppContainerTool, string>
+
+const getContainerRuntimeExecutable = (container: AppContainerTarget): string => {
+  if (container.kind !== 'container') throw new Error('Container target is required')
+  return containerRuntimeExecutables[container.tool]
+}
+
+const getContainerCommandScript = (
+  file: string,
+  args: string[],
+  options: HostCommandOptions
+): string => {
+  const lines = [
+    ...(options.cwd ? [`cd ${quotePosixShellArg(options.cwd)}`] : []),
+    getShellExecLine(file, args, options.env)
+  ]
+  return lines.join('\n')
+}
+
+const getContainerTerminalScript = (options: {
+  command?: string | null
+  cwd?: string
+  keepAlive?: boolean
+}): string => {
+  const command = options.command?.trim() || null
+  const lines = [...(options.cwd ? [`cd ${quotePosixShellArg(options.cwd)}`] : [])]
+
+  if (!command) {
+    lines.push('exec "${SHELL:-/bin/sh}" -l')
+    return lines.join('\n')
+  }
+
+  lines.push(command)
+  if (options.keepAlive) lines.push('exec "${SHELL:-/bin/sh}" -i')
+  return lines.join('\n')
+}
+
+const getContainerScriptArgs = (
+  container: Extract<AppContainerTarget, { kind: 'container' }>,
+  script: string,
+  interactive: boolean
+): string[] => {
+  if (container.tool === 'distrobox') {
+    return ['enter', container.name, '--', 'sh', '-lc', script]
+  }
+  if (container.tool === 'toolbox') {
+    return ['run', '--container', container.name, 'sh', '-lc', script]
+  }
+
+  return ['exec', interactive ? '-it' : '-i', container.name, 'sh', '-lc', script]
+}
+
+const getContainerExecutableArgs = (
+  container: Extract<AppContainerTarget, { kind: 'container' }>,
+  file: string,
+  args: string[]
+): string[] => {
+  if (container.tool === 'distrobox') return ['enter', container.name, '--', file, ...args]
+  if (container.tool === 'toolbox') return ['run', '--container', container.name, file, ...args]
+  return ['exec', '-i', container.name, file, ...args]
+}
+
+const buildResolvedHostCommand = async (
   file: string,
   args: string[],
   options: HostCommandOptions = {}
 ): Promise<HostCommand> => {
-  const getCommand = async (): Promise<HostCommand> => {
-    const resolvedFile = await resolveHostFile(file, options.cwd, options.env)
-    const env = await getHostEnvironment(options.env, resolvedFile.path)
-    const baseEnv = isRunningInFlatpak() ? await getFlatpakHostEnvironment() : process.env
+  const bridge = await getCurrentContainerHostBridge()
+  if (bridge) return buildHostBridgeCommand(bridge, file, args, options)
 
-    if (!isRunningInFlatpak()) {
-      return {
-        file: resolvedFile.file,
-        args,
-        cwd: options.cwd,
-        env
-      }
-    }
+  return buildResolvedLocalCommand(file, args, options)
+}
 
+const getHostBridgeExecutablePath = async (
+  bridge: CurrentContainerHostBridge,
+  file: string,
+  args: string[],
+  options: HostCommandOptions = {}
+): Promise<string> => {
+  const commandScript = [
+    ...(options.cwd ? [`cd ${quotePosixShellArg(options.cwd)}`] : []),
+    getShellExecLine(file, args, undefined, ['"$@"'])
+  ].join('\n')
+  const wrapperScript = [
+    '#!/bin/sh',
+    `exec ${[bridge.file, ...bridge.argsPrefix, 'sh', '-lc', commandScript, 'sele-host-bridge']
+      .map(quotePosixShellArg)
+      .join(' ')} "$@"`,
+    ''
+  ].join('\n')
+  const hash = createHash('sha256').update(wrapperScript).digest('hex').slice(0, 16)
+  const safeFile = basename(file).replace(/[^A-Za-z0-9._-]/g, '_') || 'command'
+  const wrapperPath = join(tmpdir(), 'sele-host-bridges', `${safeFile}-${hash}.sh`)
+  const existing = hostBridgeExecutableCache.get(wrapperPath)
+  if (existing) return existing
+
+  const writePromise = mkdir(join(tmpdir(), 'sele-host-bridges'), { recursive: true })
+    .then(() => writeFile(wrapperPath, wrapperScript, { mode: 0o755 }))
+    .then(() => chmod(wrapperPath, 0o755))
+    .then(() => wrapperPath)
+  hostBridgeExecutableCache.set(wrapperPath, writePromise)
+  return writePromise
+}
+
+const buildHostBridgeExecutableCommand = async (
+  bridge: CurrentContainerHostBridge,
+  file: string,
+  args: string[],
+  options: HostCommandOptions = {}
+): Promise<HostCommand> => ({
+  file: await getHostBridgeExecutablePath(bridge, file, args, options),
+  args: [],
+  env: await getHostEnvironment(options.env, undefined)
+})
+
+const buildResolvedLocalCommand = async (
+  file: string,
+  args: string[],
+  options: HostCommandOptions = {}
+): Promise<HostCommand> => {
+  const resolvedFile = await resolveHostFile(file, options.cwd, options.env)
+  const env = await getHostEnvironment(options.env, resolvedFile.path)
+  const baseEnv = isRunningInFlatpak() ? await getFlatpakHostEnvironment() : process.env
+
+  if (!isRunningInFlatpak()) {
     return {
-      file: 'flatpak-spawn',
-      args: [
-        '--host',
-        '--watch-bus',
-        ...(options.cwd ? [`--directory=${options.cwd}`] : []),
-        ...getEnvironmentArguments(env, baseEnv),
-        resolvedFile.file,
-        ...args
-      ],
-      env: process.env
+      file: resolvedFile.file,
+      args,
+      cwd: options.cwd,
+      env
     }
   }
 
-  return getCommand()
+  const flatpakSpawnFile = await resolveHostFile('flatpak-spawn', undefined, process.env).catch(
+    () => ({ file: 'flatpak-spawn' })
+  )
+
+  return {
+    file: flatpakSpawnFile.file,
+    args: [
+      '--host',
+      '--watch-bus',
+      ...(options.cwd ? [`--directory=${options.cwd}`] : []),
+      ...getEnvironmentArguments(env, baseEnv),
+      resolvedFile.file,
+      ...args
+    ],
+    env: process.env
+  }
+}
+
+const getContainerRuntimeHostCommand = async (
+  container: Extract<AppContainerTarget, { kind: 'container' }>,
+  args: string[],
+  options: HostCommandOptions = {}
+): Promise<HostCommand> =>
+  buildResolvedHostCommand(getContainerRuntimeExecutable(container), args, {
+    env: options.env
+  })
+
+const getContainerHostCommand = async (
+  file: string,
+  args: string[],
+  options: HostCommandOptions = {}
+): Promise<HostCommand> => {
+  const container = options.container
+  if (!container || container.kind !== 'container')
+    return buildResolvedHostCommand(file, args, options)
+  if (await isCurrentContainerTarget(container))
+    return buildResolvedLocalCommand(file, args, options)
+
+  return getContainerRuntimeHostCommand(
+    container,
+    getContainerScriptArgs(container, getContainerCommandScript(file, args, options), false),
+    options
+  )
+}
+
+export const getHostCommand = (
+  file: string,
+  args: string[],
+  options: HostCommandOptions = {}
+): Promise<HostCommand> => getContainerHostCommand(file, args, options)
+
+export const getHostExecutableCommand = async (
+  file: string,
+  args: string[],
+  options: HostCommandOptions = {}
+): Promise<HostCommand> => {
+  const container = options.container
+  if (!container || container.kind !== 'container') {
+    const bridge = await getCurrentContainerHostBridge()
+    if (bridge) return buildHostBridgeExecutableCommand(bridge, file, args, options)
+
+    return buildResolvedLocalCommand(file, args, options)
+  }
+  if (await isCurrentContainerTarget(container))
+    return buildResolvedLocalCommand(file, args, options)
+
+  return getContainerRuntimeHostCommand(
+    container,
+    getContainerExecutableArgs(container, file, args),
+    options
+  )
+}
+
+export const getHostTerminalCommand = async (options: {
+  command?: string | null
+  container?: AppContainerTarget | null
+  cwd?: string
+  env?: NodeJS.ProcessEnv
+  keepAlive?: boolean
+  shell: { file: string; args: string[] }
+}): Promise<HostCommand> => {
+  const container = options.container
+  if (!container || container.kind !== 'container') {
+    return getHostCommand(options.shell.file, options.shell.args, {
+      cwd: options.cwd,
+      env: options.env
+    })
+  }
+  if (await isCurrentContainerTarget(container)) {
+    return buildResolvedLocalCommand(options.shell.file, options.shell.args, {
+      cwd: options.cwd,
+      env: options.env
+    })
+  }
+
+  return getContainerRuntimeHostCommand(
+    container,
+    getContainerScriptArgs(container, getContainerTerminalScript(options), true),
+    {
+      cwd: options.cwd,
+      env: options.env
+    }
+  )
 }

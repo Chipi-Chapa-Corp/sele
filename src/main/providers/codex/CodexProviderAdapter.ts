@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { basename } from 'node:path'
+import type { AppContainerTarget } from '../../../shared/app'
 import type {
   ProviderModel,
   ProviderMessageAttachment,
@@ -30,6 +32,7 @@ import type {
   ProviderSandboxModeOption,
   ProviderApp,
   ProviderSkill,
+  ProviderSourceOptions,
   ProviderTurnOptions,
   ProviderOneShotOptions
 } from '../../../shared/provider'
@@ -40,6 +43,7 @@ import {
   providerOneShotGenerationCanceledMessage
 } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { CodexAppServerClient, type RpcNotification, type RpcRequest } from './CodexAppServerClient'
 import {
   createCodexFileAttachmentInput,
@@ -281,6 +285,7 @@ type CodexPendingApprovalProtocol = 'commandExecution' | 'fileChange' | 'execCom
 
 type CodexPendingApproval = {
   requestId: number
+  container: AppContainerTarget | null
   protocol: CodexPendingApprovalProtocol
   type: ProviderPendingApproval['type']
   threadId: string
@@ -299,6 +304,7 @@ type QueuedTurn = {
   options?: ProviderTurnOptions
 }
 type OneShotGeneration = {
+  container: AppContainerTarget | null
   threadId: string | null
   turnId: string | null
   canceled: boolean
@@ -1083,9 +1089,9 @@ const getTurnAccessOptions = (options?: ProviderTurnOptions): CodexTurnAccessOpt
 export class CodexProviderAdapter implements ProviderAdapter {
   id = 'codex' as const
 
-  private client = new CodexAppServerClient()
-  private disposeNotificationListener: (() => void) | null = null
-  private disposeServerRequestListener: (() => void) | null = null
+  private clients = new Map<string, CodexAppServerClient>()
+  private clientContainerContext = new AsyncLocalStorage<AppContainerTarget | null>()
+  private threadContainers = new Map<string, AppContainerTarget | null>()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
@@ -1106,12 +1112,63 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private pendingApprovalsByThread = new Map<string, CodexPendingApproval[]>()
   private contextUsageByThread = new Map<string, ProviderChatContextUsage>()
 
-  constructor() {
-    this.disposeNotificationListener = this.client.onNotification(this.handleNotification)
-    this.disposeServerRequestListener = this.client.onServerRequest(this.handleServerRequest)
+  private get client(): CodexAppServerClient {
+    return this.getClient(this.clientContainerContext.getStore() ?? null)
   }
 
-  login = async (): Promise<ProviderLoginResult> => {
+  private getClient = (container: AppContainerTarget | null | undefined): CodexAppServerClient => {
+    const normalizedContainer = normalizeContainerTarget(container)
+    const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
+    const key = getContainerTargetKey(storedContainer)
+    const existingClient = this.clients.get(key)
+    if (existingClient) return existingClient
+
+    const client = new CodexAppServerClient(storedContainer)
+    client.onNotification((notification) => {
+      this.clientContainerContext.run(storedContainer, () => this.handleNotification(notification))
+    })
+    client.onServerRequest((request) =>
+      this.clientContainerContext.run(storedContainer, () => this.handleServerRequest(request))
+    )
+    this.clients.set(key, client)
+    return client
+  }
+
+  private getCurrentContainer = (): AppContainerTarget | null =>
+    this.clientContainerContext.getStore() ?? null
+
+  private getThreadContainer = (
+    threadId: string,
+    options?: { container?: AppContainerTarget | null }
+  ): AppContainerTarget | null =>
+    options?.container ?? this.threadContainers.get(threadId) ?? this.getCurrentContainer()
+
+  private rememberThreadContainer = (
+    threadId: string,
+    container: AppContainerTarget | null | undefined = this.getCurrentContainer()
+  ): void => {
+    const normalizedContainer = normalizeContainerTarget(container)
+    this.threadContainers.set(
+      threadId,
+      normalizedContainer.kind === 'container' ? normalizedContainer : null
+    )
+  }
+
+  private runWithContainer = <T>(
+    container: AppContainerTarget | null | undefined,
+    run: () => Promise<T>
+  ): Promise<T> => {
+    const normalizedContainer = normalizeContainerTarget(container)
+    return this.clientContainerContext.run(
+      normalizedContainer.kind === 'container' ? normalizedContainer : null,
+      run
+    )
+  }
+
+  login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> =>
+    this.runWithContainer(options.container, () => this.loginInContext())
+
+  private loginInContext = async (): Promise<ProviderLoginResult> => {
     const account = await this.client.request<AccountReadResponse>('account/read', {
       refreshToken: false
     })
@@ -1145,15 +1202,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   getSandboxModes = async (): Promise<ProviderSandboxModeOption[]> => fallbackProviderSandboxModes
 
-  getUpdateAvailability = async (): Promise<ProviderUpdateAvailability | null> =>
-    getCodexUpdateAvailability()
+  getUpdateAvailability = async (
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderUpdateAvailability | null> =>
+    getCodexUpdateAvailability({ container: options.container, env: process.env })
 
-  updateProvider = async (): Promise<ProviderUpdateAvailability | null> => {
-    this.client.dispose()
-    return updateCodexProvider()
+  updateProvider = async (
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderUpdateAvailability | null> => {
+    this.clients.forEach((client) => client.dispose())
+    this.clients.clear()
+    return updateCodexProvider({ container: options.container, env: process.env })
   }
 
-  getModels = async (): Promise<ProviderModel[]> => {
+  getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> =>
+    this.runWithContainer(options.container, () => this.getModelsInContext())
+
+  private getModelsInContext = async (): Promise<ProviderModel[]> => {
     const models: ProviderModel[] = []
     let cursor: string | null = null
 
@@ -1179,7 +1244,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return models.length > 0 ? models : fallbackProviderModels
   }
 
-  getSkills = async (cwd?: string | null): Promise<ProviderSkill[]> => {
+  getSkills = async (
+    cwd?: string | null,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderSkill[]> =>
+    this.runWithContainer(options.container, () => this.getSkillsInContext(cwd))
+
+  private getSkillsInContext = async (cwd?: string | null): Promise<ProviderSkill[]> => {
     try {
       await this.client.request('plugin/list', {
         ...(cwd ? { cwds: [cwd] } : {}),
@@ -1219,7 +1290,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       .sort((firstSkill, secondSkill) => firstSkill.name.localeCompare(secondSkill.name))
   }
 
-  getApps = async (): Promise<ProviderApp[]> => {
+  getApps = async (options: ProviderSourceOptions = {}): Promise<ProviderApp[]> =>
+    this.runWithContainer(options.container, () => this.getAppsInContext())
+
+  private getAppsInContext = async (): Promise<ProviderApp[]> => {
     const response = await this.client.request<AppsInstalledResponse>('app/installed', {
       forceRefresh: false
     })
@@ -1242,7 +1316,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       .sort((firstApp, secondApp) => firstApp.name.localeCompare(secondApp.name))
   }
 
-  getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
+  getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> =>
+    this.runWithContainer(options.container, () => this.getUsageInContext(options))
+
+  private getUsageInContext = async (
+    options: ProviderUsageOptions = {}
+  ): Promise<ProviderAccountUsage> => {
     const includeStatistics = Boolean(options.includeStatistics)
     const [usageResult, rateLimitsResult] = await Promise.allSettled([
       includeStatistics
@@ -1286,7 +1365,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
   }
 
-  resetRateLimits = async (): Promise<ProviderAccountRateLimitResetOutcome> => {
+  resetRateLimits = async (
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderAccountRateLimitResetOutcome> =>
+    this.runWithContainer(options.container, () => this.resetRateLimitsInContext())
+
+  private resetRateLimitsInContext = async (): Promise<ProviderAccountRateLimitResetOutcome> => {
     const response = await this.client.request<AccountRateLimitResetResponse>(
       'account/rateLimitResetCredit/consume',
       { idempotencyKey: randomUUID() }
@@ -1295,7 +1379,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return normalizeRateLimitResetOutcome(response.outcome)
   }
 
-  getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {
+  getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> =>
+    this.runWithContainer(options.container, () => this.getChatsInContext(options))
+
+  private getChatsInContext = async (
+    options: ProviderChatListOptions = {}
+  ): Promise<ProviderChatPage> => {
     const response = await this.client.request<ThreadListResponse>('thread/list', {
       cursor: options.cursor ?? null,
       limit: options.limit ?? 50,
@@ -1308,6 +1397,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const chats = await Promise.all(
       response.data.map(async (thread) => {
         const namedThread = this.withResolvedThreadName(thread, threadNames.get(thread.id) ?? null)
+        this.rememberThreadContainer(namedThread.id)
 
         return {
           id: namedThread.id,
@@ -1325,7 +1415,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
           pinned: false,
           done: false,
           seenUpdatedAt: null,
-          purpose: null
+          purpose: null,
+          container: this.getCurrentContainer()
         }
       })
     )
@@ -1336,7 +1427,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
   }
 
-  getChat = async (chatId: string): Promise<ProviderChatDetail> => {
+  getChat = (
+    chatId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.getChatInContext(chatId)
+    )
+
+  private getChatInContext = async (chatId: string): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
     const cachedDetail = this.getCachedChatDetail(chatId)
     if (cachedDetail) return cachedDetail
 
@@ -1363,7 +1463,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(thread)
   }
 
-  generateOneShot = async (message: string, options?: ProviderOneShotOptions): Promise<string> => {
+  generateOneShot = (message: string, options?: ProviderOneShotOptions): Promise<string> =>
+    this.runWithContainer(options?.container, () => this.generateOneShotInContext(message, options))
+
+  private generateOneShotInContext = async (
+    message: string,
+    options?: ProviderOneShotOptions
+  ): Promise<string> => {
     const text = message.trim()
     if (!text) throw new Error('Cannot generate from an empty message')
 
@@ -1373,6 +1479,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       : false
     const generation: OneShotGeneration | null = generationId
       ? {
+          container: this.getCurrentContainer(),
           threadId: null,
           turnId: null,
           canceled: canceledBeforeStart
@@ -1416,6 +1523,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ephemeral: true
       })
       threadId = startedThread.thread.id
+      this.rememberThreadContainer(threadId)
       if (generation) generation.threadId = threadId
 
       await throwIfCanceled()
@@ -1500,10 +1608,21 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private interruptOneShotGeneration = async (generation: OneShotGeneration): Promise<void> => {
     if (!generation.threadId || !generation.turnId) return
 
-    await this.interruptTurn(generation.threadId, generation.turnId)
+    await this.runWithContainer(generation.container, () =>
+      this.interruptTurn(generation.threadId!, generation.turnId!)
+    )
   }
 
-  startChat = async (
+  startChat = (
+    message: string,
+    options?: ProviderTurnOptions,
+    onChatCreated?: (chatId: string) => Promise<void>
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(options?.container, () =>
+      this.startChatInContext(message, options, onChatCreated)
+    )
+
+  private startChatInContext = async (
     message: string,
     options?: ProviderTurnOptions,
     onChatCreated?: (chatId: string) => Promise<void>
@@ -1518,6 +1637,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...getThreadAccessOptions(options),
       ...getThreadModelOptions(options)
     })
+    this.rememberThreadContainer(startedThread.thread.id)
     await onChatCreated?.(startedThread.thread.id)
 
     const [cwd, name, turns] = await Promise.all([
@@ -1563,11 +1683,21 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
-  continueChat = async (
+  continueChat = (
+    chatId: string,
+    message: string,
+    options?: ProviderTurnOptions
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.continueChatInContext(chatId, message, options)
+    )
+
+  private continueChatInContext = async (
     chatId: string,
     message: string,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
     const text = message.trim()
     if (!text && !hasAttachmentInput(options)) {
       throw new Error('Cannot continue a chat with an empty message')
@@ -1602,12 +1732,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
-  continueChatInFork = async (
+  continueChatInFork = (
+    chatId: string,
+    message: string,
+    options?: ProviderTurnOptions,
+    onForkCreated?: (chatId: string) => Promise<void>
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.continueChatInForkInContext(chatId, message, options, onForkCreated)
+    )
+
+  private continueChatInForkInContext = async (
     chatId: string,
     message: string,
     options?: ProviderTurnOptions,
     onForkCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
     const text = message.trim()
     if (!text && !hasAttachmentInput(options)) {
       throw new Error('Cannot continue a chat with an empty message')
@@ -1624,6 +1765,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...getThreadAccessOptions(options),
       ...getThreadModelOptions(options)
     })
+    this.rememberThreadContainer(fork.thread.id)
     await onForkCreated?.(fork.thread.id)
 
     const [cwd, name, turns] = await Promise.all([
@@ -1666,12 +1808,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
-  sendActiveChatMessage = async (
+  sendActiveChatMessage = (
+    chatId: string,
+    message: string,
+    mode: ProviderActiveSendMode,
+    options?: ProviderTurnOptions
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.sendActiveChatMessageInContext(chatId, message, mode, options)
+    )
+
+  private sendActiveChatMessageInContext = async (
     chatId: string,
     message: string,
     mode: ProviderActiveSendMode,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
     if (mode === 'queue') return this.queueChatMessage(chatId, message, options)
     if (mode === 'interrupt') return this.interruptAndContinueChat(chatId, message, options)
     return this.steerActiveChat(chatId, message, options)
@@ -1693,12 +1846,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
-  editPendingMessage = async (
+  editPendingMessage = (
+    chatId: string,
+    messageId: string,
+    message: string,
+    options?: ProviderTurnOptions
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.editPendingMessageInContext(chatId, messageId, message, options)
+    )
+
+  private editPendingMessageInContext = async (
     chatId: string,
     messageId: string,
     message: string,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
     const text = message.trim()
     if (!text && !hasAttachmentInput(options)) {
       throw new Error('Cannot edit a pending message to empty content')
@@ -1721,10 +1885,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
-  interruptPendingMessage = async (
+  interruptPendingMessage = (chatId: string, messageId: string): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId), () =>
+      this.interruptPendingMessageInContext(chatId, messageId)
+    )
+
+  private interruptPendingMessageInContext = async (
     chatId: string,
     messageId: string
   ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
     if (!this.threads.has(chatId)) await this.getChat(chatId)
 
     const steeringMessage = this.takeSteeringMessage(chatId, messageId)
@@ -1742,12 +1912,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
     throw new Error('Pending message cannot be interrupted')
   }
 
-  editMessage = async (
+  editMessage = (
+    chatId: string,
+    messageId: string,
+    message: string,
+    options?: ProviderTurnOptions
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.editMessageInContext(chatId, messageId, message, options)
+    )
+
+  private editMessageInContext = async (
     chatId: string,
     messageId: string,
     message: string,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
     const text = message.trim()
     if (!text && !hasAttachmentInput(options)) {
       throw new Error('Cannot edit a message to empty content')
@@ -1823,7 +2004,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const approval = this.pendingApprovalsByThread.get(chatId)?.[0]
     if (!approval) throw new Error('No pending approval to resolve')
 
-    this.client.resolveServerRequest(
+    this.getClient(approval.container).resolveServerRequest(
       approval.requestId,
       this.createApprovalResponse(approval, decision)
     )
@@ -1836,7 +2017,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return this.getChat(chatId)
   }
 
-  stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
+  stopChat = (chatId: string): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId), () => this.stopChatInContext(chatId))
+
+  private stopChatInContext = async (chatId: string): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
     await this.stopActiveTurn(chatId, { startQueuedTurn: false })
 
     const detail = this.getCachedChatDetail(chatId)
@@ -1888,10 +2073,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
-    this.disposeNotificationListener?.()
-    this.disposeNotificationListener = null
-    this.disposeServerRequestListener?.()
-    this.disposeServerRequestListener = null
     this.chatUpdatedTimers.forEach((timer) => clearTimeout(timer))
     this.chatUpdatedTimers.clear()
     this.activeOneShotGenerations.clear()
@@ -1904,7 +2085,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.queuedTurnsByThread.clear()
     this.queuedTurnStartThreads.clear()
     this.manuallyStoppedTurnIds.clear()
-    this.client.dispose()
+    this.clients.forEach((client) => client.dispose())
+    this.clients.clear()
+    this.threadContainers.clear()
   }
 
   private resolveThreadCwd = async (
@@ -2166,6 +2349,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     done: false,
     seenUpdatedAt: null,
     purpose: null,
+    container: this.threadContainers.get(thread.id) ?? null,
     capabilities: codexCapabilities,
     pendingApproval: this.getProviderPendingApproval(thread.id),
     contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
@@ -2259,9 +2443,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private startThreadTitleGeneration = (
     threadId: string,
     prompt: string,
-    cwd: string | null
+    cwd: string | null,
+    container: AppContainerTarget | null = this.getCurrentContainer()
   ): void => {
-    void this.generateAndSetThreadTitle(threadId, prompt, cwd).catch(() => {})
+    void this.runWithContainer(container, () =>
+      this.generateAndSetThreadTitle(threadId, prompt, cwd)
+    ).catch(() => {})
   }
 
   private generateAndSetThreadTitle = async (
@@ -2528,6 +2715,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private addPendingApproval = (approval: CodexPendingApproval): void => {
+    this.rememberThreadContainer(approval.threadId, approval.container)
     const pendingApprovals = this.pendingApprovalsByThread.get(approval.threadId) ?? []
     const nextApprovals = [
       ...pendingApprovals.filter(
@@ -2560,8 +2748,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private removePendingApprovalByRequestId = (requestId: number): void => {
+    const containerKey = getContainerTargetKey(this.getCurrentContainer())
     for (const [threadId, pendingApprovals] of this.pendingApprovalsByThread) {
-      if (!pendingApprovals.some((approval) => approval.requestId === requestId)) continue
+      if (
+        !pendingApprovals.some(
+          (approval) =>
+            approval.requestId === requestId &&
+            getContainerTargetKey(approval.container) === containerKey
+        )
+      ) {
+        continue
+      }
       this.removePendingApproval(threadId, requestId)
       this.emitChatUpdated(threadId)
       return
@@ -2594,7 +2791,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (!pendingApprovals) return
 
     for (const approval of pendingApprovals) {
-      this.client.resolveServerRequest(
+      this.getClient(approval.container).resolveServerRequest(
         approval.requestId,
         this.createApprovalResponse(approval, 'cancel')
       )
@@ -3444,6 +3641,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): void => {
     const threadId = getThreadId(params)
     if (!threadId || !params.turn || typeof params.turn !== 'object') return
+    this.rememberThreadContainer(threadId)
     const liveTurn = params.turn as CodexTurn
     const normalizedTurn = this.normalizeLiveTurn({
       ...liveTurn,
@@ -3699,6 +3897,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): void => {
     const threadId = getThreadId(params)
     if (!threadId) return
+    this.rememberThreadContainer(threadId)
 
     if (notification.method === 'thread/status/changed' && params.status) {
       this.setThreadStatus(threadId, params.status as CodexThreadStatus)
@@ -3718,6 +3917,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private handleThreadTokenUsage = (params: Record<string, unknown>): void => {
     const threadId = getThreadId(params)
     if (!threadId) return
+    this.rememberThreadContainer(threadId)
 
     const contextUsage = normalizeChatContextUsage(params.tokenUsage)
     if (!contextUsage) return
@@ -3732,6 +3932,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.addPendingApproval({
       requestId: request.id,
+      container: this.getCurrentContainer(),
       protocol: 'commandExecution',
       type: 'command',
       threadId: requireStringValue(params.threadId, 'threadId'),
@@ -3750,6 +3951,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.addPendingApproval({
       requestId: request.id,
+      container: this.getCurrentContainer(),
       protocol: 'fileChange',
       type: 'fileChange',
       threadId: requireStringValue(params.threadId, 'threadId'),
@@ -3768,6 +3970,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.addPendingApproval({
       requestId: request.id,
+      container: this.getCurrentContainer(),
       protocol: 'execCommand',
       type: 'command',
       threadId: requireStringValue(params.conversationId, 'conversationId'),
@@ -3786,6 +3989,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.addPendingApproval({
       requestId: request.id,
+      container: this.getCurrentContainer(),
       protocol: 'applyPatch',
       type: 'fileChange',
       threadId: requireStringValue(params.conversationId, 'conversationId'),

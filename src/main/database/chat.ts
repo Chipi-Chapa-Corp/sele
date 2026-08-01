@@ -1,5 +1,7 @@
 import { sql } from 'kysely'
+import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderChatMetadata, ProviderChatPurpose } from '../../shared/provider'
+import { isContainerTool, normalizeContainerTarget } from '../containerTarget'
 import { getDatabase } from './sqlite'
 
 const chatMetadataChunkSize = 200
@@ -21,10 +23,16 @@ const getDefaultChatMetadata = (id: string): ProviderChatMetadata => ({
   pinned: false,
   done: false,
   seenUpdatedAt: null,
-  purpose: null
+  purpose: null,
+  container: null
 })
 
+const mapContainerTarget = (tool: string | null, name: string | null): AppContainerTarget | null =>
+  isContainerTool(tool) && name?.trim() ? { kind: 'container', tool, name: name.trim() } : null
+
 const mapChatMetadataRow = (row: {
+  container_name: string | null
+  container_tool: string | null
   id: string
   pinned: number
   done: number
@@ -35,7 +43,8 @@ const mapChatMetadataRow = (row: {
   pinned: toBoolean(row.pinned),
   done: toBoolean(row.done),
   seenUpdatedAt: toNumberOrNull(row.seen_updated_at),
-  purpose: row.purpose === 'commit' ? row.purpose : null
+  purpose: row.purpose === 'commit' ? row.purpose : null,
+  container: mapContainerTarget(row.container_tool, row.container_name)
 })
 
 const uniqueChatIds = (chatIds: string[]): string[] =>
@@ -45,7 +54,15 @@ export const getChatMetadata = async (chatId: string): Promise<ProviderChatMetad
   const db = await getDatabase()
   const row = await db
     .selectFrom('chat')
-    .select(['id', 'pinned', 'done', 'seen_updated_at', 'purpose'])
+    .select([
+      'id',
+      'container_tool',
+      'container_name',
+      'pinned',
+      'done',
+      'seen_updated_at',
+      'purpose'
+    ])
     .where('id', '=', chatId)
     .executeTakeFirst()
 
@@ -65,7 +82,15 @@ export const getChatMetadataByIds = async (
     const chunk = ids.slice(index, index + chatMetadataChunkSize)
     const rows = await db
       .selectFrom('chat')
-      .select(['id', 'pinned', 'done', 'seen_updated_at', 'purpose'])
+      .select([
+        'id',
+        'container_tool',
+        'container_name',
+        'pinned',
+        'done',
+        'seen_updated_at',
+        'purpose'
+      ])
       .where('id', 'in', chunk)
       .execute()
 
@@ -144,6 +169,35 @@ export const setChatPurpose = async (
     .onConflict((conflict) =>
       conflict.column('id').doUpdateSet({
         purpose
+      })
+    )
+    .execute()
+
+  return getChatMetadata(chatId)
+}
+
+export const setChatContainer = async (
+  chatId: string,
+  container: AppContainerTarget | null | undefined
+): Promise<ProviderChatMetadata> => {
+  const db = await getDatabase()
+  const normalizedContainer = normalizeContainerTarget(container)
+  const containerTool = normalizedContainer.kind === 'container' ? normalizedContainer.tool : null
+  const containerName = normalizedContainer.kind === 'container' ? normalizedContainer.name : null
+
+  await db
+    .insertInto('chat')
+    .values({
+      id: chatId,
+      pinned: 0,
+      done: 0,
+      container_tool: containerTool,
+      container_name: containerName
+    })
+    .onConflict((conflict) =>
+      conflict.column('id').doUpdateSet({
+        container_tool: containerTool,
+        container_name: containerName
       })
     )
     .execute()

@@ -87,15 +87,16 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   const trailingStatus = chat.status && !workingStatus && !approvalStatus ? chat.status : null
   const pendingApproval = chat.pendingApproval
   const approvalTarget = pendingApproval ? getApprovalTarget(pendingApproval) : null
-  const finishedUnseen =
+  const unread =
     !selected &&
     !chat.done &&
-    chat.status === null &&
     chat.updatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
+  const finishedUnseen = unread && chat.status === null
+  const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
 
   return (
     <article
-      className={`chat-list-item${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}`}
+      className={`chat-list-item${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}`}
     >
       <button
         className="chat-list-item__main"
@@ -135,7 +136,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               />
             </span>
           ) : (
-            finishedUnseen && (
+            showFinishedUnseen && (
               <span
                 className="chat-list-item__status-container chat-list-item__status-container--leading"
                 title={finishedUnseenLabel}

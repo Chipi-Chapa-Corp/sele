@@ -34,7 +34,11 @@ import {
   X,
   Zap
 } from 'lucide-react'
-import type { AppFileTreeFile, AppSelectedAttachment } from '../../../shared/app'
+import type {
+  AppContainerTarget,
+  AppFileTreeFile,
+  AppSelectedAttachment
+} from '../../../shared/app'
 import type {
   ProviderActiveSendMode,
   ProviderApp,
@@ -83,8 +87,10 @@ type MessageBoxProps = {
   disabled?: boolean
   editSession?: { id: string; content: string; type?: 'message' | 'pending' } | null
   error?: string | null
+  container?: AppContainerTarget | null
   model: ProviderModelId
   models: ProviderModel[]
+  modelsUnavailable?: boolean
   operationsDisabled?: boolean
   pending?: boolean
   providerId: ProviderId
@@ -185,11 +191,13 @@ type ProjectFileCache = {
   cwd: string
   files: AppFileTreeFile[]
   repositoryRoot: string
+  sourceKey: string
 }
 
 type ComposerCache = {
   cwd: string | null
   providerId: ProviderId
+  sourceKey: string
   skills: ProviderSkill[]
   apps: ProviderApp[]
 }
@@ -221,7 +229,7 @@ type ChatConfigDropdownProps = {
   disabled: boolean
   id: string
   modelLabel: string
-  reasoningLabel: string
+  reasoningLabel?: string | null
   sections: readonly ChatConfigSection[]
   statusIcons: readonly SelectorIconItem[]
   title: string
@@ -539,8 +547,12 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           )}
           <span className="message-box__chat-config-label">
             <span className="message-box__chat-config-label-part">{modelLabel}</span>
-            <span className="message-box__chat-config-dot" aria-hidden="true" />
-            <span className="message-box__chat-config-label-part">{reasoningLabel}</span>
+            {reasoningLabel && (
+              <>
+                <span className="message-box__chat-config-dot" aria-hidden="true" />
+                <span className="message-box__chat-config-label-part">{reasoningLabel}</span>
+              </>
+            )}
           </span>
         </span>
         <ChevronDown className="message-box__chat-config-trigger-chevron" aria-hidden="true" />
@@ -893,6 +905,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   disabled = false,
   editSession = null,
   error = null,
+  container = null,
   accountUsage,
   accountUsageError,
   accountUsageState,
@@ -913,6 +926,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   showSpeedSelector = true,
   model,
   models,
+  modelsUnavailable = false,
   operationsDisabled = false,
   pending = false,
   providerId,
@@ -1023,25 +1037,37 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         }
       ]
   const selectedModel = models.find((candidateModel) => candidateModel.id === model)
-  const modelOptions = models.map((candidateModel): DropdownOption<ProviderModelId> => ({
-    value: candidateModel.id,
-    label: formatModelLabel(candidateModel.label),
-    menuLabel: candidateModel.isDefault
-      ? `${formatModelLabel(candidateModel.label)} (default)`
-      : formatModelLabel(candidateModel.label),
-    description: candidateModel.description || undefined,
-    icon: <Bot aria-hidden="true" />
-  }))
-  const displayedModelOptions = modelOptions.some((option) => option.value === model)
-    ? modelOptions
-    : [
-        ...modelOptions,
+  const modelSelectionUnavailable = modelsUnavailable || models.length === 0
+  const modelOptions = modelSelectionUnavailable
+    ? []
+    : models.map((candidateModel): DropdownOption<ProviderModelId> => ({
+        value: candidateModel.id,
+        label: formatModelLabel(candidateModel.label),
+        menuLabel: candidateModel.isDefault
+          ? `${formatModelLabel(candidateModel.label)} (default)`
+          : formatModelLabel(candidateModel.label),
+        description: candidateModel.description || undefined,
+        icon: <Bot aria-hidden="true" />
+      }))
+  const displayedModelOptions = modelSelectionUnavailable
+    ? [
         {
           value: model,
-          label: formatModelLabel(model),
-          icon: <Bot aria-hidden="true" />
+          label: 'No models',
+          icon: <Bot aria-hidden="true" />,
+          disabled: true
         }
       ]
+    : modelOptions.some((option) => option.value === model)
+      ? modelOptions
+      : [
+          ...modelOptions,
+          {
+            value: model,
+            label: formatModelLabel(model),
+            icon: <Bot aria-hidden="true" />
+          }
+        ]
   const serviceTierOptions: DropdownOption<string>[] = [
     {
       value: standardServiceTierValue,
@@ -1106,10 +1132,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     ? `${selectedApprovalMode.label}: ${selectedApprovalMode.description}`
     : (selectedApprovalMode?.label ?? formatOptionLabel(effectiveApprovalMode))
   const selectedReasoningEffortLabel = selectedReasoningEffortPresentation.label
-  const selectorsDisabled = operationsDisabled || (!active && pending)
+  const selectorsDisabled = operationsDisabled || (!active && (disabled || pending))
   const approvalSelectorDisabled = selectorsDisabled || fullAccessSelected
   const selectedServiceTierValue = selectedServiceTier ?? standardServiceTierValue
-  const selectedModelLabel = formatModelLabel(selectedModel?.label ?? model)
+  const selectedModelLabel = modelSelectionUnavailable
+    ? 'No models'
+    : formatModelLabel(selectedModel?.label ?? model)
   const selectedSandboxModeLabel = selectedSandboxMode?.label ?? formatOptionLabel(sandboxMode)
   const selectedServiceTierLabel = selectedServiceTierOption?.label ?? 'Standard'
   const chatConfigSections: ChatConfigSection[] = [
@@ -1122,7 +1150,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             groups: [
               {
                 id: 'model',
-                options: displayedModelOptions,
+                options: displayedModelOptions.map((option) => ({
+                  ...option,
+                  disabled:
+                    modelSelectionUnavailable ||
+                    selectorsDisabled ||
+                    ('disabled' in option ? option.disabled : false)
+                })),
                 selectedValue: model,
                 onChange: (value: string) => onModelChange(value as ProviderModelId)
               }
@@ -1210,7 +1244,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   ]
   const chatConfigSelectorTitle = [
     `Model: ${selectedModelLabel}`,
-    `Reasoning: ${selectedReasoningEffortLabel}`,
+    showReasoningSelector && !modelSelectionUnavailable
+      ? `Reasoning: ${selectedReasoningEffortLabel}`
+      : null,
     showAccessSelector ? `Access: ${selectedSandboxModeLabel}` : null,
     reviewSelectorVisible ? `Review: ${selectedApprovalModeTitle}` : null,
     showSpeedSelector ? `Speed: ${selectedServiceTierLabel}` : null
@@ -1220,35 +1256,37 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const fastSpeedSelected =
     selectedServiceTier != null &&
     isFastServiceTier(selectedServiceTierValue, selectedServiceTierOption?.label ?? '')
-  const chatConfigStatusIcons: SelectorIconItem[] = [
-    ...(fullAccessSelected
-      ? [
-          {
-            key: 'full-access',
-            title: 'Full access',
-            icon: sandboxModeIcons[sandboxMode]
-          } satisfies SelectorIconItem
-        ]
-      : []),
-    ...(selectedReasoningEffortPresentation.showStatusIcon
-      ? [
-          {
-            key: 'reasoning',
-            title: `${selectedReasoningEffortLabel} reasoning`,
-            icon: selectedReasoningEffortPresentation.icon
-          } satisfies SelectorIconItem
-        ]
-      : []),
-    ...(fastSpeedSelected
-      ? [
-          {
-            key: 'speed',
-            title: `${selectedServiceTierLabel} speed`,
-            icon: <Zap className={fastServiceTierIconClassName} aria-hidden="true" />
-          } satisfies SelectorIconItem
-        ]
-      : [])
-  ]
+  const chatConfigStatusIcons: SelectorIconItem[] = modelSelectionUnavailable
+    ? []
+    : [
+        ...(fullAccessSelected
+          ? [
+              {
+                key: 'full-access',
+                title: 'Full access',
+                icon: sandboxModeIcons[sandboxMode]
+              } satisfies SelectorIconItem
+            ]
+          : []),
+        ...(selectedReasoningEffortPresentation.showStatusIcon
+          ? [
+              {
+                key: 'reasoning',
+                title: `${selectedReasoningEffortLabel} reasoning`,
+                icon: selectedReasoningEffortPresentation.icon
+              } satisfies SelectorIconItem
+            ]
+          : []),
+        ...(fastSpeedSelected
+          ? [
+              {
+                key: 'speed',
+                title: `${selectedServiceTierLabel} speed`,
+                icon: <Zap className={fastServiceTierIconClassName} aria-hidden="true" />
+              } satisfies SelectorIconItem
+            ]
+          : [])
+      ]
   const selectorsVisible =
     showAccessSelector ||
     reviewSelectorVisible ||
@@ -1278,15 +1316,20 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     !editing &&
     selectedAttachments.length < maxSelectedAttachmentCount
   )
+  const composerSourceKey = useMemo(() => JSON.stringify(container ?? null), [container])
   const fileMentionResults = useMemo(
     () =>
       getFileMentionResults(
-        projectCwd && projectFileCache?.cwd === projectCwd ? projectFileCache.files : [],
+        projectCwd &&
+          projectFileCache?.cwd === projectCwd &&
+          projectFileCache.sourceKey === composerSourceKey
+          ? projectFileCache.files
+          : [],
         fileMention?.query ?? ''
       ),
-    [fileMention?.query, projectCwd, projectFileCache]
+    [composerSourceKey, fileMention?.query, projectCwd, projectFileCache]
   )
-  const skillScope = `${providerId}\0${cwd ?? ''}`
+  const skillScope = `${providerId}\0${cwd ?? ''}\0${composerSourceKey}`
   const skillMentionMenuOpen = Boolean(
     skillMention &&
     !textareaDisabled &&
@@ -1295,10 +1338,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const composerResults = useMemo(
     () =>
       getComposerResults(
-        composerCache?.providerId === providerId && composerCache.cwd === cwd
+        composerCache?.providerId === providerId &&
+          composerCache.cwd === cwd &&
+          composerCache.sourceKey === composerSourceKey
           ? composerCache.skills
           : [],
-        composerCache?.providerId === providerId && composerCache.cwd === cwd
+        composerCache?.providerId === providerId &&
+          composerCache.cwd === cwd &&
+          composerCache.sourceKey === composerSourceKey
           ? composerCache.apps
           : [],
         skillMention?.query ?? ''
@@ -1309,7 +1356,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           : selectedApps.length < maxSelectedAppCount &&
             !selectedApps.some((selectedApp) => selectedApp.id === result.app.id)
       ),
-    [composerCache, cwd, providerId, selectedApps, selectedSkills, skillMention?.query]
+    [
+      composerCache,
+      composerSourceKey,
+      cwd,
+      providerId,
+      selectedApps,
+      selectedSkills,
+      skillMention?.query
+    ]
   )
   const mentionDropdownOptions = useMemo<DropdownOption<string>[]>(
     () =>
@@ -1353,18 +1408,25 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [selectedApps])
 
   useEffect(() => {
-    if (!fileMentionMenuOpen || !projectCwd || projectFileCache?.cwd === projectCwd) return
+    if (
+      !fileMentionMenuOpen ||
+      !projectCwd ||
+      (projectFileCache?.cwd === projectCwd && projectFileCache.sourceKey === composerSourceKey)
+    ) {
+      return
+    }
 
     let active = true
 
     void appApi
-      .getFileTree({ cwd: projectCwd })
+      .getFileTree({ container, cwd: projectCwd })
       .then((result) => {
         if (!active) return
         setProjectFileCache({
           cwd: projectCwd,
           files: result.files,
-          repositoryRoot: result.repositoryRoot
+          repositoryRoot: result.repositoryRoot,
+          sourceKey: composerSourceKey
         })
         setProjectFilesErrorCwd(null)
       })
@@ -1376,12 +1438,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     return () => {
       active = false
     }
-  }, [fileMentionMenuOpen, projectCwd, projectFileCache?.cwd])
+  }, [composerSourceKey, container, fileMentionMenuOpen, projectCwd, projectFileCache])
 
   useEffect(() => {
     if (
       !skillMentionMenuOpen ||
-      (composerCache?.providerId === providerId && composerCache.cwd === cwd)
+      (composerCache?.providerId === providerId &&
+        composerCache.cwd === cwd &&
+        composerCache.sourceKey === composerSourceKey)
     ) {
       return
     }
@@ -1389,8 +1453,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     let active = true
 
     void Promise.allSettled([
-      providerApi.getSkills(providerId, cwd),
-      providerApi.getApps(providerId)
+      providerApi.getSkills(providerId, cwd, { container }),
+      providerApi.getApps(providerId, { container })
     ]).then(([skillsResult, appsResult]) => {
       if (!active) return
 
@@ -1402,6 +1466,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       setComposerCache({
         cwd,
         providerId,
+        sourceKey: composerSourceKey,
         skills: skillsResult.status === 'fulfilled' ? skillsResult.value : [],
         apps: appsResult.status === 'fulfilled' ? appsResult.value : []
       })
@@ -1411,7 +1476,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     return () => {
       active = false
     }
-  }, [composerCache, cwd, providerId, skillMentionMenuOpen, skillScope])
+  }, [
+    composerCache,
+    composerSourceKey,
+    container,
+    cwd,
+    providerId,
+    skillMentionMenuOpen,
+    skillScope
+  ])
 
   useEffect(() => {
     if (!usageMenuOpen) return
@@ -1500,7 +1573,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     const nextMessage = message.trim()
     const typedSkillInputs = getSelectedSkillInputs(
       nextMessage,
-      composerCache?.providerId === providerId && composerCache.cwd === cwd
+      composerCache?.providerId === providerId &&
+        composerCache.cwd === cwd &&
+        composerCache.sourceKey === composerSourceKey
         ? composerCache.skills
         : []
     )
@@ -1715,7 +1790,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleSelectFileMention = (file: AppFileTreeFile): void => {
-    if (!fileMention || !projectCwd || projectFileCache?.cwd !== projectCwd) return
+    if (
+      !fileMention ||
+      !projectCwd ||
+      projectFileCache?.cwd !== projectCwd ||
+      projectFileCache.sourceKey !== composerSourceKey
+    ) {
+      return
+    }
 
     const attachmentPath = getMentionAttachmentPath(projectFileCache.repositoryRoot, file.path)
     const attachmentAlreadySelected = selectedAttachments.some(
@@ -2052,7 +2134,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const mentionDropdownEmptyContent = skillMentionMenuOpen ? (
     composerLoadErrorScope === skillScope ? (
       <div className="message-box__file-mention-status">Unable to load skills and apps</div>
-    ) : composerCache?.providerId !== providerId || composerCache.cwd !== cwd ? (
+    ) : composerCache?.providerId !== providerId ||
+      composerCache.cwd !== cwd ||
+      composerCache.sourceKey !== composerSourceKey ? (
       <div className="message-box__file-mention-status">Loading skills and apps…</div>
     ) : (
       <div className="message-box__file-mention-status">No matching skills or apps</div>
@@ -2061,7 +2145,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     <div className="message-box__file-mention-status">No project selected</div>
   ) : projectFilesErrorCwd === projectCwd ? (
     <div className="message-box__file-mention-status">Unable to load files</div>
-  ) : projectFileCache?.cwd !== projectCwd ? (
+  ) : projectFileCache?.cwd !== projectCwd || projectFileCache.sourceKey !== composerSourceKey ? (
     <div className="message-box__file-mention-status">Searching files…</div>
   ) : (
     <div className="message-box__file-mention-status">No matching files</div>
@@ -2277,7 +2361,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   disabled={selectorsDisabled}
                   id="chat-config-mode"
                   modelLabel={selectedModelLabel}
-                  reasoningLabel={selectedReasoningEffortLabel}
+                  reasoningLabel={modelSelectionUnavailable ? null : selectedReasoningEffortLabel}
                   sections={chatConfigSections}
                   statusIcons={chatConfigStatusIcons}
                   title={chatConfigSelectorTitle}
@@ -2324,7 +2408,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 icon={<span className="message-box__usage-ring" />}
                 size="small"
                 style={usageButtonStyle}
-                theme="secondary"
+                theme="transparent"
                 title={usageButtonLabel}
               />
               {usageMenuOpen && (

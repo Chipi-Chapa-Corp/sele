@@ -1,3 +1,5 @@
+import type { ProviderId } from './provider'
+
 export type FolderSelectionOptions = {
   defaultPath?: string | null
 }
@@ -53,6 +55,95 @@ export type AppExternalLinkResult = {
 
 export type AppWindowState = {
   isMaximized: boolean
+}
+
+export const appWindowZoomLevelDefault = 0
+export const appWindowZoomLevelMin = -4
+export const appWindowZoomLevelMax = 6
+
+export const normalizeAppWindowZoomLevel = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return appWindowZoomLevelDefault
+
+  return Math.min(Math.max(Math.round(value), appWindowZoomLevelMin), appWindowZoomLevelMax)
+}
+
+export type AppWindowZoomShortcutAction = 'in' | 'out' | 'reset'
+
+export type AppWindowZoomShortcutInput = {
+  alt?: boolean
+  altKey?: boolean
+  code?: string
+  control?: boolean
+  ctrlKey?: boolean
+  isAutoRepeat?: boolean
+  key?: string
+  meta?: boolean
+  metaKey?: boolean
+  repeat?: boolean
+  type?: string
+}
+
+export const getAppWindowZoomShortcutAction = (
+  input: AppWindowZoomShortcutInput
+): AppWindowZoomShortcutAction | null => {
+  if (input.type && input.type !== 'keyDown' && input.type !== 'keydown') return null
+  if (input.repeat || input.isAutoRepeat || input.alt || input.altKey) return null
+  if (!input.control && !input.ctrlKey && !input.meta && !input.metaKey) return null
+
+  const key = input.key?.toLocaleLowerCase()
+  const code = input.code
+
+  if (
+    key === '+' ||
+    key === '=' ||
+    key === 'add' ||
+    key === 'plus' ||
+    code === 'Equal' ||
+    code === 'NumpadAdd'
+  ) {
+    return 'in'
+  }
+
+  if (key === '0' || key === ')' || code === 'Digit0' || code === 'Numpad0') {
+    return 'reset'
+  }
+
+  if (
+    key === '-' ||
+    key === '_' ||
+    key === 'minus' ||
+    key === 'subtract' ||
+    key === '\u2212' ||
+    key === '\u2013' ||
+    code === 'Minus' ||
+    code === 'NumpadSubtract'
+  ) {
+    return 'out'
+  }
+
+  return null
+}
+
+export type AppContainerTool = 'distrobox' | 'toolbox' | 'podman' | 'docker'
+
+export type AppContainerTarget =
+  | {
+      kind: 'host'
+    }
+  | {
+      kind: 'container'
+      tool: AppContainerTool
+      name: string
+    }
+
+export type AppContainerSuggestion = {
+  id: string
+  tool: AppContainerTool
+  name: string
+  label: string
+  description: string | null
+  status: string | null
+  current?: boolean
 }
 
 export type AppDiagnosticsInteractionKind =
@@ -112,12 +203,26 @@ export type AppFileTreeFile = {
   status?: string | null
 }
 
-export type AppGitChangesOptions = {
+export type AppContainerOptions = {
+  container?: AppContainerTarget | null
+}
+
+export type AppSourceAvailabilityOptions = AppContainerOptions
+
+export type AppSourceAvailability = {
+  gitAvailable: boolean
+  providers: Array<{
+    providerId: ProviderId
+    available: boolean
+  }>
+}
+
+export type AppGitChangesOptions = AppContainerOptions & {
   cwd?: string | null
   source: AppGitChangeSource
 }
 
-export type AppGitBranchesOptions = {
+export type AppGitBranchesOptions = AppContainerOptions & {
   cwd?: string | null
 }
 
@@ -132,7 +237,7 @@ export type AppGitBranchesResult = {
   branches: string[]
 }
 
-export type AppFileTreeOptions = {
+export type AppFileTreeOptions = AppContainerOptions & {
   cwd?: string | null
 }
 
@@ -151,7 +256,7 @@ export type AppFileTreeResult = {
   files: AppFileTreeFile[]
 }
 
-export type AppFileContentsOptions = {
+export type AppFileContentsOptions = AppContainerOptions & {
   cwd?: string | null
   path: string
 }
@@ -171,7 +276,7 @@ export type AppWriteFileContentsResult = {
   version: string
 }
 
-export type AppGitCommitOptions = {
+export type AppGitCommitOptions = AppContainerOptions & {
   cwd?: string | null
   action?: AppGitCommitAction
   files: string[]
@@ -179,7 +284,7 @@ export type AppGitCommitOptions = {
   message?: string | null
 }
 
-export type AppGitRecentCommitMessagesOptions = {
+export type AppGitRecentCommitMessagesOptions = AppContainerOptions & {
   cwd?: string | null
   limit?: number | null
 }
@@ -188,7 +293,7 @@ export type AppGitRecentCommitMessagesResult = {
   messages: string[]
 }
 
-export type AppGitDiffOptions = {
+export type AppGitDiffOptions = AppContainerOptions & {
   cwd?: string | null
 }
 
@@ -204,7 +309,7 @@ export type AppGitFileDiffResult = {
   diff: string
 }
 
-export type AppGitUncommittedPatchChangesOptions = {
+export type AppGitUncommittedPatchChangesOptions = AppContainerOptions & {
   cwd?: string | null
   patches: AppGitPatchChange[]
 }
@@ -218,7 +323,7 @@ export type AppGitCommitResult = {
   pushed: boolean
 }
 
-export type AppGitPushOptions = {
+export type AppGitPushOptions = AppContainerOptions & {
   cwd?: string | null
 }
 
@@ -245,7 +350,7 @@ export type AppGitPushResult = {
   failure?: AppGitRecoverableFailure | null
 }
 
-export type AppGitPullOptions = {
+export type AppGitPullOptions = AppContainerOptions & {
   cwd?: string | null
   rememberStrategy?: boolean
   strategy?: AppGitPullStrategy
@@ -262,8 +367,11 @@ export type AppApi = {
   minimizeWindow: () => Promise<void>
   toggleWindowMaximized: () => Promise<AppWindowState>
   closeWindow: () => Promise<void>
+  setWindowZoomLevel: (level: number) => Promise<void>
   handleExternalLink: (options: AppExternalLinkOptions) => Promise<AppExternalLinkResult | null>
   getDefaultCwd: () => Promise<string>
+  getContainerSuggestions: () => Promise<AppContainerSuggestion[]>
+  getSourceAvailability: (options?: AppSourceAvailabilityOptions) => Promise<AppSourceAvailability>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
   switchGitBranch: (options: AppGitSwitchBranchOptions) => Promise<AppGitBranchesResult>
@@ -291,6 +399,7 @@ export type AppApi = {
   saveLocalImage: (options: AppLocalImageOptions) => Promise<string | null>
   onColorSchemeUpdated: (listener: (scheme: AppColorScheme) => void) => () => void
   onWindowStateUpdated: (listener: (state: AppWindowState) => void) => () => void
+  onWindowZoomLevelUpdated: (listener: (level: number) => void) => () => void
 }
 
 export const appIpcChannels = {
@@ -301,8 +410,12 @@ export const appIpcChannels = {
   minimizeWindow: 'app:minimize-window',
   toggleWindowMaximized: 'app:toggle-window-maximized',
   closeWindow: 'app:close-window',
+  setWindowZoomLevel: 'app:set-window-zoom-level',
+  windowZoomLevelUpdated: 'app:window-zoom-level-updated',
   handleExternalLink: 'app:handle-external-link',
   getDefaultCwd: 'app:get-default-cwd',
+  getContainerSuggestions: 'app:get-container-suggestions',
+  getSourceAvailability: 'app:get-source-availability',
   getGitChanges: 'app:get-git-changes',
   getGitBranches: 'app:get-git-branches',
   switchGitBranch: 'app:switch-git-branch',

@@ -20,8 +20,12 @@ const appApi: AppApi = {
   minimizeWindow: () => ipcRenderer.invoke(appIpcChannels.minimizeWindow),
   toggleWindowMaximized: () => ipcRenderer.invoke(appIpcChannels.toggleWindowMaximized),
   closeWindow: () => ipcRenderer.invoke(appIpcChannels.closeWindow),
+  setWindowZoomLevel: (level) => ipcRenderer.invoke(appIpcChannels.setWindowZoomLevel, level),
   handleExternalLink: (options) => ipcRenderer.invoke(appIpcChannels.handleExternalLink, options),
   getDefaultCwd: () => ipcRenderer.invoke(appIpcChannels.getDefaultCwd),
+  getContainerSuggestions: () => ipcRenderer.invoke(appIpcChannels.getContainerSuggestions),
+  getSourceAvailability: (options) =>
+    ipcRenderer.invoke(appIpcChannels.getSourceAvailability, options),
   getGitChanges: (options) => ipcRenderer.invoke(appIpcChannels.getGitChanges, options),
   getGitBranches: (options) => ipcRenderer.invoke(appIpcChannels.getGitBranches, options),
   switchGitBranch: (options) => ipcRenderer.invoke(appIpcChannels.switchGitBranch, options),
@@ -63,27 +67,42 @@ const appApi: AppApi = {
     ipcRenderer.on(appIpcChannels.windowStateUpdated, handleWindowStateUpdated)
     return () =>
       ipcRenderer.removeListener(appIpcChannels.windowStateUpdated, handleWindowStateUpdated)
+  },
+  onWindowZoomLevelUpdated: (listener): (() => void) => {
+    const handleWindowZoomLevelUpdated = (_: IpcRendererEvent, level: number): void => {
+      if (typeof level === 'number' && Number.isFinite(level)) listener(level)
+    }
+
+    ipcRenderer.on(appIpcChannels.windowZoomLevelUpdated, handleWindowZoomLevelUpdated)
+    return () =>
+      ipcRenderer.removeListener(
+        appIpcChannels.windowZoomLevelUpdated,
+        handleWindowZoomLevelUpdated
+      )
   }
 }
 
 const providerApi: ProviderRendererApi = {
-  login: (providerId) => ipcRenderer.invoke(providerIpcChannels.login, providerId),
-  getUpdateAvailability: (providerId) =>
-    ipcRenderer.invoke(providerIpcChannels.getUpdateAvailability, providerId),
-  updateProvider: (providerId) =>
-    ipcRenderer.invoke(providerIpcChannels.updateProvider, providerId),
+  login: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.login, providerId, options),
+  getUpdateAvailability: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getUpdateAvailability, providerId, options),
+  updateProvider: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.updateProvider, providerId, options),
   getApprovalModes: (providerId) =>
     ipcRenderer.invoke(providerIpcChannels.getApprovalModes, providerId),
   getSandboxModes: (providerId) =>
     ipcRenderer.invoke(providerIpcChannels.getSandboxModes, providerId),
-  getModels: (providerId) => ipcRenderer.invoke(providerIpcChannels.getModels, providerId),
-  getSkills: (providerId, cwd) =>
-    ipcRenderer.invoke(providerIpcChannels.getSkills, providerId, cwd),
-  getApps: (providerId) => ipcRenderer.invoke(providerIpcChannels.getApps, providerId),
+  getModels: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getModels, providerId, options),
+  getSkills: (providerId, cwd, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getSkills, providerId, cwd, options),
+  getApps: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getApps, providerId, options),
   getUsage: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getUsage, providerId, options),
-  resetRateLimits: (providerId) =>
-    ipcRenderer.invoke(providerIpcChannels.resetRateLimits, providerId),
+  resetRateLimits: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.resetRateLimits, providerId, options),
   getChats: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
   getChat: (providerId, chatId) =>

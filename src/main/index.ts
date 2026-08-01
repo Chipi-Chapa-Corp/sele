@@ -2,7 +2,12 @@ import { app, BrowserWindow, nativeTheme } from 'electron'
 import { join } from 'path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { appIpcChannels, type AppColorScheme } from '../shared/app'
+import {
+  appIpcChannels,
+  getAppWindowZoomShortcutAction,
+  normalizeAppWindowZoomLevel,
+  type AppColorScheme
+} from '../shared/app'
 import { disposeDatabase } from './database/sqlite'
 import { registerFreezeDiagnostics } from './freezeDiagnostics'
 import { disposeProviderAdapters } from './providers/providerService'
@@ -59,6 +64,21 @@ const createWindow = (): void => {
   mainWindow.on('leave-full-screen', () => sendAppWindowState(mainWindow))
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const action = getAppWindowZoomShortcutAction(input)
+    if (!action) return
+
+    event.preventDefault()
+
+    const currentZoomLevel = normalizeAppWindowZoomLevel(mainWindow.webContents.getZoomLevel())
+    const nextZoomLevel =
+      action === 'reset'
+        ? 0
+        : normalizeAppWindowZoomLevel(currentZoomLevel + (action === 'in' ? 1 : -1))
+
+    mainWindow.webContents.setZoomLevel(nextZoomLevel)
+    mainWindow.webContents.send(appIpcChannels.windowZoomLevelUpdated, nextZoomLevel)
+  })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])

@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import type { AppContainerTarget } from '../../../shared/app'
+import { getCurrentContainerHostBridge } from '../../currentContainer'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
 
@@ -40,11 +42,15 @@ type AppServerCommand = {
   resourceUnitName: string | null
 }
 
-const getAppServerCommand = (binary: string): AppServerCommand => {
+const getAppServerCommand = (
+  binary: string,
+  options: { container?: AppContainerTarget | null } = {}
+): AppServerCommand => {
   const appServerArgs = ['app-server', '--listen', 'stdio://']
   const canUseSystemd =
     process.platform === 'linux' &&
     !isRunningInFlatpak() &&
+    options.container?.kind !== 'container' &&
     Boolean(process.env.DBUS_SESSION_BUS_ADDRESS) &&
     process.env.SELE_DISABLE_CODEX_RESOURCE_ISOLATION !== '1'
 
@@ -88,6 +94,8 @@ export const getCodexResourceIdentity = (): CodexResourceIdentity | null =>
   codexResourceIdentity ? { ...codexResourceIdentity } : null
 
 export class CodexAppServerClient {
+  constructor(private readonly container: AppContainerTarget | null = null) {}
+
   private process: ChildProcessWithoutNullStreams | null = null
   private startPromise: Promise<void> | null = null
   private pendingRequests = new Map<number, PendingRequest>()
@@ -139,8 +147,13 @@ export class CodexAppServerClient {
   }
 
   private initialize = async (): Promise<void> => {
-    const appServerCommand = getAppServerCommand(getCodexExecutable())
+    const usePathCodex =
+      this.container?.kind === 'container' || Boolean(await getCurrentContainerHostBridge())
+    const appServerCommand = getAppServerCommand(usePathCodex ? 'codex' : getCodexExecutable(), {
+      container: this.container
+    })
     const hostCommand = await getHostCommand(appServerCommand.command, appServerCommand.args, {
+      container: this.container,
       env: process.env
     }).catch((error: unknown) => {
       throw getCodexExecutableError(error)

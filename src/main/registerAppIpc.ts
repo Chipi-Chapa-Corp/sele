@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
@@ -25,6 +26,7 @@ import {
 } from 'electron'
 import type {
   AppColorScheme,
+  AppContainerTarget,
   AppExternalLinkAction,
   AppExternalLinkOptions,
   AppExternalLinkResult,
@@ -54,15 +56,22 @@ import type {
   AppProjectIconOptions,
   AppSelectedAttachment,
   AppSelectedImage,
+  AppSourceAvailability,
+  AppSourceAvailabilityOptions,
   AppWriteFileContentsOptions,
   AppWindowState
 } from '../shared/app'
-import { appIpcChannels } from '../shared/app'
+import { appIpcChannels, normalizeAppWindowZoomLevel } from '../shared/app'
+import type { ProviderId } from '../shared/provider'
+import { requireContainerTarget } from './containerTarget'
+import { getCurrentContainerHostBridge } from './currentContainer'
 import {
   getProjectIcon as getStoredProjectIcon,
   setProjectIcon as setStoredProjectIcon
 } from './database/projectIcons'
+import { getContainerSuggestions } from './containerSuggestions'
 import { getHostCommand } from './hostProcess'
+import { getCodexExecutable } from './providers/codex/CodexExecutable'
 
 export const getAppWindowState = (window: BrowserWindow): AppWindowState => ({
   isMaximized: window.isMaximized()
@@ -87,6 +96,8 @@ const getDefaultPath = (value: unknown): string | undefined => {
 
 const externalLinkProtocols = new Set(['http:', 'https:', 'mailto:', 'tel:'])
 const maxExternalLinkLength = 8_192
+const sourceAvailabilityTimeoutMs = 3_000
+const sourceAvailabilityMaxBuffer = 64 * 1024
 
 const isExternalLinkAction = (value: unknown): value is AppExternalLinkAction =>
   value === 'copy' || value === 'open'
@@ -323,10 +334,18 @@ type BranchBase = {
 }
 
 type RunGitOptions = {
+  container?: AppContainerTarget | null
   env?: NodeJS.ProcessEnv
   input?: string
   required?: boolean
 }
+
+const gitCommandContext = new AsyncLocalStorage<{ container?: AppContainerTarget | null }>()
+
+const runWithGitContainer = <T>(
+  container: AppContainerTarget | null | undefined,
+  run: () => Promise<T>
+): Promise<T> => gitCommandContext.run({ container }, run)
 
 const getRunGitOptions = (options: boolean | RunGitOptions): RunGitOptions =>
   typeof options === 'boolean' ? { required: options } : options
@@ -337,8 +356,9 @@ const runGit = async (
   options: boolean | RunGitOptions = false
 ): Promise<string | null> => {
   const runOptions = getRunGitOptions(options)
+  const container = runOptions.container ?? gitCommandContext.getStore()?.container
   const env = { ...process.env, GIT_MERGE_AUTOEDIT: 'no', ...runOptions.env }
-  const hostCommand = await getHostCommand('git', args, { cwd, env })
+  const hostCommand = await getHostCommand('git', args, { container, cwd, env })
 
   return new Promise((resolve, reject) => {
     const child = execFile(
@@ -434,7 +454,7 @@ const getGitChangesOptions = (value: unknown): AppGitChangesOptions => {
     throw new Error('Invalid Git changes options')
   }
 
-  const options = value as { cwd?: unknown; source?: unknown }
+  const options = value as { container?: unknown; cwd?: unknown; source?: unknown }
   const source = options.source
 
   if (source !== 'branch' && source !== 'uncommitted') {
@@ -442,8 +462,100 @@ const getGitChangesOptions = (value: unknown): AppGitChangesOptions => {
   }
 
   return {
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
     source
+  }
+}
+
+const getSourceAvailabilityOptions = (value: unknown): AppSourceAvailabilityOptions => {
+  if (value == null) return {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid source availability options')
+  }
+
+  return {
+    container: requireContainerTarget((value as { container?: unknown }).container, {
+      optional: true
+    })
+  }
+}
+
+const runAvailabilityCommand = async (
+  file: string,
+  args: string[],
+  container: AppContainerTarget | null | undefined
+): Promise<boolean> => {
+  const hostCommand = await getHostCommand(file, args, {
+    container,
+    env: process.env
+  }).catch(() => null)
+  if (!hostCommand) return false
+
+  return new Promise((resolve) => {
+    execFile(
+      hostCommand.file,
+      hostCommand.args,
+      {
+        cwd: hostCommand.cwd,
+        env: hostCommand.env,
+        maxBuffer: sourceAvailabilityMaxBuffer,
+        timeout: sourceAvailabilityTimeoutMs
+      },
+      (error) => resolve(!error)
+    )
+  })
+}
+
+const isCommandAvailableInSource = (
+  command: string,
+  container: AppContainerTarget | null | undefined
+): Promise<boolean> => {
+  if (container?.kind === 'container') {
+    return runAvailabilityCommand('sh', ['-lc', `command -v ${command} >/dev/null 2>&1`], container)
+  }
+
+  return runAvailabilityCommand(command, ['--version'], null)
+}
+
+const isProviderAvailableInSource = async (
+  providerId: ProviderId,
+  container: AppContainerTarget | null | undefined
+): Promise<boolean> => {
+  if (providerId === 'codex') {
+    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
+      return isCommandAvailableInSource('codex', container)
+    }
+
+    return runAvailabilityCommand(getCodexExecutable(), ['--version'], null)
+  }
+
+  if (providerId === 'copilot') {
+    return container?.kind === 'container' || (await getCurrentContainerHostBridge())
+      ? isCommandAvailableInSource('copilot', container)
+      : true
+  }
+
+  return false
+}
+
+const getSourceAvailability = async (
+  options: AppSourceAvailabilityOptions = {}
+): Promise<AppSourceAvailability> => {
+  const container = options.container
+  const [gitAvailable, providers] = await Promise.all([
+    isCommandAvailableInSource('git', container),
+    Promise.all(
+      (['codex', 'copilot'] satisfies ProviderId[]).map(async (providerId) => ({
+        providerId,
+        available: await isProviderAvailableInSource(providerId, container)
+      }))
+    )
+  ])
+
+  return {
+    gitAvailable,
+    providers
   }
 }
 
@@ -454,6 +566,9 @@ const getGitBranchesOptions = (value: unknown): AppGitBranchesOptions => {
   }
 
   return {
+    container: requireContainerTarget((value as { container?: unknown }).container, {
+      optional: true
+    }),
     cwd: getDefaultPath((value as { cwd?: unknown }).cwd)
   }
 }
@@ -463,7 +578,12 @@ const getGitSwitchBranchOptions = (value: unknown): AppGitSwitchBranchOptions =>
     throw new Error('Invalid Git branch switch options')
   }
 
-  const options = value as { branchName?: unknown; create?: unknown; cwd?: unknown }
+  const options = value as {
+    branchName?: unknown
+    container?: unknown
+    create?: unknown
+    cwd?: unknown
+  }
   const branchName = typeof options.branchName === 'string' ? options.branchName.trim() : ''
 
   if (!branchName || branchName.includes('\0') || branchName.includes('\n')) {
@@ -475,6 +595,7 @@ const getGitSwitchBranchOptions = (value: unknown): AppGitSwitchBranchOptions =>
 
   return {
     branchName,
+    container: requireContainerTarget(options.container, { optional: true }),
     create: Boolean(options.create),
     cwd: getDefaultPath(options.cwd)
   }
@@ -485,9 +606,10 @@ const getFileTreeOptions = (value: unknown): AppFileTreeOptions => {
   if (typeof value !== 'object' || Array.isArray(value))
     throw new Error('Invalid file tree options')
 
-  const options = value as { cwd?: unknown }
+  const options = value as { container?: unknown; cwd?: unknown }
 
   return {
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd)
   }
 }
@@ -497,7 +619,7 @@ const getFileContentsOptions = (value: unknown): AppFileContentsOptions => {
     throw new Error('Invalid file options')
   }
 
-  const options = value as { cwd?: unknown; path?: unknown }
+  const options = value as { container?: unknown; cwd?: unknown; path?: unknown }
   if (
     typeof options.path !== 'string' ||
     options.path.length === 0 ||
@@ -507,6 +629,7 @@ const getFileContentsOptions = (value: unknown): AppFileContentsOptions => {
   }
 
   return {
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: getOptionalCwd(options.cwd),
     path: options.path
   }
@@ -572,6 +695,7 @@ const getGitCommitOptions = (value: unknown): AppGitCommitOptions => {
 
   const options = value as {
     action?: unknown
+    container?: unknown
     cwd?: unknown
     files?: unknown
     message?: unknown
@@ -595,6 +719,7 @@ const getGitCommitOptions = (value: unknown): AppGitCommitOptions => {
 
   return {
     action,
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
     files,
     patches,
@@ -604,11 +729,21 @@ const getGitCommitOptions = (value: unknown): AppGitCommitOptions => {
 
 const getGitSyncOptions = (
   value: unknown
-): { cwd?: string | null; rememberStrategy: boolean; strategy?: AppGitPullStrategy } => {
+): {
+  container?: AppContainerTarget | null
+  cwd?: string | null
+  rememberStrategy: boolean
+  strategy?: AppGitPullStrategy
+} => {
   if (value == null) return { rememberStrategy: false }
   if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid Git sync options')
 
-  const options = value as { cwd?: unknown; rememberStrategy?: unknown; strategy?: unknown }
+  const options = value as {
+    container?: unknown
+    cwd?: unknown
+    rememberStrategy?: unknown
+    strategy?: unknown
+  }
   const rememberStrategy = options.rememberStrategy
   const strategy = options.strategy
 
@@ -621,6 +756,7 @@ const getGitSyncOptions = (
   }
 
   return {
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
     rememberStrategy: Boolean(rememberStrategy),
     strategy: isGitPullStrategy(strategy) ? strategy : undefined
@@ -633,7 +769,7 @@ const getGitRecentCommitMessagesOptions = (value: unknown): AppGitRecentCommitMe
     throw new Error('Invalid Git commit history options')
   }
 
-  const options = value as { cwd?: unknown; limit?: unknown }
+  const options = value as { container?: unknown; cwd?: unknown; limit?: unknown }
   const limit = options.limit
 
   if (
@@ -644,6 +780,7 @@ const getGitRecentCommitMessagesOptions = (value: unknown): AppGitRecentCommitMe
   }
 
   return {
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
     limit: limit ?? null
   }
@@ -655,9 +792,10 @@ const getGitDiffOptions = (value: unknown): AppGitDiffOptions => {
     throw new Error('Invalid Git diff options')
   }
 
-  const options = value as { cwd?: unknown }
+  const options = value as { container?: unknown; cwd?: unknown }
 
   return {
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd)
   }
 }
@@ -686,9 +824,10 @@ const getGitUncommittedPatchChangesOptions = (
     throw new Error('Invalid Git patch filter options')
   }
 
-  const options = value as { cwd?: unknown; patches?: unknown }
+  const options = value as { container?: unknown; cwd?: unknown; patches?: unknown }
 
   return {
+    container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
     patches: getGitPatchChanges(options.patches, 'Invalid Git patch filter patches')
   }
@@ -1664,6 +1803,12 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.getDefaultCwd, () => process.cwd())
 
+  ipcMain.handle(appIpcChannels.getContainerSuggestions, () => getContainerSuggestions())
+
+  ipcMain.handle(appIpcChannels.getSourceAvailability, (_event, value: unknown) =>
+    getSourceAvailability(getSourceAvailabilityOptions(value))
+  )
+
   ipcMain.handle(appIpcChannels.getWindowState, (event) =>
     getAppWindowState(getBrowserWindow(event))
   )
@@ -1684,6 +1829,10 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.closeWindow, (event) => {
     getBrowserWindow(event).close()
+  })
+
+  ipcMain.handle(appIpcChannels.setWindowZoomLevel, (event, value: unknown) => {
+    getBrowserWindow(event).webContents.setZoomLevel(normalizeAppWindowZoomLevel(value))
   })
 
   ipcMain.handle(appIpcChannels.handleExternalLink, async (event, value: unknown) => {
@@ -1717,82 +1866,102 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.getGitChanges, async (_event, value: unknown) => {
     const options = getGitChangesOptions(value)
-    return getGitChanges(options.cwd ?? process.cwd(), options.source)
+    return runWithGitContainer(options.container, () =>
+      getGitChanges(options.cwd ?? process.cwd(), options.source)
+    )
   })
 
   ipcMain.handle(appIpcChannels.getGitBranches, async (_event, value: unknown) => {
     const options = getGitBranchesOptions(value)
-    return getGitBranches(options.cwd ?? process.cwd())
+    return runWithGitContainer(options.container, () =>
+      getGitBranches(options.cwd ?? process.cwd())
+    )
   })
 
   ipcMain.handle(appIpcChannels.switchGitBranch, async (_event, value: unknown) => {
     const options = getGitSwitchBranchOptions(value)
-    return switchGitBranch(
-      options.cwd ?? process.cwd(),
-      options.branchName,
-      Boolean(options.create)
+    return runWithGitContainer(options.container, () =>
+      switchGitBranch(options.cwd ?? process.cwd(), options.branchName, Boolean(options.create))
     )
   })
 
   ipcMain.handle(appIpcChannels.getFileTree, async (_event, value: unknown) => {
     const options = getFileTreeOptions(value)
-    return getFileTree(options.cwd ?? process.cwd())
+    return runWithGitContainer(options.container, () => getFileTree(options.cwd ?? process.cwd()))
   })
 
   ipcMain.handle(appIpcChannels.getFileContents, async (_event, value: unknown) => {
     const options = getFileContentsOptions(value)
-    return readFileContents(options.cwd ?? process.cwd(), options.path)
+    return runWithGitContainer(options.container, () =>
+      readFileContents(options.cwd ?? process.cwd(), options.path)
+    )
   })
 
   ipcMain.handle(appIpcChannels.writeFileContents, async (_event, value: unknown) => {
     const options = getWriteFileContentsOptions(value)
-    return writeEditableFile(
-      options.cwd ?? process.cwd(),
-      options.path,
-      options.contents,
-      options.expectedVersion
+    return runWithGitContainer(options.container, () =>
+      writeEditableFile(
+        options.cwd ?? process.cwd(),
+        options.path,
+        options.contents,
+        options.expectedVersion
+      )
     )
   })
 
   ipcMain.handle(appIpcChannels.getRecentGitCommitMessages, async (_event, value: unknown) => {
     const options = getGitRecentCommitMessagesOptions(value)
-    return getRecentGitCommitMessages(options.cwd ?? process.cwd(), options.limit ?? 3)
+    return runWithGitContainer(options.container, () =>
+      getRecentGitCommitMessages(options.cwd ?? process.cwd(), options.limit ?? 3)
+    )
   })
 
   ipcMain.handle(appIpcChannels.getUncommittedGitDiff, async (_event, value: unknown) => {
     const options = getGitDiffOptions(value)
-    return getUncommittedGitDiff(options.cwd ?? process.cwd())
+    return runWithGitContainer(options.container, () =>
+      getUncommittedGitDiff(options.cwd ?? process.cwd())
+    )
   })
 
   ipcMain.handle(appIpcChannels.getGitFileDiff, async (_event, value: unknown) => {
     const options = getGitFileDiffOptions(value)
-    return getGitFileDiff(options.cwd ?? process.cwd(), options.path, options.previousPath)
+    return runWithGitContainer(options.container, () =>
+      getGitFileDiff(options.cwd ?? process.cwd(), options.path, options.previousPath)
+    )
   })
 
   ipcMain.handle(appIpcChannels.getUncommittedGitPatchChanges, async (_event, value: unknown) => {
     const options = getGitUncommittedPatchChangesOptions(value)
-    return getUncommittedGitPatchChanges(options.cwd ?? process.cwd(), options.patches)
+    return runWithGitContainer(options.container, () =>
+      getUncommittedGitPatchChanges(options.cwd ?? process.cwd(), options.patches)
+    )
   })
 
   ipcMain.handle(appIpcChannels.commitGitChanges, async (_event, value: unknown) => {
     const options = getGitCommitOptions(value)
-    return commitGitChanges(
-      options.cwd ?? process.cwd(),
-      options.files,
-      options.message,
-      options.action ?? 'commit',
-      options.patches
+    return runWithGitContainer(options.container, () =>
+      commitGitChanges(
+        options.cwd ?? process.cwd(),
+        options.files,
+        options.message,
+        options.action ?? 'commit',
+        options.patches
+      )
     )
   })
 
   ipcMain.handle(appIpcChannels.pullGitChanges, async (_event, value: unknown) => {
     const options = getGitSyncOptions(value)
-    return pullGitChanges(options.cwd ?? process.cwd(), options.strategy, options.rememberStrategy)
+    return runWithGitContainer(options.container, () =>
+      pullGitChanges(options.cwd ?? process.cwd(), options.strategy, options.rememberStrategy)
+    )
   })
 
   ipcMain.handle(appIpcChannels.pushGitChanges, async (_event, value: unknown) => {
     const options = getGitSyncOptions(value)
-    return pushGitChanges(options.cwd ?? process.cwd())
+    return runWithGitContainer(options.container, () =>
+      pushGitChanges(options.cwd ?? process.cwd())
+    )
   })
 
   ipcMain.handle(appIpcChannels.selectFolder, async (event, options: unknown) => {

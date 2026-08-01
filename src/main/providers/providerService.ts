@@ -16,6 +16,7 @@ import type {
 import {
   getChatMetadata,
   getChatMetadataByIds,
+  setChatContainer,
   setChatDone,
   setChatPinned,
   setChatPurpose,
@@ -60,7 +61,8 @@ const applyMetadataToChat = (
   pinned: metadata?.pinned ?? false,
   done: metadata?.done ?? false,
   seenUpdatedAt: metadata?.seenUpdatedAt ?? null,
-  purpose: metadata?.purpose ?? null
+  purpose: metadata?.purpose ?? null,
+  container: metadata?.container ?? chat.container ?? null
 })
 
 const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat[]> => {
@@ -115,6 +117,7 @@ const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<Provid
     done: metadata.done,
     seenUpdatedAt: metadata.seenUpdatedAt,
     purpose: metadata.purpose,
+    container: metadata.container ?? detail.container ?? null,
     items: detail.items.map((item) => {
       if (item.type !== 'message' && item.type !== 'pendingMessage') return item
 
@@ -204,6 +207,7 @@ export const getChatUpdateSummary = (
   done: detail.done,
   seenUpdatedAt: detail.seenUpdatedAt,
   purpose: detail.purpose,
+  container: detail.container,
   currentActivity: getChatUpdateActivity(detail)
 })
 
@@ -263,16 +267,17 @@ for (const adapter of Object.values(adapters)) {
 }
 
 export const providerApi: ProviderApi = {
-  login: (providerId) => adapters[providerId].login(),
-  getUpdateAvailability: (providerId) => adapters[providerId].getUpdateAvailability(),
-  updateProvider: (providerId) => adapters[providerId].updateProvider(),
+  login: (providerId, options) => adapters[providerId].login(options),
+  getUpdateAvailability: (providerId, options) =>
+    adapters[providerId].getUpdateAvailability(options),
+  updateProvider: (providerId, options) => adapters[providerId].updateProvider(options),
   getApprovalModes: (providerId) => adapters[providerId].getApprovalModes(),
   getSandboxModes: (providerId) => adapters[providerId].getSandboxModes(),
-  getModels: (providerId) => adapters[providerId].getModels(),
-  getSkills: (providerId, cwd) => adapters[providerId].getSkills(cwd),
-  getApps: (providerId) => adapters[providerId].getApps(),
+  getModels: (providerId, options) => adapters[providerId].getModels(options),
+  getSkills: (providerId, cwd, options) => adapters[providerId].getSkills(cwd, options),
+  getApps: (providerId, options) => adapters[providerId].getApps(options),
   getUsage: (providerId, options?: ProviderUsageOptions) => adapters[providerId].getUsage(options),
-  resetRateLimits: (providerId) => adapters[providerId].resetRateLimits(),
+  resetRateLimits: (providerId, options) => adapters[providerId].resetRateLimits(options),
   getChats: async (providerId, options) => {
     const page = await adapters[providerId].getChats(options)
     const chats = await applyMetadataToChats(page.chats)
@@ -281,8 +286,12 @@ export const providerApi: ProviderApi = {
       chats: chats.filter((chat) => chat.purpose !== 'commit')
     }
   },
-  getChat: async (providerId, chatId) =>
-    applyMetadataToDetail(await adapters[providerId].getChat(chatId)),
+  getChat: async (providerId, chatId) => {
+    const metadata = await getChatMetadata(chatId)
+    return applyMetadataToDetail(
+      await adapters[providerId].getChat(chatId, { container: metadata.container })
+    )
+  },
   generateOneShot: (providerId, message, options) =>
     adapters[providerId].generateOneShot(message, options),
   cancelOneShot: (providerId, generationId) => adapters[providerId].cancelOneShot(generationId),
@@ -291,10 +300,13 @@ export const providerApi: ProviderApi = {
       const detail = await adapters[providerId].startChat(
         message,
         options,
-        purpose || options?.review
+        purpose || options?.review || options?.container
           ? async (chatId) => {
               await Promise.all([
                 purpose ? setChatPurpose(chatId, purpose) : Promise.resolve(),
+                options?.container
+                  ? setChatContainer(chatId, options.container)
+                  : Promise.resolve(),
                 options?.review
                   ? setMessageReview(chatId, message, options.review.prompt, options.review)
                   : Promise.resolve()
@@ -321,6 +333,9 @@ export const providerApi: ProviderApi = {
         async (forkedChatId) => {
           await Promise.all([
             setChatPurpose(forkedChatId, purpose),
+            options?.container
+              ? setChatContainer(forkedChatId, options.container)
+              : Promise.resolve(),
             options?.review
               ? setMessageReview(forkedChatId, message, options.review.prompt, options.review)
               : Promise.resolve()

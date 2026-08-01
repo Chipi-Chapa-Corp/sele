@@ -13,12 +13,14 @@ import type {
   ProviderModel,
   ProviderAccountRateLimitResetOutcome,
   ProviderAccountUsage,
+  ProviderSourceOptions,
   ProviderUsageOptions,
   ProviderActiveSendMode,
   ProviderTurnOptions,
   ProviderOneShotOptions,
   ProviderAgentTerminalDataEvent
 } from '../../shared/provider'
+import type { AppContainerTarget } from '../../shared/app'
 
 export type ProviderChatUpdateMetadata = {
   turnCompleted?: boolean
@@ -26,18 +28,25 @@ export type ProviderChatUpdateMetadata = {
 
 export type ProviderAdapter = {
   id: ProviderId
-  login: () => Promise<ProviderLoginResult>
-  getUpdateAvailability: () => Promise<ProviderUpdateAvailability | null>
-  updateProvider: () => Promise<ProviderUpdateAvailability | null>
+  login: (options?: ProviderSourceOptions) => Promise<ProviderLoginResult>
+  getUpdateAvailability: (
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderUpdateAvailability | null>
+  updateProvider: (options?: ProviderSourceOptions) => Promise<ProviderUpdateAvailability | null>
   getApprovalModes: () => Promise<ProviderApprovalModeOption[]>
   getSandboxModes: () => Promise<ProviderSandboxModeOption[]>
-  getModels: () => Promise<ProviderModel[]>
-  getSkills: (cwd?: string | null) => Promise<ProviderSkill[]>
-  getApps: () => Promise<ProviderApp[]>
+  getModels: (options?: ProviderSourceOptions) => Promise<ProviderModel[]>
+  getSkills: (cwd?: string | null, options?: ProviderSourceOptions) => Promise<ProviderSkill[]>
+  getApps: (options?: ProviderSourceOptions) => Promise<ProviderApp[]>
   getUsage: (options?: ProviderUsageOptions) => Promise<ProviderAccountUsage>
-  resetRateLimits: () => Promise<ProviderAccountRateLimitResetOutcome>
+  resetRateLimits: (
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAccountRateLimitResetOutcome>
   getChats: (options?: ProviderChatListOptions) => Promise<ProviderChatPage>
-  getChat: (chatId: string) => Promise<ProviderChatDetail>
+  getChat: (
+    chatId: string,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<ProviderChatDetail>
   generateOneShot: (message: string, options?: ProviderOneShotOptions) => Promise<string>
   cancelOneShot: (generationId: string) => Promise<void>
   startChat: (
