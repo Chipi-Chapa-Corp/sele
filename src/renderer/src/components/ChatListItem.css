@@ -62,15 +62,15 @@
   flex: 1;
   overflow: hidden;
   color: var(--ink);
-  font-weight: 700;
+  font-weight: normal;
   letter-spacing: 0;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.chat-list-item:not(.chat-list-item--selected) .chat-list-item__title {
-  font-weight: 500;
+.chat-list-item--unread .chat-list-item__title {
+  font-weight: bold;
 }
 
 .chat-list-item__meta {
@@ -283,7 +283,7 @@
   transition:
     opacity 160ms ease,
     transform 160ms ease;
-  transform: translateY(-2px);
+  transform: none;
 }
 
 .chat-list-item:hover .chat-list-item__actions,
@@ -294,15 +294,15 @@
 }
 
 .chat-list-item__actions .ui-button {
-  border-color: var(--control-border);
-  background: var(--control-surface);
-  box-shadow: var(--control-shadow);
+  border-color: var(--secondary-border);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
 }
 
 .chat-list-item__actions .ui-button:not(:disabled):hover {
-  border-color: color-mix(in srgb, var(--control-border) 72%, var(--lead));
-  background: var(--control-surface-hover);
-  box-shadow: var(--control-shadow-hover);
+  border-color: var(--secondary-border-hover);
+  background: var(--secondary-surface-hover);
+  box-shadow: var(--secondary-shadow-hover);
 }
 
 @media (max-width: 600px) {

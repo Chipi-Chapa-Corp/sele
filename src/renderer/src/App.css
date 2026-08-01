@@ -253,6 +253,27 @@
   scrollbar-gutter: stable;
 }
 
+.chat-sidebar__loading-state {
+  display: grid;
+  box-sizing: border-box;
+  min-height: 100%;
+  place-items: center;
+  padding: 28px;
+  color: color-mix(in srgb, var(--quiet) 52%, transparent);
+}
+
+.chat-sidebar__loading-icon {
+  width: 72px;
+  height: 72px;
+  stroke-width: 1.35;
+}
+
+.chat-sidebar__loading-icon > svg {
+  width: 72px;
+  height: 72px;
+  stroke-width: 1.35;
+}
+
 .chat-sidebar__body::-webkit-scrollbar,
 .changes-sidebar__body::-webkit-scrollbar,
 .chat-detail__messages::-webkit-scrollbar {
@@ -834,9 +855,9 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
-  margin: 0 4px 8px;
-  color: var(--quiet);
-  font-weight: 650;
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-weight: 400;
 }
 
 .chat-panel--empty .chat-panel__composer {
@@ -1042,16 +1063,11 @@
 
 :root[data-control-style='transparent']
   :where(
-    .message-box .ui-button--secondary:not(:disabled):active,
     .message-box .ui-button--secondary[data-pressed]:not(:disabled),
-    .message-box .ui-dropdown__trigger:not(:disabled):active,
-    .message-box__chat-config-trigger:not(:disabled):active,
-    .chat-panel__new-session .ui-dropdown__trigger:not(:disabled):active,
-    .chat-home__header .ui-button--secondary:not(:disabled):active,
     .chat-home__header .ui-button--secondary[data-pressed]:not(:disabled)
   ) {
   background: var(--glass-subtle);
-  box-shadow: none;
+  box-shadow: var(--control-shadow-active);
 }
 
 :root[data-control-style='transparent']
@@ -1094,50 +1110,10 @@
   .message-box__usage-control
   > .ui-button[data-pressed]
   .message-box__usage-ring {
-  background:
-    radial-gradient(circle at center, var(--composer-bg) 52%, transparent 54%),
-    conic-gradient(
-      var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
-      color-mix(in srgb, var(--quiet) 28%, transparent) var(--message-box-usage-degrees) 360deg
-    );
-}
-
-:root[data-button-elevation='false']
-  :where(
-    .ui-button,
-    .ui-button-group,
-    .ui-dropdown__trigger,
-    .message-box__chat-config-trigger,
-    .ui-segmented-control
-  ) {
-  box-shadow: none;
-  transform: none;
-}
-
-:root[data-button-elevation='false'] :where(.ui-button)::before {
-  box-shadow: none;
-}
-
-:root[data-button-elevation='false']
-  :where(
-    .ui-button:not(:disabled):hover,
-    .ui-button[data-pressed]:not(:disabled),
-    .ui-button:not(:disabled):active,
-    .ui-button-group:hover,
-    .ui-button-group--open,
-    .ui-button-group:active,
-    .ui-dropdown__trigger:not(:disabled):hover,
-    .ui-dropdown__trigger:not(:disabled):active,
-    .message-box__chat-config-trigger:not(:disabled):hover,
-    .message-box__chat-config-trigger:not(:disabled):active,
-    .message-box__chat-config-trigger[aria-expanded='true'],
-    .ui-dropdown--open:not([data-dropdown-menu-root='true']):not(.ui-dropdown--disabled)
-      .ui-dropdown__trigger,
-    .ui-dropdown--inline .ui-dropdown__trigger:hover,
-    .ui-dropdown--inline .ui-dropdown__trigger:focus-visible
-  ) {
-  box-shadow: none;
-  transform: none;
+  background: conic-gradient(
+    var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
+    color-mix(in srgb, var(--quiet) 28%, transparent) var(--message-box-usage-degrees) 360deg
+  );
 }
 
 ::highlight(sele-chat-search-match) {

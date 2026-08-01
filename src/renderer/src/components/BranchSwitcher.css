@@ -14,14 +14,14 @@
   justify-content: space-between;
   gap: 9px;
   padding: 0 13px 0 14px;
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--secondary-border);
   border-radius: var(--control-radius);
   color: var(--lead);
   cursor: pointer;
-  background: var(--control-surface);
-  box-shadow: var(--control-shadow);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
   font: inherit;
-  font-weight: 650;
+  font-weight: 400;
   text-align: left;
   -webkit-tap-highlight-color: transparent;
   transition:
@@ -34,16 +34,10 @@
 
 :where(.branch-switcher__trigger:not(:disabled):hover),
 :where(.branch-switcher--open .branch-switcher__trigger) {
+  border-color: var(--secondary-border-hover);
   color: var(--ink);
-  background: var(--control-surface-hover);
-  box-shadow: var(--control-shadow-hover);
-  transform: translateY(-1px);
-}
-
-:where(.branch-switcher__trigger:not(:disabled):active) {
-  background: var(--control-surface-active);
-  box-shadow: var(--control-shadow-active);
-  transform: translateY(0);
+  background: var(--secondary-surface-hover);
+  box-shadow: var(--secondary-shadow-hover);
 }
 
 :where(.branch-switcher__trigger:focus-visible) {
@@ -131,7 +125,7 @@
   cursor: pointer;
   background: transparent;
   font: inherit;
-  font-weight: 650;
+  font-weight: 400;
   text-align: left;
 }
 
@@ -173,7 +167,7 @@
 }
 
 :where(.branch-switcher__option-label strong) {
-  font-weight: 800;
+  font-weight: inherit;
 }
 
 :where(.branch-switcher__option-check) {

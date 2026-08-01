@@ -59,7 +59,7 @@
   gap: 0.36em;
   overflow: hidden;
   padding: 0.12em 0.46em;
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--secondary-border);
   border-radius: 7px;
   color: var(--ink);
   background: var(--secondary-surface);
@@ -93,17 +93,10 @@
 .chat-detail__message-attachment-file:not(:disabled):hover,
 .chat-detail__message-attachment-review:hover,
 .chat-detail__message-attachment-review[aria-expanded='true'] {
+  border-color: var(--secondary-border-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
-  transform: translateY(-1px);
-}
-
-.chat-detail__message-attachment-file:not(:disabled):active,
-.chat-detail__message-attachment-review:active {
-  background: var(--secondary-surface-active);
-  box-shadow: none;
-  transform: none;
 }
 
 .chat-detail__message-attachment-file:focus-visible,
@@ -218,7 +211,7 @@
 .chat-detail__pending-message-label {
   max-width: 82%;
   color: var(--quiet);
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1.2;
 }
 
@@ -461,7 +454,7 @@
   gap: 0.36em;
   margin: 0 0.05em;
   padding: 0.12em 0.46em;
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--secondary-border);
   border-radius: 7px;
   color: var(--ink);
   background: var(--secondary-surface);
@@ -504,20 +497,14 @@
 .chat-detail__file-link-line {
   flex: none;
   color: var(--quiet);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .chat-detail__file-link:hover {
+  border-color: var(--secondary-border-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
-  transform: translateY(-1px);
-}
-
-.chat-detail__file-link:active {
-  background: var(--secondary-surface-active);
-  box-shadow: none;
-  transform: none;
 }
 
 .chat-detail__file-link:focus-visible {
@@ -960,12 +947,6 @@
 .chat-detail__generated-image-thumbnail:hover {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--glass-line));
   box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-1px);
-}
-
-.chat-detail__generated-image-thumbnail:active {
-  box-shadow: var(--subtle-shadow);
-  transform: none;
 }
 
 .chat-detail__generated-image-thumbnail:focus-visible {

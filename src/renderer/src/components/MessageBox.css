@@ -39,12 +39,12 @@
   justify-content: space-between;
   gap: 9px;
   padding: 0 13px 0 14px;
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--secondary-border);
   border-radius: var(--control-radius);
   color: var(--lead);
   cursor: pointer;
-  background: var(--control-surface);
-  box-shadow: var(--control-shadow);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
   font: inherit;
   font-weight: 400;
   text-align: left;
@@ -59,16 +59,10 @@
 
 .message-box__chat-config-trigger:not(:disabled):hover,
 .message-box__chat-config-trigger[aria-expanded='true'] {
+  border-color: var(--secondary-border-hover);
   color: var(--ink);
-  background: var(--control-surface-hover);
-  box-shadow: var(--control-shadow-hover);
-  transform: translateY(-1px);
-}
-
-.message-box__chat-config-trigger:not(:disabled):active {
-  background: var(--control-surface-active);
-  box-shadow: var(--control-shadow-active);
-  transform: translateY(0);
+  background: var(--secondary-surface-hover);
+  box-shadow: var(--secondary-shadow-hover);
 }
 
 .message-box__chat-config-trigger:focus-visible {
@@ -411,7 +405,7 @@
   max-width: 100%;
   align-items: center;
   overflow: hidden;
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--secondary-border);
   color: var(--ink);
   background: var(--secondary-surface);
   box-shadow: var(--secondary-shadow);
@@ -429,7 +423,8 @@
 }
 
 .message-box__attachment-preview:has(> .message-box__attachment-open:not(:disabled):hover) {
-  transform: translateY(-1px);
+  border-color: var(--secondary-border-hover);
+  transform: none;
 }
 
 .message-box__attachment-preview--image:has(> .message-box__attachment-open:not(:disabled):hover) {
@@ -497,7 +492,7 @@
   min-width: 0;
   min-height: var(--control-height);
   max-height: 180px;
-  padding: 5px 8px 0;
+  padding: 5px 8px 0 0;
   resize: none;
   border: 0;
   outline: 0;
@@ -593,11 +588,24 @@
   height: 30px;
   min-height: 30px;
   padding: 0;
+  border-color: transparent;
   border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .message-box__usage-control > .ui-button::before {
   border-radius: 999px;
+  box-shadow: none;
+}
+
+.message-box__usage-control > .ui-button:not(:disabled):hover,
+.message-box__usage-control > .ui-button[data-pressed]:not(:disabled),
+.message-box__usage-control > .ui-button:not(:disabled):active,
+.message-box__usage-control > .ui-button:disabled {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .message-box__usage-control > .ui-button .ui-button__icon {
@@ -612,28 +620,24 @@
   height: 100%;
   place-items: center;
   border-radius: 999px;
-  background:
-    radial-gradient(circle at center, var(--secondary-surface) 52%, transparent 54%),
-    conic-gradient(
-      var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
-      color-mix(in srgb, var(--quiet) 24%, transparent) var(--message-box-usage-degrees) 360deg
-    );
+  background: conic-gradient(
+    var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
+    color-mix(in srgb, var(--quiet) 24%, transparent) var(--message-box-usage-degrees) 360deg
+  );
+  -webkit-mask: radial-gradient(circle at center, transparent 52%, black 54%);
+  mask: radial-gradient(circle at center, transparent 52%, black 54%);
 }
 
 .message-box__usage-control > .ui-button:not(:disabled):hover .message-box__usage-ring,
 .message-box__usage-control > .ui-button[data-pressed] .message-box__usage-ring {
-  background:
-    radial-gradient(circle at center, var(--secondary-surface-hover) 52%, transparent 54%),
-    conic-gradient(
-      var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
-      color-mix(in srgb, var(--quiet) 28%, transparent) var(--message-box-usage-degrees) 360deg
-    );
+  background: conic-gradient(
+    var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
+    color-mix(in srgb, var(--quiet) 28%, transparent) var(--message-box-usage-degrees) 360deg
+  );
 }
 
 .message-box__usage-control > .ui-button:disabled .message-box__usage-ring {
-  background:
-    radial-gradient(circle at center, var(--secondary-surface) 52%, transparent 54%),
-    conic-gradient(color-mix(in srgb, var(--quiet) 44%, transparent) 0deg 360deg);
+  background: conic-gradient(color-mix(in srgb, var(--quiet) 44%, transparent) 0deg 360deg);
 }
 
 .message-box__usage-popover {
