@@ -54,6 +54,7 @@ const createWindow = (): void => {
   })
 
   mainWindow.on('ready-to-show', () => {
+    mainWindow.maximize()
     sendAppWindowState(mainWindow)
     mainWindow.show()
   })
