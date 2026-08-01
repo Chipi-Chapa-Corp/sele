@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.3.0" date="2026-08-01">
+      <description>
+        <p>Added container source support and zoom controls, improved chat switching performance, refined control surfaces, and fixed recursive restart handling.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-07-31">
       <description>
         <p>Added GitHub Copilot support, improved host path resolution, and refreshed application metadata.</p>
