@@ -98,7 +98,7 @@
 .cwd-actions-dialog :is(.ui-button, .ui-dropdown__trigger, .ui-dropdown__option),
 .cwd-actions-dialog__field > span,
 .cwd-actions-dialog__field label,
-.cwd-actions-dialog__switch-row > span:first-child {
+.cwd-actions-dialog__switch-row {
   font: inherit;
 }
 
@@ -129,17 +129,39 @@
   width: var(--control-height);
 }
 
+.cwd-actions-dialog__icon-picker[data-dropdown-menu-root='true'] {
+  z-index: 1200;
+}
+
 .cwd-actions-dialog__icon-picker .ui-dropdown__option {
   font: inherit;
 }
 
 .cwd-actions-dialog__icon-picker .ui-dropdown__trigger {
   padding: 0;
+  border-color: transparent;
   justify-content: center;
+  background: transparent;
+  box-shadow: none;
+  font-weight: 700;
+}
+
+.cwd-actions-dialog__icon-picker .ui-dropdown__trigger:not(:disabled):hover,
+.cwd-actions-dialog__icon-picker.ui-dropdown--open:not([data-dropdown-menu-root='true']):not(
+    .ui-dropdown--disabled
+  )
+  .ui-dropdown__trigger {
+  border-color: transparent;
+  background: var(--glass-subtle);
+  box-shadow: none;
 }
 
 .cwd-actions-dialog__icon-picker .ui-dropdown__value {
   flex: none;
+}
+
+.cwd-actions-dialog__icon-picker .ui-dropdown__value-icon {
+  color: currentColor;
 }
 
 .cwd-actions-dialog__icon-picker .ui-dropdown__value-label {
@@ -185,70 +207,8 @@
   min-height: 96px;
 }
 
-.cwd-actions-dialog__switch-row {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-height: 34px;
-}
-
 .cwd-actions-dialog__switch-row[data-disabled='true'] {
   opacity: 0.56;
-}
-
-.cwd-actions-dialog__switch-row input {
-  position: absolute;
-  right: 0;
-  width: 46px;
-  height: 26px;
-  margin: 0;
-  opacity: 0;
-}
-
-.cwd-actions-dialog__switch {
-  position: relative;
-  display: block;
-  width: 46px;
-  height: 26px;
-  border: 1px solid var(--control-border);
-  border-radius: 999px;
-  background: var(--control-surface);
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-.cwd-actions-dialog__switch::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  background: var(--quiet);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
-  transition:
-    background 140ms ease,
-    transform 140ms ease;
-}
-
-.cwd-actions-dialog__switch-row input:checked + .cwd-actions-dialog__switch {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.cwd-actions-dialog__switch-row input:checked + .cwd-actions-dialog__switch::after {
-  background: var(--accent-ink);
-  transform: translateX(20px);
-}
-
-.cwd-actions-dialog__switch-row input:focus-visible + .cwd-actions-dialog__switch {
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .cwd-actions-dialog__error {

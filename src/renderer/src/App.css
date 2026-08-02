@@ -38,6 +38,10 @@
   left: var(--window-controls-edge-inset);
 }
 
+:root[data-window-control-position='hidden'] .window-controls {
+  display: none;
+}
+
 :root[data-window-control-position='left'] .window-controls--default,
 :root[data-window-control-position='right'] .window-controls--darwin,
 :root:not([data-window-control-position])[data-platform='darwin'] .window-controls--default,
@@ -356,16 +360,19 @@
   place-items: center;
 }
 
-.changes-sidebar__animated-icon {
+.app-animated-icon {
   display: grid;
-  width: var(--control-icon-size);
-  height: var(--control-icon-size);
   place-items: center;
 }
 
-.changes-sidebar__animated-icon > svg {
+.app-animated-icon--control {
   width: var(--control-icon-size);
   height: var(--control-icon-size);
+}
+
+.app-animated-icon > svg {
+  width: 100%;
+  height: 100%;
 }
 
 .changes-sidebar__view-toggle {
@@ -853,11 +860,16 @@
 .chat-panel__new-session {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin: 0 0 8px;
   color: var(--ink);
   font-weight: 400;
+}
+
+.chat-worktree-creation {
+  margin-bottom: 12px;
 }
 
 .chat-panel--empty .chat-panel__composer {
@@ -1425,65 +1437,7 @@
 }
 
 .settings-switch {
-  position: relative;
-  display: inline-grid;
-  min-width: 0;
-  width: 46px;
-  height: 26px;
   justify-self: end;
-  place-items: center;
-  cursor: pointer;
-}
-
-.settings-switch input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  opacity: 0;
-}
-
-.settings-switch__control {
-  position: relative;
-  display: block;
-  width: 46px;
-  height: 26px;
-  border: 1px solid var(--control-border);
-  border-radius: 999px;
-  background: var(--control-surface);
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-.settings-switch__control::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  background: var(--quiet);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
-  transition:
-    background 140ms ease,
-    transform 140ms ease;
-}
-
-.settings-switch input:checked + .settings-switch__control {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.settings-switch input:checked + .settings-switch__control::after {
-  background: var(--accent-ink);
-  transform: translateX(20px);
-}
-
-.settings-switch input:focus-visible + .settings-switch__control {
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 :root[data-window-control-position='left'] .chat-home__header,

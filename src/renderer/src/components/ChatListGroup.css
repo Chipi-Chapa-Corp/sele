@@ -35,6 +35,11 @@
     background 160ms ease;
 }
 
+.chat-list-group--cwd .chat-list-group__toggle {
+  color: var(--ink);
+  font-weight: normal;
+}
+
 .chat-list-group__toggle:hover,
 .chat-list-group__toggle:focus-visible {
   color: var(--ink);
@@ -113,6 +118,11 @@
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-list-group--cwd .chat-list-group__title {
+  font-weight: normal;
+  text-transform: uppercase;
 }
 
 .chat-list-group__action {

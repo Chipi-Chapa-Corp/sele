@@ -1,8 +1,8 @@
 import {
   Check,
   Folder,
-  GitBranch,
   GitCommitHorizontal,
+  GitFork,
   LoaderCircle,
   Pin,
   PinOff,
@@ -12,6 +12,7 @@ import {
   X
 } from 'lucide-react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
+import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { Button } from './Button'
 import './ChatListItem.css'
 
@@ -72,25 +73,24 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   onTogglePinned,
   approvalDecisionInFlight = null
 }) => {
-  const createdAt = new Date(chat.createdAt)
-  const contextName = chat.branchName ?? getChatProjectName(chat.cwd)
+  const now = useSemanticDateNow()
+  const createdAt = formatSemanticLexicalDateDifference(chat.createdAt, { now })
+  const isGitWorktree = chat.cwdKind === 'gitWorktree'
+  const worktreeContextName = chat.worktreeBaseBranchName ?? getChatProjectName(chat.cwd)
+  const contextName = isGitWorktree
+    ? worktreeContextName
+    : (chat.branchName ?? getChatProjectName(chat.cwd))
   const projectName = getChatProjectName(chat.projectCwd ?? chat.cwd)
   const visibleProjectName = showProject && projectName !== contextName ? projectName : null
-  const isGitWorktree = chat.cwdKind === 'gitWorktree'
-  const ProjectIcon = isGitWorktree ? GitBranch : Folder
+  const ProjectIcon = isGitWorktree ? GitFork : Folder
   const contextTitle =
-    isGitWorktree && chat.cwd
-      ? `${chat.branchName ?? 'Git worktree'}: ${chat.cwd}`
-      : (chat.cwd ?? contextName)
+    isGitWorktree && chat.cwd ? `${worktreeContextName}: ${chat.cwd}` : (chat.cwd ?? contextName)
   const workingStatus = chat.status && workingStatuses.has(chat.status) ? chat.status : null
   const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
   const trailingStatus = chat.status && !workingStatus && !approvalStatus ? chat.status : null
   const pendingApproval = chat.pendingApproval
   const approvalTarget = pendingApproval ? getApprovalTarget(pendingApproval) : null
-  const unread =
-    !selected &&
-    !chat.done &&
-    chat.updatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
+  const unread = !selected && !chat.done && chat.updatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
 
@@ -179,8 +179,14 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               )}
               <ProjectIcon className="chat-list-item__folder" aria-hidden="true" />
               <span className="chat-list-item__project">{contextName}</span>
-              <span className="chat-list-item__separator">·</span>
-              <time dateTime={createdAt.toISOString()}>{createdAt.toLocaleDateString()}</time>
+              {createdAt && (
+                <>
+                  <span className="chat-list-item__separator">·</span>
+                  <time dateTime={createdAt.dateTime} title={createdAt.title}>
+                    {createdAt.label}
+                  </time>
+                </>
+              )}
             </span>
           </span>
         )}

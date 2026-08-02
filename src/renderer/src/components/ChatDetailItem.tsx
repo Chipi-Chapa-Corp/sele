@@ -1,24 +1,5 @@
-import {
-  Children,
-  cloneElement,
-  Fragment,
-  isValidElement,
-  memo,
-  startTransition,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
-import type {
-  AnchorHTMLAttributes,
-  ForwardRefExoticComponent,
-  HTMLAttributes,
-  ReactNode,
-  RefAttributes,
-  TableHTMLAttributes
-} from 'react'
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ForwardRefExoticComponent, HTMLAttributes, RefAttributes } from 'react'
 import {
   ActivityIcon as AnimatedActivityIcon,
   BoxIcon as AnimatedBoxIcon,
@@ -66,7 +47,8 @@ import {
   Trash2,
   Wrench
 } from 'lucide-react'
-import Markdown from 'markdown-to-jsx'
+import DOMPurify from 'dompurify'
+import { marked, Renderer, type Tokens } from 'marked'
 import type {
   ProviderChatItem,
   ProviderMessage,
@@ -80,6 +62,7 @@ import type {
   ProviderWorkingTool
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { defaultAppChatThoughtSettings, type AppChatThoughtSettings } from '../settings'
 import { Button } from './Button'
 import { HighlightedCode } from './HighlightedCode'
@@ -368,10 +351,6 @@ type MarkdownFileTarget = {
   line?: number
 }
 
-type MarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
-  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
-}
-
 const externalLinkPattern = /^(?:https?|mailto|tel):/i
 const windowsAbsolutePathPattern = /^[a-z]:[\\/]/i
 const sourceLocationPattern = /^(.*?):(\d+)(?::\d+)?$/
@@ -417,92 +396,83 @@ const getMarkdownFileTarget = (href: string | undefined): MarkdownFileTarget | n
   return { path, displayPath, line }
 }
 
-const withoutSourceLocation = (children: ReactNode, line: number | undefined): ReactNode => {
-  if (!line) return children
+const escapeHtml = (value: string): string =>
+  value.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case '&':
+        return '&amp;'
+      case '<':
+        return '&lt;'
+      case '>':
+        return '&gt;'
+      case '"':
+        return '&quot;'
+      default:
+        return '&#39;'
+    }
+  })
+
+const withoutSourceLocationText = (text: string, line: number | undefined): string => {
+  if (!line) return text
 
   const locationPattern = new RegExp(`(?::${line}(?::\\d+)?|#L${line}(?:C\\d+)?)$`, 'i')
-
-  return Children.map(children, (child) => {
-    if (typeof child === 'string') return child.replace(locationPattern, '')
-    if (!isValidElement<{ children?: ReactNode }>(child) || child.props.children == null)
-      return child
-
-    return cloneElement(child, undefined, withoutSourceLocation(child.props.children, line))
-  })
+  return text.replace(locationPattern, '')
 }
 
-const MarkdownLink: React.FC<MarkdownLinkProps> = ({
-  children,
-  href,
-  onOpenFileLink,
-  ...props
-}) => {
-  const fileTarget = getMarkdownFileTarget(href)
-
-  if (!fileTarget || !onOpenFileLink) {
-    return (
-      <a {...props} href={href} rel="noreferrer" target="_blank">
-        {children}
-      </a>
+const renderHtmlAttributes = (attributes: Record<string, string | number | undefined>): string =>
+  Object.entries(attributes)
+    .flatMap(([name, value]) =>
+      value === undefined || value === '' ? [] : [` ${name}="${escapeHtml(String(value))}"`]
     )
+    .join('')
+
+const defaultChatMarkdownRenderer = new Renderer()
+
+const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => {
+  const renderer = new Renderer()
+
+  renderer.html = ({ text }) => escapeHtml(text)
+  renderer.link = function (token: Tokens.Link): string {
+    const fileTarget = getMarkdownFileTarget(token.href)
+    if (fileTarget && interactiveFileLinks) {
+      const label = withoutSourceLocationText(token.text, fileTarget.line)
+      const title = fileTarget.line
+        ? `Open ${fileTarget.displayPath} at line ${fileTarget.line}`
+        : `Open ${fileTarget.displayPath}`
+      const lineMarkup = fileTarget.line
+        ? `<span class="chat-detail__file-link-separator" aria-hidden="true">·</span><span class="chat-detail__file-link-line" aria-label="Line ${fileTarget.line}">${fileTarget.line}</span>`
+        : ''
+
+      return `<button${renderHtmlAttributes({
+        class: 'chat-detail__file-link',
+        type: 'button',
+        title,
+        'data-file-link-path': fileTarget.path,
+        'data-file-link-display-path': fileTarget.displayPath,
+        'data-file-link-line': fileTarget.line
+      })}><span class="chat-detail__file-link-label">${escapeHtml(label)}</span>${lineMarkup}</button>`
+    }
+
+    const href = token.href
+    const title = token.title ?? undefined
+    const children = this.parser.parseInline(token.tokens)
+    return `<a${renderHtmlAttributes({
+      href,
+      title,
+      rel: 'noreferrer',
+      target: '_blank'
+    })}>${children}</a>`
+  }
+  renderer.table = function (token: Tokens.Table): string {
+    const tableMarkup = defaultChatMarkdownRenderer.table.call(this, token)
+    return `<div class="chat-detail__table-scroll">${tableMarkup.replace(
+      '<table>',
+      '<table class="chat-detail__table">'
+    )}</div>`
   }
 
-  const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
-  const displayLine = fileTarget.line
-  const title = displayLine
-    ? `Open ${fileTarget.displayPath} at line ${displayLine}`
-    : `Open ${fileTarget.displayPath}`
-
-  return (
-    <button
-      className="chat-detail__file-link"
-      type="button"
-      title={title}
-      onClick={() => onOpenFileLink(fileTarget.path, fileTarget.displayPath, fileTarget.line)}
-    >
-      <span className="chat-detail__file-link-icon" aria-hidden="true">
-        <SymbolsFileIcon fileName={fileName} autoAssign />
-      </span>
-      <span className="chat-detail__file-link-label">
-        {withoutSourceLocation(children, fileTarget.line)}
-      </span>
-      {displayLine && (
-        <>
-          <span className="chat-detail__file-link-separator" aria-hidden="true">
-            ·
-          </span>
-          <span className="chat-detail__file-link-line" aria-label={`Line ${displayLine}`}>
-            {displayLine}
-          </span>
-        </>
-      )}
-    </button>
-  )
+  return renderer
 }
-
-const MarkdownTable: React.FC<TableHTMLAttributes<HTMLTableElement>> = ({ children, ...props }) => (
-  <div className="chat-detail__table-scroll">
-    <table {...props} className="chat-detail__table">
-      {children}
-    </table>
-  </div>
-)
-
-const getMarkdownOptions = (
-  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
-) =>
-  ({
-    disableParsingRawHTML: true,
-    forceBlock: true,
-    wrapper: Fragment,
-    overrides: {
-      a: {
-        component: MarkdownLink,
-        props: { onOpenFileLink }
-      },
-      table: MarkdownTable
-    }
-  }) as const
 
 const getStableIndex = (id: string, length: number): number => {
   let hash = 0
@@ -1037,33 +1007,6 @@ const withPromptMarkdownLineBreaks = (content: string): string => {
     .join('')
 }
 
-const withClickableAngleFileLinks = (content: string): string => {
-  let fence: MarkdownFence | null = null
-
-  return content
-    .split('\n')
-    .map((line) => {
-      if (fence) {
-        if (isMarkdownFenceClose(line, fence)) fence = null
-        return line
-      }
-
-      const nextFence = getMarkdownFence(line)
-      if (nextFence) {
-        fence = nextFence
-        return line
-      }
-
-      return line.replace(/\]\(<([^>\r\n]+)>\)/g, (match, target: string) => {
-        if (!getMarkdownFileTarget(target)) return match
-
-        const encodedTarget = encodeURI(target).replace(/\(/g, '%28').replace(/\)/g, '%29')
-        return `](${encodedTarget})`
-      })
-    })
-    .join('\n')
-}
-
 const getNaturalStreamBoundary = (content: string, afterIndex: number): number | null => {
   let fence: MarkdownFence | null = null
   let offset = 0
@@ -1257,8 +1200,47 @@ const MarkdownMessageComponent: React.FC<{
 }> = ({ className, content, onOpenFileLink, streaming = false }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const packetAnimationRef = useRef<Animation | null>(null)
-  const markdownOptions = useMemo(() => getMarkdownOptions(onOpenFileLink), [onOpenFileLink])
   const { animate, revision, visibleContent } = useStreamRenderedContent(content, streaming)
+  const markdownRenderer = useMemo(
+    () => createChatMarkdownRenderer(Boolean(onOpenFileLink)),
+    [onOpenFileLink]
+  )
+  const renderedMarkdown = useMemo(
+    () =>
+      DOMPurify.sanitize(
+        marked.parse(visibleContent, {
+          async: false,
+          gfm: true,
+          renderer: markdownRenderer
+        }),
+        { ADD_ATTR: ['target'] }
+      ),
+    [markdownRenderer, visibleContent]
+  )
+  const handleClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>): void => {
+      if (!onOpenFileLink || !(event.target instanceof Element)) return
+
+      const fileLink = event.target.closest<HTMLButtonElement>(
+        '.chat-detail__file-link[data-file-link-path]'
+      )
+      if (!fileLink || !containerRef.current?.contains(fileLink)) return
+
+      const path = fileLink.dataset.fileLinkPath
+      const displayPath = fileLink.dataset.fileLinkDisplayPath
+      if (!path || !displayPath) return
+
+      const parsedLine = fileLink.dataset.fileLinkLine
+        ? Number.parseInt(fileLink.dataset.fileLinkLine, 10)
+        : undefined
+      const line =
+        parsedLine && Number.isSafeInteger(parsedLine) && parsedLine > 0 ? parsedLine : undefined
+
+      event.preventDefault()
+      onOpenFileLink(path, displayPath, line)
+    },
+    [onOpenFileLink]
+  )
 
   useEffect(() => {
     if (!animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
@@ -1288,9 +1270,13 @@ const MarkdownMessageComponent: React.FC<{
   )
 
   return (
-    <div className={className} data-streaming={streaming || undefined} ref={containerRef}>
-      <Markdown options={markdownOptions}>{withClickableAngleFileLinks(visibleContent)}</Markdown>
-    </div>
+    <div
+      className={className}
+      data-streaming={streaming || undefined}
+      ref={containerRef}
+      onClick={handleClick}
+      dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
+    />
   )
 }
 
@@ -1318,41 +1304,6 @@ const copyTextToClipboard = async (content: string): Promise<void> => {
   }
 }
 
-const formatMessageTimestamp = (
-  timestamp: number | null | undefined
-): { dateTime: string; label: string } | null => {
-  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return null
-
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) return null
-
-  const now = new Date()
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  const sameYear = date.getFullYear() === now.getFullYear()
-  const timeLabel = date.toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit'
-  })
-  const dayMonthLabel = date.toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short'
-  })
-  const dayMonthYearLabel = date.toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric'
-  })
-  const dateLabel = sameDay ? '' : sameYear ? dayMonthLabel : dayMonthYearLabel
-
-  return {
-    dateTime: date.toISOString(),
-    label: dateLabel ? `${dateLabel}, ${timeLabel}` : timeLabel
-  }
-}
-
 const formatModelLabel = (label: string): string => label.replace(/-/g, ' ')
 
 const getMessageModelLabel = (
@@ -1368,24 +1319,27 @@ const getMessageModelLabel = (
 }
 
 const MessageDate: React.FC<{
-  timestamp: ReturnType<typeof formatMessageTimestamp>
+  timestamp: number | null | undefined
   markerSide: 'left' | 'right'
   modelLabel?: string | null
 }> = ({ timestamp, markerSide, modelLabel }) => {
-  if (!timestamp) {
+  const now = useSemanticDateNow()
+  const timestampLabel = formatSemanticLexicalDateDifference(timestamp, { now })
+
+  if (!timestampLabel) {
     return <span className="chat-detail__message-date chat-detail__message-date--empty" />
   }
 
-  const title = modelLabel ? `${timestamp.label} · ${modelLabel}` : timestamp.label
+  const title = modelLabel ? `${timestampLabel.title} · ${modelLabel}` : timestampLabel.title
 
   return (
-    <time className="chat-detail__message-date" dateTime={timestamp.dateTime} title={title}>
+    <time className="chat-detail__message-date" dateTime={timestampLabel.dateTime} title={title}>
       {markerSide === 'left' && (
         <span className="chat-detail__message-date-marker" aria-hidden="true">
           ·
         </span>
       )}
-      <span>{timestamp.label}</span>
+      <span>{timestampLabel.label}</span>
       {modelLabel && (
         <>
           <span className="chat-detail__message-date-marker" aria-hidden="true">
@@ -1897,7 +1851,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     const canEditPending = pending && Boolean(onEditPendingMessage)
     const canDelete = pending && Boolean(onDeletePendingMessage)
     const canInterrupt = pending && Boolean(onInterruptPendingMessage)
-    const timestamp = formatMessageTimestamp(item.createdAt)
+    const timestamp = item.createdAt
     const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById)
     const attachments = item.attachments ?? []
     const handleCopyMessage = async (): Promise<void> => {

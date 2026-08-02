@@ -27,6 +27,7 @@ import {
   Check,
   Container,
   Download,
+  EyeOff,
   FileLock,
   Files,
   FolderKanban,
@@ -66,6 +67,7 @@ import {
   DownloadIcon as AnimatedDownloadIcon,
   GitBranchIcon as AnimatedGitBranchIcon,
   GitCommitHorizontalIcon as AnimatedGitCommitHorizontalIcon,
+  MessageSquareMoreIcon as AnimatedMessageSquareMoreIcon,
   UploadIcon as AnimatedUploadIcon
 } from 'lucide-animated'
 import {
@@ -76,6 +78,7 @@ import type {
   AppContainerSuggestion,
   AppContainerTarget,
   AppContainerTool,
+  AppProject,
   AppSelectedAttachment,
   AppSourceAvailability,
   AppFileTreeResult,
@@ -140,6 +143,7 @@ import {
   isProviderApprovalsReviewer,
   isProviderSandboxMode,
   isProviderServiceTier,
+  providerOneShotGenerationCanceledMessage,
   providerIds
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
@@ -153,6 +157,7 @@ import { getReasoningEffortPresentation } from './reasoningEffortPresentation'
 import { Input } from './components/Input'
 import { MessageBox } from './components/MessageBox'
 import { SegmentedControl } from './components/SegmentedControl'
+import { Switch } from './components/Switch'
 import {
   TerminalPanel,
   type AgentTerminalSnapshot,
@@ -170,6 +175,7 @@ import {
   type AppAppearanceStylePreference,
   type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
+  type AppGitWorktreeSettings,
   type AppChatDropdownSettings,
   type AppChatUsageDisplay,
   type AppExternalLinkBehavior,
@@ -194,6 +200,8 @@ import './App.css'
 
 type LoadState = 'loading' | 'ready' | 'error'
 type SendState = 'idle' | 'sending' | 'error'
+type NewSessionLocation = 'folder' | 'worktree'
+type WorktreeCreationState = 'idle' | 'creating' | 'canceling'
 type ApplyChatDetailOptions = {
   select?: boolean
 }
@@ -445,10 +453,6 @@ type SourceAvailabilityState = {
 type UncommittedPatchFilter = {
   scope: PatchFilterScope
   patches: AppGitPatchChange[]
-}
-type ProjectOptionData = {
-  cwd: string
-  updatedAt: number
 }
 
 const chatPageSize = 20
@@ -857,7 +861,7 @@ const GitRefreshIcon: React.FC = () => (
   <RefreshCw className="changes-sidebar__refresh-icon" aria-hidden="true" />
 )
 
-const ChangesAnimatedIcon: React.FC<{
+const AnimatedStatusIcon: React.FC<{
   Icon: AnimatedIconComponent
   active: boolean
   className?: string
@@ -885,7 +889,9 @@ const ChangesAnimatedIcon: React.FC<{
   return (
     <Icon
       ref={iconRef}
-      className={['changes-sidebar__animated-icon', className].filter(Boolean).join(' ')}
+      className={['app-animated-icon', className ?? 'app-animated-icon--control']
+        .filter(Boolean)
+        .join(' ')}
       size={size}
       animateOnHover={false}
       aria-hidden="true"
@@ -924,7 +930,7 @@ const ChatCommitMarkerItem: React.FC<{
       aria-live={marker.status === 'pending' ? 'polite' : undefined}
     >
       {marker.status === 'pending' ? (
-        <ChangesAnimatedIcon
+        <AnimatedStatusIcon
           Icon={AnimatedGitCommitHorizontalIcon}
           active
           className="chat-detail__commit-marker-icon"
@@ -964,7 +970,7 @@ const ChangesSidebarGitState: React.FC<{ active: boolean; label: string }> = ({
 }) => (
   <div className="changes-sidebar__git-state" role="status">
     {active ? (
-      <ChangesAnimatedIcon
+      <AnimatedStatusIcon
         Icon={AnimatedGitBranchIcon}
         active
         className="changes-sidebar__git-state-icon"
@@ -979,8 +985,8 @@ const ChangesSidebarGitState: React.FC<{ active: boolean; label: string }> = ({
 
 const ChatSidebarLoadingState: React.FC<{ label: string }> = ({ label }) => (
   <div className="chat-sidebar__loading-state" role="status">
-    <ChangesAnimatedIcon
-      Icon={AnimatedGitBranchIcon}
+    <AnimatedStatusIcon
+      Icon={AnimatedMessageSquareMoreIcon}
       active
       className="chat-sidebar__loading-icon"
       size={72}
@@ -1002,7 +1008,7 @@ const GitSyncCountsLabel: React.FC<{
       {showPull && (
         <span className="changes-sidebar__sync-label-segment">
           {active ? (
-            <ChangesAnimatedIcon
+            <AnimatedStatusIcon
               Icon={AnimatedDownloadIcon}
               active={active}
               className="changes-sidebar__sync-label-icon"
@@ -1018,7 +1024,7 @@ const GitSyncCountsLabel: React.FC<{
       {showPush && (
         <span className="changes-sidebar__sync-label-segment">
           {active ? (
-            <ChangesAnimatedIcon
+            <AnimatedStatusIcon
               Icon={AnimatedUploadIcon}
               active={active}
               className="changes-sidebar__sync-label-icon"
@@ -1462,6 +1468,11 @@ const appearancePositionOptions = [
     icon: <PanelRight aria-hidden="true" />
   },
   {
+    value: 'hidden',
+    label: 'Hidden',
+    icon: <EyeOff aria-hidden="true" />
+  },
+  {
     value: 'system',
     label: 'System',
     icon: <Monitor aria-hidden="true" />
@@ -1690,6 +1701,36 @@ const mergeChats = (...chatGroups: ProviderChat[][]): ProviderChat[] => {
   return Array.from(chatsById.values()).sort(compareChatsByCreatedAtDesc)
 }
 
+const compareProjectsByUpdatedAtDesc = (
+  firstProject: AppProject,
+  secondProject: AppProject
+): number => {
+  if (secondProject.updatedAt !== firstProject.updatedAt) {
+    return secondProject.updatedAt - firstProject.updatedAt
+  }
+
+  return getFolderName(firstProject.cwd).localeCompare(getFolderName(secondProject.cwd))
+}
+
+const mergeProjects = (...projectGroups: AppProject[][]): AppProject[] => {
+  const projectsByCwd = new Map<string, AppProject>()
+
+  for (const projectGroup of projectGroups) {
+    for (const project of projectGroup) {
+      const cwd = project.cwd.trim()
+      if (!cwd) continue
+
+      const normalizedProject = { ...project, cwd }
+      const existingProject = projectsByCwd.get(cwd)
+      if (!existingProject || project.updatedAt >= existingProject.updatedAt) {
+        projectsByCwd.set(cwd, normalizedProject)
+      }
+    }
+  }
+
+  return Array.from(projectsByCwd.values()).sort(compareProjectsByUpdatedAtDesc)
+}
+
 const getLastPathPart = (path: string): string => {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts.at(-1) ?? path
@@ -1734,10 +1775,18 @@ const sortChatsForGroup = (chats: ProviderChat[]): ProviderChat[] =>
 
 const groupChatsForSidebar = (chats: ProviderChat[]): ChatListGroupData[] => {
   const groupsByCwd = new Map<string, ChatListGroupData>()
+  const groupCreatedAtByKey = new Map<string, number>()
   const pinnedChats: ProviderChat[] = []
   const doneChats: ProviderChat[] = []
 
   for (const chat of chats) {
+    const projectCwd = getChatProjectCwd(chat)
+    const key = getChatCwdGroupKey(projectCwd)
+    const groupCreatedAt = groupCreatedAtByKey.get(key)
+    if (groupCreatedAt === undefined || chat.createdAt > groupCreatedAt) {
+      groupCreatedAtByKey.set(key, chat.createdAt)
+    }
+
     if (chat.pinned) {
       pinnedChats.push(chat)
       continue
@@ -1748,8 +1797,6 @@ const groupChatsForSidebar = (chats: ProviderChat[]): ChatListGroupData[] => {
       continue
     }
 
-    const projectCwd = getChatProjectCwd(chat)
-    const key = getChatCwdGroupKey(projectCwd)
     const existingGroup = groupsByCwd.get(key)
 
     if (existingGroup) {
@@ -1770,6 +1817,15 @@ const groupChatsForSidebar = (chats: ProviderChat[]): ChatListGroupData[] => {
     ...group,
     chats: sortChatsForGroup(group.chats)
   }))
+  cwdGroups.sort((firstGroup, secondGroup) => {
+    const firstCreatedAt = groupCreatedAtByKey.get(firstGroup.key) ?? 0
+    const secondCreatedAt = groupCreatedAtByKey.get(secondGroup.key) ?? 0
+    if (secondCreatedAt !== firstCreatedAt) {
+      return secondCreatedAt - firstCreatedAt
+    }
+
+    return firstGroup.label.localeCompare(secondGroup.label)
+  })
   const pinnedGroups =
     pinnedChats.length === 0
       ? []
@@ -1819,6 +1875,8 @@ const getChatFromDetail = (
   cwdKind: detail.cwdKind ?? existingChat?.cwdKind ?? 'directory',
   projectCwd: detail.projectCwd ?? existingChat?.projectCwd ?? detail.cwd ?? null,
   branchName: detail.branchName ?? existingChat?.branchName ?? null,
+  worktreeBaseBranchName:
+    detail.worktreeBaseBranchName ?? existingChat?.worktreeBaseBranchName ?? null,
   createdAt: existingChat?.createdAt ?? updatedAt,
   updatedAt,
   status: detail.status,
@@ -1904,6 +1962,7 @@ const getChatDetailFromUpdateSummary = (
   cwdKind: summary.cwdKind,
   projectCwd: summary.projectCwd,
   branchName: summary.branchName,
+  worktreeBaseBranchName: summary.worktreeBaseBranchName,
   status: summary.status,
   pendingApproval: summary.pendingApproval,
   pinned: summary.pinned,
@@ -1947,6 +2006,7 @@ const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.cwdKind === second.cwdKind &&
   first.projectCwd === second.projectCwd &&
   first.branchName === second.branchName &&
+  first.worktreeBaseBranchName === second.worktreeBaseBranchName &&
   first.createdAt === second.createdAt &&
   first.updatedAt === second.updatedAt &&
   first.status === second.status &&
@@ -1970,6 +2030,7 @@ const getChatFromUpdateSummary = (
     existingChat.cwdKind !== summary.cwdKind ||
     existingChat.projectCwd !== summary.projectCwd ||
     existingChat.branchName !== summary.branchName ||
+    existingChat.worktreeBaseBranchName !== summary.worktreeBaseBranchName ||
     existingChat.status !== summary.status ||
     !arePendingApprovalsEqual(existingChat.pendingApproval, summary.pendingApproval) ||
     existingChat.pinned !== summary.pinned ||
@@ -1987,6 +2048,7 @@ const getChatFromUpdateSummary = (
     cwdKind: summary.cwdKind,
     projectCwd: summary.projectCwd,
     branchName: summary.branchName,
+    worktreeBaseBranchName: summary.worktreeBaseBranchName,
     createdAt: existingChat?.createdAt ?? summary.updatedAt,
     updatedAt:
       !existingChat || summaryChanged || turnCompleted ? summary.updatedAt : existingChat.updatedAt,
@@ -2104,6 +2166,32 @@ const serializeComposerMessage = (
   return [[...missingSkillMentions, ...missingAppMentions].join(' '), message]
     .filter(Boolean)
     .join('\n')
+}
+
+const getWorktreeBranchGenerationPrompt = (
+  prompt: string,
+  settings: AppGitWorktreeSettings
+): string => {
+  const template = settings.branchNamePrompt.trim()
+  if (!template) return `Prompt:\n\`\`\`${prompt}\`\`\``
+
+  return template.includes('{prompt}')
+    ? template.replaceAll('{prompt}', prompt)
+    : [template, `Prompt:\n\`\`\`${prompt}\`\`\``].join('\n\n')
+}
+
+const normalizeGeneratedWorktreeName = (value: string): string | null => {
+  const name = value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .find((line) => line.trim())
+    ?.trim()
+    .replace(/^`+|`+$/g, '')
+    .replace(/^refs\/heads\//, '')
+    .replace(/^agents\//, '')
+    .trim()
+
+  return name || null
 }
 
 const hasActiveWorkingStep = (detail: ProviderChatDetail | null): boolean =>
@@ -2973,6 +3061,9 @@ export const App: React.FC = () => {
   const [accountUsageError, setAccountUsageError] = useState<string | null>(null)
   const [newChatOpen, setNewChatOpen] = useState(true)
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null)
+  const [defaultCwd, setDefaultCwd] = useState<string | null>(null)
+  const [newSessionLocation, setNewSessionLocation] = useState<NewSessionLocation>('folder')
+  const [worktreeCreationState, setWorktreeCreationState] = useState<WorktreeCreationState>('idle')
   const [newSessionProvider, setNewSessionProvider] = useState<ProviderId>('codex')
   const newSessionAvailableProviderIds = useMemo(
     () =>
@@ -2990,7 +3081,7 @@ export const App: React.FC = () => {
   const configProviderHasSelectedChat = Boolean(selectedChat)
   const configProviderContainer = selectedChat ? selectedChat.container : newSessionContainer
   const configProviderContainerKey = getContainerTargetKey(configProviderContainer)
-  const [projectHistory, setProjectHistory] = useState<ProjectOptionData[]>([])
+  const [projects, setProjects] = useState<AppProject[]>([])
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [chatSearchOpen, setChatSearchOpen] = useState(false)
@@ -3092,6 +3183,12 @@ export const App: React.FC = () => {
   const changesContainerRef = useRef<AppContainerTarget | null>(null)
   const changeSourceRef = useRef(changeSource)
   const gitAvailableRef = useRef<boolean | null>(null)
+  const selectedChatRef = useRef<ProviderChat | null>(selectedChat)
+  const worktreeCreationCanceledRef = useRef(false)
+  const worktreeBranchGenerationRef = useRef<{
+    generationId: string
+    providerId: ProviderId
+  } | null>(null)
   const containerSelectionReadyRef = useRef(false)
   const initialChatCommitMarkersRef = useRef(chatCommitMarkers)
   const scopedCommitActivitiesRef =
@@ -3157,6 +3254,7 @@ export const App: React.FC = () => {
   )
 
   useEffect(() => {
+    selectedChatRef.current = selectedChat
     selectedChatKeyRef.current = selectedChat ? getChatKey(selectedChat) : null
     selectedChatUpdatedAtRef.current = selectedChat?.updatedAt ?? null
   }, [selectedChat])
@@ -3164,6 +3262,32 @@ export const App: React.FC = () => {
   useEffect(() => {
     chatDetailRef.current = chatDetail
   }, [chatDetail])
+
+  const clearSelectedChatIfUnavailableInSource = useCallback(
+    (availableProviderIds: ProviderId[], container: AppContainerTarget | null): void => {
+      const currentChat = selectedChatRef.current
+      if (
+        !currentChat ||
+        availableProviderIds.includes(currentChat.providerId) ||
+        !areContainerTargetsEqual(currentChat.container, container)
+      ) {
+        return
+      }
+
+      resetChatSearch()
+      selectedChatRef.current = null
+      selectedChatKeyRef.current = null
+      selectedChatUpdatedAtRef.current = null
+      chatDetailRef.current = null
+      setSelectedChat(null)
+      setChatDetail(null)
+      setChatLoadState('ready')
+      setSendState('idle')
+      setEditingMessage(null)
+      setNewChatOpen(true)
+    },
+    [resetChatSearch]
+  )
 
   useEffect(() => {
     const limit = appSettings.chat.recentChatCacheLimit
@@ -3737,29 +3861,68 @@ export const App: React.FC = () => {
     const loadInitialChats = async (): Promise<void> => {
       if (!newSessionSourceAvailabilityReady) return
 
+      const container = normalizeContainerTarget(newSessionContainer)
       if (newSessionAvailableProviderIds.length === 0) {
+        setChats([])
+        clearSelectedChatIfUnavailableInSource([], container)
         setLoadState('ready')
         return
       }
 
-      const container = normalizeContainerTarget(newSessionContainer)
+      const availableProviderIds = new Set(newSessionAvailableProviderIds)
+      setChats((currentChats) =>
+        currentChats.filter(
+          (chat) =>
+            availableProviderIds.has(chat.providerId) &&
+            areContainerTargetsEqual(chat.container, container)
+        )
+      )
+      clearSelectedChatIfUnavailableInSource(newSessionAvailableProviderIds, container)
       setLoadState('loading')
-      const results = await Promise.allSettled(
-        newSessionAvailableProviderIds.map((providerId) =>
-          providerApi.getChats(providerId, {
+
+      let settledProviderCount = 0
+      let loadedProviderCount = 0
+      const markProviderSettled = (): void => {
+        settledProviderCount += 1
+        if (
+          settledProviderCount === newSessionAvailableProviderIds.length &&
+          loadedProviderCount === 0
+        ) {
+          setLoadState('error')
+        }
+      }
+
+      newSessionAvailableProviderIds.forEach((providerId) => {
+        void providerApi
+          .getChats(providerId, {
             container,
             cursor: null,
             limit: chatPageSize
           })
-        )
-      )
-      if (!active) return
+          .then((page) => {
+            if (!active) return
 
-      const loadedChats = results.flatMap((result) =>
-        result.status === 'fulfilled' ? result.value.chats : []
-      )
-      setChats((currentChats) => mergeChats(currentChats, loadedChats))
-      setLoadState(results.some((result) => result.status === 'fulfilled') ? 'ready' : 'error')
+            loadedProviderCount += 1
+            setChats((currentChats) =>
+              mergeChats(
+                currentChats.filter(
+                  (chat) =>
+                    chat.providerId !== providerId &&
+                    availableProviderIds.has(chat.providerId) &&
+                    areContainerTargetsEqual(chat.container, container)
+                ),
+                page.chats
+              )
+            )
+            setLoadState('ready')
+          })
+          .catch(() => {
+            // Other providers should still populate the sidebar.
+          })
+          .finally(() => {
+            if (active) markProviderSettled()
+          })
+      })
     }
 
     void loadInitialChats()
@@ -3767,61 +3930,29 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [newSessionAvailableProviderIds, newSessionContainer, newSessionSourceAvailabilityReady])
+  }, [
+    clearSelectedChatIfUnavailableInSource,
+    newSessionAvailableProviderIds,
+    newSessionContainer,
+    newSessionSourceAvailabilityReady
+  ])
 
   useEffect(() => {
     let active = true
 
-    const loadProjectHistory = async (): Promise<void> => {
-      if (!newSessionSourceAvailabilityReady) return
-
-      if (newSessionAvailableProviderIds.length === 0) {
-        setProjectHistory([])
-        return
-      }
-
-      const container = normalizeContainerTarget(newSessionContainer)
-      const projectsByCwd = new Map<string, ProjectOptionData>()
-      const loadedChats: ProviderChat[] = []
-
-      await Promise.allSettled(
-        newSessionAvailableProviderIds.map(async (providerId) => {
-          let cursor: string | null = null
-          do {
-            const page = await providerApi.getChats(providerId, {
-              container,
-              cursor,
-              limit: 100
-            })
-            if (!active) return
-
-            loadedChats.push(...page.chats)
-            page.chats.forEach((chat) => {
-              const cwd = getChatProjectCwd(chat)
-              if (!cwd) return
-
-              const existingProject = projectsByCwd.get(cwd)
-              if (!existingProject || chat.updatedAt > existingProject.updatedAt) {
-                projectsByCwd.set(cwd, { cwd, updatedAt: chat.updatedAt })
-              }
-            })
-            cursor = page.nextCursor
-          } while (cursor)
-        })
-      )
-
-      if (active) {
-        setProjectHistory(Array.from(projectsByCwd.values()))
-        setChats((currentChats) => mergeChats(currentChats, loadedChats))
-      }
-    }
-
-    void loadProjectHistory()
+    appApi
+      .getProjects()
+      .then((storedProjects) => {
+        if (active) setProjects(mergeProjects(storedProjects))
+      })
+      .catch(() => {
+        if (active) setProjects([])
+      })
 
     return () => {
       active = false
     }
-  }, [newSessionAvailableProviderIds, newSessionContainer, newSessionSourceAvailabilityReady])
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -3909,7 +4040,9 @@ export const App: React.FC = () => {
 
     if (
       !configProviderHasSelectedChat &&
-      (!newSessionSourceAvailabilityReady || !newSessionProviderAvailable)
+      (!newSessionSourceAvailabilityReady ||
+        !newSessionProviderAvailable ||
+        loadState === 'loading')
     ) {
       queueMicrotask(() => {
         if (active) setModels([])
@@ -3944,6 +4077,7 @@ export const App: React.FC = () => {
     configProviderContainerKey,
     configProviderHasSelectedChat,
     configProviderId,
+    loadState,
     newSessionProviderAvailable,
     newSessionSourceAvailabilityReady
   ])
@@ -4528,6 +4662,8 @@ export const App: React.FC = () => {
     selectedChatKey
   ])
   const usageProviderId = selectedProviderId ?? newSessionProvider
+  const usageProviderAvailable = selectedChat ? true : newSessionProviderAvailable
+  const usageProviderAvailabilityReady = selectedChat ? true : newSessionSourceAvailabilityReady
   const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
   const changesContainer = selectedChat
     ? (chatDetail?.container ?? selectedChat.container)
@@ -4744,6 +4880,13 @@ export const App: React.FC = () => {
 
   const refreshAccountUsage = useCallback(
     async (options: ProviderUsageOptions = {}): Promise<void> => {
+      if (!usageProviderAvailable) {
+        setAccountUsage(null)
+        setAccountUsageState(usageProviderAvailabilityReady ? 'ready' : 'loading')
+        setAccountUsageError(null)
+        return
+      }
+
       const providerId = usageProviderId
       const container = normalizeContainerTarget(changesContainer)
       setAccountUsageState('loading')
@@ -4758,19 +4901,41 @@ export const App: React.FC = () => {
         setAccountUsageError(getErrorMessage(error, 'Unable to load usage.'))
       }
     },
-    [changesContainer, usageProviderId]
+    [changesContainer, usageProviderAvailabilityReady, usageProviderAvailable, usageProviderId]
   )
 
-  const resetAccountRateLimits = useCallback(
-    () =>
-      providerApi.resetRateLimits(usageProviderId, {
-        container: normalizeContainerTarget(changesContainer)
-      }),
-    [changesContainer, usageProviderId]
-  )
+  const resetAccountRateLimits = useCallback(() => {
+    if (!usageProviderAvailable) return Promise.resolve('nothingToReset' as const)
+
+    return providerApi.resetRateLimits(usageProviderId, {
+      container: normalizeContainerTarget(changesContainer)
+    })
+  }, [changesContainer, usageProviderAvailable, usageProviderId])
 
   useEffect(() => {
     let active = true
+
+    if (
+      !usageProviderAvailabilityReady ||
+      !usageProviderAvailable ||
+      (!selectedChat && loadState === 'loading')
+    ) {
+      queueMicrotask(() => {
+        if (!active) return
+        setAccountUsage(null)
+        setAccountUsageState(
+          usageProviderAvailabilityReady && usageProviderAvailable && loadState !== 'loading'
+            ? 'ready'
+            : 'loading'
+        )
+        setAccountUsageError(null)
+      })
+
+      return () => {
+        active = false
+      }
+    }
+
     const providerId = usageProviderId
     const container = normalizeContainerTarget(changesContainer)
 
@@ -4796,7 +4961,14 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [changesContainer, usageProviderId])
+  }, [
+    changesContainer,
+    loadState,
+    selectedChat,
+    usageProviderAvailabilityReady,
+    usageProviderAvailable,
+    usageProviderId
+  ])
 
   useEffect(() => {
     if (!selectedProviderId || !selectedChatId) return
@@ -5072,7 +5244,10 @@ export const App: React.FC = () => {
     appApi
       .getDefaultCwd()
       .then((cwd) => {
-        if (active) setNewSessionCwd(cwd)
+        if (active) {
+          setDefaultCwd(cwd)
+          setNewSessionCwd(cwd)
+        }
       })
       .catch(() => {})
 
@@ -5389,8 +5564,7 @@ export const App: React.FC = () => {
     }
 
     activeChatGroups.forEach((group) => addProjectIconEntry(group.cwd))
-    projectHistory.forEach((project) => addProjectIconEntry(project.cwd))
-    chats.forEach((chat) => addProjectIconEntry(getChatProjectCwd(chat)))
+    projects.forEach((project) => addProjectIconEntry(project.cwd))
     addProjectIconEntry(newSessionCwd)
 
     const projectIconEntries = Array.from(entriesByKey.values())
@@ -5420,7 +5594,7 @@ export const App: React.FC = () => {
         return nextIcons
       })
     })
-  }, [activeChatGroups, chats, newSessionCwd, projectHistory, projectIconsByGroup])
+  }, [activeChatGroups, newSessionCwd, projects, projectIconsByGroup])
 
   const projectOptions = useMemo<DropdownOption<string>[]>(() => {
     const projectsByCwd = new Map<string, { cwd: string; updatedAt: number }>()
@@ -5435,8 +5609,7 @@ export const App: React.FC = () => {
       }
     }
 
-    projectHistory.forEach((project) => addProject(project.cwd, project.updatedAt))
-    chats.forEach((chat) => addProject(getChatProjectCwd(chat), chat.updatedAt))
+    projects.forEach((project) => addProject(project.cwd, project.updatedAt))
     addProject(newSessionCwd, Number.MAX_SAFE_INTEGER)
 
     const getProjectOptionIcon = (cwd: string | null): React.ReactElement => {
@@ -5478,7 +5651,7 @@ export const App: React.FC = () => {
     }
 
     return options
-  }, [chats, newSessionCwd, projectHistory, projectIconsByGroup])
+  }, [newSessionCwd, projects, projectIconsByGroup])
   const newSessionProjectValue = newSessionCwd ?? newSessionProjectPlaceholderValue
   const containerOptions = useMemo<DropdownOption<string>[]>(
     () => [
@@ -6098,10 +6271,38 @@ export const App: React.FC = () => {
     }))
   }
 
+  const handleGitWorktreeChange = (key: keyof AppGitWorktreeSettings, value: string): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      git: {
+        ...currentSettings.git,
+        worktree: {
+          ...currentSettings.git.worktree,
+          [key]: value
+        }
+      }
+    }))
+  }
+
+  const rememberProject = useCallback(async (cwd: string | null | undefined): Promise<void> => {
+    const normalizedCwd = cwd?.trim()
+    if (!normalizedCwd) return
+
+    try {
+      const project = await appApi.addProject({ cwd: normalizedCwd })
+      setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
+    } catch {
+      // Keep the project selected even if local persistence fails.
+    }
+  }, [])
+
   const handleSelectNewSessionFolder = async (): Promise<void> => {
     try {
       const folder = await appApi.selectFolder({ defaultPath: newSessionCwd })
-      if (folder) setNewSessionCwd(folder)
+      if (folder) {
+        setNewSessionCwd(folder)
+        await rememberProject(folder)
+      }
     } catch {
       // Keep the current folder if the native dialog cannot be opened.
     }
@@ -6238,7 +6439,11 @@ export const App: React.FC = () => {
       if (metadata.done) removeRecentChatCacheEntry(chat.providerId, chat.id)
 
       if (done && selectedChat?.providerId === chat.providerId && selectedChat.id === chat.id) {
-        showNewChatView(undefined, chatDetail?.container ?? selectedChat.container)
+        const currentChat = chatDetail?.id === selectedChat.id ? chatDetail : selectedChat
+        showNewChatView(
+          getChatProjectCwd(currentChat),
+          chatDetail?.container ?? selectedChat.container
+        )
       }
     } catch {
       // Leave the chat as-is if local metadata cannot be updated.
@@ -6285,7 +6490,7 @@ export const App: React.FC = () => {
         !selectedChat.done &&
         getChatCwdGroupKey(getChatProjectCwd(selectedChat)) === getChatCwdGroupKey(group.cwd)
       ) {
-        showNewChatView(undefined, chatDetail?.container ?? selectedChat.container)
+        showNewChatView(group.cwd, chatDetail?.container ?? selectedChat.container)
       }
     } catch {
       // Leave the group as-is if local metadata cannot be updated.
@@ -6363,6 +6568,16 @@ export const App: React.FC = () => {
         : (resolvedCommitModel.defaultServiceTier ?? null)
     }
   }
+
+  const handleCancelWorktreeCreation = useCallback(async (): Promise<void> => {
+    worktreeCreationCanceledRef.current = true
+    setWorktreeCreationState('canceling')
+
+    const generation = worktreeBranchGenerationRef.current
+    if (!generation) return
+
+    await providerApi.cancelOneShot(generation.providerId, generation.generationId).catch(() => {})
+  }, [])
 
   const handleSendMessage = async (
     message: string,
@@ -6447,15 +6662,71 @@ export const App: React.FC = () => {
       setSendState('sending')
 
       try {
+        let sessionCwd = newSessionCwd ?? undefined
+
+        if (newSessionLocation === 'worktree') {
+          if (!newSessionCwd) throw new Error('Choose a folder before creating a worktree.')
+
+          const generationId = crypto.randomUUID()
+          worktreeCreationCanceledRef.current = false
+          worktreeBranchGenerationRef.current = { generationId, providerId: newSessionProvider }
+          setWorktreeCreationState('creating')
+
+          const generatedName = await providerApi.generateOneShot(
+            newSessionProvider,
+            getWorktreeBranchGenerationPrompt(
+              messageWithComposerMentions.trim() || serializedMessage.trim() || 'File attachment',
+              appSettings.git.worktree
+            ),
+            {
+              ...getGitTurnOptions(),
+              cwd: newSessionCwd,
+              generationId
+            }
+          )
+          if (worktreeCreationCanceledRef.current) {
+            setSendState('idle')
+            return
+          }
+
+          const worktreeName = normalizeGeneratedWorktreeName(generatedName)
+          if (!worktreeName) throw new Error('AI did not return a branch name.')
+
+          const worktree = await appApi.createGitWorktree({
+            container: changesContainer,
+            cwd: newSessionCwd,
+            name: worktreeName
+          })
+          if (worktreeCreationCanceledRef.current) {
+            setSendState('idle')
+            return
+          }
+
+          sessionCwd = worktree.worktreePath
+        }
+
         const detail = await providerApi.startChat(newSessionProvider, serializedMessage, {
           ...turnOptions,
-          cwd: newSessionCwd ?? undefined
+          cwd: sessionCwd
         })
         applyViewedChatDetail(newSessionProvider, detail, { select: true })
+        if (newSessionCwd?.trim() && newSessionCwd.trim() === defaultCwd?.trim()) {
+          void rememberProject(newSessionCwd)
+        }
         setSendState('idle')
-      } catch {
-        setSendState('error')
+      } catch (error) {
+        if (
+          worktreeCreationCanceledRef.current ||
+          (error instanceof Error && error.message === providerOneShotGenerationCanceledMessage)
+        ) {
+          setSendState('idle')
+        } else {
+          setSendState('error')
+        }
       } finally {
+        worktreeBranchGenerationRef.current = null
+        worktreeCreationCanceledRef.current = false
+        setWorktreeCreationState('idle')
         sendInFlightRef.current = false
       }
 
@@ -7175,6 +7446,22 @@ export const App: React.FC = () => {
     selectedChat?.branchName ??
     null
   const branchNames = branchMetadata?.branches ?? (currentBranchName ? [currentBranchName] : [])
+  const newSessionLocationOptions = useMemo<DropdownOption<NewSessionLocation>[]>(
+    () => [
+      {
+        value: 'folder',
+        label: 'Folder',
+        icon: <FolderKanban aria-hidden="true" />
+      },
+      {
+        value: 'worktree',
+        label: 'Worktree',
+        menuLabel: currentBranchName ? `Worktree · ${currentBranchName}` : 'Worktree',
+        icon: <GitBranch aria-hidden="true" />
+      }
+    ],
+    [currentBranchName]
+  )
   const commitInputValue = commitInput.trim()
   const commitFiles = useMemo(() => getCommitFiles(changedFiles), [changedFiles])
   const syncInProgress = syncState === 'sending'
@@ -8067,6 +8354,8 @@ export const App: React.FC = () => {
     void appApi.closeWindow()
   }
 
+  const windowControlsHidden = appSettings.appearance.position === 'hidden'
+
   const renderSettingsPanel = (): React.ReactElement => {
     const renderChatBooleanSettingField = (field: ChatBooleanSettingField): React.ReactElement => (
       <div className="settings-dialog__field" key={field.key}>
@@ -8074,18 +8363,14 @@ export const App: React.FC = () => {
           <h3 id={field.id}>{field.label}</h3>
           {field.description && <p>{field.description}</p>}
         </div>
-        <label className="settings-switch">
-          <input
-            type="checkbox"
-            role="switch"
-            aria-labelledby={field.id}
-            checked={appSettings.chat[field.key]}
-            onChange={(event) =>
-              handleChatDropdownPreferenceChange(field.key, event.currentTarget.checked)
-            }
-          />
-          <span className="settings-switch__control" aria-hidden="true" />
-        </label>
+        <Switch
+          className="settings-switch"
+          aria-labelledby={field.id}
+          checked={appSettings.chat[field.key]}
+          onChange={(event) =>
+            handleChatDropdownPreferenceChange(field.key, event.currentTarget.checked)
+          }
+        />
       </div>
     )
 
@@ -8260,21 +8545,14 @@ export const App: React.FC = () => {
                   <h3 id="settings-performance-disable-shadows">Disable shadows</h3>
                   <p>Remove box shadows throughout the app.</p>
                 </div>
-                <label className="settings-switch">
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    aria-labelledby="settings-performance-disable-shadows"
-                    checked={appSettings.performance.disableShadows}
-                    onChange={(event) =>
-                      handlePerformancePreferenceChange(
-                        'disableShadows',
-                        event.currentTarget.checked
-                      )
-                    }
-                  />
-                  <span className="settings-switch__control" aria-hidden="true" />
-                </label>
+                <Switch
+                  className="settings-switch"
+                  aria-labelledby="settings-performance-disable-shadows"
+                  checked={appSettings.performance.disableShadows}
+                  onChange={(event) =>
+                    handlePerformancePreferenceChange('disableShadows', event.currentTarget.checked)
+                  }
+                />
               </div>
             </div>
           </section>
@@ -8429,6 +8707,31 @@ export const App: React.FC = () => {
               </div>
             </div>
           </section>
+          <section className="settings-dialog__section" aria-labelledby="settings-git-worktree">
+            <h2 className="settings-dialog__section-heading" id="settings-git-worktree">
+              Worktree
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--stack">
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-git-worktree-branch-name-prompt"
+                >
+                  <h3>Branch name prompt</h3>
+                </label>
+                <textarea
+                  id="settings-git-worktree-branch-name-prompt"
+                  className="settings-dialog__prompt-textarea"
+                  rows={4}
+                  spellCheck={false}
+                  value={appSettings.git.worktree.branchNamePrompt}
+                  onChange={(event) =>
+                    handleGitWorktreeChange('branchNamePrompt', event.currentTarget.value)
+                  }
+                />
+              </div>
+            </div>
+          </section>
         </section>
       )
     }
@@ -8538,6 +8841,7 @@ export const App: React.FC = () => {
               <SegmentedControl
                 aria-label="Window control style"
                 className="settings-dialog__appearance-toggle"
+                disabled={windowControlsHidden}
                 options={appearanceStyleOptions}
                 value={appSettings.appearance.style}
                 onChange={handleAppearanceStyleChange}
@@ -8652,41 +8956,42 @@ export const App: React.FC = () => {
     )
   }
 
-  const renderWindowControls = (placement: 'darwin' | 'default'): React.ReactElement => (
-    <div className={`window-controls window-controls--${placement}`} aria-label="Window controls">
-      <button
-        className="window-control window-control--minimize"
-        type="button"
-        aria-label="Minimize"
-        title="Minimize"
-        onClick={handleMinimizeWindow}
-      >
-        <Minus aria-hidden="true" />
-      </button>
-      <button
-        className="window-control window-control--maximize"
-        type="button"
-        aria-label={windowState.isMaximized ? 'Restore' : 'Maximize'}
-        title={windowState.isMaximized ? 'Restore' : 'Maximize'}
-        onClick={handleToggleWindowMaximized}
-      >
-        {windowState.isMaximized ? (
-          <Minimize2 aria-hidden="true" />
-        ) : (
-          <Maximize2 aria-hidden="true" />
-        )}
-      </button>
-      <button
-        className="window-control window-control--close"
-        type="button"
-        aria-label="Close"
-        title="Close"
-        onClick={handleCloseWindow}
-      >
-        <X aria-hidden="true" />
-      </button>
-    </div>
-  )
+  const renderWindowControls = (placement: 'darwin' | 'default'): React.ReactElement | null =>
+    windowControlsHidden ? null : (
+      <div className={`window-controls window-controls--${placement}`} aria-label="Window controls">
+        <button
+          className="window-control window-control--minimize"
+          type="button"
+          aria-label="Minimize"
+          title="Minimize"
+          onClick={handleMinimizeWindow}
+        >
+          <Minus aria-hidden="true" />
+        </button>
+        <button
+          className="window-control window-control--maximize"
+          type="button"
+          aria-label={windowState.isMaximized ? 'Restore' : 'Maximize'}
+          title={windowState.isMaximized ? 'Restore' : 'Maximize'}
+          onClick={handleToggleWindowMaximized}
+        >
+          {windowState.isMaximized ? (
+            <Minimize2 aria-hidden="true" />
+          ) : (
+            <Maximize2 aria-hidden="true" />
+          )}
+        </button>
+        <button
+          className="window-control window-control--close"
+          type="button"
+          aria-label="Close"
+          title="Close"
+          onClick={handleCloseWindow}
+        >
+          <X aria-hidden="true" />
+        </button>
+      </div>
+    )
 
   const chromeControlTheme =
     appSettings.appearance.controlStyle === 'transparent' ? 'transparent' : 'secondary'
@@ -9034,7 +9339,7 @@ export const App: React.FC = () => {
                 )}
                 {!selectedChat && newChatOpen && (
                   <div className="chat-panel__new-session">
-                    <span>New session in</span>
+                    <span>New session of</span>
                     <Dropdown
                       aria-label="Project"
                       title={newSessionCwd ?? 'Choose folder'}
@@ -9070,21 +9375,46 @@ export const App: React.FC = () => {
                       valueContent={newSessionProviderValueContent}
                       onChange={setNewSessionProvider}
                     />
-                    {containerSuggestions.length > 0 && (
-                      <>
-                        <span>from</span>
-                        <Dropdown
-                          aria-label="Runtime"
-                          disabled={providerUpdateInProgress || sendState === 'sending'}
-                          options={containerOptions}
-                          placement="top"
-                          size="small"
-                          value={newSessionContainerValue}
-                          onChange={handleNewSessionContainerChange}
-                        />
-                      </>
-                    )}
+                    <span>in</span>
+                    <Dropdown
+                      aria-label="Session location"
+                      disabled={providerUpdateInProgress || sendState === 'sending'}
+                      options={newSessionLocationOptions}
+                      placement="top"
+                      size="small"
+                      value={newSessionLocation}
+                      onChange={setNewSessionLocation}
+                    />
+                    <span>from</span>
+                    <Dropdown
+                      aria-label="Runtime"
+                      disabled={providerUpdateInProgress || sendState === 'sending'}
+                      options={containerOptions}
+                      placement="top"
+                      size="small"
+                      value={newSessionContainerValue}
+                      onChange={handleNewSessionContainerChange}
+                    />
                   </div>
+                )}
+                {!selectedChat && newChatOpen && worktreeCreationState !== 'idle' && (
+                  <section
+                    className="chat-approval chat-worktree-creation"
+                    aria-label="Worktree creation"
+                  >
+                    <div className="chat-approval__main">
+                      <span className="chat-approval__label">Creating worktree</span>
+                    </div>
+                    <div className="chat-approval__actions">
+                      <Button
+                        disabled={worktreeCreationState === 'canceling'}
+                        callback={() => void handleCancelWorktreeCreation()}
+                        icon={<X aria-hidden="true" />}
+                        label={<span>Cancel</span>}
+                        theme="secondary"
+                      />
+                    </div>
+                  </section>
                 )}
                 {selectedChat && pendingApproval && (
                   <section className="chat-approval" aria-label="Approval request">
@@ -9458,7 +9788,7 @@ export const App: React.FC = () => {
                     dropdownPlacement="top"
                     icon={
                       commitState === 'sending' ? (
-                        <ChangesAnimatedIcon Icon={AnimatedGitCommitHorizontalIcon} active />
+                        <AnimatedStatusIcon Icon={AnimatedGitCommitHorizontalIcon} active />
                       ) : (
                         <GitCommitHorizontal aria-hidden="true" />
                       )

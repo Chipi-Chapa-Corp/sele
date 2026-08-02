@@ -37,6 +37,7 @@ import {
 import { Button, type ButtonDropdownAction } from './Button'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { Input } from './Input'
+import { Switch } from './Switch'
 import { Textarea } from './Textarea'
 import './ActionsButton.css'
 
@@ -404,37 +405,26 @@ export const ActionsButton = ({
               onChange={(event) => updateDraft({ command: event.currentTarget.value })}
             />
           </label>
-          <label className="cwd-actions-dialog__switch-row">
-            <span>Open in terminal</span>
-            <input
-              type="checkbox"
-              role="switch"
-              checked={draft.openInTerminal}
-              onChange={(event) =>
-                updateDraft({
-                  openInTerminal: event.currentTarget.checked,
-                  closeTerminalOnFinish: event.currentTarget.checked && draft.closeTerminalOnFinish
-                })
-              }
-            />
-            <span className="cwd-actions-dialog__switch" aria-hidden="true" />
-          </label>
-          <label
+          <Switch
             className="cwd-actions-dialog__switch-row"
-            data-disabled={!draft.openInTerminal ? 'true' : undefined}
-          >
-            <span>Close terminal on finish</span>
-            <input
-              type="checkbox"
-              role="switch"
-              disabled={!draft.openInTerminal}
-              checked={draft.openInTerminal && draft.closeTerminalOnFinish}
-              onChange={(event) =>
-                updateDraft({ closeTerminalOnFinish: event.currentTarget.checked })
-              }
-            />
-            <span className="cwd-actions-dialog__switch" aria-hidden="true" />
-          </label>
+            label="Open in terminal"
+            checked={draft.openInTerminal}
+            onChange={(event) =>
+              updateDraft({
+                openInTerminal: event.currentTarget.checked,
+                closeTerminalOnFinish: event.currentTarget.checked && draft.closeTerminalOnFinish
+              })
+            }
+          />
+          <Switch
+            className="cwd-actions-dialog__switch-row"
+            label="Close terminal on finish"
+            disabled={!draft.openInTerminal}
+            checked={draft.openInTerminal && draft.closeTerminalOnFinish}
+            onChange={(event) =>
+              updateDraft({ closeTerminalOnFinish: event.currentTarget.checked })
+            }
+          />
           {dialogError && (
             <p className="cwd-actions-dialog__error" role="alert">
               {dialogError}

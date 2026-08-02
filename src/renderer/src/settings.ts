@@ -21,7 +21,7 @@ import type { AppAction } from './actions'
 import { normalizeAppActions } from './actions'
 
 export type AppThemePreference = 'system' | 'light' | 'dark'
-export type AppAppearancePositionPreference = 'system' | 'left' | 'right'
+export type AppAppearancePositionPreference = 'system' | 'left' | 'right' | 'hidden'
 export type AppAppearanceStylePreference = 'system' | 'sele' | 'macos'
 export type AppAppearanceControlStylePreference = 'bordered' | 'transparent'
 export type AppChatUsageDisplay = 'chatContext' | 'global'
@@ -37,6 +37,10 @@ export type AppGitCommitPromptSettings = {
 export type AppGitCommitMessageGenerationSettings = {
   prompt: string
   aiInstructionsPrefix: string
+}
+
+export type AppGitWorktreeSettings = {
+  branchNamePrompt: string
 }
 
 export type AppChatThoughtSettings = {
@@ -100,6 +104,7 @@ export type AppSettings = {
     commitModel: ProviderModelId | null
     commitPrompt: AppGitCommitPromptSettings
     commitMessageGeneration: AppGitCommitMessageGenerationSettings
+    worktree: AppGitWorktreeSettings
   }
 }
 
@@ -176,6 +181,11 @@ export const defaultAppGitCommitMessageGenerationSettings: AppGitCommitMessageGe
   aiInstructionsPrefix: 'AI instructions:'
 }
 
+export const defaultAppGitWorktreeSettings: AppGitWorktreeSettings = {
+  branchNamePrompt:
+    'Do not reason, do not use any tools, respond with a branch name for this prompt: ```{prompt}```. Do not add fences or any characters, your message will be used directly'
+}
+
 const legacyDefaultGitCommitPromptSettings: Partial<
   Record<keyof AppGitCommitPromptSettings, Set<string>>
 > = {
@@ -244,7 +254,8 @@ export const defaultAppSettings: AppSettings = {
   git: {
     commitModel: null,
     commitPrompt: defaultAppGitCommitPromptSettings,
-    commitMessageGeneration: defaultAppGitCommitMessageGenerationSettings
+    commitMessageGeneration: defaultAppGitCommitMessageGenerationSettings,
+    worktree: defaultAppGitWorktreeSettings
   }
 }
 
@@ -254,7 +265,7 @@ export const isAppThemePreference = (value: unknown): value is AppThemePreferenc
 export const isAppAppearancePositionPreference = (
   value: unknown
 ): value is AppAppearancePositionPreference =>
-  value === 'system' || value === 'left' || value === 'right'
+  value === 'system' || value === 'left' || value === 'right' || value === 'hidden'
 
 export const isAppAppearanceStylePreference = (
   value: unknown
@@ -338,6 +349,14 @@ const readCommitMessageGenerationField = (
     : defaultAppGitCommitMessageGenerationSettings[key]
 }
 
+const readWorktreeField = (
+  storedSettings: Record<string, unknown>,
+  key: keyof AppGitWorktreeSettings
+): string => {
+  const storedValue = storedSettings[key]
+  return typeof storedValue === 'string' ? storedValue : defaultAppGitWorktreeSettings[key]
+}
+
 export const readStoredAppSettings = (): AppSettings => {
   try {
     const storedValue = window.localStorage.getItem(appSettingsStorageKey)
@@ -383,6 +402,10 @@ export const readStoredAppSettings = (): AppSettings => {
       typeof git.commitMessageGeneration === 'object' &&
       !Array.isArray(git.commitMessageGeneration)
         ? (git.commitMessageGeneration as Record<string, unknown>)
+        : {}
+    const worktree =
+      git.worktree && typeof git.worktree === 'object' && !Array.isArray(git.worktree)
+        ? (git.worktree as Record<string, unknown>)
         : {}
 
     const actions = normalizeAppActions(parsedValue.actions)
@@ -462,6 +485,9 @@ export const readStoredAppSettings = (): AppSettings => {
             commitMessageGeneration,
             'aiInstructionsPrefix'
           )
+        },
+        worktree: {
+          branchNamePrompt: readWorktreeField(worktree, 'branchNamePrompt')
         }
       }
     }
@@ -483,6 +509,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
         commitModel?: ProviderModelId | null
         commitPrompt?: Partial<AppGitCommitPromptSettings>
         commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
+        worktree?: Partial<AppGitWorktreeSettings>
       }
     } = {}
 
@@ -595,6 +622,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       commitModel?: ProviderModelId | null
       commitPrompt?: Partial<AppGitCommitPromptSettings>
       commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
+      worktree?: Partial<AppGitWorktreeSettings>
     } = {}
     if (settings.git.commitModel !== defaultAppSettings.git.commitModel) {
       storedGit.commitModel = settings.git.commitModel
@@ -625,6 +653,18 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
     if (Object.keys(storedCommitMessageGeneration).length > 0) {
       storedGit.commitMessageGeneration = storedCommitMessageGeneration
+    }
+
+    const storedWorktree: Partial<AppGitWorktreeSettings> = {}
+    for (const key of Object.keys(
+      defaultAppGitWorktreeSettings
+    ) as (keyof AppGitWorktreeSettings)[]) {
+      if (settings.git.worktree[key] !== defaultAppGitWorktreeSettings[key]) {
+        storedWorktree[key] = settings.git.worktree[key]
+      }
+    }
+    if (Object.keys(storedWorktree).length > 0) {
+      storedGit.worktree = storedWorktree
     }
     if (Object.keys(storedGit).length > 0) storedSettings.git = storedGit
 
