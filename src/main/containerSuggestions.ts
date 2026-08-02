@@ -200,9 +200,12 @@ const getDockerContainers = async (): Promise<ContainerEntry[]> => {
 }
 
 const isCurrentContainer = (
-  entry: Pick<ContainerEntry, 'name'>,
+  entry: Pick<ContainerEntry, 'tool' | 'name'>,
   currentContainer: AppContainerTarget | null
-): boolean => currentContainer?.kind === 'container' && entry.name === currentContainer.name
+): boolean =>
+  currentContainer?.kind === 'container' &&
+  entry.tool === currentContainer.tool &&
+  entry.name === currentContainer.name
 
 const withCurrentContainer = (
   entries: ContainerEntry[],

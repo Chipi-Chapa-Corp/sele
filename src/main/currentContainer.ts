@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { hostname } from 'node:os'
 import type { AppContainerTarget, AppContainerTool } from '../shared/app'
 import { normalizeContainerTarget } from './containerTarget'
 
@@ -32,6 +31,9 @@ const currentContainerCommandTimeoutMs = 5_000
 
 let currentContainerTarget: Promise<AppContainerTarget | null> | null = null
 let currentContainerHostBridge: Promise<CurrentContainerHostBridge | null> | null = null
+
+const isFlatpakEnvironment = (): boolean =>
+  Boolean(process.env.FLATPAK_ID) || process.env.container?.trim().toLocaleLowerCase() === 'flatpak'
 
 const unquoteEnvironmentValue = (value: string): string => {
   const trimmed = value.trim()
@@ -102,8 +104,10 @@ const isDistroboxEnvironment = (): boolean =>
     process.env.container === 'distrobox'
   )
 
-const hasCurrentContainerMarker = async (): Promise<boolean> =>
-  Boolean(
+const hasCurrentContainerMarker = async (): Promise<boolean> => {
+  if (isFlatpakEnvironment()) return false
+
+  return Boolean(
     process.env.container ||
     isDistroboxEnvironment() ||
     process.env.CONTAINER_ID ||
@@ -112,6 +116,7 @@ const hasCurrentContainerMarker = async (): Promise<boolean> =>
     (await fileExists('/run/.toolboxenv')) ||
     (await fileExists('/.dockerenv'))
   )
+}
 
 const runTextCommand = (file: string, args: string[]): Promise<string | null> =>
   new Promise((resolve) => {
@@ -227,8 +232,7 @@ const getCurrentContainerName = async (
     await inspectCurrentContainerName(containerId, tool),
     toolboxEnvironment?.name,
     toolboxEnvironment?.container_name,
-    toolboxEnvironment?.containerName,
-    hostname()
+    toolboxEnvironment?.containerName
   ]
 
   for (const candidate of candidates) {
@@ -276,6 +280,7 @@ const getCurrentContainerTool = async (
 
 const detectCurrentContainerTarget = async (): Promise<AppContainerTarget | null> => {
   if (process.platform !== 'linux') return null
+  if (isFlatpakEnvironment()) return null
 
   const [containerEnvironment, toolboxEnvironment, dockerEnvironmentExists] = await Promise.all([
     readEnvironmentFile('/run/.containerenv'),
@@ -308,6 +313,8 @@ export const isCurrentContainerTarget = async (
 
   const currentContainer = await getCurrentContainerTarget()
   return (
-    currentContainer?.kind === 'container' && normalizedContainer.name === currentContainer.name
+    currentContainer?.kind === 'container' &&
+    normalizedContainer.tool === currentContainer.tool &&
+    normalizedContainer.name === currentContainer.name
   )
 }

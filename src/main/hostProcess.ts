@@ -39,6 +39,7 @@ const forwardedEnvironmentVariables = new Set([
   'ALL_PROXY',
   'CODEX_HOME',
   'COLORTERM',
+  'COPILOT_CLI_PATH',
   'HTTPS_PROXY',
   'HTTP_PROXY',
   'NO_PROXY',
@@ -48,6 +49,7 @@ const forwardedEnvironmentVariables = new Set([
   'OPENAI_PROJECT_ID',
   'PATH',
   'SELE_CODEX_PATH',
+  'SELE_COPILOT_PATH',
   'SELE_DISABLE_CODEX_RESOURCE_ISOLATION',
   'TERM',
   'TERM_PROGRAM',
@@ -63,6 +65,7 @@ const hostEnvironmentTimeoutMs = 5_000
 const hostEnvironmentMaxBuffer = 512 * 1024
 const resolvedCommandCache = new Map<string, Promise<ResolvedHostFile>>()
 const hostBridgeExecutableCache = new Map<string, Promise<string>>()
+const commandExecutableCache = new Map<string, Promise<string>>()
 let flatpakHostEnvironment: Promise<NodeJS.ProcessEnv> | null = null
 
 export const isRunningInFlatpak = (): boolean => Boolean(process.env.FLATPAK_ID)
@@ -868,6 +871,40 @@ const buildHostBridgeExecutableCommand = async (
   env: await getHostEnvironment(options.env, undefined)
 })
 
+const getCommandExecutablePath = async (
+  file: string,
+  args: string[],
+  safeFile: string
+): Promise<string> => {
+  const wrapperScript = [
+    '#!/bin/sh',
+    `exec ${[file, ...args].map(quotePosixShellArg).join(' ')} "$@"`,
+    ''
+  ].join('\n')
+  const hash = createHash('sha256').update(wrapperScript).digest('hex').slice(0, 16)
+  const safeName = basename(safeFile).replace(/[^A-Za-z0-9._-]/g, '_') || 'command'
+  const wrapperPath = join(tmpdir(), 'sele-host-bridges', `${safeName}-${hash}.sh`)
+  const existing = commandExecutableCache.get(wrapperPath)
+  if (existing) return existing
+
+  const writePromise = mkdir(join(tmpdir(), 'sele-host-bridges'), { recursive: true })
+    .then(() => writeFile(wrapperPath, wrapperScript, { mode: 0o755 }))
+    .then(() => chmod(wrapperPath, 0o755))
+    .then(() => wrapperPath)
+  commandExecutableCache.set(wrapperPath, writePromise)
+  return writePromise
+}
+
+const buildFlatpakExecutableCommand = async (
+  command: HostCommand,
+  safeFile: string
+): Promise<HostCommand> => ({
+  file: await getCommandExecutablePath(command.file, command.args, safeFile),
+  args: [],
+  cwd: command.cwd,
+  env: command.env
+})
+
 const buildResolvedLocalCommand = async (
   file: string,
   args: string[],
@@ -942,20 +979,25 @@ export const getHostExecutableCommand = async (
   args: string[],
   options: HostCommandOptions = {}
 ): Promise<HostCommand> => {
+  const normalizeExecutableCommand = (command: HostCommand): Promise<HostCommand> =>
+    isRunningInFlatpak() ? buildFlatpakExecutableCommand(command, file) : Promise.resolve(command)
+
   const container = options.container
   if (!container || container.kind !== 'container') {
     const bridge = await getCurrentContainerHostBridge()
     if (bridge) return buildHostBridgeExecutableCommand(bridge, file, args, options)
 
-    return buildResolvedLocalCommand(file, args, options)
+    return normalizeExecutableCommand(await buildResolvedLocalCommand(file, args, options))
   }
   if (await isCurrentContainerTarget(container))
-    return buildResolvedLocalCommand(file, args, options)
+    return normalizeExecutableCommand(await buildResolvedLocalCommand(file, args, options))
 
-  return getContainerRuntimeHostCommand(
-    container,
-    getContainerExecutableArgs(container, file, args),
-    options
+  return normalizeExecutableCommand(
+    await getContainerRuntimeHostCommand(
+      container,
+      getContainerExecutableArgs(container, file, args),
+      options
+    )
   )
 }
 

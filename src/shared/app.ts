@@ -14,6 +14,16 @@ export type AppProjectIcon = {
   updatedAt: number
 }
 
+export type AppProject = {
+  cwd: string
+  addedAt: number
+  updatedAt: number
+}
+
+export type AppAddProjectOptions = {
+  cwd: string
+}
+
 export type AppLocalImageOptions = {
   cwd?: string | null
   path: string
@@ -231,10 +241,22 @@ export type AppGitSwitchBranchOptions = AppGitBranchesOptions & {
   create?: boolean
 }
 
+export type AppGitCreateWorktreeOptions = AppContainerOptions & {
+  cwd?: string | null
+  name: string
+}
+
 export type AppGitBranchesResult = {
   repositoryRoot: string
   currentBranch: string | null
   branches: string[]
+}
+
+export type AppGitCreateWorktreeResult = {
+  repositoryRoot: string
+  worktreePath: string
+  branchName: string
+  baseBranchName: string | null
 }
 
 export type AppFileTreeOptions = AppContainerOptions & {
@@ -370,11 +392,14 @@ export type AppApi = {
   setWindowZoomLevel: (level: number) => Promise<void>
   handleExternalLink: (options: AppExternalLinkOptions) => Promise<AppExternalLinkResult | null>
   getDefaultCwd: () => Promise<string>
+  getProjects: () => Promise<AppProject[]>
+  addProject: (options: AppAddProjectOptions) => Promise<AppProject>
   getContainerSuggestions: () => Promise<AppContainerSuggestion[]>
   getSourceAvailability: (options?: AppSourceAvailabilityOptions) => Promise<AppSourceAvailability>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
   switchGitBranch: (options: AppGitSwitchBranchOptions) => Promise<AppGitBranchesResult>
+  createGitWorktree: (options: AppGitCreateWorktreeOptions) => Promise<AppGitCreateWorktreeResult>
   getFileTree: (options?: AppFileTreeOptions) => Promise<AppFileTreeResult>
   getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
   writeFileContents: (options: AppWriteFileContentsOptions) => Promise<AppWriteFileContentsResult>
@@ -414,11 +439,14 @@ export const appIpcChannels = {
   windowZoomLevelUpdated: 'app:window-zoom-level-updated',
   handleExternalLink: 'app:handle-external-link',
   getDefaultCwd: 'app:get-default-cwd',
+  getProjects: 'app:get-projects',
+  addProject: 'app:add-project',
   getContainerSuggestions: 'app:get-container-suggestions',
   getSourceAvailability: 'app:get-source-availability',
   getGitChanges: 'app:get-git-changes',
   getGitBranches: 'app:get-git-branches',
   switchGitBranch: 'app:switch-git-branch',
+  createGitWorktree: 'app:create-git-worktree',
   getFileTree: 'app:get-file-tree',
   getFileContents: 'app:get-file-contents',
   writeFileContents: 'app:write-file-contents',

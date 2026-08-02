@@ -88,7 +88,8 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
           : chat.preview,
         cwdKind: cwdMetadata.kind,
         projectCwd: cwdMetadata.projectCwd,
-        branchName: cwdMetadata.branchName
+        branchName: cwdMetadata.branchName,
+        worktreeBaseBranchName: cwdMetadata.worktreeBaseBranchName
       }
     })
   )
@@ -113,6 +114,7 @@ const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<Provid
     cwdKind: cwdMetadata.kind,
     projectCwd: cwdMetadata.projectCwd,
     branchName: cwdMetadata.branchName,
+    worktreeBaseBranchName: cwdMetadata.worktreeBaseBranchName,
     pinned: metadata.pinned,
     done: metadata.done,
     seenUpdatedAt: metadata.seenUpdatedAt,
@@ -200,6 +202,7 @@ export const getChatUpdateSummary = (
   cwdKind: detail.cwdKind,
   projectCwd: detail.projectCwd,
   branchName: detail.branchName,
+  worktreeBaseBranchName: detail.worktreeBaseBranchName,
   updatedAt,
   status: detail.status,
   pendingApproval: detail.pendingApproval,

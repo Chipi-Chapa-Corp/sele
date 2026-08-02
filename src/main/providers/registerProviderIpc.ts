@@ -3,10 +3,12 @@ import { BrowserWindow, ipcMain, type WebContents } from 'electron'
 import type {
   ProviderApprovalDecision,
   ProviderActiveSendMode,
+  ProviderAccountUsage,
   ProviderChatDetail,
   ProviderChatDetailUpdate,
   ProviderChatItem,
   ProviderChatListOptions,
+  ProviderChatPage,
   ProviderChatPurpose,
   ProviderChatUpdatedEvent,
   ProviderCwdNote,
@@ -69,6 +71,61 @@ let acknowledgedChatUpdateCount = 0
 let lastChatUpdateQueuedAt: number | null = null
 let lastChatUpdateSentAt: number | null = null
 let lastChatUpdateAcknowledgedAt: number | null = null
+let providerIpcShuttingDown = false
+
+export const beginProviderIpcShutdown = (): void => {
+  providerIpcShuttingDown = true
+  chatUpdateDeliveryByWebContentsId.clear()
+}
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
+
+const isExpectedProviderShutdownError = (error: unknown): boolean => {
+  const message = getErrorMessage(error)
+  if (!providerIpcShuttingDown) return false
+
+  return (
+    message === 'Codex app-server stopped' ||
+    message === 'Codex app-server is not running' ||
+    message.includes('Object has been destroyed')
+  )
+}
+
+const isExpectedProviderBackgroundReadError = (error: unknown): boolean => {
+  const message = getErrorMessage(error)
+  return (
+    isExpectedProviderShutdownError(error) ||
+    message === 'Codex app-server request timed out: initialize'
+  )
+}
+
+const runShutdownTolerantProviderRead = async <TValue>(
+  read: () => Promise<TValue>,
+  fallback: (error: unknown) => TValue
+): Promise<TValue> => {
+  try {
+    return await read()
+  } catch (error) {
+    if (isExpectedProviderBackgroundReadError(error)) return fallback(error)
+    throw error
+  }
+}
+
+const getEmptyProviderAccountUsage = (error: unknown): ProviderAccountUsage => ({
+  updatedAt: Date.now(),
+  statisticsLoaded: false,
+  summary: null,
+  dailyUsageBuckets: null,
+  rateLimits: [],
+  rateLimitResetCredits: null,
+  errors: isExpectedProviderShutdownError(error) ? [] : [getErrorMessage(error)]
+})
+
+const getEmptyProviderChatPage = (): ProviderChatPage => ({
+  chats: [],
+  nextCursor: null
+})
 
 export const getProviderIpcDiagnostics = (): Record<string, unknown> => ({
   queuedChatUpdateCount,
@@ -830,17 +887,27 @@ export const registerProviderIpc = (): void => {
     providerApi.getApps(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  ipcMain.handle(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) =>
-    providerApi.getUsage(requireProviderId(providerId), requireUsageOptions(options))
-  )
+  ipcMain.handle(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) => {
+    const requiredProviderId = requireProviderId(providerId)
+    const requiredOptions = requireUsageOptions(options)
+    return runShutdownTolerantProviderRead(
+      () => providerApi.getUsage(requiredProviderId, requiredOptions),
+      getEmptyProviderAccountUsage
+    )
+  })
 
   ipcMain.handle(providerIpcChannels.resetRateLimits, (_, providerId: unknown, options: unknown) =>
     providerApi.resetRateLimits(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  ipcMain.handle(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) =>
-    providerApi.getChats(requireProviderId(providerId), requireChatListOptions(options))
-  )
+  ipcMain.handle(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) => {
+    const requiredProviderId = requireProviderId(providerId)
+    const requiredOptions = requireChatListOptions(options)
+    return runShutdownTolerantProviderRead(
+      () => providerApi.getChats(requiredProviderId, requiredOptions),
+      getEmptyProviderChatPage
+    )
+  })
 
   ipcMain.handle(providerIpcChannels.getChat, (_, providerId: unknown, chatId: unknown) =>
     providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))

@@ -6,7 +6,7 @@ const eslintPluginReactHooks = require('eslint-plugin-react-hooks')
 const eslintPluginReactRefresh = require('eslint-plugin-react-refresh')
 
 module.exports = defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out'] },
+  { ignores: ['**/node_modules', '**/dist', '**/out', '**/agents'] },
   tseslint.configs.recommended,
   {
     files: ['eslint.config.cjs'],

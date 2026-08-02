@@ -33,7 +33,8 @@ const getNativeProjectCwd = (gitCommonDir: string): string | null =>
 const getDefaultCwdMetadata = (cwd: string | null): ProviderChatCwdMetadata => ({
   kind: 'directory',
   projectCwd: cwd,
-  branchName: null
+  branchName: null,
+  worktreeBaseBranchName: null
 })
 
 const readCwdMetadata = async (cwd: string): Promise<ProviderChatCwdMetadata> => {
@@ -61,7 +62,8 @@ const readCwdMetadata = async (cwd: string): Promise<ProviderChatCwdMetadata> =>
   return {
     kind: 'gitWorktree',
     projectCwd: getNativeProjectCwd(gitCommonDir) ?? gitTopLevel ?? cwd,
-    branchName: normalizedBranchName
+    branchName: normalizedBranchName,
+    worktreeBaseBranchName: null
   }
 }
 

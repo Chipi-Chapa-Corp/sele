@@ -11,7 +11,7 @@ import {
 import { disposeDatabase } from './database/sqlite'
 import { registerFreezeDiagnostics } from './freezeDiagnostics'
 import { disposeProviderAdapters } from './providers/providerService'
-import { registerProviderIpc } from './providers/registerProviderIpc'
+import { beginProviderIpcShutdown, registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
 import { disposeTerminalSessions, registerTerminalIpc } from './registerTerminalIpc'
 
@@ -135,6 +135,7 @@ if (isProviderCliInvocation()) {
 }
 
 app.on('before-quit', () => {
+  beginProviderIpcShutdown()
   disposeFreezeDiagnostics?.()
   disposeFreezeDiagnostics = null
   disposeProviderAdapters()

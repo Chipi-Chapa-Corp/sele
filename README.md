@@ -51,6 +51,12 @@ flatpak override --user --env=SELE_CODEX_PATH="$(command -v codex)" com.chipicha
 launchctl setenv SELE_CODEX_PATH "$(command -v codex)"
 ```
 
+If the Flatpak cannot see a host Copilot install, point Sele at that executable as well:
+
+```bash
+flatpak override --user --env=SELE_COPILOT_PATH="$(command -v copilot)" com.chipichapa.sele
+```
+
 For Copilot, start `copilot` once and use `/login` if the CLI is not already authenticated.
 
 ## Development

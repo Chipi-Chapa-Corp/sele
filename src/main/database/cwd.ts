@@ -10,7 +10,7 @@ export const getStoredCwdMetadata = async (
   const db = await getDatabase()
   const row = await db
     .selectFrom('cwd_metadata')
-    .select(['kind', 'project_cwd', 'branch_name'])
+    .select(['kind', 'project_cwd', 'branch_name', 'worktree_base_branch_name'])
     .where('cwd', '=', cwd)
     .executeTakeFirst()
 
@@ -20,7 +20,8 @@ export const getStoredCwdMetadata = async (
     ? {
         kind: row.kind,
         projectCwd: row.project_cwd,
-        branchName: row.branch_name || null
+        branchName: row.branch_name || null,
+        worktreeBaseBranchName: row.worktree_base_branch_name || null
       }
     : null
 }
@@ -37,13 +38,15 @@ export const setStoredCwdMetadata = async (
       cwd,
       kind: metadata.kind,
       project_cwd: metadata.projectCwd,
-      branch_name: metadata.branchName ?? ''
+      branch_name: metadata.branchName ?? '',
+      worktree_base_branch_name: metadata.worktreeBaseBranchName ?? ''
     })
     .onConflict((conflict) =>
       conflict.column('cwd').doUpdateSet({
         kind: metadata.kind,
         project_cwd: metadata.projectCwd,
-        branch_name: metadata.branchName ?? ''
+        branch_name: metadata.branchName ?? '',
+        worktree_base_branch_name: metadata.worktreeBaseBranchName ?? ''
       })
     )
     .execute()

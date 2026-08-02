@@ -337,6 +337,7 @@ export type ProviderChatCwdMetadata = {
   kind: ProviderChatCwdKind
   projectCwd: string | null
   branchName: string | null
+  worktreeBaseBranchName: string | null
 }
 
 export type ProviderApprovalDecision = 'allow' | 'deny'
@@ -374,6 +375,7 @@ export type ProviderChat = {
   cwdKind: ProviderChatCwdKind
   projectCwd: string | null
   branchName: string | null
+  worktreeBaseBranchName: string | null
   createdAt: number
   updatedAt: number
   status: ProviderChatStatus | null
@@ -557,6 +559,7 @@ export type ProviderChatDetail = {
   cwdKind: ProviderChatCwdKind
   projectCwd: string | null
   branchName: string | null
+  worktreeBaseBranchName: string | null
   status: ProviderChatStatus | null
   pinned: boolean
   done: boolean

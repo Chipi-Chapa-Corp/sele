@@ -26,6 +26,7 @@ import {
 } from 'electron'
 import type {
   AppColorScheme,
+  AppAddProjectOptions,
   AppContainerTarget,
   AppExternalLinkAction,
   AppExternalLinkOptions,
@@ -37,6 +38,8 @@ import type {
   AppGitCommitOptions,
   AppGitBranchesOptions,
   AppGitBranchesResult,
+  AppGitCreateWorktreeOptions,
+  AppGitCreateWorktreeResult,
   AppGitDiffOptions,
   AppGitFileDiffOptions,
   AppGitChangesResult,
@@ -69,9 +72,15 @@ import {
   getProjectIcon as getStoredProjectIcon,
   setProjectIcon as setStoredProjectIcon
 } from './database/projectIcons'
+import {
+  addProject as addStoredProject,
+  getProjects as getStoredProjects
+} from './database/projects'
+import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { getHostCommand } from './hostProcess'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
+import { getCopilotExecutable } from './providers/copilot/CopilotExecutable'
 
 export const getAppWindowState = (window: BrowserWindow): AppWindowState => ({
   isMaximized: window.isMaximized()
@@ -206,6 +215,17 @@ const getProjectIconOptions = (value: unknown): AppProjectIconOptions => {
   }
 }
 
+const getAddProjectOptions = (value: unknown): AppAddProjectOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid project options')
+  }
+
+  const cwd = getOptionalCwd((value as { cwd?: unknown }).cwd)
+  if (!cwd) throw new Error('Invalid project cwd')
+
+  return { cwd }
+}
+
 const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid local image options')
@@ -338,6 +358,7 @@ type RunGitOptions = {
   env?: NodeJS.ProcessEnv
   input?: string
   required?: boolean
+  timeoutMs?: number
 }
 
 const gitCommandContext = new AsyncLocalStorage<{ container?: AppContainerTarget | null }>()
@@ -369,7 +390,7 @@ const runGit = async (
         encoding: 'utf8',
         env: hostCommand.env,
         maxBuffer: 10 * 1024 * 1024,
-        timeout: 10_000
+        timeout: runOptions.timeoutMs ?? 10_000
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -531,9 +552,11 @@ const isProviderAvailableInSource = async (
   }
 
   if (providerId === 'copilot') {
-    return container?.kind === 'container' || (await getCurrentContainerHostBridge())
-      ? isCommandAvailableInSource('copilot', container)
-      : true
+    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
+      return isCommandAvailableInSource('copilot', container)
+    }
+
+    return runAvailabilityCommand(getCopilotExecutable(), ['--version'], null)
   }
 
   return false
@@ -598,6 +621,29 @@ const getGitSwitchBranchOptions = (value: unknown): AppGitSwitchBranchOptions =>
     container: requireContainerTarget(options.container, { optional: true }),
     create: Boolean(options.create),
     cwd: getDefaultPath(options.cwd)
+  }
+}
+
+const getGitCreateWorktreeOptions = (value: unknown): AppGitCreateWorktreeOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid Git worktree options')
+  }
+
+  const options = value as {
+    container?: unknown
+    cwd?: unknown
+    name?: unknown
+  }
+  const name = typeof options.name === 'string' ? options.name.trim() : ''
+
+  if (!name || name.includes('\0') || name.includes('\n') || name.includes('\r')) {
+    throw new Error('Invalid worktree name')
+  }
+
+  return {
+    container: requireContainerTarget(options.container, { optional: true }),
+    cwd: getDefaultPath(options.cwd),
+    name
   }
 }
 
@@ -877,6 +923,93 @@ const switchGitBranch = async (
   await runGit(repositoryRoot, create ? ['switch', '-c', branchName] : ['switch', branchName], true)
 
   return getGitBranches(repositoryRoot)
+}
+
+const gitWorktreeCreateTimeoutMs = 120_000
+
+const normalizeGitWorktreeName = (name: string): string => {
+  const normalizedName = name
+    .trim()
+    .replace(/^```(?:[a-z0-9_-]+)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
+    .replace(/^refs\/heads\//, '')
+    .replace(/^agents\//, '')
+    .trim()
+
+  if (
+    !normalizedName ||
+    normalizedName.includes('\0') ||
+    normalizedName.includes('\n') ||
+    normalizedName.includes('\r') ||
+    normalizedName.includes('\\') ||
+    isAbsolute(normalizedName)
+  ) {
+    throw new Error('AI returned an invalid worktree name')
+  }
+
+  const segments = normalizedName.split('/')
+  if (
+    segments.some(
+      (segment) =>
+        !segment || segment === '.' || segment === '..' || segment.toLocaleLowerCase() === '.git'
+    )
+  ) {
+    throw new Error('AI returned an invalid worktree name')
+  }
+
+  return normalizedName
+}
+
+const createGitWorktree = async (
+  cwd: string,
+  name: string
+): Promise<AppGitCreateWorktreeResult> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+
+  const baseBranchName = await getCurrentBranchName(repositoryRoot)
+  if (!baseBranchName) {
+    throw new Error('Cannot create a worktree while the selected repository is detached.')
+  }
+
+  const worktreeName = normalizeGitWorktreeName(name)
+  const branchName = `agents/${worktreeName}`
+  await runGit(repositoryRoot, ['check-ref-format', '--branch', branchName], true)
+
+  const worktreePath = join(repositoryRoot, 'agents', ...worktreeName.split('/'))
+  const relativeWorktreePath = relative(repositoryRoot, worktreePath)
+  if (
+    !relativeWorktreePath ||
+    relativeWorktreePath === '..' ||
+    relativeWorktreePath.startsWith('../') ||
+    relativeWorktreePath.startsWith('..\\') ||
+    isAbsolute(relativeWorktreePath)
+  ) {
+    throw new Error('AI returned an invalid worktree name')
+  }
+
+  await runGit(
+    repositoryRoot,
+    ['worktree', 'add', '-b', branchName, worktreePath, baseBranchName],
+    {
+      required: true,
+      timeoutMs: gitWorktreeCreateTimeoutMs
+    }
+  )
+  await setStoredCwdMetadata(worktreePath, {
+    kind: 'gitWorktree',
+    projectCwd: repositoryRoot,
+    branchName,
+    worktreeBaseBranchName: baseBranchName
+  })
+
+  return {
+    repositoryRoot,
+    worktreePath,
+    branchName,
+    baseBranchName
+  }
 }
 
 const getOriginHeadBranch = async (cwd: string): Promise<string | null> => {
@@ -1803,6 +1936,16 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.getDefaultCwd, () => process.cwd())
 
+  ipcMain.handle(appIpcChannels.getProjects, () => getStoredProjects())
+
+  ipcMain.handle(appIpcChannels.addProject, async (_event, value: unknown) => {
+    const options = getAddProjectOptions(value)
+    const cwdStat = await stat(options.cwd).catch(() => null)
+    if (!cwdStat?.isDirectory()) throw new Error('Project folder does not exist')
+
+    return addStoredProject(options.cwd)
+  })
+
   ipcMain.handle(appIpcChannels.getContainerSuggestions, () => getContainerSuggestions())
 
   ipcMain.handle(appIpcChannels.getSourceAvailability, (_event, value: unknown) =>
@@ -1882,6 +2025,13 @@ export const registerAppIpc = (): void => {
     const options = getGitSwitchBranchOptions(value)
     return runWithGitContainer(options.container, () =>
       switchGitBranch(options.cwd ?? process.cwd(), options.branchName, Boolean(options.create))
+    )
+  })
+
+  ipcMain.handle(appIpcChannels.createGitWorktree, async (_event, value: unknown) => {
+    const options = getGitCreateWorktreeOptions(value)
+    return runWithGitContainer(options.container, () =>
+      createGitWorktree(options.cwd ?? process.cwd(), options.name)
     )
   })
 

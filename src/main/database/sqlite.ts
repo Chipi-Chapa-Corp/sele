@@ -32,6 +32,7 @@ export type LocalDatabase = {
     kind: ProviderChatCwdKind
     project_cwd: string | null
     branch_name: string | null
+    worktree_base_branch_name: string | null
   }
   cwd_notes: {
     id: string
@@ -42,6 +43,11 @@ export type LocalDatabase = {
   project_icons: {
     cwd_key: string
     image_path: string
+    updated_at: number
+  }
+  projects: {
+    cwd: string
+    added_at: number
     updated_at: number
   }
   message_reviews: {
@@ -94,6 +100,7 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('kind', 'text', (column) => column.notNull())
     .addColumn('project_cwd', 'text')
     .addColumn('branch_name', 'text')
+    .addColumn('worktree_base_branch_name', 'text')
     .execute()
 
   await db.schema
@@ -110,6 +117,14 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .ifNotExists()
     .addColumn('cwd_key', 'text', (column) => column.primaryKey())
     .addColumn('image_path', 'text', (column) => column.notNull())
+    .addColumn('updated_at', 'integer', (column) => column.notNull())
+    .execute()
+
+  await db.schema
+    .createTable('projects')
+    .ifNotExists()
+    .addColumn('cwd', 'text', (column) => column.primaryKey())
+    .addColumn('added_at', 'integer', (column) => column.notNull())
     .addColumn('updated_at', 'integer', (column) => column.notNull())
     .execute()
 
@@ -136,6 +151,9 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   )
   await ensureColumn(db, 'cwd_metadata', 'branch_name', () =>
     db.schema.alterTable('cwd_metadata').addColumn('branch_name', 'text').execute()
+  )
+  await ensureColumn(db, 'cwd_metadata', 'worktree_base_branch_name', () =>
+    db.schema.alterTable('cwd_metadata').addColumn('worktree_base_branch_name', 'text').execute()
   )
   await ensureColumn(db, 'chat', 'seen_updated_at', () =>
     db.schema.alterTable('chat').addColumn('seen_updated_at', 'integer').execute()

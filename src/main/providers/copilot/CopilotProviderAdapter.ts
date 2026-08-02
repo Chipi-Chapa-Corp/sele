@@ -39,9 +39,10 @@ import type {
 import type { AppContainerTarget } from '../../../shared/app'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getCurrentContainerHostBridge } from '../../currentContainer'
-import { getHostExecutableCommand } from '../../hostProcess'
+import { getHostExecutableCommand, isRunningInFlatpak } from '../../hostProcess'
 import { fallbackCopilotModels } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import { getCopilotExecutable } from './CopilotExecutable'
 import { renderCopilotChatItems } from './CopilotItemRenderers'
 
 type PendingPermission = {
@@ -764,14 +765,22 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     container: AppContainerTarget | null
   ): Promise<CopilotClientEntry> => {
     const normalizedContainer = normalizeContainerTarget(container)
-    if (normalizedContainer.kind !== 'container' && !(await getCurrentContainerHostBridge())) {
+    if (
+      normalizedContainer.kind !== 'container' &&
+      !isRunningInFlatpak() &&
+      !(await getCurrentContainerHostBridge())
+    ) {
       return this.getHostClientEntry()
     }
 
-    const hostCommand = await getHostExecutableCommand('copilot', [], {
-      container: normalizedContainer.kind === 'container' ? normalizedContainer : null,
-      env: process.env
-    })
+    const hostCommand = await getHostExecutableCommand(
+      normalizedContainer.kind === 'container' ? 'copilot' : getCopilotExecutable(),
+      [],
+      {
+        container: normalizedContainer.kind === 'container' ? normalizedContainer : null,
+        env: process.env
+      }
+    )
     return {
       client: new CopilotClient({
         mode: 'copilot-cli',
@@ -1092,6 +1101,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     cwdKind: 'directory',
     projectCwd: null,
     branchName: null,
+    worktreeBaseBranchName: null,
     status: state.pendingPermissions.length
       ? 'waitingOnApproval'
       : state.failed
@@ -1136,6 +1146,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       cwdKind: 'directory',
       projectCwd: null,
       branchName: metadata.context?.branch ?? null,
+      worktreeBaseBranchName: null,
       createdAt: toMilliseconds(metadata.startTime),
       updatedAt: toMilliseconds(metadata.modifiedTime),
       status: detail?.status ?? null,
