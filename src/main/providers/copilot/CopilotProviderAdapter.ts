@@ -989,6 +989,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (
       normalizedContainer.kind !== 'container' &&
       !isRunningInFlatpak() &&
+      process.platform !== 'win32' &&
       !(await getCurrentContainerHostBridge())
     ) {
       return this.getHostClientEntry()

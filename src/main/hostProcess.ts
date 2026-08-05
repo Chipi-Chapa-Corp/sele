@@ -115,6 +115,16 @@ const getEnvironmentPathExt = (env: NodeJS.ProcessEnv | undefined): string | und
   return pathExtKey ? env[pathExtKey] : undefined
 }
 
+const getEnvironmentValue = (
+  env: NodeJS.ProcessEnv | undefined,
+  name: string
+): string | undefined => {
+  if (!env) return undefined
+
+  const key = Object.keys(env).find((candidate) => candidate.toLocaleLowerCase() === name)
+  return key ? env[key] : undefined
+}
+
 const parseEnvironment = (value: string): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {}
 
@@ -208,7 +218,7 @@ const getCommandNameCandidates = (
 ): string[] => {
   if (process.platform !== 'win32' || extname(commandName)) return [commandName]
 
-  const extensions = splitPath(getEnvironmentPathExt(env))
+  const extensions = splitPath(getEnvironmentPathExt(env) ?? '.COM;.EXE;.BAT;.CMD')
   return unique([commandName, ...extensions.map((extension) => `${commandName}${extension}`)])
 }
 
@@ -257,6 +267,7 @@ const getShellCandidates = async (
 
 const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 const quoteFishShellArg = quotePosixShellArg
+const quotePowerShellArg = (value: string): string => `'${value.replace(/'/g, "''")}'`
 const lookupResultStart = '__SELE_EXECUTABLE_LOOKUP_START__'
 const lookupResultEnd = '__SELE_EXECUTABLE_LOOKUP_END__'
 
@@ -277,6 +288,43 @@ set --local found (command -v ${quotedCommandName} 2>/dev/null; or which ${quote
 set --local lookup_path (string join : $PATH)
 printf '\\n${lookupResultStart}\\nFOUND=%s\\nPATH=%s\\n${lookupResultEnd}\\n' "$found" "$lookup_path"
 `.trim()
+}
+
+const getWindowsPowerShellLookupScript = (commandName: string): string => {
+  const quotedCommandName = quotePowerShellArg(commandName)
+
+  return `
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$lookupPath = @(
+  $env:Path
+  if ($machinePath) { [Environment]::ExpandEnvironmentVariables($machinePath) }
+  if ($userPath) { [Environment]::ExpandEnvironmentVariables($userPath) }
+) | Where-Object { $_ }
+$env:Path = $lookupPath -join ';'
+$found = (Get-Command -Name ${quotedCommandName} -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::Out.WriteLine('')
+[Console]::Out.WriteLine('${lookupResultStart}')
+[Console]::Out.WriteLine("FOUND=$found")
+[Console]::Out.WriteLine("PATH=$($env:Path)")
+[Console]::Out.WriteLine('${lookupResultEnd}')
+`.trim()
+}
+
+const getWindowsPowerShellCandidates = async (env: NodeJS.ProcessEnv): Promise<string[]> => {
+  const systemRoot =
+    getEnvironmentValue(env, 'systemroot') ??
+    getEnvironmentValue(process.env, 'systemroot') ??
+    getEnvironmentValue(env, 'windir') ??
+    getEnvironmentValue(process.env, 'windir')
+  const candidates = unique([
+    systemRoot ? join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : null
+  ])
+  const executableCandidates = await Promise.all(
+    candidates.map(async (candidate) => ((await isExecutableFile(candidate)) ? candidate : null))
+  )
+  return unique(executableCandidates)
 }
 
 const getShellLookupArgSets = (
@@ -613,6 +661,28 @@ const resolveFromShell = async (
   return null
 }
 
+const resolveFromWindowsPowerShell = async (
+  commandName: string,
+  cwd: string | undefined,
+  env: NodeJS.ProcessEnv
+): Promise<ResolvedHostFile | null> => {
+  if (process.platform !== 'win32') return null
+
+  const script = getWindowsPowerShellLookupScript(commandName)
+  const powershells = await getWindowsPowerShellCandidates(env)
+  for (const powershell of powershells) {
+    const result = await runLocalShellLookup(
+      powershell,
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+      env,
+      cwd
+    )
+    if (result && (await isExecutableFile(result.file))) return result
+  }
+
+  return null
+}
+
 const getExecutableNotFoundMessage = (file: string): string =>
   [
     `Executable was not found: ${file}.`,
@@ -650,6 +720,13 @@ const resolveHostFile = async (
       const lookupEnvironment = await getLookupEnvironment(env)
       const pathEntries = getToolPathEntries(getEnvironmentPath(lookupEnvironment.env))
       const lookupPath = pathEntries.join(delimiter)
+      const windowsShellCandidate = await resolveFromWindowsPowerShell(
+        file,
+        cwd,
+        lookupEnvironment.env
+      )
+      if (windowsShellCandidate) return windowsShellCandidate
+
       const shellCandidate = await resolveFromShell(
         file,
         pathEntries,
@@ -905,6 +982,25 @@ const buildFlatpakExecutableCommand = async (
   env: command.env
 })
 
+const normalizeWindowsExecutableCommand = (command: HostCommand): HostCommand => {
+  if (
+    process.platform !== 'win32' ||
+    !['.bat', '.cmd'].includes(extname(command.file).toLowerCase())
+  ) {
+    return command
+  }
+
+  const commandShell =
+    getEnvironmentValue(command.env, 'comspec') ??
+    getEnvironmentValue(process.env, 'comspec') ??
+    'cmd.exe'
+  return {
+    ...command,
+    file: commandShell,
+    args: ['/d', '/s', '/c', 'call', command.file, ...command.args]
+  }
+}
+
 const buildResolvedLocalCommand = async (
   file: string,
   args: string[],
@@ -980,7 +1076,9 @@ export const getHostExecutableCommand = async (
   options: HostCommandOptions = {}
 ): Promise<HostCommand> => {
   const normalizeExecutableCommand = (command: HostCommand): Promise<HostCommand> =>
-    isRunningInFlatpak() ? buildFlatpakExecutableCommand(command, file) : Promise.resolve(command)
+    isRunningInFlatpak()
+      ? buildFlatpakExecutableCommand(command, file)
+      : Promise.resolve(normalizeWindowsExecutableCommand(command))
 
   const container = options.container
   if (!container || container.kind !== 'container') {
