@@ -335,6 +335,7 @@
   display: none;
   align-items: center;
   justify-self: end;
+  gap: 8px;
 }
 
 :root[data-window-control-position='left'] .changes-sidebar__titlebar,
@@ -349,8 +350,7 @@
 
 :root[data-window-control-position='left'] .chat-home__settings-action,
 :root:not([data-window-control-position])[data-platform='darwin'] .chat-home__settings-action {
-  visibility: hidden;
-  pointer-events: none;
+  display: none;
 }
 
 .changes-sidebar__refresh-icon {
@@ -977,6 +977,11 @@
   display: flex;
   align-items: center;
   justify-self: start;
+  gap: 8px;
+}
+
+.chat-home__settings-action {
+  display: flex;
 }
 
 .chat-home__actions-right {

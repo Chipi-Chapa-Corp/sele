@@ -10,7 +10,7 @@ export type ChatListGroupData = {
   cwd: string | null
   label: string
   chats: ProviderChat[]
-  kind: 'pinned' | 'cwd' | 'done'
+  kind: 'pinned' | 'cwd' | 'active' | 'done'
 }
 
 type ChatListGroupProps = {
@@ -19,6 +19,7 @@ type ChatListGroupProps = {
   open: boolean
   selectedChatKey: string | null
   committingChatKeys?: ReadonlySet<string>
+  canReorderChats?: boolean
   visibleChatCount?: number
   chatPageSize?: number
   projectIconSrc?: string | null
@@ -27,8 +28,10 @@ type ChatListGroupProps = {
   onMarkChatDone: (chat: ProviderChat, done?: boolean) => void
   onMarkCwdChatsDone: (group: ChatListGroupData) => void
   onNewChatInCwd: (group: ChatListGroupData) => void
+  onRenameChat: (chat: ProviderChat, title: string) => Promise<void>
   onSelectProjectIcon?: (group: ChatListGroupData) => void
   onResolveApproval: (chat: ProviderChat, decision: ProviderApprovalDecision) => void
+  onReorderPinnedChats: (chats: ProviderChat[]) => void
   onSelectChat: (chat: ProviderChat) => void
   onToggle: (groupKey: string) => void
   onToggleChatPinned: (chat: ProviderChat) => void
@@ -45,6 +48,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   open,
   selectedChatKey,
   committingChatKeys,
+  canReorderChats = true,
   visibleChatCount = group.chats.length,
   chatPageSize = 20,
   projectIconSrc = null,
@@ -53,8 +57,10 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   onMarkChatDone,
   onMarkCwdChatsDone,
   onNewChatInCwd,
+  onRenameChat,
   onSelectProjectIcon,
   onResolveApproval,
+  onReorderPinnedChats,
   onSelectChat,
   onToggle,
   onToggleChatPinned,
@@ -152,9 +158,19 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             committingChatKeys={committingChatKeys}
             canMarkDone={group.kind !== 'done'}
             canMarkUndone={group.kind === 'done'}
-            showProjects={group.kind === 'pinned' || group.kind === 'done'}
+            reorderable={group.kind === 'pinned' && canReorderChats}
+            showProjects={
+              group.kind === 'pinned' || group.kind === 'active' || group.kind === 'done'
+            }
             onMarkDone={onMarkChatDone}
+            onRename={onRenameChat}
             onResolveApproval={onResolveApproval}
+            onReorder={(nextVisibleChats) =>
+              onReorderPinnedChats([
+                ...nextVisibleChats,
+                ...group.chats.slice(nextVisibleChats.length)
+              ])
+            }
             onSelect={onSelectChat}
             onTogglePinned={onToggleChatPinned}
             resolvingApprovalId={resolvingApprovalId}

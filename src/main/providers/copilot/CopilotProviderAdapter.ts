@@ -74,6 +74,7 @@ type CopilotSessionMetadata = SessionMetadata & {
 
 type CopilotSessionState = {
   id: string
+  createdAt: number
   client: CopilotClient | null
   container: AppContainerTarget | null
   session: CopilotSession | null
@@ -683,6 +684,20 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId)
+    await state.session!.rpc.name.set({ name: title })
+    state.title = title
+    if (state.metadata) {
+      state.metadata = {
+        ...state.metadata,
+        name: title
+      }
+    }
+    this.emitUpdate(state)
+    return this.createChatDetail(state)
+  }
+
   generateOneShot = async (message: string, options?: ProviderOneShotOptions): Promise<string> => {
     const generationId = options?.generationId ?? randomUUID()
     if (this.oneShotGenerations.has(generationId)) {
@@ -1143,6 +1158,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
     const state: CopilotSessionState = {
       id: sessionId,
+      createdAt: Date.now(),
       client: null,
       container: storedContainer,
       session: null,
@@ -1542,6 +1558,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   private createChatDetail = (state: CopilotSessionState): ProviderChatDetail => ({
     id: state.id,
+    createdAt: state.metadata ? toMilliseconds(state.metadata.startTime) : state.createdAt,
     title: this.getTitle(state),
     cwd: this.getCwd(state),
     cwdKind: 'directory',
@@ -1558,6 +1575,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
             ? 'active'
             : null,
     pinned: false,
+    pinnedOrder: null,
     done: false,
     seenUpdatedAt: null,
     purpose: null,
@@ -1602,6 +1620,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       status: detail?.status ?? null,
       pendingApproval: detail?.pendingApproval ?? null,
       pinned: false,
+      pinnedOrder: null,
       done: false,
       seenUpdatedAt: null,
       purpose: null,

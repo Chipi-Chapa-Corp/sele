@@ -47,6 +47,7 @@ export type ProviderAdapter = {
     chatId: string,
     options?: { container?: AppContainerTarget | null }
   ) => Promise<ProviderChatDetail>
+  setChatTitle: (chatId: string, title: string) => Promise<ProviderChatDetail>
   generateOneShot: (message: string, options?: ProviderOneShotOptions) => Promise<string>
   cancelOneShot: (generationId: string) => Promise<void>
   startChat: (

@@ -342,6 +342,14 @@ const requireChatId = (value: unknown): string => {
   return value
 }
 
+const requireChatIds = (value: unknown): string[] => {
+  if (!Array.isArray(value) || value.length > 1000) throw new Error('Invalid chat IDs')
+
+  const chatIds = value.map(requireChatId)
+  if (new Set(chatIds).size !== chatIds.length) throw new Error('Duplicate chat IDs')
+  return chatIds
+}
+
 const requireChatPurpose = (value: unknown): ProviderChatPurpose => {
   if (value !== 'commit') throw new Error('Invalid chat purpose')
   return value
@@ -508,6 +516,13 @@ const requireUsageOptions = (value: unknown): ProviderUsageOptions | undefined =
 const requireMessage = (value: unknown): string => {
   if (typeof value !== 'string') throw new Error('Invalid message')
   return value
+}
+
+const requireChatTitle = (value: unknown): string => {
+  if (typeof value !== 'string') throw new Error('Invalid chat title')
+  const title = value.trim()
+  if (!title || title.length > 100) throw new Error('Chat title must be 1–100 characters')
+  return title
 }
 
 const providerImageExtensions = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
@@ -909,6 +924,16 @@ export const registerProviderIpc = (): void => {
   )
 
   ipcMain.handle(
+    providerIpcChannels.setChatTitle,
+    (_, providerId: unknown, chatId: unknown, title: unknown) =>
+      providerApi.setChatTitle(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireChatTitle(title)
+      )
+  )
+
+  ipcMain.handle(
     providerIpcChannels.generateOneShot,
     (_, providerId: unknown, message: unknown, options: unknown) =>
       providerApi.generateOneShot(
@@ -1151,5 +1176,9 @@ export const registerProviderIpc = (): void => {
         requireChatId(chatId),
         requireBoolean(pinned)
       )
+  )
+
+  ipcMain.handle(providerIpcChannels.setPinnedChatOrder, (_, chatIds: unknown) =>
+    providerApi.setPinnedChatOrder(requireChatIds(chatIds))
   )
 }

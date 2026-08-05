@@ -1407,6 +1407,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           status: getThreadStatus(namedThread),
           pendingApproval: this.getProviderPendingApproval(namedThread.id),
           pinned: false,
+          pinnedOrder: null,
           done: false,
           seenUpdatedAt: null,
           purpose: null,
@@ -1456,6 +1457,26 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     return this.createChatDetail(thread)
   }
+
+  setChatTitle = (chatId: string, title: string): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId), async () => {
+      this.rememberThreadContainer(chatId)
+      if (!this.threads.has(chatId)) await this.getChatInContext(chatId)
+
+      await this.client.request('thread/name/set', {
+        threadId: chatId,
+        name: title
+      })
+      this.updateThread(chatId, (thread) => ({
+        ...thread,
+        name: title
+      }))
+      this.emitChatUpdated(chatId)
+
+      const detail = this.getCachedChatDetail(chatId)
+      if (!detail) throw new Error('Unable to rename chat')
+      return detail
+    })
 
   generateOneShot = (message: string, options?: ProviderOneShotOptions): Promise<string> =>
     this.runWithContainer(options?.container, () => this.generateOneShotInContext(message, options))
@@ -2301,6 +2322,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private createChatDetail = (thread: CodexThread): ProviderChatDetail => ({
     id: thread.id,
+    createdAt: thread.createdAt * 1_000,
     title: getThreadTitle(thread),
     cwd: getThreadApiCwd(thread),
     cwdKind: 'directory' as const,
@@ -2309,6 +2331,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     worktreeBaseBranchName: null,
     status: getThreadStatus(thread),
     pinned: false,
+    pinnedOrder: null,
     done: false,
     seenUpdatedAt: null,
     purpose: null,

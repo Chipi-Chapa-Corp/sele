@@ -112,6 +112,8 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
   getChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.getChat, providerId, chatId),
+  setChatTitle: (providerId, chatId, title) =>
+    ipcRenderer.invoke(providerIpcChannels.setChatTitle, providerId, chatId, title),
   generateOneShot: (providerId, message, options) =>
     ipcRenderer.invoke(providerIpcChannels.generateOneShot, providerId, message, options),
   cancelOneShot: (providerId, generationId) =>
@@ -203,6 +205,8 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.markChatSeen, providerId, chatId, seenUpdatedAt),
   setChatPinned: (providerId, chatId, pinned) =>
     ipcRenderer.invoke(providerIpcChannels.setChatPinned, providerId, chatId, pinned),
+  setPinnedChatOrder: (chatIds) =>
+    ipcRenderer.invoke(providerIpcChannels.setPinnedChatOrder, chatIds),
   setViewedChat: (providerId, chatId) =>
     ipcRenderer.send(providerIpcChannels.viewedChatChanged, providerId, chatId),
   acknowledgeChatUpdate: (sequence, detailApplied) =>

@@ -33,12 +33,14 @@ import {
   FolderKanban,
   FolderPen,
   FolderPlus,
+  FolderTree,
   Gauge,
   GitBranch,
   GitCommitHorizontal,
   GitMerge,
   GitPullRequestArrow,
   Link2,
+  LayoutList,
   ListChevronsDownUp,
   ListChevronsUpDown,
   Maximize2,
@@ -770,8 +772,10 @@ const containerSelectionStorageKey = 'sele:container-selection:v3'
 const scopedCommitActivitiesStorageKey = 'sele:scoped-commit-activities:v1'
 const chatCommitMarkersStorageKey = 'sele:chat-commit-markers:v1'
 const continuedStoppedWorkingStepsStorageKey = 'sele:continued-stopped-working-steps:v1'
+const chatGroupingPreferenceStorageKey = 'sele:chat-grouping-preference:v1'
 const gitCurrentChatModelValue = '__sele_current_chat_model__'
 const pinnedGroupKey = 'pinned'
+const activeGroupKey = 'active'
 const unknownCwdGroupKey = 'cwd:unknown'
 const doneGroupKey = 'done'
 const newSessionProjectPlaceholderValue = '__sele_new_session_project_placeholder__'
@@ -788,6 +792,26 @@ const fallbackDefaultSandboxMode =
   fallbackProviderSandboxModes[0]?.id ??
   'workspace-write'
 const refreshIconReplayMs = 1_050
+
+type ChatGroupingPreference = 'grouped' | 'ungrouped'
+
+const readChatGroupingPreference = (): ChatGroupingPreference => {
+  try {
+    return window.localStorage.getItem(chatGroupingPreferenceStorageKey) === 'ungrouped'
+      ? 'ungrouped'
+      : 'grouped'
+  } catch {
+    return 'grouped'
+  }
+}
+
+const writeChatGroupingPreference = (preference: ChatGroupingPreference): void => {
+  try {
+    window.localStorage.setItem(chatGroupingPreferenceStorageKey, preference)
+  } catch {
+    // Sidebar grouping is non-critical; ignore unavailable storage.
+  }
+}
 
 const providerLabels = {
   codex: 'Codex',
@@ -2143,6 +2167,24 @@ const getCollapsedGroupState = (
 const sortChatsForGroup = (chats: ProviderChat[]): ProviderChat[] =>
   [...chats].sort(compareChatsByCreatedAtDesc)
 
+const sortPinnedChats = (chats: ProviderChat[]): ProviderChat[] =>
+  [...chats].sort((firstChat, secondChat) => {
+    if (firstChat.pinnedOrder !== null && secondChat.pinnedOrder !== null) {
+      const orderDifference = firstChat.pinnedOrder - secondChat.pinnedOrder
+      if (orderDifference !== 0) return orderDifference
+    } else if (firstChat.pinnedOrder !== null) {
+      return -1
+    } else if (secondChat.pinnedOrder !== null) {
+      return 1
+    }
+
+    if (secondChat.createdAt !== firstChat.createdAt) {
+      return secondChat.createdAt - firstChat.createdAt
+    }
+
+    return getChatKey(firstChat).localeCompare(getChatKey(secondChat))
+  })
+
 const groupChatsForSidebar = (chats: ProviderChat[]): ChatListGroupData[] => {
   const groupsByCwd = new Map<string, ChatListGroupData>()
   const groupCreatedAtByKey = new Map<string, number>()
@@ -2204,7 +2246,7 @@ const groupChatsForSidebar = (chats: ProviderChat[]): ChatListGroupData[] => {
             key: pinnedGroupKey,
             cwd: null,
             label: 'Pinned',
-            chats: sortChatsForGroup(pinnedChats),
+            chats: sortPinnedChats(pinnedChats),
             kind: 'pinned' as const
           }
         ]
@@ -2247,12 +2289,13 @@ const getChatFromDetail = (
   branchName: detail.branchName ?? existingChat?.branchName ?? null,
   worktreeBaseBranchName:
     detail.worktreeBaseBranchName ?? existingChat?.worktreeBaseBranchName ?? null,
-  createdAt: existingChat?.createdAt ?? updatedAt,
+  createdAt: detail.createdAt,
   updatedAt,
   status: detail.status,
   pendingApproval: detail.pendingApproval,
   seenUpdatedAt: detail.seenUpdatedAt ?? existingChat?.seenUpdatedAt ?? null,
   pinned: detail.pinned ?? existingChat?.pinned ?? false,
+  pinnedOrder: detail.pinnedOrder ?? existingChat?.pinnedOrder ?? null,
   done: detail.done ?? existingChat?.done ?? false,
   purpose: detail.purpose ?? existingChat?.purpose ?? null,
   container: detail.container ?? existingChat?.container ?? null
@@ -2369,6 +2412,7 @@ const getChatDetailFromUpdateSummary = (
   summary: ProviderChatUpdateSummary
 ): ProviderChatDetail => ({
   ...detail,
+  createdAt: summary.createdAt,
   title: summary.title,
   cwd: summary.cwd,
   cwdKind: summary.cwdKind,
@@ -2378,6 +2422,7 @@ const getChatDetailFromUpdateSummary = (
   status: summary.status,
   pendingApproval: summary.pendingApproval,
   pinned: summary.pinned,
+  pinnedOrder: summary.pinnedOrder,
   done: summary.done,
   seenUpdatedAt: summary.seenUpdatedAt,
   purpose: summary.purpose,
@@ -2424,6 +2469,7 @@ const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.status === second.status &&
   arePendingApprovalsEqual(first.pendingApproval, second.pendingApproval) &&
   first.pinned === second.pinned &&
+  first.pinnedOrder === second.pinnedOrder &&
   first.done === second.done &&
   first.seenUpdatedAt === second.seenUpdatedAt &&
   first.purpose === second.purpose &&
@@ -2446,6 +2492,7 @@ const getChatFromUpdateSummary = (
     existingChat.status !== summary.status ||
     !arePendingApprovalsEqual(existingChat.pendingApproval, summary.pendingApproval) ||
     existingChat.pinned !== summary.pinned ||
+    existingChat.pinnedOrder !== summary.pinnedOrder ||
     existingChat.done !== summary.done ||
     existingChat.seenUpdatedAt !== summary.seenUpdatedAt ||
     existingChat.purpose !== summary.purpose ||
@@ -2461,12 +2508,13 @@ const getChatFromUpdateSummary = (
     projectCwd: summary.projectCwd,
     branchName: summary.branchName,
     worktreeBaseBranchName: summary.worktreeBaseBranchName,
-    createdAt: existingChat?.createdAt ?? summary.updatedAt,
+    createdAt: summary.createdAt,
     updatedAt:
       !existingChat || summaryChanged || turnCompleted ? summary.updatedAt : existingChat.updatedAt,
     status: summary.status,
     pendingApproval: summary.pendingApproval,
     pinned: summary.pinned,
+    pinnedOrder: summary.pinnedOrder,
     done: summary.done,
     seenUpdatedAt:
       existingChat?.seenUpdatedAt == null
@@ -3555,6 +3603,9 @@ export const App: React.FC = () => {
   const [chatSearchQuery, setChatSearchQuery] = useState('')
   const [chatSearchMatchCount, setChatSearchMatchCount] = useState(0)
   const [chatSearchActiveIndex, setChatSearchActiveIndex] = useState(0)
+  const [chatGroupingPreference, setChatGroupingPreference] = useState<ChatGroupingPreference>(
+    readChatGroupingPreference
+  )
   const [collapsedCwdGroups, setCollapsedCwdGroups] = useState<Record<string, boolean>>({})
   const [visibleChatCountsByGroup, setVisibleChatCountsByGroup] = useState<Record<string, number>>(
     {}
@@ -3656,6 +3707,7 @@ export const App: React.FC = () => {
   const selectedChatUpdatedAtRef = useRef<number | null>(null)
   const recentChatCacheLimitRef = useRef(effectiveAppSettings.chat.recentChatCacheLimit)
   const recentChatCacheRef = useRef(new Map<string, RecentChatCacheEntry>())
+  const pinnedOrderMutationRef = useRef(0)
   const changesCwdRef = useRef<string | null>(null)
   const changesContainerRef = useRef<AppContainerTarget | null>(null)
   const changeSourceRef = useRef(changeSource)
@@ -4873,6 +4925,7 @@ export const App: React.FC = () => {
         detail: {
           ...entry.detail,
           pinned: metadata.pinned,
+          pinnedOrder: metadata.pinnedOrder,
           done: metadata.done,
           seenUpdatedAt: metadata.seenUpdatedAt,
           purpose: metadata.purpose,
@@ -4888,6 +4941,7 @@ export const App: React.FC = () => {
           ? {
               ...chat,
               pinned: metadata.pinned,
+              pinnedOrder: metadata.pinnedOrder,
               done: metadata.done,
               seenUpdatedAt: metadata.seenUpdatedAt,
               purpose: metadata.purpose,
@@ -4904,6 +4958,7 @@ export const App: React.FC = () => {
         ? {
             ...currentChat,
             pinned: metadata.pinned,
+            pinnedOrder: metadata.pinnedOrder,
             done: metadata.done,
             seenUpdatedAt: metadata.seenUpdatedAt,
             purpose: metadata.purpose,
@@ -4919,6 +4974,7 @@ export const App: React.FC = () => {
         ? {
             ...currentDetail,
             pinned: metadata.pinned,
+            pinnedOrder: metadata.pinnedOrder,
             done: metadata.done,
             seenUpdatedAt: metadata.seenUpdatedAt,
             purpose: metadata.purpose,
@@ -6073,6 +6129,18 @@ export const App: React.FC = () => {
   const chatGroups = groupChatsForSidebar(filteredChats)
   const pinnedChatGroup = chatGroups.find((group) => group.kind === 'pinned') ?? null
   const activeChatGroups = chatGroups.filter((group) => group.kind === 'cwd')
+  const displayedActiveChatGroups =
+    chatGroupingPreference === 'grouped' || activeChatGroups.length === 0
+      ? activeChatGroups
+      : [
+          {
+            key: activeGroupKey,
+            cwd: null,
+            label: 'Active',
+            chats: sortChatsForGroup(activeChatGroups.flatMap((group) => group.chats)),
+            kind: 'active' as const
+          }
+        ]
   const doneChatGroup = chatGroups.find((group) => group.kind === 'done') ?? null
   const messageBoxNotesCwd = selectedChat ? changesProjectCwd : newSessionCwd
   const messageBoxNotesVisible = Boolean(selectedChat) || newChatOpen
@@ -6515,6 +6583,14 @@ export const App: React.FC = () => {
       ...currentGroups,
       [groupKey]: !getCollapsedGroupState(groupKey, currentGroups)
     }))
+  }
+
+  const handleToggleChatGrouping = (): void => {
+    setChatGroupingPreference((currentPreference) => {
+      const nextPreference = currentPreference === 'grouped' ? 'ungrouped' : 'grouped'
+      writeChatGroupingPreference(nextPreference)
+      return nextPreference
+    })
   }
 
   const handleLoadMoreChatsInGroup = (group: ChatListGroupData): void => {
@@ -7247,6 +7323,11 @@ export const App: React.FC = () => {
     }
   }
 
+  const handleRenameChat = async (chat: ProviderChat, title: string): Promise<void> => {
+    const detail = await providerApi.setChatTitle(chat.providerId, chat.id, title)
+    applyChatDetail(chat.providerId, detail)
+  }
+
   const handleToggleChatPinned = async (chat: ProviderChat): Promise<void> => {
     try {
       const metadata = await providerApi.setChatPinned(chat.providerId, chat.id, !chat.pinned)
@@ -7254,6 +7335,41 @@ export const App: React.FC = () => {
     } catch {
       // Leave the chat as-is if local metadata cannot be updated.
     }
+  }
+
+  const handleReorderPinnedChats = (orderedChats: ProviderChat[]): void => {
+    if (orderedChats.length < 2) return
+
+    const mutationId = ++pinnedOrderMutationRef.current
+    const previousOrderByChatKey = new Map(
+      orderedChats.map((chat) => [getChatKey(chat), chat.pinnedOrder])
+    )
+    const nextOrderByChatKey = new Map(
+      orderedChats.map((chat, pinnedOrder) => [getChatKey(chat), pinnedOrder])
+    )
+
+    setChats((currentChats) =>
+      currentChats.map((chat) => {
+        const pinnedOrder = nextOrderByChatKey.get(getChatKey(chat))
+        return pinnedOrder === undefined ? chat : { ...chat, pinnedOrder }
+      })
+    )
+
+    void providerApi
+      .setPinnedChatOrder(orderedChats.map((chat) => chat.id))
+      .then((metadataList) => {
+        if (pinnedOrderMutationRef.current === mutationId) applyChatMetadata(metadataList)
+      })
+      .catch(() => {
+        if (pinnedOrderMutationRef.current !== mutationId) return
+
+        setChats((currentChats) =>
+          currentChats.map((chat) => {
+            const pinnedOrder = previousOrderByChatKey.get(getChatKey(chat))
+            return pinnedOrder === undefined ? chat : { ...chat, pinnedOrder }
+          })
+        )
+      })
   }
 
   const handleUnpinPinnedChats = async (group: ChatListGroupData): Promise<void> => {
@@ -7940,6 +8056,7 @@ export const App: React.FC = () => {
         open={groupOpen}
         selectedChatKey={selectedChat ? getChatKey(selectedChat) : null}
         committingChatKeys={committingChatKeys}
+        canReorderChats={searchTerms.length === 0}
         visibleChatCount={visibleChatCount}
         chatPageSize={chatPageSize}
         onLoadMoreChats={handleLoadMoreChatsInGroup}
@@ -7948,8 +8065,10 @@ export const App: React.FC = () => {
         onMarkChatDone={handleMarkChatDone}
         onMarkCwdChatsDone={(nextGroup) => void handleMarkCwdChatsDone(nextGroup)}
         onNewChatInCwd={handleNewChatInCwd}
+        onRenameChat={handleRenameChat}
         onSelectProjectIcon={(nextGroup) => void handleSelectProjectIcon(nextGroup)}
         onResolveApproval={(chat, decision) => void handleResolveChatApproval(chat, decision)}
+        onReorderPinnedChats={handleReorderPinnedChats}
         onSelectChat={handleSelectChat}
         onToggle={handleToggleCwdGroup}
         onToggleChatPinned={handleToggleChatPinned}
@@ -10239,6 +10358,27 @@ export const App: React.FC = () => {
     />
   )
 
+  const renderChatGroupingButton = (): React.ReactElement => {
+    const nextPreference = chatGroupingPreference === 'grouped' ? 'ungrouped' : 'grouped'
+
+    return (
+      <Button
+        theme={chromeControlTheme}
+        aria-label={`Chat grouping: ${chatGroupingPreference}. Switch to ${nextPreference}`}
+        aria-pressed={chatGroupingPreference === 'grouped'}
+        title={chatGroupingPreference === 'grouped' ? 'Grouped' : 'Ungrouped'}
+        callback={handleToggleChatGrouping}
+        icon={
+          chatGroupingPreference === 'grouped' ? (
+            <FolderTree aria-hidden="true" />
+          ) : (
+            <LayoutList aria-hidden="true" />
+          )
+        }
+      />
+    )
+  }
+
   return (
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
@@ -10289,8 +10429,9 @@ export const App: React.FC = () => {
                 </>
               ) : (
                 <div className="chat-home__actions">
-                  <div className="chat-home__actions-left chat-home__settings-action">
-                    {renderSettingsButton()}
+                  <div className="chat-home__actions-left">
+                    <span className="chat-home__settings-action">{renderSettingsButton()}</span>
+                    {renderChatGroupingButton()}
                   </div>
                   <div className="chat-home__actions-right">
                     <Button
@@ -10326,7 +10467,7 @@ export const App: React.FC = () => {
               {filteredChats.length > 0 && (
                 <div className="chat-list-stack">
                   {pinnedChatGroup && renderChatGroup(pinnedChatGroup, 'pinned-chats-list')}
-                  {activeChatGroups.map((group, groupIndex) =>
+                  {displayedActiveChatGroups.map((group, groupIndex) =>
                     renderChatGroup(group, `cwd-chats-list-${groupIndex}`)
                   )}
                   {doneChatGroup && renderChatGroup(doneChatGroup, 'cwd-chats-list-done')}

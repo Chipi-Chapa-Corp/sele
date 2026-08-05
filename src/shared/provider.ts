@@ -372,6 +372,7 @@ export type ProviderUserInputResponse =
 export type ProviderChatMetadata = {
   id: string
   pinned: boolean
+  pinnedOrder: number | null
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
@@ -399,6 +400,7 @@ export type ProviderChat = {
   status: ProviderChatStatus | null
   pendingApproval: ProviderPendingApproval | null
   pinned: boolean
+  pinnedOrder: number | null
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
@@ -557,6 +559,7 @@ export type ProviderChatItem =
 
 export type ProviderChatDetail = {
   id: string
+  createdAt: number
   title: string
   cwd: string | null
   cwdKind: ProviderChatCwdKind
@@ -565,6 +568,7 @@ export type ProviderChatDetail = {
   worktreeBaseBranchName: string | null
   status: ProviderChatStatus | null
   pinned: boolean
+  pinnedOrder: number | null
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
@@ -581,7 +585,7 @@ export type ProviderChatActivitySummary = {
   activity: ProviderToolActivity
 }
 
-export type ProviderChatUpdateSummary = Omit<ProviderChat, 'providerId' | 'createdAt'> & {
+export type ProviderChatUpdateSummary = Omit<ProviderChat, 'providerId'> & {
   currentActivity: ProviderChatActivitySummary | null
 }
 
@@ -681,6 +685,11 @@ export type ProviderApi = {
   ) => Promise<ProviderAccountRateLimitResetOutcome>
   getChats: (providerId: ProviderId, options?: ProviderChatListOptions) => Promise<ProviderChatPage>
   getChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
+  setChatTitle: (
+    providerId: ProviderId,
+    chatId: string,
+    title: string
+  ) => Promise<ProviderChatDetail>
   generateOneShot: (
     providerId: ProviderId,
     message: string,
@@ -771,6 +780,7 @@ export type ProviderApi = {
     chatId: string,
     pinned: boolean
   ) => Promise<ProviderChatMetadata>
+  setPinnedChatOrder: (chatIds: string[]) => Promise<ProviderChatMetadata[]>
   onChatUpdated: (listener: (event: ProviderChatUpdatedEvent) => void) => () => void
 }
 
@@ -807,6 +817,7 @@ export const providerIpcChannels = {
   resetRateLimits: 'provider:reset-rate-limits',
   getChats: 'provider:get-chats',
   getChat: 'provider:get-chat',
+  setChatTitle: 'provider:set-chat-title',
   generateOneShot: 'provider:generate-one-shot',
   cancelOneShot: 'provider:cancel-one-shot',
   startChat: 'provider:start-chat',
@@ -826,6 +837,7 @@ export const providerIpcChannels = {
   setCwdNotes: 'provider:set-cwd-notes',
   markChatSeen: 'provider:mark-chat-seen',
   setChatPinned: 'provider:set-chat-pinned',
+  setPinnedChatOrder: 'provider:set-pinned-chat-order',
   continueChatSummary: 'provider:continue-chat-summary',
   sendActiveChatMessageSummary: 'provider:send-active-chat-message-summary',
   stopChatSummary: 'provider:stop-chat-summary',
