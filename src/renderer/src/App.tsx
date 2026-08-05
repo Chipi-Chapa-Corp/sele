@@ -373,6 +373,7 @@ type ChangeTreeFolderNode<TFile extends TreeFile = TreeFile> = {
   name: string
   path: string
   children: ChangeTreeNode<TFile>[]
+  childrenPrecomputed: boolean
 }
 type ChangeTreeNode<TFile extends TreeFile = TreeFile> =
   ChangeTreeFolderNode<TFile> | ChangeTreeFileNode<TFile>
@@ -381,6 +382,7 @@ type MutableChangeTreeFolder<TFile extends TreeFile = TreeFile> = {
   path: string
   folders: Map<string, MutableChangeTreeFolder<TFile>>
   files: ChangeTreeFileNode<TFile>[]
+  childrenPrecomputed: boolean
 }
 type ChatPaneWidths = {
   sidebar: number
@@ -2995,12 +2997,14 @@ const getTreeFilesWithDisplayPaths = <TFile extends TreeFile>(
 
 const createMutableChangeTreeFolder = <TFile extends TreeFile>(
   name: string,
-  path: string
+  path: string,
+  childrenPrecomputed = true
 ): MutableChangeTreeFolder<TFile> => ({
   name,
   path,
   folders: new Map(),
-  files: []
+  files: [],
+  childrenPrecomputed
 })
 
 const finalizeChangeTreeFolder = <TFile extends TreeFile>(
@@ -3012,7 +3016,8 @@ const finalizeChangeTreeFolder = <TFile extends TreeFile>(
       type: 'folder',
       name: childFolder.name,
       path: childFolder.path,
-      children: finalizeChangeTreeFolder(childFolder)
+      children: finalizeChangeTreeFolder(childFolder),
+      childrenPrecomputed: childFolder.childrenPrecomputed
     }))
 
   const files = [...folder.files].sort((firstFile, secondFile) =>
@@ -3022,31 +3027,46 @@ const finalizeChangeTreeFolder = <TFile extends TreeFile>(
   return [...folders, ...files]
 }
 
-const buildChangeTree = <TFile extends TreeFile>(files: TFile[]): ChangeTreeNode<TFile>[] => {
+const buildChangeTree = <TFile extends TreeFile>(
+  files: TFile[],
+  shouldPrecomputeFolderChildren?: (folderPath: string) => boolean
+): ChangeTreeNode<TFile>[] => {
   const root = createMutableChangeTreeFolder<TFile>('', '')
 
   for (const file of files) {
     const displayPath = getChangedFileDisplayPath(file)
-    const pathParts = getPathParts(displayPath)
-    const fileName = pathParts.pop() ?? displayPath
+    const pathPartIterator = displayPath.replace(/\\/g, '/').matchAll(/[^/]+/g)
+    let pathPart = pathPartIterator.next()
+    let nextPathPart = pathPartIterator.next()
     let folder = root
     let folderPath = ''
+    let fileParentPrecomputed = true
 
-    for (const folderName of pathParts) {
+    while (!pathPart.done && !nextPathPart.done && fileParentPrecomputed) {
+      const folderName = pathPart.value[0]
       folderPath = folderPath ? `${folderPath}/${folderName}` : folderName
       let childFolder = folder.folders.get(folderName)
 
       if (!childFolder) {
-        childFolder = createMutableChangeTreeFolder(folderName, folderPath)
+        childFolder = createMutableChangeTreeFolder(
+          folderName,
+          folderPath,
+          shouldPrecomputeFolderChildren?.(folderPath) ?? true
+        )
         folder.folders.set(folderName, childFolder)
       }
 
       folder = childFolder
+      fileParentPrecomputed = childFolder.childrenPrecomputed
+      pathPart = nextPathPart
+      nextPathPart = pathPartIterator.next()
     }
+
+    if (!fileParentPrecomputed) continue
 
     folder.files.push({
       type: 'file',
-      name: fileName,
+      name: pathPart.done ? displayPath : pathPart.value[0],
       file
     })
   }
@@ -3062,8 +3082,32 @@ const getTreeFolderPaths = <TFile extends TreeFile>(nodes: ChangeTreeNode<TFile>
 const getCollapsedTreeFolders = (folderPaths: string[]): Record<string, boolean> =>
   Object.fromEntries(folderPaths.map((folderPath) => [folderPath, true]))
 
+const fileTreePrecomputedLevels = 2
+
+const buildProgressiveFileTree = <TFile extends TreeFile>(
+  files: TFile[],
+  lastOpenedFolderPath: string | null
+): ChangeTreeNode<TFile>[] => {
+  const lastOpenedFolderDepth = lastOpenedFolderPath ? getPathParts(lastOpenedFolderPath).length : 0
+
+  return buildChangeTree(files, (folderPath) => {
+    const folderDepth = getPathParts(folderPath).length
+    if (folderDepth < fileTreePrecomputedLevels) return true
+    if (!lastOpenedFolderPath) return false
+
+    if (folderPath === lastOpenedFolderPath || lastOpenedFolderPath.startsWith(`${folderPath}/`)) {
+      return true
+    }
+
+    return (
+      folderPath.startsWith(`${lastOpenedFolderPath}/`) &&
+      folderDepth - lastOpenedFolderDepth < fileTreePrecomputedLevels
+    )
+  })
+}
+
 const getDefaultFileTreeCollapsedFolders = (files: RepositoryFile[]): Record<string, boolean> => {
-  const folderPaths = getTreeFolderPaths(buildChangeTree(files))
+  const folderPaths = getTreeFolderPaths(buildProgressiveFileTree(files, null))
 
   if (!folderPaths.includes('src')) return {}
 
@@ -3652,6 +3696,9 @@ export const App: React.FC = () => {
   const [collapsedFileTreeFolders, setCollapsedFileTreeFolders] = useState<Record<string, boolean>>(
     {}
   )
+  const [lastOpenedFileTreeFolderPath, setLastOpenedFileTreeFolderPath] = useState<string | null>(
+    null
+  )
   const [commitInput, setCommitInput] = useState('')
   const [commitState, setCommitState] = useState<SendState>('idle')
   const [commitMessageGenerationState, setCommitMessageGenerationState] =
@@ -3732,6 +3779,7 @@ export const App: React.FC = () => {
   const sandboxModeManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.sandboxMode))
   const approvalModeBeforeFullAccessRef = useRef<ProviderApprovalMode | null>(null)
   const collapsedFileTreeFoldersByCwdRef = useRef(new Map<string, Record<string, boolean>>())
+  const lastOpenedFileTreeFolderByCwdRef = useRef(new Map<string, string>())
   const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
 
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
@@ -6093,6 +6141,9 @@ export const App: React.FC = () => {
         setFileTreeScope(nextFileTreeScope)
         setFileTreeLoadScope(nextFileTreeScope)
         setFileTreeLoadState('ready')
+        setLastOpenedFileTreeFolderPath(
+          lastOpenedFileTreeFolderByCwdRef.current.get(nextFileTreeScope.cwd) ?? null
+        )
         const rememberedCollapsedFolders = collapsedFileTreeFoldersByCwdRef.current.get(
           nextFileTreeScope.cwd
         )
@@ -8589,7 +8640,10 @@ export const App: React.FC = () => {
   const changesEmptyMessage = getChangesEmptyMessage(changeSource, changesCwd)
   const filesEmptyMessage = getFileTreeEmptyMessage(changesCwd)
   const changeTree = useMemo(() => buildChangeTree(changedFiles), [changedFiles])
-  const repositoryFileTree = useMemo(() => buildChangeTree(repositoryFiles), [repositoryFiles])
+  const repositoryFileTree = useMemo(
+    () => buildProgressiveFileTree(repositoryFiles, lastOpenedFileTreeFolderPath),
+    [lastOpenedFileTreeFolderPath, repositoryFiles]
+  )
   const changeTreeFolderPaths = useMemo(() => getTreeFolderPaths(changeTree), [changeTree])
   const repositoryFileTreeFolderPaths = useMemo(
     () => getTreeFolderPaths(repositoryFileTree),
@@ -8625,11 +8679,19 @@ export const App: React.FC = () => {
     }))
   }
 
-  const handleToggleFileTreeFolder = (folderPath: string): void => {
+  const handleToggleFileTreeFolder = (folderPath: string, childrenPrecomputed: boolean): void => {
+    const collapsed = !childrenPrecomputed || Boolean(collapsedFileTreeFolders[folderPath])
+
+    if (collapsed) setLastOpenedFileTreeFolderPath(folderPath)
+
     setCollapsedFileTreeFolders((currentFolders) => {
-      const nextFolders = {
-        ...currentFolders,
-        [folderPath]: !currentFolders[folderPath]
+      const nextFolders = { ...currentFolders }
+
+      if (collapsed) {
+        delete nextFolders[folderPath]
+        if (changesCwd) lastOpenedFileTreeFolderByCwdRef.current.set(changesCwd, folderPath)
+      } else {
+        nextFolders[folderPath] = true
       }
 
       if (changesCwd) collapsedFileTreeFoldersByCwdRef.current.set(changesCwd, nextFolders)
@@ -8855,11 +8917,11 @@ export const App: React.FC = () => {
     depth: number,
     options: {
       collapsedFolders: Record<string, boolean>
-      onToggleFolder: (folderPath: string) => void
+      onToggleFolder: (folderPath: string, childrenPrecomputed: boolean) => void
     }
   ): React.ReactElement => {
     if (node.type === 'folder') {
-      const collapsed = Boolean(options.collapsedFolders[node.path])
+      const collapsed = !node.childrenPrecomputed || Boolean(options.collapsedFolders[node.path])
 
       return (
         <li
@@ -8873,7 +8935,7 @@ export const App: React.FC = () => {
             type="button"
             title={node.path}
             style={getChangeTreeRowStyle(depth)}
-            onClick={() => options.onToggleFolder(node.path)}
+            onClick={() => options.onToggleFolder(node.path, node.childrenPrecomputed)}
           >
             <span className="changes-sidebar__tree-chevron" aria-hidden="true">
               {collapsed ? <ChevronRight /> : <ChevronDown />}
