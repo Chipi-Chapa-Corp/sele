@@ -48,10 +48,7 @@ import {
 } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
 import { getCopilotExecutable } from './CopilotExecutable'
-import {
-  renderCopilotChatItems,
-  type CopilotRenderedPlan
-} from './CopilotItemRenderers'
+import { renderCopilotChatItems, type CopilotRenderedPlan } from './CopilotItemRenderers'
 
 type PendingPermission = {
   id: string
@@ -97,6 +94,7 @@ type CopilotSessionState = {
 
 type CopilotOneShotGeneration = {
   session: CopilotSession | null
+  state: CopilotSessionState | null
   canceled: boolean
 }
 
@@ -263,7 +261,11 @@ const oneShotCancellationRetentionMs = 120_000
 const normalizePlanStatus = (
   value: string | undefined
 ): CopilotRenderedPlan['items'][number]['status'] => {
-  const status = value?.trim().toLocaleLowerCase().replace(/[\s-]+/g, '_') ?? ''
+  const status =
+    value
+      ?.trim()
+      .toLocaleLowerCase()
+      .replace(/[\s-]+/g, '_') ?? ''
   if (['completed', 'complete', 'done', 'cancelled', 'canceled', 'skipped'].includes(status)) {
     return 'completed'
   }
@@ -683,24 +685,52 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   generateOneShot = async (message: string, options?: ProviderOneShotOptions): Promise<string> => {
     const generationId = options?.generationId ?? randomUUID()
+    if (this.oneShotGenerations.has(generationId)) {
+      throw new Error('Duplicate one-shot generation ID')
+    }
+
+    const generation: CopilotOneShotGeneration = {
+      session: null,
+      state: null,
+      canceled: this.takeCanceledOneShotGeneration(generationId)
+    }
+    this.oneShotGenerations.set(generationId, generation)
+
     const sessionId = randomUUID()
     this.hiddenSessionIds.add(sessionId)
     const state = this.createState(sessionId, options)
+    generation.state = state
+
+    const throwIfCanceled = async (): Promise<void> => {
+      if (!generation.canceled) return
+      await (generation.session ?? generation.state?.session)?.abort().catch(() => {})
+      throw new Error(providerOneShotGenerationCanceledMessage)
+    }
 
     try {
+      await throwIfCanceled()
       const session = await this.createSession(state, options, false, copilotOneShotClientName)
-      this.oneShotSessions.set(generationId, session)
+      generation.session = session
+      await throwIfCanceled()
+
       const response = await session.sendAndWait(getMessageOptions(message, options), 10 * 60_000)
+      await throwIfCanceled()
       if (response?.data.content.trim()) return response.data.content.trim()
 
       await this.loadEvents(state)
+      await throwIfCanceled()
       const lastMessage = state.events.findLast(
         (event): event is Extract<SessionEvent, { type: 'assistant.message' }> =>
           event.type === 'assistant.message' && Boolean(event.data.content.trim())
       )
       return lastMessage?.data.content.trim() ?? ''
+    } catch (error) {
+      if (generation.canceled) throw new Error(providerOneShotGenerationCanceledMessage)
+      throw error
     } finally {
-      this.oneShotSessions.delete(generationId)
+      if (this.oneShotGenerations.get(generationId) === generation) {
+        this.oneShotGenerations.delete(generationId)
+      }
       const session = state.session
       if (session) await session.disconnect().catch(() => {})
       await state.client?.deleteSession(sessionId).catch(() => {})
@@ -714,7 +744,37 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   cancelOneShot = async (generationId: string): Promise<void> => {
-    await this.oneShotSessions.get(generationId)?.abort()
+    const generation = this.oneShotGenerations.get(generationId)
+    if (!generation) {
+      this.rememberCanceledOneShotGeneration(generationId)
+      return
+    }
+
+    generation.canceled = true
+    await (generation.session ?? generation.state?.session)?.abort().catch(() => {})
+  }
+
+  private rememberCanceledOneShotGeneration = (generationId: string): void => {
+    this.canceledOneShotGenerationIds.add(generationId)
+
+    const existingTimer = this.canceledOneShotGenerationTimers.get(generationId)
+    if (existingTimer) clearTimeout(existingTimer)
+
+    const timer = setTimeout(() => {
+      this.canceledOneShotGenerationIds.delete(generationId)
+      this.canceledOneShotGenerationTimers.delete(generationId)
+    }, oneShotCancellationRetentionMs)
+    this.canceledOneShotGenerationTimers.set(generationId, timer)
+  }
+
+  private takeCanceledOneShotGeneration = (generationId: string): boolean => {
+    const canceled = this.canceledOneShotGenerationIds.delete(generationId)
+    const timer = this.canceledOneShotGenerationTimers.get(generationId)
+    if (timer) {
+      clearTimeout(timer)
+      this.canceledOneShotGenerationTimers.delete(generationId)
+    }
+    return canceled
   }
 
   startChat = async (
@@ -871,6 +931,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.events = []
     state.eventIds.clear()
     state.title = null
+    state.plan = null
+    state.planRefreshSequence += 1
     state.active = true
     state.stopped = false
     state.failed = false
@@ -952,6 +1014,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   dispose = (): void => {
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
+    this.oneShotGenerations.forEach((generation) => {
+      void (generation.session ?? generation.state?.session)?.abort().catch(() => {})
+    })
+    this.oneShotGenerations.clear()
+    this.canceledOneShotGenerationIds.clear()
+    this.canceledOneShotGenerationTimers.forEach((timer) => clearTimeout(timer))
+    this.canceledOneShotGenerationTimers.clear()
     this.states.forEach((state) => {
       state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
       this.cancelPendingUserInputs(state)
@@ -1170,6 +1239,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     await this.loadSessionTitle(state)
     await this.loadEvents(state)
     await this.refreshPendingMessages(state)
+    await this.refreshPlan(state)
     return state
   }
 
@@ -1287,7 +1357,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       // Copilot generates and persists a session name during the first turn, but does
       // not reliably send a title_changed event to SDK clients. Refresh it before the
       // completed-turn update so newly created chats are renamed in the live UI.
-      void this.loadSessionTitle(state).then(() => this.emitUpdate(state, true))
+      void Promise.all([this.loadSessionTitle(state), this.refreshPlan(state)]).then(() =>
+        this.emitUpdate(state, true)
+      )
+      return
+    }
+    if (event.type === 'session.plan_changed' || event.type === 'session.todos_changed') {
+      void this.refreshPlan(state).then(() => this.emitUpdate(state))
       return
     }
     if (event.type === 'pending_messages.modified') {
@@ -1372,6 +1448,33 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         content: message
       }))
     ]
+  }
+
+  private refreshPlan = async (state: CopilotSessionState): Promise<void> => {
+    const session = state.session
+    if (!session) return
+
+    const sequence = ++state.planRefreshSequence
+    const [todosResult, planResult] = await Promise.all([
+      session.rpc.plan.readSqlTodosWithDependencies().catch(() => null),
+      session.rpc.plan.read().catch(() => null)
+    ])
+    if (
+      state.session !== session ||
+      state.planRefreshSequence !== sequence ||
+      this.states.get(state.id) !== state
+    ) {
+      return
+    }
+
+    const items = (todosResult?.rows ?? []).flatMap((row): CopilotRenderedPlan['items'] => {
+      const step = row.title?.trim() || row.description?.trim()
+      return step ? [{ step, status: normalizePlanStatus(row.status) }] : []
+    })
+    state.plan =
+      items.length > 0
+        ? { explanation: null, items }
+        : parseMarkdownPlan(planResult?.exists ? planResult.content : null)
   }
 
   private queueUpdate = (state: CopilotSessionState): void => {
@@ -1469,7 +1572,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     items: renderCopilotChatItems(state.events, {
       active: state.active || state.pendingUserInputs.length > 0,
       stopped: state.stopped,
-      pendingItems: state.pendingMessages
+      pendingItems: state.pendingMessages,
+      plan: state.plan
     })
   })
 

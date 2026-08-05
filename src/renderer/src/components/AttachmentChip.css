@@ -59,6 +59,11 @@
   cursor: default;
 }
 
+.attachment-chip[data-disabled] .attachment-chip__trigger {
+  color: var(--lead);
+  opacity: 0.48;
+}
+
 .attachment-chip__icon {
   display: grid;
   width: 1.05em;

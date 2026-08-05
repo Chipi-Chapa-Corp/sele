@@ -9,6 +9,7 @@ type AttachmentChipProps = {
   callbackDisabled?: boolean
   callbackTitle: string
   className?: string
+  disabledAppearance?: boolean
   icon: ReactNode
   label: ReactNode
   removeAriaLabel: string
@@ -19,6 +20,7 @@ type AttachmentChipProps = {
   triggerAriaExpanded?: boolean
   triggerAriaHasPopup?: AriaAttributes['aria-haspopup']
   triggerRef?: Ref<HTMLButtonElement>
+  title?: string
 }
 
 export const AttachmentChip: React.FC<AttachmentChipProps> = ({
@@ -28,6 +30,7 @@ export const AttachmentChip: React.FC<AttachmentChipProps> = ({
   callbackDisabled = false,
   callbackTitle,
   className,
+  disabledAppearance = false,
   icon,
   label,
   removeAriaLabel,
@@ -37,12 +40,15 @@ export const AttachmentChip: React.FC<AttachmentChipProps> = ({
   triggerAriaControls,
   triggerAriaExpanded,
   triggerAriaHasPopup,
-  triggerRef
+  triggerRef,
+  title
 }) => (
   <div
     className={['attachment-chip', className].filter(Boolean).join(' ')}
     data-active={active || undefined}
+    data-disabled={disabledAppearance || undefined}
     role="listitem"
+    title={title}
   >
     <button
       ref={triggerRef}

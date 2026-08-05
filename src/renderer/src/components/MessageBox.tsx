@@ -159,6 +159,7 @@ const minTextareaHeight = 44
 const maxTextareaHeight = 180
 const maxSelectedAttachmentCount = 10
 const maxSelectedSkillCount = 20
+const copilotMultipleSkillsTooltip = "Copilot doesn't support multiple skills invocation"
 const standardServiceTierValue = '__standard__'
 const fastServiceTierIconClassName = 'message-box__fast-speed-icon'
 const maxSelectedAppCount = 20
@@ -1628,7 +1629,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         ? composerCache.skills
         : []
     )
-    const selectedSkillInputs = Array.from(
+    const availableSkillInputs = Array.from(
       new Map(
         [
           ...selectedSkills.map((skill) => ({ name: skill.name, path: skill.path })),
@@ -1636,6 +1637,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         ].map((skill) => [skill.path, skill])
       ).values()
     ).slice(0, maxSelectedSkillCount)
+    const selectedSkillInputs =
+      providerId === 'copilot' ? availableSkillInputs.slice(-1) : availableSkillInputs
     const selectedAppInputs = selectedApps
       .map((app) => ({ id: app.id, name: app.name }))
       .slice(0, maxSelectedAppCount)
@@ -2299,23 +2302,33 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 aria-label="Selected context"
                 role="list"
               >
-                {selectedSkills.map((skill) => (
-                  <AttachmentChip
-                    key={skill.path}
-                    callback={() => textareaRef.current?.focus({ preventScroll: true })}
-                    callbackAriaLabel={`Selected skill ${skill.name}`}
-                    callbackDisabled
-                    callbackTitle={[skill.displayName || skill.name, getSkillSummary(skill)]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    icon={<Package aria-hidden="true" />}
-                    label={`$${skill.displayName || skill.name}`}
-                    removeAriaLabel={`Remove ${skill.name} skill`}
-                    removeCallback={() => handleRemoveSkill(skill.path)}
-                    removeDisabled={textareaDisabled}
-                    removeTitle={`Remove ${skill.name} skill`}
-                  />
-                ))}
+                {selectedSkills.map((skill, index) => {
+                  const disabledByCopilot =
+                    providerId === 'copilot' && index < selectedSkills.length - 1
+                  const skillTitle = disabledByCopilot
+                    ? copilotMultipleSkillsTooltip
+                    : [skill.displayName || skill.name, getSkillSummary(skill)]
+                        .filter(Boolean)
+                        .join(' · ')
+
+                  return (
+                    <AttachmentChip
+                      key={skill.path}
+                      callback={() => textareaRef.current?.focus({ preventScroll: true })}
+                      callbackAriaLabel={`Selected skill ${skill.name}`}
+                      callbackDisabled
+                      callbackTitle={skillTitle}
+                      disabledAppearance={disabledByCopilot}
+                      icon={<Package aria-hidden="true" />}
+                      label={skill.displayName || skill.name}
+                      removeAriaLabel={`Remove ${skill.name} skill`}
+                      removeCallback={() => handleRemoveSkill(skill.path)}
+                      removeDisabled={textareaDisabled}
+                      removeTitle={`Remove ${skill.name} skill`}
+                      title={disabledByCopilot ? copilotMultipleSkillsTooltip : undefined}
+                    />
+                  )
+                })}
                 {selectedApps.map((app) => (
                   <AttachmentChip
                     key={app.id}
