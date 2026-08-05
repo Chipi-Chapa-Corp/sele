@@ -241,6 +241,15 @@ export type AppGitSwitchBranchOptions = AppGitBranchesOptions & {
   create?: boolean
 }
 
+export type AppGitDeleteBranchScope = 'local' | 'remote' | 'both'
+
+export type AppGitDeleteBranchOptions = AppGitBranchesOptions & {
+  branchName: string
+  force?: boolean
+  removeWorktree?: boolean
+  scope?: AppGitDeleteBranchScope
+}
+
 export type AppGitCreateWorktreeOptions = AppContainerOptions & {
   cwd?: string | null
   name: string
@@ -250,6 +259,17 @@ export type AppGitBranchesResult = {
   repositoryRoot: string
   currentBranch: string | null
   branches: string[]
+}
+
+export type AppGitDeleteBranchResult = {
+  branches: AppGitBranchesResult | null
+  cancelled: boolean
+  deleted: boolean
+  error: string | null
+  force: boolean
+  forceSuggested: boolean
+  scope: AppGitDeleteBranchScope | null
+  worktreePath: string | null
 }
 
 export type AppGitCreateWorktreeResult = {
@@ -385,6 +405,7 @@ export type AppGitPullResult = {
 
 export type AppApi = {
   getColorScheme: () => Promise<AppColorScheme>
+  getInstalledFontFamilies: () => Promise<string[]>
   getWindowState: () => Promise<AppWindowState>
   minimizeWindow: () => Promise<void>
   toggleWindowMaximized: () => Promise<AppWindowState>
@@ -399,6 +420,7 @@ export type AppApi = {
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
   switchGitBranch: (options: AppGitSwitchBranchOptions) => Promise<AppGitBranchesResult>
+  deleteGitBranch: (options: AppGitDeleteBranchOptions) => Promise<AppGitDeleteBranchResult>
   createGitWorktree: (options: AppGitCreateWorktreeOptions) => Promise<AppGitCreateWorktreeResult>
   getFileTree: (options?: AppFileTreeOptions) => Promise<AppFileTreeResult>
   getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
@@ -429,6 +451,7 @@ export type AppApi = {
 
 export const appIpcChannels = {
   getColorScheme: 'app:get-color-scheme',
+  getInstalledFontFamilies: 'app:get-installed-font-families',
   colorSchemeUpdated: 'app:color-scheme-updated',
   getWindowState: 'app:get-window-state',
   windowStateUpdated: 'app:window-state-updated',
@@ -446,6 +469,7 @@ export const appIpcChannels = {
   getGitChanges: 'app:get-git-changes',
   getGitBranches: 'app:get-git-branches',
   switchGitBranch: 'app:switch-git-branch',
+  deleteGitBranch: 'app:delete-git-branch',
   createGitWorktree: 'app:create-git-worktree',
   getFileTree: 'app:get-file-tree',
   getFileContents: 'app:get-file-contents',

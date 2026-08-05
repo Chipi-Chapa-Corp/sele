@@ -38,6 +38,9 @@ import type {
   AppGitCommitOptions,
   AppGitBranchesOptions,
   AppGitBranchesResult,
+  AppGitDeleteBranchOptions,
+  AppGitDeleteBranchResult,
+  AppGitDeleteBranchScope,
   AppGitCreateWorktreeOptions,
   AppGitCreateWorktreeResult,
   AppGitDiffOptions,
@@ -348,6 +351,92 @@ const copyProjectIcon = async (sourcePath: string): Promise<string> => {
 
 const getColorScheme = (): AppColorScheme => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
 
+const runFontListCommand = (file: string, args: string[]): Promise<string> =>
+  new Promise((resolve, reject) => {
+    execFile(
+      file,
+      args,
+      {
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: 30_000,
+        windowsHide: true
+      },
+      (error, stdout) => {
+        if (error) reject(error)
+        else resolve(stdout)
+      }
+    )
+  })
+
+const normalizeInstalledFontFamilies = (families: Iterable<string>): string[] => {
+  const uniqueFamilies = new Map<string, string>()
+
+  for (const family of families) {
+    const normalizedFamily = family.replace(/\s+/g, ' ').trim()
+    if (!normalizedFamily) continue
+
+    const key = normalizedFamily.toLocaleLowerCase()
+    if (!uniqueFamilies.has(key)) uniqueFamilies.set(key, normalizedFamily)
+  }
+
+  return [...uniqueFamilies.values()].sort((first, second) =>
+    first.localeCompare(second, undefined, { numeric: true, sensitivity: 'base' })
+  )
+}
+
+const readInstalledFontFamilies = async (): Promise<string[]> => {
+  if (process.platform === 'win32') {
+    const output = await runFontListCommand('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name }'
+    ])
+    return normalizeInstalledFontFamilies(output.split(/\r?\n/))
+  }
+
+  if (process.platform === 'darwin') {
+    const output = await runFontListCommand('/usr/sbin/system_profiler', [
+      'SPFontsDataType',
+      '-json'
+    ])
+    const profile = JSON.parse(output) as {
+      SPFontsDataType?: Array<{
+        _name?: unknown
+        family?: unknown
+        fullname?: unknown
+        typefaces?: Array<{ _name?: unknown; family?: unknown; fullname?: unknown }>
+      }>
+    }
+    return normalizeInstalledFontFamilies(
+      (profile.SPFontsDataType ?? []).flatMap((font) =>
+        [font, ...(font.typefaces ?? [])].flatMap((typeface) =>
+          typeof typeface.family === 'string'
+            ? [typeface.family]
+            : typeof typeface.fullname === 'string'
+              ? [typeface.fullname]
+              : typeof typeface._name === 'string'
+                ? [typeface._name]
+                : []
+        )
+      )
+    )
+  }
+
+  const output = await runFontListCommand('fc-list', ['--format=%{family}\n'])
+  return normalizeInstalledFontFamilies(
+    output.split(/\r?\n/).flatMap((families) => families.split(','))
+  )
+}
+
+let installedFontFamiliesPromise: Promise<string[]> | null = null
+
+const getInstalledFontFamilies = (): Promise<string[]> => {
+  installedFontFamiliesPromise ??= readInstalledFontFamilies().catch(() => [])
+  return installedFontFamiliesPromise
+}
+
 type BranchBase = {
   ref: string
   commit: string
@@ -620,6 +709,47 @@ const getGitSwitchBranchOptions = (value: unknown): AppGitSwitchBranchOptions =>
     branchName,
     container: requireContainerTarget(options.container, { optional: true }),
     create: Boolean(options.create),
+    cwd: getDefaultPath(options.cwd)
+  }
+}
+
+const isGitDeleteBranchScope = (value: unknown): value is AppGitDeleteBranchScope =>
+  value === 'local' || value === 'remote' || value === 'both'
+
+const getGitDeleteBranchOptions = (value: unknown): AppGitDeleteBranchOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid Git branch delete options')
+  }
+
+  const options = value as {
+    branchName?: unknown
+    container?: unknown
+    force?: unknown
+    removeWorktree?: unknown
+    scope?: unknown
+    cwd?: unknown
+  }
+  const branchName = typeof options.branchName === 'string' ? options.branchName.trim() : ''
+
+  if (!branchName || branchName.includes('\0') || branchName.includes('\n')) {
+    throw new Error('Invalid branch name')
+  }
+  if (options.force != null && typeof options.force !== 'boolean') {
+    throw new Error('Invalid Git force delete option')
+  }
+  if (options.removeWorktree != null && typeof options.removeWorktree !== 'boolean') {
+    throw new Error('Invalid Git worktree remove option')
+  }
+  if (options.scope != null && !isGitDeleteBranchScope(options.scope)) {
+    throw new Error('Invalid Git branch delete scope')
+  }
+
+  return {
+    branchName,
+    container: requireContainerTarget(options.container, { optional: true }),
+    force: Boolean(options.force),
+    removeWorktree: Boolean(options.removeWorktree),
+    scope: isGitDeleteBranchScope(options.scope) ? options.scope : undefined,
     cwd: getDefaultPath(options.cwd)
   }
 }
@@ -923,6 +1053,141 @@ const switchGitBranch = async (
   await runGit(repositoryRoot, create ? ['switch', '-c', branchName] : ['switch', branchName], true)
 
   return getGitBranches(repositoryRoot)
+}
+
+const getGitBranchRemote = async (cwd: string, branchName: string): Promise<string> => {
+  const remote = await runGit(cwd, [
+    'for-each-ref',
+    '--count=1',
+    '--format=%(upstream:remotename)',
+    `refs/heads/${branchName}`
+  ])
+
+  return remote?.trim() || 'origin'
+}
+
+const isForceBranchDeleteSuggestion = (message: string): boolean =>
+  /\bgit\s+branch\s+-D\b/.test(message) || /\bbranch\s+-D\b/.test(message)
+
+type GitWorktreeEntry = {
+  branchRef: string | null
+  path: string
+}
+
+const parseGitWorktreeList = (output: string): GitWorktreeEntry[] => {
+  const entries: GitWorktreeEntry[] = []
+  let path: string | null = null
+  let branchRef: string | null = null
+
+  const finishEntry = (): void => {
+    if (path) entries.push({ branchRef, path })
+    path = null
+    branchRef = null
+  }
+
+  for (const field of output.split('\0')) {
+    if (!field) {
+      finishEntry()
+      continue
+    }
+
+    if (field.startsWith('worktree ')) path = field.slice('worktree '.length)
+    if (field.startsWith('branch ')) branchRef = field.slice('branch '.length)
+  }
+
+  finishEntry()
+  return entries
+}
+
+const getLinkedBranchWorktreePath = async (
+  repositoryRoot: string,
+  branchName: string
+): Promise<string | null> => {
+  const output = await runGit(repositoryRoot, ['worktree', 'list', '--porcelain', '-z'], true)
+  const branchRef = `refs/heads/${branchName}`
+  const worktrees = parseGitWorktreeList(output ?? '')
+
+  return (
+    worktrees.find(
+      (worktree, index) =>
+        index > 0 && worktree.path !== repositoryRoot && worktree.branchRef === branchRef
+    )?.path ?? null
+  )
+}
+
+const isBranchUsedByWorktreeFailure = (message: string): boolean => {
+  const normalizedMessage = message.toLocaleLowerCase()
+  return (
+    normalizedMessage.includes('cannot delete branch') &&
+    normalizedMessage.includes('used by worktree at')
+  )
+}
+
+const deleteGitBranch = async (
+  cwd: string,
+  branchName: string,
+  scope: AppGitDeleteBranchScope,
+  force: boolean,
+  removeWorktree: boolean
+): Promise<AppGitDeleteBranchResult> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+
+  await runGit(repositoryRoot, ['check-ref-format', '--branch', branchName], true)
+  const remote =
+    scope === 'remote' || scope === 'both'
+      ? await getGitBranchRemote(repositoryRoot, branchName)
+      : null
+
+  try {
+    if (removeWorktree) {
+      const worktreePath = await getLinkedBranchWorktreePath(repositoryRoot, branchName)
+      if (worktreePath) {
+        await runGit(repositoryRoot, ['worktree', 'remove', worktreePath], {
+          required: true,
+          timeoutMs: 120_000
+        })
+      }
+    }
+
+    if (scope === 'local' || scope === 'both') {
+      await runGit(repositoryRoot, ['branch', force ? '-D' : '-d', '--', branchName], true)
+    }
+
+    if (scope === 'remote' || scope === 'both') {
+      await runGit(repositoryRoot, ['push', '--delete', remote ?? 'origin', branchName], {
+        required: true,
+        timeoutMs: 120_000
+      })
+    }
+  } catch (error) {
+    const message = getGitErrorMessage(error)
+    const worktreePath =
+      !removeWorktree && scope !== 'remote' && isBranchUsedByWorktreeFailure(message)
+        ? await getLinkedBranchWorktreePath(repositoryRoot, branchName)
+        : null
+    return {
+      branches: await getGitBranches(repositoryRoot),
+      cancelled: false,
+      deleted: false,
+      error: message,
+      force,
+      forceSuggested: !force && scope !== 'remote' && isForceBranchDeleteSuggestion(message),
+      scope,
+      worktreePath
+    }
+  }
+
+  return {
+    branches: await getGitBranches(repositoryRoot),
+    cancelled: false,
+    deleted: true,
+    error: null,
+    force,
+    forceSuggested: false,
+    scope,
+    worktreePath: null
+  }
 }
 
 const gitWorktreeCreateTimeoutMs = 120_000
@@ -1934,6 +2199,8 @@ const pullGitChanges = async (
 export const registerAppIpc = (): void => {
   ipcMain.handle(appIpcChannels.getColorScheme, getColorScheme)
 
+  ipcMain.handle(appIpcChannels.getInstalledFontFamilies, getInstalledFontFamilies)
+
   ipcMain.handle(appIpcChannels.getDefaultCwd, () => process.cwd())
 
   ipcMain.handle(appIpcChannels.getProjects, () => getStoredProjects())
@@ -2025,6 +2292,54 @@ export const registerAppIpc = (): void => {
     const options = getGitSwitchBranchOptions(value)
     return runWithGitContainer(options.container, () =>
       switchGitBranch(options.cwd ?? process.cwd(), options.branchName, Boolean(options.create))
+    )
+  })
+
+  ipcMain.handle(appIpcChannels.deleteGitBranch, async (event, value: unknown) => {
+    const options = getGitDeleteBranchOptions(value)
+    let scope = options.scope ?? null
+    let force = Boolean(options.force)
+
+    if (!scope) {
+      const result = await dialog.showMessageBox(getBrowserWindow(event), {
+        type: 'warning',
+        title: 'Delete branch',
+        message: `Delete “${options.branchName}”?`,
+        detail:
+          'Choose whether to delete the local branch, its remote branch, or both. Force only applies to local deletion.',
+        buttons: ['Delete Local', 'Delete Remote', 'Delete Both', 'Cancel'],
+        defaultId: 3,
+        cancelId: 3,
+        checkboxLabel: 'Force',
+        checkboxChecked: false,
+        noLink: true
+      })
+
+      scope = (['local', 'remote', 'both'] as const)[result.response] ?? null
+      force = result.checkboxChecked
+    }
+
+    if (!scope) {
+      return {
+        branches: null,
+        cancelled: true,
+        deleted: false,
+        error: null,
+        force,
+        forceSuggested: false,
+        scope: null,
+        worktreePath: null
+      } satisfies AppGitDeleteBranchResult
+    }
+
+    return runWithGitContainer(options.container, () =>
+      deleteGitBranch(
+        options.cwd ?? process.cwd(),
+        options.branchName,
+        scope,
+        force,
+        Boolean(options.removeWorktree)
+      )
     )
   })
 

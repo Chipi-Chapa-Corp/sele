@@ -16,6 +16,7 @@ import { terminalIpcChannels } from '../shared/terminal'
 
 const appApi: AppApi = {
   getColorScheme: () => ipcRenderer.invoke(appIpcChannels.getColorScheme),
+  getInstalledFontFamilies: () => ipcRenderer.invoke(appIpcChannels.getInstalledFontFamilies),
   getWindowState: () => ipcRenderer.invoke(appIpcChannels.getWindowState),
   minimizeWindow: () => ipcRenderer.invoke(appIpcChannels.minimizeWindow),
   toggleWindowMaximized: () => ipcRenderer.invoke(appIpcChannels.toggleWindowMaximized),
@@ -31,6 +32,7 @@ const appApi: AppApi = {
   getGitChanges: (options) => ipcRenderer.invoke(appIpcChannels.getGitChanges, options),
   getGitBranches: (options) => ipcRenderer.invoke(appIpcChannels.getGitBranches, options),
   switchGitBranch: (options) => ipcRenderer.invoke(appIpcChannels.switchGitBranch, options),
+  deleteGitBranch: (options) => ipcRenderer.invoke(appIpcChannels.deleteGitBranch, options),
   createGitWorktree: (options) => ipcRenderer.invoke(appIpcChannels.createGitWorktree, options),
   getFileTree: (options) => ipcRenderer.invoke(appIpcChannels.getFileTree, options),
   getFileContents: (options) => ipcRenderer.invoke(appIpcChannels.getFileContents, options),
@@ -177,27 +179,18 @@ const providerApi: ProviderRendererApi = {
     ),
   resolveApproval: (providerId, chatId, decision) =>
     ipcRenderer.invoke(providerIpcChannels.resolveApproval, providerId, chatId, decision),
+  resolveUserInput: (providerId, chatId, requestId, response) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.resolveUserInput,
+      providerId,
+      chatId,
+      requestId,
+      response
+    ),
   stopChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.stopChat, providerId, chatId),
   stopChatSummary: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.stopChatSummary, providerId, chatId),
-  writeAgentTerminalInput: (providerId, chatId, processId, data) =>
-    ipcRenderer.invoke(
-      providerIpcChannels.writeAgentTerminalInput,
-      providerId,
-      chatId,
-      processId,
-      data
-    ),
-  resizeAgentTerminal: (providerId, chatId, processId, cols, rows) =>
-    ipcRenderer.invoke(
-      providerIpcChannels.resizeAgentTerminal,
-      providerId,
-      chatId,
-      processId,
-      cols,
-      rows
-    ),
   markChatDone: (providerId, chatId, done) =>
     ipcRenderer.invoke(providerIpcChannels.markChatDone, providerId, chatId, done),
   markCwdChatsDone: (providerId, cwd) =>
@@ -228,18 +221,6 @@ const providerApi: ProviderRendererApi = {
       ipcRenderer.removeListener(providerIpcChannels.chatUpdated, handleChatUpdated)
       ipcRenderer.send(providerIpcChannels.chatUpdatesStopped)
     }
-  },
-  onAgentTerminalData: (listener): (() => void) => {
-    const handleAgentTerminalData = (
-      _: IpcRendererEvent,
-      event: Parameters<typeof listener>[0]
-    ): void => {
-      listener(event)
-    }
-
-    ipcRenderer.on(providerIpcChannels.agentTerminalData, handleAgentTerminalData)
-    return () =>
-      ipcRenderer.removeListener(providerIpcChannels.agentTerminalData, handleAgentTerminalData)
   }
 }
 
