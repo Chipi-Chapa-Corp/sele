@@ -42,10 +42,16 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getCurrentContainerHostBridge } from '../../currentContainer'
 import { getHostExecutableCommand, isRunningInFlatpak } from '../../hostProcess'
-import { fallbackCopilotModels } from '../../../shared/provider'
+import {
+  fallbackCopilotModels,
+  providerOneShotGenerationCanceledMessage
+} from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
 import { getCopilotExecutable } from './CopilotExecutable'
-import { renderCopilotChatItems } from './CopilotItemRenderers'
+import {
+  renderCopilotChatItems,
+  type CopilotRenderedPlan
+} from './CopilotItemRenderers'
 
 type PendingPermission = {
   id: string
@@ -85,6 +91,13 @@ type CopilotSessionState = {
   pendingMessages: ProviderPendingMessage[]
   pendingPermissions: PendingPermission[]
   pendingUserInputs: PendingUserInput[]
+  plan: CopilotRenderedPlan | null
+  planRefreshSequence: number
+}
+
+type CopilotOneShotGeneration = {
+  session: CopilotSession | null
+  canceled: boolean
 }
 
 type CopilotAskUserArguments = {
@@ -245,6 +258,42 @@ const truncate = (value: string, limit: number): string => {
 const chatTitlePromptLimit = 2_000
 const chatTitleMaxLength = 36
 const copilotOneShotClientName = 'Sele one-shot'
+const oneShotCancellationRetentionMs = 120_000
+
+const normalizePlanStatus = (
+  value: string | undefined
+): CopilotRenderedPlan['items'][number]['status'] => {
+  const status = value?.trim().toLocaleLowerCase().replace(/[\s-]+/g, '_') ?? ''
+  if (['completed', 'complete', 'done', 'cancelled', 'canceled', 'skipped'].includes(status)) {
+    return 'completed'
+  }
+  if (['in_progress', 'active', 'doing', 'running', 'started'].includes(status)) {
+    return 'in_progress'
+  }
+  return 'pending'
+}
+
+const parseMarkdownPlan = (content: string | null): CopilotRenderedPlan | null => {
+  if (!content?.trim()) return null
+
+  const items = content.split(/\r?\n/).flatMap((line): CopilotRenderedPlan['items'] => {
+    const checklist = line.match(/^\s*[-*+]\s+\[([ xX])\]\s+(.+?)\s*$/)
+    if (checklist) {
+      return [
+        {
+          step: checklist[2]!.trim(),
+          status: checklist[1]!.toLocaleLowerCase() === 'x' ? 'completed' : 'pending'
+        }
+      ]
+    }
+
+    const listItem = line.match(/^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/)
+    const step = listItem?.[1]?.trim()
+    return step ? [{ step, status: 'pending' }] : []
+  })
+
+  return items.length > 0 ? { explanation: null, items } : null
+}
 
 const normalizeGeneratedChatTitle = (value: string): string | null => {
   const firstLine = value
@@ -467,7 +516,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private oneShotSessions = new Map<string, CopilotSession>()
+  private oneShotGenerations = new Map<string, CopilotOneShotGeneration>()
+  private canceledOneShotGenerationIds = new Set<string>()
+  private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private hiddenSessionIds = new Set<string>()
 
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
@@ -1035,7 +1086,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       options,
       pendingMessages: [],
       pendingPermissions: [],
-      pendingUserInputs: []
+      pendingUserInputs: [],
+      plan: null,
+      planRefreshSequence: 0
     }
     this.sessionContainers.set(sessionId, storedContainer)
     this.states.set(sessionId, state)

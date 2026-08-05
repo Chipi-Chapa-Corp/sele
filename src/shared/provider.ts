@@ -495,7 +495,9 @@ export type ProviderToolIcon =
   'image-view' | 'image-generation' | 'openai-docs' | 'plan' | 'question'
 
 export type ProviderToolImage = {
-  path: string
+  path?: string | null
+  dataUrl?: string | null
+  name?: string | null
 }
 
 export type ProviderWorkingTool = {

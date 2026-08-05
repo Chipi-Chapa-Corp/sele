@@ -907,7 +907,16 @@ const GeneratedImageTool: React.FC<{
   label: string
   tools: ProviderWorkingTool[]
 }> = ({ active, label, tools }) => {
-  const paths = [...new Set(tools.flatMap((tool) => tool.images.map((image) => image.path)))]
+  const images = Array.from(
+    new Map(
+      tools
+        .flatMap((tool) => tool.images)
+        .flatMap((image) => {
+          const key = image.path || image.dataUrl
+          return key ? [[key, image] as const] : []
+        })
+    ).values()
+  )
 
   return (
     <div
@@ -926,8 +935,13 @@ const GeneratedImageTool: React.FC<{
         <span className="chat-detail__tool-label">{label}</span>
       </div>
       <div className="chat-detail__generated-image-gallery">
-        {paths.map((path) => (
-          <GeneratedImageThumbnail path={path} key={path} />
+        {images.map((image) => (
+          <GeneratedImageThumbnail
+            path={image.path}
+            initialDataUrl={image.dataUrl}
+            name={image.name ?? undefined}
+            key={image.path || image.dataUrl}
+          />
         ))}
       </div>
     </div>
@@ -1423,7 +1437,9 @@ const getToolSignature = (tool: ProviderWorkingTool): string =>
     tool.diffs.map((diff) => `${diff.path}:${diff.diff.length}`).join(','),
     tool.backgroundSessionId,
     tool.finishedBackgroundSessionId,
-    tool.images.map((image) => image.path).join(',')
+    tool.images
+      .map((image) => `${image.path ?? ''}:${image.dataUrl?.length ?? 0}:${image.name ?? ''}`)
+      .join(',')
   ].join(':')
 
 const getWorkingItemSignature = (item: ProviderWorkingItem): string => {

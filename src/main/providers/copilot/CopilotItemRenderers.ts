@@ -5,6 +5,7 @@ import type {
   ProviderFileDiff,
   ProviderMessageAttachment,
   ProviderToolActivity,
+  ProviderToolImage,
   ProviderWorkingItem,
   ProviderWorkingTool
 } from '../../../shared/provider'
@@ -12,10 +13,19 @@ import type {
 type ToolStartEvent = Extract<SessionEvent, { type: 'tool.execution_start' }>
 type ToolCompleteEvent = Extract<SessionEvent, { type: 'tool.execution_complete' }>
 
+export type CopilotRenderedPlan = {
+  explanation: string | null
+  items: Array<{
+    step: string
+    status: 'pending' | 'in_progress' | 'completed'
+  }>
+}
+
 type RenderOptions = {
   active: boolean
   stopped: boolean
   pendingItems?: ProviderChatItem[]
+  plan?: CopilotRenderedPlan | null
 }
 
 type Segment = {
@@ -142,6 +152,69 @@ const getToolDiffs = (tool: ProviderWorkingTool, event: ToolCompleteEvent): Prov
   return [{ path, kind, diff: output }]
 }
 
+type CopilotBinaryAsset = Extract<SessionEvent, { type: 'session.binary_asset' }>['data']
+
+const toToolImage = (
+  data: string,
+  mimeType: string,
+  name?: string | null
+): ProviderToolImage | null => {
+  if (!data || !mimeType.startsWith('image/')) return null
+  return {
+    dataUrl: `data:${mimeType};base64,${data}`,
+    name: name?.trim() || 'Generated image'
+  }
+}
+
+const getToolImages = (
+  event: ToolCompleteEvent,
+  binaryAssets: ReadonlyMap<string, CopilotBinaryAsset>
+): ProviderToolImage[] => {
+  const result = event.data.result
+  if (!result) return []
+
+  const images: ProviderToolImage[] = []
+  const addImage = (image: ProviderToolImage | null): void => {
+    if (!image?.dataUrl) return
+    if (images.some((existing) => existing.dataUrl === image.dataUrl)) return
+    images.push(image)
+  }
+
+  result.contents?.forEach((content) => {
+    if (content.type === 'image') {
+      addImage(toToolImage(content.data, content.mimeType))
+      return
+    }
+    if (content.type !== 'resource' || !('blob' in content.resource)) return
+    addImage(
+      toToolImage(
+        content.resource.blob,
+        content.resource.mimeType ?? '',
+        basename(content.resource.uri) || 'Generated image'
+      )
+    )
+  })
+
+  result.binaryResultsForLlm?.forEach((binary) => {
+    if ('data' in binary) {
+      addImage(toToolImage(binary.data, binary.mimeType, binary.description))
+      return
+    }
+    if (!('assetId' in binary)) return
+    const asset = binaryAssets.get(binary.assetId)
+    if (!asset) return
+    addImage(
+      toToolImage(
+        asset.data,
+        asset.mimeType,
+        binary.description || asset.description || 'Generated image'
+      )
+    )
+  })
+
+  return images
+}
+
 const updateTool = (
   items: ProviderWorkingItem[],
   toolCallId: string,
@@ -213,7 +286,12 @@ export const renderCopilotChatItems = (
 ): ProviderChatItem[] => {
   const items: ProviderChatItem[] = []
   const askUserToolCallIds = new Set<string>()
+  const binaryAssets = new Map<string, CopilotBinaryAsset>()
   let segment: Segment | null = null
+
+  events.forEach((event) => {
+    if (event.type === 'session.binary_asset') binaryAssets.set(event.data.assetId, event.data)
+  })
 
   const ensureSegment = (eventId: string): Segment => {
     if (!segment) {
@@ -362,13 +440,16 @@ export const renderCopilotChatItems = (
 
     if (event.type === 'tool.execution_complete') {
       const askedQuestion = askUserToolCallIds.has(event.data.toolCallId)
+      const images = askedQuestion ? [] : getToolImages(event, binaryAssets)
       updateTool(ensureSegment(event.id).workingItems, event.data.toolCallId, (tool) => ({
         ...tool,
         status: 'finished',
         label: askedQuestion ? 'Asked a question' : tool.label,
+        icon: images.length > 0 ? 'image-generation' : tool.icon,
         stdout: askedQuestion ? null : getToolOutput(event),
         diffs: askedQuestion ? [] : getToolDiffs(tool, event),
-        rawOutput: askedQuestion ? null : (event.data.result ?? event.data.error ?? null)
+        rawOutput: askedQuestion ? null : (event.data.result ?? event.data.error ?? null),
+        images
       }))
       continue
     }
@@ -385,6 +466,30 @@ export const renderCopilotChatItems = (
     if (event.type === 'session.compaction_complete') {
       items.push({ type: 'contextCompaction', id: event.id })
     }
+  }
+
+  if (options.plan?.items.length) {
+    ensureSegment('copilot:plan').workingItems.push({
+      type: 'tool',
+      id: 'copilot:plan',
+      toolId: 'update_plan',
+      status: 'finished',
+      activity: 'other',
+      icon: 'plan',
+      label: 'Updated plan',
+      command: null,
+      cwd: null,
+      stdout: null,
+      diffs: [],
+      backgroundSessionId: null,
+      finishedBackgroundSessionId: null,
+      rawInput: {
+        explanation: options.plan.explanation,
+        plan: options.plan.items
+      },
+      rawOutput: null,
+      images: []
+    })
   }
 
   flushSegment(true)

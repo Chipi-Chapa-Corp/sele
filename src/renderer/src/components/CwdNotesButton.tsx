@@ -142,6 +142,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
+    event.stopPropagation()
     handleAddNote()
   }
 
