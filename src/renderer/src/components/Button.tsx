@@ -1,5 +1,11 @@
 import { ChevronDown } from 'lucide-react'
-import type { ButtonHTMLAttributes, CSSProperties, ReactElement, ReactNode } from 'react'
+import type {
+  ButtonHTMLAttributes,
+  CSSProperties,
+  MouseEventHandler,
+  ReactElement,
+  ReactNode
+} from 'react'
 import { forwardRef, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import './Button.css'
@@ -28,12 +34,16 @@ export type ButtonDropdownAction = {
 export type ButtonMenuRowProps = {
   className?: string
   disabled?: boolean
+  endAdornment?: ReactNode
   icon?: ReactNode
   inlineActionRole?: 'menuitem'
   inlineActions?: readonly ButtonDropdownInlineAction[]
   label: ReactNode
   labelClassName?: string
-  mainRole?: 'menuitem'
+  mainAriaSelected?: boolean
+  mainId?: string
+  mainRole?: 'menuitem' | 'option'
+  onMouseEnter?: MouseEventHandler<HTMLDivElement>
   onSelect?: () => Promise<void> | void
   title?: string
 }
@@ -115,12 +125,16 @@ const renderIcon = (icon: ReactNode, className: string): ReactNode =>
 export const ButtonMenuRow = ({
   className,
   disabled = false,
+  endAdornment = null,
   icon = null,
   inlineActionRole,
   inlineActions = [],
   label,
   labelClassName,
+  mainAriaSelected,
+  mainId,
   mainRole,
+  onMouseEnter,
   onSelect,
   title
 }: ButtonMenuRowProps): ReactElement => {
@@ -156,11 +170,13 @@ export const ButtonMenuRow = ({
   }
 
   return (
-    <div className={rowClassName} role="presentation">
+    <div className={rowClassName} role="presentation" onMouseEnter={onMouseEnter}>
       {interactive ? (
         <button
+          aria-selected={mainAriaSelected}
           className={mainClassName}
           disabled={disabled}
+          id={mainId}
           role={mainRole}
           style={mainStyle}
           title={title}
@@ -169,11 +185,21 @@ export const ButtonMenuRow = ({
         >
           {renderIcon(icon, 'ui-button-menu__icon')}
           <span className={labelClassNames}>{label}</span>
+          {endAdornment && (
+            <span className="ui-button-menu__end-adornment" aria-hidden="true">
+              {endAdornment}
+            </span>
+          )}
         </button>
       ) : (
         <span className={mainClassName} style={mainStyle} title={title}>
           {renderIcon(icon, 'ui-button-menu__icon')}
           <span className={labelClassNames}>{label}</span>
+          {endAdornment && (
+            <span className="ui-button-menu__end-adornment" aria-hidden="true">
+              {endAdornment}
+            </span>
+          )}
         </span>
       )}
       {inlineActions.length > 0 && (

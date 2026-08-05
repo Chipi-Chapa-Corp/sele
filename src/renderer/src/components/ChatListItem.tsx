@@ -87,7 +87,9 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
     isGitWorktree && chat.cwd ? `${worktreeContextName}: ${chat.cwd}` : (chat.cwd ?? contextName)
   const workingStatus = chat.status && workingStatuses.has(chat.status) ? chat.status : null
   const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
-  const trailingStatus = chat.status && !workingStatus && !approvalStatus ? chat.status : null
+  const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
+  const trailingStatus =
+    chat.status && !workingStatus && !approvalStatus && !userInputStatus ? chat.status : null
   const pendingApproval = chat.pendingApproval
   const approvalTarget = pendingApproval ? getApprovalTarget(pendingApproval) : null
   const unread = !selected && !chat.done && chat.updatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
@@ -96,7 +98,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
 
   return (
     <article
-      className={`chat-list-item${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}`}
+      className={`chat-list-item${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}`}
     >
       <button
         className="chat-list-item__main"
@@ -133,6 +135,17 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               <ShieldQuestionMark
                 className="chat-list-item__approval-icon"
                 aria-label={statusLabels[approvalStatus]}
+              />
+            </span>
+          ) : userInputStatus ? (
+            <span
+              className="chat-list-item__status-container chat-list-item__status-container--leading"
+              title={statusLabels[userInputStatus]}
+            >
+              <span
+                className="chat-list-item__status chat-list-item__status--waitingOnUserInput"
+                role="img"
+                aria-label={statusLabels[userInputStatus]}
               />
             </span>
           ) : (

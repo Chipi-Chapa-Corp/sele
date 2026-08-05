@@ -2,26 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ITheme, Terminal as XtermTerminal } from '@xterm/xterm'
 import { Plus, RefreshCw, Terminal as TerminalIcon, X } from 'lucide-react'
 import type { AppContainerTarget } from '../../../shared/app'
-import type { ProviderId, ProviderWorkingToolStatus } from '../../../shared/provider'
-import { providerApi } from '../providerApi'
+import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { terminalApi } from '../terminalApi'
 import { Button } from './Button'
 import { SegmentedControl } from './SegmentedControl'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPanel.css'
-
-export type TerminalLaunchRequest = {
-  id: string
-  providerId: ProviderId
-  chatId: string
-  turnId: string
-  itemId: string
-  processId: string
-  command: string
-  cwd: string | null
-  output: string | null
-  status: ProviderWorkingToolStatus
-}
 
 export type TerminalCommandLaunchRequest = {
   id: string
@@ -33,47 +19,22 @@ export type TerminalCommandLaunchRequest = {
   closeOnFinish: boolean
 }
 
-export type AgentTerminalSnapshot = Omit<TerminalLaunchRequest, 'id'>
-
-type AgentTerminalIdentity = {
-  providerId: ProviderId
-  chatId: string
-  turnId: string
-  itemId: string
-  processId: string
-}
-
 type TerminalPanelProps = {
   container: AppContainerTarget | null
   cwd: string | null
   commandLaunchRequest?: TerminalCommandLaunchRequest | null
-  launchRequest?: TerminalLaunchRequest | null
-  agentTerminalSnapshots?: AgentTerminalSnapshot[]
 }
 
 type TerminalState = 'starting' | 'running' | 'exited' | 'error'
 
 type TerminalTab = {
   id: string
-  kind: 'local'
   label: string
   container: AppContainerTarget | null
   cwd: string | null
   initialCommand: string | null
   closeOnCommandFinish: boolean
 }
-
-type AgentTerminalTab = AgentTerminalIdentity & {
-  id: string
-  kind: 'agent'
-  label: string
-  command: string
-  cwd: string | null
-  initialOutput: string | null
-  initialStatus: ProviderWorkingToolStatus
-}
-
-type AnyTerminalTab = TerminalTab | AgentTerminalTab
 
 type TerminalSessionProps = {
   closeOnCommandFinish: boolean
@@ -94,7 +55,6 @@ type TerminalTabRuntime = {
 
 const outputPauseThreshold = 512 * 1024
 const outputResumeThreshold = 64 * 1024
-const truncatedToolValueMarker = '… [truncated to keep the app responsive]'
 
 const darkTerminalTheme: ITheme = {
   background: '#121212',
@@ -158,7 +118,6 @@ const createTerminalTab = (
   container: AppContainerTarget | null
 ): TerminalTab => ({
   id: crypto.randomUUID(),
-  kind: 'local',
   label: `Terminal ${number}`,
   container,
   cwd,
@@ -173,24 +132,8 @@ const getCommandTabLabel = (command: string): string => {
   return firstLine.length > 24 ? `${firstLine.slice(0, 23)}…` : firstLine
 }
 
-const createAgentTerminalTab = (request: TerminalLaunchRequest): AgentTerminalTab => ({
-  id: crypto.randomUUID(),
-  label: getCommandTabLabel(request.command),
-  kind: 'agent',
-  providerId: request.providerId,
-  chatId: request.chatId,
-  turnId: request.turnId,
-  itemId: request.itemId,
-  processId: request.processId,
-  command: request.command,
-  cwd: request.cwd,
-  initialOutput: request.output,
-  initialStatus: request.status
-})
-
 const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): TerminalTab => ({
   id: crypto.randomUUID(),
-  kind: 'local',
   label: request.label?.trim() || getCommandTabLabel(request.command),
   container: request.container,
   cwd: request.cwd,
@@ -244,6 +187,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
     let resizeFrame: number | null = null
     let resizeObserver: ResizeObserver | null = null
     let themeObserver: MutationObserver | null = null
+    let removeFontSettingsListener: (() => void) | null = null
     let removeDataListener: (() => void) | null = null
     let removeExitListener: (() => void) | null = null
     let terminal: XtermTerminal | null = null
@@ -300,6 +244,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
           import('@xterm/addon-webgl')
         ])
         if (!active) return
+        const codeFont = getCodeFontAppearance()
 
         terminal = new Terminal({
           allowTransparency: false,
@@ -308,9 +253,8 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
           cursorStyle: 'block',
           disableStdin: true,
           drawBoldTextInBrightColors: true,
-          fontFamily:
-            '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, Consolas, monospace',
-          fontSize: 18,
+          fontFamily: codeFont.family,
+          fontSize: codeFont.size,
           letterSpacing: 0,
           lineHeight: 1.15,
           macOptionIsMeta: true,
@@ -343,6 +287,17 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
           attributes: true,
           attributeFilter: ['data-color-scheme']
         })
+
+        const handleFontSettingsChanged = (): void => {
+          if (!terminal) return
+          const font = getCodeFontAppearance()
+          terminal.options.fontFamily = font.family
+          terminal.options.fontSize = font.size
+          window.requestAnimationFrame(() => fitRef.current?.())
+        }
+        window.addEventListener(appFontSettingsChangedEvent, handleFontSettingsChanged)
+        removeFontSettingsListener = () =>
+          window.removeEventListener(appFontSettingsChangedEvent, handleFontSettingsChanged)
 
         terminal.attachCustomKeyEventHandler((event) => {
           if (event.type !== 'keydown' || !terminal) return true
@@ -456,6 +411,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
       if (resizeFrame != null) cancelAnimationFrame(resizeFrame)
       resizeObserver?.disconnect()
       themeObserver?.disconnect()
+      removeFontSettingsListener?.()
       removeDataListener?.()
       removeExitListener?.()
       fitRef.current = null
@@ -500,339 +456,29 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
   )
 }
 
-type AgentTerminalSessionProps = AgentTerminalIdentity & {
-  command: string
-  initialOutput: string | null
-  initialStatus: ProviderWorkingToolStatus
-  label: string
-  snapshot: AgentTerminalSnapshot | null
-  tabId: string
-  visible: boolean
-  onStateChange: (tabId: string, state: TerminalState, sessionId: string | null) => void
-}
-
-const matchesAgentTerminal = (
-  event: {
-    providerId: ProviderId
-    chatId: string
-    turnId: string
-    itemId: string
-    processId: string | null
-  },
-  target: AgentTerminalIdentity
-): boolean =>
-  event.providerId === target.providerId &&
-  event.chatId === target.chatId &&
-  ((event.processId && event.processId === target.processId) ||
-    (event.turnId === target.turnId && event.itemId === target.itemId))
-
-const AgentTerminalSession: React.FC<AgentTerminalSessionProps> = ({
-  providerId,
-  chatId,
-  turnId,
-  itemId,
-  processId,
-  initialOutput,
-  initialStatus,
-  label,
-  snapshot,
-  tabId,
-  visible,
-  onStateChange
-}) => {
-  const hostRef = useRef<HTMLDivElement>(null)
-  const terminalRef = useRef<XtermTerminal | null>(null)
-  const fitRef = useRef<(() => void) | null>(null)
-  const syncOutputRef = useRef<(output: string) => void>(() => {})
-  const renderedOutputRef = useRef('')
-  const statusRef = useRef<ProviderWorkingToolStatus>(initialStatus)
-  const outputRef = useRef(initialOutput ?? '')
-  const visibleRef = useRef(visible)
-  const [state, setState] = useState<TerminalState>('starting')
-  const [error, setError] = useState<string | null>(null)
-  const status = snapshot?.status ?? initialStatus
-  const output = snapshot?.output ?? initialOutput ?? ''
-
-  const updateState = useCallback(
-    (nextState: TerminalState): void => {
-      setState(nextState)
-      onStateChange(tabId, nextState, null)
-    },
-    [onStateChange, tabId]
-  )
-
-  useEffect(() => {
-    statusRef.current = status
-    if (!terminalRef.current || state === 'error') return
-    terminalRef.current.options.disableStdin = true
-  }, [state, status])
-
-  useEffect(() => {
-    outputRef.current = output
-  }, [output])
-
-  useEffect(() => {
-    visibleRef.current = visible
-  }, [visible])
-
-  useEffect(() => {
-    if (!visible) return
-
-    const frame = requestAnimationFrame(() => {
-      fitRef.current?.()
-      terminalRef.current?.focus()
-    })
-
-    return () => cancelAnimationFrame(frame)
-  }, [visible])
-
-  useEffect(() => {
-    syncOutputRef.current(output)
-  }, [output])
-
-  useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
-
-    const target = { providerId, chatId, turnId, itemId, processId }
-    let active = true
-    let terminal: XtermTerminal | null = null
-    let outputFrame: number | null = null
-    let resizeFrame: number | null = null
-    let resizeObserver: ResizeObserver | null = null
-    let themeObserver: MutationObserver | null = null
-    let removeTerminalDataListener: (() => void) | null = null
-    let outputChunks: string[] = []
-    let lastColumns = 0
-    let lastRows = 0
-
-    updateState('starting')
-    setError(null)
-    host.replaceChildren()
-
-    const flushOutput = (): void => {
-      outputFrame = null
-      if (!terminal || outputChunks.length === 0) return
-
-      const data = outputChunks.join('')
-      outputChunks = []
-      terminal.write(data)
-    }
-
-    const queueOutput = (data: string): void => {
-      if (!active || !terminal || data.length === 0) return
-      outputChunks.push(data)
-      outputFrame ??= requestAnimationFrame(flushOutput)
-    }
-
-    const syncOutput = (nextOutput: string): void => {
-      if (!active || !terminal) return
-
-      const renderedOutput = renderedOutputRef.current
-      if (nextOutput.startsWith(renderedOutput)) {
-        const delta = nextOutput.slice(renderedOutput.length)
-        renderedOutputRef.current = nextOutput
-        queueOutput(delta)
-        return
-      }
-
-      if (renderedOutput && nextOutput.includes(truncatedToolValueMarker)) return
-
-      outputChunks = []
-      renderedOutputRef.current = nextOutput
-      terminal.reset()
-      queueOutput(nextOutput)
-    }
-
-    const start = async (): Promise<void> => {
-      try {
-        const [{ Terminal }, { FitAddon }, { WebglAddon }] = await Promise.all([
-          import('@xterm/xterm'),
-          import('@xterm/addon-fit'),
-          import('@xterm/addon-webgl')
-        ])
-        if (!active) return
-
-        terminal = new Terminal({
-          allowTransparency: false,
-          convertEol: false,
-          cursorBlink: true,
-          cursorStyle: 'block',
-          disableStdin: true,
-          drawBoldTextInBrightColors: true,
-          fontFamily:
-            '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, Consolas, monospace',
-          fontSize: 18,
-          letterSpacing: 0,
-          lineHeight: 1.15,
-          macOptionIsMeta: true,
-          minimumContrastRatio: 1,
-          rightClickSelectsWord: true,
-          scrollback: 5_000,
-          scrollOnUserInput: true,
-          theme: getTerminalTheme()
-        })
-        terminalRef.current = terminal
-
-        const fitAddon = new FitAddon()
-        terminal.loadAddon(fitAddon)
-        terminal.open(host)
-
-        try {
-          const webglAddon = new WebglAddon()
-          webglAddon.onContextLoss(() => {
-            webglAddon.dispose()
-          })
-          terminal.loadAddon(webglAddon)
-        } catch {
-          // xterm keeps using its default DOM renderer when WebGL is unavailable.
-        }
-
-        themeObserver = new MutationObserver(() => {
-          if (terminal) terminal.options.theme = getTerminalTheme()
-        })
-        themeObserver.observe(document.documentElement, {
-          attributes: true,
-          attributeFilter: ['data-color-scheme']
-        })
-
-        terminal.attachCustomKeyEventHandler((event) => {
-          if (event.type !== 'keydown' || !terminal) return true
-
-          const isMac = document.documentElement.dataset.platform === 'darwin'
-          const copyPressed = isMac
-            ? event.metaKey && event.key.toLocaleLowerCase() === 'c'
-            : event.ctrlKey && event.shiftKey && event.key.toLocaleLowerCase() === 'c'
-          const pastePressed = isMac
-            ? event.metaKey && event.key.toLocaleLowerCase() === 'v'
-            : event.ctrlKey && event.shiftKey && event.key.toLocaleLowerCase() === 'v'
-
-          if (copyPressed && terminal.hasSelection()) {
-            void navigator.clipboard.writeText(terminal.getSelection())
-            return false
-          }
-
-          if (pastePressed) {
-            void navigator.clipboard
-              .readText()
-              .then((text) => terminal?.paste(text))
-              .catch(() => {})
-            return false
-          }
-
-          return true
-        })
-
-        const fitAndResize = (): void => {
-          resizeFrame = null
-          if (!terminal || host.clientWidth === 0 || host.clientHeight === 0) return
-
-          fitAddon.fit()
-          if (terminal.cols === lastColumns && terminal.rows === lastRows) return
-
-          lastColumns = terminal.cols
-          lastRows = terminal.rows
-        }
-        fitRef.current = fitAndResize
-
-        resizeObserver = new ResizeObserver(() => {
-          if (resizeFrame == null) resizeFrame = requestAnimationFrame(fitAndResize)
-        })
-        resizeObserver.observe(host)
-
-        removeTerminalDataListener = providerApi.onAgentTerminalData((event) => {
-          if (!matchesAgentTerminal(event, target) || event.source !== 'output') return
-          renderedOutputRef.current = `${renderedOutputRef.current}${event.data}`
-          queueOutput(event.data)
-        })
-
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-        if (!active || !terminal) return
-        fitAndResize()
-        syncOutputRef.current = syncOutput
-        syncOutput(outputRef.current)
-        updateState(statusRef.current === 'running' ? 'running' : 'exited')
-        if (visibleRef.current) terminal.focus()
-      } catch (startError) {
-        if (!active) return
-        const message = getErrorMessage(startError)
-        setError(message)
-        updateState('error')
-        terminal?.writeln(`\r\n\u001b[31m${message}\u001b[0m`)
-      }
-    }
-
-    void start()
-
-    return () => {
-      active = false
-      if (outputFrame != null) cancelAnimationFrame(outputFrame)
-      if (resizeFrame != null) cancelAnimationFrame(resizeFrame)
-      resizeObserver?.disconnect()
-      themeObserver?.disconnect()
-      removeTerminalDataListener?.()
-      fitRef.current = null
-      syncOutputRef.current = () => {}
-      terminalRef.current = null
-      terminal?.dispose()
-    }
-  }, [chatId, itemId, onStateChange, processId, providerId, tabId, turnId, updateState])
-
-  return (
-    <div
-      className={`terminal-panel__session${visible ? ' terminal-panel__session--active' : ''}`}
-      role="region"
-      aria-label={label}
-      hidden={!visible}
-    >
-      {state === 'error' && (
-        <div className="terminal-panel__restart">
-          <Button
-            theme="transparent"
-            size="small"
-            aria-label="Terminal error"
-            title={error ?? 'Terminal error'}
-            disabled
-            callback={() => {}}
-            icon={<X aria-hidden="true" />}
-          />
-        </div>
-      )}
-      <div className="terminal-panel__surface" onPointerDown={() => terminalRef.current?.focus()}>
-        <div className="terminal-panel__host" ref={hostRef} />
-      </div>
-    </div>
-  )
-}
-
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   container,
   cwd,
-  commandLaunchRequest = null,
-  launchRequest = null,
-  agentTerminalSnapshots = []
+  commandLaunchRequest = null
 }) => {
   const nextTabNumberRef = useRef(2)
   const closingTabsRef = useRef(new Set<string>())
   const handledCommandLaunchRequestIdsRef = useRef(
     new Set(commandLaunchRequest ? [commandLaunchRequest.id] : [])
   )
-  const handledLaunchRequestIdsRef = useRef(new Set(launchRequest ? [launchRequest.id] : []))
   const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
   const [workspace, setWorkspace] = useState(() => {
     const initialLocalTab = createTerminalTab(1, cwd, container)
-    const tabs: AnyTerminalTab[] = [initialLocalTab]
+    const tabs: TerminalTab[] = [initialLocalTab]
     const initialCommandTab = commandLaunchRequest
       ? createCommandTerminalTab(commandLaunchRequest)
       : null
-    const initialAgentTab = launchRequest ? createAgentTerminalTab(launchRequest) : null
     if (initialCommandTab) tabs.push(initialCommandTab)
-    if (initialAgentTab) tabs.push(initialAgentTab)
 
     return {
-      activeTabId: (initialAgentTab?.id ??
-        (initialCommandTab && commandLaunchRequest?.focus ? initialCommandTab.id : null) ??
-        initialLocalTab.id) as string | null,
+      activeTabId: ((initialCommandTab && commandLaunchRequest?.focus
+        ? initialCommandTab.id
+        : null) ?? initialLocalTab.id) as string | null,
       tabs
     }
   })
@@ -843,32 +489,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     },
     []
   )
-
-  useEffect(() => {
-    if (!launchRequest || handledLaunchRequestIdsRef.current.has(launchRequest.id)) return
-
-    handledLaunchRequestIdsRef.current.add(launchRequest.id)
-    const tab = createAgentTerminalTab(launchRequest)
-    setWorkspace((currentWorkspace) => ({
-      activeTabId:
-        currentWorkspace.tabs.find(
-          (currentTab) =>
-            currentTab.kind === 'agent' &&
-            currentTab.providerId === tab.providerId &&
-            currentTab.chatId === tab.chatId &&
-            currentTab.processId === tab.processId
-        )?.id ?? tab.id,
-      tabs: currentWorkspace.tabs.some(
-        (currentTab) =>
-          currentTab.kind === 'agent' &&
-          currentTab.providerId === tab.providerId &&
-          currentTab.chatId === tab.chatId &&
-          currentTab.processId === tab.processId
-      )
-        ? currentWorkspace.tabs
-        : [...currentWorkspace.tabs, tab]
-    }))
-  }, [launchRequest])
 
   useEffect(() => {
     if (
@@ -923,13 +543,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     })
   }, [])
 
-  const handleCloseTab = async (tab: AnyTerminalTab): Promise<void> => {
+  const handleCloseTab = async (tab: TerminalTab): Promise<void> => {
     if (closingTabsRef.current.has(tab.id)) return
     closingTabsRef.current.add(tab.id)
 
     try {
       const runtime = tabRuntimesRef.current.get(tab.id)
-      if (tab.kind === 'local' && runtime?.state === 'running' && runtime.sessionId) {
+      if (runtime?.state === 'running' && runtime.sessionId) {
         const processStatus = await terminalApi
           .getProcessStatus(runtime.sessionId)
           .catch(() => null)
@@ -1011,46 +631,20 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             />
           </div>
         )}
-        {workspace.tabs.map((tab) =>
-          tab.kind === 'agent' ? (
-            <AgentTerminalSession
-              chatId={tab.chatId}
-              command={tab.command}
-              initialOutput={tab.initialOutput}
-              initialStatus={tab.initialStatus}
-              itemId={tab.itemId}
-              key={tab.id}
-              label={tab.label}
-              processId={tab.processId}
-              providerId={tab.providerId}
-              snapshot={
-                agentTerminalSnapshots.find(
-                  (snapshot) =>
-                    snapshot.providerId === tab.providerId &&
-                    snapshot.chatId === tab.chatId &&
-                    snapshot.processId === tab.processId
-                ) ?? null
-              }
-              tabId={tab.id}
-              turnId={tab.turnId}
-              visible={tab.id === workspace.activeTabId}
-              onStateChange={handleTabStateChange}
-            />
-          ) : (
-            <TerminalSession
-              closeOnCommandFinish={tab.closeOnCommandFinish}
-              container={tab.container}
-              cwd={tab.cwd}
-              initialCommand={tab.initialCommand}
-              key={tab.id}
-              label={tab.label}
-              tabId={tab.id}
-              visible={tab.id === workspace.activeTabId}
-              onCommandFinish={handleCommandFinish}
-              onStateChange={handleTabStateChange}
-            />
-          )
-        )}
+        {workspace.tabs.map((tab) => (
+          <TerminalSession
+            closeOnCommandFinish={tab.closeOnCommandFinish}
+            container={tab.container}
+            cwd={tab.cwd}
+            initialCommand={tab.initialCommand}
+            key={tab.id}
+            label={tab.label}
+            tabId={tab.id}
+            visible={tab.id === workspace.activeTabId}
+            onCommandFinish={handleCommandFinish}
+            onStateChange={handleTabStateChange}
+          />
+        ))}
       </div>
     </section>
   )

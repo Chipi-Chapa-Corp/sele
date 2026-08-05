@@ -1,18 +1,24 @@
-import { Check, ChevronDown, GitBranch, Plus } from 'lucide-react'
+import { Check, ChevronDown, GitBranch, Plus, X } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Button, ButtonMenuRow } from './Button'
 import { Input } from './Input'
 import './BranchSwitcher.css'
 
 type BranchSwitcherProps = {
   branches: readonly string[]
   busy?: boolean
+  canForceDelete?: boolean
   currentBranch: string | null
+  deleteWorktreePath?: string | null
   disabled?: boolean
   error?: string | null
   id?: string
   loading?: boolean
   onClearError?: () => void
+  onDelete: (branchName: string) => Promise<void>
+  onDeleteWorktree?: () => Promise<void>
+  onForceDelete?: () => Promise<void>
   onOpen?: () => void
   onSwitch: (branchName: string, create: boolean) => Promise<boolean>
 }
@@ -79,12 +85,17 @@ const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
 export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   branches,
   busy = false,
+  canForceDelete = false,
   currentBranch,
+  deleteWorktreePath = null,
   disabled = false,
   error = null,
   id,
   loading = false,
   onClearError,
+  onDelete,
+  onDeleteWorktree,
+  onForceDelete,
   onOpen,
   onSwitch
 }) => {
@@ -96,7 +107,9 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   const inputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const switchInFlightRef = useRef(false)
+  const deleteInFlightRef = useRef(false)
   const [open, setOpen] = useState(false)
+  const [busyAction, setBusyAction] = useState<'delete' | 'switch' | 'worktree' | null>(null)
   const [query, setQuery] = useState('')
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
@@ -189,12 +202,57 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
     if (busy || switchInFlightRef.current) return
 
     switchInFlightRef.current = true
+    setBusyAction('switch')
 
     try {
       const switched = await onSwitch(item.name, item.kind === 'create')
       if (switched) closeMenu(true)
     } finally {
       switchInFlightRef.current = false
+      setBusyAction(null)
+    }
+  }
+
+  const deleteBranch = async (branchName: string): Promise<void> => {
+    if (busy || deleteInFlightRef.current) return
+
+    deleteInFlightRef.current = true
+    setBusyAction('delete')
+    onClearError?.()
+
+    try {
+      await onDelete(branchName)
+    } finally {
+      deleteInFlightRef.current = false
+      setBusyAction(null)
+    }
+  }
+
+  const forceDeleteBranch = async (): Promise<void> => {
+    if (busy || deleteInFlightRef.current || !onForceDelete) return
+
+    deleteInFlightRef.current = true
+    setBusyAction('delete')
+
+    try {
+      await onForceDelete()
+    } finally {
+      deleteInFlightRef.current = false
+      setBusyAction(null)
+    }
+  }
+
+  const deleteWorktree = async (): Promise<void> => {
+    if (busy || deleteInFlightRef.current || !onDeleteWorktree) return
+
+    deleteInFlightRef.current = true
+    setBusyAction('worktree')
+
+    try {
+      await onDeleteWorktree()
+    } finally {
+      deleteInFlightRef.current = false
+      setBusyAction(null)
     }
   }
 
@@ -273,39 +331,50 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
           const selected = item.kind === 'branch' && item.name === currentBranch
 
           return (
-            <button
+            <ButtonMenuRow
               className={[
-                'branch-switcher__option',
-                item.key === effectiveActiveKey ? 'branch-switcher__option--active' : null,
-                item.kind === 'create' ? 'branch-switcher__option--create' : null
+                'branch-switcher__option-row',
+                item.key === effectiveActiveKey ? 'branch-switcher__option-row--active' : null,
+                item.kind === 'create' ? 'branch-switcher__option-row--create' : null
               ]
                 .filter(Boolean)
                 .join(' ')}
-              id={`${listboxId}-option-${index}`}
-              key={item.key}
-              type="button"
-              role="option"
-              aria-selected={selected}
               disabled={busy}
-              onClick={() => void selectItem(item)}
-              onMouseEnter={() => setActiveKey(item.key)}
-            >
-              {item.kind === 'create' ? (
-                <Plus className="branch-switcher__option-icon" aria-hidden="true" />
-              ) : (
-                <GitBranch className="branch-switcher__option-icon" aria-hidden="true" />
-              )}
-              <span className="branch-switcher__option-label">
-                {item.kind === 'create' ? (
+              endAdornment={
+                selected ? <Check className="branch-switcher__option-check" /> : undefined
+              }
+              icon={item.kind === 'create' ? <Plus /> : <GitBranch />}
+              inlineActions={
+                item.kind === 'branch'
+                  ? [
+                      {
+                        id: `delete-${item.name}`,
+                        ariaLabel: `Delete ${item.name}`,
+                        callback: () => deleteBranch(item.name),
+                        icon: <X aria-hidden="true" />,
+                        title: `Delete ${item.name}`
+                      }
+                    ]
+                  : []
+              }
+              key={item.key}
+              label={
+                item.kind === 'create' ? (
                   <>
                     Create <strong>{item.name}</strong> and switch
                   </>
                 ) : (
                   item.name
-                )}
-              </span>
-              {selected && <Check className="branch-switcher__option-check" aria-hidden="true" />}
-            </button>
+                )
+              }
+              labelClassName="branch-switcher__option-label"
+              mainAriaSelected={selected}
+              mainId={`${listboxId}-option-${index}`}
+              mainRole="option"
+              onSelect={() => selectItem(item)}
+              title={item.name}
+              onMouseEnter={() => setActiveKey(item.key)}
+            />
           )
         })}
         {loading && menuItems.length === 0 && (
@@ -322,11 +391,40 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
           </p>
         )}
       </div>
-      {busy && <p className="branch-switcher__status">Switching branch…</p>}
-      {error && (
-        <p className="branch-switcher__error" role="status">
-          {error}
+      {busy && (
+        <p className="branch-switcher__status">
+          {busyAction === 'worktree'
+            ? 'Deleting worktree…'
+            : busyAction === 'delete'
+              ? 'Deleting branch…'
+              : 'Switching branch…'}
         </p>
+      )}
+      {error && (
+        <div className="branch-switcher__error" role="status">
+          {error}
+        </div>
+      )}
+      {error && canForceDelete && onForceDelete && (
+        <Button
+          theme="secondary"
+          size="small"
+          fill
+          disabled={busy}
+          label="Force Delete"
+          callback={forceDeleteBranch}
+        />
+      )}
+      {error && deleteWorktreePath && onDeleteWorktree && (
+        <Button
+          theme="secondary"
+          size="small"
+          fill
+          disabled={busy}
+          label="Delete Worktree"
+          title={`Delete worktree at ${deleteWorktreePath}`}
+          callback={deleteWorktree}
+        />
       )}
     </div>
   ) : null

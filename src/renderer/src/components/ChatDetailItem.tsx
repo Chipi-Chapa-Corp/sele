@@ -1,19 +1,17 @@
 import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ForwardRefExoticComponent, HTMLAttributes, RefAttributes } from 'react'
 import {
-  ActivityIcon as AnimatedActivityIcon,
+  AudioLinesIcon as AnimatedAudioLinesIcon,
   BoxIcon as AnimatedBoxIcon,
   BookTextIcon as AnimatedBookTextIcon,
-  BrainIcon as AnimatedBrainIcon,
+  CircleHelpIcon as AnimatedCircleHelpIcon,
   DeleteIcon as AnimatedDeleteIcon,
   EyeIcon as AnimatedEyeIcon,
   FilePenLineIcon as AnimatedFilePenLineIcon,
   FileStackIcon as AnimatedFileStackIcon,
   FileTextIcon as AnimatedFileTextIcon,
   GitBranchIcon as AnimatedGitBranchIcon,
-  HourglassIcon as AnimatedHourglassIcon,
   ListIcon as AnimatedListIcon,
-  LoaderPinwheelIcon as AnimatedLoaderPinwheelIcon,
   PenToolIcon as AnimatedPenToolIcon,
   SearchIcon as AnimatedSearchIcon,
   SparklesIcon as AnimatedSparklesIcon,
@@ -21,14 +19,15 @@ import {
   WrenchIcon as AnimatedWrenchIcon
 } from 'lucide-animated'
 import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
+import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ArrowUp,
   BookOpenText,
   Check,
   ChevronRight,
+  CircleQuestionMark,
   Copy,
   Eye,
-  ExternalLink,
   FilePlus2,
   FileCode2,
   FileText,
@@ -75,6 +74,9 @@ type ChatDetailItemProps = {
   canEditOwnMessages?: boolean
   continuePrompt?: string
   continueStoppedTurnDisabled?: boolean
+  continuedStoppedTurn?: boolean
+  followingWorkingStepHasNext?: boolean
+  followingWorkingStepStatus?: ProviderWorkingStep['status']
   hasNextWorkingStep?: boolean
   item: ProviderChatItem
   modelLabelsById?: ReadonlyMap<ProviderModelId, string>
@@ -83,8 +85,7 @@ type ChatDetailItemProps = {
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
-  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
-  onContinueStoppedTurn?: (prompt: string) => Promise<void> | void
+  onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => void
   previousItem?: ProviderChatItem | null
   projectCwd?: string | null
@@ -167,10 +168,6 @@ const areWorkingToolsEqual = (first: ProviderWorkingTool, second: ProviderWorkin
   first.icon === second.icon &&
   first.label === second.label &&
   first.command === second.command &&
-  first.agentTerminal?.turnId === second.agentTerminal?.turnId &&
-  first.agentTerminal?.itemId === second.agentTerminal?.itemId &&
-  first.agentTerminal?.processId === second.agentTerminal?.processId &&
-  first.agentTerminalDisabledReason === second.agentTerminalDisabledReason &&
   first.cwd === second.cwd &&
   first.stdout === second.stdout &&
   first.backgroundSessionId === second.backgroundSessionId &&
@@ -247,6 +244,9 @@ const areChatDetailItemPropsEqual = (
   first.canEditOwnMessages === second.canEditOwnMessages &&
   first.continuePrompt === second.continuePrompt &&
   first.continueStoppedTurnDisabled === second.continueStoppedTurnDisabled &&
+  first.continuedStoppedTurn === second.continuedStoppedTurn &&
+  first.followingWorkingStepHasNext === second.followingWorkingStepHasNext &&
+  first.followingWorkingStepStatus === second.followingWorkingStepStatus &&
   first.hasNextWorkingStep === second.hasNextWorkingStep &&
   first.modelLabelsById === second.modelLabelsById &&
   first.onDeletePendingMessage === second.onDeletePendingMessage &&
@@ -254,7 +254,6 @@ const areChatDetailItemPropsEqual = (
   first.onInterruptPendingMessage === second.onInterruptPendingMessage &&
   first.onEditMessage === second.onEditMessage &&
   first.onOpenFileLink === second.onOpenFileLink &&
-  first.onOpenAgentTerminal === second.onOpenAgentTerminal &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
   isQueuedPendingMessage(first.previousItem) === isQueuedPendingMessage(second.previousItem) &&
@@ -330,18 +329,38 @@ const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
   'image-view': AnimatedEyeIcon,
   'image-generation': AnimatedSparklesIcon,
   'openai-docs': AnimatedBookTextIcon,
-  plan: AnimatedListIcon
+  plan: AnimatedListIcon,
+  question: AnimatedCircleHelpIcon
 }
 
 const placeholderOptions = [
-  { label: 'Thinking', Icon: AnimatedBrainIcon },
-  { label: 'Analyzing', Icon: AnimatedActivityIcon },
-  { label: 'Processing', Icon: AnimatedLoaderPinwheelIcon },
-  { label: 'Working', Icon: AnimatedHourglassIcon }
-] satisfies Array<{ label: string; Icon: AnimatedIconComponent }>
+  'Thinking',
+  'Analyzing',
+  'Processing',
+  'Working',
+  'Vibing',
+  'Bribing beavers',
+  'Bribing monkeys',
+  'Bribing ducks',
+  'Drinking water',
+  'Drinking whisky',
+  'Scrolling Instagram',
+  'Scrolling YouTube',
+  'Scrolling TikTok',
+  'Bouncing logic trampolines',
+  'Knitting cozy nonsense',
+  'Brain buffering',
+  'Consulting rubber duck',
+  'Overclocking whimsy',
+  'Brewing ideas',
+  'Consulting the stars',
+  'Hallucinating',
+  'Overthinking',
+  'Judging',
+  'Consulting my cat'
+]
 const longRunningActivities = new Set<ProviderToolActivity>(['npm', 'npx', 'script', 'command'])
 const silencePlaceholderDelayMs = 600
-const animatedIconReplayMs = 1_050
 const streamRenderMaxDelayMs = 180
 const streamPacketAnimationMs = 150
 
@@ -436,6 +455,10 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
     const fileTarget = getMarkdownFileTarget(token.href)
     if (fileTarget && interactiveFileLinks) {
       const label = withoutSourceLocationText(token.text, fileTarget.line)
+      const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
+      const iconMarkup = renderToStaticMarkup(
+        <SymbolsFileIcon fileName={fileName} autoAssign aria-hidden="true" />
+      )
       const title = fileTarget.line
         ? `Open ${fileTarget.displayPath} at line ${fileTarget.line}`
         : `Open ${fileTarget.displayPath}`
@@ -450,7 +473,7 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
         'data-file-link-path': fileTarget.path,
         'data-file-link-display-path': fileTarget.displayPath,
         'data-file-link-line': fileTarget.line
-      })}><span class="chat-detail__file-link-label">${escapeHtml(label)}</span>${lineMarkup}</button>`
+      })}><span class="chat-detail__file-link-icon" aria-hidden="true">${iconMarkup}</span><span class="chat-detail__file-link-label">${escapeHtml(label)}</span>${lineMarkup}</button>`
     }
 
     const href = token.href
@@ -474,18 +497,8 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
   return renderer
 }
 
-const getStableIndex = (id: string, length: number): number => {
-  let hash = 0
-
-  for (let index = 0; index < id.length; index += 1) {
-    hash = (hash * 31 + id.charCodeAt(index)) | 0
-  }
-
-  return Math.abs(hash) % length
-}
-
-const getPlaceholderOption = (id: string): (typeof placeholderOptions)[number] =>
-  placeholderOptions[getStableIndex(id, placeholderOptions.length)]
+const getRandomPlaceholderOption = (): (typeof placeholderOptions)[number] =>
+  placeholderOptions[Math.floor(Math.random() * placeholderOptions.length)]
 
 const activeLabelReplacements: Array<[RegExp, string]> = [
   [/^Read\b/, 'Reading'],
@@ -525,7 +538,10 @@ const getToolDisplayLabel = (
   label: string,
   activity: ProviderToolActivity,
   active: boolean
-): string => (active ? getActiveToolLabel(label, activity) : getFinishedToolLabel(label, activity))
+): string => {
+  if (label === 'Asking question' || label === 'Asked a question') return label
+  return active ? getActiveToolLabel(label, activity) : getFinishedToolLabel(label, activity)
+}
 
 const DiffContent: React.FC<{
   tools: ProviderWorkingTool[]
@@ -544,60 +560,23 @@ const DiffContent: React.FC<{
   </div>
 )
 
-const CommandContent: React.FC<{
-  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
-  tools: ProviderWorkingTool[]
-}> = ({ onOpenAgentTerminal, tools }) => (
+const CommandContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) => (
   <div className="chat-detail__activity-content chat-detail__activity-content--command">
-    {tools.map((tool) => {
-      const terminalAction =
-        tool.command &&
-        (tool.agentTerminal || tool.agentTerminalDisabledReason) &&
-        onOpenAgentTerminal ? (
-          <span
-            className="chat-detail__command-terminal-action"
-            title={tool.agentTerminalDisabledReason ?? 'Pop out command terminal'}
-          >
-            <Button
-              theme="transparent"
-              aria-label={
-                tool.agentTerminalDisabledReason
-                  ? `Terminal pop-out unavailable: ${tool.agentTerminalDisabledReason}`
-                  : 'Pop out command terminal'
-              }
-              disabled={Boolean(tool.agentTerminalDisabledReason) || !tool.agentTerminal}
-              callback={() => {
-                if (!tool.agentTerminal || tool.agentTerminalDisabledReason) return
-                onOpenAgentTerminal(tool)
-              }}
-              icon={<ExternalLink aria-hidden="true" />}
-            />
-          </span>
-        ) : null
-
-      return (
-        <section key={tool.id}>
-          {tool.command && (
-            <div className="chat-detail__command-row">
-              <div className="chat-detail__command-body">
-                <HighlightedCode language={getInputLanguage(tool.command)}>
-                  {tool.command}
-                </HighlightedCode>
-              </div>
-              {terminalAction}
-            </div>
-          )}
-          {tool.command && tool.stdout && (
-            <span className="chat-detail__command-divider" aria-hidden="true" />
-          )}
-          {tool.stdout && (
-            <HighlightedCode language={getOutputLanguage(tool.stdout)}>
-              {tool.stdout}
-            </HighlightedCode>
-          )}
-        </section>
-      )
-    })}
+    {tools.map((tool) => (
+      <section key={tool.id}>
+        {tool.command && (
+          <HighlightedCode language={getInputLanguage(tool.command)}>
+            {tool.command}
+          </HighlightedCode>
+        )}
+        {tool.command && tool.stdout && (
+          <span className="chat-detail__command-divider" aria-hidden="true" />
+        )}
+        {tool.stdout && (
+          <HighlightedCode language={getOutputLanguage(tool.stdout)}>{tool.stdout}</HighlightedCode>
+        )}
+      </section>
+    ))}
   </div>
 )
 
@@ -673,6 +652,7 @@ const ToolTypeIcon: React.FC<{
   if (icon === 'image-generation') return <Sparkles aria-hidden="true" />
   if (icon === 'openai-docs') return <BookOpenText aria-hidden="true" />
   if (icon === 'plan') return <ListChecks aria-hidden="true" />
+  if (icon === 'question') return <CircleQuestionMark aria-hidden="true" />
 
   if (activity === 'read') return <FileText aria-hidden="true" />
   if (activity === 'search') return <Search aria-hidden="true" />
@@ -687,7 +667,7 @@ const ToolTypeIcon: React.FC<{
   return <Wrench aria-hidden="true" />
 }
 
-const LoopingAnimatedIcon: React.FC<{
+const ActiveAnimatedIcon: React.FC<{
   Icon: AnimatedIconComponent
   active: boolean
 }> = ({ Icon, active }) => {
@@ -702,12 +682,7 @@ const LoopingAnimatedIcon: React.FC<{
     }
 
     icon?.startAnimation()
-    const interval = window.setInterval(() => icon?.startAnimation(), animatedIconReplayMs)
-
-    return () => {
-      window.clearInterval(interval)
-      icon?.stopAnimation()
-    }
+    return () => icon?.stopAnimation()
   }, [active])
 
   return (
@@ -728,7 +703,7 @@ const ToolStatusIcon: React.FC<{
 }> = ({ activity, active, icon }) => {
   if (active) {
     const Icon = icon ? animatedToolIcons[icon] : animatedActivityIcons[activity]
-    return <LoopingAnimatedIcon Icon={Icon} active={active} />
+    return <ActiveAnimatedIcon Icon={Icon} active={active} />
   }
 
   return <ToolTypeIcon activity={activity} icon={icon} />
@@ -739,9 +714,8 @@ const Activity: React.FC<{
   tools: ProviderWorkingTool[]
   active: boolean
   expanded: boolean
-  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   projectCwd?: string | null
-}> = ({ label, tools, active, expanded, onOpenAgentTerminal, projectCwd }) => {
+}> = ({ label, tools, active, expanded, projectCwd }) => {
   const [openState, setOpenState] = useState({ expanded, open: expanded })
   const open = openState.expanded === expanded ? openState.open : expanded
   const activity = tools[0]?.activity ?? 'other'
@@ -770,7 +744,7 @@ const Activity: React.FC<{
           activity === 'npm' ||
           activity === 'npx' ||
           activity === 'script' ? (
-          <CommandContent onOpenAgentTerminal={onOpenAgentTerminal} tools={tools} />
+          <CommandContent tools={tools} />
         ) : (
           <RawContent tools={tools} />
         ))}
@@ -784,7 +758,6 @@ const getToolsFromToolItem = (item: ProviderToolItem): ProviderWorkingTool[] =>
 const hasToolDetails = (tool: ProviderWorkingTool): boolean =>
   Boolean(
     tool.command ||
-    tool.agentTerminal ||
     tool.stdout ||
     tool.diffs.length > 0 ||
     tool.rawInput != null ||
@@ -1156,9 +1129,8 @@ const ToolItem: React.FC<{
   item: ProviderToolItem
   activeToolIds: Set<string>
   expanded?: boolean
-  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   projectCwd?: string | null
-}> = ({ item, activeToolIds, expanded = false, onOpenAgentTerminal, projectCwd }) => {
+}> = ({ item, activeToolIds, expanded = false, projectCwd }) => {
   const tools = getToolsFromToolItem(item)
   const activity = tools[0]?.activity ?? 'other'
   const active = tools.some((tool) => activeToolIds.has(tool.id))
@@ -1186,7 +1158,6 @@ const ToolItem: React.FC<{
       tools={tools}
       active={active}
       expanded={expanded}
-      onOpenAgentTerminal={onOpenAgentTerminal}
       projectCwd={projectCwd}
     />
   )
@@ -1381,9 +1352,8 @@ const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolActivity
 const ToolSequence: React.FC<{
   items: ProviderToolItem[]
   activeToolIds: Set<string>
-  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   projectCwd?: string | null
-}> = ({ items, activeToolIds, onOpenAgentTerminal, projectCwd }) => {
+}> = ({ items, activeToolIds, projectCwd }) => {
   const [open, setOpen] = useState(false)
   const tools = items.flatMap(getToolsFromToolItem)
   const activeTools = tools.filter((tool) => activeToolIds.has(tool.id))
@@ -1411,7 +1381,6 @@ const ToolSequence: React.FC<{
               item={item}
               activeToolIds={activeToolIds}
               key={item.id}
-              onOpenAgentTerminal={onOpenAgentTerminal}
               projectCwd={projectCwd}
             />
           ))}
@@ -1421,18 +1390,22 @@ const ToolSequence: React.FC<{
   )
 }
 
-const WorkingPlaceholder: React.FC<{ id: string }> = ({ id }) => {
-  const placeholder = getPlaceholderOption(id)
+const RandomWorkingPlaceholder: React.FC = () => {
+  const [placeholder] = useState(getRandomPlaceholderOption)
 
   return (
     <div className="chat-detail__tool-read chat-detail__tool-read--active chat-detail__tool-placeholder">
       <span className="chat-detail__tool-icon">
-        <LoopingAnimatedIcon Icon={placeholder.Icon} active />
+        <ActiveAnimatedIcon Icon={AnimatedAudioLinesIcon} active />
       </span>
-      <span className="chat-detail__tool-label">{placeholder.label}</span>
+      <span className="chat-detail__tool-label">{placeholder}</span>
     </div>
   )
 }
+
+const WorkingPlaceholder: React.FC<{ id: string }> = ({ id }) => (
+  <RandomWorkingPlaceholder key={id} />
+)
 
 type PlaceholderState = {
   signature: string
@@ -1446,10 +1419,6 @@ const getToolSignature = (tool: ProviderWorkingTool): string =>
     tool.label,
     tool.status,
     tool.command?.length ?? 0,
-    tool.agentTerminal?.turnId ?? '',
-    tool.agentTerminal?.itemId ?? '',
-    tool.agentTerminal?.processId ?? '',
-    tool.agentTerminalDisabledReason ?? '',
     tool.stdout?.length ?? 0,
     tool.diffs.map((diff) => `${diff.path}:${diff.diff.length}`).join(','),
     tool.backgroundSessionId,
@@ -1601,27 +1570,33 @@ const getWorkingStepDefaultOpen = (
 
 const WorkingStep: React.FC<{
   continueDisabled?: boolean
+  continuedStoppedTurn?: boolean
+  followingWorkingStepHasNext?: boolean
+  followingWorkingStepStatus?: ProviderWorkingStep['status']
   hasNextWorkingStep?: boolean
   item: ProviderWorkingStep
   onContinue?: () => Promise<void> | void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
-  onOpenAgentTerminal?: (tool: ProviderWorkingTool) => void
   onRetry?: () => void
   projectCwd?: string | null
   retryDisabled?: boolean
   thoughtSettings: AppChatThoughtSettings
 }> = ({
   continueDisabled = false,
+  continuedStoppedTurn = false,
+  followingWorkingStepHasNext = false,
+  followingWorkingStepStatus,
   hasNextWorkingStep = false,
   item,
   onContinue,
   onOpenFileLink,
-  onOpenAgentTerminal,
   onRetry,
   projectCwd,
   retryDisabled = false,
   thoughtSettings
 }) => {
+  const [continueClicked, setContinueClicked] = useState(false)
+  const linkedToFollowingStep = continuedStoppedTurn || continueClicked
   const { generatedImages, remaining } = partitionGeneratedImageItems(item.items)
   const blocks = groupWorkingItems(remaining)
   const lastWorkingItem = item.items.at(-1)
@@ -1631,10 +1606,24 @@ const WorkingStep: React.FC<{
   )
   const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
   const active = item.status === 'working'
-  const defaultOpen = getWorkingStepDefaultOpen(item.status, thoughtSettings, hasNextWorkingStep)
+  const preserveOpenDuringContinuedWork =
+    continueClicked && followingWorkingStepStatus === 'working' && !followingWorkingStepHasNext
+  const collapseWithFollowingStep =
+    linkedToFollowingStep && followingWorkingStepStatus != null && !preserveOpenDuringContinuedWork
+  const autoCollapseStatus = collapseWithFollowingStep ? followingWorkingStepStatus : item.status
+  const autoCollapseHasNextWorkingStep = collapseWithFollowingStep
+    ? followingWorkingStepHasNext
+    : linkedToFollowingStep
+      ? false
+      : hasNextWorkingStep
+  const defaultOpen = getWorkingStepDefaultOpen(
+    autoCollapseStatus,
+    thoughtSettings,
+    autoCollapseHasNextWorkingStep
+  )
   const openControlKey = [
-    item.status,
-    hasNextWorkingStep ? 'next' : 'latest',
+    autoCollapseStatus,
+    autoCollapseHasNextWorkingStep ? 'next' : 'latest',
     thoughtSettings.expandThoughtsOnStart,
     thoughtSettings.collapseThoughtsOnFinish,
     thoughtSettings.collapseThoughtsOnNextTurn,
@@ -1645,7 +1634,7 @@ const WorkingStep: React.FC<{
   const open = openState.key === openControlKey ? openState.open : defaultOpen
   const showPlaceholder = useSilencePlaceholder(
     signature,
-    active && (!lastWorkingItem || lastWorkingItem.type === 'message'),
+    active && activeToolIds.size === 0,
     !lastWorkingItem
   )
   const label =
@@ -1667,12 +1656,11 @@ const WorkingStep: React.FC<{
       item={imageItem}
       activeToolIds={activeToolIds}
       key={imageItem.id}
-      onOpenAgentTerminal={onOpenAgentTerminal}
       projectCwd={projectCwd}
     />
   ))
   const stoppedTurnActions =
-    item.status === 'stopped' && (onRetry || onContinue) ? (
+    item.status === 'stopped' && !linkedToFollowingStep && (onRetry || onContinue) ? (
       <div className="chat-detail__working-actions">
         {onRetry && (
           <Button
@@ -1693,7 +1681,10 @@ const WorkingStep: React.FC<{
             aria-label="Continue stopped turn"
             title="Continue"
             disabled={continueDisabled}
-            callback={onContinue}
+            callback={() => {
+              setContinueClicked(true)
+              return onContinue()
+            }}
             icon={<Play aria-hidden="true" />}
             label={<span>Continue</span>}
           />
@@ -1750,12 +1741,11 @@ const WorkingStep: React.FC<{
             {blocks.map((block, blockIndex) =>
               block.type === 'tools' ? (
                 block.items.length > 1 &&
-                (blockIndex < blocks.length - 1 || item.status !== 'working' || showPlaceholder) ? (
+                (blockIndex < blocks.length - 1 || item.status !== 'working') ? (
                   <ToolSequence
                     items={block.items}
                     activeToolIds={activeToolIds}
                     key={block.items[0]?.id}
-                    onOpenAgentTerminal={onOpenAgentTerminal}
                     projectCwd={projectCwd}
                   />
                 ) : (
@@ -1765,7 +1755,6 @@ const WorkingStep: React.FC<{
                       activeToolIds={activeToolIds}
                       expanded={active && toolItem === lastWorkingItem}
                       key={toolItem.id}
-                      onOpenAgentTerminal={onOpenAgentTerminal}
                       projectCwd={projectCwd}
                     />
                   ))
@@ -1800,6 +1789,9 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   canEditOwnMessages = false,
   continuePrompt = '',
   continueStoppedTurnDisabled = false,
+  continuedStoppedTurn = false,
+  followingWorkingStepHasNext = false,
+  followingWorkingStepStatus,
   hasNextWorkingStep = false,
   item,
   modelLabelsById,
@@ -1808,7 +1800,6 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onInterruptPendingMessage,
   onEditMessage,
   onOpenFileLink,
-  onOpenAgentTerminal,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
   previousItem,
@@ -1967,13 +1958,17 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   return (
     <WorkingStep
       continueDisabled={continueStoppedTurnDisabled || !continuePrompt.trim()}
+      continuedStoppedTurn={continuedStoppedTurn}
+      followingWorkingStepHasNext={followingWorkingStepHasNext}
+      followingWorkingStepStatus={followingWorkingStepStatus}
       hasNextWorkingStep={hasNextWorkingStep}
       item={item}
       onContinue={
-        onContinueStoppedTurn ? () => onContinueStoppedTurn(continuePrompt.trim()) : undefined
+        onContinueStoppedTurn
+          ? () => onContinueStoppedTurn(item.id, continuePrompt.trim())
+          : undefined
       }
       onOpenFileLink={onOpenFileLink}
-      onOpenAgentTerminal={onOpenAgentTerminal}
       onRetry={
         retryMessage && onRetryStoppedTurn ? () => onRetryStoppedTurn(retryMessage) : undefined
       }

@@ -24,6 +24,7 @@ import {
   FolderPen,
   Gauge,
   ListPlus,
+  LoaderCircle,
   Package,
   Paperclip,
   RotateCcw,
@@ -219,6 +220,7 @@ type ChatConfigOptionGroup = {
 }
 
 type ChatConfigSection = {
+  disabled?: boolean
   id: ChatConfigSectionId
   icon: ReactNode
   label: string
@@ -388,7 +390,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       {sections.map((section) => (
         <button
           className="message-box__chat-config-section-button"
-          disabled={disabled}
+          disabled={disabled || section.disabled}
           key={section.id}
           type="button"
           onClick={() => {
@@ -895,6 +897,9 @@ const getRateLimitResetMessage = (outcome: ProviderAccountRateLimitResetOutcome)
   return 'That reset credit was already used.'
 }
 
+const getRateLimitUsageFingerprint = (usage: ProviderAccountUsage | null): string =>
+  JSON.stringify(usage?.rateLimits ?? null)
+
 export const MessageBox: React.FC<MessageBoxProps> = ({
   approvalMode,
   approvalModes,
@@ -968,11 +973,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   > | null>(null)
   const [attachmentSelectionPending, setAttachmentSelectionPending] = useState(false)
   const [attachmentSelectionError, setAttachmentSelectionError] = useState<string | null>(null)
+  const [dismissedError, setDismissedError] = useState<string | null>(null)
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageView, setUsageView] = useState<UsagePopoverView>('usage')
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
   const [rateLimitResetPending, setRateLimitResetPending] = useState(false)
   const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
+  const [rateLimitRefreshBaseline, setRateLimitRefreshBaseline] = useState<string | null>(null)
   const [fileMention, setFileMention] = useState<FileMention | null>(null)
   const [projectFileCache, setProjectFileCache] = useState<ProjectFileCache | null>(null)
   const [projectFilesErrorCwd, setProjectFilesErrorCwd] = useState<string | null>(null)
@@ -1068,6 +1075,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             icon: <Bot aria-hidden="true" />
           }
         ]
+  const supportedServiceTiers = selectedModel?.supportedServiceTiers ?? []
+  const serviceTierSelectionAvailable = supportedServiceTiers.length > 0
   const serviceTierOptions: DropdownOption<string>[] = [
     {
       value: standardServiceTierValue,
@@ -1075,7 +1084,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       description: 'Standard response speed and credit usage',
       icon: <Gauge aria-hidden="true" />
     },
-    ...(selectedModel?.supportedServiceTiers ?? []).map((option) => ({
+    ...supportedServiceTiers.map((option) => ({
       value: option.id,
       label: option.label,
       menuLabel: option.isDefault ? `${option.label} (default)` : option.label,
@@ -1087,22 +1096,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       )
     }))
   ]
-  const displayedServiceTierOptions =
-    serviceTier == null || serviceTierOptions.some((option) => option.value === serviceTier)
-      ? serviceTierOptions
-      : [
-          ...serviceTierOptions,
-          {
-            value: serviceTier,
-            label: formatOptionLabel(serviceTier),
-            icon: <Gauge aria-hidden="true" />
-          }
-        ]
+  const displayedServiceTierOptions = serviceTierOptions
   const selectedServiceTier = serviceTier == null ? null : serviceTier
   const selectedServiceTierOption = displayedServiceTierOptions.find(
     (option) => option.value === (selectedServiceTier ?? standardServiceTierValue)
   )
   const supportedReasoningEfforts = selectedModel?.supportedReasoningEfforts ?? []
+  const reasoningSelectionAvailable = supportedReasoningEfforts.length > 0
   const reasoningEffortOptions = supportedReasoningEfforts.map((option) => {
     const presentation = getReasoningEffortPresentation(option.id)
     const label = getReasoningEffortOptionLabel(option.id, option.label)
@@ -1116,18 +1116,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     } satisfies DropdownOption<ProviderReasoningEffort>
   })
   const selectedReasoningEffortPresentation = getReasoningEffortPresentation(reasoningEffort)
-  const displayedReasoningEffortOptions = reasoningEffortOptions.some(
-    (option) => option.value === reasoningEffort
-  )
-    ? reasoningEffortOptions
-    : [
-        ...reasoningEffortOptions,
-        {
-          value: reasoningEffort,
-          label: selectedReasoningEffortPresentation.label,
-          icon: selectedReasoningEffortPresentation.icon
-        }
-      ]
+  const displayedReasoningEffortOptions = reasoningEffortOptions
   const selectedApprovalModeTitle = selectedApprovalMode?.description
     ? `${selectedApprovalMode.label}: ${selectedApprovalMode.description}`
     : (selectedApprovalMode?.label ?? formatOptionLabel(effectiveApprovalMode))
@@ -1168,7 +1157,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ? [
           {
             id: 'reasoning',
-            icon: selectedReasoningEffortPresentation.icon,
+            disabled: !reasoningSelectionAvailable,
+            icon: reasoningSelectionAvailable ? (
+              selectedReasoningEffortPresentation.icon
+            ) : (
+              <Sparkles />
+            ),
             label: 'Reasoning',
             groups: [
               {
@@ -1227,6 +1221,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ? [
           {
             id: 'speed',
+            disabled: !serviceTierSelectionAvailable,
             icon: selectedServiceTierOption?.icon ?? <Gauge aria-hidden="true" />,
             label: 'Speed',
             groups: [
@@ -1244,12 +1239,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   ]
   const chatConfigSelectorTitle = [
     `Model: ${selectedModelLabel}`,
-    showReasoningSelector && !modelSelectionUnavailable
+    showReasoningSelector && !modelSelectionUnavailable && reasoningSelectionAvailable
       ? `Reasoning: ${selectedReasoningEffortLabel}`
       : null,
     showAccessSelector ? `Access: ${selectedSandboxModeLabel}` : null,
     reviewSelectorVisible ? `Review: ${selectedApprovalModeTitle}` : null,
-    showSpeedSelector ? `Speed: ${selectedServiceTierLabel}` : null
+    showSpeedSelector && serviceTierSelectionAvailable ? `Speed: ${selectedServiceTierLabel}` : null
   ]
     .filter(Boolean)
     .join(' · ')
@@ -1268,7 +1263,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               } satisfies SelectorIconItem
             ]
           : []),
-        ...(selectedReasoningEffortPresentation.showStatusIcon
+        ...(selectedReasoningEffortPresentation.showStatusIcon && reasoningSelectionAvailable
           ? [
               {
                 key: 'reasoning',
@@ -1396,6 +1391,18 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [message])
 
   useEffect(() => {
+    let active = true
+
+    queueMicrotask(() => {
+      if (active) setDismissedError(null)
+    })
+
+    return () => {
+      active = false
+    }
+  }, [error])
+
+  useEffect(() => {
     selectedAttachmentsRef.current = selectedAttachments
   }, [selectedAttachments])
 
@@ -1508,6 +1515,48 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [usageMenuOpen])
+
+  const rateLimitUsageFingerprint = getRateLimitUsageFingerprint(accountUsage)
+
+  useEffect(() => {
+    if (rateLimitRefreshBaseline === null) return
+
+    if (rateLimitUsageFingerprint !== rateLimitRefreshBaseline) {
+      let active = true
+
+      queueMicrotask(() => {
+        if (active) setRateLimitRefreshBaseline(null)
+      })
+
+      return () => {
+        active = false
+      }
+    }
+
+    let active = true
+    let refreshTimeout: number | null = null
+
+    const scheduleRefresh = (): void => {
+      refreshTimeout = window.setTimeout(() => {
+        void (async () => {
+          try {
+            await onUsageRefresh?.()
+          } catch {
+            // Keep polling after transient refresh failures.
+          } finally {
+            if (active) scheduleRefresh()
+          }
+        })()
+      }, 1_000)
+    }
+
+    scheduleRefresh()
+
+    return () => {
+      active = false
+      if (refreshTimeout !== null) window.clearTimeout(refreshTimeout)
+    }
+  }, [onUsageRefresh, rateLimitRefreshBaseline, rateLimitUsageFingerprint])
 
   useEffect(() => {
     if (!editSession) {
@@ -2027,10 +2076,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ]
     : undefined
   const accountUsageErrors = accountUsage?.errors ?? []
-  const statisticsLoading =
-    usageView === 'statistics' && accountUsageState === 'loading' && !accountUsage?.statisticsLoaded
-  const statisticsLoadError =
-    usageView === 'statistics' && accountUsageState === 'error' && !accountUsage?.statisticsLoaded
+  const statisticsReported = Boolean(
+    accountUsage?.statisticsLoaded &&
+    accountUsage.summary &&
+    Object.values(accountUsage.summary).some((value) => value !== null)
+  )
+  const visibleUsageView: UsagePopoverView = statisticsReported ? usageView : 'usage'
+  const statisticsLoading = accountUsageState === 'loading' && !statisticsReported
   const rateLimits = accountUsage?.rateLimits ?? []
   const mainRateLimits = rateLimits.filter(isMainRateLimit)
   const visibleRateLimits = mainRateLimits.length > 0 ? mainRateLimits : rateLimits.slice(0, 1)
@@ -2065,7 +2117,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
     const nextOpen = !usageMenuOpen
     setUsageOpen(nextOpen)
-    if (nextOpen) void onUsageRefresh?.({ includeStatistics: usageView === 'statistics' })
+    if (nextOpen) {
+      if (!statisticsReported) setUsageView('usage')
+      void onUsageRefresh?.({ includeStatistics: true })
+    }
   }
 
   const handleUsageViewChange = (nextView: UsagePopoverView): void => {
@@ -2088,9 +2143,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     setRateLimitResetMessage(null)
 
     try {
+      const usageBeforeReset = getRateLimitUsageFingerprint(accountUsage)
       const outcome = await onUsageReset()
       setRateLimitResetMessage(getRateLimitResetMessage(outcome))
       await onUsageRefresh?.()
+      if (outcome === 'reset' && onUsageRefresh) {
+        setRateLimitRefreshBaseline(usageBeforeReset)
+      }
     } catch (resetError) {
       setRateLimitResetMessage(
         resetError instanceof Error ? resetError.message : 'Unable to reset rate limits.'
@@ -2150,13 +2209,38 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   ) : (
     <div className="message-box__file-mention-status">No matching files</div>
   )
+  const messageBoxError =
+    attachmentSelectionError ?? (error && error !== dismissedError ? error : null)
+  const messageBoxErrorLabel = attachmentSelectionError ? 'Attachment failed' : 'Request failed'
+
+  const handleDismissMessageBoxError = (): void => {
+    if (attachmentSelectionError) {
+      setAttachmentSelectionError(null)
+      return
+    }
+
+    if (error) setDismissedError(error)
+  }
 
   return (
     <form className="message-box" aria-busy={pending} onSubmit={handleSubmit}>
-      {(attachmentSelectionError || error) && (
-        <p className="message-box__error" role="status">
-          {attachmentSelectionError ?? error}
-        </p>
+      {messageBoxError && (
+        <div className="message-box__error" role="alert">
+          <div className="message-box__error-main">
+            <span className="message-box__error-label">{messageBoxErrorLabel}</span>
+            <span className="message-box__error-summary">{messageBoxError}</span>
+          </div>
+          <div className="message-box__error-actions">
+            <Button
+              aria-label="Dismiss error"
+              title="Dismiss error"
+              callback={handleDismissMessageBoxError}
+              icon={<X aria-hidden="true" />}
+              size="small"
+              theme="transparent"
+            />
+          </div>
+        </div>
       )}
       <label className="sr-only" htmlFor="message-input">
         Message
@@ -2361,7 +2445,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   disabled={selectorsDisabled}
                   id="chat-config-mode"
                   modelLabel={selectedModelLabel}
-                  reasoningLabel={modelSelectionUnavailable ? null : selectedReasoningEffortLabel}
+                  reasoningLabel={
+                    modelSelectionUnavailable || !reasoningSelectionAvailable
+                      ? null
+                      : selectedReasoningEffortLabel
+                  }
                   sections={chatConfigSections}
                   statusIcons={chatConfigStatusIcons}
                   title={chatConfigSelectorTitle}
@@ -2423,14 +2511,30 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                     className="message-box__usage-tabs"
                     options={[
                       { value: 'usage', label: 'Usage' },
-                      { value: 'statistics', label: 'Statistics' }
+                      {
+                        value: 'statistics',
+                        label: statisticsLoading
+                          ? 'Statistics'
+                          : statisticsReported
+                            ? 'Statistics'
+                            : 'No statistics',
+                        ariaLabel: statisticsLoading
+                          ? 'Statistics loading'
+                          : statisticsReported
+                            ? 'Statistics'
+                            : 'No statistics available',
+                        disabled: !statisticsReported,
+                        icon: statisticsLoading ? (
+                          <LoaderCircle className="message-box__usage-loading-icon" />
+                        ) : undefined
+                      }
                     ]}
                     size="small"
-                    value={usageView}
+                    value={visibleUsageView}
                     onChange={handleUsageViewChange}
                   />
 
-                  {usageView === 'usage' ? (
+                  {visibleUsageView === 'usage' ? (
                     <div className="message-box__usage-page" role="tabpanel">
                       <section className="message-box__usage-section">
                         <div className="message-box__usage-row">
@@ -2530,14 +2634,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   ) : (
                     <div className="message-box__usage-page" role="tabpanel">
                       <section className="message-box__usage-section">
-                        {statisticsLoading && (
-                          <p className="message-box__usage-status">Loading statistics...</p>
-                        )}
-                        {statisticsLoadError && (
-                          <p className="message-box__usage-status">
-                            {accountUsageError ?? 'Usage unavailable.'}
-                          </p>
-                        )}
                         {accountUsage?.statisticsLoaded && accountUsage.summary && (
                           <>
                             <div className="message-box__usage-row">

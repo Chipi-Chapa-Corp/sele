@@ -30,6 +30,7 @@ import {
   appActionIconIds,
   type AppAction,
   type AppActionIcon,
+  type AppActionType,
   defaultAppActionIcon,
   getAppActionKeybindingFromEvent,
   normalizeAppActions
@@ -37,6 +38,7 @@ import {
 import { Button, type ButtonDropdownAction } from './Button'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { Input } from './Input'
+import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
 import { Switch } from './Switch'
 import { Textarea } from './Textarea'
 import './ActionsButton.css'
@@ -54,12 +56,14 @@ type ActionsButtonProps = {
 
 type ActionDraft = {
   id: string | null
-  command: string
+  content: string
   closeTerminalOnFinish: boolean
   icon: AppActionIcon
   keybinding: string | null
   name: string
   openInTerminal: boolean
+  sendInNewChat: boolean
+  type: AppActionType
 }
 
 const actionIconComponents = {
@@ -90,12 +94,14 @@ const actionIconLabels = {
 
 const emptyActionDraft: ActionDraft = {
   id: null,
-  command: '',
+  content: '',
   closeTerminalOnFinish: false,
   icon: defaultAppActionIcon,
   keybinding: null,
   name: '',
-  openInTerminal: true
+  openInTerminal: true,
+  sendInNewChat: false,
+  type: 'command'
 }
 
 const createActionId = (): string => {
@@ -108,12 +114,14 @@ const getDraftFromAction = (action: AppAction | null): ActionDraft =>
   action
     ? {
         id: action.id,
-        command: action.command,
-        closeTerminalOnFinish: action.closeTerminalOnFinish,
+        content: action.type === 'prompt' ? action.prompt : action.command,
+        closeTerminalOnFinish: action.type === 'command' ? action.closeTerminalOnFinish : false,
         icon: action.icon,
         keybinding: action.keybinding,
         name: action.name,
-        openInTerminal: action.openInTerminal
+        openInTerminal: action.type === 'command' ? action.openInTerminal : true,
+        sendInNewChat: action.type === 'prompt' ? action.sendInNewChat : false,
+        type: action.type
       }
     : { ...emptyActionDraft }
 
@@ -128,6 +136,14 @@ const actionIconOptions: DropdownOption<AppActionIcon>[] = appActionIconIds.map(
   label: actionIconLabels[icon],
   icon: renderActionIcon(icon)
 }))
+
+const actionTypeOptions: SegmentedControlOption<AppActionType>[] = [
+  { value: 'command', label: 'Command' },
+  { value: 'prompt', label: 'Prompt' }
+]
+
+const getActionContent = (action: AppAction): string =>
+  action.type === 'prompt' ? action.prompt : action.command
 
 const renderActionMenuLabel = (action: AppAction): ReactNode => (
   <span className="cwd-actions-menu-label">
@@ -154,6 +170,7 @@ export const ActionsButton = ({
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [keybindingFocused, setKeybindingFocused] = useState(false)
   const nameInputId = `cwd-actions-name-${reactId}`
+  const contentInputId = `cwd-actions-content-${reactId}`
   const keybindingDescriptionId = `cwd-actions-keybinding-description-${reactId}`
   const primaryAction = actions.find((action) => action.id === lastActionId) ?? actions[0] ?? null
   const draftOpen = draft !== null
@@ -189,13 +206,13 @@ export const ActionsButton = ({
     if (!draft) return
 
     const name = draft.name.trim()
-    const command = draft.command.trim()
+    const content = draft.content.trim()
     if (!name) {
       setDialogError('Name is required.')
       return
     }
-    if (!command) {
-      setDialogError('Command is required.')
+    if (!content) {
+      setDialogError(`${draft.type === 'prompt' ? 'Prompt' : 'Command'} is required.`)
       return
     }
 
@@ -207,15 +224,27 @@ export const ActionsButton = ({
       return
     }
 
-    const savedAction: AppAction = {
+    const savedActionBase = {
       id: draft.id ?? createActionId(),
-      command,
-      closeTerminalOnFinish: draft.openInTerminal && draft.closeTerminalOnFinish,
       icon: draft.icon,
       keybinding: draft.keybinding,
-      name,
-      openInTerminal: draft.openInTerminal
+      name
     }
+    const savedAction: AppAction =
+      draft.type === 'prompt'
+        ? {
+            ...savedActionBase,
+            type: 'prompt',
+            prompt: content,
+            sendInNewChat: draft.sendInNewChat
+          }
+        : {
+            ...savedActionBase,
+            type: 'command',
+            command: content,
+            closeTerminalOnFinish: draft.openInTerminal && draft.closeTerminalOnFinish,
+            openInTerminal: draft.openInTerminal
+          }
     const nextActions = draft.id
       ? actions.map((action) => (action.id === draft.id ? savedAction : action))
       : [...actions, savedAction]
@@ -292,7 +321,7 @@ export const ActionsButton = ({
     ...actions.map((action): ButtonDropdownAction => ({
       id: `run-${action.id}`,
       label: renderActionMenuLabel(action),
-      title: action.command,
+      title: getActionContent(action),
       disabled: Boolean(runningActionId),
       icon: renderActionIcon(action.icon),
       callback: () => handleRunAction(action),
@@ -395,36 +424,59 @@ export const ActionsButton = ({
               Press a key combination. Press Backspace to remove the keybinding.
             </span>
           </label>
-          <label className="cwd-actions-dialog__field">
-            <span>Command</span>
-            <Textarea
-              className="cwd-actions-dialog__command"
-              value={draft.command}
-              rows={4}
-              spellCheck={false}
-              onChange={(event) => updateDraft({ command: event.currentTarget.value })}
+          <div className="cwd-actions-dialog__field">
+            <SegmentedControl
+              aria-label="Action type"
+              className="cwd-actions-dialog__type"
+              options={actionTypeOptions}
+              size="small"
+              value={draft.type}
+              onChange={(type) => updateDraft({ type })}
             />
-          </label>
-          <Switch
-            className="cwd-actions-dialog__switch-row"
-            label="Open in terminal"
-            checked={draft.openInTerminal}
-            onChange={(event) =>
-              updateDraft({
-                openInTerminal: event.currentTarget.checked,
-                closeTerminalOnFinish: event.currentTarget.checked && draft.closeTerminalOnFinish
-              })
-            }
-          />
-          <Switch
-            className="cwd-actions-dialog__switch-row"
-            label="Close terminal on finish"
-            disabled={!draft.openInTerminal}
-            checked={draft.openInTerminal && draft.closeTerminalOnFinish}
-            onChange={(event) =>
-              updateDraft({ closeTerminalOnFinish: event.currentTarget.checked })
-            }
-          />
+            <label className="sr-only" htmlFor={contentInputId}>
+              {draft.type === 'prompt' ? 'Prompt' : 'Command'}
+            </label>
+            <Textarea
+              id={contentInputId}
+              className="cwd-actions-dialog__command"
+              value={draft.content}
+              rows={4}
+              spellCheck={draft.type === 'prompt'}
+              onChange={(event) => updateDraft({ content: event.currentTarget.value })}
+            />
+          </div>
+          {draft.type === 'prompt' ? (
+            <Switch
+              className="cwd-actions-dialog__switch-row"
+              label="Send in a new chat"
+              checked={draft.sendInNewChat}
+              onChange={(event) => updateDraft({ sendInNewChat: event.currentTarget.checked })}
+            />
+          ) : (
+            <>
+              <Switch
+                className="cwd-actions-dialog__switch-row"
+                label="Open in terminal"
+                checked={draft.openInTerminal}
+                onChange={(event) =>
+                  updateDraft({
+                    openInTerminal: event.currentTarget.checked,
+                    closeTerminalOnFinish:
+                      event.currentTarget.checked && draft.closeTerminalOnFinish
+                  })
+                }
+              />
+              <Switch
+                className="cwd-actions-dialog__switch-row"
+                label="Close terminal on finish"
+                disabled={!draft.openInTerminal}
+                checked={draft.openInTerminal && draft.closeTerminalOnFinish}
+                onChange={(event) =>
+                  updateDraft({ closeTerminalOnFinish: event.currentTarget.checked })
+                }
+              />
+            </>
+          )}
           {dialogError && (
             <p className="cwd-actions-dialog__error" role="alert">
               {dialogError}

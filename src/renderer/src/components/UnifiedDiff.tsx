@@ -16,6 +16,7 @@ import { refractor } from 'refractor'
 import jsx from 'refractor/jsx'
 import tsx from 'refractor/tsx'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
+import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { Button } from './Button'
 import { Input } from './Input'
 import 'react-diff-view/style/index.css'
@@ -130,9 +131,6 @@ const getMonacoLanguage = (path: string): string => {
   return language ? (monacoLanguageAliases[language] ?? language) : 'plaintext'
 }
 
-const editorFontFamily =
-  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace"
-
 monaco.editor.defineTheme('sele-light', {
   base: 'vs',
   inherit: true,
@@ -217,11 +215,6 @@ monaco.editor.defineTheme('sele-dark', {
 
 const getMonacoTheme = (): 'sele-light' | 'sele-dark' =>
   document.documentElement.dataset.colorScheme === 'dark' ? 'sele-dark' : 'sele-light'
-
-const getEditorFontSize = (element: HTMLElement): number => {
-  const fontSize = Number.parseFloat(getComputedStyle(element).fontSize)
-  return Number.isFinite(fontSize) ? fontSize : 14
-}
 
 let editableDiffInstanceId = 0
 
@@ -773,14 +766,15 @@ export const EditableUnifiedDiff = ({
     )
     originalModel.updateOptions({ insertSpaces: true, tabSize: 2 })
     modifiedModel.updateOptions({ insertSpaces: true, tabSize: 2 })
+    const codeFont = getCodeFontAppearance()
 
     const editor = monaco.editor.createDiffEditor(parent, {
       ariaLabel,
       automaticLayout: true,
       diffAlgorithm: 'advanced',
       diffWordWrap: 'off',
-      fontFamily: editorFontFamily,
-      fontSize: getEditorFontSize(parent),
+      fontFamily: codeFont.family,
+      fontSize: codeFont.size,
       folding: false,
       glyphMargin: false,
       ignoreTrimWhitespace: false,
@@ -930,6 +924,13 @@ export const EditableUnifiedDiff = ({
       attributeFilter: ['data-color-scheme']
     })
 
+    const handleFontSettingsChanged = (): void => {
+      const font = getCodeFontAppearance()
+      originalEditor.updateOptions({ fontFamily: font.family, fontSize: font.size })
+      modifiedEditor.updateOptions({ fontFamily: font.family, fontSize: font.size })
+    }
+    window.addEventListener(appFontSettingsChangedEvent, handleFontSettingsChanged)
+
     queueMicrotask(() => modifiedEditor.focus())
     return () => {
       cancelScheduledReviewInput()
@@ -937,6 +938,7 @@ export const EditableUnifiedDiff = ({
       reviewDecorationCollectionsRef.current = null
       targetDecorationCollectionRef.current = null
       themeObserver.disconnect()
+      window.removeEventListener(appFontSettingsChangedEvent, handleFontSettingsChanged)
       changeSubscription.dispose()
       originalSelectionSubscription.dispose()
       modifiedSelectionSubscription.dispose()

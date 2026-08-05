@@ -36,6 +36,9 @@ type ChatListGroupProps = {
   resolvingApprovalId?: string | null
 }
 
+const formatProjectLabel = (label: string): string =>
+  label.replaceAll('-', ' ').replace(/(^|\s)\S/g, (wordStart) => wordStart.toLocaleUpperCase())
+
 export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   contentId,
   group,
@@ -58,6 +61,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   onUnpinPinnedChats,
   resolvingApprovalId = null
 }) => {
+  const groupLabel = group.kind === 'cwd' ? formatProjectLabel(group.label) : group.label
   const visibleChats = group.chats.slice(0, visibleChatCount)
   const remainingChatCount = Math.max(0, group.chats.length - visibleChats.length)
   const nextChatCount = Math.min(chatPageSize, remainingChatCount)
@@ -73,17 +77,17 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
       }
       aria-controls={contentId}
       open={open}
-      title={group.cwd ?? group.label}
+      title={group.cwd ?? groupLabel}
       onClick={() => onToggle(group.key)}
     >
-      <span className="chat-list-group__title">{group.label}</span>
+      <span className="chat-list-group__title">{groupLabel}</span>
     </DisclosureToggle>
   )
 
   return (
     <section
       className={`chat-list-group chat-list-group--${group.kind}${open ? ' chat-list-group--open' : ''}`}
-      aria-label={`${group.label} chats`}
+      aria-label={`${groupLabel} chats`}
     >
       <div className="chat-list-group__header">
         {group.kind === 'cwd' ? (
@@ -91,7 +95,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             <button
               className="chat-list-group__project-icon-button"
               type="button"
-              aria-label={`Project: ${group.label}`}
+              aria-label={`Project: ${groupLabel}`}
               title="Choose project image"
               onClick={() => onSelectProjectIcon?.(group)}
             >
@@ -111,7 +115,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             <Button
               theme="transparent"
               size="small"
-              aria-label={`New chat in ${group.label}`}
+              aria-label={`New chat in ${groupLabel}`}
               title="New chat"
               callback={() => onNewChatInCwd(group)}
               icon={<SquarePen aria-hidden="true" />}
@@ -119,7 +123,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             <Button
               theme="transparent"
               size="small"
-              aria-label={`Mark all ${group.label} chats done`}
+              aria-label={`Mark all ${groupLabel} chats done`}
               title="Mark project chats done"
               callback={() => onMarkCwdChatsDone(group)}
               icon={<CheckCheck aria-hidden="true" />}
@@ -142,7 +146,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
       {open && (
         <blockquote className="chat-list-group__items" id={contentId}>
           <ChatList
-            ariaLabel={`${group.label} chats`}
+            ariaLabel={`${groupLabel} chats`}
             chats={visibleChats}
             selectedChatKey={selectedChatKey}
             committingChatKeys={committingChatKeys}
@@ -162,7 +166,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
                   theme="secondary"
                   size="small"
                   fill
-                  aria-label={`Show fewer ${group.label} chats`}
+                  aria-label={`Show fewer ${groupLabel} chats`}
                   title="Show less"
                   callback={() => onShowLessChats(group)}
                   icon={<ChevronUp aria-hidden="true" />}
@@ -174,7 +178,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
                   theme="secondary"
                   size="small"
                   fill
-                  aria-label={`Load next ${nextChatCount} ${group.label} chats`}
+                  aria-label={`Load next ${nextChatCount} ${groupLabel} chats`}
                   title={`Load next ${nextChatCount} chats`}
                   callback={() => onLoadMoreChats(group)}
                   icon={<ChevronDown aria-hidden="true" />}
