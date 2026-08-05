@@ -13,15 +13,31 @@ export const appActionIconIds = [
 
 export type AppActionIcon = (typeof appActionIconIds)[number]
 
-export type AppAction = {
+export const appActionTypes = ['command', 'prompt'] as const
+
+export type AppActionType = (typeof appActionTypes)[number]
+
+type AppActionBase = {
   id: string
   name: string
   icon: AppActionIcon
   keybinding: string | null
+}
+
+export type AppCommandAction = AppActionBase & {
+  type: 'command'
   command: string
   openInTerminal: boolean
   closeTerminalOnFinish: boolean
 }
+
+export type AppPromptAction = AppActionBase & {
+  type: 'prompt'
+  prompt: string
+  sendInNewChat: boolean
+}
+
+export type AppAction = AppCommandAction | AppPromptAction
 
 type KeyboardEventLike = {
   altKey: boolean
@@ -36,7 +52,7 @@ const modifierKeys = new Set(['Alt', 'AltGraph', 'Control', 'Meta', 'Shift', 'OS
 const maxActionCount = 100
 const maxActionIdLength = 128
 const maxActionNameLength = 80
-const maxActionCommandLength = 20_000
+const maxActionContentLength = 20_000
 const maxActionKeybindingLength = 80
 
 export const defaultAppActionIcon = 'play' satisfies AppActionIcon
@@ -89,10 +105,14 @@ export const normalizeAppActions = (value: unknown): AppAction[] => {
     const action = value[index]
     if (!action || typeof action !== 'object') continue
 
-    const candidate = action as Partial<AppAction>
+    const candidate = action as Record<string, unknown>
+    const type: AppActionType = candidate.type === 'prompt' ? 'prompt' : 'command'
     const name = normalizeActionString(candidate.name, maxActionNameLength)
-    const command = normalizeActionString(candidate.command, maxActionCommandLength)
-    if (!name || !command) continue
+    const content = normalizeActionString(
+      type === 'prompt' ? candidate.prompt : candidate.command,
+      maxActionContentLength
+    )
+    if (!name || !content) continue
 
     let id = normalizeActionString(candidate.id, maxActionIdLength)
     if (!id) id = `${Date.now()}-${index}`
@@ -103,17 +123,30 @@ export const normalizeAppActions = (value: unknown): AppAction[] => {
     const uniqueKeybinding = keybinding && !keybindings.has(keybinding) ? keybinding : null
     if (uniqueKeybinding) keybindings.add(uniqueKeybinding)
 
-    const openInTerminal = Boolean(candidate.openInTerminal)
-
-    actions.push({
+    const normalizedAction = {
       id,
       name,
       icon: isAppActionIcon(candidate.icon) ? candidate.icon : defaultAppActionIcon,
-      keybinding: uniqueKeybinding,
-      command,
-      openInTerminal,
-      closeTerminalOnFinish: openInTerminal && Boolean(candidate.closeTerminalOnFinish)
-    })
+      keybinding: uniqueKeybinding
+    }
+
+    if (type === 'prompt') {
+      actions.push({
+        ...normalizedAction,
+        type,
+        prompt: content,
+        sendInNewChat: Boolean(candidate.sendInNewChat)
+      })
+    } else {
+      const openInTerminal = Boolean(candidate.openInTerminal)
+      actions.push({
+        ...normalizedAction,
+        type,
+        command: content,
+        openInTerminal,
+        closeTerminalOnFinish: openInTerminal && Boolean(candidate.closeTerminalOnFinish)
+      })
+    }
   }
 
   return actions

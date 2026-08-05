@@ -58,6 +58,7 @@ import {
   Sun,
   Terminal,
   ToolCase,
+  Undo2,
   Upload,
   UnlockKeyhole,
   X,
@@ -86,6 +87,7 @@ import type {
   AppGitChangeKind,
   AppGitChangesResult,
   AppGitCommitAction,
+  AppGitDeleteBranchScope,
   AppGitPatchChange,
   AppProjectIcon,
   AppGitPullStrategy,
@@ -158,35 +160,46 @@ import { Input } from './components/Input'
 import { MessageBox } from './components/MessageBox'
 import { SegmentedControl } from './components/SegmentedControl'
 import { Switch } from './components/Switch'
-import {
-  TerminalPanel,
-  type AgentTerminalSnapshot,
-  type TerminalCommandLaunchRequest,
-  type TerminalLaunchRequest
-} from './components/TerminalPanel'
+import { TerminalPanel, type TerminalCommandLaunchRequest } from './components/TerminalPanel'
+import { UserInputRequestBox } from './components/UserInputRequestBox'
 import type { AppAction } from './actions'
 import { getAppActionKeybindingFromEvent } from './actions'
 import { appApi } from './appApi'
+import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
 import { terminalApi } from './terminalApi'
 import {
   type AppAppearancePositionPreference,
   type AppAppearanceControlStylePreference,
   type AppAppearanceStylePreference,
+  type AppFontSetting,
   type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
   type AppGitWorktreeSettings,
   type AppChatDropdownSettings,
   type AppChatUsageDisplay,
   type AppExternalLinkBehavior,
+  type AppProjectSettingsByCwd,
+  type AppProjectSettingsOverrides,
   type AppSettings,
   type AppThemePreference,
   appAppearanceZoomLevelMax,
   appAppearanceZoomLevelMin,
+  appFontInheritValue,
+  appFontMonospaceValue,
+  appFontSizeMax,
+  appFontSizeMin,
+  appFontSystemValue,
   appChatManualDropdownValue,
   appChatStandardSpeedValue,
+  isAppProjectSettingsOverridesEmpty,
+  normalizeAppProjectSettingsCwd,
   normalizeAppAppearanceZoomLevel,
+  normalizeAppFontSize,
+  readStoredAppProjectSettings,
   readStoredAppSettings,
+  resolveAppSettings,
+  writeStoredAppProjectSettings,
   writeStoredAppSettings
 } from './settings'
 import { setThemePreference } from './systemColorScheme'
@@ -215,6 +228,11 @@ type EditingMessage =
 type ApprovalResolutionState = {
   approvalId: string | null
   decision: ProviderApprovalDecision | null
+  error: string | null
+}
+type UserInputResolutionState = {
+  requestId: string | null
+  resolving: boolean
   error: string | null
 }
 type ProviderUpdateState = 'idle' | 'updating'
@@ -297,6 +315,7 @@ type GitSyncRecoveryActionOptions = {
   rememberStrategy?: boolean
 }
 type SettingsTab = 'appearance' | 'chat' | 'links' | 'performance' | 'git'
+type SettingsScope = 'global' | 'project'
 type CachedPatchChangedFiles = {
   containerKey: string
   cwd: string
@@ -310,6 +329,14 @@ type FileTreeScope = {
 type GitBranchesScope = {
   sourceKey: string
   cwd: string
+}
+type GitBranchDeleteRetry = {
+  branchName: string
+  scope: AppGitDeleteBranchScope
+}
+type GitBranchWorktreeDeleteRetry = GitBranchDeleteRetry & {
+  force: boolean
+  worktreePath: string
 }
 type ChangedFile = {
   path: string
@@ -370,6 +397,7 @@ type MessageBoxSelection = {
   serviceTier: ProviderServiceTier | null
 }
 type StoredMessageBoxSelection = Partial<MessageBoxSelection>
+type StoredMessageBoxSelections = Partial<Record<ProviderId, StoredMessageBoxSelection>>
 type ChatBooleanSettingKey = {
   [Key in keyof AppSettings['chat']]: AppSettings['chat'][Key] extends boolean ? Key : never
 }[keyof AppSettings['chat']]
@@ -379,6 +407,271 @@ type ChatBooleanSettingField = {
   description?: string
   id: string
 }
+type AppearanceFontKey = 'applicationFont' | 'chatFont' | 'codeFont'
+type AppProjectSettingPath =
+  | { section: 'appearance'; key: keyof AppSettings['appearance'] }
+  | { section: 'chat'; key: keyof AppSettings['chat'] }
+  | { section: 'links'; key: keyof AppSettings['links'] }
+  | { section: 'performance'; key: keyof AppSettings['performance'] }
+  | { section: 'git'; key: 'commitModel' }
+  | { section: 'gitCommitPrompt'; key: keyof AppGitCommitPromptSettings }
+  | {
+      section: 'gitCommitMessageGeneration'
+      key: keyof AppGitCommitMessageGenerationSettings
+    }
+  | { section: 'gitWorktree'; key: keyof AppGitWorktreeSettings }
+
+const hasSettingKey = (value: object | null | undefined, key: PropertyKey): boolean =>
+  Boolean(value && Object.prototype.hasOwnProperty.call(value, key))
+
+const getProjectSettingPathId = (path: AppProjectSettingPath): string =>
+  `settings-project-action-${path.section}-${path.key}`
+
+const cleanProjectSettingsOverrides = (
+  overrides: AppProjectSettingsOverrides
+): AppProjectSettingsOverrides => {
+  const nextOverrides: AppProjectSettingsOverrides = { ...overrides }
+
+  if (nextOverrides.appearance && Object.keys(nextOverrides.appearance).length === 0) {
+    delete nextOverrides.appearance
+  }
+  if (nextOverrides.chat && Object.keys(nextOverrides.chat).length === 0) {
+    delete nextOverrides.chat
+  }
+  if (nextOverrides.links && Object.keys(nextOverrides.links).length === 0) {
+    delete nextOverrides.links
+  }
+  if (nextOverrides.performance && Object.keys(nextOverrides.performance).length === 0) {
+    delete nextOverrides.performance
+  }
+
+  if (nextOverrides.git) {
+    const gitOverrides = { ...nextOverrides.git }
+    if (gitOverrides.commitPrompt && Object.keys(gitOverrides.commitPrompt).length === 0) {
+      delete gitOverrides.commitPrompt
+    }
+    if (
+      gitOverrides.commitMessageGeneration &&
+      Object.keys(gitOverrides.commitMessageGeneration).length === 0
+    ) {
+      delete gitOverrides.commitMessageGeneration
+    }
+    if (gitOverrides.worktree && Object.keys(gitOverrides.worktree).length === 0) {
+      delete gitOverrides.worktree
+    }
+
+    if (Object.keys(gitOverrides).length === 0) {
+      delete nextOverrides.git
+    } else {
+      nextOverrides.git = gitOverrides
+    }
+  }
+
+  return nextOverrides
+}
+
+const getAppProjectSettingValue = (settings: AppSettings, path: AppProjectSettingPath): unknown => {
+  switch (path.section) {
+    case 'appearance':
+      return settings.appearance[path.key]
+    case 'chat':
+      return settings.chat[path.key]
+    case 'links':
+      return settings.links[path.key]
+    case 'performance':
+      return settings.performance[path.key]
+    case 'git':
+      return settings.git.commitModel
+    case 'gitCommitPrompt':
+      return settings.git.commitPrompt[path.key]
+    case 'gitCommitMessageGeneration':
+      return settings.git.commitMessageGeneration[path.key]
+    case 'gitWorktree':
+      return settings.git.worktree[path.key]
+  }
+}
+
+const isAppProjectSettingOverridden = (
+  overrides: AppProjectSettingsOverrides | null | undefined,
+  path: AppProjectSettingPath
+): boolean => {
+  switch (path.section) {
+    case 'appearance':
+      return hasSettingKey(overrides?.appearance, path.key)
+    case 'chat':
+      return hasSettingKey(overrides?.chat, path.key)
+    case 'links':
+      return hasSettingKey(overrides?.links, path.key)
+    case 'performance':
+      return hasSettingKey(overrides?.performance, path.key)
+    case 'git':
+      return hasSettingKey(overrides?.git, 'commitModel')
+    case 'gitCommitPrompt':
+      return hasSettingKey(overrides?.git?.commitPrompt, path.key)
+    case 'gitCommitMessageGeneration':
+      return hasSettingKey(overrides?.git?.commitMessageGeneration, path.key)
+    case 'gitWorktree':
+      return hasSettingKey(overrides?.git?.worktree, path.key)
+  }
+}
+
+const setAppProjectSettingOverrideValue = (
+  overrides: AppProjectSettingsOverrides,
+  path: AppProjectSettingPath,
+  value: unknown
+): AppProjectSettingsOverrides => {
+  switch (path.section) {
+    case 'appearance':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        appearance: {
+          ...overrides.appearance,
+          [path.key]: value
+        } as Partial<AppSettings['appearance']>
+      })
+    case 'chat':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        chat: {
+          ...overrides.chat,
+          [path.key]: value
+        } as Partial<AppSettings['chat']>
+      })
+    case 'links':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        links: {
+          ...overrides.links,
+          [path.key]: value
+        } as Partial<AppSettings['links']>
+      })
+    case 'performance':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        performance: {
+          ...overrides.performance,
+          [path.key]: value
+        } as Partial<AppSettings['performance']>
+      })
+    case 'git':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        git: {
+          ...overrides.git,
+          commitModel: value as ProviderModelId | null
+        }
+      })
+    case 'gitCommitPrompt':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        git: {
+          ...overrides.git,
+          commitPrompt: {
+            ...overrides.git?.commitPrompt,
+            [path.key]: value
+          } as Partial<AppGitCommitPromptSettings>
+        }
+      })
+    case 'gitCommitMessageGeneration':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        git: {
+          ...overrides.git,
+          commitMessageGeneration: {
+            ...overrides.git?.commitMessageGeneration,
+            [path.key]: value
+          } as Partial<AppGitCommitMessageGenerationSettings>
+        }
+      })
+    case 'gitWorktree':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        git: {
+          ...overrides.git,
+          worktree: {
+            ...overrides.git?.worktree,
+            [path.key]: value
+          } as Partial<AppGitWorktreeSettings>
+        }
+      })
+  }
+}
+
+const clearAppProjectSettingOverrideValue = (
+  overrides: AppProjectSettingsOverrides,
+  path: AppProjectSettingPath
+): AppProjectSettingsOverrides => {
+  switch (path.section) {
+    case 'appearance': {
+      const appearance = { ...(overrides.appearance ?? {}) }
+      delete appearance[path.key]
+      return cleanProjectSettingsOverrides({ ...overrides, appearance })
+    }
+    case 'chat': {
+      const chat = { ...(overrides.chat ?? {}) }
+      delete chat[path.key]
+      return cleanProjectSettingsOverrides({ ...overrides, chat })
+    }
+    case 'links': {
+      const links = { ...(overrides.links ?? {}) }
+      delete links[path.key]
+      return cleanProjectSettingsOverrides({ ...overrides, links })
+    }
+    case 'performance': {
+      const performance = { ...(overrides.performance ?? {}) }
+      delete performance[path.key]
+      return cleanProjectSettingsOverrides({ ...overrides, performance })
+    }
+    case 'git': {
+      const git = { ...(overrides.git ?? {}) }
+      delete git.commitModel
+      return cleanProjectSettingsOverrides({ ...overrides, git })
+    }
+    case 'gitCommitPrompt': {
+      const commitPrompt = { ...(overrides.git?.commitPrompt ?? {}) }
+      delete commitPrompt[path.key]
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        git: { ...(overrides.git ?? {}), commitPrompt }
+      })
+    }
+    case 'gitCommitMessageGeneration': {
+      const commitMessageGeneration = { ...(overrides.git?.commitMessageGeneration ?? {}) }
+      delete commitMessageGeneration[path.key]
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        git: { ...(overrides.git ?? {}), commitMessageGeneration }
+      })
+    }
+    case 'gitWorktree': {
+      const worktree = { ...(overrides.git?.worktree ?? {}) }
+      delete worktree[path.key]
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        git: { ...(overrides.git ?? {}), worktree }
+      })
+    }
+  }
+}
+
+const setAppProjectSettingsForCwd = (
+  projectSettings: AppProjectSettingsByCwd,
+  cwd: string,
+  overrides: AppProjectSettingsOverrides
+): AppProjectSettingsByCwd => {
+  const normalizedCwd = normalizeAppProjectSettingsCwd(cwd)
+  if (!normalizedCwd) return projectSettings
+
+  const nextProjectSettings = { ...projectSettings }
+  if (isAppProjectSettingsOverridesEmpty(overrides)) {
+    delete nextProjectSettings[normalizedCwd]
+  } else {
+    nextProjectSettings[normalizedCwd] = cleanProjectSettingsOverrides(overrides)
+  }
+
+  return nextProjectSettings
+}
+
 const chatPromptBoxSettingFields = [
   {
     key: 'hidePlans',
@@ -434,6 +727,7 @@ type RecentChatCacheEntry = {
   detail: ProviderChatDetail
   updatedAt: number
 }
+type ContinuedStoppedWorkingStepsByChat = Record<string, string[]>
 type ChatResizeEdge = 'left' | 'right'
 type GitChangesScope = {
   sourceKey: string
@@ -465,7 +759,8 @@ const chatResizeHandleWidth = 9
 const chatResizeHandleCount = 2
 const chatPaneDefaultReferenceWidth = 1200
 const chatPanePreferenceStorageKey = 'sele:chat-pane-preference:v1'
-const messageBoxSelectionStorageKey = 'sele:message-box-selection:v1'
+const legacyMessageBoxSelectionStorageKey = 'sele:message-box-selection:v1'
+const messageBoxSelectionsStorageKey = 'sele:message-box-selections:v2'
 const providerUpdatePreferenceStorageKey = 'sele:provider-update-preferences:v1'
 const legacyContainerSelectionStorageKeys = [
   'sele:container-selection:v2',
@@ -474,6 +769,7 @@ const legacyContainerSelectionStorageKeys = [
 const containerSelectionStorageKey = 'sele:container-selection:v3'
 const scopedCommitActivitiesStorageKey = 'sele:scoped-commit-activities:v1'
 const chatCommitMarkersStorageKey = 'sele:chat-commit-markers:v1'
+const continuedStoppedWorkingStepsStorageKey = 'sele:continued-stopped-working-steps:v1'
 const gitCurrentChatModelValue = '__sele_current_chat_model__'
 const pinnedGroupKey = 'pinned'
 const unknownCwdGroupKey = 'cwd:unknown'
@@ -698,7 +994,8 @@ const providerToolIcons = new Set<ProviderToolIcon>([
   'image-view',
   'image-generation',
   'openai-docs',
-  'plan'
+  'plan',
+  'question'
 ])
 const chatCommitMarkerStatuses = new Set<ChatCommitMarkerStatus>([
   'pending',
@@ -854,6 +1151,48 @@ const writeStoredScopedCommitActivities = (
     window.localStorage.setItem(scopedCommitActivitiesStorageKey, JSON.stringify(activities))
   } catch {
     // Commit activity recovery is best-effort when storage is unavailable.
+  }
+}
+
+const readStoredContinuedStoppedWorkingSteps = (): ContinuedStoppedWorkingStepsByChat => {
+  try {
+    const storedValue = window.localStorage.getItem(continuedStoppedWorkingStepsStorageKey)
+    if (!storedValue) return {}
+
+    const parsedValue = JSON.parse(storedValue) as unknown
+    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
+
+    const continuedSteps: ContinuedStoppedWorkingStepsByChat = {}
+    Object.entries(parsedValue as Record<string, unknown>).forEach(([chatKey, value]) => {
+      if (!chatKey || !Array.isArray(value)) return
+
+      const workingStepIds = Array.from(
+        new Set(value.filter((item): item is string => typeof item === 'string' && Boolean(item)))
+      )
+      if (workingStepIds.length > 0) continuedSteps[chatKey] = workingStepIds
+    })
+
+    return continuedSteps
+  } catch {
+    return {}
+  }
+}
+
+const writeStoredContinuedStoppedWorkingSteps = (
+  continuedSteps: ContinuedStoppedWorkingStepsByChat
+): void => {
+  try {
+    if (Object.keys(continuedSteps).length === 0) {
+      window.localStorage.removeItem(continuedStoppedWorkingStepsStorageKey)
+      return
+    }
+
+    window.localStorage.setItem(
+      continuedStoppedWorkingStepsStorageKey,
+      JSON.stringify(continuedSteps)
+    )
+  } catch {
+    // Continued-step grouping remains available for this session if storage is unavailable.
   }
 }
 
@@ -1280,53 +1619,77 @@ const getLegacySandboxMode = (accessMode: LegacyProviderAccessMode): ProviderSan
 const isStoredSelectionString = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0
 
-const readStoredMessageBoxSelection = (): StoredMessageBoxSelection => {
+const parseStoredMessageBoxSelection = (value: unknown): StoredMessageBoxSelection => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+
+  const parsedValue = value as Record<string, unknown>
+  const selection: StoredMessageBoxSelection = {}
+  if (isProviderApprovalMode(parsedValue.approvalMode)) {
+    selection.approvalMode = parsedValue.approvalMode
+  } else if (isProviderApprovalPolicy(parsedValue.approvalPolicy)) {
+    const approvalsReviewer = isProviderApprovalsReviewer(parsedValue.approvalsReviewer)
+      ? parsedValue.approvalsReviewer
+      : 'user'
+
+    selection.approvalMode = getApprovalModeForPolicy(parsedValue.approvalPolicy, approvalsReviewer)
+  }
+  if (isProviderSandboxMode(parsedValue.sandboxMode)) {
+    selection.sandboxMode = parsedValue.sandboxMode
+  }
+  if (
+    (!selection.approvalMode || !selection.sandboxMode) &&
+    isLegacyProviderAccessMode(parsedValue.accessMode)
+  ) {
+    selection.approvalMode ??= getLegacyApprovalMode(parsedValue.accessMode)
+    selection.sandboxMode ??= getLegacySandboxMode(parsedValue.accessMode)
+  }
+  if (isStoredSelectionString(parsedValue.model)) selection.model = parsedValue.model
+  if (isStoredSelectionString(parsedValue.reasoningEffort)) {
+    selection.reasoningEffort = parsedValue.reasoningEffort
+  }
+  if (parsedValue.serviceTier == null || isProviderServiceTier(parsedValue.serviceTier)) {
+    selection.serviceTier = parsedValue.serviceTier ?? null
+  }
+
+  return selection
+}
+
+const readStoredMessageBoxSelections = (): StoredMessageBoxSelections => {
   try {
-    const storedValue = window.localStorage.getItem(messageBoxSelectionStorageKey)
+    const storedValue = window.localStorage.getItem(messageBoxSelectionsStorageKey)
+    if (storedValue) {
+      const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
+      if (parsedValue && typeof parsedValue === 'object' && !Array.isArray(parsedValue)) {
+        return Object.fromEntries(
+          providerIds.flatMap((providerId) => {
+            const value = parsedValue[providerId]
+            return value && typeof value === 'object' && !Array.isArray(value)
+              ? [[providerId, parseStoredMessageBoxSelection(value)]]
+              : []
+          })
+        )
+      }
+    }
+  } catch {
+    // Fall through to the legacy single-provider preference.
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(legacyMessageBoxSelectionStorageKey)
     if (!storedValue) return {}
 
-    const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
-    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
+    const legacySelection = parseStoredMessageBoxSelection(JSON.parse(storedValue))
+    if (Object.keys(legacySelection).length === 0) return {}
 
-    const selection: StoredMessageBoxSelection = {}
-    if (isProviderApprovalMode(parsedValue.approvalMode)) {
-      selection.approvalMode = parsedValue.approvalMode
-    } else if (isProviderApprovalPolicy(parsedValue.approvalPolicy)) {
-      const approvalsReviewer = isProviderApprovalsReviewer(parsedValue.approvalsReviewer)
-        ? parsedValue.approvalsReviewer
-        : 'user'
-
-      selection.approvalMode = getApprovalModeForPolicy(
-        parsedValue.approvalPolicy,
-        approvalsReviewer
-      )
-    }
-    if (isProviderSandboxMode(parsedValue.sandboxMode))
-      selection.sandboxMode = parsedValue.sandboxMode
-    if (
-      (!selection.approvalMode || !selection.sandboxMode) &&
-      isLegacyProviderAccessMode(parsedValue.accessMode)
-    ) {
-      selection.approvalMode ??= getLegacyApprovalMode(parsedValue.accessMode)
-      selection.sandboxMode ??= getLegacySandboxMode(parsedValue.accessMode)
-    }
-    if (isStoredSelectionString(parsedValue.model)) selection.model = parsedValue.model
-    if (isStoredSelectionString(parsedValue.reasoningEffort)) {
-      selection.reasoningEffort = parsedValue.reasoningEffort
-    }
-    if (parsedValue.serviceTier == null || isProviderServiceTier(parsedValue.serviceTier)) {
-      selection.serviceTier = parsedValue.serviceTier ?? null
-    }
-
-    return selection
+    return Object.fromEntries(providerIds.map((providerId) => [providerId, { ...legacySelection }]))
   } catch {
     return {}
   }
 }
 
-const writeStoredMessageBoxSelection = (selection: MessageBoxSelection): void => {
+const writeStoredMessageBoxSelections = (selections: StoredMessageBoxSelections): void => {
   try {
-    window.localStorage.setItem(messageBoxSelectionStorageKey, JSON.stringify(selection))
+    window.localStorage.setItem(messageBoxSelectionsStorageKey, JSON.stringify(selections))
   } catch {
     // Composer preferences are non-critical; ignore unavailable storage.
   }
@@ -1600,6 +1963,12 @@ const getDefaultReasoningEffort = (model: ProviderModel | undefined): ProviderRe
   model?.supportedReasoningEfforts[0]?.id ||
   fallbackInitialReasoningEffort
 
+const modelHasReasoningEffortOptions = (model: ProviderModel | undefined): boolean =>
+  Boolean(model?.supportedReasoningEfforts.length)
+
+const modelHasServiceTierOptions = (model: ProviderModel | undefined): boolean =>
+  Boolean(model?.supportedServiceTiers?.length)
+
 const getDefaultApprovalMode = (
   approvalModes: ProviderApprovalModeOption[]
 ): ProviderApprovalMode =>
@@ -1614,11 +1983,10 @@ const getDefaultSandboxMode = (sandboxModes: ProviderSandboxModeOption[]): Provi
 
 const modelSupportsReasoningEffort = (
   model: ProviderModel | undefined,
-  reasoningEffort: ProviderReasoningEffort
+  reasoningEffort: ProviderReasoningEffort | undefined
 ): boolean =>
-  !model ||
-  model.supportedReasoningEfforts.length === 0 ||
-  model.supportedReasoningEfforts.some((option) => option.id === reasoningEffort)
+  reasoningEffort != null &&
+  (!model || model.supportedReasoningEfforts.some((option) => option.id === reasoningEffort))
 
 const modelSupportsServiceTier = (
   model: ProviderModel | undefined,
@@ -1633,6 +2001,8 @@ const getChatKey = (chat: Pick<ProviderChat, 'providerId' | 'id'>): string =>
 
 const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
   getChatKey({ providerId, id: chatId })
+
+const optimisticChatItemIdPrefix = 'optimistic:'
 
 const createChatCommitMarkerId = (): string => {
   const randomId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
@@ -1916,7 +2286,8 @@ const getWorkingStepFromUpdate = (
 
 const getChatDetailFromUpdate = (
   update: ProviderChatDetailUpdate,
-  currentDetail: ProviderChatDetail | null
+  currentDetail: ProviderChatDetail | null,
+  preserveOptimisticTurnUntilUserMessage = false
 ): ProviderChatDetail | null => {
   const { chatItemsPrefixLastId, chatItemsStartIndex, items, ...chatDetail } = update
   if (
@@ -1930,8 +2301,16 @@ const getChatDetailFromUpdate = (
     return null
   }
 
-  const mergedItems: ProviderChatItem[] =
-    chatItemsStartIndex === 0 ? [] : currentDetail!.items.slice(0, chatItemsStartIndex)
+  const preserveOptimisticItems =
+    chatItemsStartIndex === 0 &&
+    items.length === 0 &&
+    currentDetail?.id === update.id &&
+    currentDetail.items.some((item) => item.id.startsWith(optimisticChatItemIdPrefix))
+  const mergedItems: ProviderChatItem[] = preserveOptimisticItems
+    ? currentDetail.items
+    : chatItemsStartIndex === 0
+      ? []
+      : currentDetail!.items.slice(0, chatItemsStartIndex)
   for (const [index, item] of items.entries()) {
     if (item.type !== 'working') {
       mergedItems.push(item)
@@ -1944,6 +2323,39 @@ const getChatDetailFromUpdate = (
     )
     if (!mergedWorkingStep) return null
     mergedItems.push(mergedWorkingStep)
+  }
+
+  if (preserveOptimisticTurnUntilUserMessage && currentDetail?.id === update.id) {
+    // Copilot can report an active turn before its SDK echoes the new user message. Keep the
+    // optimistic turn during that gap so the previous working step is not briefly reactivated.
+    const optimisticTurnStartIndex = currentDetail.items.findIndex((item) =>
+      item.id.startsWith(optimisticChatItemIdPrefix)
+    )
+
+    if (optimisticTurnStartIndex >= 0) {
+      const existingUserMessageIds = new Set(
+        currentDetail.items
+          .slice(0, optimisticTurnStartIndex)
+          .filter(
+            (item): item is ProviderMessage => item.type === 'message' && item.role === 'user'
+          )
+          .map((item) => item.id)
+      )
+      const hasNewProviderUserMessage = mergedItems.some(
+        (item) =>
+          item.type === 'message' &&
+          item.role === 'user' &&
+          !item.id.startsWith(optimisticChatItemIdPrefix) &&
+          !existingUserMessageIds.has(item.id)
+      )
+
+      if (!hasNewProviderUserMessage) {
+        return {
+          ...chatDetail,
+          items: currentDetail.items
+        }
+      }
+    }
   }
 
   return {
@@ -2074,7 +2486,7 @@ const getOptimisticItems = (
   review?: Omit<ProviderReview, 'prompt'> | null
 ): ProviderChatItem[] => {
   const createdAt = Date.now()
-  const id = `optimistic:${createdAt}`
+  const id = `${optimisticChatItemIdPrefix}${createdAt}`
 
   return [
     ...items,
@@ -2965,40 +3377,31 @@ const isAppActionShortcutTargetBlocked = (target: EventTarget | null): boolean =
 }
 
 export const App: React.FC = () => {
-  const storedMessageBoxSelection = useMemo(() => readStoredMessageBoxSelection(), [])
+  const storedMessageBoxSelections = useMemo(() => readStoredMessageBoxSelections(), [])
+  const storedMessageBoxSelection = storedMessageBoxSelections.codex ?? {}
   const [appSettings, setAppSettings] = useState<AppSettings>(readStoredAppSettings)
-  const [appearanceZoomLevelInputDraft, setAppearanceZoomLevelInputDraft] = useState<string | null>(
-    null
+  const [projectSettingsByCwd, setProjectSettingsByCwd] = useState<AppProjectSettingsByCwd>(
+    readStoredAppProjectSettings
   )
+  const [appearanceZoomLevelInputDraft, setAppearanceZoomLevelInputDraft] = useState<{
+    key: string
+    value: string
+  } | null>(null)
+  const [appearanceFontSizeInputDraft, setAppearanceFontSizeInputDraft] = useState<{
+    key: string
+    value: string
+  } | null>(null)
+  const [installedFontFamilies, setInstalledFontFamilies] = useState<string[]>([])
+  const [installedFontsLoaded, setInstalledFontsLoaded] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('appearance')
-  const updateAppearanceZoomLevel = useCallback((value: number): void => {
-    const zoomLevel = normalizeAppAppearanceZoomLevel(value)
-
-    setAppearanceZoomLevelInputDraft(null)
-    setAppSettings((currentSettings) =>
-      currentSettings.appearance.zoomLevel === zoomLevel
-        ? currentSettings
-        : {
-            ...currentSettings,
-            appearance: {
-              ...currentSettings.appearance,
-              zoomLevel
-            }
-          }
-    )
-  }, [])
-  const appearanceZoomLevelInput =
-    appearanceZoomLevelInputDraft ?? String(appSettings.appearance.zoomLevel)
+  const [settingsScope, setSettingsScope] = useState<SettingsScope>('global')
   const [fileEditorTarget, setFileEditorTarget] = useState<FileEditorTarget | null>(null)
   const [selectedReview, setSelectedReview] = useState<Omit<ProviderReview, 'prompt'> | null>(null)
   const [reviewCommentsDraft, setReviewCommentsDraft] = useState<ProviderReviewComment[]>([])
   const [terminalCwd, setTerminalCwd] = useState<string | null | undefined>(undefined)
   const [terminalContainer, setTerminalContainer] = useState<AppContainerTarget | null | undefined>(
     undefined
-  )
-  const [terminalLaunchRequest, setTerminalLaunchRequest] = useState<TerminalLaunchRequest | null>(
-    null
   )
   const [terminalCommandLaunchRequest, setTerminalCommandLaunchRequest] =
     useState<TerminalCommandLaunchRequest | null>(null)
@@ -3011,6 +3414,7 @@ export const App: React.FC = () => {
   const [chatLoadRequest, setChatLoadRequest] = useState(0)
   const [committedChatUpdate, setCommittedChatUpdate] = useState<CommittedChatUpdate | null>(null)
   const [sendState, setSendState] = useState<SendState>('idle')
+  const [sendError, setSendError] = useState<string | null>(null)
   const [editingMessage, setEditingMessage] = useState<EditingMessage | null>(null)
   const [approvalModes, setApprovalModes] = useState<ProviderApprovalModeOption[]>(
     fallbackProviderApprovalModes
@@ -3039,6 +3443,11 @@ export const App: React.FC = () => {
     decision: null,
     error: null
   })
+  const [userInputResolution, setUserInputResolution] = useState<UserInputResolutionState>({
+    requestId: null,
+    resolving: false,
+    error: null
+  })
   const [providerUpdateSuggestion, setProviderUpdateSuggestion] =
     useState<ProviderUpdateSuggestion | null>(null)
   const [providerUpdateState, setProviderUpdateState] = useState<ProviderUpdateState>('idle')
@@ -3061,6 +3470,64 @@ export const App: React.FC = () => {
   const [accountUsageError, setAccountUsageError] = useState<string | null>(null)
   const [newChatOpen, setNewChatOpen] = useState(true)
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null)
+  const settingsProjectCwd = normalizeAppProjectSettingsCwd(
+    selectedChat
+      ? (chatDetail?.projectCwd ?? selectedChat.projectCwd ?? chatDetail?.cwd ?? selectedChat.cwd)
+      : newSessionCwd
+  )
+  const settingsProjectOverrides = settingsProjectCwd
+    ? projectSettingsByCwd[settingsProjectCwd]
+    : undefined
+  const effectiveAppSettings = useMemo(
+    () => resolveAppSettings(appSettings, settingsProjectOverrides),
+    [appSettings, settingsProjectOverrides]
+  )
+  const settingsViewIsProject = settingsScope === 'project' && Boolean(settingsProjectCwd)
+  const settingsPanelSettings = settingsViewIsProject ? effectiveAppSettings : appSettings
+  const settingsScopeKey =
+    settingsViewIsProject && settingsProjectCwd ? `project:${settingsProjectCwd}` : 'global'
+  const installedFontOptions = useMemo<DropdownOption<string>[]>(
+    () => installedFontFamilies.map((family) => ({ value: family, label: family })),
+    [installedFontFamilies]
+  )
+  const updateAppearanceZoomLevel = useCallback(
+    (value: number): void => {
+      const zoomLevel = normalizeAppAppearanceZoomLevel(value)
+      const zoomPath = { section: 'appearance', key: 'zoomLevel' } satisfies AppProjectSettingPath
+
+      setAppearanceZoomLevelInputDraft(null)
+
+      if (
+        settingsViewIsProject &&
+        settingsProjectCwd &&
+        isAppProjectSettingOverridden(settingsProjectOverrides, zoomPath)
+      ) {
+        setProjectSettingsByCwd((currentSettings) => {
+          const currentOverrides = currentSettings[settingsProjectCwd] ?? {}
+          const nextOverrides = setAppProjectSettingOverrideValue(
+            currentOverrides,
+            zoomPath,
+            zoomLevel
+          )
+          return setAppProjectSettingsForCwd(currentSettings, settingsProjectCwd, nextOverrides)
+        })
+        return
+      }
+
+      setAppSettings((currentSettings) =>
+        currentSettings.appearance.zoomLevel === zoomLevel
+          ? currentSettings
+          : {
+              ...currentSettings,
+              appearance: {
+                ...currentSettings.appearance,
+                zoomLevel
+              }
+            }
+      )
+    },
+    [settingsProjectCwd, settingsProjectOverrides, settingsViewIsProject]
+  )
   const [defaultCwd, setDefaultCwd] = useState<string | null>(null)
   const [newSessionLocation, setNewSessionLocation] = useState<NewSessionLocation>('folder')
   const [worktreeCreationState, setWorktreeCreationState] = useState<WorktreeCreationState>('idle')
@@ -3109,6 +3576,11 @@ export const App: React.FC = () => {
   const [gitBranchLoadRequest, setGitBranchLoadRequest] = useState(0)
   const [gitBranchActionState, setGitBranchActionState] = useState<SendState>('idle')
   const [gitBranchError, setGitBranchError] = useState<string | null>(null)
+  const [gitBranchDeleteRetry, setGitBranchDeleteRetry] = useState<GitBranchDeleteRetry | null>(
+    null
+  )
+  const [gitBranchWorktreeDeleteRetry, setGitBranchWorktreeDeleteRetry] =
+    useState<GitBranchWorktreeDeleteRetry | null>(null)
   const [gitSourceAvailability, setGitSourceAvailability] =
     useState<SourceAvailabilityState | null>(null)
   const [lastGitAvailable, setLastGitAvailable] = useState<boolean | null>(null)
@@ -3140,6 +3612,8 @@ export const App: React.FC = () => {
   const [chatCommitMarkers, setChatCommitMarkers] = useState<Record<string, ChatCommitMarker>>(
     readStoredChatCommitMarkers
   )
+  const [continuedStoppedWorkingStepsByChat, setContinuedStoppedWorkingStepsByChat] =
+    useState<ContinuedStoppedWorkingStepsByChat>(readStoredContinuedStoppedWorkingSteps)
   const [startingScopedCommitActivity, setStartingScopedCommitActivity] =
     useState<StartingScopedCommitActivity | null>(null)
   const [directCommitActivities, setDirectCommitActivities] = useState<
@@ -3167,6 +3641,9 @@ export const App: React.FC = () => {
   const searchInputRef = useRef<HTMLInputElement>(null)
   const settingsCloseButtonRef = useRef<HTMLButtonElement>(null)
   const sendInFlightRef = useRef(false)
+  const runPromptActionRef = useRef<(prompt: string, target: 'current' | 'new') => Promise<void>>(
+    async () => {}
+  )
   const commitInFlightRef = useRef(false)
   const commitMessageGenerationInFlightRef = useRef(false)
   const gitBranchRequestIdRef = useRef(0)
@@ -3177,7 +3654,7 @@ export const App: React.FC = () => {
   const chatUserScrollIntentFrameRef = useRef<number | null>(null)
   const selectedChatKeyRef = useRef<string | null>(null)
   const selectedChatUpdatedAtRef = useRef<number | null>(null)
-  const recentChatCacheLimitRef = useRef(appSettings.chat.recentChatCacheLimit)
+  const recentChatCacheLimitRef = useRef(effectiveAppSettings.chat.recentChatCacheLimit)
   const recentChatCacheRef = useRef(new Map<string, RecentChatCacheEntry>())
   const changesCwdRef = useRef<string | null>(null)
   const changesContainerRef = useRef<AppContainerTarget | null>(null)
@@ -3195,6 +3672,8 @@ export const App: React.FC = () => {
     useRef<Record<string, ScopedCommitActivity>>(scopedCommitActivities)
   const loadingCwdNotesRef = useRef(new Set<string>())
   const loadingProjectIconsRef = useRef(new Set<string>())
+  const messageBoxSelectionsRef = useRef(storedMessageBoxSelections)
+  const messageBoxSelectionProviderRef = useRef<ProviderId>('codex')
   const modelManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.model))
   const reasoningManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.reasoningEffort))
   const approvalModeManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.approvalMode))
@@ -3290,7 +3769,7 @@ export const App: React.FC = () => {
   )
 
   useEffect(() => {
-    const limit = appSettings.chat.recentChatCacheLimit
+    const limit = effectiveAppSettings.chat.recentChatCacheLimit
     recentChatCacheLimitRef.current = limit
     if (limit === 0) {
       recentChatCacheRef.current.clear()
@@ -3298,7 +3777,7 @@ export const App: React.FC = () => {
     }
 
     trimRecentChatCache(recentChatCacheRef.current, limit)
-  }, [appSettings.chat.recentChatCacheLimit])
+  }, [effectiveAppSettings.chat.recentChatCacheLimit])
 
   useEffect(() => {
     scopedCommitActivitiesRef.current = scopedCommitActivities
@@ -3308,6 +3787,10 @@ export const App: React.FC = () => {
   useEffect(() => {
     writeStoredChatCommitMarkers(chatCommitMarkers)
   }, [chatCommitMarkers])
+
+  useEffect(() => {
+    writeStoredContinuedStoppedWorkingSteps(continuedStoppedWorkingStepsByChat)
+  }, [continuedStoppedWorkingStepsByChat])
 
   useEffect(() => {
     let active = true
@@ -3482,12 +3965,37 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     writeStoredAppSettings(appSettings)
-    setThemePreference(appSettings.appearance.theme)
   }, [appSettings])
 
   useEffect(() => {
-    void appApi.setWindowZoomLevel(appSettings.appearance.zoomLevel).catch(() => {})
-  }, [appSettings.appearance.zoomLevel])
+    writeStoredAppProjectSettings(projectSettingsByCwd)
+  }, [projectSettingsByCwd])
+
+  useEffect(() => {
+    setThemePreference(effectiveAppSettings.appearance.theme)
+  }, [effectiveAppSettings.appearance.theme])
+
+  useEffect(() => {
+    let active = true
+
+    void appApi
+      .getInstalledFontFamilies()
+      .then((families) => {
+        if (active) setInstalledFontFamilies(families)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setInstalledFontsLoaded(true)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    void appApi.setWindowZoomLevel(effectiveAppSettings.appearance.zoomLevel).catch(() => {})
+  }, [effectiveAppSettings.appearance.zoomLevel])
 
   useEffect(() => {
     const handleLinkClick = (event: MouseEvent): void => {
@@ -3506,7 +4014,7 @@ export const App: React.FC = () => {
       if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) return
 
       event.preventDefault()
-      const behavior = appSettings.links.behavior
+      const behavior = effectiveAppSettings.links.behavior
       void appApi
         .handleExternalLink({
           url: url.toString(),
@@ -3527,15 +4035,19 @@ export const App: React.FC = () => {
 
     document.addEventListener('click', handleLinkClick)
     return () => document.removeEventListener('click', handleLinkClick)
-  }, [appSettings.links])
+  }, [effectiveAppSettings.links])
 
   useLayoutEffect(() => {
-    applyShadowPreference(appSettings.performance.disableShadows)
-  }, [appSettings.performance.disableShadows])
+    applyShadowPreference(effectiveAppSettings.performance.disableShadows)
+  }, [effectiveAppSettings.performance.disableShadows])
 
   useLayoutEffect(() => {
-    applyWindowControlAppearancePreferences(appSettings.appearance)
-  }, [appSettings.appearance])
+    applyWindowControlAppearancePreferences(effectiveAppSettings.appearance)
+  }, [effectiveAppSettings.appearance])
+
+  useLayoutEffect(() => {
+    applyFontAppearancePreferences(effectiveAppSettings.appearance)
+  }, [effectiveAppSettings.appearance])
 
   useEffect(() => {
     if (!settingsOpen) return
@@ -3566,14 +4078,50 @@ export const App: React.FC = () => {
   )
 
   useEffect(() => {
-    writeStoredMessageBoxSelection({
+    const currentSelection: MessageBoxSelection = {
       approvalMode,
       model,
       reasoningEffort,
       sandboxMode,
       serviceTier
-    })
-  }, [approvalMode, model, reasoningEffort, sandboxMode, serviceTier])
+    }
+    const previousProviderId = messageBoxSelectionProviderRef.current
+
+    if (previousProviderId !== configProviderId) {
+      const nextSelections = {
+        ...messageBoxSelectionsRef.current,
+        [previousProviderId]: currentSelection
+      }
+      const nextSelection = nextSelections[configProviderId] ?? {}
+      const fallbackModels = getFallbackModels(configProviderId)
+      const nextModel =
+        fallbackModels.find((candidateModel) => candidateModel.id === nextSelection.model) ??
+        getDefaultModel(fallbackModels)
+
+      messageBoxSelectionsRef.current = nextSelections
+      messageBoxSelectionProviderRef.current = configProviderId
+      modelManuallySelectedRef.current = Boolean(nextSelection.model)
+      reasoningManuallySelectedRef.current = Boolean(nextSelection.reasoningEffort)
+      approvalModeManuallySelectedRef.current = Boolean(nextSelection.approvalMode)
+      sandboxModeManuallySelectedRef.current = Boolean(nextSelection.sandboxMode)
+      approvalModeBeforeFullAccessRef.current = null
+
+      setApprovalMode(nextSelection.approvalMode ?? fallbackDefaultApprovalMode)
+      setSandboxMode(nextSelection.sandboxMode ?? fallbackDefaultSandboxMode)
+      setModel(nextSelection.model ?? nextModel.id)
+      setReasoningEffort(nextSelection.reasoningEffort ?? getDefaultReasoningEffort(nextModel))
+      setServiceTier(nextSelection.serviceTier ?? null)
+      writeStoredMessageBoxSelections(nextSelections)
+      return
+    }
+
+    const nextSelections = {
+      ...messageBoxSelectionsRef.current,
+      [configProviderId]: currentSelection
+    }
+    messageBoxSelectionsRef.current = nextSelections
+    writeStoredMessageBoxSelections(nextSelections)
+  }, [approvalMode, configProviderId, model, reasoningEffort, sandboxMode, serviceTier])
 
   useEffect(() => {
     if (sandboxMode !== 'danger-full-access' || approvalMode === 'never') return
@@ -4090,7 +4638,10 @@ export const App: React.FC = () => {
     setModel((currentModel) => {
       const currentModelExists = models.some((nextModel) => nextModel.id === currentModel)
 
-      if (!currentModelExists) return defaultModel.id
+      if (!currentModelExists) {
+        modelManuallySelectedRef.current = false
+        return defaultModel.id
+      }
       if (!modelManuallySelectedRef.current && currentModel === fallbackInitialModel.id) {
         return defaultModel.id
       }
@@ -4104,11 +4655,16 @@ export const App: React.FC = () => {
     if (!selectedModel) return
 
     setReasoningEffort((currentReasoningEffort) => {
+      if (!modelHasReasoningEffortOptions(selectedModel)) {
+        reasoningManuallySelectedRef.current = false
+        return getDefaultReasoningEffort(selectedModel)
+      }
       if (!reasoningManuallySelectedRef.current) return getDefaultReasoningEffort(selectedModel)
       if (modelSupportsReasoningEffort(selectedModel, currentReasoningEffort)) {
         return currentReasoningEffort
       }
 
+      reasoningManuallySelectedRef.current = false
       return getDefaultReasoningEffort(selectedModel)
     })
 
@@ -4117,7 +4673,13 @@ export const App: React.FC = () => {
         ? currentServiceTier
         : (selectedModel.defaultServiceTier ?? null)
     )
-  }, [model, models])
+  }, [
+    effectiveAppSettings.chat.forceModel,
+    effectiveAppSettings.chat.forceReasoning,
+    effectiveAppSettings.chat.forceSpeed,
+    model,
+    models
+  ])
 
   const removeRecentChatCacheEntry = useCallback((providerId: ProviderId, chatId: string): void => {
     recentChatCacheRef.current.delete(getProviderChatKey(providerId, chatId))
@@ -4453,7 +5015,11 @@ export const App: React.FC = () => {
         const viewingUpdatedChat = selectedChatKeyRef.current === updatedChatKey
         const selectedDetail =
           viewingUpdatedChat && event.detail
-            ? getChatDetailFromUpdate(event.detail, chatDetailRef.current)
+            ? getChatDetailFromUpdate(
+                event.detail,
+                chatDetailRef.current,
+                event.providerId === 'copilot'
+              )
             : null
 
         if (selectedDetail) {
@@ -4623,7 +5189,7 @@ export const App: React.FC = () => {
     extractedChatPlan?.contextKey === selectedChatKey ? extractedChatPlan : null
   useEffect(() => {
     if (
-      appSettings.chat.hidePlans ||
+      effectiveAppSettings.chat.hidePlans ||
       !selectedChatKey ||
       !selectedChatId ||
       chatDetail?.id !== selectedChatId
@@ -4655,7 +5221,7 @@ export const App: React.FC = () => {
       if (timeoutId !== null) window.clearTimeout(timeoutId)
     }
   }, [
-    appSettings.chat.hidePlans,
+    effectiveAppSettings.chat.hidePlans,
     chatDetail?.id,
     chatDetail?.items,
     selectedChatId,
@@ -4748,32 +5314,6 @@ export const App: React.FC = () => {
     )
   }, [changesPaneView, handleChangesPaneViewChange])
 
-  const handleOpenAgentTerminal = useCallback(
-    (tool: ProviderWorkingTool): void => {
-      if (!selectedChat || !tool.agentTerminal) return
-
-      const targetCwd = tool.cwd ?? changesCwd
-      setTerminalCwd((currentCwd) => (currentCwd === undefined ? targetCwd : currentCwd))
-      setTerminalContainer((currentContainer) =>
-        currentContainer === undefined ? changesContainer : currentContainer
-      )
-      setTerminalLaunchRequest({
-        id: crypto.randomUUID(),
-        providerId: selectedChat.providerId,
-        chatId: selectedChat.id,
-        turnId: tool.agentTerminal.turnId,
-        itemId: tool.agentTerminal.itemId,
-        processId: tool.agentTerminal.processId,
-        command: tool.command ?? tool.label,
-        cwd: targetCwd,
-        output: tool.stdout,
-        status: tool.status
-      })
-      handleChangesPaneViewChange('terminal')
-    },
-    [changesContainer, changesCwd, handleChangesPaneViewChange, selectedChat]
-  )
-
   const handleRunAction = useCallback(
     async (action: AppAction): Promise<void> => {
       const targetCwd = changesCwd
@@ -4786,6 +5326,12 @@ export const App: React.FC = () => {
                 lastActionId: action.id
               }
         )
+      }
+
+      if (action.type === 'prompt') {
+        await runPromptActionRef.current(action.prompt, action.sendInNewChat ? 'new' : 'current')
+        markActionUsed()
+        return
       }
 
       if (action.openInTerminal) {
@@ -4877,6 +5423,12 @@ export const App: React.FC = () => {
   const approvalDecisionInFlight = currentApprovalResolution?.decision ?? null
   const resolvingApprovalId = approvalResolution.decision ? approvalResolution.approvalId : null
   const approvalError = currentApprovalResolution?.error ?? null
+  const pendingUserInput = chatDetail?.pendingUserInput ?? null
+  const pendingUserInputId = pendingUserInput?.id ?? null
+  const currentUserInputResolution =
+    userInputResolution.requestId === pendingUserInput?.id ? userInputResolution : null
+  const userInputResolving = currentUserInputResolution?.resolving ?? false
+  const userInputError = currentUserInputResolution?.error ?? null
 
   const refreshAccountUsage = useCallback(
     async (options: ProviderUsageOptions = {}): Promise<void> => {
@@ -4949,7 +5501,7 @@ export const App: React.FC = () => {
       .getUsage(providerId, { container })
       .then((usage) => {
         if (!active) return
-        setAccountUsage(usage)
+        setAccountUsage((currentUsage) => mergeAccountUsage(currentUsage, usage))
         setAccountUsageState('ready')
       })
       .catch((error) => {
@@ -5048,6 +5600,19 @@ export const App: React.FC = () => {
     }
     scheduleChatAutoScroll(contentElement)
   }, [chatDetail, scheduleChatAutoScroll, scrollChatContentToBottom, selectedChatCommitMarkers])
+
+  useEffect(() => {
+    if (!pendingUserInputId) return
+
+    const contentElement = contentRef.current
+    if (!contentElement) return
+
+    chatAutoScrollEnabledRef.current = true
+    chatUserScrollIntentRef.current = false
+    chatAutoScrollTargetRef.current = null
+    scrollChatContentToBottom(contentElement)
+    scheduleChatAutoScroll(contentElement)
+  }, [pendingUserInputId, scheduleChatAutoScroll, scrollChatContentToBottom])
 
   useEffect(() => {
     chatAutoScrollEnabledRef.current = true
@@ -5231,6 +5796,8 @@ export const App: React.FC = () => {
       setSyncRecovery(null)
       setGitBranchActionState('idle')
       setGitBranchError(null)
+      setGitBranchDeleteRetry(null)
+      setGitBranchWorktreeDeleteRetry(null)
     })
 
     return () => {
@@ -5293,6 +5860,8 @@ export const App: React.FC = () => {
       if (!active || gitBranchRequestIdRef.current !== requestId) return
       setGitBranchLoadState('loading')
       setGitBranchError(null)
+      setGitBranchDeleteRetry(null)
+      setGitBranchWorktreeDeleteRetry(null)
     })
 
     appApi
@@ -5691,7 +6260,7 @@ export const App: React.FC = () => {
     const suggestion = containerSuggestions.find((container) => container.id === value)
     if (suggestion) setNewSessionContainer(getContainerTargetFromSuggestion(suggestion))
   }
-  const savedGitCommitModel = appSettings.git.commitModel
+  const savedGitCommitModel = settingsPanelSettings.git.commitModel
   const savedGitCommitModelOption = savedGitCommitModel
     ? models.find((candidateModel) => candidateModel.id === savedGitCommitModel)
     : undefined
@@ -5728,17 +6297,19 @@ export const App: React.FC = () => {
     ]
   }, [models])
   const effectiveSandboxMode =
-    appSettings.chat.forceAccess === appChatManualDropdownValue
+    effectiveAppSettings.chat.forceAccess === appChatManualDropdownValue
       ? sandboxMode
-      : appSettings.chat.forceAccess
+      : effectiveAppSettings.chat.forceAccess
   const configuredApprovalMode =
-    appSettings.chat.forceReview === appChatManualDropdownValue
+    effectiveAppSettings.chat.forceReview === appChatManualDropdownValue
       ? approvalMode
-      : appSettings.chat.forceReview
+      : effectiveAppSettings.chat.forceReview
   const effectiveApprovalMode =
     effectiveSandboxMode === 'danger-full-access' ? 'never' : configuredApprovalMode
   const configuredModel =
-    appSettings.chat.forceModel === appChatManualDropdownValue ? model : appSettings.chat.forceModel
+    effectiveAppSettings.chat.forceModel === appChatManualDropdownValue
+      ? model
+      : effectiveAppSettings.chat.forceModel
   const effectiveModel = models.some((candidateModel) => candidateModel.id === configuredModel)
     ? configuredModel
     : getDefaultModel(models).id
@@ -5746,11 +6317,11 @@ export const App: React.FC = () => {
     (candidateModel) => candidateModel.id === effectiveModel
   )
   const configuredServiceTier =
-    appSettings.chat.forceSpeed === appChatManualDropdownValue
+    effectiveAppSettings.chat.forceSpeed === appChatManualDropdownValue
       ? serviceTier
-      : appSettings.chat.forceSpeed === appChatStandardSpeedValue
+      : effectiveAppSettings.chat.forceSpeed === appChatStandardSpeedValue
         ? null
-        : appSettings.chat.forceSpeed
+        : effectiveAppSettings.chat.forceSpeed
   const effectiveServiceTier = modelSupportsServiceTier(
     selectedEffectiveModel,
     configuredServiceTier
@@ -5758,9 +6329,9 @@ export const App: React.FC = () => {
     ? configuredServiceTier
     : (selectedEffectiveModel?.defaultServiceTier ?? null)
   const configuredReasoningEffort =
-    appSettings.chat.forceReasoning === appChatManualDropdownValue
+    effectiveAppSettings.chat.forceReasoning === appChatManualDropdownValue
       ? reasoningEffort
-      : appSettings.chat.forceReasoning
+      : effectiveAppSettings.chat.forceReasoning
   const effectiveReasoningEffort = modelSupportsReasoningEffort(
     selectedEffectiveModel,
     configuredReasoningEffort
@@ -5768,11 +6339,90 @@ export const App: React.FC = () => {
     ? configuredReasoningEffort
     : getDefaultReasoningEffort(selectedEffectiveModel)
   const hasForcedChatDropdown =
-    appSettings.chat.forceAccess !== appChatManualDropdownValue ||
-    appSettings.chat.forceReview !== appChatManualDropdownValue ||
-    appSettings.chat.forceModel !== appChatManualDropdownValue ||
-    appSettings.chat.forceReasoning !== appChatManualDropdownValue ||
-    appSettings.chat.forceSpeed !== appChatManualDropdownValue
+    effectiveAppSettings.chat.forceAccess !== appChatManualDropdownValue ||
+    effectiveAppSettings.chat.forceReview !== appChatManualDropdownValue ||
+    effectiveAppSettings.chat.forceModel !== appChatManualDropdownValue ||
+    effectiveAppSettings.chat.forceReasoning !== appChatManualDropdownValue ||
+    effectiveAppSettings.chat.forceSpeed !== appChatManualDropdownValue
+  const settingsConfiguredModel =
+    settingsPanelSettings.chat.forceModel === appChatManualDropdownValue
+      ? model
+      : settingsPanelSettings.chat.forceModel
+  const settingsEffectiveModel = models.some(
+    (candidateModel) => candidateModel.id === settingsConfiguredModel
+  )
+    ? settingsConfiguredModel
+    : getDefaultModel(models).id
+  const settingsSelectedEffectiveModel = models.find(
+    (candidateModel) => candidateModel.id === settingsEffectiveModel
+  )
+  useEffect(() => {
+    if (models.length === 0) return
+
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+
+      setAppSettings((currentSettings) => {
+        const currentChatSettings = currentSettings.chat
+        let forceModel = currentChatSettings.forceModel
+        let forceReasoning = currentChatSettings.forceReasoning
+        let forceSpeed = currentChatSettings.forceSpeed
+
+        if (
+          forceModel !== appChatManualDropdownValue &&
+          !models.some((candidateModel) => candidateModel.id === forceModel)
+        ) {
+          forceModel = appChatManualDropdownValue
+        }
+
+        const configuredForcedModel = forceModel === appChatManualDropdownValue ? model : forceModel
+        const configuredForcedProviderModel =
+          models.find((candidateModel) => candidateModel.id === configuredForcedModel) ??
+          getDefaultModel(models)
+
+        if (
+          forceReasoning !== appChatManualDropdownValue &&
+          !modelSupportsReasoningEffort(configuredForcedProviderModel, forceReasoning)
+        ) {
+          forceReasoning = appChatManualDropdownValue
+        }
+
+        if (forceSpeed !== appChatManualDropdownValue) {
+          const configuredForcedServiceTier =
+            forceSpeed === appChatStandardSpeedValue ? null : forceSpeed
+          if (
+            !modelHasServiceTierOptions(configuredForcedProviderModel) ||
+            !modelSupportsServiceTier(configuredForcedProviderModel, configuredForcedServiceTier)
+          ) {
+            forceSpeed = appChatManualDropdownValue
+          }
+        }
+
+        if (
+          forceModel === currentChatSettings.forceModel &&
+          forceReasoning === currentChatSettings.forceReasoning &&
+          forceSpeed === currentChatSettings.forceSpeed
+        ) {
+          return currentSettings
+        }
+
+        return {
+          ...currentSettings,
+          chat: {
+            ...currentChatSettings,
+            forceModel,
+            forceReasoning,
+            forceSpeed
+          }
+        }
+      })
+    })
+
+    return () => {
+      active = false
+    }
+  }, [model, models])
   const forceAccessOptions: DropdownOption<AppChatDropdownSettings['forceAccess']>[] = [
     {
       value: appChatManualDropdownValue,
@@ -5815,16 +6465,6 @@ export const App: React.FC = () => {
       icon: <Bot aria-hidden="true" />
     }))
   ]
-  if (
-    appSettings.chat.forceModel !== appChatManualDropdownValue &&
-    !forceModelOptions.some((option) => option.value === appSettings.chat.forceModel)
-  ) {
-    forceModelOptions.push({
-      value: appSettings.chat.forceModel,
-      label: formatModelLabel(appSettings.chat.forceModel),
-      icon: <Bot aria-hidden="true" />
-    })
-  }
   const forceReasoningOptions: DropdownOption<AppChatDropdownSettings['forceReasoning']>[] = [
     {
       value: appChatManualDropdownValue,
@@ -5832,7 +6472,7 @@ export const App: React.FC = () => {
       description: 'Use the reasoning effort selected manually in the chat.',
       icon: <MessageSquare aria-hidden="true" />
     },
-    ...(selectedEffectiveModel?.supportedReasoningEfforts ?? []).map((option) => {
+    ...(settingsSelectedEffectiveModel?.supportedReasoningEfforts ?? []).map((option) => {
       const presentation = getReasoningEffortPresentation(option.id)
 
       return {
@@ -5845,17 +6485,6 @@ export const App: React.FC = () => {
       }
     })
   ]
-  if (
-    appSettings.chat.forceReasoning !== appChatManualDropdownValue &&
-    !forceReasoningOptions.some((option) => option.value === appSettings.chat.forceReasoning)
-  ) {
-    const presentation = getReasoningEffortPresentation(appSettings.chat.forceReasoning)
-    forceReasoningOptions.push({
-      value: appSettings.chat.forceReasoning,
-      label: presentation.label,
-      icon: presentation.icon
-    })
-  }
   const forceSpeedOptions: DropdownOption<AppChatDropdownSettings['forceSpeed']>[] = [
     {
       value: appChatManualDropdownValue,
@@ -5863,29 +6492,23 @@ export const App: React.FC = () => {
       description: 'Use the speed selected manually in the chat.',
       icon: <MessageSquare aria-hidden="true" />
     },
-    {
-      value: appChatStandardSpeedValue,
-      label: 'Standard',
-      description: 'Standard response speed and credit usage',
-      icon: getChatServiceTierIcon(appChatStandardSpeedValue)
-    },
-    ...(selectedEffectiveModel?.supportedServiceTiers ?? []).map((option) => ({
+    ...(modelHasServiceTierOptions(settingsSelectedEffectiveModel)
+      ? [
+          {
+            value: appChatStandardSpeedValue,
+            label: 'Standard',
+            description: 'Standard response speed and credit usage',
+            icon: getChatServiceTierIcon(appChatStandardSpeedValue)
+          } satisfies DropdownOption<AppChatDropdownSettings['forceSpeed']>
+        ]
+      : []),
+    ...(settingsSelectedEffectiveModel?.supportedServiceTiers ?? []).map((option) => ({
       value: option.id,
       label: option.label,
       description: option.description || undefined,
       icon: getChatServiceTierIcon(option.id, option.label)
     }))
   ]
-  if (
-    appSettings.chat.forceSpeed !== appChatManualDropdownValue &&
-    !forceSpeedOptions.some((option) => option.value === appSettings.chat.forceSpeed)
-  ) {
-    forceSpeedOptions.push({
-      value: appSettings.chat.forceSpeed,
-      label: formatSelectionLabel(appSettings.chat.forceSpeed),
-      icon: getChatServiceTierIcon(appSettings.chat.forceSpeed)
-    })
-  }
 
   const handleToggleCwdGroup = (groupKey: string): void => {
     setCollapsedCwdGroups((currentGroups) => ({
@@ -6062,6 +6685,98 @@ export const App: React.FC = () => {
     setAppSettings((currentSettings) => update(currentSettings))
   }
 
+  const updateProjectSettings = (
+    update: (overrides: AppProjectSettingsOverrides) => AppProjectSettingsOverrides
+  ): void => {
+    if (!settingsProjectCwd) return
+
+    setProjectSettingsByCwd((currentSettings) => {
+      const currentOverrides = currentSettings[settingsProjectCwd] ?? {}
+      const nextOverrides = update(currentOverrides)
+      return setAppProjectSettingsForCwd(currentSettings, settingsProjectCwd, nextOverrides)
+    })
+  }
+
+  const updateScopedSetting = (
+    path: AppProjectSettingPath,
+    value: unknown,
+    updateGlobal: (settings: AppSettings) => AppSettings
+  ): void => {
+    if (settingsViewIsProject && settingsProjectCwd) {
+      updateProjectSettings((currentOverrides) =>
+        setAppProjectSettingOverrideValue(currentOverrides, path, value)
+      )
+      return
+    }
+
+    updateAppSettings(updateGlobal)
+  }
+
+  const handleEditProjectSetting = (path: AppProjectSettingPath): void => {
+    if (!settingsProjectCwd) return
+
+    updateProjectSettings((currentOverrides) =>
+      setAppProjectSettingOverrideValue(
+        currentOverrides,
+        path,
+        getAppProjectSettingValue(effectiveAppSettings, path)
+      )
+    )
+  }
+
+  const handleResetProjectSetting = (path: AppProjectSettingPath): void => {
+    if (!settingsProjectCwd) return
+
+    setAppearanceZoomLevelInputDraft(null)
+    setAppearanceFontSizeInputDraft(null)
+    updateProjectSettings((currentOverrides) =>
+      clearAppProjectSettingOverrideValue(currentOverrides, path)
+    )
+  }
+
+  const isProjectSettingOverrideEnabled = (path: AppProjectSettingPath): boolean =>
+    settingsViewIsProject && isAppProjectSettingOverridden(settingsProjectOverrides, path)
+
+  const isScopedSettingControlDisabled = (path: AppProjectSettingPath, disabled = false): boolean =>
+    disabled || (settingsViewIsProject && !isProjectSettingOverrideEnabled(path))
+
+  const getSettingsFieldClassName = (
+    ...classNames: (string | false | null | undefined)[]
+  ): string =>
+    [
+      'settings-dialog__field',
+      settingsViewIsProject ? 'settings-dialog__field--with-project-action' : null,
+      ...classNames
+    ]
+      .filter(Boolean)
+      .join(' ')
+
+  const renderProjectSettingAction = (
+    path: AppProjectSettingPath,
+    label: string
+  ): React.ReactElement | null => {
+    if (!settingsViewIsProject) return null
+
+    const overridden = isProjectSettingOverrideEnabled(path)
+    const actionLabel = overridden ? `Reset ${label}` : `Edit ${label}`
+
+    return (
+      <span className="settings-dialog__project-action">
+        <Button
+          id={getProjectSettingPathId(path)}
+          aria-label={actionLabel}
+          title={actionLabel}
+          callback={() =>
+            overridden ? handleResetProjectSetting(path) : handleEditProjectSetting(path)
+          }
+          icon={overridden ? <Undo2 aria-hidden="true" /> : <SquarePen aria-hidden="true" />}
+          size="small"
+          theme="transparent"
+        />
+      </span>
+    )
+  }
+
   const handleActionsChange = (actions: AppAction[]): void => {
     updateAppSettings((currentSettings) => {
       const lastActionId = actions.some((action) => action.id === currentSettings.lastActionId)
@@ -6084,7 +6799,7 @@ export const App: React.FC = () => {
   }
 
   const handleThemePreferenceChange = (theme: AppThemePreference): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting({ section: 'appearance', key: 'theme' }, theme, (currentSettings) => ({
       ...currentSettings,
       appearance: {
         ...currentSettings.appearance,
@@ -6094,7 +6809,7 @@ export const App: React.FC = () => {
   }
 
   const handleAppearanceZoomLevelInputChange = (value: string): void => {
-    setAppearanceZoomLevelInputDraft(value)
+    setAppearanceZoomLevelInputDraft({ key: settingsScopeKey, value })
 
     const trimmedValue = value.trim()
     if (!trimmedValue || trimmedValue === '-' || trimmedValue === '+') return
@@ -6110,17 +6825,21 @@ export const App: React.FC = () => {
   }
 
   const handleAppearancePositionChange = (position: AppAppearancePositionPreference): void => {
-    updateAppSettings((currentSettings) => ({
-      ...currentSettings,
-      appearance: {
-        ...currentSettings.appearance,
-        position
-      }
-    }))
+    updateScopedSetting(
+      { section: 'appearance', key: 'position' },
+      position,
+      (currentSettings) => ({
+        ...currentSettings,
+        appearance: {
+          ...currentSettings.appearance,
+          position
+        }
+      })
+    )
   }
 
   const handleAppearanceStyleChange = (style: AppAppearanceStylePreference): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting({ section: 'appearance', key: 'style' }, style, (currentSettings) => ({
       ...currentSettings,
       appearance: {
         ...currentSettings.appearance,
@@ -6132,17 +6851,59 @@ export const App: React.FC = () => {
   const handleAppearanceControlStyleChange = (
     controlStyle: AppAppearanceControlStylePreference
   ): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting(
+      { section: 'appearance', key: 'controlStyle' },
+      controlStyle,
+      (currentSettings) => ({
+        ...currentSettings,
+        appearance: {
+          ...currentSettings.appearance,
+          controlStyle
+        }
+      })
+    )
+  }
+
+  const updateAppearanceFont = (key: AppearanceFontKey, font: AppFontSetting): void => {
+    updateScopedSetting({ section: 'appearance', key }, font, (currentSettings) => ({
       ...currentSettings,
       appearance: {
         ...currentSettings.appearance,
-        controlStyle
+        [key]: font
       }
     }))
   }
 
+  const handleAppearanceFontFamilyChange = (key: AppearanceFontKey, family: string): void => {
+    updateAppearanceFont(key, {
+      ...settingsPanelSettings.appearance[key],
+      family
+    })
+  }
+
+  const handleAppearanceFontSizeInputChange = (key: AppearanceFontKey, value: string): void => {
+    const draftKey = `${settingsScopeKey}:${key}`
+    setAppearanceFontSizeInputDraft({ key: draftKey, value })
+
+    const trimmedValue = value.trim()
+    if (!trimmedValue) return
+
+    const size = Number(trimmedValue)
+    if (!Number.isFinite(size)) return
+
+    const currentFont = settingsPanelSettings.appearance[key]
+    updateAppearanceFont(key, {
+      ...currentFont,
+      size: normalizeAppFontSize(size, currentFont.size)
+    })
+  }
+
+  const handleAppearanceFontSizeInputBlur = (): void => {
+    setAppearanceFontSizeInputDraft(null)
+  }
+
   const handleExternalLinkBehaviorChange = (behavior: AppExternalLinkBehavior): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting({ section: 'links', key: 'behavior' }, behavior, (currentSettings) => ({
       ...currentSettings,
       links: {
         behavior
@@ -6151,17 +6912,21 @@ export const App: React.FC = () => {
   }
 
   const handleChatUsageDisplayChange = (displayUsage: AppChatUsageDisplay): void => {
-    updateAppSettings((currentSettings) => ({
-      ...currentSettings,
-      chat: {
-        ...currentSettings.chat,
-        displayUsage
-      }
-    }))
+    updateScopedSetting(
+      { section: 'chat', key: 'displayUsage' },
+      displayUsage,
+      (currentSettings) => ({
+        ...currentSettings,
+        chat: {
+          ...currentSettings.chat,
+          displayUsage
+        }
+      })
+    )
   }
 
   const handleChatDropdownPreferenceChange = (key: ChatBooleanSettingKey, value: boolean): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting({ section: 'chat', key }, value, (currentSettings) => ({
       ...currentSettings,
       chat: {
         ...currentSettings.chat,
@@ -6174,7 +6939,7 @@ export const App: React.FC = () => {
     key: Key,
     value: AppChatDropdownSettings[Key]
   ): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting({ section: 'chat', key }, value, (currentSettings) => ({
       ...currentSettings,
       chat: {
         ...currentSettings.chat,
@@ -6187,7 +6952,7 @@ export const App: React.FC = () => {
     key: keyof AppSettings['performance'],
     value: boolean
   ): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting({ section: 'performance', key }, value, (currentSettings) => ({
       ...currentSettings,
       performance: {
         ...currentSettings.performance,
@@ -6210,31 +6975,41 @@ export const App: React.FC = () => {
       }
     }
 
-    updateAppSettings((currentSettings) => ({
-      ...currentSettings,
-      chat: {
-        ...currentSettings.chat,
-        recentChatCacheLimit
-      }
-    }))
+    updateScopedSetting(
+      { section: 'chat', key: 'recentChatCacheLimit' },
+      recentChatCacheLimit,
+      (currentSettings) => ({
+        ...currentSettings,
+        chat: {
+          ...currentSettings.chat,
+          recentChatCacheLimit
+        }
+      })
+    )
   }
 
   const handleContinuePromptChange = (continuePrompt: string): void => {
-    updateAppSettings((currentSettings) => ({
-      ...currentSettings,
-      chat: {
-        ...currentSettings.chat,
-        continuePrompt
-      }
-    }))
+    updateScopedSetting(
+      { section: 'chat', key: 'continuePrompt' },
+      continuePrompt,
+      (currentSettings) => ({
+        ...currentSettings,
+        chat: {
+          ...currentSettings.chat,
+          continuePrompt
+        }
+      })
+    )
   }
 
   const handleGitCommitModelChange = (nextModel: string): void => {
-    updateAppSettings((currentSettings) => ({
+    const commitModel = nextModel === gitCurrentChatModelValue ? null : nextModel
+
+    updateScopedSetting({ section: 'git', key: 'commitModel' }, commitModel, (currentSettings) => ({
       ...currentSettings,
       git: {
         ...currentSettings.git,
-        commitModel: nextModel === gitCurrentChatModelValue ? null : nextModel
+        commitModel
       }
     }))
   }
@@ -6243,7 +7018,7 @@ export const App: React.FC = () => {
     key: keyof AppGitCommitPromptSettings,
     value: string
   ): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting({ section: 'gitCommitPrompt', key }, value, (currentSettings) => ({
       ...currentSettings,
       git: {
         ...currentSettings.git,
@@ -6259,20 +7034,24 @@ export const App: React.FC = () => {
     key: keyof AppGitCommitMessageGenerationSettings,
     value: string
   ): void => {
-    updateAppSettings((currentSettings) => ({
-      ...currentSettings,
-      git: {
-        ...currentSettings.git,
-        commitMessageGeneration: {
-          ...currentSettings.git.commitMessageGeneration,
-          [key]: value
+    updateScopedSetting(
+      { section: 'gitCommitMessageGeneration', key },
+      value,
+      (currentSettings) => ({
+        ...currentSettings,
+        git: {
+          ...currentSettings.git,
+          commitMessageGeneration: {
+            ...currentSettings.git.commitMessageGeneration,
+            [key]: value
+          }
         }
-      }
-    }))
+      })
+    )
   }
 
   const handleGitWorktreeChange = (key: keyof AppGitWorktreeSettings, value: string): void => {
-    updateAppSettings((currentSettings) => ({
+    updateScopedSetting({ section: 'gitWorktree', key }, value, (currentSettings) => ({
       ...currentSettings,
       git: {
         ...currentSettings.git,
@@ -6316,6 +7095,10 @@ export const App: React.FC = () => {
     if (!nextModel) return
 
     setReasoningEffort((currentReasoningEffort) => {
+      if (!modelHasReasoningEffortOptions(nextModel)) {
+        reasoningManuallySelectedRef.current = false
+        return getDefaultReasoningEffort(nextModel)
+      }
       if (
         reasoningManuallySelectedRef.current &&
         modelSupportsReasoningEffort(nextModel, currentReasoningEffort)
@@ -6323,6 +7106,7 @@ export const App: React.FC = () => {
         return currentReasoningEffort
       }
 
+      reasoningManuallySelectedRef.current = false
       return getDefaultReasoningEffort(nextModel)
     })
   }
@@ -6431,6 +7215,19 @@ export const App: React.FC = () => {
   }
 
   const providerUpdateInProgress = providerUpdateState === 'updating'
+  const requestErrorVisible = sendState === 'error'
+  const requestErrorSummary =
+    sendState === 'error' && sendError ? sendError : 'Unable to complete request.'
+
+  const handleSendFailure = useCallback((error: unknown, fallback: string): void => {
+    setSendError(getErrorMessage(error, fallback))
+    setSendState('error')
+  }, [])
+
+  const handleDismissSendError = (): void => {
+    setSendState('idle')
+    setSendError(null)
+  }
 
   const handleMarkChatDone = async (chat: ProviderChat, done = true): Promise<void> => {
     try {
@@ -6537,36 +7334,60 @@ export const App: React.FC = () => {
     setEditingMessage(null)
   }, [])
 
-  const getCurrentTurnOptions = (): ProviderTurnOptions => ({
-    ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
-    container: changesContainer,
-    model: effectiveModel,
-    reasoningEffort: effectiveReasoningEffort,
-    sandboxMode: effectiveSandboxMode,
-    serviceTier: effectiveServiceTier
-  })
+  const normalizeTurnOptionsForModels = useCallback(
+    (turnOptions: ProviderTurnOptions): ProviderTurnOptions => {
+      const resolvedModel =
+        models.find((candidateModel) => candidateModel.id === turnOptions.model) ??
+        getDefaultModel(models)
+      const {
+        reasoningEffort: configuredReasoningEffort,
+        serviceTier: configuredServiceTier,
+        ...remainingOptions
+      } = turnOptions
+      const reasoningEffort = modelHasReasoningEffortOptions(resolvedModel)
+        ? modelSupportsReasoningEffort(resolvedModel, configuredReasoningEffort)
+          ? configuredReasoningEffort
+          : getDefaultReasoningEffort(resolvedModel)
+        : undefined
+      const serviceTier = modelSupportsServiceTier(resolvedModel, configuredServiceTier)
+        ? configuredServiceTier
+        : (resolvedModel.defaultServiceTier ?? null)
+
+      return {
+        ...remainingOptions,
+        model: resolvedModel.id,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        serviceTier
+      }
+    },
+    [models]
+  )
+
+  const getCurrentTurnOptions = (): ProviderTurnOptions =>
+    normalizeTurnOptionsForModels({
+      ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
+      container: changesContainer,
+      model: effectiveModel,
+      ...(modelHasReasoningEffortOptions(selectedEffectiveModel)
+        ? { reasoningEffort: effectiveReasoningEffort }
+        : {}),
+      sandboxMode: effectiveSandboxMode,
+      serviceTier: effectiveServiceTier
+    })
 
   const getGitTurnOptions = (): ProviderTurnOptions => {
-    const commitModel = appSettings.git.commitModel
+    const commitModel = effectiveAppSettings.git.commitModel
     const turnOptions = getCurrentTurnOptions()
     if (!commitModel) return turnOptions
 
     const selectedCommitModel = models.find((candidateModel) => candidateModel.id === commitModel)
     const resolvedCommitModel = selectedCommitModel ?? getDefaultModel(models)
 
-    return {
+    return normalizeTurnOptionsForModels({
       ...turnOptions,
       model: resolvedCommitModel.id,
-      reasoningEffort: modelSupportsReasoningEffort(
-        resolvedCommitModel,
-        turnOptions.reasoningEffort
-      )
-        ? turnOptions.reasoningEffort
-        : getDefaultReasoningEffort(resolvedCommitModel),
-      serviceTier: modelSupportsServiceTier(resolvedCommitModel, turnOptions.serviceTier)
-        ? turnOptions.serviceTier
-        : (resolvedCommitModel.defaultServiceTier ?? null)
-    }
+      serviceTier: turnOptions.serviceTier
+    })
   }
 
   const handleCancelWorktreeCreation = useCallback(async (): Promise<void> => {
@@ -6586,7 +7407,8 @@ export const App: React.FC = () => {
     review?: Omit<ProviderReview, 'prompt'> | null,
     skills: ProviderSkillInput[] = [],
     apps: ProviderAppInput[] = [],
-    turnOptionsOverride?: ProviderTurnOptions
+    turnOptionsOverride?: ProviderTurnOptions,
+    sendTarget?: 'current' | 'new'
   ): Promise<void> => {
     if (providerUpdateInProgress || sendInFlightRef.current) return
     sendInFlightRef.current = true
@@ -6596,7 +7418,7 @@ export const App: React.FC = () => {
       ? serializeReviewMessage(messageWithComposerMentions, review)
       : messageWithComposerMentions
     const baseTurnOptions = {
-      ...(turnOptionsOverride ?? getCurrentTurnOptions()),
+      ...normalizeTurnOptionsForModels(turnOptionsOverride ?? getCurrentTurnOptions()),
       review: review
         ? {
             ...review,
@@ -6620,7 +7442,7 @@ export const App: React.FC = () => {
           }
         : baseTurnOptions
 
-    if (editingMessage) {
+    if (editingMessage && !sendTarget) {
       if (!selectedChat) {
         sendInFlightRef.current = false
         return
@@ -6649,7 +7471,7 @@ export const App: React.FC = () => {
         setEditingMessage(null)
         setSendState('idle')
       } catch (error) {
-        setSendState('error')
+        handleSendFailure(error, 'Unable to edit message.')
         throw error
       } finally {
         sendInFlightRef.current = false
@@ -6658,13 +7480,16 @@ export const App: React.FC = () => {
       return
     }
 
-    if (!selectedChat) {
+    if (!selectedChat || sendTarget === 'new') {
       setSendState('sending')
 
       try {
-        let sessionCwd = newSessionCwd ?? undefined
+        const startingSelectedChat = sendTarget === 'new' ? selectedChat : null
+        const startingProviderId = startingSelectedChat?.providerId ?? newSessionProvider
+        const startingCwd = startingSelectedChat ? changesProjectCwd : newSessionCwd
+        let sessionCwd = startingCwd ?? undefined
 
-        if (newSessionLocation === 'worktree') {
+        if (!startingSelectedChat && newSessionLocation === 'worktree') {
           if (!newSessionCwd) throw new Error('Choose a folder before creating a worktree.')
 
           const generationId = crypto.randomUUID()
@@ -6676,7 +7501,7 @@ export const App: React.FC = () => {
             newSessionProvider,
             getWorktreeBranchGenerationPrompt(
               messageWithComposerMentions.trim() || serializedMessage.trim() || 'File attachment',
-              appSettings.git.worktree
+              effectiveAppSettings.git.worktree
             ),
             {
               ...getGitTurnOptions(),
@@ -6705,13 +7530,22 @@ export const App: React.FC = () => {
           sessionCwd = worktree.worktreePath
         }
 
-        const detail = await providerApi.startChat(newSessionProvider, serializedMessage, {
+        const detail = await providerApi.startChat(startingProviderId, serializedMessage, {
           ...turnOptions,
           cwd: sessionCwd
         })
-        applyViewedChatDetail(newSessionProvider, detail, { select: true })
-        if (newSessionCwd?.trim() && newSessionCwd.trim() === defaultCwd?.trim()) {
-          void rememberProject(newSessionCwd)
+        applyViewedChatDetail(
+          startingProviderId,
+          detail.items.length === 0
+            ? {
+                ...detail,
+                items: getOptimisticItems([], messageWithComposerMentions, attachments, review)
+              }
+            : detail,
+          { select: true }
+        )
+        if (startingCwd?.trim() && startingCwd.trim() === defaultCwd?.trim()) {
+          void rememberProject(startingCwd)
         }
         setSendState('idle')
       } catch (error) {
@@ -6721,7 +7555,7 @@ export const App: React.FC = () => {
         ) {
           setSendState('idle')
         } else {
-          setSendState('error')
+          handleSendFailure(error, 'Unable to start chat.')
         }
       } finally {
         worktreeBranchGenerationRef.current = null
@@ -6749,8 +7583,8 @@ export const App: React.FC = () => {
         applyChatSummary(providerId, summary, false)
         markChatSeenAt(providerId, chatId, Date.now())
         setSendState('idle')
-      } catch {
-        setSendState('error')
+      } catch (error) {
+        handleSendFailure(error, 'Unable to send message.')
       } finally {
         sendInFlightRef.current = false
       }
@@ -6782,18 +7616,32 @@ export const App: React.FC = () => {
       applyChatSummary(providerId, summary, false)
       markChatSeenAt(providerId, chatId, Date.now())
       setSendState('idle')
-    } catch {
+    } catch (error) {
       void providerApi
         .getChat(providerId, chatId)
         .then((detail) => applyViewedChatDetail(providerId, detail))
         .catch(() => {})
-      setSendState('error')
+      handleSendFailure(error, 'Unable to send message.')
     } finally {
       sendInFlightRef.current = false
     }
   }
 
-  const handleContinueStoppedTurn = (prompt: string): Promise<void> => handleSendMessage(prompt)
+  const handleContinueStoppedTurn = (workingStepId: string, prompt: string): Promise<void> => {
+    if (selectedChatKey) {
+      setContinuedStoppedWorkingStepsByChat((currentStepsByChat) => {
+        const currentStepIds = currentStepsByChat[selectedChatKey] ?? []
+        if (currentStepIds.includes(workingStepId)) return currentStepsByChat
+
+        return {
+          ...currentStepsByChat,
+          [selectedChatKey]: [...currentStepIds, workingStepId]
+        }
+      })
+    }
+
+    return handleSendMessage(prompt)
+  }
 
   const handleRetryStoppedTurn = useCallback(
     async (message: ProviderMessage): Promise<void> => {
@@ -6824,7 +7672,7 @@ export const App: React.FC = () => {
             comments: reviewAttachment.comments
           }
         : null
-      const turnOptions: ProviderTurnOptions = {
+      const turnOptions = normalizeTurnOptionsForModels({
         ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
         model: effectiveModel,
         reasoningEffort: effectiveReasoningEffort,
@@ -6838,7 +7686,7 @@ export const App: React.FC = () => {
           : undefined,
         images: imagePaths.length > 0 ? imagePaths.map((path) => ({ path })) : undefined,
         files: filePaths.length > 0 ? filePaths.map((path) => ({ path })) : undefined
-      }
+      })
 
       sendInFlightRef.current = true
       chatAutoScrollEnabledRef.current = true
@@ -6855,8 +7703,8 @@ export const App: React.FC = () => {
         applyViewedChatDetail(selectedProviderId, detail)
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
         setSendState('idle')
-      } catch {
-        setSendState('error')
+      } catch (error) {
+        handleSendFailure(error, 'Unable to retry message.')
       } finally {
         sendInFlightRef.current = false
       }
@@ -6869,7 +7717,9 @@ export const App: React.FC = () => {
       effectiveReasoningEffort,
       effectiveSandboxMode,
       effectiveServiceTier,
+      handleSendFailure,
       markChatSeenAt,
+      normalizeTurnOptionsForModels,
       providerUpdateInProgress,
       selectedChatId,
       selectedProviderId
@@ -6926,6 +7776,38 @@ export const App: React.FC = () => {
     await resolveChatApproval(chat, approval, decision, { markViewed: false })
   }
 
+  const resolveSelectedUserInput = async (
+    response: { kind: 'answer'; answer: string; wasFreeform: boolean } | { kind: 'cancel' }
+  ): Promise<void> => {
+    if (!selectedChat || !pendingUserInput || userInputResolving || providerUpdateInProgress) return
+
+    const requestId = pendingUserInput.id
+    setUserInputResolution({ requestId, resolving: true, error: null })
+
+    try {
+      const detail = await providerApi.resolveUserInput(
+        selectedChat.providerId,
+        selectedChat.id,
+        requestId,
+        response
+      )
+      applyViewedChatDetail(selectedChat.providerId, detail)
+    } catch (error) {
+      setUserInputResolution({
+        requestId,
+        resolving: false,
+        error: getErrorMessage(error, 'Unable to resolve Copilot question.')
+      })
+      return
+    }
+
+    setUserInputResolution((currentResolution) =>
+      currentResolution.requestId === requestId
+        ? { ...currentResolution, resolving: false }
+        : currentResolution
+    )
+  }
+
   const handleStopChat = async (): Promise<void> => {
     if (providerUpdateInProgress || !selectedChat || sendInFlightRef.current) return
     sendInFlightRef.current = true
@@ -6936,8 +7818,8 @@ export const App: React.FC = () => {
       applyChatSummary(selectedChat.providerId, summary, true)
       markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
       setSendState('idle')
-    } catch {
-      setSendState('error')
+    } catch (error) {
+      handleSendFailure(error, 'Unable to stop chat.')
     } finally {
       sendInFlightRef.current = false
     }
@@ -6955,11 +7837,18 @@ export const App: React.FC = () => {
         )
         applyViewedChatDetail(selectedProviderId, detail)
         if (sendState === 'error') setSendState('idle')
-      } catch {
-        setSendState('error')
+      } catch (error) {
+        handleSendFailure(error, 'Unable to delete queued message.')
       }
     },
-    [applyViewedChatDetail, providerUpdateInProgress, selectedChatId, selectedProviderId, sendState]
+    [
+      applyViewedChatDetail,
+      handleSendFailure,
+      providerUpdateInProgress,
+      selectedChatId,
+      selectedProviderId,
+      sendState
+    ]
   )
 
   const handleInterruptPendingMessage = useCallback(
@@ -6983,13 +7872,19 @@ export const App: React.FC = () => {
         )
         applyViewedChatDetail(selectedProviderId, detail)
         setSendState('idle')
-      } catch {
-        setSendState('error')
+      } catch (error) {
+        handleSendFailure(error, 'Unable to send queued message.')
       } finally {
         sendInFlightRef.current = false
       }
     },
-    [applyViewedChatDetail, providerUpdateInProgress, selectedChatId, selectedProviderId]
+    [
+      applyViewedChatDetail,
+      handleSendFailure,
+      providerUpdateInProgress,
+      selectedChatId,
+      selectedProviderId
+    ]
   )
 
   const handleChatContentScroll = (): void => {
@@ -7068,6 +7963,12 @@ export const App: React.FC = () => {
   const chatHasPendingSteeringMessage = hasPendingSteeringMessage(chatDetail)
   const chatIsBusy =
     chatHasActiveTurn || (sendState === 'sending' && hasActiveWorkingStep(chatDetail))
+
+  useEffect(() => {
+    runPromptActionRef.current = (prompt, target) =>
+      handleSendMessage(prompt, undefined, [], null, [], [], undefined, target)
+  })
+
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const messageBoxDisabled = selectedChat
     ? providerUpdateInProgress ||
@@ -7084,41 +7985,6 @@ export const App: React.FC = () => {
     !editingMessage
   )
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
-  const agentTerminalSnapshots = useMemo((): AgentTerminalSnapshot[] => {
-    if (!selectedChat) return []
-
-    const snapshots: AgentTerminalSnapshot[] = []
-    const addTool = (tool: ProviderWorkingTool): void => {
-      if (!tool.agentTerminal) return
-
-      snapshots.push({
-        providerId: selectedChat.providerId,
-        chatId: selectedChat.id,
-        turnId: tool.agentTerminal.turnId,
-        itemId: tool.agentTerminal.itemId,
-        processId: tool.agentTerminal.processId,
-        command: tool.command ?? tool.label,
-        cwd: tool.cwd ?? changesCwd,
-        output: tool.stdout,
-        status: tool.status
-      })
-    }
-
-    visibleChatItems.forEach((item) => {
-      if (item.type !== 'working') return
-
-      item.items.forEach((workingItem) => {
-        if (workingItem.type === 'tool') {
-          addTool(workingItem)
-          return
-        }
-
-        if (workingItem.type === 'toolGroup') workingItem.tools.forEach(addTool)
-      })
-    })
-
-    return snapshots
-  }, [changesCwd, selectedChat, visibleChatItems])
   const stoppedTurnRetryMessages = useMemo(
     () => getStoppedTurnRetryMessages(visibleChatItems),
     [visibleChatItems]
@@ -7145,6 +8011,34 @@ export const App: React.FC = () => {
 
     return ids
   }, [visibleChatItems])
+  const followingWorkingStepsById = useMemo(() => {
+    const followingSteps = new Map<
+      string,
+      { hasNextWorkingStep: boolean; status: ProviderWorkingStep['status'] }
+    >()
+    let followingWorkingStep: ProviderWorkingStep | null = null
+    let followingWorkingStepHasNext = false
+
+    for (let itemIndex = visibleChatItems.length - 1; itemIndex >= 0; itemIndex -= 1) {
+      const item = visibleChatItems[itemIndex]
+      if (item.type !== 'working') continue
+
+      if (followingWorkingStep) {
+        followingSteps.set(item.id, {
+          hasNextWorkingStep: followingWorkingStepHasNext,
+          status: followingWorkingStep.status
+        })
+      }
+      followingWorkingStepHasNext = followingWorkingStep != null
+      followingWorkingStep = item
+    }
+
+    return followingSteps
+  }, [visibleChatItems])
+  const continuedStoppedWorkingStepIds = useMemo(
+    () => new Set(selectedChatKey ? continuedStoppedWorkingStepsByChat[selectedChatKey] : []),
+    [continuedStoppedWorkingStepsByChat, selectedChatKey]
+  )
   const firstPendingChatItemId =
     visibleChatItems.find((item) => item.type === 'pendingMessage')?.id ?? null
   const [
@@ -7632,6 +8526,8 @@ export const App: React.FC = () => {
     const requestId = ++gitBranchRequestIdRef.current
     setGitBranchActionState('sending')
     setGitBranchError(null)
+    setGitBranchDeleteRetry(null)
+    setGitBranchWorktreeDeleteRetry(null)
 
     try {
       const result = await appApi.switchGitBranch({
@@ -7661,6 +8557,88 @@ export const App: React.FC = () => {
       }
       return false
     }
+  }
+
+  const handleDeleteBranch = async (
+    branchName: string,
+    scope?: AppGitDeleteBranchScope,
+    force = false,
+    removeWorktree = false
+  ): Promise<void> => {
+    if (branchSwitchDisabled || !changesCwd) return
+
+    const cwd = changesCwd
+    const requestId = ++gitBranchRequestIdRef.current
+    setGitBranchActionState('sending')
+    setGitBranchError(null)
+    setGitBranchDeleteRetry(null)
+    setGitBranchWorktreeDeleteRetry(null)
+
+    try {
+      const result = await appApi.deleteGitBranch({
+        branchName,
+        container: changesContainer,
+        cwd,
+        force,
+        removeWorktree,
+        scope
+      })
+      if (gitBranchRequestIdRef.current !== requestId) return
+
+      if (result.branches) {
+        setGitBranches(result.branches)
+        setGitBranchesScope({ sourceKey: gitAvailabilityScopeKey, cwd })
+        setGitBranchLoadState('ready')
+      }
+
+      if (result.cancelled) {
+        setGitBranchActionState('idle')
+        return
+      }
+
+      if (result.deleted) {
+        setGitBranchActionState('idle')
+        setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
+        setFileTreeLoadRequest((currentRequest) => currentRequest + 1)
+        return
+      }
+
+      setGitBranchActionState('error')
+      setGitBranchError(result.error ?? 'Unable to delete this branch.')
+      if (result.forceSuggested && result.scope) {
+        setGitBranchDeleteRetry({ branchName, scope: result.scope })
+      }
+      if (result.worktreePath && result.scope) {
+        setGitBranchWorktreeDeleteRetry({
+          branchName,
+          force: result.force,
+          scope: result.scope,
+          worktreePath: result.worktreePath
+        })
+      }
+    } catch (error) {
+      if (gitBranchRequestIdRef.current !== requestId) return
+
+      setGitBranchActionState('error')
+      setGitBranchError(getErrorMessage(error, 'Unable to delete this branch.'))
+    }
+  }
+
+  const handleForceDeleteBranch = async (): Promise<void> => {
+    if (!gitBranchDeleteRetry) return
+
+    await handleDeleteBranch(gitBranchDeleteRetry.branchName, gitBranchDeleteRetry.scope, true)
+  }
+
+  const handleDeleteBranchWorktree = async (): Promise<void> => {
+    if (!gitBranchWorktreeDeleteRetry) return
+
+    await handleDeleteBranch(
+      gitBranchWorktreeDeleteRetry.branchName,
+      gitBranchWorktreeDeleteRetry.scope,
+      gitBranchWorktreeDeleteRetry.force,
+      true
+    )
   }
 
   const handleToggleActiveTreeFolders = (): void => {
@@ -7860,7 +8838,7 @@ export const App: React.FC = () => {
     const prompt = getScopedChatCommitPrompt(
       action,
       extraInstructions,
-      appSettings.git.commitPrompt
+      effectiveAppSettings.git.commitPrompt
     )
     const providerId = selectedChat?.providerId ?? newSessionProvider
     const chatId = selectedChat?.id ?? null
@@ -8007,7 +8985,7 @@ export const App: React.FC = () => {
       }
       setCommitState('error')
       setCommitError(getErrorMessage(error, 'Unable to start scoped commit in chat.'))
-      setSendState('error')
+      handleSendFailure(error, 'Unable to start scoped commit in chat.')
       return false
     } finally {
       setStartingScopedCommitActivity((currentActivity) =>
@@ -8047,7 +9025,7 @@ export const App: React.FC = () => {
           diff,
           messages,
           commitInputValue,
-          appSettings.git.commitMessageGeneration
+          effectiveAppSettings.git.commitMessageGeneration
         ),
         {
           ...getGitTurnOptions(),
@@ -8354,25 +9332,133 @@ export const App: React.FC = () => {
     void appApi.closeWindow()
   }
 
-  const windowControlsHidden = appSettings.appearance.position === 'hidden'
+  const settingsProjectLabel = settingsProjectCwd ? getFolderName(settingsProjectCwd) : 'Project'
+  const appearanceZoomLevelInput =
+    appearanceZoomLevelInputDraft?.key === settingsScopeKey
+      ? appearanceZoomLevelInputDraft.value
+      : String(settingsPanelSettings.appearance.zoomLevel)
+  const windowControlsHidden = settingsPanelSettings.appearance.position === 'hidden'
 
   const renderSettingsPanel = (): React.ReactElement => {
-    const renderChatBooleanSettingField = (field: ChatBooleanSettingField): React.ReactElement => (
-      <div className="settings-dialog__field" key={field.key}>
-        <div className="settings-dialog__field-header">
-          <h3 id={field.id}>{field.label}</h3>
-          {field.description && <p>{field.description}</p>}
+    const renderChatBooleanSettingField = (field: ChatBooleanSettingField): React.ReactElement => {
+      const path = { section: 'chat', key: field.key } satisfies AppProjectSettingPath
+
+      return (
+        <div className={getSettingsFieldClassName()} key={field.key}>
+          <div className="settings-dialog__field-header">
+            <h3 id={field.id}>{field.label}</h3>
+            {field.description && <p>{field.description}</p>}
+          </div>
+          {renderProjectSettingAction(path, field.label)}
+          <Switch
+            className="settings-switch"
+            aria-labelledby={field.id}
+            checked={settingsPanelSettings.chat[field.key]}
+            disabled={isScopedSettingControlDisabled(path)}
+            onChange={(event) =>
+              handleChatDropdownPreferenceChange(field.key, event.currentTarget.checked)
+            }
+          />
         </div>
-        <Switch
-          className="settings-switch"
-          aria-labelledby={field.id}
-          checked={appSettings.chat[field.key]}
-          onChange={(event) =>
-            handleChatDropdownPreferenceChange(field.key, event.currentTarget.checked)
-          }
-        />
-      </div>
-    )
+      )
+    }
+    const chatDisplayUsagePath = {
+      section: 'chat',
+      key: 'displayUsage'
+    } satisfies AppProjectSettingPath
+    const chatForceAccessPath = {
+      section: 'chat',
+      key: 'forceAccess'
+    } satisfies AppProjectSettingPath
+    const chatForceReviewPath = {
+      section: 'chat',
+      key: 'forceReview'
+    } satisfies AppProjectSettingPath
+    const chatForceModelPath = {
+      section: 'chat',
+      key: 'forceModel'
+    } satisfies AppProjectSettingPath
+    const chatForceReasoningPath = {
+      section: 'chat',
+      key: 'forceReasoning'
+    } satisfies AppProjectSettingPath
+    const chatForceSpeedPath = {
+      section: 'chat',
+      key: 'forceSpeed'
+    } satisfies AppProjectSettingPath
+    const chatContinuePromptPath = {
+      section: 'chat',
+      key: 'continuePrompt'
+    } satisfies AppProjectSettingPath
+    const performanceDisableShadowsPath = {
+      section: 'performance',
+      key: 'disableShadows'
+    } satisfies AppProjectSettingPath
+    const chatRecentCacheLimitPath = {
+      section: 'chat',
+      key: 'recentChatCacheLimit'
+    } satisfies AppProjectSettingPath
+    const gitCommitModelPath = {
+      section: 'git',
+      key: 'commitModel'
+    } satisfies AppProjectSettingPath
+    const gitCommitGenerationPromptPath = {
+      section: 'gitCommitMessageGeneration',
+      key: 'prompt'
+    } satisfies AppProjectSettingPath
+    const gitCommitGenerationPrefixPath = {
+      section: 'gitCommitMessageGeneration',
+      key: 'aiInstructionsPrefix'
+    } satisfies AppProjectSettingPath
+    const gitWorktreeBranchPromptPath = {
+      section: 'gitWorktree',
+      key: 'branchNamePrompt'
+    } satisfies AppProjectSettingPath
+    const linkBehaviorPath = { section: 'links', key: 'behavior' } satisfies AppProjectSettingPath
+    const appearanceThemePath = {
+      section: 'appearance',
+      key: 'theme'
+    } satisfies AppProjectSettingPath
+    const appearanceZoomPath = {
+      section: 'appearance',
+      key: 'zoomLevel'
+    } satisfies AppProjectSettingPath
+    const appearancePositionPath = {
+      section: 'appearance',
+      key: 'position'
+    } satisfies AppProjectSettingPath
+    const appearanceStylePath = {
+      section: 'appearance',
+      key: 'style'
+    } satisfies AppProjectSettingPath
+    const appearanceControlStylePath = {
+      section: 'appearance',
+      key: 'controlStyle'
+    } satisfies AppProjectSettingPath
+    const appearanceFontFields = [
+      {
+        key: 'applicationFont',
+        label: 'Application font',
+        specialOptions: [{ value: appFontSystemValue, label: 'System Default' }]
+      },
+      {
+        key: 'chatFont',
+        label: 'Chat font',
+        specialOptions: [
+          { value: appFontInheritValue, label: 'Inherit Application' },
+          { value: appFontSystemValue, label: 'System Default' }
+        ]
+      },
+      {
+        key: 'codeFont',
+        label: 'Code font',
+        specialOptions: [{ value: appFontMonospaceValue, label: 'System Monospace' }]
+      }
+    ] satisfies readonly {
+      key: AppearanceFontKey
+      label: string
+      specialOptions: readonly DropdownOption<string>[]
+    }[]
 
     if (settingsTab === 'chat') {
       return (
@@ -8395,14 +9481,16 @@ export const App: React.FC = () => {
               Limits
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Display usage</h3>
                 </div>
+                {renderProjectSettingAction(chatDisplayUsagePath, 'Display usage')}
                 <SegmentedControl
                   aria-label="Display usage"
+                  disabled={isScopedSettingControlDisabled(chatDisplayUsagePath)}
                   options={chatUsageDisplayOptions}
-                  value={appSettings.chat.displayUsage}
+                  value={settingsPanelSettings.chat.displayUsage}
                   onChange={handleChatUsageDisplayChange}
                 />
               </div>
@@ -8413,73 +9501,92 @@ export const App: React.FC = () => {
               Dropdowns
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Force access</h3>
                   <p>Hide the chat dropdown and always use this access mode.</p>
                 </div>
+                {renderProjectSettingAction(chatForceAccessPath, 'Force access')}
                 <Dropdown
                   id="settings-chat-force-access"
                   aria-label="Force access"
+                  disabled={isScopedSettingControlDisabled(chatForceAccessPath)}
                   menuAlign="end"
                   options={forceAccessOptions}
-                  value={appSettings.chat.forceAccess}
+                  value={settingsPanelSettings.chat.forceAccess}
                   onChange={(value) => handleChatForcedDropdownChange('forceAccess', value)}
                 />
               </div>
-              <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Force review</h3>
                   <p>Hide the chat dropdown and always use this review mode.</p>
                 </div>
+                {renderProjectSettingAction(chatForceReviewPath, 'Force review')}
                 <Dropdown
                   id="settings-chat-force-review"
                   aria-label="Force review"
+                  disabled={isScopedSettingControlDisabled(chatForceReviewPath)}
                   menuAlign="end"
                   options={forceReviewOptions}
-                  value={appSettings.chat.forceReview}
+                  value={settingsPanelSettings.chat.forceReview}
                   onChange={(value) => handleChatForcedDropdownChange('forceReview', value)}
                 />
               </div>
-              <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Force model</h3>
                   <p>Hide the chat dropdown and always use this model.</p>
                 </div>
+                {renderProjectSettingAction(chatForceModelPath, 'Force model')}
                 <Dropdown
                   id="settings-chat-force-model"
                   aria-label="Force model"
+                  disabled={isScopedSettingControlDisabled(
+                    chatForceModelPath,
+                    forceModelOptions.length <= 1
+                  )}
                   menuAlign="end"
                   options={forceModelOptions}
-                  value={appSettings.chat.forceModel}
+                  value={settingsPanelSettings.chat.forceModel}
                   onChange={(value) => handleChatForcedDropdownChange('forceModel', value)}
                 />
               </div>
-              <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Force reasoning</h3>
                   <p>Hide the chat dropdown and always use this reasoning effort.</p>
                 </div>
+                {renderProjectSettingAction(chatForceReasoningPath, 'Force reasoning')}
                 <Dropdown
                   id="settings-chat-force-reasoning"
                   aria-label="Force reasoning"
+                  disabled={isScopedSettingControlDisabled(
+                    chatForceReasoningPath,
+                    forceReasoningOptions.length <= 1
+                  )}
                   menuAlign="end"
                   options={forceReasoningOptions}
-                  value={appSettings.chat.forceReasoning}
+                  value={settingsPanelSettings.chat.forceReasoning}
                   onChange={(value) => handleChatForcedDropdownChange('forceReasoning', value)}
                 />
               </div>
-              <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Force speed</h3>
                   <p>Hide the chat dropdown and always use this speed.</p>
                 </div>
+                {renderProjectSettingAction(chatForceSpeedPath, 'Force speed')}
                 <Dropdown
                   id="settings-chat-force-speed"
                   aria-label="Force speed"
+                  disabled={isScopedSettingControlDisabled(
+                    chatForceSpeedPath,
+                    forceSpeedOptions.length <= 1
+                  )}
                   menuAlign="end"
                   options={forceSpeedOptions}
-                  value={appSettings.chat.forceSpeed}
+                  value={settingsPanelSettings.chat.forceSpeed}
                   onChange={(value) => handleChatForcedDropdownChange('forceSpeed', value)}
                 />
               </div>
@@ -8502,7 +9609,7 @@ export const App: React.FC = () => {
               Stopped Turns
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--stack">
+              <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
                 <label
                   className="settings-dialog__field-header"
                   htmlFor="settings-chat-continue-prompt"
@@ -8510,11 +9617,13 @@ export const App: React.FC = () => {
                   <h3>Continue prompt</h3>
                   <p>Sent as a new message when Continue is selected on a stopped turn.</p>
                 </label>
+                {renderProjectSettingAction(chatContinuePromptPath, 'Continue prompt')}
                 <textarea
                   id="settings-chat-continue-prompt"
                   className="settings-dialog__prompt-textarea"
                   rows={3}
-                  value={appSettings.chat.continuePrompt}
+                  disabled={isScopedSettingControlDisabled(chatContinuePromptPath)}
+                  value={settingsPanelSettings.chat.continuePrompt}
                   onChange={(event) => handleContinuePromptChange(event.currentTarget.value)}
                 />
               </div>
@@ -8540,15 +9649,17 @@ export const App: React.FC = () => {
               Rendering
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field">
+              <div className={getSettingsFieldClassName()}>
                 <div className="settings-dialog__field-header">
                   <h3 id="settings-performance-disable-shadows">Disable shadows</h3>
                   <p>Remove box shadows throughout the app.</p>
                 </div>
+                {renderProjectSettingAction(performanceDisableShadowsPath, 'Disable shadows')}
                 <Switch
                   className="settings-switch"
                   aria-labelledby="settings-performance-disable-shadows"
-                  checked={appSettings.performance.disableShadows}
+                  checked={settingsPanelSettings.performance.disableShadows}
+                  disabled={isScopedSettingControlDisabled(performanceDisableShadowsPath)}
                   onChange={(event) =>
                     handlePerformancePreferenceChange('disableShadows', event.currentTarget.checked)
                   }
@@ -8564,7 +9675,7 @@ export const App: React.FC = () => {
               Chat Cache
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field">
+              <div className={getSettingsFieldClassName()}>
                 <label
                   className="settings-dialog__field-header"
                   htmlFor="settings-chat-cache-limit"
@@ -8575,6 +9686,7 @@ export const App: React.FC = () => {
                     disable.
                   </p>
                 </label>
+                {renderProjectSettingAction(chatRecentCacheLimitPath, 'Cache recent chats')}
                 <Input
                   className="settings-dialog__number-input"
                   id="settings-chat-cache-limit"
@@ -8582,7 +9694,8 @@ export const App: React.FC = () => {
                   min={0}
                   max={50}
                   step={1}
-                  value={appSettings.chat.recentChatCacheLimit}
+                  disabled={isScopedSettingControlDisabled(chatRecentCacheLimitPath)}
+                  value={settingsPanelSettings.chat.recentChatCacheLimit}
                   onChange={(event) =>
                     handleRecentChatCacheLimitChange(event.currentTarget.valueAsNumber)
                   }
@@ -8607,13 +9720,15 @@ export const App: React.FC = () => {
               AI model
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Commit model</h3>
                 </div>
+                {renderProjectSettingAction(gitCommitModelPath, 'Commit model')}
                 <Dropdown
                   id="settings-git-commit-model"
                   aria-label="Commit model"
+                  disabled={isScopedSettingControlDisabled(gitCommitModelPath)}
                   menuAlign="end"
                   options={gitCommitModelOptions}
                   value={gitCommitModelValue}
@@ -8632,21 +9747,27 @@ export const App: React.FC = () => {
             <div className="settings-dialog__section-cards">
               {gitCommitPromptFieldOptions.map((field) => {
                 const fieldId = `settings-git-commit-prompt-${field.key}`
+                const path = {
+                  section: 'gitCommitPrompt',
+                  key: field.key
+                } satisfies AppProjectSettingPath
 
                 return (
                   <div
-                    className="settings-dialog__field settings-dialog__field--stack"
+                    className={getSettingsFieldClassName('settings-dialog__field--stack')}
                     key={field.key}
                   >
                     <label className="settings-dialog__field-header" htmlFor={fieldId}>
                       <h3>{field.label}</h3>
                     </label>
+                    {renderProjectSettingAction(path, field.label)}
                     <textarea
                       id={fieldId}
                       className="settings-dialog__prompt-textarea"
                       rows={field.rows}
                       spellCheck={false}
-                      value={appSettings.git.commitPrompt[field.key]}
+                      disabled={isScopedSettingControlDisabled(path)}
+                      value={settingsPanelSettings.git.commitPrompt[field.key]}
                       onChange={(event) =>
                         handleGitCommitPromptChange(field.key, event.currentTarget.value)
                       }
@@ -8667,43 +9788,48 @@ export const App: React.FC = () => {
               Commit name generation
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--stack settings-dialog__field--prompt-groups">
-                <div className="settings-dialog__prompt-group">
-                  <label
-                    className="settings-dialog__field-header"
-                    htmlFor="settings-git-commit-generation-prompt"
-                  >
-                    <h3>Generation prompt</h3>
-                  </label>
-                  <textarea
-                    id="settings-git-commit-generation-prompt"
-                    className="settings-dialog__prompt-textarea"
-                    rows={4}
-                    spellCheck={false}
-                    value={appSettings.git.commitMessageGeneration.prompt}
-                    onChange={(event) =>
-                      handleGitCommitMessageGenerationChange('prompt', event.currentTarget.value)
-                    }
-                  />
-                </div>
-                <div className="settings-dialog__prompt-group">
-                  <label
-                    className="settings-dialog__field-header"
-                    htmlFor="settings-git-ai-instructions-prefix"
-                  >
-                    <h3>AI instructions prefix</h3>
-                  </label>
-                  <Input
-                    id="settings-git-ai-instructions-prefix"
-                    value={appSettings.git.commitMessageGeneration.aiInstructionsPrefix}
-                    onChange={(event) =>
-                      handleGitCommitMessageGenerationChange(
-                        'aiInstructionsPrefix',
-                        event.currentTarget.value
-                      )
-                    }
-                  />
-                </div>
+              <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-git-commit-generation-prompt"
+                >
+                  <h3>Generation prompt</h3>
+                </label>
+                {renderProjectSettingAction(gitCommitGenerationPromptPath, 'Generation prompt')}
+                <textarea
+                  id="settings-git-commit-generation-prompt"
+                  className="settings-dialog__prompt-textarea"
+                  rows={4}
+                  spellCheck={false}
+                  disabled={isScopedSettingControlDisabled(gitCommitGenerationPromptPath)}
+                  value={settingsPanelSettings.git.commitMessageGeneration.prompt}
+                  onChange={(event) =>
+                    handleGitCommitMessageGenerationChange('prompt', event.currentTarget.value)
+                  }
+                />
+              </div>
+              <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-git-ai-instructions-prefix"
+                >
+                  <h3>AI instructions prefix</h3>
+                </label>
+                {renderProjectSettingAction(
+                  gitCommitGenerationPrefixPath,
+                  'AI instructions prefix'
+                )}
+                <Input
+                  id="settings-git-ai-instructions-prefix"
+                  disabled={isScopedSettingControlDisabled(gitCommitGenerationPrefixPath)}
+                  value={settingsPanelSettings.git.commitMessageGeneration.aiInstructionsPrefix}
+                  onChange={(event) =>
+                    handleGitCommitMessageGenerationChange(
+                      'aiInstructionsPrefix',
+                      event.currentTarget.value
+                    )
+                  }
+                />
               </div>
             </div>
           </section>
@@ -8712,19 +9838,21 @@ export const App: React.FC = () => {
               Worktree
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--stack">
+              <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
                 <label
                   className="settings-dialog__field-header"
                   htmlFor="settings-git-worktree-branch-name-prompt"
                 >
                   <h3>Branch name prompt</h3>
                 </label>
+                {renderProjectSettingAction(gitWorktreeBranchPromptPath, 'Branch name prompt')}
                 <textarea
                   id="settings-git-worktree-branch-name-prompt"
                   className="settings-dialog__prompt-textarea"
                   rows={4}
                   spellCheck={false}
-                  value={appSettings.git.worktree.branchNamePrompt}
+                  disabled={isScopedSettingControlDisabled(gitWorktreeBranchPromptPath)}
+                  value={settingsPanelSettings.git.worktree.branchNamePrompt}
                   onChange={(event) =>
                     handleGitWorktreeChange('branchNamePrompt', event.currentTarget.value)
                   }
@@ -8749,15 +9877,17 @@ export const App: React.FC = () => {
               External Links
             </h2>
             <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--inline">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Behavior</h3>
                   <p>Manual asks each time. Copy and Open always use that action.</p>
                 </div>
+                {renderProjectSettingAction(linkBehaviorPath, 'External link behavior')}
                 <SegmentedControl
                   aria-label="External link behavior"
+                  disabled={isScopedSettingControlDisabled(linkBehaviorPath)}
                   options={externalLinkOptions}
-                  value={appSettings.links.behavior}
+                  value={settingsPanelSettings.links.behavior}
                   onChange={handleExternalLinkBehaviorChange}
                 />
               </div>
@@ -8779,25 +9909,28 @@ export const App: React.FC = () => {
             Window
           </h2>
           <div className="settings-dialog__section-cards">
-            <div className="settings-dialog__field settings-dialog__field--inline">
+            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
               <div className="settings-dialog__field-header">
                 <h3>Theme</h3>
               </div>
+              {renderProjectSettingAction(appearanceThemePath, 'Theme')}
               <SegmentedControl
                 aria-label="Theme"
                 className="settings-dialog__appearance-toggle"
+                disabled={isScopedSettingControlDisabled(appearanceThemePath)}
                 options={themeOptions}
-                value={appSettings.appearance.theme}
+                value={settingsPanelSettings.appearance.theme}
                 onChange={handleThemePreferenceChange}
               />
             </div>
-            <div className="settings-dialog__field settings-dialog__field--inline">
+            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
               <label
                 className="settings-dialog__field-header"
                 htmlFor="settings-appearance-zoom-level"
               >
                 <h3>Zoom</h3>
               </label>
+              {renderProjectSettingAction(appearanceZoomPath, 'Zoom')}
               <Input
                 className="settings-dialog__number-input"
                 id="settings-appearance-zoom-level"
@@ -8805,6 +9938,7 @@ export const App: React.FC = () => {
                 min={appAppearanceZoomLevelMin}
                 max={appAppearanceZoomLevelMax}
                 step={1}
+                disabled={isScopedSettingControlDisabled(appearanceZoomPath)}
                 value={appearanceZoomLevelInput}
                 onBlur={handleAppearanceZoomLevelInputBlur}
                 onChange={(event) =>
@@ -8822,28 +9956,31 @@ export const App: React.FC = () => {
             Window Controls
           </h2>
           <div className="settings-dialog__section-cards">
-            <div className="settings-dialog__field settings-dialog__field--inline">
+            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
               <div className="settings-dialog__field-header">
                 <h3>Position</h3>
               </div>
+              {renderProjectSettingAction(appearancePositionPath, 'Position')}
               <SegmentedControl
                 aria-label="Position"
                 className="settings-dialog__appearance-toggle"
+                disabled={isScopedSettingControlDisabled(appearancePositionPath)}
                 options={appearancePositionOptions}
-                value={appSettings.appearance.position}
+                value={settingsPanelSettings.appearance.position}
                 onChange={handleAppearancePositionChange}
               />
             </div>
-            <div className="settings-dialog__field settings-dialog__field--inline">
+            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
               <div className="settings-dialog__field-header">
                 <h3>Style</h3>
               </div>
+              {renderProjectSettingAction(appearanceStylePath, 'Window control style')}
               <SegmentedControl
                 aria-label="Window control style"
                 className="settings-dialog__appearance-toggle"
-                disabled={windowControlsHidden}
+                disabled={isScopedSettingControlDisabled(appearanceStylePath, windowControlsHidden)}
                 options={appearanceStyleOptions}
-                value={appSettings.appearance.style}
+                value={settingsPanelSettings.appearance.style}
                 onChange={handleAppearanceStyleChange}
               />
             </div>
@@ -8854,18 +9991,91 @@ export const App: React.FC = () => {
             Buttons
           </h2>
           <div className="settings-dialog__section-cards">
-            <div className="settings-dialog__field settings-dialog__field--inline">
+            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
               <div className="settings-dialog__field-header">
                 <h3>Style</h3>
               </div>
+              {renderProjectSettingAction(appearanceControlStylePath, 'Button style')}
               <SegmentedControl
                 aria-label="Button style"
                 className="settings-dialog__appearance-toggle"
+                disabled={isScopedSettingControlDisabled(appearanceControlStylePath)}
                 options={appearanceControlStyleOptions}
-                value={appSettings.appearance.controlStyle}
+                value={settingsPanelSettings.appearance.controlStyle}
                 onChange={handleAppearanceControlStyleChange}
               />
             </div>
+          </div>
+        </section>
+        <section className="settings-dialog__section" aria-labelledby="settings-appearance-fonts">
+          <h2 className="settings-dialog__section-heading" id="settings-appearance-fonts">
+            Fonts
+          </h2>
+          <div className="settings-dialog__section-cards">
+            {appearanceFontFields.map((field) => {
+              const path = {
+                section: 'appearance',
+                key: field.key
+              } satisfies AppProjectSettingPath
+              const font = settingsPanelSettings.appearance[field.key]
+              const specialValues = new Set(field.specialOptions.map((option) => option.value))
+              const selectedFontIsMissing =
+                !specialValues.has(font.family) &&
+                !installedFontFamilies.some((family) => family === font.family)
+              const options = [
+                ...field.specialOptions,
+                ...(selectedFontIsMissing
+                  ? [{ value: font.family, label: `${font.family} (Unavailable)` }]
+                  : []),
+                ...installedFontOptions
+              ]
+              const draftKey = `${settingsScopeKey}:${field.key}`
+              const sizeInput =
+                appearanceFontSizeInputDraft?.key === draftKey
+                  ? appearanceFontSizeInputDraft.value
+                  : String(font.size)
+              const disabled = isScopedSettingControlDisabled(path)
+
+              return (
+                <div
+                  className={getSettingsFieldClassName('settings-dialog__field--inline')}
+                  key={field.key}
+                >
+                  <div className="settings-dialog__field-header">
+                    <h3>{field.label}</h3>
+                    {!installedFontsLoaded && <p>Loading installed fonts…</p>}
+                  </div>
+                  {renderProjectSettingAction(path, field.label)}
+                  <div className="settings-dialog__font-controls">
+                    <Dropdown
+                      aria-label={field.label}
+                      className="settings-dialog__font-dropdown"
+                      disabled={disabled}
+                      options={options}
+                      value={font.family}
+                      onChange={(family) => handleAppearanceFontFamilyChange(field.key, family)}
+                    />
+                    <label className="settings-dialog__font-size">
+                      <span className="sr-only">{field.label} size</span>
+                      <Input
+                        aria-label={`${field.label} size`}
+                        type="number"
+                        min={appFontSizeMin}
+                        max={appFontSizeMax}
+                        step={0.025}
+                        disabled={disabled}
+                        value={sizeInput}
+                        onBlur={handleAppearanceFontSizeInputBlur}
+                        onChange={(event) =>
+                          handleAppearanceFontSizeInputChange(field.key, event.currentTarget.value)
+                        }
+                      />
+                      <span aria-hidden="true">rem</span>
+                    </label>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </section>
       </section>
@@ -8949,6 +10159,29 @@ export const App: React.FC = () => {
                 )
               })}
             </nav>
+            <div className="settings-dialog__scope">
+              <SegmentedControl<SettingsScope>
+                aria-label="Settings scope"
+                className="settings-dialog__scope-switcher"
+                options={[
+                  { value: 'global', label: 'Global' },
+                  {
+                    value: 'project',
+                    label: settingsProjectLabel,
+                    disabled: !settingsProjectCwd,
+                    title: settingsProjectCwd ?? 'No project selected'
+                  }
+                ]}
+                size="small"
+                value={settingsViewIsProject ? 'project' : 'global'}
+                onChange={(scope) => {
+                  if (scope === 'project' && !settingsProjectCwd) return
+                  setAppearanceZoomLevelInputDraft(null)
+                  setAppearanceFontSizeInputDraft(null)
+                  setSettingsScope(scope)
+                }}
+              />
+            </div>
           </aside>
           <div className="settings-dialog__body">{renderSettingsPanel()}</div>
         </section>
@@ -8994,7 +10227,7 @@ export const App: React.FC = () => {
     )
 
   const chromeControlTheme =
-    appSettings.appearance.controlStyle === 'transparent' ? 'transparent' : 'secondary'
+    effectiveAppSettings.appearance.controlStyle === 'transparent' ? 'transparent' : 'secondary'
 
   const renderSettingsButton = (): React.ReactElement => (
     <Button
@@ -9228,54 +10461,84 @@ export const App: React.FC = () => {
                     selectedChatCommitMarkers.length === 0 && (
                       <p className="chat__status">No messages found.</p>
                     )}
-                  {visibleChatItems.map((item, itemIndex) => (
-                    <Fragment key={item.id}>
-                      {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
-                      {item.id === firstPendingChatItemId &&
-                        trailingChatCommitMarkers.map(renderChatCommitMarker)}
-                      <ChatDetailItem
-                        canEditOwnMessages={canEditOwnMessages}
-                        continuePrompt={appSettings.chat.continuePrompt}
-                        continueStoppedTurnDisabled={stoppedTurnActionDisabled}
-                        hasNextWorkingStep={workingStepIdsWithNextWorkingStep.has(item.id)}
-                        item={item}
-                        modelLabelsById={modelLabelsById}
-                        onDeletePendingMessage={handleDeletePendingMessage}
-                        onEditPendingMessage={handleEditPendingMessage}
-                        onInterruptPendingMessage={
-                          chatHasActiveTurn ? handleInterruptPendingMessage : undefined
-                        }
-                        onContinueStoppedTurn={
-                          item.type === 'working' && item.status === 'stopped'
-                            ? handleContinueStoppedTurn
-                            : undefined
-                        }
-                        onEditMessage={handleEditMessage}
-                        onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
-                        onOpenAgentTerminal={handleOpenAgentTerminal}
-                        onRetryStoppedTurn={handleRetryStoppedTurn}
-                        previousItem={visibleChatItems[itemIndex - 1] ?? null}
-                        projectCwd={changesProjectCwd}
-                        retryMessage={
-                          canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null
-                        }
-                        retryStoppedTurnDisabled={stoppedTurnActionDisabled}
-                        selectedModelId={model}
-                        streaming={item.id === streamingChatItemId}
-                        thoughtSettings={appSettings.chat}
-                      />
-                      {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
-                    </Fragment>
-                  ))}
+                  {visibleChatItems.map((item, itemIndex) => {
+                    const followingWorkingStep = followingWorkingStepsById.get(item.id)
+
+                    return (
+                      <Fragment key={item.id}>
+                        {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
+                        {item.id === firstPendingChatItemId &&
+                          trailingChatCommitMarkers.map(renderChatCommitMarker)}
+                        <ChatDetailItem
+                          canEditOwnMessages={canEditOwnMessages}
+                          continuePrompt={effectiveAppSettings.chat.continuePrompt}
+                          continueStoppedTurnDisabled={stoppedTurnActionDisabled}
+                          continuedStoppedTurn={continuedStoppedWorkingStepIds.has(item.id)}
+                          followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
+                          followingWorkingStepStatus={followingWorkingStep?.status}
+                          hasNextWorkingStep={workingStepIdsWithNextWorkingStep.has(item.id)}
+                          item={item}
+                          modelLabelsById={modelLabelsById}
+                          onDeletePendingMessage={handleDeletePendingMessage}
+                          onEditPendingMessage={handleEditPendingMessage}
+                          onInterruptPendingMessage={
+                            chatHasActiveTurn ? handleInterruptPendingMessage : undefined
+                          }
+                          onContinueStoppedTurn={
+                            item.type === 'working' && item.status === 'stopped'
+                              ? handleContinueStoppedTurn
+                              : undefined
+                          }
+                          onEditMessage={handleEditMessage}
+                          onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+                          onRetryStoppedTurn={handleRetryStoppedTurn}
+                          previousItem={visibleChatItems[itemIndex - 1] ?? null}
+                          projectCwd={changesProjectCwd}
+                          retryMessage={
+                            canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null
+                          }
+                          retryStoppedTurnDisabled={stoppedTurnActionDisabled}
+                          selectedModelId={model}
+                          streaming={item.id === streamingChatItemId}
+                          thoughtSettings={effectiveAppSettings.chat}
+                        />
+                        {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
+                      </Fragment>
+                    )
+                  })}
                   {!firstPendingChatItemId && trailingChatCommitMarkers.map(renderChatCommitMarker)}
                 </div>
               </div>
             )}
-            {!appSettings.chat.hidePlans && (
+            {!effectiveAppSettings.chat.hidePlans && (
               <ChatPlan key={selectedChatKey ?? 'no-chat'} plan={messageBoxPlan} />
             )}
             <div className="chat-panel__composer">
               <div className="chat-panel__composer-inner">
+                {requestErrorVisible && (
+                  <section
+                    className="chat-approval chat-request-error"
+                    aria-label="Request error"
+                    role="alert"
+                  >
+                    <div className="chat-approval__main">
+                      <span className="chat-approval__label">Request failed</span>
+                      <span className="chat-approval__summary" title={requestErrorSummary}>
+                        {requestErrorSummary}
+                      </span>
+                    </div>
+                    <div className="chat-approval__actions">
+                      <Button
+                        aria-label="Dismiss error"
+                        title="Dismiss error"
+                        callback={handleDismissSendError}
+                        icon={<X aria-hidden="true" />}
+                        size="small"
+                        theme="transparent"
+                      />
+                    </div>
+                  </section>
+                )}
                 {!selectedChat && newChatOpen && providerUpdateSuggestion && (
                   <section
                     className="chat-approval chat-provider-update"
@@ -9457,6 +10720,18 @@ export const App: React.FC = () => {
                     </div>
                   </section>
                 )}
+                {selectedChat && pendingUserInput && (
+                  <UserInputRequestBox
+                    disabled={providerUpdateInProgress || userInputResolving}
+                    error={userInputError}
+                    key={pendingUserInput.id}
+                    request={pendingUserInput}
+                    onCancel={() => resolveSelectedUserInput({ kind: 'cancel' })}
+                    onSubmit={(answer, wasFreeform) =>
+                      resolveSelectedUserInput({ kind: 'answer', answer, wasFreeform })
+                    }
+                  />
+                )}
                 <MessageBox
                   active={editingMessage ? false : chatHasActiveTurn}
                   activePrimaryMode="queue"
@@ -9467,13 +10742,12 @@ export const App: React.FC = () => {
                   autoFocus={!selectedChat && newChatOpen}
                   disabled={messageBoxDisabled}
                   editSession={editingMessage}
-                  error={sendState === 'error' ? 'Unable to complete request.' : null}
                   accountUsage={accountUsage}
                   accountUsageError={accountUsageError}
                   accountUsageState={accountUsageState}
                   container={changesContainer}
                   contextUsage={messageBoxContextUsage}
-                  displayUsage={appSettings.chat.displayUsage}
+                  displayUsage={effectiveAppSettings.chat.displayUsage}
                   lastActionId={appSettings.lastActionId}
                   model={effectiveModel}
                   models={models}
@@ -9501,23 +10775,25 @@ export const App: React.FC = () => {
                   serviceTier={effectiveServiceTier}
                   showAccessSelector={
                     messageBoxProviderAvailable &&
-                    appSettings.chat.forceAccess === appChatManualDropdownValue
+                    effectiveAppSettings.chat.forceAccess === appChatManualDropdownValue
                   }
-                  showActions={appSettings.chat.enableActions}
+                  showActions={effectiveAppSettings.chat.enableActions}
                   showActionLabel={hasForcedChatDropdown}
-                  showModelSelector={appSettings.chat.forceModel === appChatManualDropdownValue}
-                  showNotesButton={appSettings.chat.enableNotesButton}
+                  showModelSelector={
+                    effectiveAppSettings.chat.forceModel === appChatManualDropdownValue
+                  }
+                  showNotesButton={effectiveAppSettings.chat.enableNotesButton}
                   showReasoningSelector={
                     messageBoxProviderAvailable &&
-                    appSettings.chat.forceReasoning === appChatManualDropdownValue
+                    effectiveAppSettings.chat.forceReasoning === appChatManualDropdownValue
                   }
                   showReviewSelector={
                     messageBoxProviderAvailable &&
-                    appSettings.chat.forceReview === appChatManualDropdownValue
+                    effectiveAppSettings.chat.forceReview === appChatManualDropdownValue
                   }
                   showSpeedSelector={
                     messageBoxProviderAvailable &&
-                    appSettings.chat.forceSpeed === appChatManualDropdownValue
+                    effectiveAppSettings.chat.forceSpeed === appChatManualDropdownValue
                   }
                   onActionsChange={handleActionsChange}
                   onLastActionChange={handleLastActionChange}
@@ -9602,15 +10878,22 @@ export const App: React.FC = () => {
                   <BranchSwitcher
                     branches={branchNames}
                     busy={gitBranchActionState === 'sending'}
+                    canForceDelete={Boolean(gitBranchDeleteRetry)}
                     currentBranch={currentBranchName}
+                    deleteWorktreePath={gitBranchWorktreeDeleteRetry?.worktreePath}
                     disabled={branchSwitchDisabled}
                     error={gitBranchError}
                     id="changes-branch"
                     loading={gitBranchLoadState === 'loading'}
                     onClearError={() => {
                       setGitBranchError(null)
+                      setGitBranchDeleteRetry(null)
+                      setGitBranchWorktreeDeleteRetry(null)
                       if (gitBranchActionState === 'error') setGitBranchActionState('idle')
                     }}
+                    onDelete={handleDeleteBranch}
+                    onDeleteWorktree={handleDeleteBranchWorktree}
+                    onForceDelete={handleForceDeleteBranch}
                     onOpen={() => setGitBranchLoadRequest((currentRequest) => currentRequest + 1)}
                     onSwitch={handleSwitchBranch}
                   />
@@ -9700,11 +10983,9 @@ export const App: React.FC = () => {
                   aria-hidden={changesPaneView !== 'terminal'}
                 >
                   <TerminalPanel
-                    agentTerminalSnapshots={agentTerminalSnapshots}
                     commandLaunchRequest={terminalCommandLaunchRequest}
                     container={terminalContainer ?? null}
                     cwd={terminalCwd}
-                    launchRequest={terminalLaunchRequest}
                   />
                 </div>
               )}
