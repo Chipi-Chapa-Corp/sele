@@ -26,6 +26,11 @@ export type AppAppearanceStylePreference = 'system' | 'sele' | 'macos'
 export type AppAppearanceControlStylePreference = 'bordered' | 'transparent'
 export type AppChatUsageDisplay = 'chatContext' | 'global'
 
+export type AppFontSetting = {
+  family: string
+  size: number
+}
+
 export type AppGitCommitPromptSettings = {
   instructions: string
   workflow: string
@@ -77,6 +82,16 @@ export const appAppearanceZoomLevelDefault = appWindowZoomLevelDefault
 export const appAppearanceZoomLevelMin = appWindowZoomLevelMin
 export const appAppearanceZoomLevelMax = appWindowZoomLevelMax
 export const normalizeAppAppearanceZoomLevel = normalizeAppWindowZoomLevel
+export const appFontSystemValue = 'sele:system-font'
+export const appFontInheritValue = 'sele:inherit-application-font'
+export const appFontMonospaceValue = 'sele:system-monospace-font'
+export const appFontSizeMin = 0.5
+export const appFontSizeMax = 2.5
+
+export const normalizeAppFontSize = (value: unknown, fallback: number): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.round(Math.min(Math.max(value, appFontSizeMin), appFontSizeMax) * 1000) / 1000
+}
 
 export type AppSettings = {
   actions: AppAction[]
@@ -87,6 +102,9 @@ export type AppSettings = {
     position: AppAppearancePositionPreference
     style: AppAppearanceStylePreference
     controlStyle: AppAppearanceControlStylePreference
+    applicationFont: AppFontSetting
+    chatFont: AppFontSetting
+    codeFont: AppFontSetting
   }
   chat: AppChatThoughtSettings & {
     continuePrompt: string
@@ -108,7 +126,23 @@ export type AppSettings = {
   }
 }
 
+export type AppProjectSettingsOverrides = {
+  appearance?: Partial<AppSettings['appearance']>
+  chat?: Partial<AppSettings['chat']>
+  links?: Partial<AppExternalLinkSettings>
+  performance?: Partial<AppPerformanceSettings>
+  git?: {
+    commitModel?: ProviderModelId | null
+    commitPrompt?: Partial<AppGitCommitPromptSettings>
+    commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
+    worktree?: Partial<AppGitWorktreeSettings>
+  }
+}
+
+export type AppProjectSettingsByCwd = Record<string, AppProjectSettingsOverrides>
+
 export const appSettingsStorageKey = 'sele:app-settings:v1'
+export const appProjectSettingsStorageKey = 'sele:app-project-settings:v1'
 
 export const defaultStoppedTurnContinuePrompt = 'Continue from where you left off'
 
@@ -228,7 +262,19 @@ export const defaultAppAppearanceSettings: AppSettings['appearance'] = {
   zoomLevel: appAppearanceZoomLevelDefault,
   position: isMacPlatform() ? 'left' : 'system',
   style: isMacPlatform() ? 'macos' : 'system',
-  controlStyle: 'bordered'
+  controlStyle: 'bordered',
+  applicationFont: {
+    family: appFontSystemValue,
+    size: 1.25
+  },
+  chatFont: {
+    family: appFontInheritValue,
+    size: 1.25
+  },
+  codeFont: {
+    family: appFontMonospaceValue,
+    size: 1.25
+  }
 }
 
 export const defaultAppSettings: AppSettings = {
@@ -291,6 +337,33 @@ const isStoredModel = (value: unknown): value is ProviderModelId =>
 const isStoredReasoningEffort = (value: unknown): value is ProviderReasoningEffort =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 64
 
+const getStoredFontFamily = (value: unknown, fallback: string): string => {
+  if (typeof value !== 'string') return fallback
+  const family = value.trim()
+  const hasControlCharacter = [...family].some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
+  return family && family.length <= 256 && !hasControlCharacter ? family : fallback
+}
+
+const getStoredFontSetting = (value: unknown, fallback: AppFontSetting): AppFontSetting => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback
+
+  const setting = value as Record<string, unknown>
+  const storedSize = setting.size
+  const remSize = typeof storedSize === 'number' && storedSize >= 8 ? storedSize / 16 : storedSize
+  return {
+    family: getStoredFontFamily(setting.family, fallback.family),
+    size: normalizeAppFontSize(remSize, fallback.size)
+  }
+}
+
+const hasOwnProperty = <Key extends PropertyKey>(
+  value: object,
+  key: Key
+): value is object & Record<Key, unknown> => Object.prototype.hasOwnProperty.call(value, key)
+
 const getStoredForcedDropdown = <TValue extends string>(
   value: unknown,
   isValue: (candidate: unknown) => candidate is TValue
@@ -325,6 +398,192 @@ const getStoredPerformanceBoolean = (
 ): boolean =>
   typeof performance[key] === 'boolean' ? performance[key] : defaultAppSettings.performance[key]
 
+const readProjectAppearanceOverrides = (
+  appearance: Record<string, unknown>
+): Partial<AppSettings['appearance']> => {
+  const overrides: Partial<AppSettings['appearance']> = {}
+
+  if (hasOwnProperty(appearance, 'theme') && isAppThemePreference(appearance.theme)) {
+    overrides.theme = appearance.theme
+  }
+  if (
+    hasOwnProperty(appearance, 'zoomLevel') &&
+    typeof appearance.zoomLevel === 'number' &&
+    Number.isFinite(appearance.zoomLevel)
+  ) {
+    overrides.zoomLevel = normalizeAppAppearanceZoomLevel(appearance.zoomLevel)
+  }
+  if (
+    hasOwnProperty(appearance, 'position') &&
+    isAppAppearancePositionPreference(appearance.position)
+  ) {
+    overrides.position = appearance.position
+  }
+  if (hasOwnProperty(appearance, 'style') && isAppAppearanceStylePreference(appearance.style)) {
+    overrides.style = appearance.style
+  }
+  if (
+    hasOwnProperty(appearance, 'controlStyle') &&
+    isAppAppearanceControlStylePreference(appearance.controlStyle)
+  ) {
+    overrides.controlStyle = appearance.controlStyle
+  }
+  for (const key of ['applicationFont', 'chatFont', 'codeFont'] as const) {
+    if (hasOwnProperty(appearance, key)) {
+      overrides[key] = getStoredFontSetting(appearance[key], defaultAppSettings.appearance[key])
+    }
+  }
+
+  return overrides
+}
+
+const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSettings['chat']> => {
+  const overrides: Partial<AppSettings['chat']> = {}
+
+  if (hasOwnProperty(chat, 'continuePrompt') && typeof chat.continuePrompt === 'string') {
+    overrides.continuePrompt = chat.continuePrompt
+  }
+  if (hasOwnProperty(chat, 'recentChatCacheLimit')) {
+    overrides.recentChatCacheLimit = getStoredRecentChatCacheLimit(chat.recentChatCacheLimit)
+  }
+  if (hasOwnProperty(chat, 'displayUsage') && isAppChatUsageDisplay(chat.displayUsage)) {
+    overrides.displayUsage = chat.displayUsage
+  }
+
+  const booleanKeys = [
+    'hidePlans',
+    'enableActions',
+    'enableNotesButton',
+    'updateExistingChats',
+    'updateNewChats',
+    'expandThoughtsOnStart',
+    'collapseThoughtsOnFinish',
+    'collapseThoughtsOnNextTurn',
+    'expandStoppedTurns',
+    'collapseStoppedOnNextTurn'
+  ] satisfies readonly (keyof AppSettings['chat'])[]
+
+  for (const key of booleanKeys) {
+    if (hasOwnProperty(chat, key) && typeof chat[key] === 'boolean') {
+      overrides[key] = chat[key]
+    }
+  }
+
+  if (hasOwnProperty(chat, 'forceAccess')) {
+    overrides.forceAccess = getStoredForcedDropdown(chat.forceAccess, isProviderSandboxMode)
+  }
+  if (hasOwnProperty(chat, 'forceReview')) {
+    overrides.forceReview = getStoredForcedDropdown(chat.forceReview, isProviderApprovalMode)
+  }
+  if (hasOwnProperty(chat, 'forceModel')) {
+    overrides.forceModel = getStoredForcedDropdown(chat.forceModel, isStoredModel)
+  }
+  if (hasOwnProperty(chat, 'forceReasoning')) {
+    overrides.forceReasoning = getStoredForcedDropdown(chat.forceReasoning, isStoredReasoningEffort)
+  }
+  if (hasOwnProperty(chat, 'forceSpeed')) {
+    overrides.forceSpeed = getStoredForcedDropdown(chat.forceSpeed, isProviderServiceTier)
+  }
+
+  return overrides
+}
+
+const readProjectLinkOverrides = (
+  links: Record<string, unknown>
+): Partial<AppExternalLinkSettings> => {
+  const overrides: Partial<AppExternalLinkSettings> = {}
+
+  if (hasOwnProperty(links, 'behavior') && isAppExternalLinkBehavior(links.behavior)) {
+    overrides.behavior = links.behavior
+  }
+
+  return overrides
+}
+
+const readProjectPerformanceOverrides = (
+  performance: Record<string, unknown>
+): Partial<AppPerformanceSettings> => {
+  const overrides: Partial<AppPerformanceSettings> = {}
+
+  if (
+    hasOwnProperty(performance, 'disableShadows') &&
+    typeof performance.disableShadows === 'boolean'
+  ) {
+    overrides.disableShadows = performance.disableShadows
+  }
+
+  return overrides
+}
+
+const readProjectGitOverrides = (
+  git: Record<string, unknown>
+): AppProjectSettingsOverrides['git'] => {
+  const overrides: NonNullable<AppProjectSettingsOverrides['git']> = {}
+
+  if (hasOwnProperty(git, 'commitModel')) {
+    if (git.commitModel == null) {
+      overrides.commitModel = null
+    } else if (isStoredModel(git.commitModel)) {
+      overrides.commitModel = git.commitModel
+    }
+  }
+
+  const commitPrompt =
+    git.commitPrompt && typeof git.commitPrompt === 'object' && !Array.isArray(git.commitPrompt)
+      ? (git.commitPrompt as Record<string, unknown>)
+      : {}
+  const storedCommitPrompt: Partial<AppGitCommitPromptSettings> = {}
+  for (const key of Object.keys(
+    defaultAppGitCommitPromptSettings
+  ) as (keyof AppGitCommitPromptSettings)[]) {
+    if (hasOwnProperty(commitPrompt, key) && typeof commitPrompt[key] === 'string') {
+      storedCommitPrompt[key] = commitPrompt[key]
+    }
+  }
+  if (Object.keys(storedCommitPrompt).length > 0) {
+    overrides.commitPrompt = storedCommitPrompt
+  }
+
+  const commitMessageGeneration =
+    git.commitMessageGeneration &&
+    typeof git.commitMessageGeneration === 'object' &&
+    !Array.isArray(git.commitMessageGeneration)
+      ? (git.commitMessageGeneration as Record<string, unknown>)
+      : {}
+  const storedCommitMessageGeneration: Partial<AppGitCommitMessageGenerationSettings> = {}
+  for (const key of Object.keys(
+    defaultAppGitCommitMessageGenerationSettings
+  ) as (keyof AppGitCommitMessageGenerationSettings)[]) {
+    if (
+      hasOwnProperty(commitMessageGeneration, key) &&
+      typeof commitMessageGeneration[key] === 'string'
+    ) {
+      storedCommitMessageGeneration[key] = commitMessageGeneration[key]
+    }
+  }
+  if (Object.keys(storedCommitMessageGeneration).length > 0) {
+    overrides.commitMessageGeneration = storedCommitMessageGeneration
+  }
+
+  const worktree =
+    git.worktree && typeof git.worktree === 'object' && !Array.isArray(git.worktree)
+      ? (git.worktree as Record<string, unknown>)
+      : {}
+  const storedWorktree: Partial<AppGitWorktreeSettings> = {}
+  for (const key of Object.keys(
+    defaultAppGitWorktreeSettings
+  ) as (keyof AppGitWorktreeSettings)[]) {
+    if (hasOwnProperty(worktree, key) && typeof worktree[key] === 'string') {
+      storedWorktree[key] = worktree[key]
+    }
+  }
+  if (Object.keys(storedWorktree).length > 0) {
+    overrides.worktree = storedWorktree
+  }
+
+  return overrides
+}
+
 const readPromptField = (
   storedPrompt: Record<string, unknown>,
   key: keyof AppGitCommitPromptSettings
@@ -355,6 +614,109 @@ const readWorktreeField = (
 ): string => {
   const storedValue = storedSettings[key]
   return typeof storedValue === 'string' ? storedValue : defaultAppGitWorktreeSettings[key]
+}
+
+const pruneAppProjectSettingsOverrides = (
+  overrides: AppProjectSettingsOverrides
+): AppProjectSettingsOverrides => {
+  const prunedOverrides: AppProjectSettingsOverrides = {}
+
+  if (overrides.appearance && Object.keys(overrides.appearance).length > 0) {
+    prunedOverrides.appearance = { ...overrides.appearance }
+  }
+  if (overrides.chat && Object.keys(overrides.chat).length > 0) {
+    prunedOverrides.chat = { ...overrides.chat }
+  }
+  if (overrides.links && Object.keys(overrides.links).length > 0) {
+    prunedOverrides.links = { ...overrides.links }
+  }
+  if (overrides.performance && Object.keys(overrides.performance).length > 0) {
+    prunedOverrides.performance = { ...overrides.performance }
+  }
+
+  if (overrides.git) {
+    const gitOverrides: NonNullable<AppProjectSettingsOverrides['git']> = {}
+
+    if (hasOwnProperty(overrides.git, 'commitModel')) {
+      gitOverrides.commitModel = overrides.git.commitModel ?? null
+    }
+    if (overrides.git.commitPrompt && Object.keys(overrides.git.commitPrompt).length > 0) {
+      gitOverrides.commitPrompt = { ...overrides.git.commitPrompt }
+    }
+    if (
+      overrides.git.commitMessageGeneration &&
+      Object.keys(overrides.git.commitMessageGeneration).length > 0
+    ) {
+      gitOverrides.commitMessageGeneration = { ...overrides.git.commitMessageGeneration }
+    }
+    if (overrides.git.worktree && Object.keys(overrides.git.worktree).length > 0) {
+      gitOverrides.worktree = { ...overrides.git.worktree }
+    }
+
+    if (Object.keys(gitOverrides).length > 0) {
+      prunedOverrides.git = gitOverrides
+    }
+  }
+
+  return prunedOverrides
+}
+
+export const isAppProjectSettingsOverridesEmpty = (
+  overrides: AppProjectSettingsOverrides | null | undefined
+): boolean => !overrides || Object.keys(pruneAppProjectSettingsOverrides(overrides)).length === 0
+
+export const normalizeAppProjectSettingsCwd = (cwd: string | null | undefined): string | null => {
+  const normalizedCwd = cwd?.trim()
+  return normalizedCwd ? normalizedCwd : null
+}
+
+export const resolveAppSettings = (
+  settings: AppSettings,
+  overrides: AppProjectSettingsOverrides | null | undefined
+): AppSettings => {
+  if (isAppProjectSettingsOverridesEmpty(overrides)) return settings
+
+  const gitOverrides = overrides?.git
+  const commitModel =
+    gitOverrides && hasOwnProperty(gitOverrides, 'commitModel')
+      ? (gitOverrides.commitModel ?? null)
+      : settings.git.commitModel
+
+  return {
+    ...settings,
+    appearance: {
+      ...settings.appearance,
+      ...overrides?.appearance
+    },
+    chat: {
+      ...settings.chat,
+      ...overrides?.chat
+    },
+    links: {
+      ...settings.links,
+      ...overrides?.links
+    },
+    performance: {
+      ...settings.performance,
+      ...overrides?.performance
+    },
+    git: {
+      ...settings.git,
+      commitModel,
+      commitPrompt: {
+        ...settings.git.commitPrompt,
+        ...gitOverrides?.commitPrompt
+      },
+      commitMessageGeneration: {
+        ...settings.git.commitMessageGeneration,
+        ...gitOverrides?.commitMessageGeneration
+      },
+      worktree: {
+        ...settings.git.worktree,
+        ...gitOverrides?.worktree
+      }
+    }
+  }
 }
 
 export const readStoredAppSettings = (): AppSettings => {
@@ -426,7 +788,13 @@ export const readStoredAppSettings = (): AppSettings => {
           : defaultAppSettings.appearance.style,
         controlStyle: isAppAppearanceControlStylePreference(appearance.controlStyle)
           ? appearance.controlStyle
-          : defaultAppSettings.appearance.controlStyle
+          : defaultAppSettings.appearance.controlStyle,
+        applicationFont: getStoredFontSetting(
+          appearance.applicationFont,
+          defaultAppSettings.appearance.applicationFont
+        ),
+        chatFont: getStoredFontSetting(appearance.chatFont, defaultAppSettings.appearance.chatFont),
+        codeFont: getStoredFontSetting(appearance.codeFont, defaultAppSettings.appearance.codeFont)
       },
       chat: {
         continuePrompt:
@@ -496,6 +864,105 @@ export const readStoredAppSettings = (): AppSettings => {
   }
 }
 
+const readStoredAppProjectSettingsOverride = (
+  value: unknown
+): AppProjectSettingsOverrides | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const storedOverrides = value as Record<string, unknown>
+  const overrides: AppProjectSettingsOverrides = {}
+
+  const appearance =
+    storedOverrides.appearance &&
+    typeof storedOverrides.appearance === 'object' &&
+    !Array.isArray(storedOverrides.appearance)
+      ? readProjectAppearanceOverrides(storedOverrides.appearance as Record<string, unknown>)
+      : null
+  if (appearance && Object.keys(appearance).length > 0) overrides.appearance = appearance
+
+  const chat =
+    storedOverrides.chat &&
+    typeof storedOverrides.chat === 'object' &&
+    !Array.isArray(storedOverrides.chat)
+      ? readProjectChatOverrides(storedOverrides.chat as Record<string, unknown>)
+      : null
+  if (chat && Object.keys(chat).length > 0) overrides.chat = chat
+
+  const links =
+    storedOverrides.links &&
+    typeof storedOverrides.links === 'object' &&
+    !Array.isArray(storedOverrides.links)
+      ? readProjectLinkOverrides(storedOverrides.links as Record<string, unknown>)
+      : null
+  if (links && Object.keys(links).length > 0) overrides.links = links
+
+  const performance =
+    storedOverrides.performance &&
+    typeof storedOverrides.performance === 'object' &&
+    !Array.isArray(storedOverrides.performance)
+      ? readProjectPerformanceOverrides(storedOverrides.performance as Record<string, unknown>)
+      : null
+  if (performance && Object.keys(performance).length > 0) overrides.performance = performance
+
+  const git =
+    storedOverrides.git &&
+    typeof storedOverrides.git === 'object' &&
+    !Array.isArray(storedOverrides.git)
+      ? readProjectGitOverrides(storedOverrides.git as Record<string, unknown>)
+      : null
+  if (git && Object.keys(git).length > 0) overrides.git = git
+
+  return isAppProjectSettingsOverridesEmpty(overrides) ? null : overrides
+}
+
+export const readStoredAppProjectSettings = (): AppProjectSettingsByCwd => {
+  try {
+    const storedValue = window.localStorage.getItem(appProjectSettingsStorageKey)
+    if (!storedValue) return {}
+
+    const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
+    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
+
+    const projectSettings: AppProjectSettingsByCwd = {}
+    for (const [cwd, storedOverrides] of Object.entries(parsedValue)) {
+      const normalizedCwd = normalizeAppProjectSettingsCwd(cwd)
+      if (!normalizedCwd) continue
+
+      const overrides = readStoredAppProjectSettingsOverride(storedOverrides)
+      if (overrides) projectSettings[normalizedCwd] = overrides
+    }
+
+    return projectSettings
+  } catch {
+    return {}
+  }
+}
+
+export const writeStoredAppProjectSettings = (projectSettings: AppProjectSettingsByCwd): void => {
+  try {
+    const storedProjectSettings: AppProjectSettingsByCwd = {}
+
+    for (const [cwd, overrides] of Object.entries(projectSettings)) {
+      const normalizedCwd = normalizeAppProjectSettingsCwd(cwd)
+      if (!normalizedCwd) continue
+
+      const prunedOverrides = pruneAppProjectSettingsOverrides(overrides)
+      if (!isAppProjectSettingsOverridesEmpty(prunedOverrides)) {
+        storedProjectSettings[normalizedCwd] = prunedOverrides
+      }
+    }
+
+    if (Object.keys(storedProjectSettings).length === 0) {
+      window.localStorage.removeItem(appProjectSettingsStorageKey)
+      return
+    }
+
+    window.localStorage.setItem(appProjectSettingsStorageKey, JSON.stringify(storedProjectSettings))
+  } catch {
+    // App settings are non-critical; ignore unavailable storage.
+  }
+}
+
 export const writeStoredAppSettings = (settings: AppSettings): void => {
   try {
     const storedSettings: {
@@ -537,6 +1004,16 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
     if (settings.appearance.controlStyle !== defaultAppSettings.appearance.controlStyle) {
       storedAppearance.controlStyle = settings.appearance.controlStyle
+    }
+    for (const key of ['applicationFont', 'chatFont', 'codeFont'] as const) {
+      const font = settings.appearance[key]
+      const defaultFont = defaultAppSettings.appearance[key]
+      if (font.family !== defaultFont.family || font.size !== defaultFont.size) {
+        storedAppearance[key] = {
+          family: getStoredFontFamily(font.family, defaultFont.family),
+          size: normalizeAppFontSize(font.size, defaultFont.size)
+        }
+      }
     }
     if (Object.keys(storedAppearance).length > 0) storedSettings.appearance = storedAppearance
 
