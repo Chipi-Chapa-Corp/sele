@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.6.0" date="2026-08-05">
+      <description>
+        <p>Added chat renaming, grouping controls, reorderable pinned chats, and selection-based quoting, with faster progressive file-tree loading and refined chat item interactions.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-08-05">
       <description>
         <p>Enhanced Copilot plan, image, and attachment rendering, improved Windows provider executable discovery, and simplified runtime selection for host-only setups.</p>
