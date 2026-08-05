@@ -26,13 +26,7 @@
   background: transparent;
   font: inherit;
   text-align: left;
-  transition: padding-right 160ms ease;
   -webkit-tap-highlight-color: transparent;
-}
-
-.chat-list-item:hover .chat-list-item__main,
-.chat-list-item:has(:focus-visible) .chat-list-item__main {
-  padding-right: 88px;
 }
 
 .chat-list-item--approval .chat-list-item__main {
@@ -61,6 +55,12 @@
   display: flex;
   gap: 8px;
   align-items: center;
+  transition: padding-right 160ms ease;
+}
+
+.chat-list-item:hover .chat-list-item__header,
+.chat-list-item:has(:focus-visible) .chat-list-item__header {
+  padding-right: 74px;
 }
 
 .chat-list-item__title {
@@ -320,12 +320,12 @@
     padding: 16px;
   }
 
-  .chat-list-item:hover .chat-list-item__main,
-  .chat-list-item:has(:focus-visible) .chat-list-item__main {
-    padding-right: 88px;
-  }
-
   .chat-list-item__header {
     align-items: center;
+  }
+
+  .chat-list-item:hover .chat-list-item__header,
+  .chat-list-item:has(:focus-visible) .chat-list-item__header {
+    padding-right: 72px;
   }
 }
