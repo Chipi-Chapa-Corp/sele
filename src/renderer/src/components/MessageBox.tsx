@@ -96,6 +96,7 @@ type MessageBoxProps = {
   pending?: boolean
   providerId: ProviderId
   projectCwd?: string | null
+  quoteRequest?: MessageBoxQuoteRequest | null
   cwd?: string | null
   reasoningEffort: ProviderReasoningEffort
   serviceTier: ProviderServiceTier | null
@@ -146,6 +147,11 @@ type MessageBoxProps = {
   ) => Promise<void> | void
 }
 
+export type MessageBoxQuoteRequest = {
+  id: number
+  content: string
+}
+
 type MessageBoxContextUsage = {
   source: 'exact' | 'estimated' | 'unavailable'
   usedTokens: number | null
@@ -170,6 +176,13 @@ const compactNumberFormatter = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 1,
   notation: 'compact'
 })
+
+const formatQuote = (content: string): string =>
+  content
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n')
 
 type ScrollSnapshot = {
   element: HTMLElement
@@ -937,6 +950,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   pending = false,
   providerId,
   projectCwd,
+  quoteRequest = null,
   cwd = null,
   reasoningEffort,
   serviceTier,
@@ -990,6 +1004,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [composerLoadErrorScope, setComposerLoadErrorScope] = useState<string | null>(null)
   const [activeSkillMentionIndex, setActiveSkillMentionIndex] = useState(0)
   const editSessionIdRef = useRef<string | null>(null)
+  const handledQuoteRequestIdRef = useRef<number | null>(null)
   const messageRef = useRef(message)
   const selectedAttachmentsRef = useRef(selectedAttachments)
   const selectedSkillsRef = useRef(selectedSkills)
@@ -1588,6 +1603,38 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
     return () => window.cancelAnimationFrame(animationFrame)
   }, [editSession])
+
+  useEffect(() => {
+    if (!quoteRequest || editing || handledQuoteRequestIdRef.current === quoteRequest.id) {
+      return
+    }
+
+    const quotedContent = formatQuote(quoteRequest.content.trim())
+    if (!quotedContent) return
+
+    let focusFrame: number | null = null
+    const updateFrame = window.requestAnimationFrame(() => {
+      handledQuoteRequestIdRef.current = quoteRequest.id
+      setMessage(
+        (currentMessage) => `${currentMessage ? `${currentMessage}\n` : ''}${quotedContent}\n\n`
+      )
+      setFileMention(null)
+      setSkillMention(null)
+
+      focusFrame = window.requestAnimationFrame(() => {
+        const textarea = textareaRef.current
+        if (!textarea) return
+
+        textarea.focus({ preventScroll: true })
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(updateFrame)
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
+    }
+  }, [editing, quoteRequest])
 
   useEffect(() => {
     if (!autoFocus || operationsDisabled || disabled || pending) return

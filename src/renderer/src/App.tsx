@@ -159,7 +159,8 @@ import { Dropdown, type DropdownOption } from './components/Dropdown'
 import { FileEditorDialog, type FileEditorTarget } from './components/FileEditorDialog'
 import { getReasoningEffortPresentation } from './reasoningEffortPresentation'
 import { Input } from './components/Input'
-import { MessageBox } from './components/MessageBox'
+import { MessageBox, type MessageBoxQuoteRequest } from './components/MessageBox'
+import { MessageSelectionQuoteButton } from './components/MessageSelectionQuoteButton'
 import { SegmentedControl } from './components/SegmentedControl'
 import { Switch } from './components/Switch'
 import { TerminalPanel, type TerminalCommandLaunchRequest } from './components/TerminalPanel'
@@ -3508,6 +3509,8 @@ export const App: React.FC = () => {
   const [sendState, setSendState] = useState<SendState>('idle')
   const [sendError, setSendError] = useState<string | null>(null)
   const [editingMessage, setEditingMessage] = useState<EditingMessage | null>(null)
+  const [messageBoxQuoteRequest, setMessageBoxQuoteRequest] =
+    useState<MessageBoxQuoteRequest | null>(null)
   const [approvalModes, setApprovalModes] = useState<ProviderApprovalModeOption[]>(
     fallbackProviderApprovalModes
   )
@@ -8134,6 +8137,13 @@ export const App: React.FC = () => {
   const chatIsBusy =
     chatHasActiveTurn || (sendState === 'sending' && hasActiveWorkingStep(chatDetail))
 
+  const handleQuoteSelectedMessageText = useCallback((content: string): void => {
+    setMessageBoxQuoteRequest((currentRequest) => ({
+      id: (currentRequest?.id ?? 0) + 1,
+      content
+    }))
+  }, [])
+
   useEffect(() => {
     runPromptActionRef.current = (prompt, target) =>
       handleSendMessage(prompt, undefined, [], null, [], [], undefined, target)
@@ -10713,6 +10723,14 @@ export const App: React.FC = () => {
                 </div>
               </div>
             )}
+            {selectedChat && (
+              <MessageSelectionQuoteButton
+                containerRef={contentRef}
+                enabled={!editingMessage}
+                key={selectedChatKey}
+                onQuote={handleQuoteSelectedMessageText}
+              />
+            )}
             {!effectiveAppSettings.chat.hidePlans && (
               <ChatPlan key={selectedChatKey ?? 'no-chat'} plan={messageBoxPlan} />
             )}
@@ -10974,6 +10992,7 @@ export const App: React.FC = () => {
                   pending={sendState === 'sending'}
                   providerId={selectedChat?.providerId ?? newSessionProvider}
                   projectCwd={changesProjectCwd}
+                  quoteRequest={messageBoxQuoteRequest}
                   cwd={changesCwd}
                   reasoningEffort={effectiveReasoningEffort}
                   sandboxMode={effectiveSandboxMode}
