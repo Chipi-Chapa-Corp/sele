@@ -105,57 +105,37 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  gap: 6px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-:where(.branch-switcher__option) {
-  appearance: none;
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  min-height: 38px;
-  grid-template-columns: var(--control-icon-size) minmax(0, 1fr) var(--control-icon-size);
-  align-items: center;
-  gap: 10px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 7px;
-  color: var(--lead);
-  cursor: pointer;
-  background: transparent;
-  font: inherit;
-  font-weight: 400;
-  text-align: left;
-}
-
-:where(.branch-switcher__option--active) {
+:where(.branch-switcher__option-row--active) {
   color: var(--ink);
   background: var(--menu-option-active-bg);
 }
 
-:where(.branch-switcher__option--create) {
+:where(.branch-switcher__option-row .ui-button-menu__item--row-main) {
+  font-weight: 400;
+}
+
+:where(.branch-switcher__option-row--create) {
   color: var(--menu-option-selected-color);
 }
 
-:where(.branch-switcher__option:disabled) {
-  cursor: default;
-  opacity: 0.62;
-}
-
-:where(.branch-switcher__option-icon),
 :where(.branch-switcher__option-check) {
   width: var(--control-icon-size);
   height: var(--control-icon-size);
   flex: none;
+  color: var(--menu-option-check-color);
 }
 
-:where(.branch-switcher__option-icon) {
+:where(.branch-switcher__option-row .ui-button-menu__icon) {
   color: var(--quiet);
 }
 
-:where(.branch-switcher__option--active .branch-switcher__option-icon),
-:where(.branch-switcher__option--create .branch-switcher__option-icon) {
+:where(.branch-switcher__option-row--active .ui-button-menu__icon),
+:where(.branch-switcher__option-row--create .ui-button-menu__icon) {
   color: currentColor;
 }
 
@@ -170,24 +150,27 @@
   font-weight: inherit;
 }
 
-:where(.branch-switcher__option-check) {
-  color: var(--menu-option-check-color);
-}
-
 :where(.branch-switcher__message),
-:where(.branch-switcher__status),
-:where(.branch-switcher__error) {
+:where(.branch-switcher__status) {
   margin: 0;
   padding: 9px 11px;
   color: var(--quiet);
   line-height: 1.35;
 }
 
-:where(.branch-switcher__status),
-:where(.branch-switcher__error) {
+:where(.branch-switcher__status) {
   border-top: 1px solid var(--menu-border);
 }
 
 :where(.branch-switcher__error) {
+  min-height: 0;
+  max-height: min(180px, 28vh);
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
   color: var(--error);
+  line-height: 1.35;
+  white-space: pre-wrap;
 }

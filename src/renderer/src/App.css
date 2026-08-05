@@ -692,9 +692,8 @@
 }
 
 .changes-sidebar__sync-recovery-command {
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-    monospace;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
 }
 
 .changes-sidebar__sync-recovery-actions {
@@ -828,17 +827,70 @@
 
 .chat-approval__summary {
   color: var(--ink);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-    monospace;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
 }
 
-.chat-provider-update .chat-approval__summary {
+.chat-provider-update .chat-approval__summary,
+.chat-request-error .chat-approval__summary,
+.chat-user-input .chat-approval__summary {
   font-family: inherit;
+}
+
+.chat-user-input {
+  position: relative;
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.chat-user-input__question {
+  padding-right: 32px;
+  overflow: visible;
+  white-space: pre-wrap;
+}
+
+.chat-user-input__dismiss {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  right: 8px;
+}
+
+.chat-user-input__choices {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.chat-user-input__choices .ui-button {
+  max-width: 100%;
+}
+
+.chat-user-input__answer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.chat-user-input__input {
+  width: auto;
+  flex: 1 1 auto;
 }
 
 .chat-provider-update {
   margin-bottom: 16px;
+}
+
+.chat-request-error {
+  margin-bottom: 16px;
+}
+
+.chat-request-error .chat-approval__label {
+  color: var(--error);
 }
 
 .chat-approval__cwd {
@@ -1149,6 +1201,8 @@
   margin: 0 auto;
   overflow-y: auto;
   padding: 10px 34px 10px;
+  font-family: var(--chat-font-family);
+  font-size: var(--chat-font-size);
   scrollbar-color: var(--glass-edge) transparent;
   scrollbar-gutter: stable;
 }
@@ -1225,6 +1279,7 @@
 
 .settings-dialog__nav {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   flex-direction: column;
   gap: 3px;
@@ -1275,6 +1330,16 @@
 .settings-dialog__nav-icon svg {
   width: 18px;
   height: 18px;
+}
+
+.settings-dialog__scope {
+  min-width: 0;
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.settings-dialog__scope-switcher {
+  width: 100%;
 }
 
 .settings-dialog__body {
@@ -1340,6 +1405,11 @@
   background: var(--glass-strong);
 }
 
+.settings-dialog__field--with-project-action {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 14px;
+}
+
 .settings-dialog__field + .settings-dialog__field {
   margin-top: -1px;
   border-top-left-radius: 0;
@@ -1359,6 +1429,15 @@
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 10px;
+}
+
+.settings-dialog__field--stack.settings-dialog__field--with-project-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.settings-dialog__field--stack.settings-dialog__field--with-project-action
+  > :is(.settings-dialog__prompt-textarea, .ui-input) {
+  grid-column: 1 / -1;
 }
 
 .settings-dialog__field--prompt-groups {
@@ -1405,9 +1484,40 @@
   justify-self: end;
 }
 
+.settings-dialog__project-action {
+  display: inline-grid;
+  justify-self: end;
+}
+
 .settings-dialog__number-input {
   width: 88px;
   justify-self: end;
+  text-align: right;
+}
+
+.settings-dialog__font-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-self: end;
+  gap: 10px;
+}
+
+.settings-dialog__font-dropdown {
+  width: 230px;
+  min-width: 0;
+}
+
+.settings-dialog__font-size {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.settings-dialog__font-size .ui-input {
+  width: 82px;
   text-align: right;
 }
 
@@ -1434,6 +1544,11 @@
   box-shadow:
     0 0 0 3px var(--focus-ring),
     var(--control-shadow);
+}
+
+.settings-dialog__prompt-textarea:disabled {
+  cursor: default;
+  opacity: 0.62;
 }
 
 .settings-switch {
@@ -1692,6 +1807,25 @@
 
   .settings-dialog__field {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-dialog__field--with-project-action,
+  .settings-dialog__field--stack.settings-dialog__field--with-project-action {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-dialog__project-action {
+    justify-self: start;
+  }
+
+  .settings-dialog__font-controls {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .settings-dialog__font-dropdown {
+    width: auto;
+    flex: 1 1 auto;
   }
 
   .chat-approval {

@@ -73,6 +73,10 @@
   transform: translateX(20px);
 }
 
+:where(.ui-switch input:checked:disabled + .ui-switch__control)::after {
+  background: color-mix(in srgb, var(--accent-ink) 56%, var(--quiet));
+}
+
 :where(.ui-switch input:focus-visible + .ui-switch__control) {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }

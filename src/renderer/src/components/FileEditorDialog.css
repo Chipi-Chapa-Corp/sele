@@ -413,7 +413,7 @@
   overflow: auto;
   color: var(--lead);
   background: var(--floating-bg);
-  font-size: 1.25rem;
+  font-size: 1.25em;
   line-height: 1.65;
   overflow-wrap: anywhere;
   scrollbar-color: var(--glass-edge) transparent;
@@ -503,8 +503,8 @@
   border-radius: 5px;
   color: var(--inline-code-color);
   background: var(--inline-code-bg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  font-size: 0.9em;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
 }
 
 .file-editor-dialog__markdown-preview pre {
@@ -523,7 +523,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  font-size: 0.9em;
+  font-size: var(--code-font-size);
   line-height: 1.55;
   white-space: pre;
 }

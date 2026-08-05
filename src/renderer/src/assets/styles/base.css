@@ -18,6 +18,7 @@ body {
   min-height: 100vh;
   overflow: hidden;
   background: var(--bg);
+  font-size: var(--application-font-size);
 }
 
 textarea {

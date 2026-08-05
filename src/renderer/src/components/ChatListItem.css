@@ -75,7 +75,8 @@
   white-space: nowrap;
 }
 
-.chat-list-item--unread .chat-list-item__title {
+.chat-list-item--unread .chat-list-item__title,
+.chat-list-item--waiting-input .chat-list-item__title {
   font-weight: bold;
 }
 
@@ -251,9 +252,8 @@
 .chat-list-item__approval-target-text {
   min-width: 0;
   overflow: hidden;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-    monospace;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

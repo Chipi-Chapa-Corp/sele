@@ -186,10 +186,7 @@
   font-weight: 500;
 }
 
-:where(
-  .ui-button--primary:not(:disabled):hover,
-  .ui-button--primary[data-pressed]:not(:disabled)
-) {
+:where(.ui-button--primary:not(:disabled):hover, .ui-button--primary[data-pressed]:not(:disabled)) {
   border-color: var(--primary-border);
   background: var(--primary-surface-hover);
   box-shadow: var(--primary-shadow-hover);
@@ -357,6 +354,20 @@
 
 .ui-button-menu__row .ui-button-menu__label {
   white-space: nowrap;
+}
+
+.ui-button-menu__end-adornment {
+  display: grid;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  flex: none;
+  margin-left: auto;
+  place-items: center;
+}
+
+.ui-button-menu__end-adornment svg {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
 }
 
 .ui-button-menu__inline-actions {

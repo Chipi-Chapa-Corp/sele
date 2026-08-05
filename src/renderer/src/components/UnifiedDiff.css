@@ -19,8 +19,8 @@
   --diff-gutter-selected-text-color: var(--lead);
   --diff-code-selected-background-color: var(--accent-soft);
   --diff-code-selected-text-color: var(--lead);
-  --diff-font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  --diff-font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
   min-width: 100%;
 }
 
@@ -95,7 +95,8 @@
   margin: 0;
   padding: 18px 20px;
   color: var(--lead);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
   line-height: 1.55;
   white-space: pre;
 }

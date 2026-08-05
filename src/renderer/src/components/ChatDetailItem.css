@@ -526,7 +526,8 @@
   border-radius: 6px;
   color: var(--inline-code-color);
   background: var(--inline-code-bg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
 }
 
 .chat-detail__message a code,
@@ -634,7 +635,8 @@
   margin: 0;
   overflow: auto;
   color: var(--lead);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -664,8 +666,8 @@
   --diff-code-insert-edit-text-color: var(--lead);
   --diff-code-delete-edit-background-color: color-mix(in srgb, #c74c44 28%, transparent);
   --diff-code-delete-edit-text-color: var(--lead);
-  --diff-font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  --diff-font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
   min-width: 100%;
 }
 
@@ -817,26 +819,8 @@
   padding: 0;
 }
 
-.chat-detail__command-row {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.chat-detail__command-body {
-  min-width: 0;
-  flex: 1;
-}
-
 .chat-detail__activity-content--command pre {
   padding: 12px 14px;
-}
-
-.chat-detail__command-terminal-action {
-  display: flex;
-  flex: none;
-  margin: 4px 4px 0 0;
 }
 
 .chat-detail__command-divider {

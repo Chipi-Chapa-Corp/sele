@@ -498,6 +498,8 @@
   outline: 0;
   color: var(--ink);
   background: transparent;
+  font-family: var(--chat-font-family);
+  font-size: var(--chat-font-size);
   line-height: 1.5;
   overscroll-behavior: contain;
 }
@@ -666,6 +668,16 @@
   flex-direction: column;
 }
 
+.message-box__usage-loading-icon {
+  animation: message-box-usage-spin 900ms linear infinite;
+}
+
+@keyframes message-box-usage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .message-box__usage-section {
   display: flex;
   min-width: 0;
@@ -796,19 +808,48 @@
 }
 
 .message-box__error {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 14px;
-  margin: 0;
-  padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, var(--error) 34%, transparent);
-  border-radius: 9px;
-  color: var(--error);
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding: 12px;
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
   background: var(--glass-strong);
   box-shadow: var(--glass-shadow);
   line-height: 1.3;
   -webkit-backdrop-filter: blur(18px) saturate(1.3);
   backdrop-filter: blur(18px) saturate(1.3);
+}
+
+.message-box__error-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.message-box__error-label {
+  color: var(--error);
+  font-weight: 780;
+}
+
+.message-box__error-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lead);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-box__error-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
 }
 
 @container chat-panel (max-width: 1200px) {
