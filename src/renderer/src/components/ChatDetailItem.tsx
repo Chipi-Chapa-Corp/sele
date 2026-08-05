@@ -173,7 +173,14 @@ const areWorkingToolsEqual = (first: ProviderWorkingTool, second: ProviderWorkin
   first.backgroundSessionId === second.backgroundSessionId &&
   first.finishedBackgroundSessionId === second.finishedBackgroundSessionId &&
   first.images.length === second.images.length &&
-  first.images.every((image, index) => image.path === second.images[index]?.path) &&
+  first.images.every((image, index) => {
+    const nextImage = second.images[index]
+    return (
+      image.path === nextImage?.path &&
+      image.dataUrl === nextImage?.dataUrl &&
+      image.name === nextImage?.name
+    )
+  }) &&
   areFileDiffsEqual(first.diffs, second.diffs) &&
   areUnknownValuesEqual(first.rawInput, second.rawInput) &&
   areUnknownValuesEqual(first.rawOutput, second.rawOutput)

@@ -32,6 +32,7 @@ export type CodexThreadItem = {
   tool?: string
   namespace?: string | null
   query?: string
+  path?: string
   arguments?: unknown
   changes?: {
     path: string
@@ -365,6 +366,7 @@ const readCommands = new Set([
 const searchCommands = new Set(['rg', 'grep', 'find'])
 const scriptCommands = new Set(['bash', 'sh', 'node', 'python', 'python3'])
 const shellEvalCommands = new Set(['bash', 'sh', 'zsh'])
+const neutralCommands = new Set(['cd', 'pwd', 'which', 'command -v', 'true', 'false'])
 
 const executionCommands = new Set([
   'npm',
@@ -428,7 +430,7 @@ const classifySegment = (segment: ShellSegment): SegmentClassification | null =>
   if (!parsed) return null
 
   const { command, args } = parsed
-  if (['cd', 'pwd', 'which', 'command -v'].includes(command)) {
+  if (neutralCommands.has(command)) {
     return { activity: 'neutral', command, args }
   }
   if (command === 'git') return { activity: 'git', command, args }
@@ -1083,6 +1085,7 @@ const generatedImageToolNames = new Set([
   'image_gen/imagegen',
   'imagegen'
 ])
+const viewedImageToolNames = new Set(['imageView', 'view_image'])
 const generatedImageExtensions = /\.(?:avif|gif|jpe?g|png|webp)$/i
 const generatedImagePathPattern = /(?:[A-Za-z]:[\\/]|\/)[^\s"'`<>]+?\.(?:avif|gif|jpe?g|png|webp)/gi
 const generatedImagePathKeys = new Set(['path', 'saved_path', 'savedPath'])
@@ -1134,6 +1137,59 @@ const getGeneratedImagePaths = (item: CodexThreadItem): ProviderToolImage[] => {
   return [...imagePaths].map((path) => ({ path }))
 }
 
+const getViewedImages = (item: CodexThreadItem): ProviderToolImage[] => {
+  const argumentPath =
+    item.arguments && typeof item.arguments === 'object' && !Array.isArray(item.arguments)
+      ? (item.arguments as Record<string, unknown>).path
+      : null
+  const pathCandidates = [
+    item.path,
+    typeof argumentPath === 'string' ? argumentPath : null,
+    item.customToolName && item.customToolInput
+      ? getToolStringArgument(item.customToolInput, item.customToolName, 'path')
+      : null
+  ]
+  const path = pathCandidates
+    .find(
+      (candidate): candidate is string =>
+        typeof candidate === 'string' && isAbsoluteGeneratedImagePath(candidate.trim())
+    )
+    ?.trim()
+  const dataUrls = new Set<string>()
+  const seen = new WeakSet<object>()
+
+  const visit = (value: unknown, depth = 0): void => {
+    if (!value || typeof value !== 'object' || depth > 8 || seen.has(value)) return
+    seen.add(value)
+
+    if (Array.isArray(value)) {
+      value.forEach((entry) => visit(entry, depth + 1))
+      return
+    }
+
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (
+        (key === 'image_url' || key === 'imageUrl') &&
+        typeof entry === 'string' &&
+        entry.startsWith('data:image/')
+      ) {
+        dataUrls.add(entry)
+        continue
+      }
+      visit(entry, depth + 1)
+    }
+  }
+
+  visit(item)
+
+  const name = path ? getFileName(path) : 'Viewed image'
+  if (dataUrls.size > 0) {
+    return [...dataUrls].map((dataUrl) => ({ dataUrl, name, path }))
+  }
+
+  return path ? [{ path, name }] : []
+}
+
 const getToolNameCandidates = (item: CodexThreadItem): string[] => {
   const names = [
     item.customToolName,
@@ -1175,7 +1231,12 @@ const renderMappedTool = (
   const isGeneratedImage = getToolNameCandidates(item).some((name) =>
     generatedImageToolNames.has(name)
   )
-  const images = isGeneratedImage ? getGeneratedImagePaths(item) : []
+  const isViewedImage = getToolNameCandidates(item).some((name) => viewedImageToolNames.has(name))
+  const images = isGeneratedImage
+    ? getGeneratedImagePaths(item)
+    : isViewedImage
+      ? getViewedImages(item)
+      : []
 
   return renderTool(
     item,
