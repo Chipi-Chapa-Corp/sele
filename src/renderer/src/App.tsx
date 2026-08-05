@@ -10648,16 +10648,20 @@ export const App: React.FC = () => {
                       value={newSessionLocation}
                       onChange={setNewSessionLocation}
                     />
-                    <span>from</span>
-                    <Dropdown
-                      aria-label="Runtime"
-                      disabled={providerUpdateInProgress || sendState === 'sending'}
-                      options={containerOptions}
-                      placement="top"
-                      size="small"
-                      value={newSessionContainerValue}
-                      onChange={handleNewSessionContainerChange}
-                    />
+                    {containerSuggestions.length > 0 && (
+                      <>
+                        <span>from</span>
+                        <Dropdown
+                          aria-label="Runtime"
+                          disabled={providerUpdateInProgress || sendState === 'sending'}
+                          options={containerOptions}
+                          placement="top"
+                          size="small"
+                          value={newSessionContainerValue}
+                          onChange={handleNewSessionContainerChange}
+                        />
+                      </>
+                    )}
                   </div>
                 )}
                 {!selectedChat && newChatOpen && worktreeCreationState !== 'idle' && (
