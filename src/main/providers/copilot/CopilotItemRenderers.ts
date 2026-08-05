@@ -79,6 +79,8 @@ const getToolPath = (event: ToolStartEvent): string | null =>
   getArgument(event.data.arguments, 'path', 'filePath', 'file', 'fileName', 'target', 'directory')
 
 const getToolLabel = (event: ToolStartEvent): string => {
+  if (event.data.toolName === 'ask_user') return 'Asking question'
+
   const activity = classifyTool(event)
   const path = getToolPath(event)
   const command = getToolCommand(event)
@@ -106,17 +108,15 @@ const createTool = (event: ToolStartEvent): ProviderWorkingTool => ({
   toolId: event.data.toolCallId,
   status: 'running',
   activity: classifyTool(event),
-  icon: null,
+  icon: event.data.toolName === 'ask_user' ? 'question' : null,
   label: getToolLabel(event),
   command: getToolCommand(event),
-  agentTerminal: null,
-  agentTerminalDisabledReason: 'Copilot CLI does not expose an attachable agent terminal.',
   cwd: getToolCwd(event),
   stdout: null,
   diffs: [],
   backgroundSessionId: null,
   finishedBackgroundSessionId: null,
-  rawInput: event.data.arguments ?? null,
+  rawInput: event.data.toolName === 'ask_user' ? null : (event.data.arguments ?? null),
   rawOutput: null,
   images: []
 })
@@ -212,6 +212,7 @@ export const renderCopilotChatItems = (
   options: RenderOptions
 ): ProviderChatItem[] => {
   const items: ProviderChatItem[] = []
+  const askUserToolCallIds = new Set<string>()
   let segment: Segment | null = null
 
   const ensureSegment = (eventId: string): Segment => {
@@ -319,16 +320,30 @@ export const renderCopilotChatItems = (
           content: event.data.reasoningText.trim()
         })
       }
-      currentSegment.assistantMessages.push(event)
+      const asksQuestion = event.data.toolRequests?.some(
+        (toolRequest) => toolRequest.name === 'ask_user'
+      )
+      const content = event.data.content.trim()
+      if (asksQuestion && content) {
+        currentSegment.workingItems.push({
+          type: 'message',
+          id: event.id,
+          content
+        })
+      } else {
+        currentSegment.assistantMessages.push(event)
+      }
       continue
     }
 
     if (event.type === 'tool.execution_start') {
+      if (event.data.toolName === 'ask_user') askUserToolCallIds.add(event.data.toolCallId)
       ensureSegment(event.id).workingItems.push(createTool(event))
       continue
     }
 
     if (event.type === 'tool.execution_partial_result') {
+      if (askUserToolCallIds.has(event.data.toolCallId)) continue
       updateTool(ensureSegment(event.id).workingItems, event.data.toolCallId, (tool) => ({
         ...tool,
         stdout: `${tool.stdout ?? ''}${event.data.partialOutput}`
@@ -337,6 +352,7 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'tool.execution_progress') {
+      if (askUserToolCallIds.has(event.data.toolCallId)) continue
       updateTool(ensureSegment(event.id).workingItems, event.data.toolCallId, (tool) => ({
         ...tool,
         label: event.data.progressMessage.trim() || tool.label
@@ -345,12 +361,14 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'tool.execution_complete') {
+      const askedQuestion = askUserToolCallIds.has(event.data.toolCallId)
       updateTool(ensureSegment(event.id).workingItems, event.data.toolCallId, (tool) => ({
         ...tool,
         status: 'finished',
-        stdout: getToolOutput(event),
-        diffs: getToolDiffs(tool, event),
-        rawOutput: event.data.result ?? event.data.error ?? null
+        label: askedQuestion ? 'Asked a question' : tool.label,
+        stdout: askedQuestion ? null : getToolOutput(event),
+        diffs: askedQuestion ? [] : getToolDiffs(tool, event),
+        rawOutput: askedQuestion ? null : (event.data.result ?? event.data.error ?? null)
       }))
       continue
     }

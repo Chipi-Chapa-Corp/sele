@@ -21,6 +21,7 @@ import type {
   ProviderSkillInput,
   ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
+  ProviderUserInputResponse,
   ProviderUsageOptions,
   ProviderWorkingItem,
   ProviderWorkingStepUpdate
@@ -359,30 +360,6 @@ const requireGenerationId = (value: unknown): string => {
   return value
 }
 
-const requireProcessId = (value: unknown): string => {
-  if (typeof value !== 'string' || !value.trim() || value.includes('\0')) {
-    throw new Error('Invalid process ID')
-  }
-
-  return value
-}
-
-const requireTerminalInput = (value: unknown): string => {
-  if (typeof value !== 'string' || value.length > 1_000_000) {
-    throw new Error('Invalid terminal input')
-  }
-
-  return value
-}
-
-const requireTerminalDimension = (value: unknown, label: string): number => {
-  if (!Number.isInteger(value) || typeof value !== 'number' || value < 1 || value > 1000) {
-    throw new Error(`Invalid terminal ${label}`)
-  }
-
-  return value
-}
-
 const requireOptionalCwd = (value: unknown): string | null => {
   if (value == null) return null
   if (typeof value !== 'string') throw new Error('Invalid cwd')
@@ -439,6 +416,30 @@ const requireCwdNotes = (value: unknown): ProviderCwdNote[] => {
 const requireApprovalDecision = (value: unknown): ProviderApprovalDecision => {
   if (value !== 'allow' && value !== 'deny') throw new Error('Invalid approval decision')
   return value
+}
+
+const requireUserInputResponse = (value: unknown): ProviderUserInputResponse => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid user input response')
+  }
+
+  const response = value as { kind?: unknown; answer?: unknown; wasFreeform?: unknown }
+  if (response.kind === 'cancel') return { kind: 'cancel' }
+  if (
+    response.kind !== 'answer' ||
+    typeof response.answer !== 'string' ||
+    !response.answer.trim() ||
+    response.answer.length > 100_000 ||
+    typeof response.wasFreeform !== 'boolean'
+  ) {
+    throw new Error('Invalid user input response')
+  }
+
+  return {
+    kind: 'answer',
+    answer: response.answer,
+    wasFreeform: response.wasFreeform
+  }
 }
 
 const requireActiveSendMode = (value: unknown): ProviderActiveSendMode => {
@@ -700,8 +701,10 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   const model = options.model ?? 'gpt-5.5'
   if (!isProviderModelId(model)) throw new Error('Invalid model')
 
-  const reasoningEffort = options.reasoningEffort ?? 'xhigh'
-  if (!isProviderReasoningEffort(reasoningEffort)) throw new Error('Invalid reasoning effort')
+  const reasoningEffort = options.reasoningEffort
+  if (reasoningEffort != null && !isProviderReasoningEffort(reasoningEffort)) {
+    throw new Error('Invalid reasoning effort')
+  }
 
   const serviceTier = options.serviceTier
   if (serviceTier != null && !isProviderServiceTier(serviceTier)) {
@@ -722,7 +725,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     files,
     images,
     model,
-    reasoningEffort,
+    ...(reasoningEffort == null ? {} : { reasoningEffort }),
     serviceTier: serviceTier ?? null,
     review: requireReview(options.review),
     sandboxMode,
@@ -750,14 +753,6 @@ export const registerProviderIpc = (): void => {
   providerApi.onChatUpdated((event) => {
     BrowserWindow.getAllWindows().forEach((window) => {
       queueChatUpdateForWindow(window.webContents, event)
-    })
-  })
-
-  providerApi.onAgentTerminalData((event) => {
-    BrowserWindow.getAllWindows().forEach((window) => {
-      if (!window.webContents.isDestroyed()) {
-        window.webContents.send(providerIpcChannels.agentTerminalData, event)
-      }
     })
   })
 
@@ -1079,29 +1074,6 @@ export const registerProviderIpc = (): void => {
   )
 
   ipcMain.handle(
-    providerIpcChannels.writeAgentTerminalInput,
-    (_, providerId: unknown, chatId: unknown, processId: unknown, data: unknown) =>
-      providerApi.writeAgentTerminalInput(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireProcessId(processId),
-        requireTerminalInput(data)
-      )
-  )
-
-  ipcMain.handle(
-    providerIpcChannels.resizeAgentTerminal,
-    (_, providerId: unknown, chatId: unknown, processId: unknown, cols: unknown, rows: unknown) =>
-      providerApi.resizeAgentTerminal(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireProcessId(processId),
-        requireTerminalDimension(cols, 'columns'),
-        requireTerminalDimension(rows, 'rows')
-      )
-  )
-
-  ipcMain.handle(
     providerIpcChannels.stopChatSummary,
     async (_, providerId: unknown, chatId: unknown) => {
       const detail = await providerApi.stopChat(
@@ -1119,6 +1091,17 @@ export const registerProviderIpc = (): void => {
         requireProviderId(providerId),
         requireChatId(chatId),
         requireApprovalDecision(decision)
+      )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.resolveUserInput,
+    (_, providerId: unknown, chatId: unknown, requestId: unknown, response: unknown) =>
+      providerApi.resolveUserInput(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireMessageId(requestId),
+        requireUserInputResponse(response)
       )
   )
 

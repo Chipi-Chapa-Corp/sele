@@ -18,7 +18,7 @@ import type {
   ProviderActiveSendMode,
   ProviderTurnOptions,
   ProviderOneShotOptions,
-  ProviderAgentTerminalDataEvent
+  ProviderUserInputResponse
 } from '../../shared/provider'
 import type { AppContainerTarget } from '../../shared/app'
 
@@ -89,17 +89,14 @@ export type ProviderAdapter = {
     chatId: string,
     decision: ProviderApprovalDecision
   ) => Promise<ProviderChatDetail>
-  stopChat: (chatId: string) => Promise<ProviderChatDetail>
-  writeAgentTerminalInput: (chatId: string, processId: string, data: string) => Promise<void>
-  resizeAgentTerminal: (
+  resolveUserInput: (
     chatId: string,
-    processId: string,
-    cols: number,
-    rows: number
-  ) => Promise<void>
+    requestId: string,
+    response: ProviderUserInputResponse
+  ) => Promise<ProviderChatDetail>
+  stopChat: (chatId: string) => Promise<ProviderChatDetail>
   onChatUpdated: (
     listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   ) => () => void
-  onAgentTerminalData: (listener: (event: ProviderAgentTerminalDataEvent) => void) => () => void
   dispose: () => void
 }

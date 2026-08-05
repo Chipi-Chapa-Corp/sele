@@ -7,13 +7,13 @@ import {
   type ModelInfo,
   type PermissionRequest,
   type PermissionRequestResult,
+  type SessionConfig,
   type SessionEvent,
   type SessionMetadata
 } from '@github/copilot-sdk'
 import type {
   ProviderAccountUsage,
   ProviderActiveSendMode,
-  ProviderAgentTerminalDataEvent,
   ProviderApprovalDecision,
   ProviderApprovalModeOption,
   ProviderApp,
@@ -26,6 +26,7 @@ import type {
   ProviderModel,
   ProviderOneShotOptions,
   ProviderPendingApproval,
+  ProviderPendingUserInput,
   ProviderPendingMessage,
   ProviderReasoningEffort,
   ProviderSandboxModeOption,
@@ -33,6 +34,7 @@ import type {
   ProviderSourceOptions,
   ProviderTokenUsageBreakdown,
   ProviderTurnOptions,
+  ProviderUserInputResponse,
   ProviderUsageOptions,
   ProviderUpdateAvailability
 } from '../../../shared/provider'
@@ -52,12 +54,27 @@ type PendingPermission = {
   resolve: (result: PermissionRequestResult) => void
 }
 
+type CopilotUserInputHandler = NonNullable<SessionConfig['onUserInputRequest']>
+type CopilotUserInputRequest = Parameters<CopilotUserInputHandler>[0]
+type CopilotUserInputResponse = Awaited<ReturnType<CopilotUserInputHandler>>
+
+type PendingUserInput = {
+  id: string
+  request: CopilotUserInputRequest
+  startedAt: number
+  resolve: (response: CopilotUserInputResponse) => void
+}
+
+type CopilotSessionMetadata = SessionMetadata & {
+  name?: string
+}
+
 type CopilotSessionState = {
   id: string
   client: CopilotClient | null
   container: AppContainerTarget | null
   session: CopilotSession | null
-  metadata: SessionMetadata | null
+  metadata: CopilotSessionMetadata | null
   events: SessionEvent[]
   eventIds: Set<string>
   title: string | null
@@ -67,6 +84,64 @@ type CopilotSessionState = {
   options: ProviderTurnOptions | undefined
   pendingMessages: ProviderPendingMessage[]
   pendingPermissions: PendingPermission[]
+  pendingUserInputs: PendingUserInput[]
+}
+
+type CopilotAskUserArguments = {
+  question?: unknown
+  choices?: unknown
+  allow_freeform?: unknown
+  allowFreeform?: unknown
+}
+
+type CopilotUserInputPresentation = {
+  choices: string[]
+  allowFreeform: boolean
+}
+
+const asAskUserArguments = (value: unknown): CopilotAskUserArguments | null =>
+  typeof value === 'object' && value !== null ? (value as CopilotAskUserArguments) : null
+
+const getAskUserArguments = (
+  state: CopilotSessionState,
+  question: string
+): CopilotAskUserArguments | null => {
+  for (let eventIndex = state.events.length - 1; eventIndex >= 0; eventIndex -= 1) {
+    const event = state.events[eventIndex]
+
+    if (event?.type === 'assistant.message') {
+      const toolRequests = event.data.toolRequests ?? []
+      for (let toolIndex = toolRequests.length - 1; toolIndex >= 0; toolIndex -= 1) {
+        const toolRequest = toolRequests[toolIndex]
+        if (toolRequest?.name !== 'ask_user') continue
+        const argumentsValue = asAskUserArguments(toolRequest.arguments)
+        if (argumentsValue?.question === question) return argumentsValue
+      }
+    }
+
+    if (event?.type === 'tool.execution_start' && event.data.toolName === 'ask_user') {
+      const argumentsValue = asAskUserArguments(event.data.arguments)
+      if (argumentsValue?.question === question) return argumentsValue
+    }
+  }
+
+  return null
+}
+
+const getUserInputPresentation = (
+  state: CopilotSessionState,
+  request: CopilotUserInputRequest
+): CopilotUserInputPresentation => {
+  const argumentsValue = getAskUserArguments(state, request.question) ?? asAskUserArguments(request)
+  const choices = Array.isArray(argumentsValue?.choices)
+    ? argumentsValue.choices.filter((choice): choice is string => typeof choice === 'string')
+    : (request.choices ?? [])
+  const allowFreeform = argumentsValue?.allow_freeform ?? argumentsValue?.allowFreeform
+
+  return {
+    choices,
+    allowFreeform: typeof allowFreeform === 'boolean' ? allowFreeform : true
+  }
 }
 
 type CopilotClientEntry = {
@@ -166,6 +241,44 @@ const truncate = (value: string, limit: number): string => {
   const normalized = value.replace(/\s+/g, ' ').trim()
   return normalized.length <= limit ? normalized : `${normalized.slice(0, limit - 1)}…`
 }
+
+const chatTitlePromptLimit = 2_000
+const chatTitleMaxLength = 36
+const copilotOneShotClientName = 'Sele one-shot'
+
+const normalizeGeneratedChatTitle = (value: string): string | null => {
+  const firstLine = value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .find((line) => line.trim().length > 0)
+    ?.trim()
+  if (!firstLine) return null
+
+  const title = firstLine
+    .replace(/^title[:\s]+/i, '')
+    .replace(/^[`"']+|[`"']+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.?!]+$/g, '')
+    .trim()
+  if (!title) return null
+
+  return title.length <= chatTitleMaxLength
+    ? title
+    : `${title.slice(0, chatTitleMaxLength - 3).trimEnd()}...`
+}
+
+const createChatTitlePrompt = (prompt: string): string =>
+  [
+    'Create a short UI title for the user prompt below.',
+    `The title must be at most ${chatTitleMaxLength} characters.`,
+    'Return only the plain-text title, with no quotes, markdown, prefix, or trailing punctuation.',
+    'Use an imperative verb first for change requests, such as Add, Fix, Update, Refactor, Remove, Locate, or Find.',
+    'Do not answer the prompt or perform the task.',
+    '',
+    'User prompt:',
+    prompt.slice(0, chatTitlePromptLimit)
+  ].join('\n')
 
 const getEventCwd = (events: SessionEvent[]): string | null => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -353,9 +466,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
-  private agentTerminalDataListeners = new Set<(event: ProviderAgentTerminalDataEvent) => void>()
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private oneShotSessions = new Map<string, CopilotSession>()
+  private hiddenSessionIds = new Set<string>()
 
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
     const client = await this.ensureClient(options.container)
@@ -468,9 +581,34 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const normalizedContainer = normalizeContainerTarget(options.container)
     const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
     const client = await this.ensureClient(storedContainer)
-    const sessions = (await client.listSessions()).sort(
-      (first, second) => toMilliseconds(second.modifiedTime) - toMilliseconds(first.modifiedTime)
-    )
+    // CopilotClient.listSessions() currently omits the persisted `name` field. Use the
+    // typed RPC response so generated names and /rename survive a list refresh/restart.
+    const sessionList = await client.rpc.sessions.list({ source: 'local' })
+    const sessions: CopilotSessionMetadata[] = sessionList.sessions
+      .filter(
+        (metadata) =>
+          !this.hiddenSessionIds.has(metadata.sessionId) &&
+          !('clientName' in metadata && metadata.clientName === copilotOneShotClientName)
+      )
+      .map((metadata) => ({
+        sessionId: metadata.sessionId,
+        startTime: new Date(metadata.startTime),
+        modifiedTime: new Date(metadata.modifiedTime),
+        summary: metadata.summary,
+        name: metadata.name,
+        isRemote: metadata.isRemote,
+        context: metadata.context
+          ? {
+              workingDirectory: metadata.context.cwd,
+              gitRoot: metadata.context.gitRoot,
+              repository: metadata.context.repository,
+              branch: metadata.context.branch
+            }
+          : undefined
+      }))
+      .sort(
+        (first, second) => toMilliseconds(second.modifiedTime) - toMilliseconds(first.modifiedTime)
+      )
     const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0)
     const limit = Math.max(1, Math.min(options.limit ?? 50, 100))
     const page = sessions.slice(offset, offset + limit)
@@ -495,10 +633,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   generateOneShot = async (message: string, options?: ProviderOneShotOptions): Promise<string> => {
     const generationId = options?.generationId ?? randomUUID()
     const sessionId = randomUUID()
+    this.hiddenSessionIds.add(sessionId)
     const state = this.createState(sessionId, options)
 
     try {
-      const session = await this.createSession(state, options)
+      const session = await this.createSession(state, options, false, copilotOneShotClientName)
       this.oneShotSessions.set(generationId, session)
       const response = await session.sendAndWait(getMessageOptions(message, options), 10 * 60_000)
       if (response?.data.content.trim()) return response.data.content.trim()
@@ -514,7 +653,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       const session = state.session
       if (session) await session.disconnect().catch(() => {})
       await state.client?.deleteSession(sessionId).catch(() => {})
+      const timer = this.updateTimers.get(sessionId)
+      if (timer) clearTimeout(timer)
+      this.updateTimers.delete(sessionId)
       this.states.delete(sessionId)
+      this.sessionContainers.delete(sessionId)
+      this.hiddenSessionIds.delete(sessionId)
     }
   }
 
@@ -533,6 +677,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     await onChatCreated?.(sessionId)
     state.active = true
     await session.send(getMessageOptions(message, options))
+    this.startChatTitleGeneration(state, message || 'File attachment', options)
     return this.createChatDetail(state)
   }
 
@@ -577,6 +722,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     await this.applyTurnOptions(state, options)
 
     if (mode === 'interrupt') {
+      this.cancelPendingUserInputs(state)
       await state.session!.abort()
       await state.session!.send(getMessageOptions(message, options, 'enqueue'))
     } else {
@@ -662,6 +808,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (!target) throw new Error('Message cannot be edited')
 
     state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
+    this.cancelPendingUserInputs(state)
     if (state.active) await state.session!.abort()
     await state.session!.rpc.queue.clear()
     state.pendingMessages = []
@@ -678,6 +825,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.failed = false
     state.metadata =
       (await state.client?.getSessionMetadata(chatId).catch(() => undefined)) ?? state.metadata
+    await this.loadSessionTitle(state)
     await this.loadEvents(state)
     await this.refreshPendingMessages(state)
     this.emitUpdate(state)
@@ -698,22 +846,49 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  resolveUserInput = async (
+    chatId: string,
+    requestId: string,
+    response: ProviderUserInputResponse
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId)
+    const pending = state.pendingUserInputs[0]
+    if (!pending || pending.id !== requestId) {
+      throw new Error('There is no matching pending Copilot question.')
+    }
+
+    if (response.kind === 'answer') {
+      const answer = response.wasFreeform ? response.answer.trim() : response.answer
+      if (!answer.trim()) throw new Error('An answer is required.')
+      const presentation = getUserInputPresentation(state, pending.request)
+
+      if (response.wasFreeform && !presentation.allowFreeform) {
+        throw new Error('This Copilot question requires one of the available choices.')
+      }
+      if (!response.wasFreeform && !presentation.choices.includes(answer)) {
+        throw new Error('The selected Copilot answer is no longer available.')
+      }
+
+      state.pendingUserInputs.shift()
+      pending.resolve({ answer, wasFreeform: response.wasFreeform })
+    } else {
+      state.pendingUserInputs.shift()
+      pending.resolve({ answer: '', wasFreeform: true })
+    }
+
+    this.emitUpdate(state)
+    return this.createChatDetail(state)
+  }
+
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
     state.stopped = true
     state.active = false
     state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
+    this.cancelPendingUserInputs(state)
     await state.session!.abort()
     await this.refreshPendingMessages(state)
     return this.createChatDetail(state)
-  }
-
-  writeAgentTerminalInput = async (): Promise<void> => {
-    throw new Error('Copilot CLI does not expose agent terminal input through the SDK.')
-  }
-
-  resizeAgentTerminal = async (): Promise<void> => {
-    throw new Error('Copilot CLI does not expose agent terminal resizing through the SDK.')
   }
 
   onChatUpdated = (
@@ -723,18 +898,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     return () => this.chatUpdatedListeners.delete(listener)
   }
 
-  onAgentTerminalData = (
-    listener: (event: ProviderAgentTerminalDataEvent) => void
-  ): (() => void) => {
-    this.agentTerminalDataListeners.add(listener)
-    return () => this.agentTerminalDataListeners.delete(listener)
-  }
-
   dispose = (): void => {
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
     this.states.forEach((state) => {
       state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
+      this.cancelPendingUserInputs(state)
     })
     this.clientEntries.forEach((entry) => {
       void entry.client.stop()
@@ -742,6 +911,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.clientEntries.clear()
     this.clientEntryPromises.clear()
     this.sessionContainers.clear()
+    this.hiddenSessionIds.clear()
   }
 
   private getHostClientEntry = (): CopilotClientEntry => {
@@ -864,7 +1034,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       failed: false,
       options,
       pendingMessages: [],
-      pendingPermissions: []
+      pendingPermissions: [],
+      pendingUserInputs: []
     }
     this.sessionContainers.set(sessionId, storedContainer)
     this.states.set(sessionId, state)
@@ -882,24 +1053,34 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   private createSession = async (
     state: CopilotSessionState,
-    options?: ProviderTurnOptions | ProviderOneShotOptions
+    options?: ProviderTurnOptions | ProviderOneShotOptions,
+    enableUserInput = true,
+    clientName = 'Sele'
   ): Promise<CopilotSession> => {
     const client = await this.ensureClient(state.container)
     state.client = client
+    const reasoningEffort = normalizeReasoningEffort(options?.reasoningEffort)
     const session = await client.createSession({
       sessionId: state.id,
-      clientName: 'Sele',
+      clientName,
       workingDirectory: options?.cwd,
       model: options?.model,
-      reasoningEffort: normalizeReasoningEffort(options?.reasoningEffort),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       streaming: false,
       enableConfigDiscovery: true,
       enableSkills: true,
       onEvent: (event) => this.handleEvent(state.id, event),
-      onPermissionRequest: (request) => this.handlePermission(state.id, request)
+      onPermissionRequest: (request) => this.handlePermission(state.id, request),
+      ...(enableUserInput
+        ? {
+            onUserInputRequest: (request: CopilotUserInputRequest) =>
+              this.handleUserInput(state.id, request)
+          }
+        : {})
     })
     state.session = session
     state.metadata = (await client.getSessionMetadata(state.id).catch(() => undefined)) ?? null
+    await this.loadSessionTitle(state)
     await this.loadEvents(state)
     return session
   }
@@ -918,18 +1099,21 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.metadata = (await client.getSessionMetadata(sessionId).catch(() => undefined)) ?? null
     if (!state.metadata) throw new Error(`Copilot session was not found: ${sessionId}`)
 
+    const reasoningEffort = normalizeReasoningEffort(options?.reasoningEffort)
     state.session = await client.resumeSession(sessionId, {
       clientName: 'Sele',
       workingDirectory: options?.cwd ?? state.metadata.context?.workingDirectory,
       model: options?.model,
-      reasoningEffort: normalizeReasoningEffort(options?.reasoningEffort),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       streaming: false,
       enableConfigDiscovery: true,
       enableSkills: true,
       suppressResumeEvent: true,
       onEvent: (event) => this.handleEvent(sessionId, event),
-      onPermissionRequest: (request) => this.handlePermission(sessionId, request)
+      onPermissionRequest: (request) => this.handlePermission(sessionId, request),
+      onUserInputRequest: (request) => this.handleUserInput(sessionId, request)
     })
+    await this.loadSessionTitle(state)
     await this.loadEvents(state)
     await this.refreshPendingMessages(state)
     return state
@@ -941,9 +1125,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<void> => {
     if (!options || !state.session) return
     state.options = options
-    await state.session.setModel(options.model, {
-      reasoningEffort: normalizeReasoningEffort(options.reasoningEffort)
-    })
+    const reasoningEffort = normalizeReasoningEffort(options.reasoningEffort)
+    await state.session.setModel(options.model, reasoningEffort ? { reasoningEffort } : undefined)
   }
 
   private loadEvents = async (state: CopilotSessionState): Promise<void> => {
@@ -953,6 +1136,61 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.events.sort(
       (first, second) => toMilliseconds(first.timestamp) - toMilliseconds(second.timestamp)
     )
+  }
+
+  private startChatTitleGeneration = (
+    state: CopilotSessionState,
+    prompt: string,
+    options?: ProviderTurnOptions
+  ): void => {
+    void this.generateChatTitle(prompt, options, state.container)
+      .then(async (title) => {
+        if (!title || !state.session || this.states.get(state.id) !== state) return
+
+        const result = await state.session.rpc.name.setAuto({ summary: title })
+        if (!result.applied) return
+
+        await this.loadSessionTitle(state)
+        this.emitUpdate(state)
+      })
+      .catch(() => {})
+  }
+
+  private generateChatTitle = async (
+    prompt: string,
+    options: ProviderTurnOptions | undefined,
+    container: AppContainerTarget | null
+  ): Promise<string | null> => {
+    const titleOptions: ProviderOneShotOptions | undefined = options
+      ? {
+          ...options,
+          approvalPolicy: 'never',
+          container,
+          files: undefined,
+          images: undefined,
+          reasoningEffort: undefined,
+          review: undefined,
+          sandboxMode: 'read-only',
+          skills: undefined,
+          generationId: randomUUID()
+        }
+      : undefined
+    const generatedTitle = await this.generateOneShot(createChatTitlePrompt(prompt), titleOptions)
+    return normalizeGeneratedChatTitle(generatedTitle)
+  }
+
+  private loadSessionTitle = async (state: CopilotSessionState): Promise<void> => {
+    if (!state.session) return
+    const result = await state.session.rpc.name.get().catch(() => null)
+    if (!result) return
+
+    state.title = result.name?.trim() || null
+    if (state.metadata) {
+      state.metadata = {
+        ...state.metadata,
+        name: state.title ?? undefined
+      }
+    }
   }
 
   private storeEvent = (state: CopilotSessionState, event: SessionEvent): void => {
@@ -965,7 +1203,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const state = this.createState(sessionId)
     this.storeEvent(state, event)
 
-    if (event.type === 'session.title_changed') state.title = event.data.title
+    if (event.type === 'session.title_changed') {
+      state.title = event.data.title.trim() || null
+      if (state.metadata) {
+        state.metadata = {
+          ...state.metadata,
+          name: state.title ?? undefined
+        }
+      }
+    }
     if (
       event.type === 'user.message' ||
       event.type === 'assistant.turn_start' ||
@@ -979,11 +1225,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (event.type === 'abort') {
       state.active = false
       state.stopped = true
+      this.cancelPendingUserInputs(state)
     }
     if (event.type === 'session.idle') {
       state.active = false
       state.stopped = Boolean(event.data.aborted)
-      this.emitUpdate(state, true)
+      // Copilot generates and persists a session name during the first turn, but does
+      // not reliably send a title_changed event to SDK clients. Refresh it before the
+      // completed-turn update so newly created chats are renamed in the live UI.
+      void this.loadSessionTitle(state).then(() => this.emitUpdate(state, true))
       return
     }
     if (event.type === 'pending_messages.modified') {
@@ -1015,6 +1265,29 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       })
       this.emitUpdate(state)
     })
+  }
+
+  private handleUserInput = (
+    sessionId: string,
+    request: CopilotUserInputRequest
+  ): Promise<CopilotUserInputResponse> => {
+    const state = this.createState(sessionId)
+
+    return new Promise<CopilotUserInputResponse>((resolve) => {
+      state.pendingUserInputs.push({
+        id: randomUUID(),
+        request,
+        startedAt: Date.now(),
+        resolve
+      })
+      this.emitUpdate(state)
+    })
+  }
+
+  private cancelPendingUserInputs = (state: CopilotSessionState): void => {
+    state.pendingUserInputs
+      .splice(0)
+      .forEach((pending) => pending.resolve({ answer: '', wasFreeform: true }))
   }
 
   private refreshPendingMessages = async (state: CopilotSessionState): Promise<void> => {
@@ -1062,12 +1335,14 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       clearTimeout(timer)
       this.updateTimers.delete(state.id)
     }
+    if (this.hiddenSessionIds.has(state.id) || this.states.get(state.id) !== state) return
     const detail = this.createChatDetail(state)
     this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
   }
 
   private getTitle = (state: CopilotSessionState): string => {
     if (state.title?.trim()) return state.title.trim()
+    if (state.metadata?.name?.trim()) return state.metadata.name.trim()
     if (state.metadata?.summary?.trim()) return truncate(state.metadata.summary, 80)
     const firstUserMessage = state.events.find(
       (event): event is Extract<SessionEvent, { type: 'user.message' }> =>
@@ -1094,6 +1369,20 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
   }
 
+  private getPendingUserInput = (state: CopilotSessionState): ProviderPendingUserInput | null => {
+    const pending = state.pendingUserInputs[0]
+    if (!pending) return null
+    const presentation = getUserInputPresentation(state, pending.request)
+
+    return {
+      id: pending.id,
+      question: pending.request.question,
+      choices: presentation.choices,
+      allowFreeform: presentation.allowFreeform,
+      startedAt: pending.startedAt
+    }
+  }
+
   private createChatDetail = (state: CopilotSessionState): ProviderChatDetail => ({
     id: state.id,
     title: this.getTitle(state),
@@ -1102,13 +1391,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     projectCwd: null,
     branchName: null,
     worktreeBaseBranchName: null,
-    status: state.pendingPermissions.length
-      ? 'waitingOnApproval'
-      : state.failed
-        ? 'error'
-        : state.active
-          ? 'active'
-          : null,
+    status: state.pendingUserInputs.length
+      ? 'waitingOnUserInput'
+      : state.pendingPermissions.length
+        ? 'waitingOnApproval'
+        : state.failed
+          ? 'error'
+          : state.active
+            ? 'active'
+            : null,
     pinned: false,
     done: false,
     seenUpdatedAt: null,
@@ -1119,16 +1410,17 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       activeMessages: true
     },
     pendingApproval: this.getPendingApproval(state),
+    pendingUserInput: this.getPendingUserInput(state),
     contextUsage: getContextUsage(state.events),
     items: renderCopilotChatItems(state.events, {
-      active: state.active,
+      active: state.active || state.pendingUserInputs.length > 0,
       stopped: state.stopped,
       pendingItems: state.pendingMessages
     })
   })
 
   private createChatFromMetadata = (
-    metadata: SessionMetadata,
+    metadata: CopilotSessionMetadata,
     container?: AppContainerTarget | null
   ): ProviderChat => {
     const state = this.states.get(metadata.sessionId)
@@ -1140,7 +1432,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     return {
       id: metadata.sessionId,
       providerId: this.id,
-      title: detail?.title ?? truncate(metadata.summary ?? 'Copilot session', 80),
+      title: detail?.title ?? truncate(metadata.name ?? metadata.summary ?? 'Copilot session', 80),
       preview: truncate(preview, 500),
       cwd: detail?.cwd ?? metadata.context?.workingDirectory ?? null,
       cwdKind: 'directory',

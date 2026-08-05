@@ -351,6 +351,24 @@ export type ProviderPendingApproval = {
   startedAt: number
 }
 
+export type ProviderPendingUserInput = {
+  id: string
+  question: string
+  choices: string[]
+  allowFreeform: boolean
+  startedAt: number
+}
+
+export type ProviderUserInputResponse =
+  | {
+      kind: 'answer'
+      answer: string
+      wasFreeform: boolean
+    }
+  | {
+      kind: 'cancel'
+    }
+
 export type ProviderChatMetadata = {
   id: string
   pinned: boolean
@@ -473,26 +491,11 @@ export type ProviderToolActivity =
 
 export type ProviderWorkingToolStatus = 'running' | 'finished'
 
-export type ProviderToolIcon = 'image-view' | 'image-generation' | 'openai-docs' | 'plan'
+export type ProviderToolIcon =
+  'image-view' | 'image-generation' | 'openai-docs' | 'plan' | 'question'
 
 export type ProviderToolImage = {
   path: string
-}
-
-export type ProviderAgentTerminalTarget = {
-  turnId: string
-  itemId: string
-  processId: string
-}
-
-export type ProviderAgentTerminalDataEvent = {
-  providerId: ProviderId
-  chatId: string
-  turnId: string
-  itemId: string
-  processId: string | null
-  source: 'output' | 'input'
-  data: string
 }
 
 export type ProviderWorkingTool = {
@@ -504,8 +507,6 @@ export type ProviderWorkingTool = {
   icon: ProviderToolIcon | null
   label: string
   command: string | null
-  agentTerminal: ProviderAgentTerminalTarget | null
-  agentTerminalDisabledReason: string | null
   cwd: string | null
   stdout: string | null
   diffs: ProviderFileDiff[]
@@ -568,6 +569,7 @@ export type ProviderChatDetail = {
   container: AppContainerTarget | null
   capabilities: ProviderCapabilities
   pendingApproval: ProviderPendingApproval | null
+  pendingUserInput: ProviderPendingUserInput | null
   contextUsage: ProviderChatContextUsage | null
   items: ProviderChatItem[]
 }
@@ -635,7 +637,7 @@ export type ProviderTurnOptions = {
   files?: ProviderFileInput[]
   images?: ProviderImageInput[]
   model: ProviderModelId
-  reasoningEffort: ProviderReasoningEffort
+  reasoningEffort?: ProviderReasoningEffort
   serviceTier: ProviderServiceTier | null
   review?: ProviderReview
   sandboxMode: ProviderSandboxMode
@@ -738,20 +740,13 @@ export type ProviderApi = {
     chatId: string,
     decision: ProviderApprovalDecision
   ) => Promise<ProviderChatDetail>
+  resolveUserInput: (
+    providerId: ProviderId,
+    chatId: string,
+    requestId: string,
+    response: ProviderUserInputResponse
+  ) => Promise<ProviderChatDetail>
   stopChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
-  writeAgentTerminalInput: (
-    providerId: ProviderId,
-    chatId: string,
-    processId: string,
-    data: string
-  ) => Promise<void>
-  resizeAgentTerminal: (
-    providerId: ProviderId,
-    chatId: string,
-    processId: string,
-    cols: number,
-    rows: number
-  ) => Promise<void>
   markChatDone: (
     providerId: ProviderId,
     chatId: string,
@@ -775,10 +770,9 @@ export type ProviderApi = {
     pinned: boolean
   ) => Promise<ProviderChatMetadata>
   onChatUpdated: (listener: (event: ProviderChatUpdatedEvent) => void) => () => void
-  onAgentTerminalData: (listener: (event: ProviderAgentTerminalDataEvent) => void) => () => void
 }
 
-export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated' | 'onAgentTerminalData'> & {
+export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
   continueChatSummary: (
     providerId: ProviderId,
     chatId: string,
@@ -796,7 +790,6 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated' | 'onAgentTe
   setViewedChat: (providerId: ProviderId | null, chatId: string | null) => void
   acknowledgeChatUpdate: (sequence: number, detailApplied: boolean) => void
   onChatUpdated: (listener: (event: ProviderWindowChatUpdatedEvent) => void) => () => void
-  onAgentTerminalData: (listener: (event: ProviderAgentTerminalDataEvent) => void) => () => void
 }
 
 export const providerIpcChannels = {
@@ -823,10 +816,8 @@ export const providerIpcChannels = {
   interruptPendingMessage: 'provider:interrupt-pending-message',
   editMessage: 'provider:edit-message',
   resolveApproval: 'provider:resolve-approval',
+  resolveUserInput: 'provider:resolve-user-input',
   stopChat: 'provider:stop-chat',
-  writeAgentTerminalInput: 'provider:write-agent-terminal-input',
-  resizeAgentTerminal: 'provider:resize-agent-terminal',
-  agentTerminalData: 'provider:agent-terminal-data',
   markChatDone: 'provider:mark-chat-done',
   markCwdChatsDone: 'provider:mark-cwd-chats-done',
   getCwdNotes: 'provider:get-cwd-notes',

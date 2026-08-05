@@ -14,7 +14,6 @@ import type {
   ProviderCapabilities,
   ProviderLoginResult,
   ProviderActiveSendMode,
-  ProviderAgentTerminalDataEvent,
   ProviderApprovalDecision,
   ProviderPendingApproval,
   ProviderPendingMessage,
@@ -263,11 +262,6 @@ type FileChangePatchParams = {
   turnId?: unknown
   itemId?: unknown
   changes?: unknown
-}
-
-type TerminalInteractionParams = AgentMessageDeltaParams & {
-  processId?: unknown
-  stdin?: unknown
 }
 
 type RawResponseItemParams = {
@@ -1095,7 +1089,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
-  private agentTerminalDataListeners = new Set<(event: ProviderAgentTerminalDataEvent) => void>()
   private threads = new Map<string, CodexThread>()
   private pendingTurnIds = new Map<string, string>()
   private activeTurnIds = new Map<string, string>()
@@ -2018,6 +2011,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return this.getChat(chatId)
   }
 
+  resolveUserInput = async (): Promise<ProviderChatDetail> => {
+    throw new Error('Interactive questions are not supported by this provider.')
+  }
+
   stopChat = (chatId: string): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId), () => this.stopChatInContext(chatId))
 
@@ -2031,46 +2028,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
-  writeAgentTerminalInput = async (
-    chatId: string,
-    processId: string,
-    data: string
-  ): Promise<void> => {
-    void data
-
-    if (!this.hasAgentTerminalProcess(chatId, processId)) {
-      throw new Error('Agent terminal is no longer available')
-    }
-
-    throw new Error(
-      'Codex app-server does not expose stdin control for agent commandExecution processes'
-    )
-  }
-
-  resizeAgentTerminal = async (
-    chatId: string,
-    processId: string,
-    cols: number,
-    rows: number
-  ): Promise<void> => {
-    void cols
-    void rows
-
-    if (!this.hasAgentTerminalProcess(chatId, processId)) return
-  }
-
   onChatUpdated = (
     listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   ): (() => void) => {
     this.chatUpdatedListeners.add(listener)
     return () => this.chatUpdatedListeners.delete(listener)
-  }
-
-  onAgentTerminalData = (
-    listener: (event: ProviderAgentTerminalDataEvent) => void
-  ): (() => void) => {
-    this.agentTerminalDataListeners.add(listener)
-    return () => this.agentTerminalDataListeners.delete(listener)
   }
 
   dispose = (): void => {
@@ -2080,7 +2042,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationIds.clear()
     this.canceledOneShotGenerationTimers.forEach((timer) => clearTimeout(timer))
     this.canceledOneShotGenerationTimers.clear()
-    this.agentTerminalDataListeners.clear()
     this.steeringMessagesByThread.clear()
     this.hiddenPendingMessageIdsByThread.clear()
     this.queuedTurnsByThread.clear()
@@ -2354,6 +2315,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     container: this.threadContainers.get(thread.id) ?? null,
     capabilities: codexCapabilities,
     pendingApproval: this.getProviderPendingApproval(thread.id),
+    pendingUserInput: null,
     contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
     items: [
       ...getChatItems(this.getRenderableTurns(thread), thread.createdAt, {
@@ -3304,37 +3266,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return this.activeTurnIds.get(threadId) ?? null
   }
 
-  private getAgentTerminalItem = (
-    threadId: string,
-    turnId: string,
-    itemId: string
-  ): CodexThreadItem | null =>
-    this.threads
-      .get(threadId)
-      ?.turns.find((turn) => turn.id === turnId)
-      ?.items.find((item) => item.id === itemId) ?? null
-
-  private hasAgentTerminalProcess = (threadId: string, processId: string): boolean =>
-    Boolean(
-      this.threads
-        .get(threadId)
-        ?.turns.some((turn) =>
-          turn.items.some(
-            (item) => item.type === 'commandExecution' && item.processId === processId
-          )
-        )
-    )
-
-  private emitAgentTerminalData = (
-    event: Omit<ProviderAgentTerminalDataEvent, 'providerId'>
-  ): void => {
-    const providerEvent = {
-      ...event,
-      providerId: this.id
-    }
-    this.agentTerminalDataListeners.forEach((listener) => listener(providerEvent))
-  }
-
   private markTurnInterrupted = (threadId: string, turnId: string): void => {
     this.updateThread(threadId, (thread) => ({
       ...thread,
@@ -3812,34 +3743,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       return item
     })
-    const item = this.getAgentTerminalItem(threadId, turnId, itemId)
-    this.emitAgentTerminalData({
-      chatId: threadId,
-      turnId,
-      itemId,
-      processId: item?.processId ?? null,
-      source: 'output',
-      data: delta
-    })
     this.scheduleChatUpdated(threadId)
-  }
-
-  private handleTerminalInteraction = (params: TerminalInteractionParams): void => {
-    const threadId = getThreadId(params)
-    const turnId = getTurnId(params)
-    const itemId = getItemId(params)
-    const processId = getOptionalStringValue(params.processId)
-    const stdin = typeof params.stdin === 'string' ? params.stdin : null
-    if (!threadId || !turnId || !itemId || stdin == null) return
-
-    this.emitAgentTerminalData({
-      chatId: threadId,
-      turnId,
-      itemId,
-      processId,
-      source: 'input',
-      data: stdin
-    })
   }
 
   private handleFileChangePatchUpdated = (params: FileChangePatchParams): void => {
@@ -4059,11 +3963,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (notification.method === 'item/commandExecution/outputDelta') {
       this.handleCommandOutputDelta(params as AgentMessageDeltaParams)
-      return
-    }
-
-    if (notification.method === 'item/commandExecution/terminalInteraction') {
-      this.handleTerminalInteraction(params as TerminalInteractionParams)
       return
     }
 
