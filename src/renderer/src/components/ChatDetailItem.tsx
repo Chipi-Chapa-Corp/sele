@@ -1538,6 +1538,8 @@ const partitionGeneratedImageItems = (
 ): { generatedImages: ProviderToolItem[]; remaining: ProviderWorkingItem[] } => {
   const generatedImages: ProviderToolItem[] = []
   const remaining: ProviderWorkingItem[] = []
+  const isGeneratedImageTool = (tool: ProviderWorkingTool): boolean =>
+    tool.icon === 'image-generation' && tool.images.length > 0
 
   for (const item of items) {
     if (item.type === 'message') {
@@ -1546,13 +1548,13 @@ const partitionGeneratedImageItems = (
     }
 
     if (item.type === 'tool') {
-      if (item.images.length > 0) generatedImages.push(item)
+      if (isGeneratedImageTool(item)) generatedImages.push(item)
       else remaining.push(item)
       continue
     }
 
-    const imageTools = item.tools.filter((tool) => tool.images.length > 0)
-    const remainingTools = item.tools.filter((tool) => tool.images.length === 0)
+    const imageTools = item.tools.filter(isGeneratedImageTool)
+    const remainingTools = item.tools.filter((tool) => !isGeneratedImageTool(tool))
     generatedImages.push(...imageTools)
 
     if (remainingTools.length === 1) remaining.push(remainingTools[0])
