@@ -11,6 +11,8 @@ import {
   isCurrentContainerTarget,
   type CurrentContainerHostBridge
 } from './currentContainer'
+import { getSshEnvironment } from './database/sshEnvironments'
+import { getSshCommandArgs } from './sshCommand'
 import {
   getRequiredWorkingDirectoryShellLine,
   getTargetTerminalScript,
@@ -841,6 +843,7 @@ const containerRuntimeExecutables = {
 
 const getContainerRuntimeExecutable = (container: AppContainerTarget): string => {
   if (container.kind !== 'container') throw new Error('Container target is required')
+  if (container.tool === 'ssh') throw new Error('Local container target is required')
   return containerRuntimeExecutables[container.tool]
 }
 
@@ -872,13 +875,26 @@ const getContainerScriptArgs = (
 }
 
 const getContainerExecutableArgs = (
-  container: Extract<AppContainerTarget, { kind: 'container' }>,
+  container: Extract<AppContainerTarget, { tool: AppContainerTool }>,
   file: string,
   args: string[]
 ): string[] => {
   if (container.tool === 'distrobox') return ['enter', container.name, '--', file, ...args]
   if (container.tool === 'toolbox') return ['run', '--container', container.name, file, ...args]
   return ['exec', '-i', container.name, file, ...args]
+}
+
+const getSshHostCommand = async (
+  container: Extract<AppContainerTarget, { tool: 'ssh' }>,
+  script: string,
+  options: { env?: NodeJS.ProcessEnv; interactive?: boolean } = {}
+): Promise<HostCommand> => {
+  const environment = await getSshEnvironment(container.name)
+  if (!environment) throw new Error('SSH environment is no longer available')
+
+  const args = getSshCommandArgs(environment, script, options.interactive)
+
+  return buildResolvedHostCommand('ssh', args, { env: options.env ?? process.env })
 }
 
 const buildResolvedHostCommand = async (
@@ -1040,6 +1056,11 @@ const getContainerHostCommand = async (
   const container = options.container
   if (!container || container.kind !== 'container')
     return buildResolvedHostCommand(file, args, options)
+  if (container.tool === 'ssh') {
+    return getSshHostCommand(container, getContainerCommandScript(file, args, options), {
+      env: process.env
+    })
+  }
   if (await isCurrentContainerTarget(container))
     return buildResolvedLocalCommand(file, args, options)
 
@@ -1073,6 +1094,13 @@ export const getHostExecutableCommand = async (
 
     return normalizeExecutableCommand(await buildResolvedLocalCommand(file, args, options))
   }
+  if (container.tool === 'ssh') {
+    return normalizeExecutableCommand(
+      await getSshHostCommand(container, getContainerCommandScript(file, args, options), {
+        env: process.env
+      })
+    )
+  }
   if (await isCurrentContainerTarget(container))
     return normalizeExecutableCommand(await buildResolvedLocalCommand(file, args, options))
 
@@ -1098,6 +1126,12 @@ export const getHostTerminalCommand = async (options: {
     return getHostCommand(options.shell.file, options.shell.args, {
       cwd: options.cwd,
       env: options.env
+    })
+  }
+  if (container.tool === 'ssh') {
+    return getSshHostCommand(container, getTargetTerminalScript(options), {
+      env: process.env,
+      interactive: true
     })
   }
   if (await isCurrentContainerTarget(container)) {

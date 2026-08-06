@@ -211,7 +211,7 @@ const withCurrentContainer = (
   entries: ContainerEntry[],
   currentContainer: AppContainerTarget | null
 ): ContainerEntry[] => {
-  if (currentContainer?.kind !== 'container') return entries
+  if (currentContainer?.kind !== 'container' || currentContainer.tool === 'ssh') return entries
 
   let foundCurrentContainer = false
   const markedEntries = entries.map((entry) => {

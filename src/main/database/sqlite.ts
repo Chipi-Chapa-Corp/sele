@@ -51,6 +51,16 @@ export type LocalDatabase = {
     added_at: number
     updated_at: number
   }
+  ssh_environments: {
+    id: string
+    name: string
+    host: string
+    port: number
+    user: string | null
+    identity_file: string | null
+    created_at: number
+    updated_at: number
+  }
   message_reviews: {
     id: string
     chat_id: string
@@ -127,6 +137,19 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .ifNotExists()
     .addColumn('cwd', 'text', (column) => column.primaryKey())
     .addColumn('added_at', 'integer', (column) => column.notNull())
+    .addColumn('updated_at', 'integer', (column) => column.notNull())
+    .execute()
+
+  await db.schema
+    .createTable('ssh_environments')
+    .ifNotExists()
+    .addColumn('id', 'text', (column) => column.primaryKey())
+    .addColumn('name', 'text', (column) => column.notNull())
+    .addColumn('host', 'text', (column) => column.notNull())
+    .addColumn('port', 'integer', (column) => column.notNull())
+    .addColumn('user', 'text')
+    .addColumn('identity_file', 'text')
+    .addColumn('created_at', 'integer', (column) => column.notNull())
     .addColumn('updated_at', 'integer', (column) => column.notNull())
     .execute()
 

@@ -48,10 +48,12 @@ import {
   Minus,
   Monitor,
   Moon,
+  PackagePlus,
   PanelLeft,
   PanelRight,
   RefreshCw,
   Search,
+  Server,
   Settings,
   MessageSquare,
   ShieldQuestionMark,
@@ -81,8 +83,10 @@ import type {
   AppContainerSuggestion,
   AppContainerTarget,
   AppContainerTool,
+  AppCreateSshEnvironmentOptions,
   AppProject,
   AppSelectedAttachment,
+  AppSshEnvironment,
   AppSourceAvailability,
   AppFileTreeResult,
   AppGitBranchesResult,
@@ -163,6 +167,7 @@ import { MessageBox, type MessageBoxQuoteRequest } from './components/MessageBox
 import { MessageSelectionQuoteButton } from './components/MessageSelectionQuoteButton'
 import { SegmentedControl } from './components/SegmentedControl'
 import { Switch } from './components/Switch'
+import { SshEnvironmentDialog } from './components/SshEnvironmentDialog'
 import { TerminalPanel, type TerminalCommandLaunchRequest } from './components/TerminalPanel'
 import { UserInputRequestBox } from './components/UserInputRequestBox'
 import type { AppAction } from './actions'
@@ -882,8 +887,12 @@ const writeStoredProviderUpdatePreferences = (preferences: ProviderUpdatePrefere
   }
 }
 
-const isContainerTool = (value: unknown): value is AppContainerTool =>
-  value === 'distrobox' || value === 'toolbox' || value === 'podman' || value === 'docker'
+const isContainerTool = (value: unknown): value is AppContainerTool | 'ssh' =>
+  value === 'distrobox' ||
+  value === 'toolbox' ||
+  value === 'podman' ||
+  value === 'docker' ||
+  value === 'ssh'
 
 const normalizeContainerTarget = (
   container: AppContainerTarget | null | undefined
@@ -920,12 +929,15 @@ const getContainerSuggestionState = (suggestion: AppContainerSuggestion): string
 
 const isContainerTargetAvailable = (
   container: AppContainerTarget,
-  suggestions: AppContainerSuggestion[]
+  suggestions: AppContainerSuggestion[],
+  sshEnvironments: AppSshEnvironment[]
 ): boolean =>
   container.kind === 'host' ||
-  suggestions.some(
-    (suggestion) => suggestion.tool === container.tool && suggestion.name === container.name
-  )
+  (container.tool === 'ssh'
+    ? sshEnvironments.some((environment) => environment.id === container.name)
+    : suggestions.some(
+        (suggestion) => suggestion.tool === container.tool && suggestion.name === container.name
+      ))
 
 const parseStoredContainerSelection = (
   storedValue: string | null,
@@ -3550,6 +3562,8 @@ export const App: React.FC = () => {
   const [providerUpdatePreferences, setProviderUpdatePreferences] =
     useState<ProviderUpdatePreferences>(readStoredProviderUpdatePreferences)
   const [containerSuggestions, setContainerSuggestions] = useState<AppContainerSuggestion[]>([])
+  const [sshEnvironments, setSshEnvironments] = useState<AppSshEnvironment[]>([])
+  const [sshEnvironmentDialogOpen, setSshEnvironmentDialogOpen] = useState(false)
   const [storedContainerSelection] = useState<AppContainerTarget | null>(
     readStoredContainerSelection
   )
@@ -4266,9 +4280,11 @@ export const App: React.FC = () => {
   useEffect(() => {
     let active = true
 
-    appApi
-      .getContainerSuggestions()
-      .then((suggestions) => {
+    Promise.all([
+      appApi.getContainerSuggestions().catch(() => [] satisfies AppContainerSuggestion[]),
+      appApi.getSshEnvironments()
+    ])
+      .then(([suggestions, environments]) => {
         if (!active) return
 
         const currentSuggestion = suggestions.find((suggestion) => suggestion.current)
@@ -4277,15 +4293,16 @@ export const App: React.FC = () => {
           : ({ kind: 'host' } satisfies AppContainerTarget)
 
         setContainerSuggestions(suggestions)
+        setSshEnvironments(environments)
         setNewSessionContainer((currentContainer) => {
           if (!containerSelectionReadyRef.current) {
             const initialContainer = storedContainerSelection ?? currentSource
-            return isContainerTargetAvailable(initialContainer, suggestions)
+            return isContainerTargetAvailable(initialContainer, suggestions, environments)
               ? initialContainer
               : currentSource
           }
 
-          return isContainerTargetAvailable(currentContainer, suggestions)
+          return isContainerTargetAvailable(currentContainer, suggestions, environments)
             ? currentContainer
             : currentSource
         })
@@ -4296,6 +4313,7 @@ export const App: React.FC = () => {
         if (!active) return
 
         setContainerSuggestions([])
+        setSshEnvironments([])
         if (!containerSelectionReadyRef.current) {
           setNewSessionContainer(storedContainerSelection ?? { kind: 'host' })
         } else {
@@ -4948,14 +4966,14 @@ export const App: React.FC = () => {
       if (container !== undefined) {
         const normalizedContainer = normalizeContainerTarget(container)
         setNewSessionContainer(
-          isContainerTargetAvailable(normalizedContainer, containerSuggestions)
+          isContainerTargetAvailable(normalizedContainer, containerSuggestions, sshEnvironments)
             ? normalizedContainer
             : { kind: 'host' }
         )
       }
       setNewChatOpen(true)
     },
-    [containerSuggestions, resetChatSearch]
+    [containerSuggestions, resetChatSearch, sshEnvironments]
   )
 
   const applyChatMetadata = useCallback((metadataList: ProviderChatMetadata[]): void => {
@@ -6351,6 +6369,13 @@ export const App: React.FC = () => {
         label: 'Host',
         icon: <Monitor aria-hidden="true" />
       },
+      ...sshEnvironments.map((environment) => ({
+        value: `ssh:${environment.id}`,
+        label: environment.name,
+        menuLabel: environment.name,
+        description: `${environment.user ? `${environment.user}@` : ''}${environment.host}:${environment.port}`,
+        icon: <Server aria-hidden="true" />
+      })),
       ...containerSuggestions.map((container) => ({
         value: container.id,
         label: container.name,
@@ -6358,7 +6383,7 @@ export const App: React.FC = () => {
         icon: getContainerToolIcon(container.tool)
       }))
     ],
-    [containerSuggestions]
+    [containerSuggestions, sshEnvironments]
   )
   const newSessionProviderOptions = useMemo<DropdownOption<ProviderId>[]>(
     () =>
@@ -6379,8 +6404,28 @@ export const App: React.FC = () => {
       return
     }
 
+    const environment = sshEnvironments.find(
+      (candidateEnvironment) => `ssh:${candidateEnvironment.id}` === value
+    )
+    if (environment) {
+      setNewSessionContainer({ kind: 'container', tool: 'ssh', name: environment.id })
+      return
+    }
+
     const suggestion = containerSuggestions.find((container) => container.id === value)
     if (suggestion) setNewSessionContainer(getContainerTargetFromSuggestion(suggestion))
+  }
+  const handleCreateSshEnvironment = async (
+    options: AppCreateSshEnvironmentOptions
+  ): Promise<void> => {
+    const environment = await appApi.createSshEnvironment(options)
+    setSshEnvironments((currentEnvironments) => [
+      environment,
+      ...currentEnvironments.filter(
+        (currentEnvironment) => currentEnvironment.id !== environment.id
+      )
+    ])
+    setNewSessionContainer({ kind: 'container', tool: 'ssh', name: environment.id })
   }
   const savedGitCommitModel = settingsPanelSettings.git.commitModel
   const savedGitCommitModelOption = savedGitCommitModel
@@ -8487,6 +8532,7 @@ export const App: React.FC = () => {
     () =>
       changesCwd
         ? changedFiles.map((file) => ({
+            container: changesContainer,
             cwd: changesCwd,
             path: file.path,
             displayPath: getChangedFileDisplayPath(file),
@@ -8494,7 +8540,7 @@ export const App: React.FC = () => {
             previousPath: file.previousPath ?? null
           }))
         : [],
-    [changedFiles, changesCwd]
+    [changedFiles, changesContainer, changesCwd]
   )
   const gitSyncMetadata = changesCwd && gitChangesScope?.cwd === changesCwd ? gitChanges : null
   const unpulledCount = gitSyncMetadata?.unpulledCount ?? 0
@@ -8854,6 +8900,7 @@ export const App: React.FC = () => {
     if (!changesCwd) return
 
     setFileEditorTarget({
+      container: changesContainer,
       cwd: changesCwd,
       path: file.path,
       displayPath: getChangedFileDisplayPath(file),
@@ -8873,6 +8920,7 @@ export const App: React.FC = () => {
         : normalizedDisplayPath
 
       setFileEditorTarget({
+        container: changesContainer,
         cwd: changesCwd,
         path,
         displayPath: relativeDisplayPath,
@@ -8880,7 +8928,7 @@ export const App: React.FC = () => {
         endLine
       })
     },
-    [changesCwd]
+    [changesContainer, changesCwd]
   )
 
   const handleOpenAttachment = useCallback(
@@ -10454,6 +10502,11 @@ export const App: React.FC = () => {
   return (
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
+      <SshEnvironmentDialog
+        open={sshEnvironmentDialogOpen}
+        onClose={() => setSshEnvironmentDialogOpen(false)}
+        onSave={handleCreateSshEnvironment}
+      />
       {fileEditorTarget && (
         <FileEditorDialog
           diffTargets={fileEditorTarget.kind ? fileEditorDiffTargets : []}
@@ -10869,20 +10922,25 @@ export const App: React.FC = () => {
                       value={newSessionLocation}
                       onChange={setNewSessionLocation}
                     />
-                    {containerSuggestions.length > 0 && (
-                      <>
-                        <span>from</span>
-                        <Dropdown
-                          aria-label="Runtime"
-                          disabled={providerUpdateInProgress || sendState === 'sending'}
-                          options={containerOptions}
-                          placement="top"
-                          size="small"
-                          value={newSessionContainerValue}
-                          onChange={handleNewSessionContainerChange}
-                        />
-                      </>
-                    )}
+                    <span>from</span>
+                    <Dropdown
+                      aria-label="Runtime"
+                      disabled={providerUpdateInProgress || sendState === 'sending'}
+                      menuActions={[
+                        {
+                          id: 'add-environment',
+                          label: 'Add environment',
+                          title: 'Add environment',
+                          icon: <PackagePlus aria-hidden="true" />,
+                          callback: () => setSshEnvironmentDialogOpen(true)
+                        }
+                      ]}
+                      options={containerOptions}
+                      placement="top"
+                      size="small"
+                      value={newSessionContainerValue}
+                      onChange={handleNewSessionContainerChange}
+                    />
                   </div>
                 )}
                 {!selectedChat && newChatOpen && worktreeCreationState !== 'idle' && (

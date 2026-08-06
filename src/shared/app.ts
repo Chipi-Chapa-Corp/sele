@@ -25,6 +25,7 @@ export type AppAddProjectOptions = {
 }
 
 export type AppLocalImageOptions = {
+  container?: AppContainerTarget | null
   cwd?: string | null
   path: string
 }
@@ -136,6 +137,8 @@ export const getAppWindowZoomShortcutAction = (
 
 export type AppContainerTool = 'distrobox' | 'toolbox' | 'podman' | 'docker'
 
+export type AppContainerTargetTool = AppContainerTool | 'ssh'
+
 export type AppContainerTarget =
   | {
       kind: 'host'
@@ -145,6 +148,30 @@ export type AppContainerTarget =
       tool: AppContainerTool
       name: string
     }
+  | {
+      kind: 'container'
+      tool: 'ssh'
+      name: string
+    }
+
+export type AppSshEnvironment = {
+  id: string
+  name: string
+  host: string
+  port: number
+  user: string | null
+  identityFile: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type AppCreateSshEnvironmentOptions = {
+  name: string
+  host: string
+  port: number
+  user?: string | null
+  identityFile?: string | null
+}
 
 export type AppContainerSuggestion = {
   id: string
@@ -415,6 +442,9 @@ export type AppApi = {
   getDefaultCwd: () => Promise<string>
   getProjects: () => Promise<AppProject[]>
   addProject: (options: AppAddProjectOptions) => Promise<AppProject>
+  getSshEnvironments: () => Promise<AppSshEnvironment[]>
+  createSshEnvironment: (options: AppCreateSshEnvironmentOptions) => Promise<AppSshEnvironment>
+  selectSshIdentityFile: () => Promise<string | null>
   getContainerSuggestions: () => Promise<AppContainerSuggestion[]>
   getSourceAvailability: (options?: AppSourceAvailabilityOptions) => Promise<AppSourceAvailability>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
@@ -464,6 +494,9 @@ export const appIpcChannels = {
   getDefaultCwd: 'app:get-default-cwd',
   getProjects: 'app:get-projects',
   addProject: 'app:add-project',
+  getSshEnvironments: 'app:get-ssh-environments',
+  createSshEnvironment: 'app:create-ssh-environment',
+  selectSshIdentityFile: 'app:select-ssh-identity-file',
   getContainerSuggestions: 'app:get-container-suggestions',
   getSourceAvailability: 'app:get-source-availability',
   getGitChanges: 'app:get-git-changes',

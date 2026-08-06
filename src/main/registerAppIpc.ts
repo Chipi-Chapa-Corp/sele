@@ -28,6 +28,7 @@ import type {
   AppColorScheme,
   AppAddProjectOptions,
   AppContainerTarget,
+  AppCreateSshEnvironmentOptions,
   AppExternalLinkAction,
   AppExternalLinkOptions,
   AppExternalLinkResult,
@@ -79,6 +80,10 @@ import {
   addProject as addStoredProject,
   getProjects as getStoredProjects
 } from './database/projects'
+import {
+  createSshEnvironment as createStoredSshEnvironment,
+  getSshEnvironments as getStoredSshEnvironments
+} from './database/sshEnvironments'
 import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { getHostCommand } from './hostProcess'
@@ -229,12 +234,62 @@ const getAddProjectOptions = (value: unknown): AppAddProjectOptions => {
   return { cwd }
 }
 
+const getCreateSshEnvironmentOptions = (value: unknown): AppCreateSshEnvironmentOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid SSH environment options')
+  }
+
+  const options = value as {
+    name?: unknown
+    host?: unknown
+    port?: unknown
+    user?: unknown
+    identityFile?: unknown
+  }
+  const name = typeof options.name === 'string' ? options.name.trim() : ''
+  const host = typeof options.host === 'string' ? options.host.trim() : ''
+  const user = typeof options.user === 'string' ? options.user.trim() : ''
+  const identityFile = typeof options.identityFile === 'string' ? options.identityFile.trim() : ''
+
+  if (!name || name.length > 80 || /[\0\r\n]/.test(name)) {
+    throw new Error('Environment name must be 1–80 characters')
+  }
+  if (!host || host.length > 253 || host.startsWith('-') || /[\0\s]/.test(host)) {
+    throw new Error('Enter a valid SSH host')
+  }
+  if (user && (user.length > 128 || /[\0\s@]/.test(user) || user.startsWith('-'))) {
+    throw new Error('Enter a valid SSH user')
+  }
+  if (
+    typeof options.port !== 'number' ||
+    !Number.isInteger(options.port) ||
+    options.port < 1 ||
+    options.port > 65_535
+  ) {
+    throw new Error('SSH port must be between 1 and 65535')
+  }
+  if (
+    identityFile &&
+    (!isAbsolute(identityFile) || identityFile.length > 4_096 || /[\0\r\n]/.test(identityFile))
+  ) {
+    throw new Error('Enter a valid absolute identity file path')
+  }
+
+  return {
+    name,
+    host,
+    port: options.port,
+    user: user || null,
+    identityFile: identityFile || null
+  }
+}
+
 const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid local image options')
   }
 
-  const options = value as { cwd?: unknown; path?: unknown }
+  const options = value as { container?: unknown; cwd?: unknown; path?: unknown }
   if (
     typeof options.path !== 'string' ||
     options.path.length === 0 ||
@@ -247,7 +302,11 @@ const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
   if (!isAbsolute(options.path) && !cwd)
     throw new Error('A cwd is required for relative image paths')
 
-  return { cwd, path: options.path }
+  return {
+    container: requireContainerTarget(options.container, { optional: true }),
+    cwd,
+    path: options.path
+  }
 }
 
 const getImageMimeType = (imagePath: string): string | null =>
@@ -292,6 +351,8 @@ const resolveLocalImagePath = async (cwd: string | null, path: string): Promise<
 }
 
 const getLocalImage = async (cwd: string | null, path: string): Promise<AppLocalImage> => {
+  if (isSshGitTarget()) return getSshLocalImage(cwd, path)
+
   const imagePath = await resolveLocalImagePath(cwd, path)
   const image = await getImageFile(imagePath, maxLocalImageBytes)
   if (!image) throw new Error('Unable to load this image.')
@@ -1553,9 +1614,184 @@ const getFileTree = async (
 }
 
 const maxEditableFileBytes = 2 * 1024 * 1024
+const remoteFileMetadataBufferBytes = 16 * 1024
 
 const getFileVersion = (contents: Buffer | string): string =>
   createHash('sha256').update(contents).digest('hex')
+
+const isSshGitTarget = (): boolean => {
+  const container = gitCommandContext.getStore()?.container
+  return container?.kind === 'container' && container.tool === 'ssh'
+}
+
+const runSshFileCommand = async (
+  cwd: string,
+  args: string[],
+  options: { input?: Buffer; maxBuffer?: number } = {}
+): Promise<Buffer> => {
+  const container = gitCommandContext.getStore()?.container
+  if (container?.kind !== 'container' || container.tool !== 'ssh') {
+    throw new Error('SSH target is required')
+  }
+  const hostCommand = await getHostCommand('sh', args, {
+    container,
+    cwd,
+    env: process.env
+  })
+
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      hostCommand.file,
+      hostCommand.args,
+      {
+        cwd: hostCommand.cwd,
+        encoding: 'buffer',
+        env: hostCommand.env,
+        maxBuffer: options.maxBuffer ?? maxEditableFileBytes + remoteFileMetadataBufferBytes,
+        timeout: 30_000
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const detail = Buffer.from(stderr).toString('utf8').trim()
+          reject(new Error(detail || error.message))
+          return
+        }
+
+        resolve(Buffer.from(stdout))
+      }
+    )
+
+    if (options.input) child.stdin?.end(options.input)
+  })
+}
+
+const getRemoteRepositoryFilePath = (repositoryRoot: string, path: string): string => {
+  const absolutePath = isAbsolute(path) ? path : resolve(repositoryRoot, path)
+  const relativePath = relative(repositoryRoot, absolutePath).replace(/\\/g, '/')
+  if (
+    !relativePath ||
+    relativePath === '..' ||
+    relativePath.startsWith('../') ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error('File is outside the repository')
+  }
+
+  return relativePath
+}
+
+const readSshFileContents = async (
+  cwd: string,
+  path: string
+): Promise<{ contents: string; editable: boolean; version: string }> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const relativePath = getRemoteRepositoryFilePath(repositoryRoot, path)
+  const script = [
+    'set -eu',
+    'root=$(realpath -- .)',
+    'file=$(realpath -- "$1")',
+    'case "$file" in "$root"/*) ;; *) echo "File is outside the repository" >&2; exit 1 ;; esac',
+    '[ -f "$file" ] || { echo "Choose a regular file to open." >&2; exit 1; }',
+    'size=$(wc -c < "$file")',
+    `[ "$size" -le ${maxEditableFileBytes} ] || { echo "Files larger than 2 MB cannot be opened." >&2; exit 1; }`,
+    'if [ -L "$1" ]; then editable=0; else editable=1; fi',
+    'printf "%s\\0%s\\0" "$editable" "$size"',
+    'cat -- "$file"'
+  ].join('\n')
+  const output = await runSshFileCommand(repositoryRoot, [
+    '-lc',
+    script,
+    'sele-read-file',
+    relativePath
+  ])
+  const editableSeparator = output.indexOf(0)
+  const sizeSeparator = output.indexOf(0, editableSeparator + 1)
+  if (editableSeparator < 0 || sizeSeparator < 0) throw new Error('Invalid remote file response')
+
+  const editable = output.subarray(0, editableSeparator).toString('utf8') === '1'
+  const size = Number(output.subarray(editableSeparator + 1, sizeSeparator).toString('utf8'))
+  const file = output.subarray(sizeSeparator + 1)
+  if (!Number.isSafeInteger(size) || size < 0 || file.byteLength !== size) {
+    throw new Error('Invalid remote file response')
+  }
+
+  const contents = file.toString('utf8')
+  if (!Buffer.from(contents, 'utf8').equals(file)) throw new Error('Binary files cannot be opened.')
+
+  return { contents, editable, version: getFileVersion(file) }
+}
+
+const writeSshFileContents = async (
+  cwd: string,
+  path: string,
+  contents: string,
+  expectedVersion: string
+): Promise<{ version: string }> => {
+  const currentFile = await readSshFileContents(cwd, path)
+  if (!currentFile.editable) throw new Error('Symbolic links cannot be edited.')
+  if (currentFile.version !== expectedVersion) {
+    throw new Error('This file changed on disk. Reload it before saving.')
+  }
+
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const relativePath = getRemoteRepositoryFilePath(repositoryRoot, path)
+  const script = [
+    'set -eu',
+    'root=$(realpath -- .)',
+    'file=$(realpath -- "$1")',
+    'case "$file" in "$root"/*) ;; *) echo "File is outside the repository" >&2; exit 1 ;; esac',
+    '[ ! -L "$1" ] && [ -f "$file" ] || { echo "File cannot be edited." >&2; exit 1; }',
+    'cat > "$file"'
+  ].join('\n')
+  await runSshFileCommand(repositoryRoot, ['-lc', script, 'sele-write-file', relativePath], {
+    input: Buffer.from(contents, 'utf8')
+  })
+
+  return { version: getFileVersion(contents) }
+}
+
+const getSshLocalImage = async (cwd: string | null, path: string): Promise<AppLocalImage> => {
+  const mimeType = getImageMimeType(path)
+  if (!mimeType) throw new Error('Unable to load this image.')
+
+  let commandCwd = cwd ?? '/'
+  let imagePath = path
+  if (!isAbsolute(imagePath)) {
+    if (!cwd) throw new Error('A cwd is required for relative image paths')
+    const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+    if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+    commandCwd = repositoryRoot
+    imagePath = getRemoteRepositoryFilePath(repositoryRoot, imagePath)
+  }
+
+  const script = [
+    'set -eu',
+    '[ -f "$1" ] || { echo "Choose a regular image file." >&2; exit 1; }',
+    'size=$(wc -c < "$1")',
+    `[ "$size" -le ${maxLocalImageBytes} ] || { echo "Choose an image smaller than 32 MB." >&2; exit 1; }`,
+    'printf "%s\\0" "$size"',
+    'cat -- "$1"'
+  ].join('\n')
+  const output = await runSshFileCommand(
+    commandCwd,
+    ['-lc', script, 'sele-read-image', imagePath],
+    { maxBuffer: maxLocalImageBytes + remoteFileMetadataBufferBytes }
+  )
+  const sizeSeparator = output.indexOf(0)
+  if (sizeSeparator < 0) throw new Error('Invalid remote image response')
+  const size = Number(output.subarray(0, sizeSeparator).toString('utf8'))
+  const file = output.subarray(sizeSeparator + 1)
+  if (!Number.isSafeInteger(size) || size < 0 || file.byteLength !== size) {
+    throw new Error('Invalid remote image response')
+  }
+
+  return {
+    dataUrl: `data:${mimeType};base64,${file.toString('base64')}`,
+    updatedAt: Date.now()
+  }
+}
 
 const isPathInsideDirectory = (directoryPath: string, filePath: string): boolean => {
   const relativePath = relative(directoryPath, filePath)
@@ -1619,6 +1855,8 @@ const readFileContents = async (
   cwd: string,
   path: string
 ): Promise<{ contents: string; editable: boolean; version: string }> => {
+  if (isSshGitTarget()) return readSshFileContents(cwd, path)
+
   const { absolutePath, editable } = await resolveReadableFile(cwd, path)
   const file = await readFile(absolutePath)
   const contents = file.toString('utf8')
@@ -1643,6 +1881,8 @@ const writeEditableFile = async (
   if (Buffer.byteLength(contents, 'utf8') > maxEditableFileBytes) {
     throw new Error('Files larger than 2 MB cannot be edited.')
   }
+
+  if (isSshGitTarget()) return writeSshFileContents(cwd, path, contents, expectedVersion)
 
   const { absolutePath } = await resolveEditableFile(cwd, path)
   const currentContents = await readFile(absolutePath)
@@ -2213,6 +2453,31 @@ export const registerAppIpc = (): void => {
     return addStoredProject(options.cwd)
   })
 
+  ipcMain.handle(appIpcChannels.getSshEnvironments, () => getStoredSshEnvironments())
+
+  ipcMain.handle(appIpcChannels.createSshEnvironment, async (_event, value: unknown) => {
+    const options = getCreateSshEnvironmentOptions(value)
+    if (options.identityFile) {
+      const identityStat = await stat(options.identityFile).catch(() => null)
+      if (!identityStat?.isFile()) throw new Error('SSH identity file does not exist')
+    }
+
+    return createStoredSshEnvironment(options)
+  })
+
+  ipcMain.handle(appIpcChannels.selectSshIdentityFile, async (event) => {
+    const browserWindow = BrowserWindow.fromWebContents(event.sender)
+    const dialogOptions = {
+      title: 'Choose SSH identity file',
+      properties: ['openFile']
+    } satisfies Electron.OpenDialogOptions
+    const result = browserWindow
+      ? await dialog.showOpenDialog(browserWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions)
+
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
   ipcMain.handle(appIpcChannels.getContainerSuggestions, () => getContainerSuggestions())
 
   ipcMain.handle(appIpcChannels.getSourceAvailability, (_event, value: unknown) =>
@@ -2541,12 +2806,16 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
     const options = getLocalImageOptions(value)
-    return getLocalImage(options.cwd ?? null, options.path)
+    return runWithGitContainer(options.container, () =>
+      getLocalImage(options.cwd ?? null, options.path)
+    )
   })
 
   ipcMain.handle(appIpcChannels.copyLocalImage, async (_event, value: unknown) => {
     const options = getLocalImageOptions(value)
-    const image = await getLocalImage(options.cwd ?? null, options.path)
+    const image = await runWithGitContainer(options.container, () =>
+      getLocalImage(options.cwd ?? null, options.path)
+    )
     const clipboardImage = nativeImage.createFromDataURL(image.dataUrl)
     if (clipboardImage.isEmpty()) throw new Error('Unable to copy this image.')
     clipboard.writeImage(clipboardImage)
@@ -2554,6 +2823,26 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.saveLocalImage, async (event, value: unknown) => {
     const options = getLocalImageOptions(value)
+    if (options.container?.kind === 'container' && options.container.tool === 'ssh') {
+      const image = await runWithGitContainer(options.container, () =>
+        getLocalImage(options.cwd ?? null, options.path)
+      )
+      const extension = extname(options.path).slice(1)
+      const dialogOptions = {
+        defaultPath: join(app.getPath('downloads'), basename(options.path)),
+        filters: extension ? [{ name: 'Image', extensions: [extension] }] : undefined
+      } satisfies Electron.SaveDialogOptions
+      const browserWindow = BrowserWindow.fromWebContents(event.sender)
+      const result = browserWindow
+        ? await dialog.showSaveDialog(browserWindow, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions)
+      if (result.canceled || !result.filePath) return null
+
+      const encodedImage = image.dataUrl.slice(image.dataUrl.indexOf(',') + 1)
+      await writeFile(result.filePath, Buffer.from(encodedImage, 'base64'))
+      return result.filePath
+    }
+
     const sourcePath = await resolveLocalImagePath(options.cwd ?? null, options.path)
     const image = await getImageFile(sourcePath, maxLocalImageBytes)
     if (!image) throw new Error('Unable to save this image.')

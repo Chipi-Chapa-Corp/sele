@@ -1,11 +1,17 @@
-import type { AppContainerTarget, AppContainerTool } from '../shared/app'
+import type { AppContainerTarget, AppContainerTargetTool } from '../shared/app'
 
 export const hostContainerTarget = { kind: 'host' } satisfies AppContainerTarget
 
-const containerTools = new Set<AppContainerTool>(['distrobox', 'toolbox', 'podman', 'docker'])
+const containerTools = new Set<AppContainerTargetTool>([
+  'distrobox',
+  'toolbox',
+  'podman',
+  'docker',
+  'ssh'
+])
 
-export const isContainerTool = (value: unknown): value is AppContainerTool =>
-  containerTools.has(value as AppContainerTool)
+export const isContainerTool = (value: unknown): value is AppContainerTargetTool =>
+  containerTools.has(value as AppContainerTargetTool)
 
 export const getContainerTargetKey = (container: AppContainerTarget | null | undefined): string =>
   container?.kind === 'container' ? `${container.tool}:${container.name}` : 'host'

@@ -26,6 +26,10 @@ const appApi: AppApi = {
   getDefaultCwd: () => ipcRenderer.invoke(appIpcChannels.getDefaultCwd),
   getProjects: () => ipcRenderer.invoke(appIpcChannels.getProjects),
   addProject: (options) => ipcRenderer.invoke(appIpcChannels.addProject, options),
+  getSshEnvironments: () => ipcRenderer.invoke(appIpcChannels.getSshEnvironments),
+  createSshEnvironment: (options) =>
+    ipcRenderer.invoke(appIpcChannels.createSshEnvironment, options),
+  selectSshIdentityFile: () => ipcRenderer.invoke(appIpcChannels.selectSshIdentityFile),
   getContainerSuggestions: () => ipcRenderer.invoke(appIpcChannels.getContainerSuggestions),
   getSourceAvailability: (options) =>
     ipcRenderer.invoke(appIpcChannels.getSourceAvailability, options),

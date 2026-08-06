@@ -29,7 +29,7 @@ import {
 } from '@react-symbols/icons/utils'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import type { AppGitChangeKind } from '../../../shared/app'
+import type { AppContainerTarget, AppGitChangeKind } from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { Button } from './Button'
@@ -38,6 +38,7 @@ import { EditableUnifiedDiff, UnifiedDiff, type DiffReviewLocation } from './Uni
 import './FileEditorDialog.css'
 
 export type FileEditorTarget = {
+  container?: AppContainerTarget | null
   cwd: string
   path: string
   displayPath: string
@@ -364,6 +365,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
     try {
       const result = await appApi.getFileContents({
+        container: target.container,
         cwd: target.cwd,
         path: target.path
       })
@@ -382,7 +384,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setEditable(null)
       setLoadState('error')
     }
-  }, [target.cwd, target.path])
+  }, [target.container, target.cwd, target.path])
 
   const loadImage = useCallback(async (): Promise<void> => {
     const request = loadRequestRef.current + 1
@@ -394,6 +396,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
     try {
       const result = await appApi.getLocalImage({
+        container: target.container,
         cwd: target.cwd,
         path: target.path
       })
@@ -409,7 +412,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setEditable(null)
       setLoadState('error')
     }
-  }, [target.cwd, target.path])
+  }, [target.container, target.cwd, target.path])
 
   const loadDiff = useCallback(
     async (options: LoadDiffOptions = {}): Promise<void> => {
@@ -424,6 +427,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
       try {
         const result = await appApi.getGitFileDiff({
+          container: target.container,
           cwd: target.cwd,
           path: target.path,
           previousPath: target.previousPath
@@ -444,7 +448,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         }
       }
     },
-    [target.cwd, target.kind, target.path, target.previousPath]
+    [target.container, target.cwd, target.kind, target.path, target.previousPath]
   )
 
   useEffect(() => {
@@ -775,6 +779,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
     try {
       const result = await appApi.writeFileContents({
+        container: target.container,
         cwd: target.cwd,
         path: target.path,
         contents: contentsToSave,
@@ -795,6 +800,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     dirty,
     loadDiff,
     saveState,
+    target.container,
     target.cwd,
     target.path,
     version,
@@ -813,6 +819,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
     try {
       await appApi.copyLocalImage({
+        container: target.container,
         cwd: target.cwd,
         path: target.path
       })
@@ -825,7 +832,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setEditorError(getErrorMessage(copyError, 'Unable to copy this image.'))
       setCopyState('error')
     }
-  }, [canShowImage, copyState, target.cwd, target.path, visibleLoadState])
+  }, [canShowImage, copyState, target.container, target.cwd, target.path, visibleLoadState])
 
   return (
     <div
