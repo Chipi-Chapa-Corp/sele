@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.8.0" date="2026-08-06">
+      <description>
+        <p>Added SSH environment support for working with remote projects, including environment management, host command execution, and terminal integration.</p>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-08-06">
       <description>
         <p>Added tool-viewed image extraction and improved generated-image filtering, while preserving streamed text through late snapshots, isolating one-shot client resources, and restoring terminal launch behavior in Flatpak.</p>
