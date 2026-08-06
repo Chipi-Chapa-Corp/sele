@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.7.0" date="2026-08-06">
+      <description>
+        <p>Added tool-viewed image extraction and improved generated-image filtering, while preserving streamed text through late snapshots, isolating one-shot client resources, and restoring terminal launch behavior in Flatpak.</p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-08-05">
       <description>
         <p>Added chat renaming, grouping controls, reorderable pinned chats, and selection-based quoting, with faster progressive file-tree loading and refined chat item interactions.</p>
