@@ -299,7 +299,7 @@ type QueuedTurn = {
   options?: ProviderTurnOptions
 }
 type OneShotGeneration = {
-  container: AppContainerTarget | null
+  client: CodexAppServerClient
   threadId: string | null
   turnId: string | null
   canceled: boolean
@@ -1504,13 +1504,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const text = message.trim()
     if (!text) throw new Error('Cannot generate from an empty message')
 
+    const client = new CodexAppServerClient(this.getCurrentContainer(), false)
     const generationId = options?.generationId?.trim() || null
     const canceledBeforeStart = generationId
       ? this.takeCanceledOneShotGeneration(generationId)
       : false
     const generation: OneShotGeneration | null = generationId
       ? {
-          container: this.getCurrentContainer(),
+          client,
           threadId: null,
           turnId: null,
           canceled: canceledBeforeStart
@@ -1538,7 +1539,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     try {
       await throwIfCanceled()
 
-      const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
+      const startedThread = await client.request<ThreadStartResponse>('thread/start', {
         cwd: options?.cwd,
         model: options?.model,
         serviceTier: options?.serviceTier ?? null,
@@ -1554,12 +1555,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ephemeral: true
       })
       threadId = startedThread.thread.id
-      this.rememberThreadContainer(threadId)
       if (generation) generation.threadId = threadId
 
       await throwIfCanceled()
 
       generatedText = this.waitForOneShotText(
+        client,
         threadId,
         oneShotGenerationTimeoutMs,
         'AI generation',
@@ -1571,7 +1572,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         }
       )
 
-      const startedTurn = await this.client.request<TurnStartResponse>('turn/start', {
+      const startedTurn = await client.request<TurnStartResponse>('turn/start', {
         threadId,
         cwd: options?.cwd,
         input: createUserTextInput(text),
@@ -1595,7 +1596,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw error
     } finally {
       if (generationId) this.activeOneShotGenerations.delete(generationId)
-      if (threadId) await this.client.request('thread/unsubscribe', { threadId }).catch(() => {})
+      if (threadId) await client.request('thread/unsubscribe', { threadId }).catch(() => {})
+      client.dispose()
     }
   }
 
@@ -1639,9 +1641,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private interruptOneShotGeneration = async (generation: OneShotGeneration): Promise<void> => {
     if (!generation.threadId || !generation.turnId) return
 
-    await this.runWithContainer(generation.container, () =>
-      this.interruptTurn(generation.threadId!, generation.turnId!)
-    )
+    await this.interruptTurnWithClient(generation.client, generation.threadId, generation.turnId)
   }
 
   startChat = (
@@ -2279,9 +2279,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private interruptTurn = async (
     threadId: string,
     turnId: string
+  ): Promise<{ turnId: string; interrupted: boolean }> =>
+    this.interruptTurnWithClient(this.client, threadId, turnId)
+
+  private interruptTurnWithClient = async (
+    client: CodexAppServerClient,
+    threadId: string,
+    turnId: string
   ): Promise<{ turnId: string; interrupted: boolean }> => {
     try {
-      await this.client.request('turn/interrupt', {
+      await client.request('turn/interrupt', {
         threadId,
         turnId
       })
@@ -2294,7 +2301,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
 
       try {
-        await this.client.request('turn/interrupt', {
+        await client.request('turn/interrupt', {
           threadId,
           turnId: serverTurnId
         })
@@ -2514,9 +2521,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private waitForTitleGenerationText = (threadId: string): Promise<string | null> =>
-    this.waitForOneShotText(threadId, titleGenerationTimeoutMs, 'thread title generation')
+    this.waitForOneShotText(
+      this.client,
+      threadId,
+      titleGenerationTimeoutMs,
+      'thread title generation'
+    )
 
   private waitForOneShotText = (
+    client: CodexAppServerClient,
     threadId: string,
     timeoutMs: number,
     errorLabel: string,
@@ -2536,7 +2549,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         reject(new Error(`Timed out waiting for ${errorLabel}`))
       }, timeoutMs)
 
-      const dispose = this.client.onNotification((notification) => {
+      const dispose = client.onNotification((notification) => {
         const params = getRecordValue(notification.params)
         const notificationThreadId = getThreadId(params ?? {})
         if (notificationThreadId !== threadId) return

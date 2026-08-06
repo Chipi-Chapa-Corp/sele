@@ -94,7 +94,10 @@ export const getCodexResourceIdentity = (): CodexResourceIdentity | null =>
   codexResourceIdentity ? { ...codexResourceIdentity } : null
 
 export class CodexAppServerClient {
-  constructor(private readonly container: AppContainerTarget | null = null) {}
+  constructor(
+    private readonly container: AppContainerTarget | null = null,
+    private readonly trackResourceIdentity = true
+  ) {}
 
   private process: ChildProcessWithoutNullStreams | null = null
   private startPromise: Promise<void> | null = null
@@ -128,9 +131,12 @@ export class CodexAppServerClient {
   }
 
   dispose = (): void => {
+    const processId = this.process?.pid
     this.process?.kill()
     this.process = null
-    codexResourceIdentity = null
+    if (this.trackResourceIdentity && codexResourceIdentity?.pid === processId) {
+      codexResourceIdentity = null
+    }
     this.startPromise = null
     this.rejectPending(new Error('Codex app-server stopped'))
   }
@@ -164,7 +170,7 @@ export class CodexAppServerClient {
     })
 
     this.process = child
-    if (child.pid) {
+    if (this.trackResourceIdentity && child.pid) {
       codexResourceIdentity = {
         pid: child.pid,
         systemdUnitName: appServerCommand.resourceUnitName
