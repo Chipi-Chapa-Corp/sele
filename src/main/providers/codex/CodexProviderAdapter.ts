@@ -56,6 +56,7 @@ import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProvider
 import { loadRolloutContextUsage, loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
+import { mergeCodexStreamedText } from './CodexLiveMerge'
 
 type CodexAccount =
   { type: 'apiKey' } | { type: 'chatgpt'; email: string } | { type: 'amazonBedrock' }
@@ -333,6 +334,21 @@ const getOptionalStringValue = (value: unknown): string | null =>
 
 const getOptionalNumberValue = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null
+
+const getTurnFailureMessage = (turn: CodexTurn, errorLabel: string): string => {
+  const message = getStringValue(turn.error?.message)
+  const additionalDetails = getStringValue(turn.error?.additionalDetails)
+  const details = [message, additionalDetails]
+    .filter((detail): detail is string => Boolean(detail))
+    .filter((detail, index, values) => values.indexOf(detail) === index)
+
+  if (details.length > 0) return `${errorLabel} failed: ${details.join(' ')}`
+  if (turn.status === 'interrupted') {
+    return `${errorLabel} was interrupted before it completed. Try again.`
+  }
+
+  return `${errorLabel} failed. Try again or check the selected model and provider settings.`
+}
 
 const getOptionalTokenStringValue = (value: unknown): string | null => {
   if (typeof value === 'bigint') return value >= BigInt(0) ? value.toString() : null
@@ -1546,7 +1562,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       generatedText = this.waitForOneShotText(
         threadId,
         oneShotGenerationTimeoutMs,
-        'one-shot response',
+        'AI generation',
         (turnId) => {
           if (!generation) return
 
@@ -2563,7 +2579,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         cleanup()
 
         if (completedTurn.status && completedTurn.status !== 'completed') {
-          reject(new Error(`${errorLabel} ended with status ${completedTurn.status}`))
+          reject(new Error(getTurnFailureMessage(completedTurn, errorLabel)))
           return
         }
 
@@ -3312,7 +3328,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     ...next,
     content:
       next.content && next.content.length > 0 ? next.content : (previous.content ?? next.content),
-    text: next.text ?? previous.text,
+    text: mergeCodexStreamedText(previous.text, next.text),
     command: next.command ?? previous.command,
     processId: next.processId ?? previous.processId,
     server: next.server ?? previous.server,

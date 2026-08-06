@@ -54,6 +54,11 @@ export type CodexThreadItem = {
 export type CodexTurn = {
   id: string
   status?: string | null
+  error?: {
+    message?: string | null
+    additionalDetails?: string | null
+    codexErrorInfo?: unknown
+  } | null
   model?: string | null
   startedAt?: number | null
   completedAt?: number | null
