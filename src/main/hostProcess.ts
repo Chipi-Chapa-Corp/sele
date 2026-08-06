@@ -11,6 +11,11 @@ import {
   isCurrentContainerTarget,
   type CurrentContainerHostBridge
 } from './currentContainer'
+import {
+  getRequiredWorkingDirectoryShellLine,
+  getTargetTerminalScript,
+  quotePosixShellArg
+} from './targetShell'
 
 type HostCommandOptions = {
   container?: AppContainerTarget | null
@@ -265,7 +270,6 @@ const getShellCandidates = async (
   return unique(executableCandidates)
 }
 
-const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 const quoteFishShellArg = quotePosixShellArg
 const quotePowerShellArg = (value: string): string => `'${value.replace(/'/g, "''")}'`
 const lookupResultStart = '__SELE_EXECUTABLE_LOOKUP_START__'
@@ -811,7 +815,7 @@ const getBridgeCommandScript = (
   options: HostCommandOptions
 ): string => {
   const lines = [
-    ...(options.cwd ? [`cd ${quotePosixShellArg(options.cwd)}`] : []),
+    ...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : []),
     getShellExecLine(file, args, options.env)
   ]
   return lines.join('\n')
@@ -846,27 +850,9 @@ const getContainerCommandScript = (
   options: HostCommandOptions
 ): string => {
   const lines = [
-    ...(options.cwd ? [`cd ${quotePosixShellArg(options.cwd)}`] : []),
+    ...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : []),
     getShellExecLine(file, args, options.env)
   ]
-  return lines.join('\n')
-}
-
-const getContainerTerminalScript = (options: {
-  command?: string | null
-  cwd?: string
-  keepAlive?: boolean
-}): string => {
-  const command = options.command?.trim() || null
-  const lines = [...(options.cwd ? [`cd ${quotePosixShellArg(options.cwd)}`] : [])]
-
-  if (!command) {
-    lines.push('exec "${SHELL:-/bin/sh}" -l')
-    return lines.join('\n')
-  }
-
-  lines.push(command)
-  if (options.keepAlive) lines.push('exec "${SHELL:-/bin/sh}" -i')
   return lines.join('\n')
 }
 
@@ -913,7 +899,7 @@ const getHostBridgeExecutablePath = async (
   options: HostCommandOptions = {}
 ): Promise<string> => {
   const commandScript = [
-    ...(options.cwd ? [`cd ${quotePosixShellArg(options.cwd)}`] : []),
+    ...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : []),
     getShellExecLine(file, args, undefined, ['"$@"'])
   ].join('\n')
   const wrapperScript = [
@@ -1123,7 +1109,7 @@ export const getHostTerminalCommand = async (options: {
 
   return getContainerRuntimeHostCommand(
     container,
-    getContainerScriptArgs(container, getContainerTerminalScript(options), true),
+    getContainerScriptArgs(container, getTargetTerminalScript(options), true),
     {
       cwd: options.cwd,
       env: options.env

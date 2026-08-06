@@ -1,5 +1,4 @@
 import { spawn as spawnChildProcess } from 'node:child_process'
-import { stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { basename, isAbsolute } from 'node:path'
 import { app, ipcMain } from 'electron'
@@ -80,10 +79,6 @@ const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> 
     throw new Error('Invalid terminal working directory')
   }
 
-  const cwdStat = await stat(cwd).catch(() => null)
-  if (!cwdStat?.isDirectory()) {
-    throw new Error('Terminal working directory does not exist')
-  }
   if (initialCommand && initialCommand.length > maximumCommandLength) {
     throw new Error('Command is too long')
   }
@@ -111,11 +106,6 @@ const getRunCommandOptions = async (value: unknown): Promise<TerminalRunCommandO
   if (!command) throw new Error('Command is required')
   if (command.length > maximumCommandLength) throw new Error('Command is too long')
   if (typeof cwd !== 'string' || !isAbsolute(cwd)) throw new Error('Invalid command cwd')
-
-  const cwdStat = await stat(cwd).catch(() => null)
-  if (!cwdStat?.isDirectory()) {
-    throw new Error('Command working directory does not exist')
-  }
 
   return { command, container: requireContainerTarget(input.container, { optional: true }), cwd }
 }
