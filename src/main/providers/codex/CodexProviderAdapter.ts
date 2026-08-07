@@ -56,7 +56,14 @@ import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProvider
 import { loadRolloutContextUsage, loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
-import { mergeCodexStreamedText } from './CodexLiveMerge'
+import {
+  isCodexTurnTerminal,
+  isMatchingCodexPendingTurn,
+  mergeCodexStreamedText,
+  mergeCodexTurnStatus,
+  reconcileCodexTurnSnapshots,
+  shouldPreferCodexRolloutItems
+} from './CodexLiveMerge'
 
 type CodexAccount =
   { type: 'apiKey' } | { type: 'chatgpt'; email: string } | { type: 'amazonBedrock' }
@@ -647,14 +654,17 @@ const shouldUseRolloutTurnItems = (structuredTurn: CodexTurn, rolloutTurn: Codex
 
   const structuredToolCount = countItemsByType(structuredTurn, isHistoricalToolItem)
   const rolloutToolCount = countItemsByType(rolloutTurn, isHistoricalToolItem)
-  if (rolloutToolCount <= structuredToolCount) return false
-
   const structuredTextCount = countItemsByType(structuredTurn, (item) =>
     textItemTypes.has(item.type)
   )
   const rolloutTextCount = countItemsByType(rolloutTurn, (item) => textItemTypes.has(item.type))
 
-  return rolloutTextCount >= structuredTextCount
+  return shouldPreferCodexRolloutItems({
+    structuredToolCount,
+    rolloutToolCount,
+    structuredTextCount,
+    rolloutTextCount
+  })
 }
 
 const restoreStructuredUserMessageAttachments = (
@@ -1697,9 +1707,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ...getTurnAccessOptions(options)
       })
 
-      this.activeTurnIds.set(thread.id, startedTurn.turn.id)
-      this.replacePendingTurn(thread.id, pendingTurn?.id ?? null, startedTurn.turn)
-      this.pendingTurnIds.delete(thread.id)
+      this.reconcileStartedTurn(thread.id, pendingTurn?.id ?? null, startedTurn.turn)
     } catch (error) {
       if (pendingTurn) this.removePendingTurn(thread.id, pendingTurn.id)
       throw error
@@ -1748,9 +1756,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ...getTurnAccessOptions(options)
       })
 
-      this.activeTurnIds.set(chatId, started.turn.id)
-      this.replacePendingTurn(chatId, pendingTurn?.id ?? null, started.turn)
-      this.pendingTurnIds.delete(chatId)
+      this.reconcileStartedTurn(chatId, pendingTurn?.id ?? null, started.turn)
     } catch (error) {
       if (pendingTurn) this.removePendingTurn(chatId, pendingTurn.id)
       throw error
@@ -1824,9 +1830,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ...getTurnAccessOptions(options)
       })
 
-      this.activeTurnIds.set(forkedThread.id, started.turn.id)
-      this.replacePendingTurn(forkedThread.id, pendingTurn?.id ?? null, started.turn)
-      this.pendingTurnIds.delete(forkedThread.id)
+      this.reconcileStartedTurn(forkedThread.id, pendingTurn?.id ?? null, started.turn)
     } catch (error) {
       if (pendingTurn) this.removePendingTurn(forkedThread.id, pendingTurn.id)
       throw error
@@ -2013,9 +2017,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       })
 
       this.allowRolledBackTurn(chatId, started.turn.id)
-      this.activeTurnIds.set(chatId, started.turn.id)
-      this.replacePendingTurn(chatId, pendingTurn?.id ?? null, started.turn)
-      this.pendingTurnIds.delete(chatId)
+      this.reconcileStartedTurn(chatId, pendingTurn?.id ?? null, started.turn)
     } catch (error) {
       if (pendingTurn) this.removePendingTurn(chatId, pendingTurn.id)
       throw error
@@ -2269,9 +2271,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...getTurnAccessOptions(options)
     })
 
-    this.activeTurnIds.set(chatId, started.turn.id)
-    this.replacePendingTurn(chatId, pendingTurnId, started.turn)
-    this.pendingTurnIds.delete(chatId)
+    this.reconcileStartedTurn(chatId, pendingTurnId, started.turn)
 
     return started.turn
   }
@@ -2902,7 +2902,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private removePendingTurn = (threadId: string, pendingTurnId: string): void => {
-    this.pendingTurnIds.delete(threadId)
+    this.clearPendingTurnId(threadId, pendingTurnId)
     this.updateThread(threadId, (thread) => ({
       ...thread,
       turns: thread.turns.filter((turn) => turn.id !== pendingTurnId)
@@ -3277,6 +3277,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.queuedTurnStartThreads.add(threadId)
     void this.runQueuedTurn(threadId, queuedTurn).finally(() => {
       this.queuedTurnStartThreads.delete(threadId)
+      this.startNextQueuedTurn(threadId)
     })
   }
 
@@ -3303,7 +3304,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       await this.startCodexTurn(threadId, queuedTurn.text, queuedTurn.options, queuedTurn.id)
       this.emitChatUpdated(threadId)
     } catch {
-      this.pendingTurnIds.delete(threadId)
+      this.clearPendingTurnId(threadId, queuedTurn.id)
       if (pendingTurn) this.setTurnStatus(threadId, queuedTurn.id, 'failed')
       this.setThreadStatus(threadId, { type: 'idle' })
       this.emitChatUpdated(threadId)
@@ -3489,7 +3490,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...previous,
       ...next,
       model: next.model ?? previous.model,
-      status: next.status ?? previous.status,
+      startedAt: next.startedAt ?? previous.startedAt,
+      completedAt: next.completedAt ?? previous.completedAt,
+      status: mergeCodexTurnStatus(previous, next),
       items: mergedItems
     }
   }
@@ -3498,7 +3501,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     threadId: string,
     pendingTurnId: string | null,
     nextTurn: CodexTurn
-  ): void => {
+  ): CodexTurn | null => {
+    let reconciledTurn: CodexTurn | null = null
     this.updateThread(threadId, (thread) => {
       const pendingTurnIndex = pendingTurnId
         ? thread.turns.findIndex((turn) => turn.id === pendingTurnId)
@@ -3506,14 +3510,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const existingTurnIndex = thread.turns.findIndex((turn) => turn.id === nextTurn.id)
       const pendingTurn = pendingTurnIndex >= 0 ? thread.turns[pendingTurnIndex] : null
       const existingTurn = existingTurnIndex >= 0 ? thread.turns[existingTurnIndex] : null
-      const previousTurn = pendingTurn
+      const renamedPendingTurn = pendingTurn
         ? {
             ...pendingTurn,
             id: nextTurn.id
           }
-        : existingTurn
-
-      const mergedTurn = previousTurn ? this.mergeTurn(threadId, previousTurn, nextTurn) : nextTurn
+        : null
+      // Notifications can arrive before the turn/start response. In that case the real turn is
+      // newer than nextTurn and may already be complete, so apply it last.
+      const mergedTurn = reconcileCodexTurnSnapshots(
+        renamedPendingTurn,
+        nextTurn,
+        existingTurn,
+        (previous, next) => this.mergeTurn(threadId, previous, next)
+      )
       const removedIndexes = new Set(
         [pendingTurnIndex, existingTurnIndex].filter((index) => index >= 0)
       )
@@ -3527,12 +3537,54 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const boundedInsertIndex = Math.min(insertIndex, turns.length)
 
       turns.splice(boundedInsertIndex, 0, mergedTurn)
+      reconciledTurn = mergedTurn
 
       return {
         ...thread,
         turns
       }
     })
+
+    return reconciledTurn
+  }
+
+  private clearPendingTurnId = (threadId: string, pendingTurnId: string | null): void => {
+    if (isMatchingCodexPendingTurn(this.pendingTurnIds.get(threadId), pendingTurnId)) {
+      this.pendingTurnIds.delete(threadId)
+    }
+  }
+
+  private getPendingTurnIdForLiveTurn = (threadId: string, turnId: string): string | null => {
+    const pendingTurnId = this.pendingTurnIds.get(threadId) ?? null
+    if (!pendingTurnId) return null
+
+    const existingTurn = this.threads
+      .get(threadId)
+      ?.turns.find((candidate) => candidate.id === turnId)
+    return existingTurn && isCodexTurnTerminal(existingTurn) ? null : pendingTurnId
+  }
+
+  private reconcileStartedTurn = (
+    threadId: string,
+    pendingTurnId: string | null,
+    startedTurn: CodexTurn
+  ): CodexTurn => {
+    const reconciledTurn =
+      this.replacePendingTurn(threadId, pendingTurnId, startedTurn) ?? startedTurn
+    this.clearPendingTurnId(threadId, pendingTurnId)
+
+    if (isCodexTurnTerminal(reconciledTurn)) {
+      if (this.activeTurnIds.get(threadId) === reconciledTurn.id) {
+        this.activeTurnIds.delete(threadId)
+      }
+      if (!this.getActiveTurnId(threadId)) this.setThreadStatus(threadId, { type: 'idle' })
+      this.startNextQueuedTurn(threadId)
+    } else {
+      this.activeTurnIds.set(threadId, reconciledTurn.id)
+      this.setThreadStatus(threadId, { type: 'active', activeFlags: [] })
+    }
+
+    return reconciledTurn
   }
 
   private upsertTurn = (threadId: string, turn: CodexTurn): void => {
@@ -3656,24 +3708,21 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.allowRolledBackTurn(threadId, turn.id)
     }
 
+    const pendingTurnId = this.getPendingTurnIdForLiveTurn(threadId, turn.id)
+
     if (notification.method === 'turn/started') {
-      this.activeTurnIds.set(threadId, turn.id)
-      this.setThreadStatus(threadId, { type: 'active', activeFlags: [] })
+      this.reconcileStartedTurn(threadId, pendingTurnId, turn)
+    } else if (pendingTurnId) {
+      this.replacePendingTurn(threadId, pendingTurnId, turn)
+      this.clearPendingTurnId(threadId, pendingTurnId)
+    } else {
+      this.upsertTurn(threadId, turn)
     }
+
     if (notification.method === 'turn/completed') {
       if (this.activeTurnIds.get(threadId) === turn.id) this.activeTurnIds.delete(threadId)
       this.pendingApprovalsByThread.delete(threadId)
-      this.setThreadStatus(threadId, { type: 'idle' })
-    }
-
-    const pendingTurnId =
-      notification.method === 'turn/started' ? (this.pendingTurnIds.get(threadId) ?? null) : null
-
-    if (pendingTurnId) {
-      this.replacePendingTurn(threadId, pendingTurnId, turn)
-      this.pendingTurnIds.delete(threadId)
-    } else {
-      this.upsertTurn(threadId, turn)
+      if (!this.getActiveTurnId(threadId)) this.setThreadStatus(threadId, { type: 'idle' })
     }
 
     if (notification.method === 'turn/completed') {
