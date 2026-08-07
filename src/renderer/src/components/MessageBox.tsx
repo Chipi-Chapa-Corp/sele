@@ -144,7 +144,7 @@ type MessageBoxProps = {
     review?: Omit<ProviderReview, 'prompt'> | null,
     skills?: ProviderSkillInput[],
     apps?: ProviderAppInput[]
-  ) => Promise<void> | void
+  ) => Promise<boolean> | boolean
 }
 
 export type MessageBoxQuoteRequest = {
@@ -1706,7 +1706,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       void Promise.resolve(
         onSend(nextMessage, undefined, [], undefined, selectedSkillInputs, selectedAppInputs)
       )
-        .then(() => {
+        .then((sent) => {
+          if (!sent) return
+
           setMessage(messageBeforeEditRef.current ?? '')
           setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
           setSelectedSkills(skillsBeforeEditRef.current ?? [])
@@ -1727,14 +1729,30 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     setSelectedApps([])
     onSelectedReviewChange?.(null)
     setAttachmentSelectionError(null)
-    void onSend(
-      nextMessage,
-      active ? activeMode : undefined,
-      selectedAttachments,
-      submittingReview,
-      selectedSkillInputs,
-      selectedAppInputs
+    void Promise.resolve(
+      onSend(
+        nextMessage,
+        active ? activeMode : undefined,
+        selectedAttachments,
+        submittingReview,
+        selectedSkillInputs,
+        selectedAppInputs
+      )
     )
+      .then((sent) => {
+        if (sent || !nextMessage) return
+
+        setMessage((currentMessage) =>
+          currentMessage ? `${nextMessage}\n\n${currentMessage}` : nextMessage
+        )
+      })
+      .catch(() => {
+        if (!nextMessage) return
+
+        setMessage((currentMessage) =>
+          currentMessage ? `${nextMessage}\n\n${currentMessage}` : nextMessage
+        )
+      })
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {

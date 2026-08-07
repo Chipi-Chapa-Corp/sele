@@ -7956,8 +7956,8 @@ export const App: React.FC = () => {
     apps: ProviderAppInput[] = [],
     turnOptionsOverride?: ProviderTurnOptions,
     sendTarget?: 'current' | 'new'
-  ): Promise<void> => {
-    if (providerUpdateInProgress || sendInFlightRef.current) return
+  ): Promise<boolean> => {
+    if (providerUpdateInProgress || sendInFlightRef.current) return false
     sendInFlightRef.current = true
     chatAutoScrollEnabledRef.current = true
     const messageWithComposerMentions = serializeComposerMessage(message, skills, apps)
@@ -7992,7 +7992,7 @@ export const App: React.FC = () => {
     if (editingMessage && !sendTarget) {
       if (!selectedChat) {
         sendInFlightRef.current = false
-        return
+        return false
       }
 
       setSendState('sending')
@@ -8017,14 +8017,13 @@ export const App: React.FC = () => {
         applyViewedChatDetail(selectedChat.providerId, detail)
         setEditingMessage(null)
         setSendState('idle')
+        return true
       } catch (error) {
         handleSendFailure(error, 'Unable to edit message.')
-        throw error
+        return false
       } finally {
         sendInFlightRef.current = false
       }
-
-      return
     }
 
     if (!selectedChat || sendTarget === 'new') {
@@ -8058,7 +8057,7 @@ export const App: React.FC = () => {
           )
           if (worktreeCreationCanceledRef.current) {
             setSendState('idle')
-            return
+            return true
           }
 
           const worktreeName = normalizeGeneratedWorktreeName(generatedName)
@@ -8071,7 +8070,7 @@ export const App: React.FC = () => {
           })
           if (worktreeCreationCanceledRef.current) {
             setSendState('idle')
-            return
+            return true
           }
 
           sessionCwd = worktree.worktreePath
@@ -8095,14 +8094,17 @@ export const App: React.FC = () => {
           void rememberProject(startingCwd)
         }
         setSendState('idle')
+        return true
       } catch (error) {
         if (
           worktreeCreationCanceledRef.current ||
           (error instanceof Error && error.message === providerOneShotGenerationCanceledMessage)
         ) {
           setSendState('idle')
+          return true
         } else {
           handleSendFailure(error, 'Unable to start chat.')
+          return false
         }
       } finally {
         worktreeBranchGenerationRef.current = null
@@ -8110,8 +8112,6 @@ export const App: React.FC = () => {
         setWorktreeCreationState('idle')
         sendInFlightRef.current = false
       }
-
-      return
     }
 
     const providerId = selectedChat.providerId
@@ -8130,13 +8130,13 @@ export const App: React.FC = () => {
         applyChatSummary(providerId, summary, false)
         markChatSeenAt(providerId, chatId, Date.now())
         setSendState('idle')
+        return true
       } catch (error) {
         handleSendFailure(error, 'Unable to send message.')
+        return false
       } finally {
         sendInFlightRef.current = false
       }
-
-      return
     }
 
     if (chatDetail?.id === chatId) {
@@ -8163,18 +8163,23 @@ export const App: React.FC = () => {
       applyChatSummary(providerId, summary, false)
       markChatSeenAt(providerId, chatId, Date.now())
       setSendState('idle')
+      return true
     } catch (error) {
       void providerApi
         .getChat(providerId, chatId)
         .then((detail) => applyViewedChatDetail(providerId, detail))
         .catch(() => {})
       handleSendFailure(error, 'Unable to send message.')
+      return false
     } finally {
       sendInFlightRef.current = false
     }
   }
 
-  const handleContinueStoppedTurn = (workingStepId: string, prompt: string): Promise<void> => {
+  const handleContinueStoppedTurn = async (
+    workingStepId: string,
+    prompt: string
+  ): Promise<void> => {
     if (selectedChatKey) {
       setContinuedStoppedWorkingStepsByChat((currentStepsByChat) => {
         const currentStepIds = currentStepsByChat[selectedChatKey] ?? []
@@ -8187,7 +8192,7 @@ export const App: React.FC = () => {
       })
     }
 
-    return handleSendMessage(prompt)
+    await handleSendMessage(prompt)
   }
 
   const handleLoadWorkingStep = useCallback(async (workingStepId: string): Promise<void> => {
@@ -8564,8 +8569,9 @@ export const App: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    runPromptActionRef.current = (prompt, target) =>
-      handleSendMessage(prompt, undefined, [], null, [], [], undefined, target)
+    runPromptActionRef.current = async (prompt, target) => {
+      await handleSendMessage(prompt, undefined, [], null, [], [], undefined, target)
+    }
   })
 
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
