@@ -208,6 +208,8 @@ import {
   type AppThemePreference,
   appAppearanceZoomLevelMax,
   appAppearanceZoomLevelMin,
+  appMaxChatsRenderedMax,
+  appMaxChatsRenderedMin,
   appFontInheritValue,
   appFontMonospaceValue,
   appFontSizeMax,
@@ -219,6 +221,7 @@ import {
   normalizeAppProjectSettingsCwd,
   normalizeAppAppearanceZoomLevel,
   normalizeAppFontSize,
+  normalizeAppMaxChatsRendered,
   readStoredAppProjectSettings,
   readStoredAppSettings,
   resolveAppSettings,
@@ -781,7 +784,7 @@ type UncommittedPatchFilter = {
   patches: AppGitPatchChange[]
 }
 
-const chatPageSize = 20
+const chatListFetchPageSize = 100
 const chatTurnPageSize = 10
 const chatTurnWindowTrimThreshold = 15
 const chatTurnVirtuosoIndexBase = 1_000_000
@@ -3828,9 +3831,9 @@ export const App: React.FC = () => {
     readChatGroupingPreference
   )
   const [collapsedCwdGroups, setCollapsedCwdGroups] = useState<Record<string, boolean>>({})
-  const [visibleChatCountsByGroup, setVisibleChatCountsByGroup] = useState<Record<string, number>>(
-    {}
-  )
+  const [visibleChatPageCountsByGroup, setVisibleChatPageCountsByGroup] = useState<
+    Record<string, number>
+  >({})
   const [cwdNotesByGroup, setCwdNotesByGroup] = useState<Record<string, ProviderCwdNote[]>>({})
   const [projectIconsByGroup, setProjectIconsByGroup] = useState<
     Record<string, AppProjectIcon | null>
@@ -4808,29 +4811,44 @@ export const App: React.FC = () => {
       }
 
       newSessionAvailableProviderIds.forEach((providerId) => {
-        void providerApi
-          .getChats(providerId, {
-            container,
-            cursor: null,
-            limit: chatPageSize
-          })
-          .then((page) => {
+        const loadProviderChats = async (): Promise<void> => {
+          let cursor: string | null = null
+          let firstPage = true
+          const seenCursors = new Set<string>()
+
+          do {
+            const page = await providerApi.getChats(providerId, {
+              container,
+              cursor,
+              limit: chatListFetchPageSize
+            })
             if (!active) return
 
-            loadedProviderCount += 1
+            const replaceProviderChats = firstPage
+            if (replaceProviderChats) loadedProviderCount += 1
             setChats((currentChats) =>
               mergeChats(
-                currentChats.filter(
-                  (chat) =>
-                    chat.providerId !== providerId &&
-                    availableProviderIds.has(chat.providerId) &&
-                    areContainerTargetsEqual(chat.container, container)
-                ),
+                replaceProviderChats
+                  ? currentChats.filter(
+                      (chat) =>
+                        chat.providerId !== providerId &&
+                        availableProviderIds.has(chat.providerId) &&
+                        areContainerTargetsEqual(chat.container, container)
+                    )
+                  : currentChats,
                 page.chats
               )
             )
             setLoadState('ready')
-          })
+
+            firstPage = false
+            cursor = page.nextCursor
+            if (cursor && seenCursors.has(cursor)) break
+            if (cursor) seenCursors.add(cursor)
+          } while (cursor)
+        }
+
+        void loadProviderChats()
           .catch(() => {
             // Other providers should still populate the sidebar.
           })
@@ -7034,17 +7052,17 @@ export const App: React.FC = () => {
   }
 
   const handleLoadMoreChatsInGroup = (group: ChatListGroupData): void => {
-    setVisibleChatCountsByGroup((currentCounts) => ({
-      ...currentCounts,
-      [group.key]: (currentCounts[group.key] ?? chatPageSize) + chatPageSize
+    setVisibleChatPageCountsByGroup((currentPageCounts) => ({
+      ...currentPageCounts,
+      [group.key]: (currentPageCounts[group.key] ?? 1) + 1
     }))
   }
 
   const handleShowLessChatsInGroup = (group: ChatListGroupData): void => {
-    setVisibleChatCountsByGroup((currentCounts) => {
-      const nextCounts = { ...currentCounts }
-      delete nextCounts[group.key]
-      return nextCounts
+    setVisibleChatPageCountsByGroup((currentPageCounts) => {
+      const nextPageCounts = { ...currentPageCounts }
+      delete nextPageCounts[group.key]
+      return nextPageCounts
     })
   }
 
@@ -7464,10 +7482,7 @@ export const App: React.FC = () => {
     }))
   }
 
-  const handlePerformancePreferenceChange = (
-    key: keyof AppSettings['performance'],
-    value: boolean
-  ): void => {
+  const handlePerformancePreferenceChange = (key: 'disableShadows', value: boolean): void => {
     updateScopedSetting({ section: 'performance', key }, value, (currentSettings) => ({
       ...currentSettings,
       performance: {
@@ -7475,6 +7490,23 @@ export const App: React.FC = () => {
         [key]: value
       }
     }))
+  }
+
+  const handleMaxChatsRenderedChange = (value: number): void => {
+    if (!Number.isFinite(value)) return
+
+    const maxChatsRendered = normalizeAppMaxChatsRendered(value)
+    updateScopedSetting(
+      { section: 'performance', key: 'maxChatsRendered' },
+      maxChatsRendered,
+      (currentSettings) => ({
+        ...currentSettings,
+        performance: {
+          ...currentSettings.performance,
+          maxChatsRendered
+        }
+      })
+    )
   }
 
   const handleRecentChatCacheLimitChange = (value: number): void => {
@@ -8534,7 +8566,11 @@ export const App: React.FC = () => {
   const renderChatGroup = (group: ChatListGroupData, contentId: string): React.ReactElement => {
     const groupOpen =
       searchTerms.length > 0 || !getCollapsedGroupState(group.key, collapsedCwdGroups)
-    const visibleChatCount = visibleChatCountsByGroup[group.key] ?? chatPageSize
+    const chatPageSize = effectiveAppSettings.performance.maxChatsRendered
+    const visibleChatCount =
+      group.kind === 'pinned'
+        ? group.chats.length
+        : (visibleChatPageCountsByGroup[group.key] ?? 1) * chatPageSize
 
     return (
       <ChatListGroup
@@ -8547,8 +8583,8 @@ export const App: React.FC = () => {
         canReorderChats={searchTerms.length === 0}
         visibleChatCount={visibleChatCount}
         chatPageSize={chatPageSize}
-        onLoadMoreChats={handleLoadMoreChatsInGroup}
-        onShowLessChats={handleShowLessChatsInGroup}
+        onLoadMoreChats={group.kind === 'pinned' ? undefined : handleLoadMoreChatsInGroup}
+        onShowLessChats={group.kind === 'pinned' ? undefined : handleShowLessChatsInGroup}
         projectIconSrc={projectIconsByGroup[group.key]?.dataUrl ?? null}
         onMarkChatDone={handleMarkChatDone}
         onMarkCwdChatsDone={(nextGroup) => void handleMarkCwdChatsDone(nextGroup)}
@@ -10258,6 +10294,10 @@ export const App: React.FC = () => {
       section: 'performance',
       key: 'disableShadows'
     } satisfies AppProjectSettingPath
+    const performanceMaxChatsRenderedPath = {
+      section: 'performance',
+      key: 'maxChatsRendered'
+    } satisfies AppProjectSettingPath
     const chatRecentCacheLimitPath = {
       section: 'chat',
       key: 'recentChatCacheLimit'
@@ -10526,6 +10566,32 @@ export const App: React.FC = () => {
                   disabled={isScopedSettingControlDisabled(performanceDisableShadowsPath)}
                   onChange={(event) =>
                     handlePerformancePreferenceChange('disableShadows', event.currentTarget.checked)
+                  }
+                />
+              </div>
+              <div className={getSettingsFieldClassName()}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-performance-max-chats-rendered"
+                >
+                  <h3>Max chats rendered</h3>
+                  <p>
+                    Render this many chats at a time in each sidebar group. Pinned chats are always
+                    rendered.
+                  </p>
+                </label>
+                {renderProjectSettingAction(performanceMaxChatsRenderedPath, 'Max chats rendered')}
+                <Input
+                  className="settings-dialog__number-input"
+                  id="settings-performance-max-chats-rendered"
+                  type="number"
+                  min={appMaxChatsRenderedMin}
+                  max={appMaxChatsRenderedMax}
+                  step={1}
+                  disabled={isScopedSettingControlDisabled(performanceMaxChatsRenderedPath)}
+                  value={settingsPanelSettings.performance.maxChatsRendered}
+                  onChange={(event) =>
+                    handleMaxChatsRenderedChange(event.currentTarget.valueAsNumber)
                   }
                 />
               </div>

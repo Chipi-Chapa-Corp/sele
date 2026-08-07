@@ -19,6 +19,13 @@ import {
 import type { AppExternalLinkAction } from '../../shared/app'
 import type { AppAction } from './actions'
 import { normalizeAppActions } from './actions'
+import { appMaxChatsRenderedDefault, normalizeAppMaxChatsRendered } from './performanceSettings'
+
+export {
+  appMaxChatsRenderedMax,
+  appMaxChatsRenderedMin,
+  normalizeAppMaxChatsRendered
+} from './performanceSettings'
 
 export type AppThemePreference = 'system' | 'light' | 'dark'
 export type AppAppearancePositionPreference = 'system' | 'left' | 'right' | 'hidden'
@@ -70,6 +77,7 @@ export type AppChatDropdownSettings = {
 
 export type AppPerformanceSettings = {
   disableShadows: boolean
+  maxChatsRendered: number
 }
 
 export type AppExternalLinkBehavior = 'manual' | AppExternalLinkAction
@@ -163,7 +171,8 @@ export const defaultAppChatDropdownSettings: AppChatDropdownSettings = {
 }
 
 export const defaultAppPerformanceSettings: AppPerformanceSettings = {
-  disableShadows: false
+  disableShadows: false,
+  maxChatsRendered: appMaxChatsRenderedDefault
 }
 
 export const defaultAppGitCommitPromptSettings: AppGitCommitPromptSettings = {
@@ -394,9 +403,11 @@ const getStoredChatBoolean = (
 
 const getStoredPerformanceBoolean = (
   performance: Record<string, unknown>,
-  key: keyof AppPerformanceSettings
+  key: 'disableShadows'
 ): boolean =>
   typeof performance[key] === 'boolean' ? performance[key] : defaultAppSettings.performance[key]
+
+const getStoredMaxChatsRendered = (value: unknown): number => normalizeAppMaxChatsRendered(value)
 
 const readProjectAppearanceOverrides = (
   appearance: Record<string, unknown>
@@ -510,6 +521,9 @@ const readProjectPerformanceOverrides = (
     typeof performance.disableShadows === 'boolean'
   ) {
     overrides.disableShadows = performance.disableShadows
+  }
+  if (hasOwnProperty(performance, 'maxChatsRendered')) {
+    overrides.maxChatsRendered = getStoredMaxChatsRendered(performance.maxChatsRendered)
   }
 
   return overrides
@@ -831,7 +845,8 @@ export const readStoredAppSettings = (): AppSettings => {
               : defaultAppSettings.links.behavior
       },
       performance: {
-        disableShadows: getStoredPerformanceBoolean(performance, 'disableShadows')
+        disableShadows: getStoredPerformanceBoolean(performance, 'disableShadows'),
+        maxChatsRendered: getStoredMaxChatsRendered(performance.maxChatsRendered)
       },
       git: {
         commitModel:
@@ -1090,6 +1105,11 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     const storedPerformance: Partial<AppPerformanceSettings> = {}
     if (settings.performance.disableShadows !== defaultAppSettings.performance.disableShadows) {
       storedPerformance.disableShadows = settings.performance.disableShadows
+    }
+    if (settings.performance.maxChatsRendered !== defaultAppSettings.performance.maxChatsRendered) {
+      storedPerformance.maxChatsRendered = getStoredMaxChatsRendered(
+        settings.performance.maxChatsRendered
+      )
     }
     if (Object.keys(storedPerformance).length > 0) {
       storedSettings.performance = storedPerformance
