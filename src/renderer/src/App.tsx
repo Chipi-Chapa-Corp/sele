@@ -187,6 +187,7 @@ import { UserInputRequestBox } from './components/UserInputRequestBox'
 import type { AppAction } from './actions'
 import { getAppActionKeybindingFromEvent } from './actions'
 import { appApi } from './appApi'
+import { mergeChatMetadata } from './chatMetadata'
 import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
 import { terminalApi } from './terminalApi'
@@ -2578,7 +2579,7 @@ const getChatDetailFromUpdateSummary = (
   done: summary.done,
   seenUpdatedAt: summary.seenUpdatedAt,
   purpose: summary.purpose,
-  container: summary.container
+  container: summary.container ?? detail.container
 })
 
 const arePendingApprovalsEqual = (
@@ -2636,6 +2637,7 @@ const getChatFromUpdateSummary = (
   existingChat: ProviderChat | null,
   turnCompleted: boolean
 ): ProviderChat => {
+  const container = summary.container ?? existingChat?.container ?? null
   const summaryChanged =
     !existingChat ||
     existingChat.title !== summary.title ||
@@ -2651,7 +2653,7 @@ const getChatFromUpdateSummary = (
     existingChat.done !== summary.done ||
     existingChat.seenUpdatedAt !== summary.seenUpdatedAt ||
     existingChat.purpose !== summary.purpose ||
-    !areContainerTargetsEqual(existingChat.container, summary.container)
+    !areContainerTargetsEqual(existingChat.container, container)
 
   return {
     id: summary.id,
@@ -2678,7 +2680,7 @@ const getChatFromUpdateSummary = (
           ? existingChat.seenUpdatedAt
           : Math.max(existingChat.seenUpdatedAt, summary.seenUpdatedAt),
     purpose: summary.purpose,
-    container: summary.container
+    container
   }
 }
 
@@ -5225,65 +5227,27 @@ export const App: React.FC = () => {
 
       recentChatCache.set(cacheKey, {
         ...entry,
-        detail: {
-          ...entry.detail,
-          pinned: metadata.pinned,
-          pinnedOrder: metadata.pinnedOrder,
-          done: metadata.done,
-          seenUpdatedAt: metadata.seenUpdatedAt,
-          purpose: metadata.purpose,
-          container: metadata.container
-        }
+        detail: mergeChatMetadata(entry.detail, metadata)
       })
     }
 
     setChats((currentChats) =>
       currentChats.map((chat) => {
         const metadata = metadataById.get(chat.id)
-        return metadata
-          ? {
-              ...chat,
-              pinned: metadata.pinned,
-              pinnedOrder: metadata.pinnedOrder,
-              done: metadata.done,
-              seenUpdatedAt: metadata.seenUpdatedAt,
-              purpose: metadata.purpose,
-              container: metadata.container
-            }
-          : chat
+        return metadata ? mergeChatMetadata(chat, metadata) : chat
       })
     )
     setSelectedChat((currentChat) => {
       if (!currentChat) return currentChat
 
       const metadata = metadataById.get(currentChat.id)
-      return metadata
-        ? {
-            ...currentChat,
-            pinned: metadata.pinned,
-            pinnedOrder: metadata.pinnedOrder,
-            done: metadata.done,
-            seenUpdatedAt: metadata.seenUpdatedAt,
-            purpose: metadata.purpose,
-            container: metadata.container
-          }
-        : currentChat
+      return metadata ? mergeChatMetadata(currentChat, metadata) : currentChat
     })
     setChatDetail((currentDetail) => {
       if (!currentDetail) return currentDetail
 
       const metadata = metadataById.get(currentDetail.id)
-      return metadata
-        ? {
-            ...currentDetail,
-            pinned: metadata.pinned,
-            pinnedOrder: metadata.pinnedOrder,
-            done: metadata.done,
-            seenUpdatedAt: metadata.seenUpdatedAt,
-            purpose: metadata.purpose,
-            container: metadata.container
-          }
-        : currentDetail
+      return metadata ? mergeChatMetadata(currentDetail, metadata) : currentDetail
     })
   }, [])
 
@@ -7781,7 +7745,7 @@ export const App: React.FC = () => {
         const currentChat = chatDetail?.id === selectedChat.id ? chatDetail : selectedChat
         showNewChatView(
           getChatProjectCwd(currentChat),
-          chatDetail?.container ?? selectedChat.container
+          currentChat.container ?? newSessionContainer
         )
       }
     } catch {
@@ -7869,7 +7833,8 @@ export const App: React.FC = () => {
         !selectedChat.done &&
         getChatCwdGroupKey(getChatProjectCwd(selectedChat)) === getChatCwdGroupKey(group.cwd)
       ) {
-        showNewChatView(group.cwd, chatDetail?.container ?? selectedChat.container)
+        const currentChat = chatDetail?.id === selectedChat.id ? chatDetail : selectedChat
+        showNewChatView(group.cwd, currentChat.container ?? newSessionContainer)
       }
     } catch {
       // Leave the group as-is if local metadata cannot be updated.
