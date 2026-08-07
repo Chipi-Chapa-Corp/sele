@@ -4,6 +4,7 @@ import {
   type ForwardRefExoticComponent,
   type HTMLAttributes,
   type RefAttributes,
+  forwardRef,
   startTransition,
   useCallback,
   useEffect,
@@ -77,6 +78,12 @@ import {
   UploadIcon as AnimatedUploadIcon
 } from 'lucide-animated'
 import {
+  Virtuoso,
+  type Components as VirtuosoComponents,
+  type ListRange,
+  type VirtuosoHandle
+} from 'react-virtuoso'
+import {
   FileIcon as SymbolsFileIcon,
   FolderIcon as SymbolsFolderIcon
 } from '@react-symbols/icons/utils'
@@ -142,6 +149,11 @@ import type {
   ProviderUsageOptions,
   ProviderUpdateAvailability
 } from '../../shared/provider'
+import {
+  getProviderChatTurns,
+  unloadChatItemsOutsideTurnRange,
+  type ProviderChatTurn
+} from '../../shared/chatTurns'
 import {
   fallbackCopilotModels,
   fallbackProviderApprovalModes,
@@ -228,6 +240,13 @@ type WorktreeCreationState = 'idle' | 'creating' | 'canceling'
 type ApplyChatDetailOptions = {
   select?: boolean
 }
+type ChatTurnWindow = {
+  chatKey: string
+  endIndex: number
+  startIndex: number
+  totalCount: number
+}
+type ChatTurnPageLoadDirection = 'older' | 'newer' | 'latest'
 type CommittedChatUpdate = {
   sequence: number
   detailApplied: boolean
@@ -762,6 +781,9 @@ type UncommittedPatchFilter = {
 }
 
 const chatPageSize = 20
+const chatTurnPageSize = 10
+const chatTurnWindowTrimThreshold = 15
+const chatTurnVirtuosoIndexBase = 1_000_000
 const chatSidebarDefaultWidth = 280
 const changesSidebarDefaultWidth = 240
 const chatSidebarMinWidth = 220
@@ -802,6 +824,49 @@ const fallbackDefaultSandboxMode =
   fallbackProviderSandboxModes.find((mode) => mode.isDefault)?.id ??
   fallbackProviderSandboxModes[0]?.id ??
   'workspace-write'
+
+const ChatVirtuosoList = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
+  ({ className, ...props }, ref) => (
+    <div
+      {...props}
+      className={`chat-detail__messages-inner${className ? ` ${className}` : ''}`}
+      ref={ref}
+    />
+  )
+)
+ChatVirtuosoList.displayName = 'ChatVirtuosoList'
+
+const ChatVirtuosoFooter: React.FC = () => <div className="chat-detail__messages-footer" />
+const ChatVirtuosoHeader: React.FC = () => <div className="chat-detail__messages-header" />
+
+const chatVirtuosoComponents = {
+  Footer: ChatVirtuosoFooter,
+  Header: ChatVirtuosoHeader,
+  List: ChatVirtuosoList
+} satisfies VirtuosoComponents<ProviderChatTurn, null>
+
+const mergeLoadedChatTurnItems = (
+  detail: ProviderChatDetail,
+  loadedItems: ProviderChatItem[]
+): ProviderChatDetail => {
+  const loadedItemsById = new Map(loadedItems.map((item) => [item.id, item]))
+  let changed = false
+  const items = detail.items.map((item) => {
+    const loadedItem = loadedItemsById.get(item.id)
+    if (
+      !loadedItem ||
+      loadedItem.type !== item.type ||
+      (loadedItem.type !== 'message' && loadedItem.type !== 'pendingMessage')
+    ) {
+      return item
+    }
+
+    changed = true
+    return { ...loadedItem, contentLoaded: true }
+  })
+
+  return changed ? { ...detail, items } : detail
+}
 const refreshIconReplayMs = 1_050
 
 type ChatGroupingPreference = 'grouped' | 'ungrouped'
@@ -2426,15 +2491,31 @@ const getChatDetailFromUpdate = (
       ? []
       : currentDetail!.items.slice(0, chatItemsStartIndex)
   for (const [index, item] of items.entries()) {
+    const currentItem = currentDetail?.items[chatItemsStartIndex + index]
     if (item.type !== 'working') {
+      if (
+        (item.type === 'message' || item.type === 'pendingMessage') &&
+        item.contentLoaded === false &&
+        currentItem?.type === item.type &&
+        currentItem.contentLoaded !== false
+      ) {
+        mergedItems.push(currentItem)
+        continue
+      }
       mergedItems.push(item)
       continue
     }
 
-    const mergedWorkingStep = getWorkingStepFromUpdate(
-      item,
-      currentDetail?.items[chatItemsStartIndex + index]
-    )
+    if (
+      item.itemsLoaded === false &&
+      currentItem?.type === 'working' &&
+      currentItem.itemsLoaded !== false
+    ) {
+      mergedItems.push(currentItem)
+      continue
+    }
+
+    const mergedWorkingStep = getWorkingStepFromUpdate(item, currentItem)
     if (!mergedWorkingStep) return null
     mergedItems.push(mergedWorkingStep)
   }
@@ -3573,6 +3654,10 @@ export const App: React.FC = () => {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
   const [chatDetail, setChatDetail] = useState<ProviderChatDetail | null>(null)
+  const [chatTurnWindow, setChatTurnWindow] = useState<ChatTurnWindow | null>(null)
+  const [chatTurnPageLoadDirection, setChatTurnPageLoadDirection] =
+    useState<ChatTurnPageLoadDirection | null>(null)
+  const [chatTurnVisibleRange, setChatTurnVisibleRange] = useState<ListRange | null>(null)
   const [extractedChatPlan, setExtractedChatPlan] = useState<ChatPlanData | null>(null)
   const [chatLoadState, setChatLoadState] = useState<LoadState>('ready')
   const [chatLoadRequest, setChatLoadRequest] = useState(0)
@@ -3815,6 +3900,13 @@ export const App: React.FC = () => {
   const [windowState, setWindowState] = useState<AppWindowState>({ isMaximized: false })
   const panelsRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const chatVirtuosoRef = useRef<VirtuosoHandle>(null)
+  const chatTurnWindowRef = useRef<ChatTurnWindow | null>(chatTurnWindow)
+  const chatTurnPageLoadRequestRef = useRef(0)
+  const chatTurnPageLoadInFlightRef = useRef(false)
+  const chatTurnScrollDirectionRef = useRef<'up' | 'down' | null>(null)
+  const previousChatTurnRangeStartRef = useRef<number | null>(null)
+  const scrollToLatestTurnAfterRenderRef = useRef(false)
   const chatDetailRef = useRef<ProviderChatDetail | null>(chatDetail)
   const chatSearchContentRef = useRef<HTMLDivElement>(null)
   const chatSearchInputRef = useRef<HTMLInputElement>(null)
@@ -3872,7 +3964,11 @@ export const App: React.FC = () => {
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
     const top = getScrollBottomTop(contentElement)
     chatAutoScrollTargetRef.current = { element: contentElement, top }
-    contentElement.scrollTop = top
+    if (chatVirtuosoRef.current) {
+      chatVirtuosoRef.current.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' })
+    } else {
+      contentElement.scrollTop = top
+    }
   }, [])
 
   const scheduleChatAutoScroll = useCallback(
@@ -3928,6 +4024,10 @@ export const App: React.FC = () => {
   useEffect(() => {
     chatDetailRef.current = chatDetail
   }, [chatDetail])
+
+  useEffect(() => {
+    chatTurnWindowRef.current = chatTurnWindow
+  }, [chatTurnWindow])
 
   const clearSelectedChatIfUnavailableInSource = useCallback(
     (availableProviderIds: ProviderId[], container: AppContainerTarget | null): void => {
@@ -5924,7 +6024,14 @@ export const App: React.FC = () => {
     resetChatSearch()
 
     const contentElement = contentRef.current
-    chatAutoScrollEnabledRef.current = contentElement ? isScrolledToBottom(contentElement) : true
+    const currentTurnWindow = chatTurnWindowRef.current
+    chatAutoScrollEnabledRef.current = contentElement
+      ? Boolean(
+          isScrolledToBottom(contentElement) &&
+          currentTurnWindow &&
+          currentTurnWindow.endIndex >= currentTurnWindow.totalCount
+        )
+      : true
     if (chatAutoScrollEnabledRef.current) {
       scheduleChatAutoScroll(contentElement)
     } else {
@@ -8118,6 +8225,39 @@ export const App: React.FC = () => {
     return handleSendMessage(prompt)
   }
 
+  const handleLoadWorkingStep = useCallback(async (workingStepId: string): Promise<void> => {
+    const chat = selectedChatRef.current
+    if (!chat) throw new Error('No chat selected')
+
+    const chatKey = getChatKey(chat)
+    const workingStep = await providerApi.getChatWorkingStep(
+      chat.providerId,
+      chat.id,
+      workingStepId
+    )
+    if (selectedChatKeyRef.current !== chatKey) return
+
+    setChatDetail((currentDetail) => {
+      if (currentDetail?.id !== chat.id) return currentDetail
+
+      const itemIndex = currentDetail.items.findIndex((item) => item.id === workingStepId)
+      const currentItem = currentDetail.items[itemIndex]
+      if (currentItem?.type !== 'working' || currentItem.itemsLoaded !== false) {
+        return currentDetail
+      }
+
+      const items = [...currentDetail.items]
+      items[itemIndex] = {
+        ...workingStep,
+        itemsLoaded: true,
+        itemCount: workingStep.items.length
+      }
+      const nextDetail = { ...currentDetail, items }
+      chatDetailRef.current = nextDetail
+      return nextDetail
+    })
+  }, [])
+
   const handleRetryStoppedTurn = useCallback(
     async (message: ProviderMessage): Promise<void> => {
       if (
@@ -8366,7 +8506,13 @@ export const App: React.FC = () => {
     const contentElement = contentRef.current
     if (!contentElement) return
 
-    if (isScrolledToBottom(contentElement)) {
+    const currentTurnWindow = chatTurnWindowRef.current
+    const atConversationBottom = Boolean(
+      isScrolledToBottom(contentElement) &&
+      currentTurnWindow &&
+      currentTurnWindow.endIndex >= currentTurnWindow.totalCount
+    )
+    if (atConversationBottom) {
       chatAutoScrollEnabledRef.current = true
       chatUserScrollIntentRef.current = false
       chatAutoScrollTargetRef.current = {
@@ -8393,6 +8539,9 @@ export const App: React.FC = () => {
   }
 
   const handleChatContentWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    if (event.deltaY !== 0) {
+      chatTurnScrollDirectionRef.current = event.deltaY < 0 ? 'up' : 'down'
+    }
     chatUserScrollIntentRef.current = event.deltaY < 0
     if (!chatUserScrollIntentRef.current || chatUserScrollIntentFrameRef.current !== null) return
 
@@ -8470,6 +8619,240 @@ export const App: React.FC = () => {
     !editingMessage
   )
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
+  const chatTurns = useMemo(() => getProviderChatTurns(visibleChatItems), [visibleChatItems])
+  const defaultChatTurnWindow = useMemo<ChatTurnWindow | null>(() => {
+    if (!selectedChatKey) return null
+    return {
+      chatKey: selectedChatKey,
+      startIndex: Math.max(0, chatTurns.length - chatTurnPageSize),
+      endIndex: chatTurns.length,
+      totalCount: chatTurns.length
+    }
+  }, [chatTurns.length, selectedChatKey])
+  const effectiveChatTurnWindow =
+    chatTurnWindow?.chatKey === selectedChatKey ? chatTurnWindow : defaultChatTurnWindow
+  const renderedChatTurns = useMemo(
+    () =>
+      effectiveChatTurnWindow
+        ? chatTurns.slice(effectiveChatTurnWindow.startIndex, effectiveChatTurnWindow.endIndex)
+        : [],
+    [chatTurns, effectiveChatTurnWindow]
+  )
+
+  useEffect(() => {
+    let active = true
+    chatTurnPageLoadRequestRef.current += 1
+    chatTurnPageLoadInFlightRef.current = false
+    chatTurnScrollDirectionRef.current = null
+    previousChatTurnRangeStartRef.current = null
+    queueMicrotask(() => {
+      if (!active) return
+      setChatTurnPageLoadDirection(null)
+      setChatTurnVisibleRange(null)
+
+      if (!selectedChatKey) {
+        chatTurnWindowRef.current = null
+        setChatTurnWindow(null)
+        return
+      }
+
+      setChatTurnWindow((currentWindow) => {
+        const totalCount = chatTurns.length
+        const viewingLatest =
+          currentWindow?.chatKey !== selectedChatKey ||
+          currentWindow.endIndex >= currentWindow.totalCount ||
+          chatAutoScrollEnabledRef.current
+        const nextWindow: ChatTurnWindow = viewingLatest
+          ? {
+              chatKey: selectedChatKey,
+              startIndex: Math.max(0, totalCount - chatTurnPageSize),
+              endIndex: totalCount,
+              totalCount
+            }
+          : {
+              chatKey: selectedChatKey,
+              startIndex: Math.min(currentWindow.startIndex, totalCount),
+              endIndex: Math.min(currentWindow.endIndex, totalCount),
+              totalCount
+            }
+        chatTurnWindowRef.current = nextWindow
+        if (viewingLatest) scrollToLatestTurnAfterRenderRef.current = true
+        return nextWindow
+      })
+    })
+
+    return () => {
+      active = false
+    }
+  }, [chatTurns.length, selectedChatKey])
+
+  useLayoutEffect(() => {
+    if (!scrollToLatestTurnAfterRenderRef.current || renderedChatTurns.length === 0) return
+    scrollToLatestTurnAfterRenderRef.current = false
+    window.requestAnimationFrame(() => {
+      chatVirtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' })
+    })
+  }, [effectiveChatTurnWindow?.endIndex, renderedChatTurns.length])
+
+  const loadChatTurnPage = useCallback(
+    async (direction: ChatTurnPageLoadDirection): Promise<void> => {
+      const chat = selectedChatRef.current
+      const currentWindow = chatTurnWindowRef.current
+      if (
+        !chat ||
+        !currentWindow ||
+        currentWindow.chatKey !== getChatKey(chat) ||
+        chatTurnPageLoadInFlightRef.current
+      ) {
+        return
+      }
+
+      if (direction === 'older' && currentWindow.startIndex === 0) return
+      if (direction === 'newer' && currentWindow.endIndex >= currentWindow.totalCount) return
+
+      const requestId = chatTurnPageLoadRequestRef.current + 1
+      chatTurnPageLoadRequestRef.current = requestId
+      chatTurnPageLoadInFlightRef.current = true
+      setChatTurnPageLoadDirection(direction)
+
+      try {
+        if (direction === 'latest') {
+          const detail = await providerApi.getChat(chat.providerId, chat.id)
+          if (
+            chatTurnPageLoadRequestRef.current !== requestId ||
+            selectedChatKeyRef.current !== currentWindow.chatKey
+          ) {
+            return
+          }
+
+          const totalCount = getProviderChatTurns(detail.items).length
+          const nextWindow: ChatTurnWindow = {
+            chatKey: currentWindow.chatKey,
+            startIndex: Math.max(0, totalCount - chatTurnPageSize),
+            endIndex: totalCount,
+            totalCount
+          }
+          chatAutoScrollEnabledRef.current = true
+          chatTurnScrollDirectionRef.current = 'down'
+          scrollToLatestTurnAfterRenderRef.current = true
+          chatTurnWindowRef.current = nextWindow
+          setChatTurnWindow(nextWindow)
+          applyViewedChatDetail(chat.providerId, detail)
+          return
+        }
+
+        const startIndex =
+          direction === 'older'
+            ? Math.max(0, currentWindow.startIndex - chatTurnPageSize)
+            : currentWindow.endIndex
+        const limit =
+          direction === 'older' ? currentWindow.startIndex - startIndex : chatTurnPageSize
+        const page = await providerApi.getChatTurnPage(chat.providerId, chat.id, startIndex, limit)
+        if (
+          chatTurnPageLoadRequestRef.current !== requestId ||
+          selectedChatKeyRef.current !== currentWindow.chatKey
+        ) {
+          return
+        }
+
+        setChatDetail((currentDetail) => {
+          if (currentDetail?.id !== chat.id) return currentDetail
+          const nextDetail = mergeLoadedChatTurnItems(currentDetail, page.items)
+          chatDetailRef.current = nextDetail
+          return nextDetail
+        })
+        setChatTurnWindow((latestWindow) => {
+          if (!latestWindow || latestWindow.chatKey !== currentWindow.chatKey) {
+            return latestWindow
+          }
+          const loadedEndIndex = Math.min(page.totalCount, page.startIndex + limit)
+          const nextWindow: ChatTurnWindow = {
+            chatKey: latestWindow.chatKey,
+            startIndex:
+              direction === 'older'
+                ? Math.min(page.startIndex, latestWindow.startIndex)
+                : latestWindow.startIndex,
+            endIndex:
+              direction === 'newer'
+                ? Math.max(latestWindow.endIndex, loadedEndIndex)
+                : latestWindow.endIndex,
+            totalCount: page.totalCount
+          }
+          chatTurnWindowRef.current = nextWindow
+          return nextWindow
+        })
+      } finally {
+        if (chatTurnPageLoadRequestRef.current === requestId) {
+          chatTurnPageLoadInFlightRef.current = false
+          setChatTurnPageLoadDirection(null)
+        }
+      }
+    },
+    [applyViewedChatDetail]
+  )
+
+  const handleChatTurnRangeChanged = useCallback((range: ListRange): void => {
+    const currentWindow = chatTurnWindowRef.current
+    if (!currentWindow) return
+
+    const logicalRange = {
+      startIndex: range.startIndex - chatTurnVirtuosoIndexBase,
+      endIndex: range.endIndex - chatTurnVirtuosoIndexBase
+    }
+    if (logicalRange.startIndex < 0 || logicalRange.endIndex < logicalRange.startIndex) return
+
+    const previousStartIndex = previousChatTurnRangeStartRef.current
+    if (previousStartIndex !== null && logicalRange.startIndex !== previousStartIndex) {
+      chatTurnScrollDirectionRef.current =
+        logicalRange.startIndex < previousStartIndex ? 'up' : 'down'
+    }
+    previousChatTurnRangeStartRef.current = logicalRange.startIndex
+    setChatTurnVisibleRange(logicalRange)
+
+    if (
+      currentWindow.endIndex - currentWindow.startIndex <= chatTurnWindowTrimThreshold ||
+      chatTurnPageLoadInFlightRef.current
+    ) {
+      return
+    }
+
+    let nextStartIndex = currentWindow.startIndex
+    let nextEndIndex = currentWindow.endIndex
+    if (
+      chatTurnScrollDirectionRef.current === 'up' &&
+      currentWindow.endIndex - logicalRange.endIndex - 1 >= chatTurnPageSize
+    ) {
+      nextEndIndex = currentWindow.endIndex - chatTurnPageSize
+    } else if (
+      chatTurnScrollDirectionRef.current === 'down' &&
+      logicalRange.startIndex - currentWindow.startIndex >= chatTurnPageSize
+    ) {
+      nextStartIndex = currentWindow.startIndex + chatTurnPageSize
+    } else {
+      return
+    }
+
+    const nextWindow = {
+      ...currentWindow,
+      startIndex: nextStartIndex,
+      endIndex: nextEndIndex
+    }
+    chatTurnWindowRef.current = nextWindow
+    setChatTurnWindow(nextWindow)
+    setChatDetail((currentDetail) => {
+      if (!currentDetail) return currentDetail
+      const items = unloadChatItemsOutsideTurnRange(
+        currentDetail.items,
+        nextStartIndex,
+        nextEndIndex
+      )
+      if (items === currentDetail.items) return currentDetail
+      const nextDetail = { ...currentDetail, items }
+      chatDetailRef.current = nextDetail
+      return nextDetail
+    })
+  }, [])
+
   const stoppedTurnRetryMessages = useMemo(
     () => getStoppedTurnRetryMessages(visibleChatItems),
     [visibleChatItems]
@@ -8526,15 +8909,16 @@ export const App: React.FC = () => {
   )
   const firstPendingChatItemId =
     visibleChatItems.find((item) => item.type === 'pendingMessage')?.id ?? null
+  const chatItemIndexesById = useMemo(
+    () => new Map(visibleChatItems.map((item, itemIndex) => [item.id, itemIndex])),
+    [visibleChatItems]
+  )
   const [
     chatCommitMarkersByBeforeItemId,
     chatCommitMarkersByAfterItemId,
     trailingChatCommitMarkers
   ] = useMemo(() => {
     const visibleItemsById = new Map(visibleChatItems.map((item) => [item.id, item]))
-    const visibleItemIndexesById = new Map(
-      visibleChatItems.map((item, itemIndex) => [item.id, itemIndex])
-    )
     const allItemIds = new Set(chatDetail?.items.map((item) => item.id) ?? [])
     const markersByBeforeItemId = new Map<string, ChatCommitMarker[]>()
     const markersByAfterItemId = new Map<string, ChatCommitMarker[]>()
@@ -8572,7 +8956,7 @@ export const App: React.FC = () => {
         return
       }
 
-      const anchorItemIndex = visibleItemIndexesById.get(marker.afterItemId)
+      const anchorItemIndex = chatItemIndexesById.get(marker.afterItemId)
       const anchorTimelineTime =
         marker.finishedAt !== null && anchorItemIndex !== undefined
           ? visibleChatItems
@@ -8595,7 +8979,7 @@ export const App: React.FC = () => {
     })
 
     return [markersByBeforeItemId, markersByAfterItemId, trailingMarkers] as const
-  }, [chatDetail?.items, selectedChatCommitMarkers, visibleChatItems])
+  }, [chatDetail?.items, chatItemIndexesById, selectedChatCommitMarkers, visibleChatItems])
   const lastStreamingChatItem = chatHasActiveTurn
     ? visibleChatItems.findLast((item) => item.type !== 'pendingMessage')
     : null
@@ -10759,6 +11143,71 @@ export const App: React.FC = () => {
     )
   }
 
+  const renderVirtualChatTurn = (_index: number, turn: ProviderChatTurn): React.ReactElement => {
+    const turnIsLatestRendered = turn === renderedChatTurns.at(-1)
+
+    return (
+      <div className="chat-detail__turn">
+        {turn.items.map((item) => {
+          const itemIndex = chatItemIndexesById.get(item.id) ?? -1
+          const followingWorkingStep = followingWorkingStepsById.get(item.id)
+
+          return (
+            <Fragment key={item.id}>
+              {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
+              {item.id === firstPendingChatItemId &&
+                trailingChatCommitMarkers.map(renderChatCommitMarker)}
+              <ChatDetailItem
+                canEditOwnMessages={canEditOwnMessages}
+                continuePrompt={effectiveAppSettings.chat.continuePrompt}
+                continueStoppedTurnDisabled={stoppedTurnActionDisabled}
+                continuedStoppedTurn={continuedStoppedWorkingStepIds.has(item.id)}
+                followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
+                followingWorkingStepStatus={followingWorkingStep?.status}
+                hasNextWorkingStep={workingStepIdsWithNextWorkingStep.has(item.id)}
+                item={item}
+                modelLabelsById={modelLabelsById}
+                onDeletePendingMessage={handleDeletePendingMessage}
+                onEditPendingMessage={handleEditPendingMessage}
+                onInterruptPendingMessage={
+                  chatHasActiveTurn ? handleInterruptPendingMessage : undefined
+                }
+                onContinueStoppedTurn={
+                  item.type === 'working' && item.status === 'stopped'
+                    ? handleContinueStoppedTurn
+                    : undefined
+                }
+                onEditMessage={handleEditMessage}
+                onLoadWorkingStep={handleLoadWorkingStep}
+                onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+                onRetryStoppedTurn={handleRetryStoppedTurn}
+                previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}
+                projectCwd={changesProjectCwd}
+                retryMessage={canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null}
+                retryStoppedTurnDisabled={stoppedTurnActionDisabled}
+                selectedModelId={model}
+                streaming={item.id === streamingChatItemId}
+                thoughtSettings={effectiveAppSettings.chat}
+              />
+              {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
+            </Fragment>
+          )
+        })}
+        {turnIsLatestRendered &&
+          effectiveChatTurnWindow?.endIndex === effectiveChatTurnWindow?.totalCount &&
+          !firstPendingChatItemId &&
+          trailingChatCommitMarkers.map(renderChatCommitMarker)}
+      </div>
+    )
+  }
+
+  const lastVisibleChatTurnIndex =
+    chatTurnVisibleRange?.endIndex ?? (effectiveChatTurnWindow?.endIndex ?? 0) - 1
+  const showChatTurnDownButton = Boolean(
+    effectiveChatTurnWindow &&
+    effectiveChatTurnWindow.totalCount - lastVisibleChatTurnIndex >= chatTurnWindowTrimThreshold
+  )
+
   return (
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
@@ -10972,74 +11421,93 @@ export const App: React.FC = () => {
               </div>
             )}
             {selectedChat && (
-              <div
-                className="chat-detail__messages"
-                ref={contentRef}
-                onScroll={handleChatContentScroll}
-                onWheel={handleChatContentWheel}
-              >
-                <div
-                  className="chat-detail__messages-inner"
-                  id="chat-search-content"
-                  ref={chatSearchContentRef}
-                >
-                  {chatLoadState === 'loading' && <p className="chat__status">Loading messages…</p>}
-                  {chatLoadState === 'error' && (
-                    <p className="chat__status">Unable to load messages.</p>
-                  )}
-                  {!editingMessage &&
-                    chatLoadState === 'ready' &&
-                    visibleChatItems.length === 0 &&
-                    selectedChatCommitMarkers.length === 0 && (
-                      <p className="chat__status">No messages found.</p>
-                    )}
-                  {visibleChatItems.map((item, itemIndex) => {
-                    const followingWorkingStep = followingWorkingStepsById.get(item.id)
-
-                    return (
-                      <Fragment key={item.id}>
-                        {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
-                        {item.id === firstPendingChatItemId &&
-                          trailingChatCommitMarkers.map(renderChatCommitMarker)}
-                        <ChatDetailItem
-                          canEditOwnMessages={canEditOwnMessages}
-                          continuePrompt={effectiveAppSettings.chat.continuePrompt}
-                          continueStoppedTurnDisabled={stoppedTurnActionDisabled}
-                          continuedStoppedTurn={continuedStoppedWorkingStepIds.has(item.id)}
-                          followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
-                          followingWorkingStepStatus={followingWorkingStep?.status}
-                          hasNextWorkingStep={workingStepIdsWithNextWorkingStep.has(item.id)}
-                          item={item}
-                          modelLabelsById={modelLabelsById}
-                          onDeletePendingMessage={handleDeletePendingMessage}
-                          onEditPendingMessage={handleEditPendingMessage}
-                          onInterruptPendingMessage={
-                            chatHasActiveTurn ? handleInterruptPendingMessage : undefined
-                          }
-                          onContinueStoppedTurn={
-                            item.type === 'working' && item.status === 'stopped'
-                              ? handleContinueStoppedTurn
-                              : undefined
-                          }
-                          onEditMessage={handleEditMessage}
-                          onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
-                          onRetryStoppedTurn={handleRetryStoppedTurn}
-                          previousItem={visibleChatItems[itemIndex - 1] ?? null}
-                          projectCwd={changesProjectCwd}
-                          retryMessage={
-                            canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null
-                          }
-                          retryStoppedTurnDisabled={stoppedTurnActionDisabled}
-                          selectedModelId={model}
-                          streaming={item.id === streamingChatItemId}
-                          thoughtSettings={effectiveAppSettings.chat}
-                        />
-                        {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
-                      </Fragment>
+              <div className="chat-detail__messages-shell">
+                <Virtuoso<ProviderChatTurn, null>
+                  alignToBottom
+                  atBottomStateChange={(atBottom) => {
+                    const currentWindow = chatTurnWindowRef.current
+                    const atConversationBottom = Boolean(
+                      atBottom &&
+                      currentWindow &&
+                      currentWindow.endIndex >= currentWindow.totalCount
                     )
-                  })}
-                  {!firstPendingChatItemId && trailingChatCommitMarkers.map(renderChatCommitMarker)}
-                </div>
+                    chatAutoScrollEnabledRef.current = atConversationBottom
+                    if (atConversationBottom) chatAutoScrollTargetRef.current = null
+                  }}
+                  className="chat-detail__messages"
+                  components={chatVirtuosoComponents}
+                  computeItemKey={(_index, turn) => turn.id}
+                  data={renderedChatTurns}
+                  endReached={() => {
+                    const currentWindow = chatTurnWindowRef.current
+                    if (
+                      chatTurnScrollDirectionRef.current === 'down' &&
+                      currentWindow &&
+                      currentWindow.endIndex < currentWindow.totalCount
+                    ) {
+                      void loadChatTurnPage('newer')
+                    }
+                  }}
+                  firstItemIndex={
+                    chatTurnVirtuosoIndexBase + (effectiveChatTurnWindow?.startIndex ?? 0)
+                  }
+                  followOutput={(atBottom) =>
+                    atBottom && chatAutoScrollEnabledRef.current ? 'auto' : false
+                  }
+                  id="chat-search-content"
+                  initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
+                  itemContent={renderVirtualChatTurn}
+                  key={selectedChatKey}
+                  minOverscanItemCount={{ top: 1, bottom: 1 }}
+                  onScroll={handleChatContentScroll}
+                  onWheel={handleChatContentWheel}
+                  rangeChanged={handleChatTurnRangeChanged}
+                  ref={chatVirtuosoRef}
+                  scrollerRef={(element) => {
+                    const contentElement = element instanceof HTMLDivElement ? element : null
+                    contentRef.current = contentElement
+                    chatSearchContentRef.current = contentElement
+                  }}
+                  startReached={() => {
+                    if (chatTurnScrollDirectionRef.current === 'up') {
+                      void loadChatTurnPage('older')
+                    }
+                  }}
+                />
+                {chatLoadState === 'loading' && (
+                  <p className="chat__status chat-detail__messages-status">Loading messages…</p>
+                )}
+                {chatLoadState === 'error' && (
+                  <p className="chat__status chat-detail__messages-status">
+                    Unable to load messages.
+                  </p>
+                )}
+                {!editingMessage &&
+                  chatLoadState === 'ready' &&
+                  visibleChatItems.length === 0 &&
+                  selectedChatCommitMarkers.length === 0 && (
+                    <p className="chat__status chat-detail__messages-status">No messages found.</p>
+                  )}
+                {chatTurnPageLoadDirection && chatTurnPageLoadDirection !== 'latest' && (
+                  <span
+                    className={`chat-detail__turn-page-loading chat-detail__turn-page-loading--${chatTurnPageLoadDirection}`}
+                    role="status"
+                  >
+                    Loading…
+                  </span>
+                )}
+                {showChatTurnDownButton && (
+                  <div className="chat-detail__down-button">
+                    <Button
+                      aria-label="Jump to latest messages"
+                      disabled={chatTurnPageLoadDirection === 'latest'}
+                      theme="secondary"
+                      title="Jump to latest messages"
+                      callback={() => loadChatTurnPage('latest')}
+                      icon={<ChevronDown aria-hidden="true" />}
+                    />
+                  </div>
+                )}
               </div>
             )}
             {selectedChat && (

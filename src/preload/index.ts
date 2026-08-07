@@ -121,6 +121,10 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
   getChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.getChat, providerId, chatId),
+  getChatWorkingStep: (providerId, chatId, workingStepId) =>
+    ipcRenderer.invoke(providerIpcChannels.getChatWorkingStep, providerId, chatId, workingStepId),
+  getChatTurnPage: (providerId, chatId, startIndex, limit) =>
+    ipcRenderer.invoke(providerIpcChannels.getChatTurnPage, providerId, chatId, startIndex, limit),
   setChatTitle: (providerId, chatId, title) =>
     ipcRenderer.invoke(providerIpcChannels.setChatTitle, providerId, chatId, title),
   generateOneShot: (providerId, message, options) =>

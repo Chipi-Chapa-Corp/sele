@@ -460,6 +460,7 @@ export type ProviderMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  contentLoaded?: boolean
   attachments?: ProviderMessageAttachment[]
   createdAt?: number | null
   label?: string | null
@@ -536,6 +537,8 @@ export type ProviderWorkingStep = {
   id: string
   status: 'working' | 'worked' | 'stopped' | 'queued'
   items: ProviderWorkingItem[]
+  itemsLoaded?: boolean
+  itemCount?: number
 }
 
 export type ProviderPendingMessageKind = 'steering' | 'queued'
@@ -545,6 +548,7 @@ export type ProviderPendingMessage = {
   id: string
   kind: ProviderPendingMessageKind
   content: string
+  contentLoaded?: boolean
   attachments?: ProviderMessageAttachment[]
   createdAt?: number | null
 }
@@ -610,6 +614,12 @@ export type ProviderChatDetailUpdate = Omit<ProviderChatDetail, 'items'> & {
   items: ProviderChatItemUpdate[]
   chatItemsStartIndex: number
   chatItemsPrefixLastId: string | null
+}
+
+export type ProviderChatTurnPage = {
+  items: ProviderChatItem[]
+  startIndex: number
+  totalCount: number
 }
 
 export type ProviderWindowChatUpdatedEvent = Omit<ProviderChatUpdatedEvent, 'detail'> & {
@@ -785,6 +795,17 @@ export type ProviderApi = {
 }
 
 export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
+  getChatWorkingStep: (
+    providerId: ProviderId,
+    chatId: string,
+    workingStepId: string
+  ) => Promise<ProviderWorkingStep>
+  getChatTurnPage: (
+    providerId: ProviderId,
+    chatId: string,
+    startIndex: number,
+    limit: number
+  ) => Promise<ProviderChatTurnPage>
   continueChatSummary: (
     providerId: ProviderId,
     chatId: string,
@@ -817,6 +838,8 @@ export const providerIpcChannels = {
   resetRateLimits: 'provider:reset-rate-limits',
   getChats: 'provider:get-chats',
   getChat: 'provider:get-chat',
+  getChatWorkingStep: 'provider:get-chat-working-step',
+  getChatTurnPage: 'provider:get-chat-turn-page',
   setChatTitle: 'provider:set-chat-title',
   generateOneShot: 'provider:generate-one-shot',
   cancelOneShot: 'provider:cancel-one-shot',

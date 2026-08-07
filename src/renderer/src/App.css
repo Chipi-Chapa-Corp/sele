@@ -1195,17 +1195,22 @@
   background-color: var(--accent);
 }
 
-.chat-detail__messages {
-  display: flex;
+.chat-detail__messages-shell {
+  position: relative;
   width: 100%;
   min-width: 0;
   min-height: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 14px;
+}
+
+.chat-detail__messages {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   margin: 0 auto;
   overflow-y: auto;
-  padding: 10px 34px 10px;
+  padding: 0;
   font-family: var(--chat-font-family);
   font-size: var(--chat-font-size);
   scrollbar-color: var(--glass-edge) transparent;
@@ -1573,21 +1578,27 @@
 .chat-detail__messages-inner {
   display: flex;
   width: 100%;
-  max-width: var(--chat-content-max-width);
-  min-height: 100%;
+  max-width: calc(var(--chat-content-max-width) + 68px);
   min-width: 0;
   flex-direction: column;
   gap: 14px;
   margin: 0 auto;
+  padding: 0 34px;
 }
 
-.chat-detail__messages-inner::before {
-  content: '';
-  margin-top: auto;
+.chat-detail__turn {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.chat-detail__messages-inner::after {
-  content: '';
+.chat-detail__messages-header {
+  height: 10px;
+  flex: none;
+}
+
+.chat-detail__messages-footer {
   display: block;
   height: 70px;
   flex: none;
@@ -1595,6 +1606,50 @@
 
 .chat-detail__messages-inner > * {
   flex: none;
+}
+
+.chat-detail__messages-status {
+  position: absolute;
+  top: 48px;
+  right: 24px;
+  left: 24px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.chat-detail__turn-page-loading {
+  position: absolute;
+  left: 50%;
+  z-index: 3;
+  padding: 5px 9px;
+  border: 1px solid var(--secondary-border);
+  border-radius: 999px;
+  color: var(--quiet);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
+  font-size: 0.82em;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.chat-detail__turn-page-loading--older {
+  top: 10px;
+}
+
+.chat-detail__turn-page-loading--newer {
+  bottom: 10px;
+}
+
+.chat-detail__down-button {
+  position: absolute;
+  right: 22px;
+  bottom: 18px;
+  z-index: 4;
+  border-radius: 999px;
+}
+
+.chat-detail__down-button .ui-button {
+  border-radius: 999px;
 }
 
 .chat-detail__commit-marker {
@@ -1844,7 +1899,15 @@
 
   .chat-detail__messages {
     width: 100%;
-    padding: 16px 21px 10px;
+  }
+
+  .chat-detail__messages-inner {
+    max-width: calc(var(--chat-content-max-width) + 42px);
+    padding: 0 21px;
+  }
+
+  .chat-detail__messages-header {
+    height: 16px;
   }
 
   .chat-detail__search {

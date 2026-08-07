@@ -11,6 +11,7 @@ import type {
   ProviderChatPage,
   ProviderChatPurpose,
   ProviderChatUpdatedEvent,
+  ProviderChatTurnPage,
   ProviderCwdNote,
   ProviderFileInput,
   ProviderId,
@@ -38,7 +39,10 @@ import {
   providerIpcChannels
 } from '../../shared/provider'
 import { requireContainerTarget } from '../containerTarget'
+import { getProviderChatTurns } from '../../shared/chatTurns'
 import { getChatUpdateSummary, providerApi } from './providerService'
+import { prepareChatDetailForRenderer } from './chatDetailLazy'
+import { unloadHistoricalWorkingSteps } from './workingStepLazy'
 
 type QueuedWindowChatUpdate = Omit<ProviderWindowChatUpdatedEvent, 'detail' | 'sequence'> & {
   detail: ProviderChatDetail | null
@@ -213,13 +217,35 @@ const createChatDetailUpdate = (
   previousDetail: ProviderChatDetail | null
 ): ProviderChatDetailUpdate => {
   const matchingPreviousDetail = previousDetail?.id === detail.id ? previousDetail : null
-  const chatItemsStartIndex = matchingPreviousDetail
+  const changedTailStartIndex = matchingPreviousDetail
     ? getChangedTailStartIndex(
         matchingPreviousDetail.items,
         detail.items,
         (item) => item.type === 'working' && item.status === 'working'
       )
     : 0
+  const firstPayloadStateChangeIndex = matchingPreviousDetail
+    ? detail.items.findIndex((item, index) => {
+        const previousItem = matchingPreviousDetail.items[index]
+        if (!previousItem || previousItem.id !== item.id || previousItem.type !== item.type) {
+          return false
+        }
+        if (item.type === 'message' || item.type === 'pendingMessage') {
+          return (
+            previousItem.type === item.type && previousItem.contentLoaded !== item.contentLoaded
+          )
+        }
+        return (
+          item.type === 'working' &&
+          previousItem.type === 'working' &&
+          previousItem.itemsLoaded !== item.itemsLoaded
+        )
+      })
+    : -1
+  const chatItemsStartIndex =
+    firstPayloadStateChangeIndex >= 0
+      ? Math.min(changedTailStartIndex, firstPayloadStateChangeIndex)
+      : changedTailStartIndex
   const { items, ...chatDetail } = detail
 
   return {
@@ -239,6 +265,10 @@ const createChatDetailUpdate = (
       chatItemsStartIndex > 0 ? (items[chatItemsStartIndex - 1]?.id ?? null) : null
   }
 }
+
+const getRendererChatDetail = async (
+  read: () => Promise<ProviderChatDetail>
+): Promise<ProviderChatDetail> => prepareChatDetailForRenderer(await read())
 
 const getChatUpdateDeliveryState = (webContents: WebContents): ChatUpdateDeliveryState => {
   const existingState = chatUpdateDeliveryByWebContentsId.get(webContents.id)
@@ -272,11 +302,14 @@ const sendChatUpdate = (
   const chatKey = getProviderChatKey(update.providerId, update.chatId)
   const previousDetail =
     state.acknowledgedDetail?.chatKey === chatKey ? state.acknowledgedDetail.detail : null
-  const detailUpdate = update.detail ? createChatDetailUpdate(update.detail, previousDetail) : null
+  const rendererDetail = update.detail ? prepareChatDetailForRenderer(update.detail) : null
+  const detailUpdate = rendererDetail
+    ? createChatDetailUpdate(rendererDetail, previousDetail)
+    : null
   state.inFlightUpdate = {
     sequence,
     chatKey,
-    detail: update.detail
+    detail: rendererDetail
   }
   sentChatUpdateCount += 1
   lastChatUpdateSentAt = Date.now()
@@ -360,6 +393,20 @@ const requireOptionalChatPurpose = (value: unknown): ProviderChatPurpose | undef
 
 const requireMessageId = (value: unknown): string => {
   if (typeof value !== 'string' || !value) throw new Error('Invalid message ID')
+  return value
+}
+
+const requireChatTurnStartIndex = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error('Invalid chat turn start index')
+  }
+  return value
+}
+
+const requireChatTurnLimit = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > 50) {
+    throw new Error('Invalid chat turn limit')
+  }
   return value
 }
 
@@ -920,16 +967,65 @@ export const registerProviderIpc = (): void => {
   })
 
   ipcMain.handle(providerIpcChannels.getChat, (_, providerId: unknown, chatId: unknown) =>
-    providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+    getRendererChatDetail(() =>
+      providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+    )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.getChatWorkingStep,
+    async (_, providerId: unknown, chatId: unknown, workingStepId: unknown) => {
+      const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+      const requiredWorkingStepId = requireMessageId(workingStepId)
+      const workingStep = detail.items.find(
+        (item) => item.type === 'working' && item.id === requiredWorkingStepId
+      )
+      if (!workingStep) throw new Error('Working section not found')
+      return workingStep
+    }
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.getChatTurnPage,
+    async (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      startIndex: unknown,
+      limit: unknown
+    ): Promise<ProviderChatTurnPage> => {
+      const detail = unloadHistoricalWorkingSteps(
+        await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+      )
+      const turns = getProviderChatTurns(detail.items)
+      const requiredStartIndex = Math.min(requireChatTurnStartIndex(startIndex), turns.length)
+      const requiredLimit = requireChatTurnLimit(limit)
+
+      return {
+        items: turns
+          .slice(requiredStartIndex, requiredStartIndex + requiredLimit)
+          .flatMap((turn) =>
+            turn.items.map((item) =>
+              item.type === 'message' || item.type === 'pendingMessage'
+                ? { ...item, contentLoaded: true }
+                : item
+            )
+          ),
+        startIndex: requiredStartIndex,
+        totalCount: turns.length
+      }
+    }
   )
 
   ipcMain.handle(
     providerIpcChannels.setChatTitle,
     (_, providerId: unknown, chatId: unknown, title: unknown) =>
-      providerApi.setChatTitle(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireChatTitle(title)
+      getRendererChatDetail(() =>
+        providerApi.setChatTitle(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireChatTitle(title)
+        )
       )
   )
 
@@ -952,22 +1048,26 @@ export const registerProviderIpc = (): void => {
   ipcMain.handle(
     providerIpcChannels.startChat,
     (_, providerId: unknown, message: unknown, options: unknown, purpose: unknown) =>
-      providerApi.startChat(
-        requireProviderId(providerId),
-        requireMessage(message),
-        requireTurnOptions(options),
-        requireOptionalChatPurpose(purpose)
+      getRendererChatDetail(() =>
+        providerApi.startChat(
+          requireProviderId(providerId),
+          requireMessage(message),
+          requireTurnOptions(options),
+          requireOptionalChatPurpose(purpose)
+        )
       )
   )
 
   ipcMain.handle(
     providerIpcChannels.continueChat,
     (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) =>
-      providerApi.continueChat(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessage(message),
-        requireTurnOptions(options)
+      getRendererChatDetail(() =>
+        providerApi.continueChat(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessage(message),
+          requireTurnOptions(options)
+        )
       )
   )
 
@@ -994,24 +1094,28 @@ export const registerProviderIpc = (): void => {
       purpose: unknown,
       options: unknown
     ) =>
-      providerApi.continueChatInFork(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessage(message),
-        requireChatPurpose(purpose),
-        requireTurnOptions(options)
+      getRendererChatDetail(() =>
+        providerApi.continueChatInFork(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessage(message),
+          requireChatPurpose(purpose),
+          requireTurnOptions(options)
+        )
       )
   )
 
   ipcMain.handle(
     providerIpcChannels.sendActiveChatMessage,
     (_, providerId: unknown, chatId: unknown, message: unknown, mode: unknown, options: unknown) =>
-      providerApi.sendActiveChatMessage(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessage(message),
-        requireActiveSendMode(mode),
-        requireTurnOptions(options)
+      getRendererChatDetail(() =>
+        providerApi.sendActiveChatMessage(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessage(message),
+          requireActiveSendMode(mode),
+          requireTurnOptions(options)
+        )
       )
   )
 
@@ -1039,10 +1143,12 @@ export const registerProviderIpc = (): void => {
   ipcMain.handle(
     providerIpcChannels.deletePendingMessage,
     (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
-      providerApi.deletePendingMessage(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessageId(messageId)
+      getRendererChatDetail(() =>
+        providerApi.deletePendingMessage(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessageId(messageId)
+        )
       )
   )
 
@@ -1056,22 +1162,26 @@ export const registerProviderIpc = (): void => {
       message: unknown,
       options: unknown
     ) =>
-      providerApi.editPendingMessage(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessageId(messageId),
-        requireMessage(message),
-        requireTurnOptions(options)
+      getRendererChatDetail(() =>
+        providerApi.editPendingMessage(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessageId(messageId),
+          requireMessage(message),
+          requireTurnOptions(options)
+        )
       )
   )
 
   ipcMain.handle(
     providerIpcChannels.interruptPendingMessage,
     (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
-      providerApi.interruptPendingMessage(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessageId(messageId)
+      getRendererChatDetail(() =>
+        providerApi.interruptPendingMessage(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessageId(messageId)
+        )
       )
   )
 
@@ -1085,17 +1195,21 @@ export const registerProviderIpc = (): void => {
       message: unknown,
       options: unknown
     ) =>
-      providerApi.editMessage(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessageId(messageId),
-        requireMessage(message),
-        requireTurnOptions(options)
+      getRendererChatDetail(() =>
+        providerApi.editMessage(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessageId(messageId),
+          requireMessage(message),
+          requireTurnOptions(options)
+        )
       )
   )
 
   ipcMain.handle(providerIpcChannels.stopChat, (_, providerId: unknown, chatId: unknown) =>
-    providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))
+    getRendererChatDetail(() =>
+      providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))
+    )
   )
 
   ipcMain.handle(
@@ -1112,21 +1226,25 @@ export const registerProviderIpc = (): void => {
   ipcMain.handle(
     providerIpcChannels.resolveApproval,
     (_, providerId: unknown, chatId: unknown, decision: unknown) =>
-      providerApi.resolveApproval(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireApprovalDecision(decision)
+      getRendererChatDetail(() =>
+        providerApi.resolveApproval(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireApprovalDecision(decision)
+        )
       )
   )
 
   ipcMain.handle(
     providerIpcChannels.resolveUserInput,
     (_, providerId: unknown, chatId: unknown, requestId: unknown, response: unknown) =>
-      providerApi.resolveUserInput(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessageId(requestId),
-        requireUserInputResponse(response)
+      getRendererChatDetail(() =>
+        providerApi.resolveUserInput(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessageId(requestId),
+          requireUserInputResponse(response)
+        )
       )
   )
 

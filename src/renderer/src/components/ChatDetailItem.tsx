@@ -84,6 +84,7 @@ type ChatDetailItemProps = {
   onEditPendingMessage?: (message: ProviderPendingMessage) => void
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
+  onLoadWorkingStep?: (workingStepId: string) => Promise<void> | void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => void
@@ -213,6 +214,7 @@ const areChatItemsEqual = (first: ProviderChatItem, second: ProviderChatItem): b
       second.type === 'message' &&
       first.role === second.role &&
       first.content === second.content &&
+      first.contentLoaded === second.contentLoaded &&
       areUnknownValuesEqual(first.attachments, second.attachments) &&
       first.createdAt === second.createdAt &&
       first.label === second.label &&
@@ -224,18 +226,27 @@ const areChatItemsEqual = (first: ProviderChatItem, second: ProviderChatItem): b
       second.type === 'pendingMessage' &&
       first.kind === second.kind &&
       first.content === second.content &&
+      first.contentLoaded === second.contentLoaded &&
       areUnknownValuesEqual(first.attachments, second.attachments) &&
       first.createdAt === second.createdAt
     )
   }
 
-  if (second.type === 'working' && first.status === second.status && first.status === 'worked') {
+  if (
+    second.type === 'working' &&
+    first.status === second.status &&
+    first.status === 'worked' &&
+    first.itemsLoaded !== false &&
+    second.itemsLoaded !== false
+  ) {
     return true
   }
 
   return (
     second.type === 'working' &&
     first.status === second.status &&
+    first.itemsLoaded === second.itemsLoaded &&
+    first.itemCount === second.itemCount &&
     first.items.length === second.items.length &&
     first.items.every((item, index) => areWorkingItemsEqual(item, second.items[index]))
   )
@@ -260,6 +271,7 @@ const areChatDetailItemPropsEqual = (
   first.onEditPendingMessage === second.onEditPendingMessage &&
   first.onInterruptPendingMessage === second.onInterruptPendingMessage &&
   first.onEditMessage === second.onEditMessage &&
+  first.onLoadWorkingStep === second.onLoadWorkingStep &&
   first.onOpenFileLink === second.onOpenFileLink &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
@@ -1601,6 +1613,7 @@ const WorkingStep: React.FC<{
   hasNextWorkingStep?: boolean
   item: ProviderWorkingStep
   onContinue?: () => Promise<void> | void
+  onLoad?: () => Promise<void> | void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onRetry?: () => void
   projectCwd?: string | null
@@ -1614,6 +1627,7 @@ const WorkingStep: React.FC<{
   hasNextWorkingStep = false,
   item,
   onContinue,
+  onLoad,
   onOpenFileLink,
   onRetry,
   projectCwd,
@@ -1621,6 +1635,9 @@ const WorkingStep: React.FC<{
   thoughtSettings
 }) => {
   const [continueClicked, setContinueClicked] = useState(false)
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [openAfterLoad, setOpenAfterLoad] = useState(false)
+  const unloaded = item.itemsLoaded === false
   const linkedToFollowingStep = continuedStoppedTurn || continueClicked
   const { generatedImages, remaining } = partitionGeneratedImageItems(item.items)
   const blocks = groupWorkingItems(remaining)
@@ -1656,7 +1673,7 @@ const WorkingStep: React.FC<{
     thoughtSettings.collapseStoppedOnNextTurn
   ].join(':')
   const [openState, setOpenState] = useState({ key: openControlKey, open: defaultOpen })
-  const open = openState.key === openControlKey ? openState.open : defaultOpen
+  const open = openAfterLoad || (openState.key === openControlKey ? openState.open : defaultOpen)
   const showPlaceholder = useSilencePlaceholder(
     signature,
     active && activeToolIds.size === 0,
@@ -1717,6 +1734,52 @@ const WorkingStep: React.FC<{
       </div>
     ) : null
 
+  if (unloaded) {
+    const handleLoad = async (): Promise<void> => {
+      if (loadState === 'loading') return
+
+      setLoadState('loading')
+      setOpenAfterLoad(true)
+      try {
+        await onLoad?.()
+        setLoadState('idle')
+      } catch {
+        setLoadState('error')
+      }
+    }
+
+    return (
+      <>
+        <div
+          className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
+        >
+          <button
+            className="chat-detail__working-load"
+            type="button"
+            aria-label={
+              loadState === 'error' ? `Retry loading ${label} section` : `Load ${label} section`
+            }
+            disabled={loadState === 'loading'}
+            onClick={handleLoad}
+          >
+            {heading}
+            {loadState === 'loading' ? (
+              <LoaderCircle className="chat-detail__working-spinner" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
+            )}
+          </button>
+          {loadState === 'error' && (
+            <span className="chat-detail__working-load-error" role="status">
+              Unable to load. Select the section to retry.
+            </span>
+          )}
+        </div>
+        {stoppedTurnActions}
+      </>
+    )
+  }
+
   if (blocks.length === 0) {
     if (item.status !== 'stopped' && !showPlaceholder && renderedGeneratedImages.length > 0) {
       return (
@@ -1755,7 +1818,10 @@ const WorkingStep: React.FC<{
       <details
         className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
         open={open}
-        onToggle={(event) => setOpenState({ key: openControlKey, open: event.currentTarget.open })}
+        onToggle={(event) => {
+          setOpenAfterLoad(false)
+          setOpenState({ key: openControlKey, open: event.currentTarget.open })
+        }}
       >
         <summary>
           {heading}
@@ -1824,6 +1890,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onEditPendingMessage,
   onInterruptPendingMessage,
   onEditMessage,
+  onLoadWorkingStep,
   onOpenFileLink,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
@@ -1988,6 +2055,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       followingWorkingStepStatus={followingWorkingStepStatus}
       hasNextWorkingStep={hasNextWorkingStep}
       item={item}
+      onLoad={onLoadWorkingStep ? () => onLoadWorkingStep(item.id) : undefined}
       onContinue={
         onContinueStoppedTurn
           ? () => onContinueStoppedTurn(item.id, continuePrompt.trim())
