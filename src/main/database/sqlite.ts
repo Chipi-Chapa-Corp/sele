@@ -21,6 +21,8 @@ export type LocalDatabase = {
   chat: {
     id: string
     container_name: string | null
+    container_runtime_name: string | null
+    container_runtime_tool: string | null
     container_tool: string | null
     pinned: SqliteBooleanColumn
     pinned_order: SqliteNullableNumberColumn
@@ -98,6 +100,8 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('id', 'text', (column) => column.primaryKey())
     .addColumn('container_tool', 'text')
     .addColumn('container_name', 'text')
+    .addColumn('container_runtime_tool', 'text')
+    .addColumn('container_runtime_name', 'text')
     .addColumn('pinned', 'integer', (column) => column.notNull().defaultTo(0))
     .addColumn('pinned_order', 'integer')
     .addColumn('done', 'integer', (column) => column.notNull().defaultTo(0))
@@ -191,6 +195,12 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   )
   await ensureColumn(db, 'chat', 'container_name', () =>
     db.schema.alterTable('chat').addColumn('container_name', 'text').execute()
+  )
+  await ensureColumn(db, 'chat', 'container_runtime_tool', () =>
+    db.schema.alterTable('chat').addColumn('container_runtime_tool', 'text').execute()
+  )
+  await ensureColumn(db, 'chat', 'container_runtime_name', () =>
+    db.schema.alterTable('chat').addColumn('container_runtime_name', 'text').execute()
   )
   await ensureColumn(db, 'chat', 'pinned_order', () =>
     db.schema.alterTable('chat').addColumn('pinned_order', 'integer').execute()

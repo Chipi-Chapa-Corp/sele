@@ -51,6 +51,7 @@ import {
   PackagePlus,
   PanelLeft,
   PanelRight,
+  Pencil,
   RefreshCw,
   Search,
   Server,
@@ -83,6 +84,7 @@ import type {
   AppContainerSuggestion,
   AppContainerTarget,
   AppContainerTool,
+  AppLocalContainerTarget,
   AppCreateSshEnvironmentOptions,
   AppProject,
   AppSelectedAttachment,
@@ -773,10 +775,11 @@ const legacyMessageBoxSelectionStorageKey = 'sele:message-box-selection:v1'
 const messageBoxSelectionsStorageKey = 'sele:message-box-selections:v2'
 const providerUpdatePreferenceStorageKey = 'sele:provider-update-preferences:v1'
 const legacyContainerSelectionStorageKeys = [
+  'sele:container-selection:v3',
   'sele:container-selection:v2',
   'sele:container-selection:v1'
 ]
-const containerSelectionStorageKey = 'sele:container-selection:v3'
+const containerSelectionStorageKey = 'sele:container-selection:v4'
 const scopedCommitActivitiesStorageKey = 'sele:scoped-commit-activities:v1'
 const chatCommitMarkersStorageKey = 'sele:chat-commit-markers:v1'
 const continuedStoppedWorkingStepsStorageKey = 'sele:continued-stopped-working-steps:v1'
@@ -898,19 +901,45 @@ const normalizeContainerTarget = (
   container: AppContainerTarget | null | undefined
 ): AppContainerTarget => {
   if (!container || container.kind === 'host') return { kind: 'host' }
+  if (container.tool === 'ssh') {
+    return {
+      kind: 'container',
+      tool: 'ssh',
+      name: container.name,
+      runtime:
+        container.runtime?.kind === 'container'
+          ? {
+              kind: 'container',
+              tool: container.runtime.tool,
+              name: container.runtime.name
+            }
+          : { kind: 'host' }
+    }
+  }
   return { kind: 'container', tool: container.tool, name: container.name }
 }
 
 const getContainerTargetKey = (container: AppContainerTarget | null | undefined): string => {
   const normalizedContainer = normalizeContainerTarget(container)
-  return normalizedContainer.kind === 'container'
-    ? `${normalizedContainer.tool}:${normalizedContainer.name}`
-    : hostContainerValue
+  if (normalizedContainer.kind === 'host') return hostContainerValue
+  if (normalizedContainer.tool !== 'ssh') {
+    return `${normalizedContainer.tool}:${normalizedContainer.name}`
+  }
+
+  const runtime = normalizedContainer.runtime ?? { kind: 'host' }
+  const runtimeKey =
+    runtime.kind === 'container' ? `${runtime.tool}:${runtime.name}` : hostContainerValue
+  return `ssh:${normalizedContainer.name}/from:${runtimeKey}`
 }
+
+const getContainerSelectionValue = (container: AppContainerTarget): string =>
+  container.kind === 'container' && container.tool === 'ssh'
+    ? `ssh:${container.name}`
+    : getContainerTargetKey(container)
 
 const getContainerTargetFromSuggestion = (
   suggestion: AppContainerSuggestion
-): AppContainerTarget => ({
+): AppLocalContainerTarget => ({
   kind: 'container',
   tool: suggestion.tool,
   name: suggestion.name
@@ -946,7 +975,8 @@ const parseStoredContainerSelection = (
   if (!storedValue) return null
 
   try {
-    const parsedValue = JSON.parse(storedValue) as Partial<AppContainerTarget> | null
+    const parsedValue = JSON.parse(storedValue) as
+      (Partial<AppContainerTarget> & { runtime?: unknown }) | null
     if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
       return null
     }
@@ -957,6 +987,32 @@ const parseStoredContainerSelection = (
       typeof parsedValue.name === 'string' &&
       parsedValue.name.trim()
     ) {
+      if (parsedValue.tool === 'ssh') {
+        const runtime = parsedValue.runtime
+        const normalizedRuntime: AppLocalContainerTarget =
+          runtime &&
+          typeof runtime === 'object' &&
+          !Array.isArray(runtime) &&
+          (runtime as { kind?: unknown }).kind === 'container' &&
+          isContainerTool((runtime as { tool?: unknown }).tool) &&
+          (runtime as { tool?: unknown }).tool !== 'ssh' &&
+          typeof (runtime as { name?: unknown }).name === 'string' &&
+          (runtime as { name: string }).name.trim()
+            ? {
+                kind: 'container',
+                tool: (runtime as { tool: AppContainerTool }).tool,
+                name: (runtime as { name: string }).name.trim()
+              }
+            : { kind: 'host' }
+
+        return {
+          kind: 'container',
+          tool: 'ssh',
+          name: parsedValue.name.trim(),
+          runtime: normalizedRuntime
+        }
+      }
+
       return {
         kind: 'container',
         tool: parsedValue.tool,
@@ -981,7 +1037,7 @@ const readStoredContainerSelection = (): AppContainerTarget | null => {
     for (const legacyStorageKey of legacyContainerSelectionStorageKeys) {
       const legacySelection = parseStoredContainerSelection(
         window.localStorage.getItem(legacyStorageKey),
-        { allowHost: false }
+        { allowHost: legacyStorageKey === 'sele:container-selection:v3' }
       )
       if (legacySelection) return legacySelection
     }
@@ -2467,7 +2523,10 @@ const areContainerTargetsEqual = (
   (first?.kind === 'container' &&
     second?.kind === 'container' &&
     first.tool === second.tool &&
-    first.name === second.name)
+    first.name === second.name &&
+    (first.tool !== 'ssh' ||
+      second.tool !== 'ssh' ||
+      getContainerTargetKey(first) === getContainerTargetKey(second)))
 
 const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.id === second.id &&
@@ -3562,8 +3621,15 @@ export const App: React.FC = () => {
   const [providerUpdatePreferences, setProviderUpdatePreferences] =
     useState<ProviderUpdatePreferences>(readStoredProviderUpdatePreferences)
   const [containerSuggestions, setContainerSuggestions] = useState<AppContainerSuggestion[]>([])
+  const [remoteContainerSuggestions, setRemoteContainerSuggestions] = useState<
+    AppContainerSuggestion[]
+  >([])
+  const [remoteContainerSuggestionsLoading, setRemoteContainerSuggestionsLoading] = useState(false)
   const [sshEnvironments, setSshEnvironments] = useState<AppSshEnvironment[]>([])
   const [sshEnvironmentDialogOpen, setSshEnvironmentDialogOpen] = useState(false)
+  const [editingSshEnvironment, setEditingSshEnvironment] = useState<AppSshEnvironment | null>(null)
+  const [deletingSshEnvironmentId, setDeletingSshEnvironmentId] = useState<string | null>(null)
+  const [sshEnvironmentError, setSshEnvironmentError] = useState<string | null>(null)
   const [storedContainerSelection] = useState<AppContainerTarget | null>(
     readStoredContainerSelection
   )
@@ -3571,6 +3637,10 @@ export const App: React.FC = () => {
   const [newSessionContainer, setNewSessionContainer] = useState<AppContainerTarget>(
     () => storedContainerSelection ?? { kind: 'host' }
   )
+  const newSessionSshEnvironmentId =
+    newSessionContainer.kind === 'container' && newSessionContainer.tool === 'ssh'
+      ? newSessionContainer.name
+      : null
   const newSessionContainerKey = getContainerTargetKey(newSessionContainer)
   const [newSessionSourceAvailability, setNewSessionSourceAvailability] =
     useState<SourceAvailabilityState | null>(null)
@@ -4327,6 +4397,70 @@ export const App: React.FC = () => {
       active = false
     }
   }, [storedContainerSelection])
+
+  useEffect(() => {
+    let active = true
+    const environmentId = newSessionSshEnvironmentId
+
+    if (!environmentId) {
+      queueMicrotask(() => {
+        if (!active) return
+        setRemoteContainerSuggestions([])
+        setRemoteContainerSuggestionsLoading(false)
+      })
+      return () => {
+        active = false
+      }
+    }
+
+    const remoteEnvironment = {
+      kind: 'container',
+      tool: 'ssh',
+      name: environmentId,
+      runtime: { kind: 'host' }
+    } satisfies AppContainerTarget
+
+    queueMicrotask(() => {
+      if (!active) return
+      setRemoteContainerSuggestions([])
+      setRemoteContainerSuggestionsLoading(true)
+    })
+
+    appApi
+      .getContainerSuggestions({ container: remoteEnvironment })
+      .then((suggestions) => {
+        if (!active) return
+
+        setRemoteContainerSuggestions(suggestions)
+        setNewSessionContainer((currentContainer) => {
+          if (
+            currentContainer.kind !== 'container' ||
+            currentContainer.tool !== 'ssh' ||
+            currentContainer.name !== environmentId ||
+            currentContainer.runtime?.kind !== 'container'
+          ) {
+            return currentContainer
+          }
+
+          const runtime = currentContainer.runtime
+          return suggestions.some(
+            (suggestion) => suggestion.tool === runtime.tool && suggestion.name === runtime.name
+          )
+            ? currentContainer
+            : { ...currentContainer, runtime: { kind: 'host' } }
+        })
+      })
+      .catch(() => {
+        if (active) setRemoteContainerSuggestions([])
+      })
+      .finally(() => {
+        if (active) setRemoteContainerSuggestionsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [newSessionSshEnvironmentId])
 
   useEffect(() => {
     let active = true
@@ -6362,6 +6496,34 @@ export const App: React.FC = () => {
     return options
   }, [newSessionCwd, projects, projectIconsByGroup])
   const newSessionProjectValue = newSessionCwd ?? newSessionProjectPlaceholderValue
+  const handleDeleteSshEnvironment = useCallback(
+    async (environment: AppSshEnvironment): Promise<void> => {
+      if (deletingSshEnvironmentId) return
+
+      setDeletingSshEnvironmentId(environment.id)
+      setSshEnvironmentError(null)
+      try {
+        await appApi.deleteSshEnvironment({ id: environment.id })
+        setSshEnvironments((currentEnvironments) =>
+          currentEnvironments.filter(
+            (currentEnvironment) => currentEnvironment.id !== environment.id
+          )
+        )
+        setNewSessionContainer((currentContainer) =>
+          currentContainer.kind === 'container' &&
+          currentContainer.tool === 'ssh' &&
+          currentContainer.name === environment.id
+            ? { kind: 'host' }
+            : currentContainer
+        )
+      } catch (error) {
+        setSshEnvironmentError(getErrorMessage(error, 'Unable to remove environment.'))
+      } finally {
+        setDeletingSshEnvironmentId(null)
+      }
+    },
+    [deletingSshEnvironmentId]
+  )
   const containerOptions = useMemo<DropdownOption<string>[]>(
     () => [
       {
@@ -6374,7 +6536,28 @@ export const App: React.FC = () => {
         label: environment.name,
         menuLabel: environment.name,
         description: `${environment.user ? `${environment.user}@` : ''}${environment.host}:${environment.port}`,
-        icon: <Server aria-hidden="true" />
+        icon: <Server aria-hidden="true" />,
+        inlineActions: [
+          {
+            id: `edit-${environment.id}`,
+            ariaLabel: `Edit ${environment.name}`,
+            title: `Edit ${environment.name}`,
+            icon: <Pencil aria-hidden="true" />,
+            callback: () => {
+              setEditingSshEnvironment(environment)
+              setSshEnvironmentError(null)
+              setSshEnvironmentDialogOpen(true)
+            }
+          },
+          {
+            id: `remove-${environment.id}`,
+            ariaLabel: `Remove ${environment.name}`,
+            title: `Remove ${environment.name}`,
+            disabled: Boolean(deletingSshEnvironmentId),
+            icon: <X aria-hidden="true" />,
+            callback: () => handleDeleteSshEnvironment(environment)
+          }
+        ]
       })),
       ...containerSuggestions.map((container) => ({
         value: container.id,
@@ -6383,8 +6566,49 @@ export const App: React.FC = () => {
         icon: getContainerToolIcon(container.tool)
       }))
     ],
-    [containerSuggestions, sshEnvironments]
+    [containerSuggestions, deletingSshEnvironmentId, handleDeleteSshEnvironment, sshEnvironments]
   )
+  const newSessionRemoteRuntime = useMemo<AppLocalContainerTarget | null>(
+    () =>
+      newSessionContainer.kind === 'container' && newSessionContainer.tool === 'ssh'
+        ? (newSessionContainer.runtime ?? { kind: 'host' })
+        : null,
+    [newSessionContainer]
+  )
+  const remoteRuntimeOptions = useMemo<DropdownOption<string>[]>(() => {
+    const suggestions = [...remoteContainerSuggestions]
+    if (
+      newSessionRemoteRuntime?.kind === 'container' &&
+      !suggestions.some(
+        (suggestion) =>
+          suggestion.tool === newSessionRemoteRuntime.tool &&
+          suggestion.name === newSessionRemoteRuntime.name
+      )
+    ) {
+      suggestions.unshift({
+        id: `${newSessionRemoteRuntime.tool}:${newSessionRemoteRuntime.name}`,
+        tool: newSessionRemoteRuntime.tool,
+        name: newSessionRemoteRuntime.name,
+        label: newSessionRemoteRuntime.name,
+        description: null,
+        status: null
+      })
+    }
+
+    return [
+      {
+        value: hostContainerValue,
+        label: 'Host',
+        icon: <Monitor aria-hidden="true" />
+      },
+      ...suggestions.map((container) => ({
+        value: container.id,
+        label: container.name,
+        menuLabel: `${container.name} · ${getContainerSuggestionState(container)}`,
+        icon: getContainerToolIcon(container.tool)
+      }))
+    ]
+  }, [newSessionRemoteRuntime, remoteContainerSuggestions])
   const newSessionProviderOptions = useMemo<DropdownOption<ProviderId>[]>(
     () =>
       providerOptions.filter((option) =>
@@ -6397,7 +6621,7 @@ export const App: React.FC = () => {
     : newSessionProviderOptions.length === 0
       ? 'No providers found'
       : undefined
-  const newSessionContainerValue = getContainerTargetKey(newSessionContainer)
+  const newSessionContainerValue = getContainerSelectionValue(newSessionContainer)
   const handleNewSessionContainerChange = (value: string): void => {
     if (value === hostContainerValue) {
       setNewSessionContainer({ kind: 'host' })
@@ -6408,24 +6632,60 @@ export const App: React.FC = () => {
       (candidateEnvironment) => `ssh:${candidateEnvironment.id}` === value
     )
     if (environment) {
-      setNewSessionContainer({ kind: 'container', tool: 'ssh', name: environment.id })
+      setNewSessionContainer({
+        kind: 'container',
+        tool: 'ssh',
+        name: environment.id,
+        runtime: { kind: 'host' }
+      })
       return
     }
 
     const suggestion = containerSuggestions.find((container) => container.id === value)
     if (suggestion) setNewSessionContainer(getContainerTargetFromSuggestion(suggestion))
   }
-  const handleCreateSshEnvironment = async (
+  const handleNewSessionRemoteRuntimeChange = (value: string): void => {
+    if (!newSessionSshEnvironmentId) return
+    if (value === hostContainerValue) {
+      setNewSessionContainer({
+        kind: 'container',
+        tool: 'ssh',
+        name: newSessionSshEnvironmentId,
+        runtime: { kind: 'host' }
+      })
+      return
+    }
+
+    const suggestion = remoteContainerSuggestions.find((container) => container.id === value)
+    if (!suggestion) return
+    setNewSessionContainer({
+      kind: 'container',
+      tool: 'ssh',
+      name: newSessionSshEnvironmentId,
+      runtime: getContainerTargetFromSuggestion(suggestion)
+    })
+  }
+  const handleSaveSshEnvironment = async (
     options: AppCreateSshEnvironmentOptions
   ): Promise<void> => {
-    const environment = await appApi.createSshEnvironment(options)
+    const environment = editingSshEnvironment
+      ? await appApi.updateSshEnvironment({ id: editingSshEnvironment.id, ...options })
+      : await appApi.createSshEnvironment(options)
     setSshEnvironments((currentEnvironments) => [
       environment,
       ...currentEnvironments.filter(
         (currentEnvironment) => currentEnvironment.id !== environment.id
       )
     ])
-    setNewSessionContainer({ kind: 'container', tool: 'ssh', name: environment.id })
+    setSshEnvironmentError(null)
+    if (!editingSshEnvironment) {
+      setNewSessionContainer({
+        kind: 'container',
+        tool: 'ssh',
+        name: environment.id,
+        runtime: { kind: 'host' }
+      })
+    }
   }
   const savedGitCommitModel = settingsPanelSettings.git.commitModel
   const savedGitCommitModelOption = savedGitCommitModel
@@ -10502,11 +10762,17 @@ export const App: React.FC = () => {
   return (
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
-      <SshEnvironmentDialog
-        open={sshEnvironmentDialogOpen}
-        onClose={() => setSshEnvironmentDialogOpen(false)}
-        onSave={handleCreateSshEnvironment}
-      />
+      {sshEnvironmentDialogOpen && (
+        <SshEnvironmentDialog
+          environment={editingSshEnvironment}
+          open
+          onClose={() => {
+            setSshEnvironmentDialogOpen(false)
+            setEditingSshEnvironment(null)
+          }}
+          onSave={handleSaveSshEnvironment}
+        />
+      )}
       {fileEditorTarget && (
         <FileEditorDialog
           diffTargets={fileEditorTarget.kind ? fileEditorDiffTargets : []}
@@ -10922,17 +11188,33 @@ export const App: React.FC = () => {
                       value={newSessionLocation}
                       onChange={setNewSessionLocation}
                     />
-                    <span>from</span>
+                    <span>{newSessionSshEnvironmentId ? 'over' : 'from'}</span>
                     <Dropdown
                       aria-label="Runtime"
                       disabled={providerUpdateInProgress || sendState === 'sending'}
                       menuActions={[
+                        ...(sshEnvironmentError
+                          ? [
+                              {
+                                id: 'environment-error',
+                                label: sshEnvironmentError,
+                                title: sshEnvironmentError,
+                                disabled: true,
+                                icon: <X aria-hidden="true" />,
+                                callback: () => {}
+                              }
+                            ]
+                          : []),
                         {
                           id: 'add-environment',
                           label: 'Add environment',
                           title: 'Add environment',
                           icon: <PackagePlus aria-hidden="true" />,
-                          callback: () => setSshEnvironmentDialogOpen(true)
+                          callback: () => {
+                            setEditingSshEnvironment(null)
+                            setSshEnvironmentError(null)
+                            setSshEnvironmentDialogOpen(true)
+                          }
                         }
                       ]}
                       options={containerOptions}
@@ -10941,6 +11223,25 @@ export const App: React.FC = () => {
                       value={newSessionContainerValue}
                       onChange={handleNewSessionContainerChange}
                     />
+                    {newSessionSshEnvironmentId && newSessionRemoteRuntime && (
+                      <>
+                        <span>from</span>
+                        <Dropdown
+                          aria-label="Remote runtime"
+                          disabled={
+                            providerUpdateInProgress ||
+                            sendState === 'sending' ||
+                            remoteContainerSuggestionsLoading
+                          }
+                          options={remoteRuntimeOptions}
+                          placement="top"
+                          size="small"
+                          value={getContainerTargetKey(newSessionRemoteRuntime)}
+                          valueContent={remoteContainerSuggestionsLoading ? 'Checking' : undefined}
+                          onChange={handleNewSessionRemoteRuntimeChange}
+                        />
+                      </>
+                    )}
                   </div>
                 )}
                 {!selectedChat && newChatOpen && worktreeCreationState !== 'idle' && (

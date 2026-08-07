@@ -29,6 +29,7 @@ import type {
   AppAddProjectOptions,
   AppContainerTarget,
   AppCreateSshEnvironmentOptions,
+  AppDeleteSshEnvironmentOptions,
   AppExternalLinkAction,
   AppExternalLinkOptions,
   AppExternalLinkResult,
@@ -65,6 +66,7 @@ import type {
   AppSelectedImage,
   AppSourceAvailability,
   AppSourceAvailabilityOptions,
+  AppUpdateSshEnvironmentOptions,
   AppWriteFileContentsOptions,
   AppWindowState
 } from '../shared/app'
@@ -82,7 +84,9 @@ import {
 } from './database/projects'
 import {
   createSshEnvironment as createStoredSshEnvironment,
-  getSshEnvironments as getStoredSshEnvironments
+  deleteSshEnvironment as deleteStoredSshEnvironment,
+  getSshEnvironments as getStoredSshEnvironments,
+  updateSshEnvironment as updateStoredSshEnvironment
 } from './database/sshEnvironments'
 import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
@@ -282,6 +286,35 @@ const getCreateSshEnvironmentOptions = (value: unknown): AppCreateSshEnvironment
     user: user || null,
     identityFile: identityFile || null
   }
+}
+
+const getSshEnvironmentId = (value: unknown): string => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid SSH environment options')
+  }
+
+  const id = (value as { id?: unknown }).id
+  if (typeof id !== 'string' || !id || id.length > 128 || /[\0\r\n]/.test(id)) {
+    throw new Error('Invalid SSH environment id')
+  }
+
+  return id
+}
+
+const getUpdateSshEnvironmentOptions = (value: unknown): AppUpdateSshEnvironmentOptions => ({
+  ...getCreateSshEnvironmentOptions(value),
+  id: getSshEnvironmentId(value)
+})
+
+const getDeleteSshEnvironmentOptions = (value: unknown): AppDeleteSshEnvironmentOptions => ({
+  id: getSshEnvironmentId(value)
+})
+
+const validateSshIdentityFile = async (identityFile?: string | null): Promise<void> => {
+  if (!identityFile) return
+
+  const identityStat = await stat(identityFile).catch(() => null)
+  if (!identityStat?.isFile()) throw new Error('SSH identity file does not exist')
 }
 
 const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
@@ -2457,12 +2490,21 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.createSshEnvironment, async (_event, value: unknown) => {
     const options = getCreateSshEnvironmentOptions(value)
-    if (options.identityFile) {
-      const identityStat = await stat(options.identityFile).catch(() => null)
-      if (!identityStat?.isFile()) throw new Error('SSH identity file does not exist')
-    }
+    await validateSshIdentityFile(options.identityFile)
 
     return createStoredSshEnvironment(options)
+  })
+
+  ipcMain.handle(appIpcChannels.updateSshEnvironment, async (_event, value: unknown) => {
+    const options = getUpdateSshEnvironmentOptions(value)
+    await validateSshIdentityFile(options.identityFile)
+
+    return updateStoredSshEnvironment(options)
+  })
+
+  ipcMain.handle(appIpcChannels.deleteSshEnvironment, async (_event, value: unknown) => {
+    const options = getDeleteSshEnvironmentOptions(value)
+    await deleteStoredSshEnvironment(options.id)
   })
 
   ipcMain.handle(appIpcChannels.selectSshIdentityFile, async (event) => {
@@ -2478,7 +2520,9 @@ export const registerAppIpc = (): void => {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
-  ipcMain.handle(appIpcChannels.getContainerSuggestions, () => getContainerSuggestions())
+  ipcMain.handle(appIpcChannels.getContainerSuggestions, (_event, value: unknown) =>
+    getContainerSuggestions(getSourceAvailabilityOptions(value))
+  )
 
   ipcMain.handle(appIpcChannels.getSourceAvailability, (_event, value: unknown) =>
     getSourceAvailability(getSourceAvailabilityOptions(value))

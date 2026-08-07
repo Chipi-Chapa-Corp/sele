@@ -28,11 +28,27 @@ const getDefaultChatMetadata = (id: string): ProviderChatMetadata => ({
   container: null
 })
 
-const mapContainerTarget = (tool: string | null, name: string | null): AppContainerTarget | null =>
-  isContainerTool(tool) && name?.trim() ? { kind: 'container', tool, name: name.trim() } : null
+const mapContainerTarget = (
+  tool: string | null,
+  name: string | null,
+  runtimeTool: string | null,
+  runtimeName: string | null
+): AppContainerTarget | null => {
+  if (!isContainerTool(tool) || !name?.trim()) return null
+  if (tool !== 'ssh') return { kind: 'container', tool, name: name.trim() }
+
+  const runtime =
+    isContainerTool(runtimeTool) && runtimeTool !== 'ssh' && runtimeName?.trim()
+      ? ({ kind: 'container', tool: runtimeTool, name: runtimeName.trim() } as const)
+      : ({ kind: 'host' } as const)
+
+  return { kind: 'container', tool: 'ssh', name: name.trim(), runtime }
+}
 
 const mapChatMetadataRow = (row: {
   container_name: string | null
+  container_runtime_name: string | null
+  container_runtime_tool: string | null
   container_tool: string | null
   id: string
   pinned: number
@@ -47,7 +63,12 @@ const mapChatMetadataRow = (row: {
   done: toBoolean(row.done),
   seenUpdatedAt: toNumberOrNull(row.seen_updated_at),
   purpose: row.purpose === 'commit' ? row.purpose : null,
-  container: mapContainerTarget(row.container_tool, row.container_name)
+  container: mapContainerTarget(
+    row.container_tool,
+    row.container_name,
+    row.container_runtime_tool,
+    row.container_runtime_name
+  )
 })
 
 const uniqueChatIds = (chatIds: string[]): string[] =>
@@ -61,6 +82,8 @@ export const getChatMetadata = async (chatId: string): Promise<ProviderChatMetad
       'id',
       'container_tool',
       'container_name',
+      'container_runtime_tool',
+      'container_runtime_name',
       'pinned',
       'pinned_order',
       'done',
@@ -90,6 +113,8 @@ export const getChatMetadataByIds = async (
         'id',
         'container_tool',
         'container_name',
+        'container_runtime_tool',
+        'container_runtime_name',
         'pinned',
         'pinned_order',
         'done',
@@ -218,6 +243,12 @@ export const setChatContainer = async (
   const normalizedContainer = normalizeContainerTarget(container)
   const containerTool = normalizedContainer.kind === 'container' ? normalizedContainer.tool : null
   const containerName = normalizedContainer.kind === 'container' ? normalizedContainer.name : null
+  const containerRuntime =
+    normalizedContainer.kind === 'container' &&
+    normalizedContainer.tool === 'ssh' &&
+    normalizedContainer.runtime?.kind === 'container'
+      ? normalizedContainer.runtime
+      : null
 
   await db
     .insertInto('chat')
@@ -226,12 +257,16 @@ export const setChatContainer = async (
       pinned: 0,
       done: 0,
       container_tool: containerTool,
-      container_name: containerName
+      container_name: containerName,
+      container_runtime_tool: containerRuntime?.tool ?? null,
+      container_runtime_name: containerRuntime?.name ?? null
     })
     .onConflict((conflict) =>
       conflict.column('id').doUpdateSet({
         container_tool: containerTool,
-        container_name: containerName
+        container_name: containerName,
+        container_runtime_tool: containerRuntime?.tool ?? null,
+        container_runtime_name: containerRuntime?.name ?? null
       })
     )
     .execute()

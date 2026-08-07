@@ -21,6 +21,16 @@ export type DropdownOption<TValue extends string = string> = {
   description?: string
   icon?: ReactNode
   disabled?: boolean
+  inlineActions?: readonly DropdownOptionInlineAction[]
+}
+
+export type DropdownOptionInlineAction = {
+  id: string
+  ariaLabel: string
+  callback: () => Promise<void> | void
+  disabled?: boolean
+  icon: ReactNode
+  title?: string
 }
 
 export type DropdownOptionGroup<TValue extends string = string> = {
@@ -151,7 +161,15 @@ export const Dropdown = <TValue extends string>({
   const menuOpen = (menuOnly || open) && !disabled
   const optionsHaveIcons = flattenedOptions.some((option) => Boolean(option.icon))
   const optionsHaveDescriptions = flattenedOptions.some((option) => Boolean(option.description))
+  const optionsHaveInlineActions = flattenedOptions.some((option) =>
+    Boolean(option.inlineActions?.length)
+  )
   const enabledMenuActionCount = menuActions.filter((action) => !action.disabled).length
+  const enabledOptionInlineActionCount = flattenedOptions.reduce(
+    (count, option) =>
+      count + (option.inlineActions?.filter((action) => !action.disabled).length ?? 0),
+    0
+  )
   const updateActiveIndex = (nextIndex: SetStateAction<number>): void => {
     const resolvedIndex = typeof nextIndex === 'function' ? nextIndex(activeIndex) : nextIndex
     if (controlledActiveIndex === undefined) setInternalActiveIndex(resolvedIndex)
@@ -334,6 +352,15 @@ export const Dropdown = <TValue extends string>({
     void action.callback()
   }
 
+  const selectOptionInlineAction = (action: DropdownOptionInlineAction): void => {
+    if (action.disabled) return
+
+    setOpen(false)
+    setMenuStyle(null)
+    buttonRef.current?.focus({ preventScroll: true })
+    void action.callback()
+  }
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
     if (disabled) return
 
@@ -387,7 +414,11 @@ export const Dropdown = <TValue extends string>({
     }
 
     if (event.key === 'Tab') {
-      if (!menuOpen || event.shiftKey || enabledMenuActionCount === 0) {
+      if (
+        !menuOpen ||
+        event.shiftKey ||
+        enabledMenuActionCount + enabledOptionInlineActionCount === 0
+      ) {
         setOpen(false)
         setMenuStyle(null)
         return
@@ -395,7 +426,9 @@ export const Dropdown = <TValue extends string>({
 
       event.preventDefault()
       menuRef.current
-        ?.querySelector<HTMLButtonElement>('.ui-dropdown__action:not(:disabled)')
+        ?.querySelector<HTMLButtonElement>(
+          '.ui-dropdown__action:not(:disabled), .ui-dropdown__option-inline-action:not(:disabled)'
+        )
         ?.focus()
     }
   }
@@ -456,10 +489,18 @@ export const Dropdown = <TValue extends string>({
     const optionCheck = selected ? (
       <Check className="ui-dropdown__check" aria-hidden="true" />
     ) : null
+    const inlineActions = option.inlineActions ?? []
+    const optionStyle =
+      inlineActions.length > 0
+        ? ({
+            paddingRight: `${
+              16 + inlineActions.length * 26 + Math.max(0, inlineActions.length - 1) * 2
+            }px`
+          } as CSSProperties)
+        : undefined
 
-    return (
+    const optionElement = (
       <div
-        key={option.value}
         id={optionId}
         className={getOptionClassName(
           activeIndex === index,
@@ -471,6 +512,7 @@ export const Dropdown = <TValue extends string>({
         role="option"
         aria-disabled={option.disabled || undefined}
         aria-selected={selected}
+        style={optionStyle}
         onClick={() => selectOption(option)}
         onMouseDown={(event) => event.preventDefault()}
         onPointerMove={() => {
@@ -496,6 +538,33 @@ export const Dropdown = <TValue extends string>({
             {optionCheck}
           </>
         )}
+      </div>
+    )
+
+    if (inlineActions.length === 0) {
+      return <Fragment key={option.value}>{optionElement}</Fragment>
+    }
+
+    return (
+      <div className="ui-dropdown__option-container" key={option.value} role="presentation">
+        {optionElement}
+        <span className="ui-dropdown__option-inline-actions" role="presentation">
+          {inlineActions.map((inlineAction) => (
+            <button
+              className="ui-dropdown__option-inline-action"
+              disabled={inlineAction.disabled}
+              key={inlineAction.id}
+              type="button"
+              aria-label={inlineAction.ariaLabel}
+              title={inlineAction.title}
+              onBlur={handleActionBlur}
+              onClick={() => selectOptionInlineAction(inlineAction)}
+              onKeyDown={handleActionKeyDown}
+            >
+              <span aria-hidden="true">{inlineAction.icon}</span>
+            </button>
+          ))}
+        </span>
       </div>
     )
   }
@@ -612,7 +681,7 @@ export const Dropdown = <TValue extends string>({
           openMenu()
         }}
         onBlur={(event) => {
-          if (!menuOpen || menuActions.length === 0) return
+          if (!menuOpen || (menuActions.length === 0 && !optionsHaveInlineActions)) return
 
           const nextTarget = event.relatedTarget
           if (nextTarget && menuRef.current?.contains(nextTarget)) return

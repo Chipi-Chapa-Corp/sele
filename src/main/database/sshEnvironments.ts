@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import type { AppCreateSshEnvironmentOptions, AppSshEnvironment } from '../../shared/app'
+import type {
+  AppCreateSshEnvironmentOptions,
+  AppSshEnvironment,
+  AppUpdateSshEnvironmentOptions
+} from '../../shared/app'
 import { getDatabase } from './sqlite'
 
 type SshEnvironmentRow = {
@@ -71,4 +75,32 @@ export const createSshEnvironment = async (
   const environment = await getSshEnvironment(id)
   if (!environment) throw new Error('Unable to save SSH environment')
   return environment
+}
+
+export const updateSshEnvironment = async (
+  options: AppUpdateSshEnvironmentOptions
+): Promise<AppSshEnvironment> => {
+  const db = await getDatabase()
+
+  await db
+    .updateTable('ssh_environments')
+    .set({
+      name: options.name,
+      host: options.host,
+      port: options.port,
+      user: options.user ?? null,
+      identity_file: options.identityFile ?? null,
+      updated_at: Date.now()
+    })
+    .where('id', '=', options.id)
+    .execute()
+
+  const environment = await getSshEnvironment(options.id)
+  if (!environment) throw new Error('SSH environment not found')
+  return environment
+}
+
+export const deleteSshEnvironment = async (id: string): Promise<void> => {
+  const db = await getDatabase()
+  await db.deleteFrom('ssh_environments').where('id', '=', id).execute()
 }

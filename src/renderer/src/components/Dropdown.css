@@ -399,6 +399,58 @@
   font-weight: 400;
 }
 
+:where(.ui-dropdown__option-container) {
+  position: relative;
+  min-width: 0;
+}
+
+:where(.ui-dropdown__option-inline-actions) {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 8px;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+:where(.ui-dropdown__option-inline-action) {
+  appearance: none;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  border: 0;
+  border-radius: var(--control-radius-small);
+  color: var(--quiet);
+  cursor: pointer;
+  background: transparent;
+}
+
+:where(.ui-dropdown__option-inline-action:not(:disabled):hover),
+:where(.ui-dropdown__option-inline-action:focus-visible) {
+  color: var(--ink);
+  background: var(--control-hover-bg);
+  outline: 0;
+}
+
+:where(.ui-dropdown__option-inline-action:focus-visible) {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+:where(.ui-dropdown__option-inline-action:disabled) {
+  color: var(--control-disabled-color);
+  cursor: default;
+}
+
+:where(.ui-dropdown__option-inline-action span),
+:where(.ui-dropdown__option-inline-action svg) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 :where(.ui-dropdown__option--has-icon) {
   grid-template-columns: var(--dropdown-icon-size) minmax(0, 1fr) var(--dropdown-icon-size);
 }

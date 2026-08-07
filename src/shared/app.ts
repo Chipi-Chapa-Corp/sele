@@ -139,7 +139,7 @@ export type AppContainerTool = 'distrobox' | 'toolbox' | 'podman' | 'docker'
 
 export type AppContainerTargetTool = AppContainerTool | 'ssh'
 
-export type AppContainerTarget =
+export type AppLocalContainerTarget =
   | {
       kind: 'host'
     }
@@ -148,10 +148,14 @@ export type AppContainerTarget =
       tool: AppContainerTool
       name: string
     }
+
+export type AppContainerTarget =
+  | AppLocalContainerTarget
   | {
       kind: 'container'
       tool: 'ssh'
       name: string
+      runtime?: AppLocalContainerTarget
     }
 
 export type AppSshEnvironment = {
@@ -171,6 +175,14 @@ export type AppCreateSshEnvironmentOptions = {
   port: number
   user?: string | null
   identityFile?: string | null
+}
+
+export type AppUpdateSshEnvironmentOptions = AppCreateSshEnvironmentOptions & {
+  id: string
+}
+
+export type AppDeleteSshEnvironmentOptions = {
+  id: string
 }
 
 export type AppContainerSuggestion = {
@@ -444,8 +456,10 @@ export type AppApi = {
   addProject: (options: AppAddProjectOptions) => Promise<AppProject>
   getSshEnvironments: () => Promise<AppSshEnvironment[]>
   createSshEnvironment: (options: AppCreateSshEnvironmentOptions) => Promise<AppSshEnvironment>
+  updateSshEnvironment: (options: AppUpdateSshEnvironmentOptions) => Promise<AppSshEnvironment>
+  deleteSshEnvironment: (options: AppDeleteSshEnvironmentOptions) => Promise<void>
   selectSshIdentityFile: () => Promise<string | null>
-  getContainerSuggestions: () => Promise<AppContainerSuggestion[]>
+  getContainerSuggestions: (options?: AppContainerOptions) => Promise<AppContainerSuggestion[]>
   getSourceAvailability: (options?: AppSourceAvailabilityOptions) => Promise<AppSourceAvailability>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
@@ -496,6 +510,8 @@ export const appIpcChannels = {
   addProject: 'app:add-project',
   getSshEnvironments: 'app:get-ssh-environments',
   createSshEnvironment: 'app:create-ssh-environment',
+  updateSshEnvironment: 'app:update-ssh-environment',
+  deleteSshEnvironment: 'app:delete-ssh-environment',
   selectSshIdentityFile: 'app:select-ssh-identity-file',
   getContainerSuggestions: 'app:get-container-suggestions',
   getSourceAvailability: 'app:get-source-availability',

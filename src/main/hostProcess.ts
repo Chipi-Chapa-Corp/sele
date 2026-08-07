@@ -5,7 +5,7 @@ import { access, chmod, mkdir, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { basename, delimiter, extname, isAbsolute, join } from 'node:path'
 import { spawn as spawnPty } from '@lydell/node-pty'
-import type { AppContainerTarget, AppContainerTool } from '../shared/app'
+import type { AppContainerTarget, AppContainerTool, AppLocalContainerTarget } from '../shared/app'
 import {
   getCurrentContainerHostBridge,
   isCurrentContainerTarget,
@@ -841,9 +841,9 @@ const containerRuntimeExecutables = {
   docker: 'docker'
 } satisfies Record<AppContainerTool, string>
 
-const getContainerRuntimeExecutable = (container: AppContainerTarget): string => {
-  if (container.kind !== 'container') throw new Error('Container target is required')
-  if (container.tool === 'ssh') throw new Error('Local container target is required')
+type LocalContainerTarget = Extract<AppLocalContainerTarget, { kind: 'container' }>
+
+const getContainerRuntimeExecutable = (container: LocalContainerTarget): string => {
   return containerRuntimeExecutables[container.tool]
 }
 
@@ -860,7 +860,7 @@ const getContainerCommandScript = (
 }
 
 const getContainerScriptArgs = (
-  container: Extract<AppContainerTarget, { kind: 'container' }>,
+  container: LocalContainerTarget,
   script: string,
   interactive: boolean
 ): string[] => {
@@ -892,7 +892,16 @@ const getSshHostCommand = async (
   const environment = await getSshEnvironment(container.name)
   if (!environment) throw new Error('SSH environment is no longer available')
 
-  const args = getSshCommandArgs(environment, script, options.interactive)
+  const runtime = container.runtime
+  const targetScript =
+    runtime?.kind === 'container'
+      ? getShellExecLine(
+          getContainerRuntimeExecutable(runtime),
+          getContainerScriptArgs(runtime, script, Boolean(options.interactive)),
+          undefined
+        )
+      : script
+  const args = getSshCommandArgs(environment, targetScript, options.interactive)
 
   return buildResolvedHostCommand('ssh', args, { env: options.env ?? process.env })
 }
@@ -1040,7 +1049,7 @@ const buildResolvedLocalCommand = async (
 }
 
 const getContainerRuntimeHostCommand = async (
-  container: Extract<AppContainerTarget, { kind: 'container' }>,
+  container: LocalContainerTarget,
   args: string[],
   options: HostCommandOptions = {}
 ): Promise<HostCommand> =>

@@ -1,5 +1,10 @@
 import { execFile } from 'node:child_process'
-import type { AppContainerSuggestion, AppContainerTarget, AppContainerTool } from '../shared/app'
+import type {
+  AppContainerOptions,
+  AppContainerSuggestion,
+  AppContainerTarget,
+  AppContainerTool
+} from '../shared/app'
 import { getCurrentContainerTarget } from './currentContainer'
 import { getHostCommand } from './hostProcess'
 
@@ -35,10 +40,14 @@ const ansiEscapePattern = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
 
 const stripAnsi = (value: string): string => value.replace(ansiEscapePattern, '')
 
-const runHostTextCommand = async (file: string, args: string[]): Promise<string | null> => {
+const runHostTextCommand = async (
+  file: string,
+  args: string[],
+  container?: AppContainerTarget | null
+): Promise<string | null> => {
   let hostCommand
   try {
-    hostCommand = await getHostCommand(file, args)
+    hostCommand = await getHostCommand(file, args, { container })
   } catch {
     return null
   }
@@ -157,10 +166,12 @@ const parseFormattedContainers = (output: string, tool: AppContainerTool): Conta
       ]
     })
 
-const getDistroboxContainers = async (): Promise<ContainerEntry[]> => {
+const getDistroboxContainers = async (
+  container?: AppContainerTarget | null
+): Promise<ContainerEntry[]> => {
   const output =
-    (await runHostTextCommand('distrobox', ['list', '--no-color'])) ??
-    (await runHostTextCommand('distrobox', ['list']))
+    (await runHostTextCommand('distrobox', ['list', '--no-color'], container)) ??
+    (await runHostTextCommand('distrobox', ['list'], container))
   if (!output) return []
 
   return parseContainerTable(output, 'distrobox', ['name'], (fields) =>
@@ -168,8 +179,10 @@ const getDistroboxContainers = async (): Promise<ContainerEntry[]> => {
   )
 }
 
-const getToolboxContainers = async (): Promise<ContainerEntry[]> => {
-  const output = await runHostTextCommand('toolbox', ['list', '--containers'])
+const getToolboxContainers = async (
+  container?: AppContainerTarget | null
+): Promise<ContainerEntry[]> => {
+  const output = await runHostTextCommand('toolbox', ['list', '--containers'], container)
   if (!output) return []
 
   return parseContainerTable(output, 'toolbox', ['container name', 'name'], (fields) =>
@@ -177,23 +190,27 @@ const getToolboxContainers = async (): Promise<ContainerEntry[]> => {
   )
 }
 
-const getPodmanContainers = async (): Promise<ContainerEntry[]> => {
-  const output = await runHostTextCommand('podman', [
-    'ps',
-    '--format',
-    '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'
-  ])
+const getPodmanContainers = async (
+  container?: AppContainerTarget | null
+): Promise<ContainerEntry[]> => {
+  const output = await runHostTextCommand(
+    'podman',
+    ['ps', '--format', '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'],
+    container
+  )
   if (!output) return []
 
   return parseFormattedContainers(output, 'podman')
 }
 
-const getDockerContainers = async (): Promise<ContainerEntry[]> => {
-  const output = await runHostTextCommand('docker', [
-    'ps',
-    '--format',
-    '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'
-  ])
+const getDockerContainers = async (
+  container?: AppContainerTarget | null
+): Promise<ContainerEntry[]> => {
+  const output = await runHostTextCommand(
+    'docker',
+    ['ps', '--format', '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'],
+    container
+  )
   if (!output) return []
 
   return parseFormattedContainers(output, 'docker')
@@ -320,13 +337,17 @@ const toSuggestion = (entry: ContainerEntry): AppContainerSuggestion => ({
   current: entry.current || undefined
 })
 
-export const getContainerSuggestions = async (): Promise<AppContainerSuggestion[]> => {
-  if (process.platform !== 'linux') return []
+export const getContainerSuggestions = async (
+  options: AppContainerOptions = {}
+): Promise<AppContainerSuggestion[]> => {
+  const container = options.container
+  const isRemote = container?.kind === 'container' && container.tool === 'ssh'
+  if (process.platform !== 'linux' && !isRemote) return []
 
   const [currentContainer, distroboxContainers, toolboxContainers] = await Promise.all([
-    getCurrentContainerTarget(),
-    getDistroboxContainers(),
-    getToolboxContainers()
+    isRemote ? Promise.resolve(null) : getCurrentContainerTarget(),
+    getDistroboxContainers(container),
+    getToolboxContainers(container)
   ])
   const wrappedContainers = dedupeContainerEntries(
     [...distroboxContainers, ...toolboxContainers],
@@ -334,8 +355,8 @@ export const getContainerSuggestions = async (): Promise<AppContainerSuggestion[
   )
   const wrappedContainerNames = new Set(wrappedContainers.map((container) => container.name))
   const [podmanContainers, dockerContainers] = await Promise.all([
-    getPodmanContainers(),
-    getDockerContainers()
+    getPodmanContainers(container),
+    getDockerContainers(container)
   ])
   const entries = dedupeContainerEntries(
     withCurrentContainer(

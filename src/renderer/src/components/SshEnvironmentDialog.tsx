@@ -1,13 +1,14 @@
 import { type FormEvent, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, FolderOpen, X } from 'lucide-react'
-import type { AppCreateSshEnvironmentOptions } from '../../../shared/app'
+import type { AppCreateSshEnvironmentOptions, AppSshEnvironment } from '../../../shared/app'
 import { appApi } from '../appApi'
 import { Button } from './Button'
 import { Input } from './Input'
 import './SshEnvironmentDialog.css'
 
 type SshEnvironmentDialogProps = {
+  environment?: AppSshEnvironment | null
   open: boolean
   onClose: () => void
   onSave: (options: AppCreateSshEnvironmentOptions) => Promise<void>
@@ -29,17 +30,33 @@ const emptyDraft: SshEnvironmentDraft = {
   identityFile: ''
 }
 
+const getDraftFromEnvironment = (
+  environment: AppSshEnvironment | null | undefined
+): SshEnvironmentDraft =>
+  environment
+    ? {
+        name: environment.name,
+        host: environment.host,
+        port: String(environment.port),
+        user: environment.user ?? '',
+        identityFile: environment.identityFile ?? ''
+      }
+    : { ...emptyDraft }
+
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Unable to save SSH environment.'
 
 export const SshEnvironmentDialog = ({
+  environment = null,
   open,
   onClose,
   onSave
 }: SshEnvironmentDialogProps): React.ReactElement | null => {
   const reactId = useId().replace(/:/g, '')
   const nameInputRef = useRef<HTMLInputElement>(null)
-  const [draft, setDraft] = useState<SshEnvironmentDraft>(emptyDraft)
+  const [draft, setDraft] = useState<SshEnvironmentDraft>(() =>
+    getDraftFromEnvironment(environment)
+  )
   const [saving, setSaving] = useState(false)
   const [selectingIdentity, setSelectingIdentity] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -137,7 +154,7 @@ export const SshEnvironmentDialog = ({
         className="ssh-environment-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="Add environment"
+        aria-label={environment ? 'Edit environment' : 'Add environment'}
         onSubmit={(event) => void handleSubmit(event)}
         onKeyDown={(event) => {
           if (event.key !== 'Escape') return
