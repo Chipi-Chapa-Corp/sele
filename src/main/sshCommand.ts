@@ -2,6 +2,8 @@ import type { AppSshEnvironment } from '../shared/app'
 
 const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
+export const sshConnectTimeoutSeconds = 10
+
 export const getSshCommandArgs = (
   environment: AppSshEnvironment,
   script: string,
@@ -11,7 +13,7 @@ export const getSshCommandArgs = (
   '-o',
   'BatchMode=yes',
   '-o',
-  'ConnectTimeout=10',
+  `ConnectTimeout=${sshConnectTimeoutSeconds}`,
   '-o',
   'ServerAliveInterval=30',
   '-o',

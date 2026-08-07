@@ -7,6 +7,11 @@ import type {
 } from '../shared/app'
 import { getCurrentContainerTarget } from './currentContainer'
 import { getHostCommand } from './hostProcess'
+import {
+  getRemoteContainerDiscoveryScript,
+  parseRemoteContainerDiscoveryOutput,
+  remoteContainerDiscoveryTimeoutMs
+} from './remoteContainerDiscovery'
 
 type ContainerEntry = {
   tool: AppContainerTool
@@ -43,7 +48,8 @@ const stripAnsi = (value: string): string => value.replace(ansiEscapePattern, ''
 const runHostTextCommand = async (
   file: string,
   args: string[],
-  container?: AppContainerTarget | null
+  container?: AppContainerTarget | null,
+  timeout = containerCommandTimeoutMs
 ): Promise<string | null> => {
   let hostCommand
   try {
@@ -61,7 +67,7 @@ const runHostTextCommand = async (
         encoding: 'utf8',
         env: hostCommand.env,
         maxBuffer: containerCommandMaxBuffer,
-        timeout: containerCommandTimeoutMs
+        timeout
       },
       (error, stdout) => {
         resolve(error ? null : stdout.trimEnd())
@@ -316,6 +322,50 @@ const dedupeContainerEntries = (
   return [...entriesByKey.values()]
 }
 
+const getRemoteContainers = async (container: AppContainerTarget): Promise<ContainerEntry[]> => {
+  const output = await runHostTextCommand(
+    'sh',
+    ['-lc', getRemoteContainerDiscoveryScript()],
+    container,
+    remoteContainerDiscoveryTimeoutMs
+  )
+  if (output == null) {
+    throw new Error('Unable to check containers over SSH. Verify the connection and try again.')
+  }
+
+  const toolOutputs = parseRemoteContainerDiscoveryOutput(output)
+  const distroboxContainers = parseContainerTable(
+    toolOutputs.distrobox ?? '',
+    'distrobox',
+    ['name'],
+    (fields) => (fields.length >= 4 ? 1 : 0)
+  )
+  const toolboxContainers = parseContainerTable(
+    toolOutputs.toolbox ?? '',
+    'toolbox',
+    ['container name', 'name'],
+    (fields) => (fields.length > 1 ? 1 : 0)
+  )
+  const wrappedContainers = dedupeContainerEntries(
+    [...distroboxContainers, ...toolboxContainers],
+    null
+  )
+  const wrappedContainerNames = new Set(wrappedContainers.map(({ name }) => name))
+
+  return dedupeContainerEntries(
+    [
+      ...wrappedContainers,
+      ...parseFormattedContainers(toolOutputs.podman ?? '', 'podman').filter(
+        ({ name }) => !wrappedContainerNames.has(name)
+      ),
+      ...parseFormattedContainers(toolOutputs.docker ?? '', 'docker').filter(
+        ({ name }) => !wrappedContainerNames.has(name)
+      )
+    ],
+    null
+  )
+}
+
 const getSuggestionDescription = (entry: ContainerEntry): string | null => {
   const parts = [
     entry.current ? 'Current' : null,
@@ -344,8 +394,12 @@ export const getContainerSuggestions = async (
   const isRemote = container?.kind === 'container' && container.tool === 'ssh'
   if (process.platform !== 'linux' && !isRemote) return []
 
+  if (isRemote) {
+    return (await getRemoteContainers(container)).map(toSuggestion)
+  }
+
   const [currentContainer, distroboxContainers, toolboxContainers] = await Promise.all([
-    isRemote ? Promise.resolve(null) : getCurrentContainerTarget(),
+    getCurrentContainerTarget(),
     getDistroboxContainers(container),
     getToolboxContainers(container)
   ])

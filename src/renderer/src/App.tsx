@@ -3712,6 +3712,9 @@ export const App: React.FC = () => {
     AppContainerSuggestion[]
   >([])
   const [remoteContainerSuggestionsLoading, setRemoteContainerSuggestionsLoading] = useState(false)
+  const [remoteContainerSuggestionsError, setRemoteContainerSuggestionsError] = useState<
+    string | null
+  >(null)
   const [sshEnvironments, setSshEnvironments] = useState<AppSshEnvironment[]>([])
   const [sshEnvironmentDialogOpen, setSshEnvironmentDialogOpen] = useState(false)
   const [editingSshEnvironment, setEditingSshEnvironment] = useState<AppSshEnvironment | null>(null)
@@ -4509,6 +4512,7 @@ export const App: React.FC = () => {
         if (!active) return
         setRemoteContainerSuggestions([])
         setRemoteContainerSuggestionsLoading(false)
+        setRemoteContainerSuggestionsError(null)
       })
       return () => {
         active = false
@@ -4526,6 +4530,7 @@ export const App: React.FC = () => {
       if (!active) return
       setRemoteContainerSuggestions([])
       setRemoteContainerSuggestionsLoading(true)
+      setRemoteContainerSuggestionsError(null)
     })
 
     appApi
@@ -4534,6 +4539,7 @@ export const App: React.FC = () => {
         if (!active) return
 
         setRemoteContainerSuggestions(suggestions)
+        setRemoteContainerSuggestionsError(null)
         setNewSessionContainer((currentContainer) => {
           if (
             currentContainer.kind !== 'container' ||
@@ -4552,8 +4558,12 @@ export const App: React.FC = () => {
             : { ...currentContainer, runtime: { kind: 'host' } }
         })
       })
-      .catch(() => {
-        if (active) setRemoteContainerSuggestions([])
+      .catch((error) => {
+        if (!active) return
+        setRemoteContainerSuggestions([])
+        setRemoteContainerSuggestionsError(
+          getErrorMessage(error, 'Unable to check containers over SSH.')
+        )
       })
       .finally(() => {
         if (active) setRemoteContainerSuggestionsLoading(false)
@@ -11511,6 +11521,33 @@ export const App: React.FC = () => {
                         aria-label="Dismiss error"
                         title="Dismiss error"
                         callback={handleDismissSendError}
+                        icon={<X aria-hidden="true" />}
+                        size="small"
+                        theme="transparent"
+                      />
+                    </div>
+                  </section>
+                )}
+                {!selectedChat && newChatOpen && remoteContainerSuggestionsError && (
+                  <section
+                    className="chat-approval chat-request-error"
+                    aria-label="Container lookup error"
+                    role="alert"
+                  >
+                    <div className="chat-approval__main">
+                      <span className="chat-approval__label">Container lookup failed</span>
+                      <span
+                        className="chat-approval__summary"
+                        title={remoteContainerSuggestionsError}
+                      >
+                        {remoteContainerSuggestionsError}
+                      </span>
+                    </div>
+                    <div className="chat-approval__actions">
+                      <Button
+                        aria-label="Dismiss container lookup error"
+                        title="Dismiss error"
+                        callback={() => setRemoteContainerSuggestionsError(null)}
                         icon={<X aria-hidden="true" />}
                         size="small"
                         theme="transparent"
