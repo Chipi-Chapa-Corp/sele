@@ -98,6 +98,12 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
     let selectionFrame: number | null = null
     let selectingWithPointer = false
 
+    const cancelSelectionUpdate = (): void => {
+      if (selectionFrame === null) return
+      window.cancelAnimationFrame(selectionFrame)
+      selectionFrame = null
+    }
+
     const updateSelection = (): void => {
       selectionFrame = null
       const container = containerRef.current
@@ -105,8 +111,19 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
     }
 
     const scheduleSelectionUpdate = (): void => {
-      if (selectionFrame !== null) window.cancelAnimationFrame(selectionFrame)
+      cancelSelectionUpdate()
       selectionFrame = window.requestAnimationFrame(updateSelection)
+    }
+
+    const dismiss = (): void => {
+      selectingWithPointer = false
+      cancelSelectionUpdate()
+      setSelectedQuote(null)
+    }
+
+    const clearSelectionAndDismiss = (): void => {
+      dismiss()
+      window.getSelection()?.removeAllRanges()
     }
 
     const handlePointerDown = (event: PointerEvent): void => {
@@ -115,8 +132,10 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       if (rootRef.current?.contains(target)) return
 
       const container = containerRef.current
-      selectingWithPointer = Boolean(container?.contains(target))
-      if (!selectingWithPointer) setSelectedQuote(null)
+      dismiss()
+      selectingWithPointer =
+        event.isPrimary && event.button === 0 && Boolean(container?.contains(target))
+      if (event.isPrimary && event.button === 0) window.getSelection()?.removeAllRanges()
     }
 
     const handlePointerUp = (): void => {
@@ -125,23 +144,44 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       scheduleSelectionUpdate()
     }
 
+    const handlePointerCancel = (): void => {
+      dismiss()
+    }
+
     const handleSelectionChange = (): void => {
       if (!selectingWithPointer) scheduleSelectionUpdate()
     }
 
-    const dismiss = (): void => setSelectedQuote(null)
+    const handleFocusIn = (event: FocusEvent): void => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (rootRef.current?.contains(target)) return
+      clearSelectionAndDismiss()
+    }
 
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('pointerup', handlePointerUp)
+    const handleVisibilityChange = (): void => {
+      if (document.visibilityState === 'hidden') dismiss()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    document.addEventListener('pointerup', handlePointerUp, true)
+    document.addEventListener('pointercancel', handlePointerCancel, true)
     document.addEventListener('selectionchange', handleSelectionChange)
+    document.addEventListener('focusin', handleFocusIn, true)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('blur', dismiss)
     window.addEventListener('resize', dismiss)
     window.addEventListener('scroll', dismiss, true)
 
     return () => {
-      if (selectionFrame !== null) window.cancelAnimationFrame(selectionFrame)
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('pointerup', handlePointerUp)
+      cancelSelectionUpdate()
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+      document.removeEventListener('pointerup', handlePointerUp, true)
+      document.removeEventListener('pointercancel', handlePointerCancel, true)
       document.removeEventListener('selectionchange', handleSelectionChange)
+      document.removeEventListener('focusin', handleFocusIn, true)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('blur', dismiss)
       window.removeEventListener('resize', dismiss)
       window.removeEventListener('scroll', dismiss, true)
     }
