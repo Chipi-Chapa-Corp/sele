@@ -1,4 +1,9 @@
-import type { ProviderChatItem, ProviderMessage, ProviderPendingMessage } from './provider'
+import type {
+  ProviderChatItem,
+  ProviderMessage,
+  ProviderPendingMessage,
+  ProviderWorkingStep
+} from './provider'
 
 export type ProviderChatTurn = {
   id: string
@@ -37,6 +42,13 @@ const unloadMessageContent = <TMessage extends ProviderMessage | ProviderPending
   contentLoaded: false
 })
 
+export const unloadWorkingStepItems = (step: ProviderWorkingStep): ProviderWorkingStep => ({
+  ...step,
+  items: [],
+  itemsLoaded: false,
+  itemCount: step.itemsLoaded === false ? step.itemCount : step.items.length
+})
+
 export const unloadChatItemsOutsideTurnRange = (
   items: ProviderChatItem[],
   startIndex: number,
@@ -50,16 +62,21 @@ export const unloadChatItemsOutsideTurnRange = (
   )
   let changed = false
   const nextItems = items.map((item) => {
+    if (loadedItemIds.has(item.id)) return item
+    if (item.type === 'working') {
+      if (item.itemsLoaded === false) return item
+      changed = true
+      return unloadWorkingStepItems(item)
+    }
     if (
-      loadedItemIds.has(item.id) ||
-      (item.type !== 'message' && item.type !== 'pendingMessage') ||
-      item.contentLoaded === false
+      (item.type === 'message' || item.type === 'pendingMessage') &&
+      item.contentLoaded !== false
     ) {
-      return item
+      changed = true
+      return unloadMessageContent(item)
     }
 
-    changed = true
-    return unloadMessageContent(item)
+    return item
   })
 
   return changed ? nextItems : items

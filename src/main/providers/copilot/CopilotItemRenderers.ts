@@ -34,6 +34,93 @@ type Segment = {
   assistantMessages: Array<Extract<SessionEvent, { type: 'assistant.message' }>>
 }
 
+const maxToolOutputLength = 160_000
+const maxRawToolValueLength = 80_000
+const maxRawToolCollectionEntries = 200
+const maxRawToolDepth = 8
+const truncatedToolValueMarker = '… [truncated to keep the app responsive]'
+const truncatedEarlierToolOutputMarker = `${truncatedToolValueMarker}\n`
+
+export const truncateCopilotToolOutput = (value: string | null): string | null => {
+  if (value == null || value.length <= maxToolOutputLength) return value
+  return `${truncatedEarlierToolOutputMarker}${value.slice(-maxToolOutputLength)}`
+}
+
+export const appendCopilotToolOutput = (
+  currentValue: string | null,
+  appendedValue: string
+): string => {
+  const current = currentValue?.startsWith(truncatedEarlierToolOutputMarker)
+    ? currentValue.slice(truncatedEarlierToolOutputMarker.length)
+    : (currentValue ?? '')
+  return truncateCopilotToolOutput(`${current}${appendedValue}`) ?? ''
+}
+
+type RawToolValueBudget = {
+  remaining: number
+  seen: WeakSet<object>
+}
+
+export const getBoundedCopilotRawToolValue = (
+  value: unknown,
+  budget: RawToolValueBudget = {
+    remaining: maxRawToolValueLength,
+    seen: new WeakSet<object>()
+  },
+  depth = 0
+): unknown => {
+  if (typeof value === 'string') {
+    if (value.length <= budget.remaining) {
+      budget.remaining -= value.length
+      return value
+    }
+
+    const visibleValue = value.slice(0, Math.max(0, budget.remaining))
+    budget.remaining = 0
+    return `${visibleValue}\n${truncatedToolValueMarker}`
+  }
+  if (
+    value == null ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'undefined'
+  ) {
+    return value
+  }
+  if (typeof value === 'bigint' || typeof value === 'symbol' || typeof value === 'function') {
+    return String(value)
+  }
+  if (depth >= maxRawToolDepth || budget.remaining <= 0) return truncatedToolValueMarker
+  if (budget.seen.has(value)) return '[Circular]'
+  budget.seen.add(value)
+
+  if (Array.isArray(value)) {
+    const boundedValue: unknown[] = []
+    const entryLimit = Math.min(value.length, maxRawToolCollectionEntries)
+    for (let index = 0; index < entryLimit && budget.remaining > 0; index += 1) {
+      budget.remaining -= 1
+      boundedValue.push(getBoundedCopilotRawToolValue(value[index], budget, depth + 1))
+    }
+    if (entryLimit < value.length || budget.remaining <= 0) {
+      boundedValue.push(truncatedToolValueMarker)
+    }
+    return boundedValue
+  }
+
+  const boundedValue: Record<string, unknown> = {}
+  const entries = Object.entries(value as Record<string, unknown>)
+  const entryLimit = Math.min(entries.length, maxRawToolCollectionEntries)
+  for (let index = 0; index < entryLimit && budget.remaining > 0; index += 1) {
+    const [key, entryValue] = entries[index]
+    budget.remaining -= key.length + 1
+    boundedValue[key] = getBoundedCopilotRawToolValue(entryValue, budget, depth + 1)
+  }
+  if (entryLimit < entries.length || budget.remaining <= 0) {
+    boundedValue.__truncated__ = truncatedToolValueMarker
+  }
+  return boundedValue
+}
+
 const toTimestamp = (value: string): number | null => {
   const timestamp = Date.parse(value)
   return Number.isFinite(timestamp) ? timestamp : null
@@ -126,7 +213,10 @@ const createTool = (event: ToolStartEvent): ProviderWorkingTool => ({
   diffs: [],
   backgroundSessionId: null,
   finishedBackgroundSessionId: null,
-  rawInput: event.data.toolName === 'ask_user' ? null : (event.data.arguments ?? null),
+  rawInput:
+    event.data.toolName === 'ask_user'
+      ? null
+      : getBoundedCopilotRawToolValue(event.data.arguments ?? null),
   rawOutput: null,
   images: []
 })
@@ -424,7 +514,7 @@ export const renderCopilotChatItems = (
       if (askUserToolCallIds.has(event.data.toolCallId)) continue
       updateTool(ensureSegment(event.id).workingItems, event.data.toolCallId, (tool) => ({
         ...tool,
-        stdout: `${tool.stdout ?? ''}${event.data.partialOutput}`
+        stdout: appendCopilotToolOutput(tool.stdout, event.data.partialOutput)
       }))
       continue
     }
@@ -446,9 +536,11 @@ export const renderCopilotChatItems = (
         status: 'finished',
         label: askedQuestion ? 'Asked a question' : tool.label,
         icon: images.length > 0 ? 'image-generation' : tool.icon,
-        stdout: askedQuestion ? null : getToolOutput(event),
+        stdout: askedQuestion ? null : truncateCopilotToolOutput(getToolOutput(event)),
         diffs: askedQuestion ? [] : getToolDiffs(tool, event),
-        rawOutput: askedQuestion ? null : (event.data.result ?? event.data.error ?? null),
+        rawOutput: askedQuestion
+          ? null
+          : getBoundedCopilotRawToolValue(event.data.result ?? event.data.error ?? null),
         images
       }))
       continue

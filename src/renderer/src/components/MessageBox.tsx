@@ -2802,7 +2802,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       </div>
       {openedImage && (
         <ImageLightbox
-          dataUrl={openedImage.dataUrl}
+          imageUrl={openedImage.dataUrl}
           name={openedImage.name}
           path={openedImage.path}
           onClose={() => setOpenedImage(null)}

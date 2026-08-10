@@ -32,6 +32,7 @@ import { marked } from 'marked'
 import type { AppContainerTarget, AppGitChangeKind } from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { createLocalImageUrl } from '../localImage'
 import { Button } from './Button'
 import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
 import { EditableUnifiedDiff, UnifiedDiff, type DiffReviewLocation } from './UnifiedDiff'
@@ -355,6 +356,13 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     [contents, isMarkdown]
   )
 
+  useEffect(
+    () => () => {
+      if (imageDataUrl?.startsWith('blob:')) URL.revokeObjectURL(imageDataUrl)
+    },
+    [imageDataUrl]
+  )
+
   const loadFile = useCallback(async (): Promise<void> => {
     const request = loadRequestRef.current + 1
     loadRequestRef.current = request
@@ -402,7 +410,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       })
       if (loadRequestRef.current !== request) return
 
-      setImageDataUrl(result.dataUrl)
+      setImageDataUrl(createLocalImageUrl(result))
       setEditable(false)
       setLoadState('ready')
     } catch (loadError) {

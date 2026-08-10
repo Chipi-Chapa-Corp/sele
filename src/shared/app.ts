@@ -32,7 +32,8 @@ export type AppLocalImageOptions = {
 }
 
 export type AppLocalImage = {
-  dataUrl: string
+  data: ArrayBuffer
+  mimeType: string
   updatedAt: number
 }
 

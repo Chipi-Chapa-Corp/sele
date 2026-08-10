@@ -7,7 +7,7 @@ import { Button } from './Button'
 import './ImageLightbox.css'
 
 type ImageLightboxProps = {
-  dataUrl: string
+  imageUrl: string
   name: string
   path?: string | null
   localImageOptions?: Omit<AppLocalImageOptions, 'path'>
@@ -18,7 +18,7 @@ type CopyState = 'idle' | 'copying' | 'copied' | 'error'
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 export const ImageLightbox = ({
-  dataUrl,
+  imageUrl,
   name,
   path,
   localImageOptions,
@@ -112,7 +112,7 @@ export const ImageLightbox = ({
         }}
       >
         <div className="image-lightbox__frame">
-          <img src={dataUrl} alt={`${name} preview`} />
+          <img src={imageUrl} alt={`${name} preview`} />
           <div className="image-lightbox__actions">
             {path && (
               <>

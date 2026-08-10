@@ -358,10 +358,7 @@ const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
 const getImageMimeType = (imagePath: string): string | null =>
   imageMimeTypes[extname(imagePath).toLocaleLowerCase()] ?? null
 
-const getImageFile = async (
-  imagePath: string,
-  maxBytes: number
-): Promise<{ dataUrl: string; updatedAt: number } | null> => {
+const getImageFile = async (imagePath: string, maxBytes: number): Promise<AppLocalImage | null> => {
   const mimeType = getImageMimeType(imagePath)
   if (!mimeType) return null
 
@@ -370,15 +367,21 @@ const getImageFile = async (
 
   const file = await readFile(imagePath)
   return {
-    dataUrl: `data:${mimeType};base64,${file.toString('base64')}`,
+    data: file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer,
+    mimeType,
     updatedAt: imageStat.mtimeMs
   }
 }
 
+const getImageDataUrl = (image: AppLocalImage): string =>
+  `data:${image.mimeType};base64,${Buffer.from(image.data).toString('base64')}`
+
 const getProjectIconFile = async (
   imagePath: string
-): Promise<{ dataUrl: string; updatedAt: number } | null> =>
-  getImageFile(imagePath, maxProjectIconBytes)
+): Promise<{ dataUrl: string; updatedAt: number } | null> => {
+  const image = await getImageFile(imagePath, maxProjectIconBytes)
+  return image ? { dataUrl: getImageDataUrl(image), updatedAt: image.updatedAt } : null
+}
 
 const resolveLocalImagePath = async (
   cwd: string | null,
@@ -412,7 +415,11 @@ const getLocalImage = async (
   const imagePath = await resolveLocalImagePath(cwd, path, relativeTo)
   const image = await getImageFile(imagePath, maxLocalImageBytes)
   if (!image) throw new Error('Unable to load this image.')
-  return image
+  return {
+    data: image.data,
+    mimeType: image.mimeType,
+    updatedAt: image.updatedAt
+  }
 }
 
 const getAppProjectIcon = async (cwd: string | null): Promise<AppProjectIcon | null> => {
@@ -1850,7 +1857,8 @@ const getSshLocalImage = async (
   }
 
   return {
-    dataUrl: `data:${mimeType};base64,${file.toString('base64')}`,
+    data: file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer,
+    mimeType,
     updatedAt: Date.now()
   }
 }
@@ -2846,7 +2854,7 @@ export const registerAppIpc = (): void => {
 
         return {
           kind: 'image',
-          dataUrl: image.dataUrl,
+          dataUrl: getImageDataUrl(image),
           name,
           path
         }
@@ -2889,7 +2897,7 @@ export const registerAppIpc = (): void => {
     const image = await runWithGitContainer(options.container, () =>
       getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
     )
-    const clipboardImage = nativeImage.createFromDataURL(image.dataUrl)
+    const clipboardImage = nativeImage.createFromBuffer(Buffer.from(image.data))
     if (clipboardImage.isEmpty()) throw new Error('Unable to copy this image.')
     clipboard.writeImage(clipboardImage)
   })
@@ -2911,8 +2919,7 @@ export const registerAppIpc = (): void => {
         : await dialog.showSaveDialog(dialogOptions)
       if (result.canceled || !result.filePath) return null
 
-      const encodedImage = image.dataUrl.slice(image.dataUrl.indexOf(',') + 1)
-      await writeFile(result.filePath, Buffer.from(encodedImage, 'base64'))
+      await writeFile(result.filePath, Buffer.from(image.data))
       return result.filePath
     }
 

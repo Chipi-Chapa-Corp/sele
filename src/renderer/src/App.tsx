@@ -169,6 +169,7 @@ import {
   providerIds
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
+import { buildChatConversationModel, markChatItemsChanged } from './chatConversationModel'
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
 import { BranchSwitcher } from './components/BranchSwitcher'
 import { Button, type ButtonDropdownAction } from './components/Button'
@@ -254,6 +255,7 @@ type ChatTurnPageLoadDirection = 'older' | 'newer' | 'latest'
 type CommittedChatUpdate = {
   sequence: number
   detailApplied: boolean
+  turnCompleted: boolean
 }
 type EditingMessage =
   | (Pick<ProviderMessage, 'id' | 'content'> & { type: 'message' })
@@ -788,6 +790,7 @@ const chatListFetchPageSize = 100
 const chatTurnPageSize = 10
 const chatTurnWindowTrimThreshold = 15
 const chatTurnVirtuosoIndexBase = 1_000_000
+const streamingChatUpdateIntervalMs = 50
 const chatSidebarDefaultWidth = 280
 const changesSidebarDefaultWidth = 240
 const chatSidebarMinWidth = 220
@@ -2557,6 +2560,8 @@ const getChatDetailFromUpdate = (
     }
   }
 
+  markChatItemsChanged(mergedItems, chatItemsStartIndex, currentDetail?.items ?? null)
+
   return {
     ...chatDetail,
     items: mergedItems
@@ -2819,33 +2824,6 @@ const hasActiveWorkingStep = (detail: ProviderChatDetail | null): boolean =>
 
 const hasPendingSteeringMessage = (detail: ProviderChatDetail | null): boolean =>
   detail?.items.some((item) => item.type === 'pendingMessage' && item.kind === 'steering') ?? false
-
-const getWorkingStepTurnId = (item: ProviderWorkingStep): string | null =>
-  item.id.match(/^(.*):working(?::\d+)?$/)?.[1] ?? null
-
-const getStoppedTurnRetryMessages = (
-  items: ProviderChatItem[]
-): ReadonlyMap<string, ProviderMessage> => {
-  const retryMessages = new Map<string, ProviderMessage>()
-
-  items.forEach((item, itemIndex) => {
-    if (item.type !== 'working' || item.status !== 'stopped') return
-
-    const turnId = getWorkingStepTurnId(item)
-    if (!turnId) return
-
-    const userMessage = items.find(
-      (candidate, candidateIndex): candidate is ProviderMessage =>
-        candidateIndex < itemIndex &&
-        candidate.type === 'message' &&
-        candidate.role === 'user' &&
-        candidate.id.startsWith(`${turnId}:`)
-    )
-    if (userMessage) retryMessages.set(item.id, userMessage)
-  })
-
-  return retryMessages
-}
 
 const activeCommitActivityLabelReplacements: Array<[RegExp, string]> = [
   [/^Read\b/, 'Reading'],
@@ -5377,7 +5355,8 @@ export const App: React.FC = () => {
           applyChatDetail(event.providerId, selectedDetail)
           setCommittedChatUpdate({
             sequence: event.sequence,
-            detailApplied: true
+            detailApplied: true,
+            turnCompleted: event.turnCompleted
           })
         } else {
           applyChatSummary(event.providerId, event.summary, event.turnCompleted)
@@ -5466,10 +5445,21 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (!committedChatUpdate) return
-    providerApi.acknowledgeChatUpdate(
-      committedChatUpdate.sequence,
-      committedChatUpdate.detailApplied
-    )
+    if (committedChatUpdate.turnCompleted) {
+      providerApi.acknowledgeChatUpdate(
+        committedChatUpdate.sequence,
+        committedChatUpdate.detailApplied
+      )
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      providerApi.acknowledgeChatUpdate(
+        committedChatUpdate.sequence,
+        committedChatUpdate.detailApplied
+      )
+    }, streamingChatUpdateIntervalMs)
+    return () => window.clearTimeout(timeout)
   }, [committedChatUpdate])
 
   const selectedProviderId = selectedChat?.providerId
@@ -8636,7 +8626,11 @@ export const App: React.FC = () => {
     !editingMessage
   )
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
-  const chatTurns = useMemo(() => getProviderChatTurns(visibleChatItems), [visibleChatItems])
+  const chatConversationModel = useMemo(
+    () => buildChatConversationModel(visibleChatItems),
+    [visibleChatItems]
+  )
+  const chatTurns = chatConversationModel.turns
   const defaultChatTurnWindow = useMemo<ChatTurnWindow | null>(() => {
     if (!selectedChatKey) return null
     return {
@@ -8651,9 +8645,12 @@ export const App: React.FC = () => {
   const renderedChatTurns = useMemo(
     () =>
       effectiveChatTurnWindow
-        ? chatTurns.slice(effectiveChatTurnWindow.startIndex, effectiveChatTurnWindow.endIndex)
+        ? chatConversationModel.turns.slice(
+            effectiveChatTurnWindow.startIndex,
+            effectiveChatTurnWindow.endIndex
+          )
         : [],
-    [chatTurns, effectiveChatTurnWindow]
+    [chatConversationModel, effectiveChatTurnWindow]
   )
 
   useEffect(() => {
@@ -8870,10 +8867,7 @@ export const App: React.FC = () => {
     })
   }, [])
 
-  const stoppedTurnRetryMessages = useMemo(
-    () => getStoppedTurnRetryMessages(visibleChatItems),
-    [visibleChatItems]
-  )
+  const stoppedTurnRetryMessages = chatConversationModel.stoppedTurnRetryMessages
   const canRetryStoppedTurns = Boolean(selectedChat && chatDetail?.capabilities.editMessages)
   const stoppedTurnActionDisabled =
     chatLoadState !== 'ready' ||
@@ -8882,61 +8876,21 @@ export const App: React.FC = () => {
     chatHasActiveTurn ||
     Boolean(editingMessage) ||
     Boolean(selectedChatAiCommitAction)
-  const workingStepIdsWithNextWorkingStep = useMemo(() => {
-    const ids = new Set<string>()
-    let hasLaterWorkingStep = false
-
-    for (let itemIndex = visibleChatItems.length - 1; itemIndex >= 0; itemIndex -= 1) {
-      const item = visibleChatItems[itemIndex]
-      if (item.type !== 'working') continue
-
-      if (hasLaterWorkingStep) ids.add(item.id)
-      hasLaterWorkingStep = true
-    }
-
-    return ids
-  }, [visibleChatItems])
-  const followingWorkingStepsById = useMemo(() => {
-    const followingSteps = new Map<
-      string,
-      { hasNextWorkingStep: boolean; status: ProviderWorkingStep['status'] }
-    >()
-    let followingWorkingStep: ProviderWorkingStep | null = null
-    let followingWorkingStepHasNext = false
-
-    for (let itemIndex = visibleChatItems.length - 1; itemIndex >= 0; itemIndex -= 1) {
-      const item = visibleChatItems[itemIndex]
-      if (item.type !== 'working') continue
-
-      if (followingWorkingStep) {
-        followingSteps.set(item.id, {
-          hasNextWorkingStep: followingWorkingStepHasNext,
-          status: followingWorkingStep.status
-        })
-      }
-      followingWorkingStepHasNext = followingWorkingStep != null
-      followingWorkingStep = item
-    }
-
-    return followingSteps
-  }, [visibleChatItems])
+  const workingStepIdsWithNextWorkingStep = chatConversationModel.workingStepIdsWithNextWorkingStep
+  const followingWorkingStepsById = chatConversationModel.followingWorkingStepsById
   const continuedStoppedWorkingStepIds = useMemo(
     () => new Set(selectedChatKey ? continuedStoppedWorkingStepsByChat[selectedChatKey] : []),
     [continuedStoppedWorkingStepsByChat, selectedChatKey]
   )
-  const firstPendingChatItemId =
-    visibleChatItems.find((item) => item.type === 'pendingMessage')?.id ?? null
-  const chatItemIndexesById = useMemo(
-    () => new Map(visibleChatItems.map((item, itemIndex) => [item.id, itemIndex])),
-    [visibleChatItems]
-  )
+  const firstPendingChatItemId = chatConversationModel.firstPendingItemId
+  const chatItemIndexesById = chatConversationModel.itemIndexesById
   const [
     chatCommitMarkersByBeforeItemId,
     chatCommitMarkersByAfterItemId,
     trailingChatCommitMarkers
   ] = useMemo(() => {
     const visibleItemsById = new Map(visibleChatItems.map((item) => [item.id, item]))
-    const allItemIds = new Set(chatDetail?.items.map((item) => item.id) ?? [])
+    const allItemIds = chatConversationModel.itemIds
     const markersByBeforeItemId = new Map<string, ChatCommitMarker[]>()
     const markersByAfterItemId = new Map<string, ChatCommitMarker[]>()
     const trailingMarkers: ChatCommitMarker[] = []
@@ -8996,10 +8950,8 @@ export const App: React.FC = () => {
     })
 
     return [markersByBeforeItemId, markersByAfterItemId, trailingMarkers] as const
-  }, [chatDetail?.items, chatItemIndexesById, selectedChatCommitMarkers, visibleChatItems])
-  const lastStreamingChatItem = chatHasActiveTurn
-    ? visibleChatItems.findLast((item) => item.type !== 'pendingMessage')
-    : null
+  }, [chatConversationModel, chatItemIndexesById, selectedChatCommitMarkers, visibleChatItems])
+  const lastStreamingChatItem = chatHasActiveTurn ? chatConversationModel.lastNonPendingItem : null
   const streamingChatItemId =
     lastStreamingChatItem?.type === 'message' && lastStreamingChatItem.role === 'assistant'
       ? lastStreamingChatItem.id

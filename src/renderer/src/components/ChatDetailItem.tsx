@@ -62,10 +62,12 @@ import type {
   ProviderWorkingTool
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { createLocalImageUrl } from '../localImage'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from '../markdownFileLink'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { defaultAppChatThoughtSettings, type AppChatThoughtSettings } from '../settings'
 import { Button } from './Button'
+import { BoundedHighlightedCode } from './BoundedHighlightedCode'
 import { HighlightedCode } from './HighlightedCode'
 import { ImageLightbox } from './ImageLightbox'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
@@ -120,142 +122,6 @@ const areThoughtSettingsEqual = (
   )
 }
 
-const areUnknownValuesEqual = (
-  first: unknown,
-  second: unknown,
-  seen = new Map<object, object>()
-): boolean => {
-  if (Object.is(first, second)) return true
-  if (first == null || second == null || typeof first !== 'object' || typeof second !== 'object') {
-    return false
-  }
-
-  const seenSecond = seen.get(first)
-  if (seenSecond) return seenSecond === second
-  seen.set(first, second)
-
-  if (Array.isArray(first) || Array.isArray(second)) {
-    if (!Array.isArray(first) || !Array.isArray(second) || first.length !== second.length) {
-      return false
-    }
-
-    return first.every((value, index) => areUnknownValuesEqual(value, second[index], seen))
-  }
-
-  const firstRecord = first as Record<string, unknown>
-  const secondRecord = second as Record<string, unknown>
-  const firstKeys = Object.keys(firstRecord)
-  const secondKeys = Object.keys(secondRecord)
-  if (firstKeys.length !== secondKeys.length) return false
-
-  return firstKeys.every(
-    (key) =>
-      Object.prototype.hasOwnProperty.call(secondRecord, key) &&
-      areUnknownValuesEqual(firstRecord[key], secondRecord[key], seen)
-  )
-}
-
-const areFileDiffsEqual = (
-  first: ProviderWorkingTool['diffs'],
-  second: ProviderWorkingTool['diffs']
-): boolean =>
-  first.length === second.length &&
-  first.every((diff, index) => {
-    const nextDiff = second[index]
-    return diff.path === nextDiff.path && diff.kind === nextDiff.kind && diff.diff === nextDiff.diff
-  })
-
-const areWorkingToolsEqual = (first: ProviderWorkingTool, second: ProviderWorkingTool): boolean =>
-  first.id === second.id &&
-  first.toolId === second.toolId &&
-  first.status === second.status &&
-  first.activity === second.activity &&
-  first.icon === second.icon &&
-  first.label === second.label &&
-  first.command === second.command &&
-  first.cwd === second.cwd &&
-  first.stdout === second.stdout &&
-  first.backgroundSessionId === second.backgroundSessionId &&
-  first.finishedBackgroundSessionId === second.finishedBackgroundSessionId &&
-  first.images.length === second.images.length &&
-  first.images.every((image, index) => {
-    const nextImage = second.images[index]
-    return (
-      image.path === nextImage?.path &&
-      image.dataUrl === nextImage?.dataUrl &&
-      image.name === nextImage?.name
-    )
-  }) &&
-  areFileDiffsEqual(first.diffs, second.diffs) &&
-  areUnknownValuesEqual(first.rawInput, second.rawInput) &&
-  areUnknownValuesEqual(first.rawOutput, second.rawOutput)
-
-const areWorkingItemsEqual = (first: ProviderWorkingItem, second: ProviderWorkingItem): boolean => {
-  if (first === second) return true
-  if (first.type !== second.type || first.id !== second.id) return false
-  if (first.type === 'message') {
-    return second.type === 'message' && first.content === second.content
-  }
-  if (first.type === 'toolGroup') {
-    return (
-      second.type === 'toolGroup' &&
-      first.label === second.label &&
-      first.tools.length === second.tools.length &&
-      first.tools.every((tool, index) => areWorkingToolsEqual(tool, second.tools[index]))
-    )
-  }
-
-  return second.type === 'tool' && areWorkingToolsEqual(first, second)
-}
-
-const areChatItemsEqual = (first: ProviderChatItem, second: ProviderChatItem): boolean => {
-  if (first === second) return true
-  if (first.type !== second.type || first.id !== second.id) return false
-
-  if (first.type === 'contextCompaction') return second.type === 'contextCompaction'
-  if (first.type === 'message') {
-    return (
-      second.type === 'message' &&
-      first.role === second.role &&
-      first.content === second.content &&
-      first.contentLoaded === second.contentLoaded &&
-      areUnknownValuesEqual(first.attachments, second.attachments) &&
-      first.createdAt === second.createdAt &&
-      first.label === second.label &&
-      first.model === second.model
-    )
-  }
-  if (first.type === 'pendingMessage') {
-    return (
-      second.type === 'pendingMessage' &&
-      first.kind === second.kind &&
-      first.content === second.content &&
-      first.contentLoaded === second.contentLoaded &&
-      areUnknownValuesEqual(first.attachments, second.attachments) &&
-      first.createdAt === second.createdAt
-    )
-  }
-
-  if (
-    second.type === 'working' &&
-    first.status === second.status &&
-    first.status === 'worked' &&
-    first.itemsLoaded !== false &&
-    second.itemsLoaded !== false
-  ) {
-    return true
-  }
-
-  return (
-    second.type === 'working' &&
-    first.status === second.status &&
-    first.itemsLoaded === second.itemsLoaded &&
-    first.itemCount === second.itemCount &&
-    first.items.length === second.items.length &&
-    first.items.every((item, index) => areWorkingItemsEqual(item, second.items[index]))
-  )
-}
-
 const isQueuedPendingMessage = (item: ProviderChatItem | null | undefined): boolean =>
   item?.type === 'pendingMessage' && item.kind === 'queued'
 
@@ -288,7 +154,7 @@ const areChatDetailItemPropsEqual = (
   first.selectedModelId === second.selectedModelId &&
   first.streaming === second.streaming &&
   areThoughtSettingsEqual(first.thoughtSettings, second.thoughtSettings) &&
-  areChatItemsEqual(first.item, second.item)
+  first.item === second.item
 
 type ProviderToolItem = Exclude<ProviderWorkingItem, { type: 'message' }>
 type ProviderWorkingMessageItem = Extract<ProviderWorkingItem, { type: 'message' }>
@@ -556,7 +422,9 @@ const CommandContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) =
           <span className="chat-detail__command-divider" aria-hidden="true" />
         )}
         {tool.stdout && (
-          <HighlightedCode language={getOutputLanguage(tool.stdout)}>{tool.stdout}</HighlightedCode>
+          <BoundedHighlightedCode language={getOutputLanguage(tool.stdout)}>
+            {tool.stdout}
+          </BoundedHighlightedCode>
         )}
       </section>
     ))}
@@ -619,9 +487,9 @@ const RawContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) => (
         {tool.rawInput != null && (
           <span className="chat-detail__command-divider" aria-hidden="true" />
         )}
-        <HighlightedCode language={getToolValueLanguage(tool.rawOutput)}>
+        <BoundedHighlightedCode language={getToolValueLanguage(tool.rawOutput)}>
           {formatToolValue(tool.rawOutput)}
-        </HighlightedCode>
+        </BoundedHighlightedCode>
       </section>
     ))}
   </div>
@@ -752,26 +620,36 @@ const GeneratedImageThumbnail: React.FC<{
   initialDataUrl?: string | null
   name?: string
 }> = ({ path, initialDataUrl, name = 'Generated image' }) => {
-  const [dataUrl, setDataUrl] = useState<string | null>(initialDataUrl ?? null)
-  const [failed, setFailed] = useState(!initialDataUrl && !path)
+  const [loadedImage, setLoadedImage] = useState<{ path: string; url: string } | null>(null)
+  const [failedPath, setFailedPath] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const imageUrl = path
+    ? loadedImage?.path === path
+      ? loadedImage.url
+      : null
+    : (initialDataUrl ?? null)
+  const failed = path ? failedPath === path : !initialDataUrl
 
   useEffect(() => {
-    if (initialDataUrl || !path) return undefined
+    if (!path) return undefined
 
     let current = true
+    let objectUrl: string | null = null
 
     void appApi
       .getLocalImage({ path })
       .then((image) => {
-        if (current) setDataUrl(image.dataUrl)
+        if (!current) return
+        objectUrl = createLocalImageUrl(image)
+        setLoadedImage({ path, url: objectUrl })
       })
       .catch(() => {
-        if (current) setFailed(true)
+        if (current) setFailedPath(path)
       })
 
     return () => {
       current = false
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [initialDataUrl, path])
 
@@ -783,7 +661,7 @@ const GeneratedImageThumbnail: React.FC<{
     )
   }
 
-  if (!dataUrl) {
+  if (!imageUrl) {
     return <span className="chat-detail__generated-image-loading" aria-label="Loading image" />
   }
 
@@ -796,10 +674,10 @@ const GeneratedImageThumbnail: React.FC<{
         aria-label={`Open ${name}`}
         onClick={() => setOpen(true)}
       >
-        <img src={dataUrl} alt={name} />
+        <img src={imageUrl} alt={name} />
       </button>
       {open && (
-        <ImageLightbox dataUrl={dataUrl} name={name} path={path} onClose={() => setOpen(false)} />
+        <ImageLightbox imageUrl={imageUrl} name={name} path={path} onClose={() => setOpen(false)} />
       )}
     </>
   )
@@ -1178,7 +1056,7 @@ const MarkdownMessageComponent: React.FC<{
   const containerRef = useRef<HTMLDivElement>(null)
   const packetAnimationRef = useRef<Animation | null>(null)
   const [localImagePreview, setLocalImagePreview] = useState<{
-    dataUrl: string
+    imageUrl: string
     name: string
     path: string
   } | null>(null)
@@ -1204,6 +1082,7 @@ const MarkdownMessageComponent: React.FC<{
     if (!markdownContainer) return undefined
 
     let current = true
+    const objectUrls: string[] = []
     const imageButtons = markdownContainer.querySelectorAll<HTMLButtonElement>(
       '.chat-detail__markdown-image[data-local-image-path]'
     )
@@ -1223,8 +1102,10 @@ const MarkdownMessageComponent: React.FC<{
         .then((image) => {
           if (!current || !markdownContainer.contains(button)) return
 
+          const objectUrl = createLocalImageUrl(image)
+          objectUrls.push(objectUrl)
           const imageElement = document.createElement('img')
-          imageElement.src = image.dataUrl
+          imageElement.src = objectUrl
           imageElement.alt = name
           button.replaceChildren(imageElement)
         })
@@ -1241,6 +1122,7 @@ const MarkdownMessageComponent: React.FC<{
 
     return () => {
       current = false
+      objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl))
     }
   }, [localImageContainer, localImageCwd, renderedMarkdown])
   const handleClick = useCallback(
@@ -1253,10 +1135,10 @@ const MarkdownMessageComponent: React.FC<{
       if (imageButton && containerRef.current?.contains(imageButton)) {
         const path = imageButton.dataset.localImagePath
         const name = imageButton.dataset.localImageName ?? 'Image'
-        const dataUrl = imageButton.querySelector('img')?.src
-        if (path && dataUrl?.startsWith('data:')) {
+        const imageUrl = imageButton.querySelector('img')?.src
+        if (path && imageUrl) {
           event.preventDefault()
-          setLocalImagePreview({ dataUrl, name, path })
+          setLocalImagePreview({ imageUrl, name, path })
         }
         return
       }
@@ -1328,7 +1210,7 @@ const MarkdownMessageComponent: React.FC<{
       />
       {localImagePreview && (
         <ImageLightbox
-          dataUrl={localImagePreview.dataUrl}
+          imageUrl={localImagePreview.imageUrl}
           localImageOptions={localImageOptions}
           name={localImagePreview.name}
           path={localImagePreview.path}
