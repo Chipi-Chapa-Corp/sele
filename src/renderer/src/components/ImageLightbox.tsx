@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, Copy, Download, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
+import type { AppLocalImageOptions } from '../../../shared/app'
 import { appApi } from '../appApi'
 import { Button } from './Button'
 import './ImageLightbox.css'
@@ -9,6 +10,7 @@ type ImageLightboxProps = {
   dataUrl: string
   name: string
   path?: string | null
+  localImageOptions?: Omit<AppLocalImageOptions, 'path'>
   onClose: () => void
 }
 
@@ -19,6 +21,7 @@ export const ImageLightbox = ({
   dataUrl,
   name,
   path,
+  localImageOptions,
   onClose
 }: ImageLightboxProps): React.ReactElement => {
   const [copyState, setCopyState] = useState<CopyState>('idle')
@@ -56,7 +59,7 @@ export const ImageLightbox = ({
     }
     setCopyState('copying')
     try {
-      await appApi.copyLocalImage({ path })
+      await appApi.copyLocalImage({ ...localImageOptions, path })
       setCopyState('copied')
       copyFeedbackTimerRef.current = window.setTimeout(() => {
         copyFeedbackTimerRef.current = null
@@ -76,7 +79,7 @@ export const ImageLightbox = ({
     }
     setSaveState('saving')
     try {
-      const savedPath = await appApi.saveLocalImage({ path })
+      const savedPath = await appApi.saveLocalImage({ ...localImageOptions, path })
       if (!savedPath) {
         setSaveState('idle')
         return

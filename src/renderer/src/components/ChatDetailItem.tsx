@@ -48,6 +48,7 @@ import {
 } from 'lucide-react'
 import DOMPurify from 'dompurify'
 import { marked, Renderer, type Tokens } from 'marked'
+import type { AppContainerTarget, AppLocalImageOptions } from '../../../shared/app'
 import type {
   ProviderChatItem,
   ProviderMessage,
@@ -73,6 +74,7 @@ import './ChatDetailItem.css'
 
 type ChatDetailItemProps = {
   canEditOwnMessages?: boolean
+  container?: AppContainerTarget | null
   continuePrompt?: string
   continueStoppedTurnDisabled?: boolean
   continuedStoppedTurn?: boolean
@@ -90,6 +92,7 @@ type ChatDetailItemProps = {
   onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => void
   previousItem?: ProviderChatItem | null
+  cwd?: string | null
   projectCwd?: string | null
   retryMessage?: ProviderMessage | null
   retryStoppedTurnDisabled?: boolean
@@ -261,6 +264,7 @@ const areChatDetailItemPropsEqual = (
   second: ChatDetailItemProps
 ): boolean =>
   first.canEditOwnMessages === second.canEditOwnMessages &&
+  first.container === second.container &&
   first.continuePrompt === second.continuePrompt &&
   first.continueStoppedTurnDisabled === second.continueStoppedTurnDisabled &&
   first.continuedStoppedTurn === second.continuedStoppedTurn &&
@@ -277,6 +281,7 @@ const areChatDetailItemPropsEqual = (
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
   isQueuedPendingMessage(first.previousItem) === isQueuedPendingMessage(second.previousItem) &&
+  first.cwd === second.cwd &&
   first.projectCwd === second.projectCwd &&
   first.retryMessage === second.retryMessage &&
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
@@ -447,6 +452,22 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
       rel: 'noreferrer',
       target: '_blank'
     })}>${children}</a>`
+  }
+  renderer.image = function (token: Tokens.Image): string {
+    const fileTarget = getMarkdownFileTarget(token.href)
+    if (!fileTarget) return defaultChatMarkdownRenderer.image.call(this, token)
+
+    const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
+    const name = token.text.trim() || fileName
+
+    return `<button${renderHtmlAttributes({
+      class: 'chat-detail__markdown-image',
+      type: 'button',
+      title: `Open ${fileTarget.displayPath}`,
+      'aria-label': `Open ${name}`,
+      'data-local-image-path': fileTarget.path,
+      'data-local-image-name': name
+    })}><span class="chat-detail__markdown-image-loading" aria-label="Loading ${escapeHtml(name)}"></span></button>`
   }
   renderer.table = function (token: Tokens.Table): string {
     const tableMarkup = defaultChatMarkdownRenderer.table.call(this, token)
@@ -1142,11 +1163,25 @@ const ToolItem: React.FC<{
 const MarkdownMessageComponent: React.FC<{
   className: string
   content: string
+  localImageContainer?: AppContainerTarget | null
+  localImageCwd?: string | null
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   streaming?: boolean
-}> = ({ className, content, onOpenFileLink, streaming = false }) => {
+}> = ({
+  className,
+  content,
+  localImageContainer,
+  localImageCwd,
+  onOpenFileLink,
+  streaming = false
+}) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const packetAnimationRef = useRef<Animation | null>(null)
+  const [localImagePreview, setLocalImagePreview] = useState<{
+    dataUrl: string
+    name: string
+    path: string
+  } | null>(null)
   const { animate, revision, visibleContent } = useStreamRenderedContent(content, streaming)
   const markdownRenderer = useMemo(
     () => createChatMarkdownRenderer(Boolean(onOpenFileLink)),
@@ -1164,9 +1199,69 @@ const MarkdownMessageComponent: React.FC<{
       ),
     [markdownRenderer, visibleContent]
   )
+  useEffect(() => {
+    const markdownContainer = containerRef.current
+    if (!markdownContainer) return undefined
+
+    let current = true
+    const imageButtons = markdownContainer.querySelectorAll<HTMLButtonElement>(
+      '.chat-detail__markdown-image[data-local-image-path]'
+    )
+
+    imageButtons.forEach((button) => {
+      const path = button.dataset.localImagePath
+      const name = button.dataset.localImageName ?? 'Image'
+      if (!path) return
+
+      void appApi
+        .getLocalImage({
+          container: localImageContainer,
+          cwd: localImageCwd,
+          path,
+          relativeTo: 'cwd'
+        })
+        .then((image) => {
+          if (!current || !markdownContainer.contains(button)) return
+
+          const imageElement = document.createElement('img')
+          imageElement.src = image.dataUrl
+          imageElement.alt = name
+          button.replaceChildren(imageElement)
+        })
+        .catch(() => {
+          if (!current || !markdownContainer.contains(button)) return
+
+          const error = document.createElement('span')
+          error.className = 'chat-detail__markdown-image-error'
+          error.textContent = `${name} unavailable`
+          button.replaceChildren(error)
+          button.setAttribute('aria-disabled', 'true')
+        })
+    })
+
+    return () => {
+      current = false
+    }
+  }, [localImageContainer, localImageCwd, renderedMarkdown])
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>): void => {
-      if (!onOpenFileLink || !(event.target instanceof Element)) return
+      if (!(event.target instanceof Element)) return
+
+      const imageButton = event.target.closest<HTMLButtonElement>(
+        '.chat-detail__markdown-image[data-local-image-path]'
+      )
+      if (imageButton && containerRef.current?.contains(imageButton)) {
+        const path = imageButton.dataset.localImagePath
+        const name = imageButton.dataset.localImageName ?? 'Image'
+        const dataUrl = imageButton.querySelector('img')?.src
+        if (path && dataUrl?.startsWith('data:')) {
+          event.preventDefault()
+          setLocalImagePreview({ dataUrl, name, path })
+        }
+        return
+      }
+
+      if (!onOpenFileLink) return
 
       const fileLink = event.target.closest<HTMLButtonElement>(
         '.chat-detail__file-link[data-file-link-path]'
@@ -1216,14 +1311,31 @@ const MarkdownMessageComponent: React.FC<{
     []
   )
 
+  const localImageOptions: Omit<AppLocalImageOptions, 'path'> = {
+    container: localImageContainer,
+    cwd: localImageCwd,
+    relativeTo: 'cwd'
+  }
+
   return (
-    <div
-      className={className}
-      data-streaming={streaming || undefined}
-      ref={containerRef}
-      onClick={handleClick}
-      dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
-    />
+    <>
+      <div
+        className={className}
+        data-streaming={streaming || undefined}
+        ref={containerRef}
+        onClick={handleClick}
+        dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
+      />
+      {localImagePreview && (
+        <ImageLightbox
+          dataUrl={localImagePreview.dataUrl}
+          localImageOptions={localImageOptions}
+          name={localImagePreview.name}
+          path={localImagePreview.path}
+          onClose={() => setLocalImagePreview(null)}
+        />
+      )}
+    </>
   )
 }
 
@@ -1549,12 +1661,14 @@ const getWorkingStepDefaultOpen = (
 }
 
 const WorkingStep: React.FC<{
+  container?: AppContainerTarget | null
   continueDisabled?: boolean
   continuedStoppedTurn?: boolean
   followingWorkingStepHasNext?: boolean
   followingWorkingStepStatus?: ProviderWorkingStep['status']
   hasNextWorkingStep?: boolean
   item: ProviderWorkingStep
+  cwd?: string | null
   onContinue?: () => Promise<void> | void
   onLoad?: () => Promise<void> | void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
@@ -1563,12 +1677,14 @@ const WorkingStep: React.FC<{
   retryDisabled?: boolean
   thoughtSettings: AppChatThoughtSettings
 }> = ({
+  container,
   continueDisabled = false,
   continuedStoppedTurn = false,
   followingWorkingStepHasNext = false,
   followingWorkingStepStatus,
   hasNextWorkingStep = false,
   item,
+  cwd,
   onContinue,
   onLoad,
   onOpenFileLink,
@@ -1798,6 +1914,8 @@ const WorkingStep: React.FC<{
                   className="chat-detail__working-message"
                   content={block.item.content}
                   key={block.item.id}
+                  localImageContainer={container}
+                  localImageCwd={cwd}
                   onOpenFileLink={onOpenFileLink}
                   streaming={active && block.item === lastWorkingItem}
                 />
@@ -1821,6 +1939,7 @@ const getPendingMessageActionLabel = (message: ProviderPendingMessage): string =
 
 const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   canEditOwnMessages = false,
+  container,
   continuePrompt = '',
   continueStoppedTurnDisabled = false,
   continuedStoppedTurn = false,
@@ -1838,6 +1957,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onContinueStoppedTurn,
   onRetryStoppedTurn,
   previousItem,
+  cwd,
   projectCwd,
   retryMessage,
   retryStoppedTurnDisabled = false,
@@ -1977,6 +2097,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
           <MarkdownMessage
             className={`chat-detail__message chat-detail__message--${role}`}
             content={role === 'user' ? withPromptMarkdownLineBreaks(item.content) : item.content}
+            localImageContainer={container}
+            localImageCwd={cwd}
             onOpenFileLink={onOpenFileLink}
             streaming={!pending && role === 'assistant' && streaming}
           />
@@ -1992,12 +2114,14 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
 
   return (
     <WorkingStep
+      container={container}
       continueDisabled={continueStoppedTurnDisabled || !continuePrompt.trim()}
       continuedStoppedTurn={continuedStoppedTurn}
       followingWorkingStepHasNext={followingWorkingStepHasNext}
       followingWorkingStepStatus={followingWorkingStepStatus}
       hasNextWorkingStep={hasNextWorkingStep}
       item={item}
+      cwd={cwd}
       onLoad={onLoadWorkingStep ? () => onLoadWorkingStep(item.id) : undefined}
       onContinue={
         onContinueStoppedTurn

@@ -11206,6 +11206,7 @@ export const App: React.FC = () => {
                 trailingChatCommitMarkers.map(renderChatCommitMarker)}
               <ChatDetailItem
                 canEditOwnMessages={canEditOwnMessages}
+                container={changesContainer}
                 continuePrompt={effectiveAppSettings.chat.continuePrompt}
                 continueStoppedTurnDisabled={stoppedTurnActionDisabled}
                 continuedStoppedTurn={continuedStoppedWorkingStepIds.has(item.id)}
@@ -11213,6 +11214,7 @@ export const App: React.FC = () => {
                 followingWorkingStepStatus={followingWorkingStep?.status}
                 hasNextWorkingStep={workingStepIdsWithNextWorkingStep.has(item.id)}
                 item={item}
+                cwd={changesCwd}
                 modelLabelsById={modelLabelsById}
                 onDeletePendingMessage={handleDeletePendingMessage}
                 onEditPendingMessage={handleEditPendingMessage}

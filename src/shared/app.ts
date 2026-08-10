@@ -28,6 +28,7 @@ export type AppLocalImageOptions = {
   container?: AppContainerTarget | null
   cwd?: string | null
   path: string
+  relativeTo?: 'cwd' | 'repository'
 }
 
 export type AppLocalImage = {

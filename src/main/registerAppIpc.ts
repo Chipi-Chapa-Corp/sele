@@ -322,7 +322,12 @@ const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
     throw new Error('Invalid local image options')
   }
 
-  const options = value as { container?: unknown; cwd?: unknown; path?: unknown }
+  const options = value as {
+    container?: unknown
+    cwd?: unknown
+    path?: unknown
+    relativeTo?: unknown
+  }
   if (
     typeof options.path !== 'string' ||
     options.path.length === 0 ||
@@ -334,11 +339,19 @@ const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
   const cwd = getOptionalCwd(options.cwd)
   if (!isAbsolute(options.path) && !cwd)
     throw new Error('A cwd is required for relative image paths')
+  if (
+    options.relativeTo !== undefined &&
+    options.relativeTo !== 'cwd' &&
+    options.relativeTo !== 'repository'
+  ) {
+    throw new Error('Invalid local image path base')
+  }
 
   return {
     container: requireContainerTarget(options.container, { optional: true }),
     cwd,
-    path: options.path
+    path: options.path,
+    relativeTo: options.relativeTo
   }
 }
 
@@ -367,10 +380,16 @@ const getProjectIconFile = async (
 ): Promise<{ dataUrl: string; updatedAt: number } | null> =>
   getImageFile(imagePath, maxProjectIconBytes)
 
-const resolveLocalImagePath = async (cwd: string | null, path: string): Promise<string> => {
+const resolveLocalImagePath = async (
+  cwd: string | null,
+  path: string,
+  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
+): Promise<string> => {
   let imagePath = path
 
   if (!isAbsolute(imagePath)) {
+    if (relativeTo === 'cwd') return resolve(cwd ?? process.cwd(), imagePath)
+
     const repositoryRoot = await runGit(
       cwd ?? process.cwd(),
       ['rev-parse', '--show-toplevel'],
@@ -383,10 +402,14 @@ const resolveLocalImagePath = async (cwd: string | null, path: string): Promise<
   return imagePath
 }
 
-const getLocalImage = async (cwd: string | null, path: string): Promise<AppLocalImage> => {
-  if (isSshGitTarget()) return getSshLocalImage(cwd, path)
+const getLocalImage = async (
+  cwd: string | null,
+  path: string,
+  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
+): Promise<AppLocalImage> => {
+  if (isSshGitTarget()) return getSshLocalImage(cwd, path, relativeTo)
 
-  const imagePath = await resolveLocalImagePath(cwd, path)
+  const imagePath = await resolveLocalImagePath(cwd, path, relativeTo)
   const image = await getImageFile(imagePath, maxLocalImageBytes)
   if (!image) throw new Error('Unable to load this image.')
   return image
@@ -1785,7 +1808,11 @@ const writeSshFileContents = async (
   return { version: getFileVersion(contents) }
 }
 
-const getSshLocalImage = async (cwd: string | null, path: string): Promise<AppLocalImage> => {
+const getSshLocalImage = async (
+  cwd: string | null,
+  path: string,
+  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
+): Promise<AppLocalImage> => {
   const mimeType = getImageMimeType(path)
   if (!mimeType) throw new Error('Unable to load this image.')
 
@@ -1793,10 +1820,12 @@ const getSshLocalImage = async (cwd: string | null, path: string): Promise<AppLo
   let imagePath = path
   if (!isAbsolute(imagePath)) {
     if (!cwd) throw new Error('A cwd is required for relative image paths')
-    const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-    if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
-    commandCwd = repositoryRoot
-    imagePath = getRemoteRepositoryFilePath(repositoryRoot, imagePath)
+    if (relativeTo === 'repository') {
+      const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+      if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+      commandCwd = repositoryRoot
+      imagePath = getRemoteRepositoryFilePath(repositoryRoot, imagePath)
+    }
   }
 
   const script = [
@@ -2851,14 +2880,14 @@ export const registerAppIpc = (): void => {
   ipcMain.handle(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
     const options = getLocalImageOptions(value)
     return runWithGitContainer(options.container, () =>
-      getLocalImage(options.cwd ?? null, options.path)
+      getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
     )
   })
 
   ipcMain.handle(appIpcChannels.copyLocalImage, async (_event, value: unknown) => {
     const options = getLocalImageOptions(value)
     const image = await runWithGitContainer(options.container, () =>
-      getLocalImage(options.cwd ?? null, options.path)
+      getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
     )
     const clipboardImage = nativeImage.createFromDataURL(image.dataUrl)
     if (clipboardImage.isEmpty()) throw new Error('Unable to copy this image.')
@@ -2869,7 +2898,7 @@ export const registerAppIpc = (): void => {
     const options = getLocalImageOptions(value)
     if (options.container?.kind === 'container' && options.container.tool === 'ssh') {
       const image = await runWithGitContainer(options.container, () =>
-        getLocalImage(options.cwd ?? null, options.path)
+        getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
       )
       const extension = extname(options.path).slice(1)
       const dialogOptions = {
@@ -2887,7 +2916,11 @@ export const registerAppIpc = (): void => {
       return result.filePath
     }
 
-    const sourcePath = await resolveLocalImagePath(options.cwd ?? null, options.path)
+    const sourcePath = await resolveLocalImagePath(
+      options.cwd ?? null,
+      options.path,
+      options.relativeTo
+    )
     const image = await getImageFile(sourcePath, maxLocalImageBytes)
     if (!image) throw new Error('Unable to save this image.')
 

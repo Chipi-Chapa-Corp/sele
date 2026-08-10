@@ -35,6 +35,18 @@ test('unwraps an angle-bracket file destination during direct parsing', () => {
   })
 })
 
+test('parses a cwd-relative Markdown image destination containing spaces', () => {
+  const tokens = marked.lexer('![diagram](<screenshots/current state.png>)')
+  const image = tokens[0]?.tokens?.[0]
+  assert.equal(image?.type, 'image')
+
+  assert.deepEqual(getMarkdownFileTarget(image.href), {
+    path: 'screenshots/current state.png',
+    displayPath: 'screenshots/current state.png',
+    line: undefined
+  })
+})
+
 test('removes code-span backticks from a file link label', () => {
   const tokens = marked.lexer(
     '[`normalizeContainerTarget(null)`](/var/home/kitkat/Projects/Desktop/sele/src/renderer/src/App.tsx:963)'
