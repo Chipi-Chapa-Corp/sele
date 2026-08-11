@@ -3627,10 +3627,7 @@ export const App: React.FC = () => {
   const [fileEditorTarget, setFileEditorTarget] = useState<FileEditorTarget | null>(null)
   const [selectedReview, setSelectedReview] = useState<Omit<ProviderReview, 'prompt'> | null>(null)
   const [reviewCommentsDraft, setReviewCommentsDraft] = useState<ProviderReviewComment[]>([])
-  const [terminalCwd, setTerminalCwd] = useState<string | null | undefined>(undefined)
-  const [terminalContainer, setTerminalContainer] = useState<AppContainerTarget | null | undefined>(
-    undefined
-  )
+  const [terminalOpened, setTerminalOpened] = useState(false)
   const [terminalCommandLaunchRequest, setTerminalCommandLaunchRequest] =
     useState<TerminalCommandLaunchRequest | null>(null)
   const [chats, setChats] = useState<ProviderChat[]>([])
@@ -5572,10 +5569,14 @@ export const App: React.FC = () => {
   const usageProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const usageProviderAvailabilityReady = selectedChat ? true : newSessionSourceAvailabilityReady
   const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
+  const changesProjectCwd = selectedChat
+    ? (chatDetail?.projectCwd ?? selectedChat.projectCwd ?? changesCwd)
+    : newSessionCwd
   const changesContainer = selectedChat
     ? (chatDetail?.container ?? selectedChat.container)
     : newSessionContainer
   const changesContainerKey = getContainerTargetKey(changesContainer)
+  const terminalWorkspaceKey = `${changesContainerKey}\0${changesProjectCwd ?? changesCwd ?? ''}`
   const gitAvailableForCurrentSource =
     gitSourceAvailability?.containerKey === changesContainerKey
       ? gitSourceAvailability.availability.gitAvailable
@@ -5633,21 +5634,15 @@ export const App: React.FC = () => {
     }
   }, [changesContainer, changesContainerKey, gitBranchLoadRequest, gitChangeLoadRequest])
 
-  const handleChangesPaneViewChange = useCallback(
-    (view: ChangesPaneView): void => {
-      if (view === 'terminal') {
-        setTerminalCwd((currentCwd) => (currentCwd === undefined ? changesCwd : currentCwd))
-        setTerminalContainer((currentContainer) =>
-          currentContainer === undefined ? changesContainer : currentContainer
-        )
-      } else {
-        lastNonTerminalChangesPaneViewRef.current = view
-      }
+  const handleChangesPaneViewChange = useCallback((view: ChangesPaneView): void => {
+    if (view === 'terminal') {
+      setTerminalOpened(true)
+    } else {
+      lastNonTerminalChangesPaneViewRef.current = view
+    }
 
-      setChangesPaneView(view)
-    },
-    [changesContainer, changesCwd]
-  )
+    setChangesPaneView(view)
+  }, [])
 
   const handleToggleTerminal = useCallback((): void => {
     handleChangesPaneViewChange(
@@ -5676,15 +5671,14 @@ export const App: React.FC = () => {
       }
 
       if (action.openInTerminal) {
-        setTerminalCwd((currentCwd) => (currentCwd === undefined ? targetCwd : currentCwd))
-        setTerminalContainer((currentContainer) =>
-          currentContainer === undefined ? changesContainer : currentContainer
-        )
+        setTerminalOpened(true)
         setTerminalCommandLaunchRequest({
           id: crypto.randomUUID(),
           command: action.command,
           container: changesContainer,
           cwd: targetCwd,
+          projectCwd: changesProjectCwd,
+          workspaceKey: terminalWorkspaceKey,
           label: action.name,
           focus: true,
           closeOnFinish: action.closeTerminalOnFinish
@@ -5701,7 +5695,13 @@ export const App: React.FC = () => {
       })
       markActionUsed()
     },
-    [changesContainer, changesCwd, handleChangesPaneViewChange]
+    [
+      changesContainer,
+      changesCwd,
+      changesProjectCwd,
+      handleChangesPaneViewChange,
+      terminalWorkspaceKey
+    ]
   )
 
   useEffect(
@@ -5752,9 +5752,6 @@ export const App: React.FC = () => {
     document.addEventListener('keydown', handleActionShortcut, true)
     return () => document.removeEventListener('keydown', handleActionShortcut, true)
   }, [appSettings.actions, fileEditorTarget, handleRunAction, settingsOpen])
-  const changesProjectCwd = selectedChat
-    ? (chatDetail?.projectCwd ?? selectedChat.projectCwd ?? changesCwd)
-    : newSessionCwd
   useEffect(() => {
     changesCwdRef.current = changesCwd
   }, [changesCwd])
@@ -12056,7 +12053,7 @@ export const App: React.FC = () => {
                   )}
                 </div>
               )}
-              {terminalCwd !== undefined && (
+              {terminalOpened && (
                 <div
                   className={`changes-sidebar__terminal${
                     changesPaneView === 'terminal' ? ' changes-sidebar__terminal--active' : ''
@@ -12064,9 +12061,12 @@ export const App: React.FC = () => {
                   aria-hidden={changesPaneView !== 'terminal'}
                 >
                   <TerminalPanel
+                    active={changesPaneView === 'terminal'}
                     commandLaunchRequest={terminalCommandLaunchRequest}
-                    container={terminalContainer ?? null}
-                    cwd={terminalCwd}
+                    container={changesContainer}
+                    cwd={changesCwd}
+                    projectCwd={changesProjectCwd}
+                    workspaceKey={terminalWorkspaceKey}
                   />
                 </div>
               )}

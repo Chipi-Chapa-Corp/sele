@@ -8,6 +8,7 @@ readonly arch='x86_64'
 readonly repo_url='https://chipi-chapa-corp.github.io/sele/flatpak'
 readonly runtime_repo_url='https://dl.flathub.org/repo/flathub.flatpakrepo'
 readonly bundle_path="${1:-dist/sele-linux-x64.flatpak}"
+readonly bundle_dir="$(dirname "$bundle_path")"
 readonly pages_root="${2:-dist/flatpak-pages}"
 readonly repo_dir="${pages_root}/flatpak"
 
@@ -33,6 +34,7 @@ flatpak build-update-repo \
   "$repo_dir"
 
 cp build/sele.flatpakrepo build/sele.flatpakref "$repo_dir/"
+cp build/sele.flatpakrepo "$bundle_dir/sele.flatpakrepo"
 cp build/icon.png "$repo_dir/sele.png"
 touch "$pages_root/.nojekyll"
 

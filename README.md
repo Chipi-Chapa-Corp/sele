@@ -18,6 +18,10 @@ Install the Linux Flatpak from Sele's update repository:
 flatpak install --user https://chipi-chapa-corp.github.io/sele/flatpak/sele.flatpakref
 ```
 
+The repository descriptor is also available as
+[`sele.flatpakrepo`](https://chipi-chapa-corp.github.io/sele/flatpak/sele.flatpakrepo) and
+as a downloadable asset on each GitHub Release.
+
 Install on macOS with Homebrew:
 
 ```bash

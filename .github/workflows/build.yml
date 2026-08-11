@@ -186,6 +186,7 @@ jobs:
       - name: Verify artifact
         run: |
           test -f dist/sele-linux-x64.flatpak
+          test -f dist/sele.flatpakrepo
           test -f dist/flatpak-pages/flatpak/summary
           test -f dist/flatpak-pages/flatpak/sele.flatpakref
           flatpak remote-add --user --no-gpg-verify sele-build \
@@ -197,23 +198,25 @@ jobs:
           cmp LICENSE \
             "${app_location}/files/share/licenses/com.chipichapa.sele/LICENSE"
 
-      - name: Upload Flatpak bundle
+      - name: Upload Flatpak artifacts
         uses: actions/upload-artifact@v7
         with:
           name: sele-linux-x64
-          path: dist/sele-linux-x64.flatpak
+          path: |
+            dist/sele-linux-x64.flatpak
+            dist/sele.flatpakrepo
           if-no-files-found: error
           compression-level: 0
 
       - name: Upload Flatpak repository for GitHub Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-pages-artifact@v4
         with:
           path: dist/flatpak-pages
 
   flatpak-pages:
     name: Publish Flatpak repository
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: linux
     runs-on: ubuntu-latest
     permissions:
@@ -257,6 +260,7 @@ jobs:
           test -f release-artifacts/sele-windows-x64-setup.exe
           test -f release-artifacts/sele-macos-arm64.dmg
           test -f release-artifacts/sele-linux-x64.flatpak
+          test -f release-artifacts/sele.flatpakrepo
 
       - name: Create or update release
         shell: bash

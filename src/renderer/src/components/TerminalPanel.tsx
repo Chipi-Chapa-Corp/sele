@@ -14,14 +14,19 @@ export type TerminalCommandLaunchRequest = {
   command: string
   container: AppContainerTarget | null
   cwd: string | null
+  projectCwd: string | null
+  workspaceKey: string
   label: string | null
   focus: boolean
   closeOnFinish: boolean
 }
 
 type TerminalPanelProps = {
+  active: boolean
   container: AppContainerTarget | null
   cwd: string | null
+  projectCwd: string | null
+  workspaceKey: string
   commandLaunchRequest?: TerminalCommandLaunchRequest | null
 }
 
@@ -51,6 +56,11 @@ type TerminalSessionProps = {
 type TerminalTabRuntime = {
   sessionId: string | null
   state: TerminalState
+}
+
+type TerminalWorkspace = {
+  activeTabId: string | null
+  tabs: TerminalTab[]
 }
 
 const outputPauseThreshold = 512 * 1024
@@ -316,10 +326,8 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
           }
 
           if (pastePressed) {
-            void navigator.clipboard
-              .readText()
-              .then((text) => terminal?.paste(text))
-              .catch(() => {})
+            // Let the browser paste event feed xterm. Reading and pasting here as well
+            // causes the same clipboard contents to be submitted twice.
             return false
           }
 
@@ -457,31 +465,24 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
 }
 
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({
+  active,
   container,
   cwd,
+  projectCwd,
+  workspaceKey,
   commandLaunchRequest = null
 }) => {
-  const nextTabNumberRef = useRef(2)
+  const nextTabNumberByWorkspaceRef = useRef(new Map<string, number>([[workspaceKey, 2]]))
   const closingTabsRef = useRef(new Set<string>())
-  const handledCommandLaunchRequestIdsRef = useRef(
-    new Set(commandLaunchRequest ? [commandLaunchRequest.id] : [])
-  )
+  const handledCommandLaunchRequestIdsRef = useRef(new Set<string>())
   const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
-  const [workspace, setWorkspace] = useState(() => {
-    const initialLocalTab = createTerminalTab(1, cwd, container)
-    const tabs: TerminalTab[] = [initialLocalTab]
-    const initialCommandTab = commandLaunchRequest
-      ? createCommandTerminalTab(commandLaunchRequest)
-      : null
-    if (initialCommandTab) tabs.push(initialCommandTab)
-
-    return {
-      activeTabId: ((initialCommandTab && commandLaunchRequest?.focus
-        ? initialCommandTab.id
-        : null) ?? initialLocalTab.id) as string | null,
-      tabs
-    }
+  const [workspaces, setWorkspaces] = useState(() => {
+    const initialLocalTab = createTerminalTab(1, projectCwd ?? cwd, container)
+    return new Map<string, TerminalWorkspace>([
+      [workspaceKey, { activeTabId: initialLocalTab.id, tabs: [initialLocalTab] }]
+    ])
   })
+  const workspace = workspaces.get(workspaceKey) ?? null
 
   const handleTabStateChange = useCallback(
     (tabId: string, state: TerminalState, sessionId: string | null): void => {
@@ -489,6 +490,23 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     },
     []
   )
+
+  useEffect(() => {
+    if (!active) return
+
+    setWorkspaces((currentWorkspaces) => {
+      if (currentWorkspaces.has(workspaceKey)) return currentWorkspaces
+
+      const initialLocalTab = createTerminalTab(1, projectCwd ?? cwd, container)
+      const nextWorkspaces = new Map(currentWorkspaces)
+      nextWorkspaces.set(workspaceKey, {
+        activeTabId: initialLocalTab.id,
+        tabs: [initialLocalTab]
+      })
+      nextTabNumberByWorkspaceRef.current.set(workspaceKey, 2)
+      return nextWorkspaces
+    })
+  }, [active, container, cwd, projectCwd, workspaceKey])
 
   useEffect(() => {
     if (
@@ -500,50 +518,93 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
     handledCommandLaunchRequestIdsRef.current.add(commandLaunchRequest.id)
     const tab = createCommandTerminalTab(commandLaunchRequest)
-    setWorkspace((currentWorkspace) => ({
-      activeTabId:
-        commandLaunchRequest.focus || !currentWorkspace.activeTabId
-          ? tab.id
-          : currentWorkspace.activeTabId,
-      tabs: [...currentWorkspace.tabs, tab]
-    }))
+    setWorkspaces((currentWorkspaces) => {
+      const currentWorkspace = currentWorkspaces.get(commandLaunchRequest.workspaceKey)
+      const initialLocalTab = currentWorkspace
+        ? null
+        : createTerminalTab(
+            1,
+            commandLaunchRequest.projectCwd ?? commandLaunchRequest.cwd,
+            commandLaunchRequest.container
+          )
+      const targetWorkspace =
+        currentWorkspace ??
+        ({
+          activeTabId: initialLocalTab?.id ?? null,
+          tabs: initialLocalTab ? [initialLocalTab] : []
+        } satisfies TerminalWorkspace)
+      const nextWorkspaces = new Map(currentWorkspaces)
+
+      if (!currentWorkspace) {
+        nextTabNumberByWorkspaceRef.current.set(commandLaunchRequest.workspaceKey, 2)
+      }
+      nextWorkspaces.set(commandLaunchRequest.workspaceKey, {
+        activeTabId:
+          commandLaunchRequest.focus || !targetWorkspace.activeTabId
+            ? tab.id
+            : targetWorkspace.activeTabId,
+        tabs: [...targetWorkspace.tabs, tab]
+      })
+      return nextWorkspaces
+    })
   }, [commandLaunchRequest])
 
   const handleAddTab = (): void => {
-    const tab = createTerminalTab(nextTabNumberRef.current, cwd, container)
-    nextTabNumberRef.current += 1
-    setWorkspace((currentWorkspace) => ({
-      activeTabId: tab.id,
-      tabs: [...currentWorkspace.tabs, tab]
-    }))
+    const nextTabNumber = nextTabNumberByWorkspaceRef.current.get(workspaceKey) ?? 1
+    const tab = createTerminalTab(nextTabNumber, cwd ?? projectCwd, container)
+    nextTabNumberByWorkspaceRef.current.set(workspaceKey, nextTabNumber + 1)
+    setWorkspaces((currentWorkspaces) => {
+      const currentWorkspace = currentWorkspaces.get(workspaceKey) ?? {
+        activeTabId: null,
+        tabs: []
+      }
+      const nextWorkspaces = new Map(currentWorkspaces)
+      nextWorkspaces.set(workspaceKey, {
+        activeTabId: tab.id,
+        tabs: [...currentWorkspace.tabs, tab]
+      })
+      return nextWorkspaces
+    })
   }
 
   const focusTab = (tabId: string): void => {
-    setWorkspace((currentWorkspace) => ({
-      ...currentWorkspace,
-      activeTabId: tabId
-    }))
+    setWorkspaces((currentWorkspaces) => {
+      const currentWorkspace = currentWorkspaces.get(workspaceKey)
+      if (!currentWorkspace || currentWorkspace.activeTabId === tabId) return currentWorkspaces
+
+      const nextWorkspaces = new Map(currentWorkspaces)
+      nextWorkspaces.set(workspaceKey, { ...currentWorkspace, activeTabId: tabId })
+      return nextWorkspaces
+    })
   }
 
   const handleCommandFinish = useCallback((tabId: string): void => {
     tabRuntimesRef.current.delete(tabId)
-    setWorkspace((currentWorkspace) => {
-      const closingIndex = currentWorkspace.tabs.findIndex((currentTab) => currentTab.id === tabId)
-      if (closingIndex < 0) return currentWorkspace
+    setWorkspaces((currentWorkspaces) => {
+      for (const [currentWorkspaceKey, currentWorkspace] of currentWorkspaces) {
+        const closingIndex = currentWorkspace.tabs.findIndex(
+          (currentTab) => currentTab.id === tabId
+        )
+        if (closingIndex < 0) continue
 
-      return {
-        activeTabId:
-          currentWorkspace.activeTabId === tabId
-            ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
-              currentWorkspace.tabs[closingIndex - 1]?.id ??
-              null)
-            : currentWorkspace.activeTabId,
-        tabs: currentWorkspace.tabs.filter((currentTab) => currentTab.id !== tabId)
+        const nextWorkspaces = new Map(currentWorkspaces)
+        nextWorkspaces.set(currentWorkspaceKey, {
+          activeTabId:
+            currentWorkspace.activeTabId === tabId
+              ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
+                currentWorkspace.tabs[closingIndex - 1]?.id ??
+                null)
+              : currentWorkspace.activeTabId,
+          tabs: currentWorkspace.tabs.filter((currentTab) => currentTab.id !== tabId)
+        })
+        return nextWorkspaces
       }
+
+      return currentWorkspaces
     })
   }, [])
 
-  const handleCloseTab = async (tab: TerminalTab): Promise<void> => {
+  const handleCloseTab = async (closingWorkspaceKey: string, tab: TerminalTab): Promise<void> => {
     if (closingTabsRef.current.has(tab.id)) return
     closingTabsRef.current.add(tab.id)
 
@@ -567,13 +628,16 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       }
 
       tabRuntimesRef.current.delete(tab.id)
-      setWorkspace((currentWorkspace) => {
+      setWorkspaces((currentWorkspaces) => {
+        const currentWorkspace = currentWorkspaces.get(closingWorkspaceKey)
+        if (!currentWorkspace) return currentWorkspaces
         const closingIndex = currentWorkspace.tabs.findIndex(
           (currentTab) => currentTab.id === tab.id
         )
-        if (closingIndex < 0) return currentWorkspace
+        if (closingIndex < 0) return currentWorkspaces
 
-        return {
+        const nextWorkspaces = new Map(currentWorkspaces)
+        nextWorkspaces.set(closingWorkspaceKey, {
           activeTabId:
             currentWorkspace.activeTabId === tab.id
               ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
@@ -581,7 +645,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                 null)
               : currentWorkspace.activeTabId,
           tabs: currentWorkspace.tabs.filter((currentTab) => currentTab.id !== tab.id)
-        }
+        })
+        return nextWorkspaces
       })
     } finally {
       closingTabsRef.current.delete(tab.id)
@@ -594,7 +659,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         <SegmentedControl
           aria-label="Terminal tabs"
           className="terminal-panel__tabs"
-          options={workspace.tabs.map((tab) => ({
+          options={(workspace?.tabs ?? []).map((tab) => ({
             value: tab.id,
             label: tab.label,
             ariaLabel: tab.label,
@@ -603,9 +668,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             actionAriaLabel: `Close ${tab.label}`,
             actionTitle: `Close ${tab.label}`,
             actionIcon: <X aria-hidden="true" />,
-            actionCallback: () => handleCloseTab(tab)
+            actionCallback: () => handleCloseTab(workspaceKey, tab)
           }))}
-          value={workspace.activeTabId ?? ''}
+          value={workspace?.activeTabId ?? ''}
           onChange={focusTab}
         />
         <Button
@@ -618,7 +683,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         />
       </div>
       <div className="terminal-panel__workspace">
-        {workspace.tabs.length === 0 && (
+        {workspace?.tabs.length === 0 && (
           <div className="terminal-panel__empty">
             <TerminalIcon aria-hidden="true" />
             <p>No terminal tabs open.</p>
@@ -631,20 +696,26 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             />
           </div>
         )}
-        {workspace.tabs.map((tab) => (
-          <TerminalSession
-            closeOnCommandFinish={tab.closeOnCommandFinish}
-            container={tab.container}
-            cwd={tab.cwd}
-            initialCommand={tab.initialCommand}
-            key={tab.id}
-            label={tab.label}
-            tabId={tab.id}
-            visible={tab.id === workspace.activeTabId}
-            onCommandFinish={handleCommandFinish}
-            onStateChange={handleTabStateChange}
-          />
-        ))}
+        {Array.from(workspaces, ([currentWorkspaceKey, currentWorkspace]) =>
+          currentWorkspace.tabs.map((tab) => (
+            <TerminalSession
+              closeOnCommandFinish={tab.closeOnCommandFinish}
+              container={tab.container}
+              cwd={tab.cwd}
+              initialCommand={tab.initialCommand}
+              key={tab.id}
+              label={tab.label}
+              tabId={tab.id}
+              visible={
+                active &&
+                currentWorkspaceKey === workspaceKey &&
+                tab.id === currentWorkspace.activeTabId
+              }
+              onCommandFinish={handleCommandFinish}
+              onStateChange={handleTabStateChange}
+            />
+          ))
+        )}
       </div>
     </section>
   )
