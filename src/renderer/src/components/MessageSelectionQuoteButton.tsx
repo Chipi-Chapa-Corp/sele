@@ -12,10 +12,16 @@ type MessageSelectionQuoteButtonProps = {
 
 type SelectedQuote = {
   content: string
+  host: HTMLElement
   left: number
   placement: 'above' | 'below'
   top: number
 }
+
+const quoteHostSelector = '.chat-detail__message-quote-host'
+
+const getNodeElement = (node: Node): Element | null =>
+  node instanceof Element ? node : node.parentElement
 
 const getSelectedQuote = (container: HTMLElement): SelectedQuote | null => {
   const selection = window.getSelection()
@@ -25,58 +31,40 @@ const getSelectedQuote = (container: HTMLElement): SelectedQuote | null => {
   if (!content) return null
 
   const range = selection.getRangeAt(0)
-  const assistantMessages = Array.from(
-    container.querySelectorAll<HTMLElement>('.chat-detail__message--assistant')
-  ).filter((message) => range.intersectsNode(message))
-  if (assistantMessages.length !== 1) return null
+  const startMessage = getNodeElement(range.startContainer)?.closest<HTMLElement>(
+    '.chat-detail__message--assistant'
+  )
+  const endMessage = getNodeElement(range.endContainer)?.closest<HTMLElement>(
+    '.chat-detail__message--assistant'
+  )
+  if (!startMessage || startMessage !== endMessage || !container.contains(startMessage)) return null
 
-  const assistantMessageRange = document.createRange()
-  assistantMessageRange.selectNodeContents(assistantMessages[0])
-  const selectedMessageRange = range.cloneRange()
-  const selectionStartsBeforeMessage =
-    assistantMessageRange.comparePoint(range.startContainer, range.startOffset) < 0
-  const selectionEndsAfterMessage =
-    assistantMessageRange.comparePoint(range.endContainer, range.endOffset) > 0
+  const host = startMessage.querySelector<HTMLElement>(`:scope > ${quoteHostSelector}`)
+  if (!host?.isConnected) return null
 
-  if (selectionStartsBeforeMessage) {
-    selectedMessageRange.setStart(
-      assistantMessageRange.startContainer,
-      assistantMessageRange.startOffset
-    )
-  }
-  if (selectionEndsAfterMessage) {
-    selectedMessageRange.setEnd(assistantMessageRange.endContainer, assistantMessageRange.endOffset)
-  }
-
-  const contentBeforeMessage = range.cloneRange()
-  contentBeforeMessage.setEnd(selectedMessageRange.startContainer, selectedMessageRange.startOffset)
-  const contentAfterMessage = range.cloneRange()
-  contentAfterMessage.setStart(selectedMessageRange.endContainer, selectedMessageRange.endOffset)
-  if (contentBeforeMessage.toString().trim() || contentAfterMessage.toString().trim()) return null
-
-  const rects = Array.from(selectedMessageRange.getClientRects()).filter(
+  const rects = Array.from(range.getClientRects()).filter(
     (candidateRect) => candidateRect.width > 0 || candidateRect.height > 0
   )
-  const rect = rects.at(-1) ?? selectedMessageRange.getBoundingClientRect()
+  const rect = rects.at(-1) ?? range.getBoundingClientRect()
   if (rect.width === 0 && rect.height === 0) return null
 
-  const viewportInset = 8
   const buttonHalfWidth = 16
   const buttonHeight = 32
   const offset = 8
-  const placement = rect.top >= viewportInset + buttonHeight + offset ? 'above' : 'below'
+  const hostRect = host.getBoundingClientRect()
+  const localRectTop = rect.top - hostRect.top
+  const placement = localRectTop >= buttonHeight + offset ? 'above' : 'below'
+  const maximumLeft = Math.max(buttonHalfWidth, hostRect.width - buttonHalfWidth)
 
   return {
     content,
+    host,
     left: Math.min(
-      Math.max(rect.left + rect.width / 2, viewportInset + buttonHalfWidth),
-      window.innerWidth - viewportInset - buttonHalfWidth
+      Math.max(rect.left + rect.width / 2 - hostRect.left, buttonHalfWidth),
+      maximumLeft
     ),
     placement,
-    top:
-      placement === 'above'
-        ? rect.top - offset
-        : Math.min(rect.bottom + offset, window.innerHeight - viewportInset - buttonHeight)
+    top: placement === 'above' ? localRectTop - offset : rect.bottom - hostRect.top + offset
   }
 }
 
@@ -149,6 +137,11 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
     }
 
     const handleSelectionChange = (): void => {
+      const selection = window.getSelection()
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+        dismiss()
+        return
+      }
       if (!selectingWithPointer) scheduleSelectionUpdate()
     }
 
@@ -171,7 +164,6 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', dismiss)
     window.addEventListener('resize', dismiss)
-    window.addEventListener('scroll', dismiss, true)
 
     return () => {
       cancelSelectionUpdate()
@@ -183,11 +175,12 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('blur', dismiss)
       window.removeEventListener('resize', dismiss)
-      window.removeEventListener('scroll', dismiss, true)
     }
   }, [containerRef, enabled])
 
-  if (!selectedQuote) return null
+  if (!enabled || !selectedQuote || !selectedQuote.host.isConnected) {
+    return null
+  }
 
   const style: CSSProperties = {
     left: selectedQuote.left,
@@ -215,6 +208,6 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
         onPointerDown={(event) => event.preventDefault()}
       />
     </div>,
-    document.body
+    selectedQuote.host
   )
 }

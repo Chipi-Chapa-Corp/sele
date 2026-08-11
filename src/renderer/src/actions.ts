@@ -17,11 +17,17 @@ export const appActionTypes = ['command', 'prompt'] as const
 
 export type AppActionType = (typeof appActionTypes)[number]
 
+export const appActionScopes = ['global', 'project'] as const
+
+export type AppActionScope = (typeof appActionScopes)[number]
+
 type AppActionBase = {
   id: string
   name: string
   icon: AppActionIcon
   keybinding: string | null
+  scope: AppActionScope
+  projectCwd: string | null
 }
 
 export type AppCommandAction = AppActionBase & {
@@ -54,6 +60,7 @@ const maxActionIdLength = 128
 const maxActionNameLength = 80
 const maxActionContentLength = 20_000
 const maxActionKeybindingLength = 80
+const maxActionProjectCwdLength = 4_096
 
 export const defaultAppActionIcon = 'play' satisfies AppActionIcon
 
@@ -94,6 +101,19 @@ export const getAppActionKeybindingFromEvent = (event: KeyboardEventLike): strin
     .join('+')
 }
 
+export const getAppActionsForProject = (
+  actions: AppAction[],
+  projectCwd: string | null | undefined
+): AppAction[] => {
+  const normalizedProjectCwd = normalizeActionString(projectCwd, maxActionProjectCwdLength)
+
+  return actions.filter(
+    (action) =>
+      action.scope === 'global' ||
+      (Boolean(normalizedProjectCwd) && action.projectCwd === normalizedProjectCwd)
+  )
+}
+
 export const normalizeAppActions = (value: unknown): AppAction[] => {
   if (!Array.isArray(value)) return []
 
@@ -122,12 +142,16 @@ export const normalizeAppActions = (value: unknown): AppAction[] => {
     const keybinding = normalizeActionString(candidate.keybinding, maxActionKeybindingLength)
     const uniqueKeybinding = keybinding && !keybindings.has(keybinding) ? keybinding : null
     if (uniqueKeybinding) keybindings.add(uniqueKeybinding)
+    const projectCwd = normalizeActionString(candidate.projectCwd, maxActionProjectCwdLength)
+    const scope: AppActionScope = candidate.scope === 'project' && projectCwd ? 'project' : 'global'
 
     const normalizedAction = {
       id,
       name,
       icon: isAppActionIcon(candidate.icon) ? candidate.icon : defaultAppActionIcon,
-      keybinding: uniqueKeybinding
+      keybinding: uniqueKeybinding,
+      scope,
+      projectCwd: scope === 'project' ? projectCwd : null
     }
 
     if (type === 'prompt') {

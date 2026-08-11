@@ -2546,6 +2546,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   actions={actions}
                   label={notesLabel ?? 'Workspace'}
                   lastActionId={lastActionId}
+                  projectCwd={projectCwd}
                   showLabel={showActionLabel}
                   onActionsChange={onActionsChange!}
                   onLastActionChange={onLastActionChange!}

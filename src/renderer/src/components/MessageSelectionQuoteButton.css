@@ -1,6 +1,7 @@
 .message-selection-quote {
-  position: fixed;
-  z-index: 160;
+  position: absolute;
+  z-index: 1;
+  pointer-events: auto;
   transform: translateX(-50%);
 }
 
@@ -8,21 +9,10 @@
   transform: translate(-50%, -100%);
 }
 
-.message-selection-quote > .ui-button {
-  -webkit-backdrop-filter: blur(16px) saturate(1.25);
-  backdrop-filter: blur(16px) saturate(1.25);
-  animation: message-selection-quote-appear 120ms ease-out;
-}
-
-@keyframes message-selection-quote-appear {
-  from {
-    opacity: 0;
-    scale: 0.92;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .message-selection-quote > .ui-button {
-    animation: none;
-  }
+.chat-detail__message-quote-host {
+  position: absolute;
+  inset: 0;
+  display: block;
+  pointer-events: none;
+  user-select: none;
 }

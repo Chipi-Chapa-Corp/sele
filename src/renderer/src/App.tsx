@@ -186,7 +186,7 @@ import { SshEnvironmentDialog } from './components/SshEnvironmentDialog'
 import { TerminalPanel, type TerminalCommandLaunchRequest } from './components/TerminalPanel'
 import { UserInputRequestBox } from './components/UserInputRequestBox'
 import type { AppAction } from './actions'
-import { getAppActionKeybindingFromEvent } from './actions'
+import { getAppActionsForProject, getAppActionKeybindingFromEvent } from './actions'
 import { appApi } from './appApi'
 import { mergeChatMetadata } from './chatMetadata'
 import { applyFontAppearancePreferences } from './fontAppearance'
@@ -5739,7 +5739,7 @@ export const App: React.FC = () => {
       const keybinding = getAppActionKeybindingFromEvent(event)
       if (!keybinding) return
 
-      const action = appSettings.actions.find(
+      const action = getAppActionsForProject(appSettings.actions, changesProjectCwd).find(
         (candidateAction) => candidateAction.keybinding === keybinding
       )
       if (!action) return
@@ -5751,7 +5751,7 @@ export const App: React.FC = () => {
 
     document.addEventListener('keydown', handleActionShortcut, true)
     return () => document.removeEventListener('keydown', handleActionShortcut, true)
-  }, [appSettings.actions, fileEditorTarget, handleRunAction, settingsOpen])
+  }, [appSettings.actions, changesProjectCwd, fileEditorTarget, handleRunAction, settingsOpen])
   useEffect(() => {
     changesCwdRef.current = changesCwd
   }, [changesCwd])

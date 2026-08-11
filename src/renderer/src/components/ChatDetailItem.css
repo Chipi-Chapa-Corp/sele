@@ -149,6 +149,7 @@
 }
 
 .chat-detail__message--assistant {
+  position: relative;
   max-width: 100%;
   padding: 0;
 }
@@ -454,6 +455,10 @@
 
 .chat-detail__message > :last-child,
 .chat-detail__working-message > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-detail__message--assistant > :nth-last-child(2) {
   margin-bottom: 0;
 }
 

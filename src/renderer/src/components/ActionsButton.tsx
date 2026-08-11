@@ -30,8 +30,10 @@ import {
   appActionIconIds,
   type AppAction,
   type AppActionIcon,
+  type AppActionScope,
   type AppActionType,
   defaultAppActionIcon,
+  getAppActionsForProject,
   getAppActionKeybindingFromEvent,
   normalizeAppActions
 } from '../actions'
@@ -48,6 +50,7 @@ type ActionsButtonProps = {
   disabled?: boolean
   label: string
   lastActionId?: string | null
+  projectCwd?: string | null
   showLabel?: boolean
   onActionsChange: (actions: AppAction[]) => void
   onLastActionChange: (actionId: string | null) => void
@@ -62,6 +65,7 @@ type ActionDraft = {
   keybinding: string | null
   name: string
   openInTerminal: boolean
+  scope: AppActionScope
   sendInNewChat: boolean
   type: AppActionType
 }
@@ -100,6 +104,7 @@ const emptyActionDraft: ActionDraft = {
   keybinding: null,
   name: '',
   openInTerminal: true,
+  scope: 'global',
   sendInNewChat: false,
   type: 'command'
 }
@@ -110,7 +115,7 @@ const createActionId = (): string => {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-const getDraftFromAction = (action: AppAction | null): ActionDraft =>
+const getDraftFromAction = (action: AppAction | null, defaultScope: AppActionScope): ActionDraft =>
   action
     ? {
         id: action.id,
@@ -120,10 +125,11 @@ const getDraftFromAction = (action: AppAction | null): ActionDraft =>
         keybinding: action.keybinding,
         name: action.name,
         openInTerminal: action.type === 'command' ? action.openInTerminal : true,
+        scope: action.scope,
         sendInNewChat: action.type === 'prompt' ? action.sendInNewChat : false,
         type: action.type
       }
-    : { ...emptyActionDraft }
+    : { ...emptyActionDraft, scope: defaultScope }
 
 const renderActionIcon = (icon: AppActionIcon): ReactElement => {
   const Icon = actionIconComponents[icon]
@@ -157,6 +163,7 @@ export const ActionsButton = ({
   disabled = false,
   label,
   lastActionId = null,
+  projectCwd = null,
   showLabel = false,
   onActionsChange,
   onLastActionChange,
@@ -172,7 +179,10 @@ export const ActionsButton = ({
   const nameInputId = `cwd-actions-name-${reactId}`
   const contentInputId = `cwd-actions-content-${reactId}`
   const keybindingDescriptionId = `cwd-actions-keybinding-description-${reactId}`
-  const primaryAction = actions.find((action) => action.id === lastActionId) ?? actions[0] ?? null
+  const normalizedProjectCwd = projectCwd?.trim() || null
+  const visibleActions = getAppActionsForProject(actions, normalizedProjectCwd)
+  const primaryAction =
+    visibleActions.find((action) => action.id === lastActionId) ?? visibleActions[0] ?? null
   const draftOpen = draft !== null
   const editing = Boolean(draft?.id)
 
@@ -189,7 +199,7 @@ export const ActionsButton = ({
 
   const openDraftDialog = (action: AppAction | null): void => {
     setDialogError(null)
-    setDraft(getDraftFromAction(action))
+    setDraft(getDraftFromAction(action, normalizedProjectCwd ? 'project' : 'global'))
   }
 
   const closeDraftDialog = (): void => {
@@ -228,7 +238,9 @@ export const ActionsButton = ({
       id: draft.id ?? createActionId(),
       icon: draft.icon,
       keybinding: draft.keybinding,
-      name
+      name,
+      scope: draft.scope,
+      projectCwd: draft.scope === 'project' ? normalizedProjectCwd : null
     }
     const savedAction: AppAction =
       draft.type === 'prompt'
@@ -261,7 +273,9 @@ export const ActionsButton = ({
   const handleDeleteAction = (actionId: string): void => {
     const nextActions = actions.filter((action) => action.id !== actionId)
     onActionsChange(nextActions)
-    if (lastActionId === actionId) onLastActionChange(nextActions[0]?.id ?? null)
+    if (lastActionId === actionId) {
+      onLastActionChange(getAppActionsForProject(nextActions, normalizedProjectCwd)[0]?.id ?? null)
+    }
   }
 
   const handleRunAction = async (action: AppAction): Promise<void> => {
@@ -318,7 +332,7 @@ export const ActionsButton = ({
           }
         ]
       : []),
-    ...actions.map((action): ButtonDropdownAction => ({
+    ...visibleActions.map((action): ButtonDropdownAction => ({
       id: `run-${action.id}`,
       label: renderActionMenuLabel(action),
       title: getActionContent(action),
@@ -403,6 +417,25 @@ export const ActionsButton = ({
                 onChange={(event) => updateDraft({ name: event.currentTarget.value })}
               />
             </div>
+          </div>
+          <div className="cwd-actions-dialog__field">
+            <span>Create for</span>
+            <SegmentedControl<AppActionScope>
+              aria-label="Create for"
+              className="cwd-actions-dialog__scope"
+              options={[
+                { value: 'global', label: 'Global' },
+                {
+                  value: 'project',
+                  label,
+                  disabled: !normalizedProjectCwd,
+                  title: normalizedProjectCwd ?? 'No project selected'
+                }
+              ]}
+              size="small"
+              value={draft.scope}
+              onChange={(scope) => updateDraft({ scope })}
+            />
           </div>
           <label className="cwd-actions-dialog__field">
             <span>Keybinding</span>

@@ -1,4 +1,13 @@
-import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import type { ForwardRefExoticComponent, HTMLAttributes, RefAttributes } from 'react'
 import {
   AudioLinesIcon as AnimatedAudioLinesIcon,
@@ -1044,6 +1053,7 @@ const MarkdownMessageComponent: React.FC<{
   localImageContainer?: AppContainerTarget | null
   localImageCwd?: string | null
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
+  selectionQuoteHost?: boolean
   streaming?: boolean
 }> = ({
   className,
@@ -1051,6 +1061,7 @@ const MarkdownMessageComponent: React.FC<{
   localImageContainer,
   localImageCwd,
   onOpenFileLink,
+  selectionQuoteHost = false,
   streaming = false
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1077,6 +1088,17 @@ const MarkdownMessageComponent: React.FC<{
       ),
     [markdownRenderer, visibleContent]
   )
+  useLayoutEffect(() => {
+    const markdownContainer = containerRef.current
+    if (!selectionQuoteHost || !markdownContainer) return undefined
+
+    // The quote control portals into this message-owned host. Replacing rendered markdown removes
+    // the previous host in the same commit, so a quote can never outlive its source message DOM.
+    const quoteHost = document.createElement('div')
+    quoteHost.className = 'chat-detail__message-quote-host'
+    markdownContainer.append(quoteHost)
+    return () => quoteHost.remove()
+  }, [renderedMarkdown, selectionQuoteHost])
   useEffect(() => {
     const markdownContainer = containerRef.current
     if (!markdownContainer) return undefined
@@ -1982,6 +2004,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
             localImageContainer={container}
             localImageCwd={cwd}
             onOpenFileLink={onOpenFileLink}
+            selectionQuoteHost={!pending && role === 'assistant'}
             streaming={!pending && role === 'assistant' && streaming}
           />
         )}

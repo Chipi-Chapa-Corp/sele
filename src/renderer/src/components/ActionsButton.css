@@ -212,6 +212,11 @@
   width: min(280px, 100%);
 }
 
+.cwd-actions-dialog__scope {
+  align-self: flex-start;
+  width: min(280px, 100%);
+}
+
 .cwd-actions-dialog__switch-row[data-disabled='true'] {
   opacity: 0.56;
 }
