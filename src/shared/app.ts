@@ -207,6 +207,10 @@ export type AppDiagnosticsInteraction = {
 
 export type AppDiagnosticsHeartbeat = {
   timestamp: number
+  eventLoopLagMs: number
+  longTaskCount: number
+  longTaskTotalDurationMs: number
+  longTaskMaxDurationMs: number
   jsHeapUsedBytes: number | null
   jsHeapTotalBytes: number | null
   domNodeCount: number
@@ -217,6 +221,14 @@ export type AppDiagnosticsHeartbeat = {
   selectedChatItemCount: number
   recentChatCacheEntryCount: number
   recentChatCacheItemCount: number
+  selectedChatTurnCount: number
+  renderedChatTurnCount: number
+  mountedChatTurnCount: number
+  renderedToolElementCount: number
+  openToolDetailsCount: number
+  openToolSequenceCount: number
+  chatScrollHeightPx: number
+  chatViewportHeightPx: number
   chatSearchOpen: boolean
   messageInputLength: number
   messageInputFocused: boolean

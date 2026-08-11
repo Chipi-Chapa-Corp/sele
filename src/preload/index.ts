@@ -292,14 +292,43 @@ const getDocumentDatasetCount = (key: string): number => {
 const getDocumentDatasetBoolean = (key: string): boolean =>
   document.documentElement.dataset[key] === 'true'
 
+const diagnosticsHeartbeatIntervalMs = 2_000
 let lastInteractionAt: number | null = null
 let lastInteractionKind: AppDiagnosticsInteractionKind | null = null
+let lastHeartbeatAt: number | null = null
+let longTaskCount = 0
+let longTaskTotalDurationMs = 0
+let longTaskMaxDurationMs = 0
+
+try {
+  const longTaskObserver = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) {
+      longTaskCount += 1
+      longTaskTotalDurationMs += entry.duration
+      longTaskMaxDurationMs = Math.max(longTaskMaxDurationMs, entry.duration)
+    }
+  })
+  longTaskObserver.observe({ entryTypes: ['longtask'] })
+} catch {
+  // The Long Tasks API is optional. Interval lag still detects a blocked renderer.
+}
 
 const sendDiagnosticsHeartbeat = (): void => {
+  const timestamp = Date.now()
+  const eventLoopLagMs =
+    lastHeartbeatAt === null
+      ? 0
+      : Math.max(0, timestamp - lastHeartbeatAt - diagnosticsHeartbeatIntervalMs)
+  lastHeartbeatAt = timestamp
   const memory = (performance as PerformanceWithMemory).memory
   const messageInput = document.querySelector<HTMLTextAreaElement>('#message-input')
+  const chatScroller = document.querySelector<HTMLElement>('#chat-search-content')
   const heartbeat = {
-    timestamp: Date.now(),
+    timestamp,
+    eventLoopLagMs,
+    longTaskCount,
+    longTaskTotalDurationMs,
+    longTaskMaxDurationMs,
     jsHeapUsedBytes: getFiniteNumber(memory?.usedJSHeapSize),
     jsHeapTotalBytes: getFiniteNumber(memory?.totalJSHeapSize),
     domNodeCount: document.querySelectorAll('*').length,
@@ -310,6 +339,17 @@ const sendDiagnosticsHeartbeat = (): void => {
     selectedChatItemCount: getDocumentDatasetCount('selectedChatItemCount'),
     recentChatCacheEntryCount: getDocumentDatasetCount('recentChatCacheEntryCount'),
     recentChatCacheItemCount: getDocumentDatasetCount('recentChatCacheItemCount'),
+    selectedChatTurnCount: getDocumentDatasetCount('selectedChatTurnCount'),
+    renderedChatTurnCount: getDocumentDatasetCount('renderedChatTurnCount'),
+    mountedChatTurnCount: document.querySelectorAll('.chat-detail__turn').length,
+    renderedToolElementCount: document.querySelectorAll(
+      '.chat-detail__tool-read, .chat-detail__tool-group, .chat-detail__generated-image-tool'
+    ).length,
+    openToolDetailsCount: document.querySelectorAll('details.chat-detail__tool-group[open]').length,
+    openToolSequenceCount: document.querySelectorAll('details.chat-detail__tool-sequence[open]')
+      .length,
+    chatScrollHeightPx: chatScroller?.scrollHeight ?? 0,
+    chatViewportHeightPx: chatScroller?.clientHeight ?? 0,
     chatSearchOpen: getDocumentDatasetBoolean('chatSearchOpen'),
     messageInputLength: messageInput?.value.length ?? 0,
     messageInputFocused: document.activeElement === messageInput,
@@ -322,6 +362,9 @@ const sendDiagnosticsHeartbeat = (): void => {
   } satisfies AppDiagnosticsHeartbeat
 
   ipcRenderer.send(appIpcChannels.diagnosticsHeartbeat, heartbeat)
+  longTaskCount = 0
+  longTaskTotalDurationMs = 0
+  longTaskMaxDurationMs = 0
 }
 
 const getInteractionKind = (target: EventTarget | null): AppDiagnosticsInteractionKind | null => {
@@ -364,7 +407,7 @@ document.addEventListener(
 
 const startDiagnosticsHeartbeat = (): void => {
   sendDiagnosticsHeartbeat()
-  window.setInterval(sendDiagnosticsHeartbeat, 2_000)
+  window.setInterval(sendDiagnosticsHeartbeat, diagnosticsHeartbeatIntervalMs)
 }
 
 if (document.readyState === 'loading') {

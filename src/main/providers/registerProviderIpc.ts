@@ -1,5 +1,9 @@
 import { extname, isAbsolute } from 'node:path'
 import { BrowserWindow, ipcMain, type WebContents } from 'electron'
+import {
+  getProviderChatDiagnostics,
+  type ProviderChatDiagnostics
+} from '../../shared/chatDiagnostics'
 import type {
   ProviderApprovalDecision,
   ProviderActiveSendMode,
@@ -132,15 +136,39 @@ const getEmptyProviderChatPage = (): ProviderChatPage => ({
   nextCursor: null
 })
 
-export const getProviderIpcDiagnostics = (): Record<string, unknown> => ({
+export type ProviderIpcDiagnostics = {
+  queuedChatUpdateCount: number
+  sentChatUpdateCount: number
+  acknowledgedChatUpdateCount: number
+  lastChatUpdateQueuedAt: number | null
+  lastChatUpdateSentAt: number | null
+  lastChatUpdateAcknowledgedAt: number | null
+  windows: Array<{
+    webContentsId: number
+    ready: boolean
+    hasViewedChat: boolean
+    inFlightSequence: number | null
+    inFlightItemCount: number | null
+    acknowledgedItemCount: number | null
+    pendingChatCount: number
+    trackedChatCount: number
+    chatDetailSource: 'in-flight' | 'acknowledged' | null
+    chat: ProviderChatDiagnostics | null
+  }>
+}
+
+export const getProviderIpcDiagnostics = (): ProviderIpcDiagnostics => ({
   queuedChatUpdateCount,
   sentChatUpdateCount,
   acknowledgedChatUpdateCount,
   lastChatUpdateQueuedAt,
   lastChatUpdateSentAt,
   lastChatUpdateAcknowledgedAt,
-  windows: Array.from(chatUpdateDeliveryByWebContentsId.entries()).map(
-    ([webContentsId, state]) => ({
+  windows: Array.from(chatUpdateDeliveryByWebContentsId.entries()).map(([webContentsId, state]) => {
+    const diagnosticDetail =
+      state.inFlightUpdate?.detail ?? state.acknowledgedDetail?.detail ?? null
+
+    return {
       webContentsId,
       ready: state.ready,
       hasViewedChat: state.viewedChatKey !== null,
@@ -148,9 +176,15 @@ export const getProviderIpcDiagnostics = (): Record<string, unknown> => ({
       inFlightItemCount: state.inFlightUpdate?.detail?.items.length ?? null,
       acknowledgedItemCount: state.acknowledgedDetail?.detail.items.length ?? null,
       pendingChatCount: state.pendingByChatKey.size,
-      trackedChatCount: state.latestUpdateAtByChatKey.size
-    })
-  )
+      trackedChatCount: state.latestUpdateAtByChatKey.size,
+      chatDetailSource: state.inFlightUpdate
+        ? 'in-flight'
+        : state.acknowledgedDetail
+          ? 'acknowledged'
+          : null,
+      chat: diagnosticDetail ? getProviderChatDiagnostics(diagnosticDetail.items) : null
+    }
+  })
 })
 
 const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>

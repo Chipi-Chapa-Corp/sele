@@ -1618,7 +1618,7 @@ const getScrollBottomTop = (element: HTMLElement): number =>
   Math.max(0, element.scrollHeight - element.clientHeight)
 
 const isScrolledToBottom = (element: HTMLElement): boolean =>
-  element.scrollTop >= getScrollBottomTop(element)
+  getScrollBottomTop(element) - element.scrollTop <= 1
 
 const resetDocumentScroll = (): void => {
   window.scrollTo(0, 0)
@@ -3946,12 +3946,12 @@ export const App: React.FC = () => {
 
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
     const top = getScrollBottomTop(contentElement)
-    chatAutoScrollTargetRef.current = { element: contentElement, top }
-    if (chatVirtuosoRef.current) {
-      chatVirtuosoRef.current.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' })
-    } else {
-      contentElement.scrollTop = top
+    contentElement.scrollTop = top
+    chatAutoScrollTargetRef.current = {
+      element: contentElement,
+      top: contentElement.scrollTop
     }
+    chatVirtuosoRef.current?.autoscrollToBottom()
   }, [])
 
   const scheduleChatAutoScroll = useCallback(
@@ -5963,14 +5963,13 @@ export const App: React.FC = () => {
     if (!selectedChatKey) return
 
     const contentElement = contentRef.current
-    const contentInnerElement = chatSearchContentRef.current
+    const contentInnerElement = contentElement?.querySelector<HTMLElement>(
+      '.chat-detail__messages-inner'
+    )
     if (!contentElement || !contentInnerElement) return
 
     const observer = new ResizeObserver(() => {
-      if (
-        contentRef.current !== contentElement ||
-        chatSearchContentRef.current !== contentInnerElement
-      ) {
+      if (contentRef.current !== contentElement || !contentElement.contains(contentInnerElement)) {
         return
       }
 
@@ -8701,9 +8700,10 @@ export const App: React.FC = () => {
     if (!scrollToLatestTurnAfterRenderRef.current || renderedChatTurns.length === 0) return
     scrollToLatestTurnAfterRenderRef.current = false
     window.requestAnimationFrame(() => {
-      chatVirtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' })
+      const contentElement = contentRef.current
+      if (contentElement) scrollChatContentToBottom(contentElement)
     })
-  }, [effectiveChatTurnWindow?.endIndex, renderedChatTurns.length])
+  }, [effectiveChatTurnWindow?.endIndex, renderedChatTurns.length, scrollChatContentToBottom])
 
   const loadChatTurnPage = useCallback(
     async (direction: ChatTurnPageLoadDirection): Promise<void> => {
@@ -8963,15 +8963,25 @@ export const App: React.FC = () => {
     rootDataset.selectedChatItemCount = String(chatDetail?.items.length ?? 0)
     rootDataset.recentChatCacheEntryCount = String(recentChatCacheRef.current.size)
     rootDataset.recentChatCacheItemCount = String(recentChatCacheItemCount)
+    rootDataset.selectedChatTurnCount = String(chatTurns.length)
+    rootDataset.renderedChatTurnCount = String(renderedChatTurns.length)
     rootDataset.chatSearchOpen = chatSearchOpen ? 'true' : 'false'
 
     return () => {
       delete rootDataset.selectedChatItemCount
       delete rootDataset.recentChatCacheEntryCount
       delete rootDataset.recentChatCacheItemCount
+      delete rootDataset.selectedChatTurnCount
+      delete rootDataset.renderedChatTurnCount
       delete rootDataset.chatSearchOpen
     }
-  }, [chatDetail?.items.length, chatSearchOpen, selectedChatKey])
+  }, [
+    chatDetail?.items.length,
+    chatSearchOpen,
+    chatTurns.length,
+    renderedChatTurns.length,
+    selectedChatKey
+  ])
 
   const messageBoxContextUsage = useMemo(() => {
     const contextUsage = chatDetail?.contextUsage ?? null
@@ -11429,8 +11439,10 @@ export const App: React.FC = () => {
                       currentWindow &&
                       currentWindow.endIndex >= currentWindow.totalCount
                     )
-                    chatAutoScrollEnabledRef.current = atConversationBottom
-                    if (atConversationBottom) chatAutoScrollTargetRef.current = null
+                    if (atConversationBottom) {
+                      chatAutoScrollEnabledRef.current = true
+                      chatAutoScrollTargetRef.current = null
+                    }
                   }}
                   className="chat-detail__messages"
                   components={chatVirtuosoComponents}
@@ -11449,9 +11461,7 @@ export const App: React.FC = () => {
                   firstItemIndex={
                     chatTurnVirtuosoIndexBase + (effectiveChatTurnWindow?.startIndex ?? 0)
                   }
-                  followOutput={(atBottom) =>
-                    atBottom && chatAutoScrollEnabledRef.current ? 'auto' : false
-                  }
+                  followOutput={() => (chatAutoScrollEnabledRef.current ? 'auto' : false)}
                   id="chat-search-content"
                   initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
                   itemContent={renderVirtualChatTurn}

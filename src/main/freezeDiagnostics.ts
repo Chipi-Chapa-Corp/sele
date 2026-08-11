@@ -16,7 +16,10 @@ import {
   type AppDiagnosticsInteractionKind
 } from '../shared/app'
 import { getCodexResourceIdentity } from './providers/codex/CodexAppServerClient'
-import { getProviderIpcDiagnostics } from './providers/registerProviderIpc'
+import {
+  getProviderIpcDiagnostics,
+  type ProviderIpcDiagnostics
+} from './providers/registerProviderIpc'
 
 type DiagnosticsProcessMetric = {
   pid: number
@@ -86,12 +89,14 @@ type DiagnosticsSample = {
       ageMs: number
     }
   >
-  providerIpc: Record<string, unknown>
+  providerIpc: ProviderIpcDiagnostics
 }
 
 const sampleIntervalMs = 2_000
 const retainedSampleCount = 90
 const incidentCooldownMs = 60_000
+const rendererHeartbeatStallMs = 8_000
+const rendererHeartbeatResetMs = 4_000
 const rendererMemoryHighBytes = 768 * 1024 * 1024
 const rendererMemoryRiseFloorBytes = 384 * 1024 * 1024
 const rendererMemoryRiseBytes = 192 * 1024 * 1024
@@ -106,6 +111,7 @@ const rendererHeartbeats = new Map<number, RendererHeartbeat>()
 const rendererInteractions = new Map<number, AppDiagnosticsInteraction>()
 const samples: DiagnosticsSample[] = []
 const lastIncidentAtByReason = new Map<string, number>()
+const stalledRendererIds = new Set<number>()
 let sampling = false
 let disposed = false
 let memoryIncidentActive = false
@@ -167,6 +173,11 @@ const getBoundedCount = (value: unknown): number | null => {
   return count !== null && count >= 0 && count <= 10_000_000 ? Math.floor(count) : null
 }
 
+const getBoundedMeasurement = (value: unknown, maximum = 100_000_000): number | null => {
+  const measurement = getFiniteNumber(value)
+  return measurement !== null && measurement >= 0 && measurement <= maximum ? measurement : null
+}
+
 const getInteractionKind = (value: unknown): AppDiagnosticsInteractionKind | null =>
   typeof value === 'string' && interactionKinds.has(value as AppDiagnosticsInteractionKind)
     ? (value as AppDiagnosticsInteractionKind)
@@ -184,6 +195,10 @@ const getHeartbeat = (event: IpcMainEvent, value: unknown): RendererHeartbeat | 
   if (!value || typeof value !== 'object') return null
   const heartbeat = value as Partial<AppDiagnosticsHeartbeat>
   const timestamp = getFiniteNumber(heartbeat.timestamp)
+  const eventLoopLagMs = getBoundedMeasurement(heartbeat.eventLoopLagMs)
+  const longTaskCount = getBoundedCount(heartbeat.longTaskCount)
+  const longTaskTotalDurationMs = getBoundedMeasurement(heartbeat.longTaskTotalDurationMs)
+  const longTaskMaxDurationMs = getBoundedMeasurement(heartbeat.longTaskMaxDurationMs)
   const domNodeCount = getBoundedCount(heartbeat.domNodeCount)
   const activeAnimationCount = getBoundedCount(heartbeat.activeAnimationCount)
   const animatedIconCount = getBoundedCount(heartbeat.animatedIconCount)
@@ -192,12 +207,24 @@ const getHeartbeat = (event: IpcMainEvent, value: unknown): RendererHeartbeat | 
   const selectedChatItemCount = getBoundedCount(heartbeat.selectedChatItemCount)
   const recentChatCacheEntryCount = getBoundedCount(heartbeat.recentChatCacheEntryCount)
   const recentChatCacheItemCount = getBoundedCount(heartbeat.recentChatCacheItemCount)
+  const selectedChatTurnCount = getBoundedCount(heartbeat.selectedChatTurnCount)
+  const renderedChatTurnCount = getBoundedCount(heartbeat.renderedChatTurnCount)
+  const mountedChatTurnCount = getBoundedCount(heartbeat.mountedChatTurnCount)
+  const renderedToolElementCount = getBoundedCount(heartbeat.renderedToolElementCount)
+  const openToolDetailsCount = getBoundedCount(heartbeat.openToolDetailsCount)
+  const openToolSequenceCount = getBoundedCount(heartbeat.openToolSequenceCount)
+  const chatScrollHeightPx = getBoundedMeasurement(heartbeat.chatScrollHeightPx)
+  const chatViewportHeightPx = getBoundedMeasurement(heartbeat.chatViewportHeightPx)
   const messageInputLength = getBoundedCount(heartbeat.messageInputLength)
   const openNotesCount = getBoundedCount(heartbeat.openNotesCount)
   const openPlanCount = getBoundedCount(heartbeat.openPlanCount)
   const openWorkingDetailsCount = getBoundedCount(heartbeat.openWorkingDetailsCount)
   if (
     timestamp === null ||
+    eventLoopLagMs === null ||
+    longTaskCount === null ||
+    longTaskTotalDurationMs === null ||
+    longTaskMaxDurationMs === null ||
     domNodeCount === null ||
     activeAnimationCount === null ||
     animatedIconCount === null ||
@@ -206,6 +233,14 @@ const getHeartbeat = (event: IpcMainEvent, value: unknown): RendererHeartbeat | 
     selectedChatItemCount === null ||
     recentChatCacheEntryCount === null ||
     recentChatCacheItemCount === null ||
+    selectedChatTurnCount === null ||
+    renderedChatTurnCount === null ||
+    mountedChatTurnCount === null ||
+    renderedToolElementCount === null ||
+    openToolDetailsCount === null ||
+    openToolSequenceCount === null ||
+    chatScrollHeightPx === null ||
+    chatViewportHeightPx === null ||
     typeof heartbeat.chatSearchOpen !== 'boolean' ||
     messageInputLength === null ||
     typeof heartbeat.messageInputFocused !== 'boolean' ||
@@ -225,6 +260,10 @@ const getHeartbeat = (event: IpcMainEvent, value: unknown): RendererHeartbeat | 
 
   return {
     timestamp,
+    eventLoopLagMs,
+    longTaskCount,
+    longTaskTotalDurationMs,
+    longTaskMaxDurationMs,
     jsHeapUsedBytes: getFiniteNumber(heartbeat.jsHeapUsedBytes),
     jsHeapTotalBytes: getFiniteNumber(heartbeat.jsHeapTotalBytes),
     domNodeCount,
@@ -235,6 +274,14 @@ const getHeartbeat = (event: IpcMainEvent, value: unknown): RendererHeartbeat | 
     selectedChatItemCount,
     recentChatCacheEntryCount,
     recentChatCacheItemCount,
+    selectedChatTurnCount,
+    renderedChatTurnCount,
+    mountedChatTurnCount,
+    renderedToolElementCount,
+    openToolDetailsCount,
+    openToolSequenceCount,
+    chatScrollHeightPx,
+    chatViewportHeightPx,
     chatSearchOpen: heartbeat.chatSearchOpen,
     messageInputLength,
     messageInputFocused: heartbeat.messageInputFocused,
@@ -770,6 +817,23 @@ const findPriorSample = (
   samples.findLast((sample) => sample.timestamp <= currentSample.timestamp - ageMs) ?? null
 
 const inspectSample = (sample: DiagnosticsSample): void => {
+  for (const heartbeat of sample.rendererHeartbeats) {
+    const visible = heartbeat.visibilityState === 'visible'
+    if (visible && heartbeat.ageMs >= rendererHeartbeatStallMs) {
+      if (!stalledRendererIds.has(heartbeat.webContentsId)) {
+        stalledRendererIds.add(heartbeat.webContentsId)
+        void persistIncident('renderer-heartbeat-stalled', sample, {
+          webContentsId: heartbeat.webContentsId,
+          heartbeatAgeMs: heartbeat.ageMs,
+          lastInteractionAt: heartbeat.lastInteractionAt,
+          lastInteractionKind: heartbeat.lastInteractionKind
+        })
+      }
+    } else if (!visible || heartbeat.ageMs < rendererHeartbeatResetMs) {
+      stalledRendererIds.delete(heartbeat.webContentsId)
+    }
+  }
+
   if (memoryIncidentActive) {
     if (
       sample.rendererWorkingSetBytes < rendererMemoryResetBytes &&
@@ -829,9 +893,11 @@ const captureWindowIncident = (
 const attachWindowDiagnostics = (window: BrowserWindow): void => {
   const { webContents } = window
   webContents.on('unresponsive', () => {
+    stalledRendererIds.add(webContents.id)
     captureWindowIncident('renderer-unresponsive', webContents.id)
   })
   webContents.on('render-process-gone', (_event, details) => {
+    stalledRendererIds.add(webContents.id)
     captureWindowIncident('renderer-process-gone', webContents.id, {
       reason: details.reason,
       exitCode: details.exitCode
@@ -840,6 +906,7 @@ const attachWindowDiagnostics = (window: BrowserWindow): void => {
   webContents.once('destroyed', () => {
     rendererHeartbeats.delete(webContents.id)
     rendererInteractions.delete(webContents.id)
+    stalledRendererIds.delete(webContents.id)
   })
 }
 
