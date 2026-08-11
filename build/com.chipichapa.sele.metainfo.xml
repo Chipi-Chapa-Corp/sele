@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.0" date="2026-08-12">
+      <description>
+        <p>Added controls for enabling provider skills and apps.</p>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-08-11">
       <description>
         <p>Improved chat performance and stability with lazy and paged rendering, remote SSH container discovery, project-scoped actions, workspace terminal tabs, diagnostics, and local image previews.</p>
