@@ -513,8 +513,13 @@ export const Dropdown = <TValue extends string>({
         aria-disabled={option.disabled || undefined}
         aria-selected={selected}
         style={optionStyle}
-        onClick={() => selectOption(option)}
-        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          if (!menuOnly) selectOption(option)
+        }}
+        onMouseDown={(event) => {
+          event.preventDefault()
+          if (menuOnly) selectOption(option)
+        }}
         onPointerMove={() => {
           if (!option.disabled) {
             pointerActivatedIndexRef.current = index

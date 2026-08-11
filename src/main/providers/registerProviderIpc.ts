@@ -455,6 +455,30 @@ const requireOptionalCwd = (value: unknown): string | null => {
   return value
 }
 
+const requireProviderSkillPath = (value: unknown): string => {
+  if (
+    typeof value !== 'string' ||
+    !isAbsolute(value) ||
+    value.length > 32_768 ||
+    /[\0\r\n]/.test(value)
+  ) {
+    throw new Error('Invalid skill path')
+  }
+  return value
+}
+
+const requireProviderSkillPaths = (value: unknown): string[] => {
+  if (!Array.isArray(value) || value.length > 500) throw new Error('Invalid skill paths')
+  return Array.from(new Set(value.map(requireProviderSkillPath)))
+}
+
+const requireProviderAppId = (value: unknown): string => {
+  if (typeof value !== 'string' || !value.trim() || value.length > 512 || /[\0\r\n]/.test(value)) {
+    throw new Error('Invalid app ID')
+  }
+  return value.trim()
+}
+
 const requireBoolean = (value: unknown): boolean => {
   if (typeof value !== 'boolean') throw new Error('Invalid boolean value')
   return value
@@ -976,6 +1000,41 @@ export const registerProviderIpc = (): void => {
 
   ipcMain.handle(providerIpcChannels.getApps, (_, providerId: unknown, options: unknown) =>
     providerApi.getApps(requireProviderId(providerId), requireSourceOptions(options))
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.setSkillEnabled,
+    (_, providerId: unknown, path: unknown, enabled: unknown, cwd: unknown, options: unknown) =>
+      providerApi.setSkillEnabled(
+        requireProviderId(providerId),
+        requireProviderSkillPath(path),
+        requireBoolean(enabled),
+        requireOptionalCwd(cwd),
+        requireSourceOptions(options)
+      )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.setSkillsEnabled,
+    (_, providerId: unknown, paths: unknown, enabled: unknown, cwd: unknown, options: unknown) =>
+      providerApi.setSkillsEnabled(
+        requireProviderId(providerId),
+        requireProviderSkillPaths(paths),
+        requireBoolean(enabled),
+        requireOptionalCwd(cwd),
+        requireSourceOptions(options)
+      )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.setAppEnabled,
+    (_, providerId: unknown, appId: unknown, enabled: unknown, options: unknown) =>
+      providerApi.setAppEnabled(
+        requireProviderId(providerId),
+        requireProviderAppId(appId),
+        requireBoolean(enabled),
+        requireSourceOptions(options)
+      )
   )
 
   ipcMain.handle(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) => {

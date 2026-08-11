@@ -78,6 +78,8 @@ export type ProviderApp = {
   name: string
   description: string
   enabled: boolean
+  callable: boolean
+  skillNames: string[]
 }
 
 const providerReasoningEffortDescriptions = {
@@ -685,6 +687,26 @@ export type ProviderApi = {
     options?: ProviderSourceOptions
   ) => Promise<ProviderSkill[]>
   getApps: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderApp[]>
+  setSkillEnabled: (
+    providerId: ProviderId,
+    path: string,
+    enabled: boolean,
+    cwd?: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderSkill[]>
+  setSkillsEnabled: (
+    providerId: ProviderId,
+    paths: string[],
+    enabled: boolean,
+    cwd?: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderSkill[]>
+  setAppEnabled: (
+    providerId: ProviderId,
+    appId: string,
+    enabled: boolean,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderApp[]>
   getUsage: (
     providerId: ProviderId,
     options?: ProviderUsageOptions
@@ -834,6 +856,9 @@ export const providerIpcChannels = {
   getModels: 'provider:get-models',
   getSkills: 'provider:get-skills',
   getApps: 'provider:get-apps',
+  setSkillEnabled: 'provider:set-skill-enabled',
+  setSkillsEnabled: 'provider:set-skills-enabled',
+  setAppEnabled: 'provider:set-app-enabled',
   getUsage: 'provider:get-usage',
   resetRateLimits: 'provider:reset-rate-limits',
   getChats: 'provider:get-chats',

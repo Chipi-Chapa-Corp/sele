@@ -41,6 +41,7 @@ import {
   fallbackProviderSandboxModes,
   providerOneShotGenerationCanceledMessage
 } from '../../../shared/provider'
+import { providerAppOwnsSkill } from '../../../shared/providerOwnership'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { CodexAppServerClient, type RpcNotification, type RpcRequest } from './CodexAppServerClient'
@@ -64,6 +65,12 @@ import {
   reconcileCodexTurnSnapshots,
   shouldPreferCodexRolloutItems
 } from './CodexLiveMerge'
+import {
+  disableProviderSkill,
+  listDisabledProviderSkills,
+  mergeProviderSkills,
+  restoreProviderSkill
+} from '../providerResources'
 
 type CodexAccount =
   { type: 'apiKey' } | { type: 'chatgpt'; email: string } | { type: 'amazonBedrock' }
@@ -160,6 +167,43 @@ type AppsInstalledResponse = {
     enabled: boolean
     callable: boolean
   }>
+}
+
+type AppsReadResponse = {
+  apps: Array<{
+    id: string
+    name: string
+    description?: string | null
+  }>
+  missingAppIds: string[]
+}
+
+type PluginsInstalledResponse = {
+  marketplaces: Array<{
+    name: string
+    path?: string | null
+    plugins: Array<{
+      name: string
+      installed: boolean
+    }>
+  }>
+}
+
+type PluginReadResponse = {
+  plugin: {
+    summary: {
+      name: string
+    }
+    skills: Array<{
+      name: string
+    }>
+    apps: Array<{
+      id: string
+    }>
+    appTemplates: Array<{
+      materializedAppIds: string[]
+    }>
+  }
 }
 
 type AccountUsageResponse = {
@@ -1287,52 +1331,238 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ? (response.data.find((candidate) => candidate.cwd === cwd) ?? response.data[0])
       : response.data[0]
 
-    return (entry?.skills ?? [])
-      .flatMap((skill): ProviderSkill[] => {
-        const name = skill.name.trim()
-        const path = skill.path?.trim()
-        if (!name || !path || skill.enabled === false) return []
+    const discoveredSkills = (entry?.skills ?? []).flatMap((skill): ProviderSkill[] => {
+      const name = skill.name.trim()
+      const path = skill.path?.trim()
+      if (!name || !path) return []
 
-        return [
-          {
-            name,
-            description: skill.description?.trim() ?? '',
-            shortDescription:
-              skill.interface?.shortDescription?.trim() || skill.shortDescription?.trim() || null,
-            displayName: skill.interface?.displayName?.trim() || null,
-            path,
-            scope: skill.scope ?? 'user',
-            enabled: true
-          }
-        ]
+      return [
+        {
+          name,
+          description: skill.description?.trim() ?? '',
+          shortDescription:
+            skill.interface?.shortDescription?.trim() || skill.shortDescription?.trim() || null,
+          displayName: skill.interface?.displayName?.trim() || null,
+          path,
+          scope: skill.scope ?? 'user',
+          enabled: skill.enabled !== false
+        }
+      ]
+    })
+
+    const disabledSkills = await listDisabledProviderSkills(this.getCurrentContainer())
+    return mergeProviderSkills(discoveredSkills, disabledSkills)
+  }
+
+  setSkillEnabled = async (
+    path: string,
+    enabled: boolean,
+    cwd?: string | null,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderSkill[]> =>
+    this.runWithContainer(options.container, () =>
+      this.setSkillsEnabledInContext([path], enabled, cwd, false)
+    )
+
+  setSkillsEnabled = async (
+    paths: string[],
+    enabled: boolean,
+    cwd?: string | null,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderSkill[]> =>
+    this.runWithContainer(options.container, () =>
+      this.setSkillsEnabledInContext(paths, enabled, cwd, true)
+    )
+
+  private setSkillsEnabledInContext = async (
+    paths: string[],
+    enabled: boolean,
+    cwd?: string | null,
+    toleratePartialFailure = false
+  ): Promise<ProviderSkill[]> => {
+    const skills = await this.getSkillsInContext(cwd)
+    const skillsByPath = new Map(skills.map((skill) => [skill.path, skill]))
+    const requestedSkills = paths.map((path) => {
+      const skill = skillsByPath.get(path)
+      if (!skill) throw new Error('Skill is not available in this environment')
+      return skill
+    })
+    const changedSkills = requestedSkills.filter((skill) => skill.enabled !== enabled)
+    if (changedSkills.length === 0) return skills
+
+    const updateSkill = async (skill: ProviderSkill): Promise<void> => {
+      if (!enabled) {
+        await disableProviderSkill(skill, this.getCurrentContainer())
+        return
+      }
+
+      const restored = await restoreProviderSkill(skill.path, this.getCurrentContainer())
+      if (restored) return
+
+      await this.client.request('skills/config/write', {
+        enabled: true,
+        name: skill.name,
+        path: skill.path
       })
-      .sort((firstSkill, secondSkill) => firstSkill.name.localeCompare(secondSkill.name))
+    }
+    const updateResults = await Promise.allSettled(changedSkills.map(updateSkill))
+    const failedSkills = changedSkills.filter(
+      (_, index) => updateResults[index]?.status === 'rejected'
+    )
+    const retryResults = await Promise.allSettled(failedSkills.map(updateSkill))
+    const failedRetry = retryResults.find((result) => result.status === 'rejected')
+    if (!toleratePartialFailure && failedRetry?.status === 'rejected') throw failedRetry.reason
+
+    return this.getSkillsInContext(cwd)
   }
 
   getApps = async (options: ProviderSourceOptions = {}): Promise<ProviderApp[]> =>
     this.runWithContainer(options.container, () => this.getAppsInContext())
 
   private getAppsInContext = async (): Promise<ProviderApp[]> => {
-    const response = await this.client.request<AppsInstalledResponse>('app/installed', {
-      forceRefresh: false
-    })
+    const [response, skillNamesByAppId] = await Promise.all([
+      this.client.request<AppsInstalledResponse>('app/installed', {
+        forceRefresh: false
+      }),
+      this.getPluginSkillNamesByAppIdInContext()
+    ])
+
+    const appIds = response.apps.map((app) => app.id.trim()).filter(Boolean)
+    const metadataById = new Map<string, AppsReadResponse['apps'][number]>()
+    if (appIds.length > 0) {
+      try {
+        const metadata = await this.client.request<AppsReadResponse>('app/read', {
+          appIds: appIds.slice(0, 100),
+          includeTools: false
+        })
+        metadata.apps.forEach((app) => metadataById.set(app.id, app))
+      } catch {
+        // Runtime names still provide a useful fallback if connector metadata is unavailable.
+      }
+    }
 
     return response.apps
       .flatMap((app): ProviderApp[] => {
         const id = app.id.trim()
-        const name = app.runtimeName?.trim()
-        if (!id || !name || !app.enabled || !app.callable) return []
+        const metadata = metadataById.get(id)
+        const name = metadata?.name.trim() || app.runtimeName?.trim() || id
+        if (!id || !name) return []
 
         return [
           {
             id,
             name,
-            description: 'Connected app',
-            enabled: true
+            description: metadata?.description?.trim() || 'Connected app',
+            enabled: app.enabled,
+            callable: app.callable,
+            skillNames: skillNamesByAppId.get(id) ?? []
           }
         ]
       })
       .sort((firstApp, secondApp) => firstApp.name.localeCompare(secondApp.name))
+  }
+
+  private getPluginSkillNamesByAppIdInContext = async (): Promise<Map<string, string[]>> => {
+    let installed: PluginsInstalledResponse
+    try {
+      installed = await this.client.request<PluginsInstalledResponse>('plugin/installed', {})
+    } catch {
+      return new Map()
+    }
+
+    const plugins = installed.marketplaces.flatMap((marketplace) =>
+      marketplace.plugins
+        .filter((plugin) => plugin.installed)
+        .map((plugin) => ({ marketplace, plugin }))
+    )
+    const pluginDetails = await Promise.allSettled(
+      plugins.map(({ marketplace, plugin }) =>
+        this.client.request<PluginReadResponse>('plugin/read', {
+          pluginName: plugin.name,
+          ...(marketplace.path
+            ? { marketplacePath: marketplace.path }
+            : { remoteMarketplaceName: marketplace.name })
+        })
+      )
+    )
+    const skillNamesByAppId = new Map<string, Set<string>>()
+
+    pluginDetails.forEach((result, index) => {
+      if (result.status !== 'fulfilled') return
+
+      const plugin = result.value.plugin
+      const pluginName = plugin.summary.name.trim() || plugins[index]?.plugin.name.trim()
+      if (!pluginName) return
+
+      const skillNames = plugin.skills
+        .map((skill) => skill.name.trim())
+        .filter(Boolean)
+        .map((skillName) => (skillName.includes(':') ? skillName : `${pluginName}:${skillName}`))
+      const appIds = [
+        ...plugin.apps.map((app) => app.id),
+        ...plugin.appTemplates.flatMap((template) => template.materializedAppIds)
+      ]
+
+      appIds.forEach((appId) => {
+        const normalizedAppId = appId.trim()
+        if (!normalizedAppId) return
+        const currentSkillNames = skillNamesByAppId.get(normalizedAppId) ?? new Set<string>()
+        skillNames.forEach((skillName) => currentSkillNames.add(skillName))
+        skillNamesByAppId.set(normalizedAppId, currentSkillNames)
+      })
+    })
+
+    return new Map(
+      Array.from(skillNamesByAppId, ([appId, skillNames]) => [appId, Array.from(skillNames)])
+    )
+  }
+
+  setAppEnabled = async (
+    appId: string,
+    enabled: boolean,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderApp[]> =>
+    this.runWithContainer(options.container, () => this.setAppEnabledInContext(appId, enabled))
+
+  private setAppEnabledInContext = async (
+    appId: string,
+    enabled: boolean
+  ): Promise<ProviderApp[]> => {
+    const apps = await this.getAppsInContext()
+    const app = apps.find((candidate) => candidate.id === appId)
+    if (!app) throw new Error('App is not installed in this environment')
+    const childSkillPaths = (await this.getSkillsInContext())
+      .filter((skill) => providerAppOwnsSkill(app, skill) && skill.enabled !== enabled)
+      .map((skill) => skill.path)
+
+    const updateApp = async (): Promise<void> => {
+      if (app.enabled === enabled) return
+      await this.client.request('config/batchWrite', {
+        edits: [
+          {
+            keyPath: `apps.${appId}.enabled`,
+            mergeStrategy: 'upsert',
+            value: enabled
+          }
+        ],
+        reloadUserConfig: true
+      })
+      await this.client.request('app/installed', { forceRefresh: true })
+    }
+    const updateSkills = async (): Promise<void> => {
+      if (childSkillPaths.length === 0) return
+      await this.setSkillsEnabledInContext(childSkillPaths, enabled, undefined, false)
+    }
+
+    if (enabled) {
+      await updateSkills()
+      await updateApp()
+    } else {
+      await updateApp()
+      await updateSkills()
+    }
+
+    return this.getAppsInContext()
   }
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> =>

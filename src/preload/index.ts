@@ -113,6 +113,26 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getSkills, providerId, cwd, options),
   getApps: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getApps, providerId, options),
+  setSkillEnabled: (providerId, path, enabled, cwd, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.setSkillEnabled,
+      providerId,
+      path,
+      enabled,
+      cwd,
+      options
+    ),
+  setSkillsEnabled: (providerId, paths, enabled, cwd, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.setSkillsEnabled,
+      providerId,
+      paths,
+      enabled,
+      cwd,
+      options
+    ),
+  setAppEnabled: (providerId, appId, enabled, options) =>
+    ipcRenderer.invoke(providerIpcChannels.setAppEnabled, providerId, appId, enabled, options),
   getUsage: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getUsage, providerId, options),
   resetRateLimits: (providerId, options) =>

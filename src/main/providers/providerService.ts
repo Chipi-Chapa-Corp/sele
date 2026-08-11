@@ -274,6 +274,12 @@ export const providerApi: ProviderApi = {
   getModels: (providerId, options) => adapters[providerId].getModels(options),
   getSkills: (providerId, cwd, options) => adapters[providerId].getSkills(cwd, options),
   getApps: (providerId, options) => adapters[providerId].getApps(options),
+  setSkillEnabled: (providerId, path, enabled, cwd, options) =>
+    adapters[providerId].setSkillEnabled(path, enabled, cwd, options),
+  setSkillsEnabled: (providerId, paths, enabled, cwd, options) =>
+    adapters[providerId].setSkillsEnabled(paths, enabled, cwd, options),
+  setAppEnabled: (providerId, appId, enabled, options) =>
+    adapters[providerId].setAppEnabled(appId, enabled, options),
   getUsage: (providerId, options?: ProviderUsageOptions) => adapters[providerId].getUsage(options),
   resetRateLimits: (providerId, options) => adapters[providerId].resetRateLimits(options),
   getChats: async (providerId, options) => {

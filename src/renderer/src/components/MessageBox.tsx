@@ -95,6 +95,7 @@ type MessageBoxProps = {
   operationsDisabled?: boolean
   pending?: boolean
   providerId: ProviderId
+  providerResourcesRevision?: number
   projectCwd?: string | null
   quoteRequest?: MessageBoxQuoteRequest | null
   cwd?: string | null
@@ -212,10 +213,23 @@ type ProjectFileCache = {
 type ComposerCache = {
   cwd: string | null
   providerId: ProviderId
+  providerResourcesRevision: number
   sourceKey: string
   skills: ProviderSkill[]
   apps: ProviderApp[]
 }
+
+const isComposerCacheCurrent = (
+  cache: ComposerCache | null,
+  providerId: ProviderId,
+  cwd: string | null,
+  sourceKey: string,
+  providerResourcesRevision: number
+): cache is ComposerCache =>
+  cache?.providerId === providerId &&
+  cache.cwd === cwd &&
+  cache.sourceKey === sourceKey &&
+  cache.providerResourcesRevision === providerResourcesRevision
 
 type ComposerResult = { kind: 'skill'; skill: ProviderSkill } | { kind: 'app'; app: ProviderApp }
 type SelectorIconItem = {
@@ -949,6 +963,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   operationsDisabled = false,
   pending = false,
   providerId,
+  providerResourcesRevision = 0,
   projectCwd,
   quoteRequest = null,
   cwd = null,
@@ -1349,14 +1364,22 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const composerResults = useMemo(
     () =>
       getComposerResults(
-        composerCache?.providerId === providerId &&
-          composerCache.cwd === cwd &&
-          composerCache.sourceKey === composerSourceKey
+        isComposerCacheCurrent(
+          composerCache,
+          providerId,
+          cwd,
+          composerSourceKey,
+          providerResourcesRevision
+        )
           ? composerCache.skills
           : [],
-        composerCache?.providerId === providerId &&
-          composerCache.cwd === cwd &&
-          composerCache.sourceKey === composerSourceKey
+        isComposerCacheCurrent(
+          composerCache,
+          providerId,
+          cwd,
+          composerSourceKey,
+          providerResourcesRevision
+        )
           ? composerCache.apps
           : [],
         skillMention?.query ?? ''
@@ -1372,6 +1395,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       composerSourceKey,
       cwd,
       providerId,
+      providerResourcesRevision,
       selectedApps,
       selectedSkills,
       skillMention?.query
@@ -1466,9 +1490,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   useEffect(() => {
     if (
       !skillMentionMenuOpen ||
-      (composerCache?.providerId === providerId &&
-        composerCache.cwd === cwd &&
-        composerCache.sourceKey === composerSourceKey)
+      isComposerCacheCurrent(
+        composerCache,
+        providerId,
+        cwd,
+        composerSourceKey,
+        providerResourcesRevision
+      )
     ) {
       return
     }
@@ -1489,9 +1517,16 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       setComposerCache({
         cwd,
         providerId,
+        providerResourcesRevision,
         sourceKey: composerSourceKey,
-        skills: skillsResult.status === 'fulfilled' ? skillsResult.value : [],
-        apps: appsResult.status === 'fulfilled' ? appsResult.value : []
+        skills:
+          skillsResult.status === 'fulfilled'
+            ? skillsResult.value.filter((skill) => skill.enabled)
+            : [],
+        apps:
+          appsResult.status === 'fulfilled'
+            ? appsResult.value.filter((app) => app.enabled && app.callable)
+            : []
       })
       setComposerLoadErrorScope(null)
     })
@@ -1505,6 +1540,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     container,
     cwd,
     providerId,
+    providerResourcesRevision,
     skillMentionMenuOpen,
     skillScope
   ])
@@ -1670,9 +1706,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     const nextMessage = message.trim()
     const typedSkillInputs = getSelectedSkillInputs(
       nextMessage,
-      composerCache?.providerId === providerId &&
-        composerCache.cwd === cwd &&
-        composerCache.sourceKey === composerSourceKey
+      isComposerCacheCurrent(
+        composerCache,
+        providerId,
+        cwd,
+        composerSourceKey,
+        providerResourcesRevision
+      )
         ? composerCache.skills
         : []
     )
@@ -2261,9 +2301,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const mentionDropdownEmptyContent = skillMentionMenuOpen ? (
     composerLoadErrorScope === skillScope ? (
       <div className="message-box__file-mention-status">Unable to load skills and apps</div>
-    ) : composerCache?.providerId !== providerId ||
-      composerCache.cwd !== cwd ||
-      composerCache.sourceKey !== composerSourceKey ? (
+    ) : !isComposerCacheCurrent(
+        composerCache,
+        providerId,
+        cwd,
+        composerSourceKey,
+        providerResourcesRevision
+      ) ? (
       <div className="message-box__file-mention-status">Loading skills and apps…</div>
     ) : (
       <div className="message-box__file-mention-status">No matching skills or apps</div>

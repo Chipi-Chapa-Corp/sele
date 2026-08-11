@@ -47,6 +47,12 @@ import {
   providerOneShotGenerationCanceledMessage
 } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import {
+  disableProviderSkill,
+  listDisabledProviderSkills,
+  mergeProviderSkills,
+  restoreProviderSkill
+} from '../providerResources'
 import { getCopilotExecutable } from './CopilotExecutable'
 import { renderCopilotChatItems, type CopilotRenderedPlan } from './CopilotItemRenderers'
 
@@ -570,25 +576,82 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       ...(cwd ? { projectPaths: [cwd] } : {})
     })
 
-    return result.skills
-      .flatMap((skill): ProviderSkill[] => {
-        if (!skill.enabled || !skill.userInvocable || !skill.path) return []
-        return [
-          {
-            name: skill.name,
-            description: skill.description,
-            shortDescription: skill.description || null,
-            displayName: null,
-            path: skill.path,
-            scope: getSkillScope(skill.source),
-            enabled: true
-          }
-        ]
-      })
-      .sort((first, second) => first.name.localeCompare(second.name))
+    const discoveredSkills = result.skills.flatMap((skill): ProviderSkill[] => {
+      if (!skill.enabled || !skill.userInvocable || !skill.path) return []
+      return [
+        {
+          name: skill.name,
+          description: skill.description,
+          shortDescription: skill.description || null,
+          displayName: null,
+          path: skill.path,
+          scope: getSkillScope(skill.source),
+          enabled: true
+        }
+      ]
+    })
+
+    const disabledSkills = await listDisabledProviderSkills(options.container)
+    return mergeProviderSkills(discoveredSkills, disabledSkills)
   }
 
   getApps = async (): Promise<ProviderApp[]> => []
+
+  setSkillEnabled = async (
+    path: string,
+    enabled: boolean,
+    cwd?: string | null,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderSkill[]> =>
+    this.setSkillsEnabledInContext([path], enabled, cwd, options, false)
+
+  setSkillsEnabled = async (
+    paths: string[],
+    enabled: boolean,
+    cwd?: string | null,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderSkill[]> => this.setSkillsEnabledInContext(paths, enabled, cwd, options, true)
+
+  private setSkillsEnabledInContext = async (
+    paths: string[],
+    enabled: boolean,
+    cwd: string | null | undefined,
+    options: ProviderSourceOptions,
+    toleratePartialFailure: boolean
+  ): Promise<ProviderSkill[]> => {
+    const skills = await this.getSkills(cwd, options)
+    const skillsByPath = new Map(skills.map((skill) => [skill.path, skill]))
+    const requestedSkills = paths.map((path) => {
+      const skill = skillsByPath.get(path)
+      if (!skill) throw new Error('Skill is not available in this environment')
+      return skill
+    })
+    const changedSkills = requestedSkills.filter((skill) => skill.enabled !== enabled)
+    if (changedSkills.length === 0) return skills
+
+    const updateSkill = async (skill: ProviderSkill): Promise<void> => {
+      if (!enabled) {
+        await disableProviderSkill(skill, options.container)
+        return
+      }
+
+      const restored = await restoreProviderSkill(skill.path, options.container)
+      if (!restored) throw new Error('Skill was not disabled by Sele')
+    }
+    const updateResults = await Promise.allSettled(changedSkills.map(updateSkill))
+    const failedSkills = changedSkills.filter(
+      (_, index) => updateResults[index]?.status === 'rejected'
+    )
+    const retryResults = await Promise.allSettled(failedSkills.map(updateSkill))
+    const failedRetry = retryResults.find((result) => result.status === 'rejected')
+    if (!toleratePartialFailure && failedRetry?.status === 'rejected') throw failedRetry.reason
+
+    return this.getSkills(cwd, options)
+  }
+
+  setAppEnabled = async (): Promise<ProviderApp[]> => {
+    throw new Error('Copilot does not expose connected apps')
+  }
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
     const client = await this.ensureClient(options.container)

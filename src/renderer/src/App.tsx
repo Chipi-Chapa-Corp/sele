@@ -19,6 +19,7 @@ import {
   ArrowLeft,
   BadgeCheck,
   BellOff,
+  Blocks,
   Bot,
   Box,
   Boxes,
@@ -138,6 +139,7 @@ import type {
   ProviderSandboxMode,
   ProviderSandboxModeOption,
   ProviderAppInput,
+  ProviderSkill,
   ProviderSkillInput,
   ProviderTurnOptions,
   ProviderUsageOptions,
@@ -148,6 +150,15 @@ import {
   unloadChatItemsOutsideTurnRange,
   type ProviderChatTurn
 } from '../../shared/chatTurns'
+import {
+  areAnySettingsProviderSkillsEnabled,
+  groupSettingsProviderResources,
+  isSettingsProviderAppGroupEnabled,
+  resolveSettingsProviderSkillUpdates,
+  shouldShowSettingsProviderAppSkills,
+  type SettingsProviderApp,
+  type SettingsProviderSkill
+} from '../../shared/providerOwnership'
 import {
   fallbackCopilotModels,
   fallbackProviderApprovalModes,
@@ -343,8 +354,9 @@ type DirectCommitActivity = {
 type GitSyncRecoveryActionOptions = {
   rememberStrategy?: boolean
 }
-type SettingsTab = 'appearance' | 'chat' | 'links' | 'performance' | 'git'
+type SettingsTab = 'appearance' | 'chat' | 'providers' | 'links' | 'performance' | 'git'
 type SettingsScope = 'global' | 'project'
+type ProviderResourcesLoadState = 'idle' | 'loading' | 'ready'
 type CachedPatchChangedFiles = {
   containerKey: string
   cwd: string
@@ -874,6 +886,45 @@ const providerLabels = {
   codex: 'Codex',
   copilot: 'Copilot'
 } satisfies Record<ProviderId, string>
+
+const getFirstSentence = (value: string): string => {
+  const normalizedValue = value.replace(/\s+/g, ' ').trim()
+  if (!normalizedValue) return ''
+
+  return /^.*?[.!?](?=\s|$)/.exec(normalizedValue)?.[0] ?? normalizedValue
+}
+
+const getSettingsSkillDescription = (skill: ProviderSkill): string =>
+  skill.shortDescription?.trim() || getFirstSentence(skill.description) || 'No description'
+
+const mergeSettingsProviderSkills = (
+  resources: Array<{ providerId: ProviderId; skills: ProviderSkill[] }>
+): SettingsProviderSkill[] => {
+  const skillsByPath = new Map<string, SettingsProviderSkill>()
+
+  resources.forEach(({ providerId, skills }) => {
+    skills.forEach((skill) => {
+      const current = skillsByPath.get(skill.path)
+      if (!current) {
+        skillsByPath.set(skill.path, { providerId, providerIds: [providerId], skill })
+        return
+      }
+
+      const providerIds = current.providerIds.includes(providerId)
+        ? current.providerIds
+        : [...current.providerIds, providerId]
+      skillsByPath.set(skill.path, {
+        providerId: current.skill.enabled || !skill.enabled ? current.providerId : providerId,
+        providerIds,
+        skill: current.skill.enabled || !skill.enabled ? current.skill : skill
+      })
+    })
+  })
+
+  return Array.from(skillsByPath.values()).sort((first, second) =>
+    first.skill.name.localeCompare(second.skill.name)
+  )
+}
 
 const getFallbackModels = (providerId: ProviderId): ProviderModel[] =>
   providerId === 'copilot' ? fallbackCopilotModels : fallbackProviderModels
@@ -1972,6 +2023,11 @@ const settingsTabOptions = [
     value: 'chat',
     label: 'Chat',
     icon: <MessageSquare aria-hidden="true" />
+  },
+  {
+    value: 'providers',
+    label: 'Providers',
+    icon: <Blocks aria-hidden="true" />
   },
   {
     value: 'links',
@@ -3654,6 +3710,16 @@ export const App: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('appearance')
   const [settingsScope, setSettingsScope] = useState<SettingsScope>('global')
+  const [settingsProviderSkills, setSettingsProviderSkills] = useState<SettingsProviderSkill[]>([])
+  const [settingsProviderApps, setSettingsProviderApps] = useState<SettingsProviderApp[]>([])
+  const [providerResourcesLoadState, setProviderResourcesLoadState] =
+    useState<ProviderResourcesLoadState>('idle')
+  const [providerResourcesError, setProviderResourcesError] = useState<string | null>(null)
+  const [providerResourceUpdatingKey, setProviderResourceUpdatingKey] = useState<string | null>(
+    null
+  )
+  const [providerResourcesRefresh, setProviderResourcesRefresh] = useState(0)
+  const [providerResourcesRevision, setProviderResourcesRevision] = useState(0)
   const [fileEditorTarget, setFileEditorTarget] = useState<FileEditorTarget | null>(null)
   const [selectedReview, setSelectedReview] = useState<Omit<ProviderReview, 'prompt'> | null>(null)
   const [reviewCommentsDraft, setReviewCommentsDraft] = useState<ProviderReviewComment[]>([])
@@ -4621,6 +4687,91 @@ export const App: React.FC = () => {
       active = false
     }
   }, [newSessionContainer, newSessionContainerKey])
+
+  useEffect(() => {
+    if (!settingsOpen || settingsTab !== 'providers') return
+
+    let active = true
+    if (!newSessionSourceAvailabilityReady) {
+      queueMicrotask(() => {
+        if (!active) return
+        setSettingsProviderSkills([])
+        setSettingsProviderApps([])
+        setProviderResourcesError(null)
+        setProviderResourcesLoadState('loading')
+      })
+      return () => {
+        active = false
+      }
+    }
+
+    const availableProviderIds = newSessionAvailableProviderIds
+    if (availableProviderIds.length === 0) {
+      queueMicrotask(() => {
+        if (!active) return
+        setSettingsProviderSkills([])
+        setSettingsProviderApps([])
+        setProviderResourcesError('No providers are available in this environment.')
+        setProviderResourcesLoadState('ready')
+      })
+      return () => {
+        active = false
+      }
+    }
+
+    const container = normalizeContainerTarget(newSessionContainer)
+    queueMicrotask(() => {
+      if (!active) return
+      setSettingsProviderSkills([])
+      setSettingsProviderApps([])
+      setProviderResourcesError(null)
+      setProviderResourcesLoadState('loading')
+    })
+
+    void Promise.all(
+      availableProviderIds.map(async (providerId) => {
+        const [skills, apps] = await Promise.allSettled([
+          providerApi.getSkills(providerId, settingsProjectCwd, { container }),
+          providerApi.getApps(providerId, { container })
+        ])
+
+        return {
+          providerId,
+          skills: skills.status === 'fulfilled' ? skills.value : [],
+          apps: apps.status === 'fulfilled' ? apps.value : [],
+          failed: skills.status === 'rejected' && apps.status === 'rejected'
+        }
+      })
+    ).then((resources) => {
+      if (!active) return
+
+      setSettingsProviderSkills(mergeSettingsProviderSkills(resources))
+      setSettingsProviderApps(
+        resources
+          .flatMap(({ providerId, apps }) => apps.map((app) => ({ providerId, app })))
+          .sort((first, second) => first.app.name.localeCompare(second.app.name))
+      )
+      setProviderResourcesError(
+        resources.every((resource) => resource.failed)
+          ? 'Unable to inspect provider resources in this environment.'
+          : null
+      )
+      setProviderResourcesLoadState('ready')
+    })
+
+    return () => {
+      active = false
+    }
+  }, [
+    newSessionAvailableProviderIds,
+    newSessionContainer,
+    newSessionContainerKey,
+    newSessionSourceAvailabilityReady,
+    providerResourcesRefresh,
+    settingsOpen,
+    settingsProjectCwd,
+    settingsTab
+  ])
 
   useEffect(() => {
     if (newSessionAvailableProviderIds.length === 0 || newSessionProviderAvailable) return
@@ -6809,6 +6960,186 @@ export const App: React.FC = () => {
       name: newSessionSshEnvironmentId,
       runtime: getContainerTargetFromSuggestion(suggestion)
     })
+  }
+  const handleProviderSkillEnabledChange = async (
+    resource: SettingsProviderSkill,
+    enabled: boolean
+  ): Promise<void> => {
+    const updateKey = `skill:${resource.skill.path}`
+    if (providerResourceUpdatingKey || resource.skill.enabled === enabled) return
+
+    setProviderResourceUpdatingKey(updateKey)
+    setProviderResourcesError(null)
+    setSettingsProviderSkills((currentResources) =>
+      currentResources.map((currentResource) =>
+        currentResource.skill.path === resource.skill.path
+          ? { ...currentResource, skill: { ...currentResource.skill, enabled } }
+          : currentResource
+      )
+    )
+    try {
+      await providerApi.setSkillEnabled(
+        resource.providerId,
+        resource.skill.path,
+        enabled,
+        settingsProjectCwd,
+        { container: normalizeContainerTarget(newSessionContainer) }
+      )
+    } catch (error) {
+      setSettingsProviderSkills((currentResources) =>
+        currentResources.map((currentResource) =>
+          currentResource.skill.path === resource.skill.path
+            ? {
+                ...currentResource,
+                skill: { ...currentResource.skill, enabled: resource.skill.enabled }
+              }
+            : currentResource
+        )
+      )
+      setProviderResourcesError(getErrorMessage(error, 'Unable to update skill.'))
+    } finally {
+      setProviderResourcesRevision((revision) => revision + 1)
+      setProviderResourceUpdatingKey(null)
+    }
+  }
+  const handleProviderAppEnabledChange = async (
+    resource: SettingsProviderApp,
+    childSkills: SettingsProviderSkill[],
+    enabled: boolean
+  ): Promise<void> => {
+    const updateKey = `app:${resource.providerId}:${resource.app.id}`
+    const childSkillPaths = new Set(childSkills.map((childSkill) => childSkill.skill.path))
+    if (
+      providerResourceUpdatingKey ||
+      (resource.app.enabled === enabled &&
+        childSkills.every((childSkill) => childSkill.skill.enabled === enabled))
+    ) {
+      return
+    }
+
+    setProviderResourceUpdatingKey(updateKey)
+    setProviderResourcesError(null)
+    setSettingsProviderApps((currentResources) =>
+      currentResources.map((currentResource) =>
+        currentResource.providerId === resource.providerId &&
+        currentResource.app.id === resource.app.id
+          ? { ...currentResource, app: { ...currentResource.app, enabled } }
+          : currentResource
+      )
+    )
+    setSettingsProviderSkills((currentResources) =>
+      currentResources.map((currentResource) =>
+        childSkillPaths.has(currentResource.skill.path)
+          ? { ...currentResource, skill: { ...currentResource.skill, enabled } }
+          : currentResource
+      )
+    )
+    try {
+      await providerApi.setAppEnabled(resource.providerId, resource.app.id, enabled, {
+        container: normalizeContainerTarget(newSessionContainer)
+      })
+    } catch (error) {
+      const previousChildState = new Map(
+        childSkills.map((childSkill) => [childSkill.skill.path, childSkill.skill.enabled])
+      )
+      setSettingsProviderApps((currentResources) =>
+        currentResources.map((currentResource) =>
+          currentResource.providerId === resource.providerId &&
+          currentResource.app.id === resource.app.id
+            ? {
+                ...currentResource,
+                app: { ...currentResource.app, enabled: resource.app.enabled }
+              }
+            : currentResource
+        )
+      )
+      setSettingsProviderSkills((currentResources) =>
+        currentResources.map((currentResource) => {
+          const previousEnabled = previousChildState.get(currentResource.skill.path)
+          return previousEnabled == null
+            ? currentResource
+            : {
+                ...currentResource,
+                skill: { ...currentResource.skill, enabled: previousEnabled }
+              }
+        })
+      )
+      setProviderResourcesError(getErrorMessage(error, 'Unable to update app.'))
+    } finally {
+      setProviderResourcesRevision((revision) => revision + 1)
+      setProviderResourceUpdatingKey(null)
+    }
+  }
+  const handleProviderSkillsEnabledChange = async (
+    resources: SettingsProviderSkill[],
+    enabled: boolean
+  ): Promise<void> => {
+    const changedResources = resources.filter((resource) => resource.skill.enabled !== enabled)
+    if (providerResourceUpdatingKey || changedResources.length === 0) return
+
+    const updateKey = 'skills:unparented'
+    const changedSkillPaths = new Set(changedResources.map((resource) => resource.skill.path))
+    const previousSkillState = new Map(
+      changedResources.map((resource) => [resource.skill.path, resource.skill.enabled])
+    )
+    const pathsByProvider = new Map<ProviderId, string[]>()
+    changedResources.forEach((resource) => {
+      pathsByProvider.set(resource.providerId, [
+        ...(pathsByProvider.get(resource.providerId) ?? []),
+        resource.skill.path
+      ])
+    })
+
+    setProviderResourceUpdatingKey(updateKey)
+    setProviderResourcesError(null)
+    setSettingsProviderSkills((currentResources) =>
+      currentResources.map((currentResource) =>
+        changedSkillPaths.has(currentResource.skill.path)
+          ? { ...currentResource, skill: { ...currentResource.skill, enabled } }
+          : currentResource
+      )
+    )
+    try {
+      const updatedSkillLists = await Promise.all(
+        Array.from(pathsByProvider, ([providerId, paths]) =>
+          providerApi.setSkillsEnabled(providerId, paths, enabled, settingsProjectCwd, {
+            container: normalizeContainerTarget(newSessionContainer)
+          })
+        )
+      )
+      const updateResolution = resolveSettingsProviderSkillUpdates(
+        changedResources,
+        updatedSkillLists.flat(),
+        enabled
+      )
+      setSettingsProviderSkills((currentResources) =>
+        currentResources.map((currentResource) => {
+          const updatedSkill = updateResolution.skillsByPath.get(currentResource.skill.path)
+          return updatedSkill ? { ...currentResource, skill: updatedSkill } : currentResource
+        })
+      )
+      if (updateResolution.failedCount > 0) {
+        setProviderResourcesError(
+          `${updateResolution.failedCount} ${updateResolution.failedCount === 1 ? 'skill' : 'skills'} could not be updated.`
+        )
+      }
+    } catch (error) {
+      setSettingsProviderSkills((currentResources) =>
+        currentResources.map((currentResource) => {
+          const previousEnabled = previousSkillState.get(currentResource.skill.path)
+          return previousEnabled == null
+            ? currentResource
+            : {
+                ...currentResource,
+                skill: { ...currentResource.skill, enabled: previousEnabled }
+              }
+        })
+      )
+      setProviderResourcesError(getErrorMessage(error, 'Unable to update skills.'))
+    } finally {
+      setProviderResourcesRevision((revision) => revision + 1)
+      setProviderResourceUpdatingKey(null)
+    }
   }
   const handleSaveSshEnvironment = async (
     options: AppCreateSshEnvironmentOptions
@@ -10421,6 +10752,289 @@ export const App: React.FC = () => {
       specialOptions: readonly DropdownOption<string>[]
     }[]
 
+    if (settingsTab === 'providers') {
+      const providerResourcesLoading = providerResourcesLoadState !== 'ready'
+      const { appGroups, unparentedSkills } = groupSettingsProviderResources(
+        settingsProviderSkills,
+        settingsProviderApps
+      )
+      const unparentedSkillsEnabled = areAnySettingsProviderSkillsEnabled(unparentedSkills)
+
+      return (
+        <section
+          className="settings-dialog__panel"
+          id="settings-panel-providers"
+          role="tabpanel"
+          aria-label="Provider settings"
+        >
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-providers-environment"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-providers-environment">
+              Environment
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div className="settings-dialog__field-header">
+                  <h3>Runtime</h3>
+                  <p>Inspect the skills and connected apps available to this environment.</p>
+                </div>
+                <Dropdown
+                  aria-label="Provider environment"
+                  disabled={Boolean(providerResourceUpdatingKey)}
+                  menuActions={[
+                    ...(sshEnvironmentError
+                      ? [
+                          {
+                            id: 'provider-environment-error',
+                            label: sshEnvironmentError,
+                            title: sshEnvironmentError,
+                            disabled: true,
+                            icon: <X aria-hidden="true" />,
+                            callback: () => {}
+                          }
+                        ]
+                      : []),
+                    {
+                      id: 'provider-add-environment',
+                      label: 'Add environment',
+                      title: 'Add environment',
+                      icon: <PackagePlus aria-hidden="true" />,
+                      callback: () => {
+                        setEditingSshEnvironment(null)
+                        setSshEnvironmentError(null)
+                        setSshEnvironmentDialogOpen(true)
+                      }
+                    }
+                  ]}
+                  menuAlign="end"
+                  options={containerOptions}
+                  value={newSessionContainerValue}
+                  valueContent={!newSessionSourceAvailabilityReady ? 'Checking' : undefined}
+                  onChange={handleNewSessionContainerChange}
+                />
+              </div>
+              {newSessionSshEnvironmentId && newSessionRemoteRuntime && (
+                <div className="settings-dialog__field settings-dialog__field--inline">
+                  <div className="settings-dialog__field-header">
+                    <h3>Remote runtime</h3>
+                    <p>Choose the host or container used after connecting over SSH.</p>
+                  </div>
+                  <Dropdown
+                    aria-label="Provider remote runtime"
+                    disabled={
+                      Boolean(providerResourceUpdatingKey) || remoteContainerSuggestionsLoading
+                    }
+                    menuAlign="end"
+                    options={remoteRuntimeOptions}
+                    value={getContainerTargetKey(newSessionRemoteRuntime)}
+                    valueContent={remoteContainerSuggestionsLoading ? 'Checking' : undefined}
+                    onChange={handleNewSessionRemoteRuntimeChange}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+          {providerResourcesError && (
+            <section
+              className="settings-dialog__section"
+              aria-labelledby="settings-providers-status"
+            >
+              <h2 className="settings-dialog__section-heading" id="settings-providers-status">
+                Status
+              </h2>
+              <div className="settings-dialog__section-cards">
+                <div className="settings-dialog__field settings-dialog__field--inline">
+                  <div className="settings-dialog__field-header">
+                    <h3>{providerResourcesError}</h3>
+                  </div>
+                  <Button
+                    callback={() => setProviderResourcesRefresh((refresh) => refresh + 1)}
+                    disabled={providerResourcesLoading || Boolean(providerResourceUpdatingKey)}
+                    icon={<RefreshCw aria-hidden="true" />}
+                    label={<span>Retry</span>}
+                    size="small"
+                    theme="secondary"
+                  />
+                </div>
+              </div>
+            </section>
+          )}
+          {providerResourcesLoading ? (
+            <section className="settings-dialog__section" aria-labelledby="settings-providers-apps">
+              <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
+                Apps
+              </h2>
+              <div className="settings-dialog__section-cards">
+                <div className="settings-dialog__field">
+                  <div className="settings-dialog__field-header">
+                    <h3>Loading apps…</h3>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : appGroups.length === 0 ? (
+            <section className="settings-dialog__section" aria-labelledby="settings-providers-apps">
+              <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
+                Apps
+              </h2>
+              <div className="settings-dialog__section-cards">
+                <div className="settings-dialog__field">
+                  <div className="settings-dialog__field-header">
+                    <h3>No connected apps found</h3>
+                    <p>This environment did not report any installed apps.</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : (
+            appGroups.map((group, appIndex) => {
+              const { resource } = group
+              const toggleId = `settings-provider-app-${appIndex}`
+              const updateKey = `app:${resource.providerId}:${resource.app.id}`
+              const appEnabled = isSettingsProviderAppGroupEnabled(group)
+
+              return (
+                <section
+                  className="settings-dialog__section"
+                  aria-label={resource.app.name}
+                  key={updateKey}
+                >
+                  {appIndex === 0 && (
+                    <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
+                      Apps
+                    </h2>
+                  )}
+                  <div className="settings-dialog__section-cards">
+                    <div className="settings-dialog__field">
+                      <div className="settings-dialog__field-header">
+                        <h3 id={toggleId}>{resource.app.name}</h3>
+                        <p>
+                          {resource.app.description}
+                          {resource.app.enabled && !resource.app.callable
+                            ? ' Not currently callable.'
+                            : ''}
+                        </p>
+                      </div>
+                      <Switch
+                        className="settings-switch"
+                        aria-labelledby={toggleId}
+                        checked={appEnabled}
+                        disabled={Boolean(providerResourceUpdatingKey)}
+                        onChange={(event) =>
+                          void handleProviderAppEnabledChange(
+                            resource,
+                            group.skills,
+                            event.currentTarget.checked
+                          )
+                        }
+                      />
+                    </div>
+                    {shouldShowSettingsProviderAppSkills(group) &&
+                      group.skills.map((childSkill, skillIndex) => {
+                        const skillToggleId = `settings-provider-app-${appIndex}-skill-${skillIndex}`
+
+                        return (
+                          <div className="settings-dialog__field" key={childSkill.skill.path}>
+                            <div className="settings-dialog__field-header">
+                              <h3 id={skillToggleId}>{childSkill.skill.name}</h3>
+                              <p>{getSettingsSkillDescription(childSkill.skill)}</p>
+                              <p title={childSkill.skill.path}>{childSkill.skill.path}</p>
+                            </div>
+                            <Switch
+                              className="settings-switch"
+                              aria-labelledby={skillToggleId}
+                              checked={childSkill.skill.enabled}
+                              disabled={Boolean(providerResourceUpdatingKey)}
+                              onChange={(event) =>
+                                void handleProviderSkillEnabledChange(
+                                  childSkill,
+                                  event.currentTarget.checked
+                                )
+                              }
+                            />
+                          </div>
+                        )
+                      })}
+                  </div>
+                </section>
+              )
+            })
+          )}
+          <section className="settings-dialog__section" aria-labelledby="settings-providers-skills">
+            <h2 className="settings-dialog__section-heading" id="settings-providers-skills">
+              Skills
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field">
+                <div className="settings-dialog__field-header">
+                  <h3 id="settings-provider-unparented-skills">All standalone skills</h3>
+                  <p>Enable or disable skills that are not part of an app.</p>
+                </div>
+                <Switch
+                  className="settings-switch"
+                  aria-labelledby="settings-provider-unparented-skills"
+                  checked={unparentedSkillsEnabled}
+                  disabled={
+                    providerResourcesLoading ||
+                    unparentedSkills.length === 0 ||
+                    Boolean(providerResourceUpdatingKey)
+                  }
+                  onChange={(event) =>
+                    void handleProviderSkillsEnabledChange(
+                      unparentedSkills,
+                      event.currentTarget.checked
+                    )
+                  }
+                />
+              </div>
+              {providerResourcesLoading ? (
+                <div className="settings-dialog__field">
+                  <div className="settings-dialog__field-header">
+                    <h3>Loading skills…</h3>
+                  </div>
+                </div>
+              ) : unparentedSkills.length === 0 ? (
+                <div className="settings-dialog__field">
+                  <div className="settings-dialog__field-header">
+                    <h3>No standalone skills found</h3>
+                    <p>All reported skills belong to an app.</p>
+                  </div>
+                </div>
+              ) : (
+                unparentedSkills.map((resource, index) => {
+                  const toggleId = `settings-provider-skill-${index}`
+
+                  return (
+                    <div className="settings-dialog__field" key={resource.skill.path}>
+                      <div className="settings-dialog__field-header">
+                        <h3 id={toggleId}>{resource.skill.name}</h3>
+                        <p>{getSettingsSkillDescription(resource.skill)}</p>
+                        <p title={resource.skill.path}>{resource.skill.path}</p>
+                      </div>
+                      <Switch
+                        className="settings-switch"
+                        aria-labelledby={toggleId}
+                        checked={resource.skill.enabled}
+                        disabled={Boolean(providerResourceUpdatingKey)}
+                        onChange={(event) =>
+                          void handleProviderSkillEnabledChange(
+                            resource,
+                            event.currentTarget.checked
+                          )
+                        }
+                      />
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </section>
+        </section>
+      )
+    }
+
     if (settingsTab === 'chat') {
       return (
         <section
@@ -11146,29 +11760,31 @@ export const App: React.FC = () => {
                 )
               })}
             </nav>
-            <div className="settings-dialog__scope">
-              <SegmentedControl<SettingsScope>
-                aria-label="Settings scope"
-                className="settings-dialog__scope-switcher"
-                options={[
-                  { value: 'global', label: 'Global' },
-                  {
-                    value: 'project',
-                    label: settingsProjectLabel,
-                    disabled: !settingsProjectCwd,
-                    title: settingsProjectCwd ?? 'No project selected'
-                  }
-                ]}
-                size="small"
-                value={settingsViewIsProject ? 'project' : 'global'}
-                onChange={(scope) => {
-                  if (scope === 'project' && !settingsProjectCwd) return
-                  setAppearanceZoomLevelInputDraft(null)
-                  setAppearanceFontSizeInputDraft(null)
-                  setSettingsScope(scope)
-                }}
-              />
-            </div>
+            {settingsTab !== 'providers' && (
+              <div className="settings-dialog__scope">
+                <SegmentedControl<SettingsScope>
+                  aria-label="Settings scope"
+                  className="settings-dialog__scope-switcher"
+                  options={[
+                    { value: 'global', label: 'Global' },
+                    {
+                      value: 'project',
+                      label: settingsProjectLabel,
+                      disabled: !settingsProjectCwd,
+                      title: settingsProjectCwd ?? 'No project selected'
+                    }
+                  ]}
+                  size="small"
+                  value={settingsViewIsProject ? 'project' : 'global'}
+                  onChange={(scope) => {
+                    if (scope === 'project' && !settingsProjectCwd) return
+                    setAppearanceZoomLevelInputDraft(null)
+                    setAppearanceFontSizeInputDraft(null)
+                    setSettingsScope(scope)
+                  }}
+                />
+              </div>
+            )}
           </aside>
           <div className="settings-dialog__body">{renderSettingsPanel()}</div>
         </section>
@@ -11924,6 +12540,7 @@ export const App: React.FC = () => {
                   }
                   pending={sendState === 'sending'}
                   providerId={selectedChat?.providerId ?? newSessionProvider}
+                  providerResourcesRevision={providerResourcesRevision}
                   projectCwd={changesProjectCwd}
                   quoteRequest={messageBoxQuoteRequest}
                   cwd={changesCwd}

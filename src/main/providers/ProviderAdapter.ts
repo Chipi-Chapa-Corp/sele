@@ -38,6 +38,23 @@ export type ProviderAdapter = {
   getModels: (options?: ProviderSourceOptions) => Promise<ProviderModel[]>
   getSkills: (cwd?: string | null, options?: ProviderSourceOptions) => Promise<ProviderSkill[]>
   getApps: (options?: ProviderSourceOptions) => Promise<ProviderApp[]>
+  setSkillEnabled: (
+    path: string,
+    enabled: boolean,
+    cwd?: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderSkill[]>
+  setSkillsEnabled: (
+    paths: string[],
+    enabled: boolean,
+    cwd?: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderSkill[]>
+  setAppEnabled: (
+    appId: string,
+    enabled: boolean,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderApp[]>
   getUsage: (options?: ProviderUsageOptions) => Promise<ProviderAccountUsage>
   resetRateLimits: (
     options?: ProviderSourceOptions
