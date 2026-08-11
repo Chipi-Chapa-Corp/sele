@@ -4,7 +4,6 @@ import {
   type ForwardRefExoticComponent,
   type HTMLAttributes,
   type RefAttributes,
-  forwardRef,
   startTransition,
   useCallback,
   useEffect,
@@ -13,6 +12,7 @@ import {
   useRef,
   useState
 } from 'react'
+import { flushSync } from 'react-dom'
 import {
   Apple,
   AppWindow,
@@ -77,12 +77,6 @@ import {
   MessageSquareMoreIcon as AnimatedMessageSquareMoreIcon,
   UploadIcon as AnimatedUploadIcon
 } from 'lucide-animated'
-import {
-  Virtuoso,
-  type Components as VirtuosoComponents,
-  type ListRange,
-  type VirtuosoHandle
-} from 'react-virtuoso'
 import {
   FileIcon as SymbolsFileIcon,
   FolderIcon as SymbolsFolderIcon
@@ -236,6 +230,7 @@ import {
   scrollChatSearchMatchIntoView,
   setChatSearchHighlights
 } from './chatSearch'
+import { getLatestChatTurnWindow, shiftChatTurnWindow, type ChatTurnWindow } from './chatTurnWindow'
 import './App.css'
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -245,11 +240,10 @@ type WorktreeCreationState = 'idle' | 'creating' | 'canceling'
 type ApplyChatDetailOptions = {
   select?: boolean
 }
-type ChatTurnWindow = {
+type ChatScrollAnchor = {
   chatKey: string
-  endIndex: number
-  startIndex: number
-  totalCount: number
+  offset: number
+  turnId: string
 }
 type ChatTurnPageLoadDirection = 'older' | 'newer' | 'latest'
 type CommittedChatUpdate = {
@@ -788,8 +782,8 @@ type UncommittedPatchFilter = {
 
 const chatListFetchPageSize = 100
 const chatTurnPageSize = 10
-const chatTurnWindowTrimThreshold = 15
-const chatTurnVirtuosoIndexBase = 1_000_000
+const chatTurnWindowSize = chatTurnPageSize * 2
+const chatTurnLoadThresholdPx = 80
 const streamingChatUpdateIntervalMs = 50
 const chatSidebarDefaultWidth = 280
 const changesSidebarDefaultWidth = 240
@@ -831,26 +825,6 @@ const fallbackDefaultSandboxMode =
   fallbackProviderSandboxModes.find((mode) => mode.isDefault)?.id ??
   fallbackProviderSandboxModes[0]?.id ??
   'workspace-write'
-
-const ChatVirtuosoList = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div
-      {...props}
-      className={`chat-detail__messages-inner${className ? ` ${className}` : ''}`}
-      ref={ref}
-    />
-  )
-)
-ChatVirtuosoList.displayName = 'ChatVirtuosoList'
-
-const ChatVirtuosoFooter: React.FC = () => <div className="chat-detail__messages-footer" />
-const ChatVirtuosoHeader: React.FC = () => <div className="chat-detail__messages-header" />
-
-const chatVirtuosoComponents = {
-  Footer: ChatVirtuosoFooter,
-  Header: ChatVirtuosoHeader,
-  List: ChatVirtuosoList
-} satisfies VirtuosoComponents<ProviderChatTurn, null>
 
 const mergeLoadedChatTurnItems = (
   detail: ProviderChatDetail,
@@ -1619,6 +1593,62 @@ const getScrollBottomTop = (element: HTMLElement): number =>
 
 const isScrolledToBottom = (element: HTMLElement): boolean =>
   getScrollBottomTop(element) - element.scrollTop <= 1
+
+const readChatScrollAnchor = (
+  contentElement: HTMLElement,
+  chatKey: string,
+  retainedWindow?: Pick<ChatTurnWindow, 'startIndex' | 'endIndex'>
+): ChatScrollAnchor | null => {
+  const contentRect = contentElement.getBoundingClientRect()
+  const turnElements = contentElement.querySelectorAll<HTMLElement>('[data-chat-turn-id]')
+
+  for (const turnElement of turnElements) {
+    const turnIndex = Number(turnElement.dataset.chatTurnIndex)
+    if (
+      retainedWindow &&
+      (!Number.isInteger(turnIndex) ||
+        turnIndex < retainedWindow.startIndex ||
+        turnIndex >= retainedWindow.endIndex)
+    ) {
+      continue
+    }
+
+    const turnRect = turnElement.getBoundingClientRect()
+    if (turnRect.bottom <= contentRect.top || turnRect.top >= contentRect.bottom) continue
+
+    const turnId = turnElement.dataset.chatTurnId
+    if (!turnId) continue
+
+    return {
+      chatKey,
+      offset: turnRect.top - contentRect.top,
+      turnId
+    }
+  }
+
+  return null
+}
+
+const restoreChatScrollAnchor = (
+  contentElement: HTMLElement,
+  anchor: ChatScrollAnchor
+): boolean => {
+  const turnElements = contentElement.querySelectorAll<HTMLElement>('[data-chat-turn-id]')
+  let anchorElement: HTMLElement | null = null
+  for (const turnElement of turnElements) {
+    if (turnElement.dataset.chatTurnId === anchor.turnId) {
+      anchorElement = turnElement
+      break
+    }
+  }
+  if (!anchorElement) return false
+
+  const contentRect = contentElement.getBoundingClientRect()
+  const nextOffset = anchorElement.getBoundingClientRect().top - contentRect.top
+  const adjustment = nextOffset - anchor.offset
+  if (Math.abs(adjustment) >= 0.5) contentElement.scrollTop += adjustment
+  return true
+}
 
 const resetDocumentScroll = (): void => {
   window.scrollTo(0, 0)
@@ -3637,7 +3667,7 @@ export const App: React.FC = () => {
   const [chatTurnWindow, setChatTurnWindow] = useState<ChatTurnWindow | null>(null)
   const [chatTurnPageLoadDirection, setChatTurnPageLoadDirection] =
     useState<ChatTurnPageLoadDirection | null>(null)
-  const [chatTurnVisibleRange, setChatTurnVisibleRange] = useState<ListRange | null>(null)
+  const [chatAtConversationBottom, setChatAtConversationBottom] = useState(true)
   const [extractedChatPlan, setExtractedChatPlan] = useState<ChatPlanData | null>(null)
   const [chatLoadState, setChatLoadState] = useState<LoadState>('ready')
   const [chatLoadRequest, setChatLoadRequest] = useState(0)
@@ -3883,12 +3913,14 @@ export const App: React.FC = () => {
   const [windowState, setWindowState] = useState<AppWindowState>({ isMaximized: false })
   const panelsRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const chatVirtuosoRef = useRef<VirtuosoHandle>(null)
   const chatTurnWindowRef = useRef<ChatTurnWindow | null>(chatTurnWindow)
   const chatTurnPageLoadRequestRef = useRef(0)
   const chatTurnPageLoadInFlightRef = useRef(false)
   const chatTurnScrollDirectionRef = useRef<'up' | 'down' | null>(null)
-  const previousChatTurnRangeStartRef = useRef<number | null>(null)
+  const previousChatScrollTopRef = useRef<number | null>(null)
+  const pendingChatScrollAnchorRef = useRef<ChatScrollAnchor | null>(null)
+  const chatViewportAnchorRef = useRef<ChatScrollAnchor | null>(null)
+  const chatScrollAdjustmentTargetRef = useRef<{ element: HTMLElement; top: number } | null>(null)
   const scrollToLatestTurnAfterRenderRef = useRef(false)
   const chatDetailRef = useRef<ProviderChatDetail | null>(chatDetail)
   const chatSearchContentRef = useRef<HTMLDivElement>(null)
@@ -3947,11 +3979,13 @@ export const App: React.FC = () => {
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
     const top = getScrollBottomTop(contentElement)
     contentElement.scrollTop = top
+    setChatAtConversationBottom(true)
     chatAutoScrollTargetRef.current = {
       element: contentElement,
       top: contentElement.scrollTop
     }
-    chatVirtuosoRef.current?.autoscrollToBottom()
+    const chatKey = selectedChatKeyRef.current
+    chatViewportAnchorRef.current = chatKey ? readChatScrollAnchor(contentElement, chatKey) : null
   }, [])
 
   const scheduleChatAutoScroll = useCallback(
@@ -5955,6 +5989,10 @@ export const App: React.FC = () => {
   useEffect(() => {
     chatAutoScrollEnabledRef.current = true
     chatAutoScrollTargetRef.current = null
+    chatScrollAdjustmentTargetRef.current = null
+    pendingChatScrollAnchorRef.current = null
+    chatViewportAnchorRef.current = null
+    previousChatScrollTopRef.current = null
     scheduleChatAutoScroll()
     resetDocumentScroll()
   }, [scheduleChatAutoScroll, selectedProviderId, selectedChatId])
@@ -5973,7 +6011,25 @@ export const App: React.FC = () => {
         return
       }
 
-      scheduleChatAutoScroll(contentElement)
+      if (chatAutoScrollEnabledRef.current) {
+        scheduleChatAutoScroll(contentElement)
+        return
+      }
+
+      const anchor = chatViewportAnchorRef.current
+      if (pendingChatScrollAnchorRef.current || !anchor || anchor.chatKey !== selectedChatKey) {
+        return
+      }
+
+      const previousScrollTop = contentElement.scrollTop
+      if (!restoreChatScrollAnchor(contentElement, anchor)) return
+      if (contentElement.scrollTop !== previousScrollTop) {
+        chatScrollAdjustmentTargetRef.current = {
+          element: contentElement,
+          top: contentElement.scrollTop
+        }
+      }
+      chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, selectedChatKey)
     })
     observer.observe(contentElement)
     observer.observe(contentInnerElement)
@@ -5986,6 +6042,10 @@ export const App: React.FC = () => {
 
     chatAutoScrollEnabledRef.current = true
     chatAutoScrollTargetRef.current = null
+    chatScrollAdjustmentTargetRef.current = null
+    pendingChatScrollAnchorRef.current = null
+    chatViewportAnchorRef.current = null
+    previousChatScrollTopRef.current = null
     contentRef.current?.scrollTo({ top: 0 })
     resetDocumentScroll()
   }, [selectedChat])
@@ -8500,16 +8560,48 @@ export const App: React.FC = () => {
     ]
   )
 
-  const handleChatContentScroll = (): void => {
+  const handleChatContentScroll = (): boolean => {
     const contentElement = contentRef.current
-    if (!contentElement) return
+    if (!contentElement) return false
 
     const currentTurnWindow = chatTurnWindowRef.current
+    const adjustmentTarget = chatScrollAdjustmentTargetRef.current
+    const isScrollAdjustment = Boolean(
+      adjustmentTarget?.element === contentElement &&
+      Math.abs(adjustmentTarget.top - contentElement.scrollTop) <= 1
+    )
+    if (adjustmentTarget?.element === contentElement) {
+      chatScrollAdjustmentTargetRef.current = null
+    }
+
+    const previousScrollTop = previousChatScrollTopRef.current
+    if (
+      !isScrollAdjustment &&
+      previousScrollTop !== null &&
+      Math.abs(contentElement.scrollTop - previousScrollTop) >= 0.5
+    ) {
+      chatTurnScrollDirectionRef.current =
+        contentElement.scrollTop < previousScrollTop ? 'up' : 'down'
+    }
+    previousChatScrollTopRef.current = contentElement.scrollTop
+
     const atConversationBottom = Boolean(
       isScrolledToBottom(contentElement) &&
       currentTurnWindow &&
       currentTurnWindow.endIndex >= currentTurnWindow.totalCount
     )
+    setChatAtConversationBottom(atConversationBottom)
+
+    const chatKey = currentTurnWindow?.chatKey
+    const updateViewportAnchor = (): void => {
+      chatViewportAnchorRef.current = chatKey ? readChatScrollAnchor(contentElement, chatKey) : null
+    }
+
+    if (isScrollAdjustment) {
+      updateViewportAnchor()
+      return false
+    }
+
     if (atConversationBottom) {
       chatAutoScrollEnabledRef.current = true
       chatUserScrollIntentRef.current = false
@@ -8517,7 +8609,8 @@ export const App: React.FC = () => {
         element: contentElement,
         top: contentElement.scrollTop
       }
-      return
+      updateViewportAnchor()
+      return true
     }
 
     const autoScrollTarget = chatAutoScrollTargetRef.current
@@ -8528,12 +8621,15 @@ export const App: React.FC = () => {
       autoScrollTarget.top === contentElement.scrollTop
     ) {
       scheduleChatAutoScroll(contentElement)
-      return
+      updateViewportAnchor()
+      return true
     }
 
     chatAutoScrollEnabledRef.current = false
     chatAutoScrollTargetRef.current = null
     chatUserScrollIntentRef.current = false
+    updateViewportAnchor()
+    return true
   }
 
   const handleChatContentWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
@@ -8629,12 +8725,7 @@ export const App: React.FC = () => {
   const chatTurns = chatConversationModel.turns
   const defaultChatTurnWindow = useMemo<ChatTurnWindow | null>(() => {
     if (!selectedChatKey) return null
-    return {
-      chatKey: selectedChatKey,
-      startIndex: Math.max(0, chatTurns.length - chatTurnPageSize),
-      endIndex: chatTurns.length,
-      totalCount: chatTurns.length
-    }
+    return getLatestChatTurnWindow(selectedChatKey, chatTurns.length, chatTurnPageSize)
   }, [chatTurns.length, selectedChatKey])
   const effectiveChatTurnWindow =
     chatTurnWindow?.chatKey === selectedChatKey ? chatTurnWindow : defaultChatTurnWindow
@@ -8654,11 +8745,9 @@ export const App: React.FC = () => {
     chatTurnPageLoadRequestRef.current += 1
     chatTurnPageLoadInFlightRef.current = false
     chatTurnScrollDirectionRef.current = null
-    previousChatTurnRangeStartRef.current = null
     queueMicrotask(() => {
       if (!active) return
       setChatTurnPageLoadDirection(null)
-      setChatTurnVisibleRange(null)
 
       if (!selectedChatKey) {
         chatTurnWindowRef.current = null
@@ -8673,12 +8762,7 @@ export const App: React.FC = () => {
           currentWindow.endIndex >= currentWindow.totalCount ||
           chatAutoScrollEnabledRef.current
         const nextWindow: ChatTurnWindow = viewingLatest
-          ? {
-              chatKey: selectedChatKey,
-              startIndex: Math.max(0, totalCount - chatTurnPageSize),
-              endIndex: totalCount,
-              totalCount
-            }
+          ? getLatestChatTurnWindow(selectedChatKey, totalCount, chatTurnPageSize)
           : {
               chatKey: selectedChatKey,
               startIndex: Math.min(currentWindow.startIndex, totalCount),
@@ -8697,12 +8781,26 @@ export const App: React.FC = () => {
   }, [chatTurns.length, selectedChatKey])
 
   useLayoutEffect(() => {
+    const anchor = pendingChatScrollAnchorRef.current
+    if (!anchor || anchor.chatKey !== selectedChatKey) return
+
+    pendingChatScrollAnchorRef.current = null
+    const contentElement = contentRef.current
+    if (!contentElement || !restoreChatScrollAnchor(contentElement, anchor)) return
+
+    chatScrollAdjustmentTargetRef.current = {
+      element: contentElement,
+      top: contentElement.scrollTop
+    }
+    chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, anchor.chatKey)
+  }, [effectiveChatTurnWindow?.endIndex, effectiveChatTurnWindow?.startIndex, selectedChatKey])
+
+  useLayoutEffect(() => {
     if (!scrollToLatestTurnAfterRenderRef.current || renderedChatTurns.length === 0) return
     scrollToLatestTurnAfterRenderRef.current = false
-    window.requestAnimationFrame(() => {
-      const contentElement = contentRef.current
-      if (contentElement) scrollChatContentToBottom(contentElement)
-    })
+    pendingChatScrollAnchorRef.current = null
+    const contentElement = contentRef.current
+    if (contentElement) scrollChatContentToBottom(contentElement)
   }, [effectiveChatTurnWindow?.endIndex, renderedChatTurns.length, scrollChatContentToBottom])
 
   const loadChatTurnPage = useCallback(
@@ -8737,15 +8835,16 @@ export const App: React.FC = () => {
           }
 
           const totalCount = getProviderChatTurns(detail.items).length
-          const nextWindow: ChatTurnWindow = {
-            chatKey: currentWindow.chatKey,
-            startIndex: Math.max(0, totalCount - chatTurnPageSize),
-            endIndex: totalCount,
-            totalCount
-          }
+          const nextWindow = getLatestChatTurnWindow(
+            currentWindow.chatKey,
+            totalCount,
+            chatTurnPageSize
+          )
           chatAutoScrollEnabledRef.current = true
           chatTurnScrollDirectionRef.current = 'down'
           scrollToLatestTurnAfterRenderRef.current = true
+          pendingChatScrollAnchorRef.current = null
+          chatViewportAnchorRef.current = null
           chatTurnWindowRef.current = nextWindow
           setChatTurnWindow(nextWindow)
           applyViewedChatDetail(chat.providerId, detail)
@@ -8766,32 +8865,47 @@ export const App: React.FC = () => {
           return
         }
 
-        setChatDetail((currentDetail) => {
-          if (currentDetail?.id !== chat.id) return currentDetail
-          const nextDetail = mergeLoadedChatTurnItems(currentDetail, page.items)
-          chatDetailRef.current = nextDetail
-          return nextDetail
+        const latestWindow = chatTurnWindowRef.current
+        if (!latestWindow || latestWindow.chatKey !== currentWindow.chatKey) return
+
+        const totalCount = Math.max(latestWindow.totalCount, page.totalCount)
+        const loadedEndIndex = Math.min(totalCount, page.startIndex + limit)
+        const nextWindow = shiftChatTurnWindow(
+          latestWindow,
+          direction,
+          page.startIndex,
+          loadedEndIndex,
+          totalCount,
+          chatTurnWindowSize
+        )
+        const contentElement = contentRef.current
+        pendingChatScrollAnchorRef.current = contentElement
+          ? readChatScrollAnchor(contentElement, latestWindow.chatKey, nextWindow)
+          : null
+        chatAutoScrollEnabledRef.current = false
+        chatAutoScrollTargetRef.current = null
+        chatTurnWindowRef.current = nextWindow
+
+        flushSync(() => {
+          setChatDetail((currentDetail) => {
+            if (currentDetail?.id !== chat.id) return currentDetail
+            const mergedDetail = mergeLoadedChatTurnItems(currentDetail, page.items)
+            const items = unloadChatItemsOutsideTurnRange(
+              mergedDetail.items,
+              nextWindow.startIndex,
+              nextWindow.endIndex
+            )
+            const nextDetail =
+              items === mergedDetail.items ? mergedDetail : { ...mergedDetail, items }
+            chatDetailRef.current = nextDetail
+            return nextDetail
+          })
+          setChatTurnWindow(nextWindow)
         })
-        setChatTurnWindow((latestWindow) => {
-          if (!latestWindow || latestWindow.chatKey !== currentWindow.chatKey) {
-            return latestWindow
-          }
-          const loadedEndIndex = Math.min(page.totalCount, page.startIndex + limit)
-          const nextWindow: ChatTurnWindow = {
-            chatKey: latestWindow.chatKey,
-            startIndex:
-              direction === 'older'
-                ? Math.min(page.startIndex, latestWindow.startIndex)
-                : latestWindow.startIndex,
-            endIndex:
-              direction === 'newer'
-                ? Math.max(latestWindow.endIndex, loadedEndIndex)
-                : latestWindow.endIndex,
-            totalCount: page.totalCount
-          }
-          chatTurnWindowRef.current = nextWindow
-          return nextWindow
-        })
+
+        if (!pendingChatScrollAnchorRef.current && contentElement) {
+          chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, latestWindow.chatKey)
+        }
       } finally {
         if (chatTurnPageLoadRequestRef.current === requestId) {
           chatTurnPageLoadInFlightRef.current = false
@@ -8802,67 +8916,51 @@ export const App: React.FC = () => {
     [applyViewedChatDetail]
   )
 
-  const handleChatTurnRangeChanged = useCallback((range: ListRange): void => {
+  const handleNativeChatContentScroll = (): void => {
+    if (!handleChatContentScroll()) return
+
+    const contentElement = contentRef.current
     const currentWindow = chatTurnWindowRef.current
-    if (!currentWindow) return
+    if (!contentElement || !currentWindow || chatTurnPageLoadInFlightRef.current) return
 
-    const logicalRange = {
-      startIndex: range.startIndex - chatTurnVirtuosoIndexBase,
-      endIndex: range.endIndex - chatTurnVirtuosoIndexBase
-    }
-    if (logicalRange.startIndex < 0 || logicalRange.endIndex < logicalRange.startIndex) return
-
-    const previousStartIndex = previousChatTurnRangeStartRef.current
-    if (previousStartIndex !== null && logicalRange.startIndex !== previousStartIndex) {
-      chatTurnScrollDirectionRef.current =
-        logicalRange.startIndex < previousStartIndex ? 'up' : 'down'
-    }
-    previousChatTurnRangeStartRef.current = logicalRange.startIndex
-    setChatTurnVisibleRange(logicalRange)
-
-    if (
-      currentWindow.endIndex - currentWindow.startIndex <= chatTurnWindowTrimThreshold ||
-      chatTurnPageLoadInFlightRef.current
-    ) {
-      return
-    }
-
-    let nextStartIndex = currentWindow.startIndex
-    let nextEndIndex = currentWindow.endIndex
     if (
       chatTurnScrollDirectionRef.current === 'up' &&
-      currentWindow.endIndex - logicalRange.endIndex - 1 >= chatTurnPageSize
+      contentElement.scrollTop <= chatTurnLoadThresholdPx &&
+      currentWindow.startIndex > 0
     ) {
-      nextEndIndex = currentWindow.endIndex - chatTurnPageSize
-    } else if (
-      chatTurnScrollDirectionRef.current === 'down' &&
-      logicalRange.startIndex - currentWindow.startIndex >= chatTurnPageSize
-    ) {
-      nextStartIndex = currentWindow.startIndex + chatTurnPageSize
-    } else {
+      void loadChatTurnPage('older')
       return
     }
 
-    const nextWindow = {
-      ...currentWindow,
-      startIndex: nextStartIndex,
-      endIndex: nextEndIndex
+    if (
+      chatTurnScrollDirectionRef.current === 'down' &&
+      getScrollBottomTop(contentElement) - contentElement.scrollTop <= chatTurnLoadThresholdPx &&
+      currentWindow.endIndex < currentWindow.totalCount
+    ) {
+      void loadChatTurnPage('newer')
     }
-    chatTurnWindowRef.current = nextWindow
-    setChatTurnWindow(nextWindow)
-    setChatDetail((currentDetail) => {
-      if (!currentDetail) return currentDetail
-      const items = unloadChatItemsOutsideTurnRange(
-        currentDetail.items,
-        nextStartIndex,
-        nextEndIndex
-      )
-      if (items === currentDetail.items) return currentDetail
-      const nextDetail = { ...currentDetail, items }
-      chatDetailRef.current = nextDetail
-      return nextDetail
-    })
-  }, [])
+  }
+
+  const handleNativeChatContentWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    handleChatContentWheel(event)
+    const contentElement = contentRef.current
+    const currentWindow = chatTurnWindowRef.current
+    if (!contentElement || !currentWindow || chatTurnPageLoadInFlightRef.current) return
+
+    if (
+      event.deltaY < 0 &&
+      contentElement.scrollTop <= chatTurnLoadThresholdPx &&
+      currentWindow.startIndex > 0
+    ) {
+      void loadChatTurnPage('older')
+    } else if (
+      event.deltaY > 0 &&
+      getScrollBottomTop(contentElement) - contentElement.scrollTop <= chatTurnLoadThresholdPx &&
+      currentWindow.endIndex < currentWindow.totalCount
+    ) {
+      void loadChatTurnPage('newer')
+    }
+  }
 
   const stoppedTurnRetryMessages = chatConversationModel.stoppedTurnRetryMessages
   const canRetryStoppedTurns = Boolean(selectedChat && chatDetail?.capabilities.editMessages)
@@ -11149,11 +11247,16 @@ export const App: React.FC = () => {
     )
   }
 
-  const renderVirtualChatTurn = (_index: number, turn: ProviderChatTurn): React.ReactElement => {
+  const renderChatTurn = (turnIndex: number, turn: ProviderChatTurn): React.ReactElement => {
     const turnIsLatestRendered = turn === renderedChatTurns.at(-1)
 
     return (
-      <div className="chat-detail__turn">
+      <div
+        className="chat-detail__turn"
+        data-chat-turn-id={turn.id}
+        data-chat-turn-index={turnIndex}
+        key={turn.id}
+      >
         {turn.items.map((item) => {
           const itemIndex = chatItemIndexesById.get(item.id) ?? -1
           const followingWorkingStep = followingWorkingStepsById.get(item.id)
@@ -11209,11 +11312,10 @@ export const App: React.FC = () => {
     )
   }
 
-  const lastVisibleChatTurnIndex =
-    chatTurnVisibleRange?.endIndex ?? (effectiveChatTurnWindow?.endIndex ?? 0) - 1
   const showChatTurnDownButton = Boolean(
     effectiveChatTurnWindow &&
-    effectiveChatTurnWindow.totalCount - lastVisibleChatTurnIndex >= chatTurnWindowTrimThreshold
+    (!chatAtConversationBottom ||
+      effectiveChatTurnWindow.endIndex < effectiveChatTurnWindow.totalCount)
   )
 
   return (
@@ -11430,58 +11532,27 @@ export const App: React.FC = () => {
             )}
             {selectedChat && (
               <div className="chat-detail__messages-shell">
-                <Virtuoso<ProviderChatTurn, null>
-                  alignToBottom
-                  atBottomStateChange={(atBottom) => {
-                    const currentWindow = chatTurnWindowRef.current
-                    const atConversationBottom = Boolean(
-                      atBottom &&
-                      currentWindow &&
-                      currentWindow.endIndex >= currentWindow.totalCount
-                    )
-                    if (atConversationBottom) {
-                      chatAutoScrollEnabledRef.current = true
-                      chatAutoScrollTargetRef.current = null
-                    }
-                  }}
+                <div
                   className="chat-detail__messages"
-                  components={chatVirtuosoComponents}
-                  computeItemKey={(_index, turn) => turn.id}
-                  data={renderedChatTurns}
-                  endReached={() => {
-                    const currentWindow = chatTurnWindowRef.current
-                    if (
-                      chatTurnScrollDirectionRef.current === 'down' &&
-                      currentWindow &&
-                      currentWindow.endIndex < currentWindow.totalCount
-                    ) {
-                      void loadChatTurnPage('newer')
-                    }
-                  }}
-                  firstItemIndex={
-                    chatTurnVirtuosoIndexBase + (effectiveChatTurnWindow?.startIndex ?? 0)
-                  }
-                  followOutput={() => (chatAutoScrollEnabledRef.current ? 'auto' : false)}
                   id="chat-search-content"
-                  initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
-                  itemContent={renderVirtualChatTurn}
                   key={selectedChatKey}
-                  minOverscanItemCount={{ top: 1, bottom: 1 }}
-                  onScroll={handleChatContentScroll}
-                  onWheel={handleChatContentWheel}
-                  rangeChanged={handleChatTurnRangeChanged}
-                  ref={chatVirtuosoRef}
-                  scrollerRef={(element) => {
-                    const contentElement = element instanceof HTMLDivElement ? element : null
-                    contentRef.current = contentElement
-                    chatSearchContentRef.current = contentElement
+                  onScroll={handleNativeChatContentScroll}
+                  onWheel={handleNativeChatContentWheel}
+                  ref={(element) => {
+                    contentRef.current = element
+                    chatSearchContentRef.current = element
                   }}
-                  startReached={() => {
-                    if (chatTurnScrollDirectionRef.current === 'up') {
-                      void loadChatTurnPage('older')
-                    }
-                  }}
-                />
+                >
+                  <div className="chat-detail__messages-layout">
+                    <div className="chat-detail__messages-header" />
+                    <div className="chat-detail__messages-inner">
+                      {renderedChatTurns.map((turn, index) =>
+                        renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)
+                      )}
+                    </div>
+                    <div className="chat-detail__messages-footer" />
+                  </div>
+                </div>
                 {chatLoadState === 'loading' && (
                   <p className="chat__status chat-detail__messages-status">Loading messages…</p>
                 )}
