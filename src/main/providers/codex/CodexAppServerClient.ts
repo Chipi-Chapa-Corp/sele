@@ -196,7 +196,10 @@ export class CodexAppServerClient {
 
     await this.sendRequest('initialize', {
       clientInfo: { name: 'sele', title: 'Sele', version: '1.0.0' },
-      capabilities: null
+      capabilities: {
+        experimentalApi: true,
+        requestAttestation: false
+      }
     })
 
     this.sendNotification('initialized')

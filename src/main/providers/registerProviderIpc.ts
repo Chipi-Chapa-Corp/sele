@@ -789,6 +789,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid turn options')
 
   const options = value as {
+    additionalDirectories?: unknown
     approvalPolicy?: unknown
     approvalsReviewer?: unknown
     container?: unknown
@@ -818,6 +819,25 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     throw new Error('Invalid cwd')
   }
 
+  let additionalDirectories: string[] | undefined
+  if (options.additionalDirectories !== undefined) {
+    if (
+      !Array.isArray(options.additionalDirectories) ||
+      options.additionalDirectories.length > 32
+    ) {
+      throw new Error('Invalid additional directories')
+    }
+
+    const uniqueDirectories = new Set<string>()
+    for (const directory of options.additionalDirectories) {
+      if (typeof directory !== 'string' || !isAbsolute(directory) || directory.includes('\0')) {
+        throw new Error('Invalid additional directory')
+      }
+      if (directory !== cwd) uniqueDirectories.add(directory)
+    }
+    additionalDirectories = Array.from(uniqueDirectories)
+  }
+
   const model = options.model ?? 'gpt-5.5'
   if (!isProviderModelId(model)) throw new Error('Invalid model')
 
@@ -838,6 +858,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   }
 
   return {
+    additionalDirectories,
     approvalPolicy,
     approvalsReviewer,
     container: requireContainerTarget(options.container, { optional: true }),

@@ -50,6 +50,9 @@ export type LocalDatabase = {
   }
   projects: {
     cwd: string
+    name: string
+    icon: string | null
+    additional_cwds_json: string
     added_at: number
     updated_at: number
   }
@@ -140,6 +143,9 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .createTable('projects')
     .ifNotExists()
     .addColumn('cwd', 'text', (column) => column.primaryKey())
+    .addColumn('name', 'text', (column) => column.notNull().defaultTo(''))
+    .addColumn('icon', 'text')
+    .addColumn('additional_cwds_json', 'text', (column) => column.notNull().defaultTo('[]'))
     .addColumn('added_at', 'integer', (column) => column.notNull())
     .addColumn('updated_at', 'integer', (column) => column.notNull())
     .execute()
@@ -204,6 +210,21 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   )
   await ensureColumn(db, 'chat', 'pinned_order', () =>
     db.schema.alterTable('chat').addColumn('pinned_order', 'integer').execute()
+  )
+  await ensureColumn(db, 'projects', 'name', () =>
+    db.schema
+      .alterTable('projects')
+      .addColumn('name', 'text', (column) => column.notNull().defaultTo(''))
+      .execute()
+  )
+  await ensureColumn(db, 'projects', 'icon', () =>
+    db.schema.alterTable('projects').addColumn('icon', 'text').execute()
+  )
+  await ensureColumn(db, 'projects', 'additional_cwds_json', () =>
+    db.schema
+      .alterTable('projects')
+      .addColumn('additional_cwds_json', 'text', (column) => column.notNull().defaultTo('[]'))
+      .execute()
   )
 
   schemaReady = true

@@ -1,5 +1,7 @@
 import { CheckCheck, ChevronDown, ChevronUp, FolderKanban, PinOff, SquarePen } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
+import { formatProjectLabel } from '../projectPresentation'
 import { Button } from './Button'
 import { ChatList } from './ChatList'
 import { DisclosureToggle } from './DisclosureToggle'
@@ -9,6 +11,7 @@ export type ChatListGroupData = {
   key: string
   cwd: string | null
   label: string
+  projectName?: string | null
   chats: ProviderChat[]
   kind: 'pinned' | 'cwd' | 'active' | 'done'
 }
@@ -22,7 +25,7 @@ type ChatListGroupProps = {
   canReorderChats?: boolean
   visibleChatCount?: number
   chatPageSize?: number
-  projectIconSrc?: string | null
+  projectIcon?: ReactNode
   onLoadMoreChats?: (group: ChatListGroupData) => void
   onShowLessChats?: (group: ChatListGroupData) => void
   onMarkChatDone: (chat: ProviderChat, done?: boolean) => void
@@ -39,9 +42,6 @@ type ChatListGroupProps = {
   resolvingApprovalId?: string | null
 }
 
-const formatProjectLabel = (label: string): string =>
-  label.replaceAll('-', ' ').replace(/(^|\s)\S/g, (wordStart) => wordStart.toLocaleUpperCase())
-
 export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   contentId,
   group,
@@ -51,7 +51,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   canReorderChats = true,
   visibleChatCount = group.chats.length,
   chatPageSize = 20,
-  projectIconSrc = null,
+  projectIcon = null,
   onLoadMoreChats,
   onShowLessChats,
   onMarkChatDone,
@@ -67,7 +67,10 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   onUnpinPinnedChats,
   resolvingApprovalId = null
 }) => {
-  const groupLabel = group.kind === 'cwd' ? formatProjectLabel(group.label) : group.label
+  const groupLabel =
+    group.kind === 'cwd'
+      ? group.projectName?.trim() || formatProjectLabel(group.label)
+      : group.label
   const visibleChats = group.chats.slice(0, visibleChatCount)
   const remainingChatCount = Math.max(0, group.chats.length - visibleChats.length)
   const nextChatCount = Math.min(chatPageSize, remainingChatCount)
@@ -105,11 +108,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
               title="Choose project image"
               onClick={() => onSelectProjectIcon?.(group)}
             >
-              {projectIconSrc ? (
-                <img className="chat-list-group__project-icon-image" src={projectIconSrc} alt="" />
-              ) : (
-                <FolderKanban aria-hidden="true" />
-              )}
+              {projectIcon ?? <FolderKanban aria-hidden="true" />}
             </button>
             {toggle}
           </span>

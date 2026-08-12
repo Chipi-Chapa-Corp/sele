@@ -6,22 +6,49 @@ export type FolderSelectionOptions = {
 
 export type AppProjectIconOptions = {
   cwd?: string | null
+  persist?: boolean
 }
 
 export type AppProjectIcon = {
   cwd: string | null
   dataUrl: string
+  selectionId?: string
   updatedAt: number
 }
 
+export const appProjectGlyphIds = [
+  'folder',
+  'code',
+  'git',
+  'package',
+  'database',
+  'web',
+  'mobile',
+  'server'
+] as const
+
+export type AppProjectGlyph = (typeof appProjectGlyphIds)[number]
+
+export type AppProjectIconKind = AppProjectGlyph | 'image'
+
+export const isAppProjectIconKind = (value: unknown): value is AppProjectIconKind =>
+  value === 'image' || appProjectGlyphIds.includes(value as AppProjectGlyph)
+
 export type AppProject = {
   cwd: string
+  name: string
+  icon: AppProjectIconKind | null
+  additionalCwds: string[]
   addedAt: number
   updatedAt: number
 }
 
 export type AppAddProjectOptions = {
   cwd: string
+  name?: string
+  icon?: AppProjectIconKind | null
+  iconSelectionId?: string
+  additionalCwds?: string[]
 }
 
 export type AppLocalImageOptions = {

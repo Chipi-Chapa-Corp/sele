@@ -526,6 +526,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   >()
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private oneShotGenerations = new Map<string, CopilotOneShotGeneration>()
+  private additionalDirectoriesBySession = new WeakMap<CopilotSession, Set<string>>()
   private canceledOneShotGenerationIds = new Set<string>()
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private hiddenSessionIds = new Set<string>()
@@ -1280,6 +1281,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
           }
         : {})
     })
+    await this.addAdditionalDirectories(session, options)
     state.session = session
     state.metadata = (await client.getSessionMetadata(state.id).catch(() => undefined)) ?? null
     await this.loadSessionTitle(state)
@@ -1315,6 +1317,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       onPermissionRequest: (request) => this.handlePermission(sessionId, request),
       onUserInputRequest: (request) => this.handleUserInput(sessionId, request)
     })
+    await this.addAdditionalDirectories(state.session, options)
     await this.loadSessionTitle(state)
     await this.loadEvents(state)
     await this.refreshPendingMessages(state)
@@ -1328,8 +1331,35 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<void> => {
     if (!options || !state.session) return
     state.options = options
+    await this.addAdditionalDirectories(state.session, options)
     const reasoningEffort = normalizeReasoningEffort(options.reasoningEffort)
     await state.session.setModel(options.model, reasoningEffort ? { reasoningEffort } : undefined)
+  }
+
+  private addAdditionalDirectories = async (
+    session: CopilotSession,
+    options?: ProviderTurnOptions | ProviderOneShotOptions
+  ): Promise<void> => {
+    const directories = Array.from(
+      new Set(
+        (options?.additionalDirectories ?? []).filter((directory) => directory !== options?.cwd)
+      )
+    )
+
+    const allowedDirectories = this.additionalDirectoriesBySession.get(session) ?? new Set<string>()
+
+    await Promise.all(
+      directories.map(async (path) => {
+        if (allowedDirectories.has(path)) return
+        const result = await session.rpc.permissions.paths.add({ path })
+        if (!result.success) throw new Error(`Copilot could not add project directory: ${path}`)
+        allowedDirectories.add(path)
+      })
+    )
+
+    if (!this.additionalDirectoriesBySession.has(session)) {
+      this.additionalDirectoriesBySession.set(session, allowedDirectories)
+    }
   }
 
   private loadEvents = async (state: CopilotSessionState): Promise<void> => {

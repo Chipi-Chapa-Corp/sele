@@ -648,6 +648,7 @@ export type ProviderAppInput = {
 }
 
 export type ProviderTurnOptions = {
+  additionalDirectories?: string[]
   approvalPolicy: ProviderApprovalPolicy
   approvalsReviewer: ProviderApprovalsReviewer
   container?: AppContainerTarget | null

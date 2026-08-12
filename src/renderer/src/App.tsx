@@ -185,6 +185,7 @@ import { getReasoningEffortPresentation } from './reasoningEffortPresentation'
 import { Input } from './components/Input'
 import { MessageBox, type MessageBoxQuoteRequest } from './components/MessageBox'
 import { MessageSelectionQuoteButton } from './components/MessageSelectionQuoteButton'
+import { ProjectDialog } from './components/ProjectDialog'
 import { SegmentedControl } from './components/SegmentedControl'
 import { Switch } from './components/Switch'
 import { SshEnvironmentDialog } from './components/SshEnvironmentDialog'
@@ -196,6 +197,7 @@ import { appApi } from './appApi'
 import { mergeChatMetadata } from './chatMetadata'
 import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
+import { getProjectDisplayName, renderProjectGlyph } from './projectPresentation'
 import { terminalApi } from './terminalApi'
 import {
   type AppAppearancePositionPreference,
@@ -3892,6 +3894,7 @@ export const App: React.FC = () => {
   const configProviderContainer = selectedChat ? selectedChat.container : newSessionContainer
   const configProviderContainerKey = getContainerTargetKey(configProviderContainer)
   const [projects, setProjects] = useState<AppProject[]>([])
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [chatSearchOpen, setChatSearchOpen] = useState(false)
@@ -6628,7 +6631,13 @@ export const App: React.FC = () => {
             (term) => title.includes(term) || cwd.includes(term) || cwdLabel.includes(term)
           )
         })
-  const chatGroups = groupChatsForSidebar(filteredChats)
+  const projectRecordsByCwd = new Map(projects.map((project) => [project.cwd, project]))
+  const chatGroups = groupChatsForSidebar(filteredChats).map((group) => {
+    if (group.kind !== 'cwd' || !group.cwd) return group
+
+    const project = projectRecordsByCwd.get(group.cwd)
+    return project ? { ...group, projectName: getProjectDisplayName(project) } : group
+  })
   const pinnedChatGroup = chatGroups.find((group) => group.kind === 'pinned') ?? null
   const activeChatGroups = chatGroups.filter((group) => group.kind === 'cwd')
   const displayedActiveChatGroups =
@@ -6736,29 +6745,44 @@ export const App: React.FC = () => {
   }, [activeChatGroups, newSessionCwd, projects, projectIconsByGroup])
 
   const projectOptions = useMemo<DropdownOption<string>[]>(() => {
-    const projectsByCwd = new Map<string, { cwd: string; updatedAt: number }>()
+    const projectsByCwd = new Map<
+      string,
+      { cwd: string; updatedAt: number; project: AppProject | null }
+    >()
 
-    const addProject = (cwd: string | null, updatedAt: number): void => {
+    const addProject = (
+      cwd: string | null,
+      updatedAt: number,
+      project: AppProject | null = null
+    ): void => {
       const normalizedCwd = cwd?.trim()
       if (!normalizedCwd) return
 
       const existingProject = projectsByCwd.get(normalizedCwd)
       if (!existingProject || updatedAt > existingProject.updatedAt) {
-        projectsByCwd.set(normalizedCwd, { cwd: normalizedCwd, updatedAt })
+        projectsByCwd.set(normalizedCwd, {
+          cwd: normalizedCwd,
+          updatedAt,
+          project: project ?? existingProject?.project ?? null
+        })
       }
     }
 
-    projects.forEach((project) => addProject(project.cwd, project.updatedAt))
+    projects.forEach((project) => addProject(project.cwd, project.updatedAt, project))
     addProject(newSessionCwd, Number.MAX_SAFE_INTEGER)
 
-    const getProjectOptionIcon = (cwd: string | null): React.ReactElement => {
-      const projectIcon = projectIconsByGroup[getChatCwdGroupKey(cwd)]
+    const getProjectOptionIcon = (
+      cwd: string | null,
+      project: AppProject | null = null
+    ): React.ReactElement => {
+      const projectImage = projectIconsByGroup[getChatCwdGroupKey(cwd)]
+      const usesProjectImage = project?.icon === 'image' || project?.icon == null
 
-      return projectIcon?.dataUrl ? (
-        <img src={projectIcon.dataUrl} alt="" />
-      ) : (
-        <FolderKanban aria-hidden="true" />
-      )
+      if (usesProjectImage && projectImage?.dataUrl) {
+        return <img src={projectImage.dataUrl} alt="" />
+      }
+      if (project?.icon && project.icon !== 'image') return renderProjectGlyph(project.icon)
+      return <FolderKanban aria-hidden="true" />
     }
 
     const options = Array.from(projectsByCwd.values())
@@ -6771,10 +6795,14 @@ export const App: React.FC = () => {
       })
       .map((project) => ({
         value: project.cwd,
-        label: getFolderName(project.cwd),
-        menuLabel: getFolderName(project.cwd),
+        label: project.project
+          ? getProjectDisplayName(project.project)
+          : getFolderName(project.cwd),
+        menuLabel: project.project
+          ? getProjectDisplayName(project.project)
+          : getFolderName(project.cwd),
         description: getFolderDescription(project.cwd),
-        icon: getProjectOptionIcon(project.cwd)
+        icon: getProjectOptionIcon(project.cwd, project.project)
       }))
 
     if (!newSessionCwd) {
@@ -7474,11 +7502,21 @@ export const App: React.FC = () => {
     } catch {
       return
     }
+    if (!icon) return
 
     setProjectIconsByGroup((currentIcons) => ({
       ...currentIcons,
       [group.key]: icon
     }))
+
+    if (group.cwd) {
+      void appApi
+        .addProject({ cwd: group.cwd, icon: 'image' })
+        .then((project) =>
+          setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
+        )
+        .catch(() => {})
+    }
   }
 
   const handleSelectChat = (chat: ProviderChat): void => {
@@ -8000,15 +8038,16 @@ export const App: React.FC = () => {
     }
   }, [])
 
-  const handleSelectNewSessionFolder = async (): Promise<void> => {
-    try {
-      const folder = await appApi.selectFolder({ defaultPath: newSessionCwd })
-      if (folder) {
-        setNewSessionCwd(folder)
-        await rememberProject(folder)
-      }
-    } catch {
-      // Keep the current folder if the native dialog cannot be opened.
+  const handleProjectSaved = (project: AppProject, image: AppProjectIcon | null): void => {
+    setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
+    setNewSessionCwd(project.cwd)
+    setProjectDialogOpen(false)
+
+    if (image) {
+      setProjectIconsByGroup((currentIcons) => ({
+        ...currentIcons,
+        [getChatCwdGroupKey(project.cwd)]: image
+      }))
     }
   }
 
@@ -8329,10 +8368,17 @@ export const App: React.FC = () => {
     [models]
   )
 
+  const currentProject = changesProjectCwd ? projectRecordsByCwd.get(changesProjectCwd) : undefined
+  const currentProjectDirectories = currentProject
+    ? [currentProject.cwd, ...currentProject.additionalCwds]
+    : undefined
+
   const getCurrentTurnOptions = (): ProviderTurnOptions =>
     normalizeTurnOptionsForModels({
+      additionalDirectories: currentProjectDirectories,
       ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
       container: changesContainer,
+      cwd: changesCwd ?? undefined,
       model: effectiveModel,
       ...(modelHasReasoningEffortOptions(selectedEffectiveModel)
         ? { reasoningEffort: effectiveReasoningEffort }
@@ -8677,7 +8723,12 @@ export const App: React.FC = () => {
           }
         : null
       const turnOptions = normalizeTurnOptionsForModels({
+        additionalDirectories: currentProject
+          ? [currentProject.cwd, ...currentProject.additionalCwds]
+          : undefined,
         ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
+        container: changesContainer,
+        cwd: changesCwd ?? undefined,
         model: effectiveModel,
         reasoningEffort: effectiveReasoningEffort,
         sandboxMode: effectiveSandboxMode,
@@ -8716,6 +8767,9 @@ export const App: React.FC = () => {
     [
       applyViewedChatDetail,
       chatDetail?.capabilities.editMessages,
+      changesContainer,
+      changesCwd,
+      currentProject,
       effectiveApprovalMode,
       effectiveModel,
       effectiveReasoningEffort,
@@ -8984,6 +9038,16 @@ export const App: React.FC = () => {
       group.kind === 'pinned'
         ? group.chats.length
         : (visibleChatPageCountsByGroup[group.key] ?? 1) * chatPageSize
+    const project = group.cwd ? projectRecordsByCwd.get(group.cwd) : null
+    const projectImage = projectIconsByGroup[group.key]
+    const projectIcon =
+      (project?.icon === 'image' || project?.icon == null) && projectImage?.dataUrl ? (
+        <img className="chat-list-group__project-icon-image" src={projectImage.dataUrl} alt="" />
+      ) : project?.icon && project.icon !== 'image' ? (
+        renderProjectGlyph(project.icon)
+      ) : (
+        <FolderKanban aria-hidden="true" />
+      )
 
     return (
       <ChatListGroup
@@ -8998,7 +9062,7 @@ export const App: React.FC = () => {
         chatPageSize={chatPageSize}
         onLoadMoreChats={group.kind === 'pinned' ? undefined : handleLoadMoreChatsInGroup}
         onShowLessChats={group.kind === 'pinned' ? undefined : handleShowLessChatsInGroup}
-        projectIconSrc={projectIconsByGroup[group.key]?.dataUrl ?? null}
+        projectIcon={projectIcon}
         onMarkChatDone={handleMarkChatDone}
         onMarkCwdChatsDone={(nextGroup) => void handleMarkCwdChatsDone(nextGroup)}
         onNewChatInCwd={handleNewChatInCwd}
@@ -11937,6 +12001,14 @@ export const App: React.FC = () => {
   return (
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
+      {projectDialogOpen && (
+        <ProjectDialog
+          defaultPath={newSessionCwd}
+          projects={projects}
+          onClose={() => setProjectDialogOpen(false)}
+          onSaved={handleProjectSaved}
+        />
+      )}
       {sshEnvironmentDialogOpen && (
         <SshEnvironmentDialog
           environment={editingSshEnvironment}
@@ -12343,7 +12415,7 @@ export const App: React.FC = () => {
                           label: 'Add project..',
                           title: 'Add project..',
                           icon: <FolderPlus aria-hidden="true" />,
-                          callback: () => void handleSelectNewSessionFolder()
+                          callback: () => setProjectDialogOpen(true)
                         }
                       ]}
                       options={projectOptions}

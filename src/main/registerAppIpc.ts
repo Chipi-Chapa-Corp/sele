@@ -70,7 +70,7 @@ import type {
   AppWriteFileContentsOptions,
   AppWindowState
 } from '../shared/app'
-import { appIpcChannels, normalizeAppWindowZoomLevel } from '../shared/app'
+import { appIpcChannels, isAppProjectIconKind, normalizeAppWindowZoomLevel } from '../shared/app'
 import type { ProviderId } from '../shared/provider'
 import { requireContainerTarget } from './containerTarget'
 import { getCurrentContainerHostBridge } from './currentContainer'
@@ -222,8 +222,14 @@ const getProjectIconOptions = (value: unknown): AppProjectIconOptions => {
     throw new Error('Invalid project icon options')
   }
 
+  const options = value as { cwd?: unknown; persist?: unknown }
+  if (options.persist != null && typeof options.persist !== 'boolean') {
+    throw new Error('Invalid project icon persistence option')
+  }
+
   return {
-    cwd: getOptionalCwd((value as { cwd?: unknown }).cwd)
+    cwd: getOptionalCwd(options.cwd),
+    ...(options.persist == null ? {} : { persist: options.persist })
   }
 }
 
@@ -232,10 +238,66 @@ const getAddProjectOptions = (value: unknown): AppAddProjectOptions => {
     throw new Error('Invalid project options')
   }
 
-  const cwd = getOptionalCwd((value as { cwd?: unknown }).cwd)
+  const options = value as {
+    cwd?: unknown
+    name?: unknown
+    icon?: unknown
+    iconSelectionId?: unknown
+    additionalCwds?: unknown
+  }
+  const cwd = getOptionalCwd(options.cwd)
   if (!cwd) throw new Error('Invalid project cwd')
 
-  return { cwd }
+  let name: string | undefined
+  if (options.name !== undefined) {
+    if (typeof options.name !== 'string') throw new Error('Invalid project name')
+    name = options.name.trim()
+    if (!name || name.length > 80) throw new Error('Invalid project name')
+  }
+
+  let icon: AppAddProjectOptions['icon'] | undefined
+  if (options.icon !== undefined) {
+    if (options.icon !== null && !isAppProjectIconKind(options.icon)) {
+      throw new Error('Invalid project icon')
+    }
+    icon = options.icon
+  }
+
+  let additionalCwds: string[] | undefined
+  if (options.additionalCwds !== undefined) {
+    if (!Array.isArray(options.additionalCwds) || options.additionalCwds.length > 32) {
+      throw new Error('Invalid additional project folders')
+    }
+
+    const uniqueCwds = new Set<string>()
+    for (const candidate of options.additionalCwds) {
+      const additionalCwd = getOptionalCwd(candidate)
+      if (!additionalCwd) throw new Error('Invalid additional project folder')
+      if (additionalCwd !== cwd) uniqueCwds.add(additionalCwd)
+    }
+    additionalCwds = Array.from(uniqueCwds)
+  }
+
+  let iconSelectionId: string | undefined
+  if (options.iconSelectionId !== undefined) {
+    if (
+      typeof options.iconSelectionId !== 'string' ||
+      !options.iconSelectionId ||
+      options.iconSelectionId.length > 128 ||
+      icon !== 'image'
+    ) {
+      throw new Error('Invalid project icon selection')
+    }
+    iconSelectionId = options.iconSelectionId
+  }
+
+  return {
+    cwd,
+    ...(name !== undefined ? { name } : {}),
+    ...(icon !== undefined ? { icon } : {}),
+    ...(iconSelectionId !== undefined ? { iconSelectionId } : {}),
+    ...(additionalCwds !== undefined ? { additionalCwds } : {})
+  }
 }
 
 const getCreateSshEnvironmentOptions = (value: unknown): AppCreateSshEnvironmentOptions => {
@@ -471,6 +533,22 @@ const copyProjectIcon = async (sourcePath: string): Promise<string> => {
   await copyFile(sourcePath, copiedPath)
 
   return copiedPath
+}
+
+const pendingProjectIconSelections = new Map<string, string>()
+const maxPendingProjectIconSelections = 100
+
+const rememberPendingProjectIconSelection = (imagePath: string): string => {
+  const selectionId = randomUUID()
+  pendingProjectIconSelections.set(selectionId, imagePath)
+
+  while (pendingProjectIconSelections.size > maxPendingProjectIconSelections) {
+    const oldestSelectionId = pendingProjectIconSelections.keys().next().value
+    if (!oldestSelectionId) break
+    pendingProjectIconSelections.delete(oldestSelectionId)
+  }
+
+  return selectionId
 }
 
 const getColorScheme = (): AppColorScheme => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
@@ -2517,10 +2595,27 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.addProject, async (_event, value: unknown) => {
     const options = getAddProjectOptions(value)
-    const cwdStat = await stat(options.cwd).catch(() => null)
-    if (!cwdStat?.isDirectory()) throw new Error('Project folder does not exist')
+    const cwds = [options.cwd, ...(options.additionalCwds ?? [])]
+    const cwdStats = await Promise.all(cwds.map((cwd) => stat(cwd).catch(() => null)))
+    if (!cwdStats[0]?.isDirectory()) throw new Error('Project folder does not exist')
+    if (cwdStats.slice(1).some((cwdStat) => !cwdStat?.isDirectory())) {
+      throw new Error('An additional project folder does not exist')
+    }
 
-    return addStoredProject(options.cwd)
+    const selectedImagePath = options.iconSelectionId
+      ? pendingProjectIconSelections.get(options.iconSelectionId)
+      : null
+    if (options.iconSelectionId && !selectedImagePath) {
+      throw new Error('Project icon selection has expired')
+    }
+
+    const project = await addStoredProject(options)
+    if (options.iconSelectionId && selectedImagePath) {
+      await setStoredProjectIcon(options.cwd, selectedImagePath)
+      pendingProjectIconSelections.delete(options.iconSelectionId)
+    }
+
+    return project
   })
 
   ipcMain.handle(appIpcChannels.getSshEnvironments, () => getStoredSshEnvironments())
@@ -2822,8 +2917,19 @@ export const registerAppIpc = (): void => {
     if (!sourcePath) return null
 
     const copiedPath = await copyProjectIcon(sourcePath)
-    await setStoredProjectIcon(options.cwd ?? null, copiedPath)
-    return getAppProjectIcon(options.cwd ?? null)
+    if (options.persist !== false) {
+      await setStoredProjectIcon(options.cwd ?? null, copiedPath)
+      return getAppProjectIcon(options.cwd ?? null)
+    }
+
+    const image = await getProjectIconFile(copiedPath)
+    if (!image) throw new Error('Unable to load the selected project image')
+    return {
+      cwd: options.cwd ?? null,
+      dataUrl: image.dataUrl,
+      selectionId: rememberPendingProjectIconSelection(copiedPath),
+      updatedAt: image.updatedAt
+    }
   })
 
   ipcMain.handle(appIpcChannels.selectMessageAttachments, async (event) => {

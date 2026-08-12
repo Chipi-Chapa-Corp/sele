@@ -256,6 +256,7 @@ type ThreadRollbackResponse = {
 type CodexThreadAccessOptions = {
   approvalPolicy: 'on-request' | 'on-failure' | 'never'
   approvalsReviewer?: 'user' | 'auto_review'
+  runtimeWorkspaceRoots?: string[]
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
 }
 
@@ -267,9 +268,10 @@ type CodexThreadModelOptions = {
 type CodexTurnAccessOptions = {
   approvalPolicy: 'on-request' | 'on-failure' | 'never'
   approvalsReviewer?: 'user' | 'auto_review'
+  runtimeWorkspaceRoots?: string[]
   sandboxPolicy:
     | { type: 'readOnly'; networkAccess: boolean }
-    | { type: 'workspaceWrite'; networkAccess: boolean }
+    | { type: 'workspaceWrite'; writableRoots?: string[]; networkAccess: boolean }
     | { type: 'dangerFullAccess' }
 }
 
@@ -1108,6 +1110,15 @@ const getApprovalsReviewer = (
 const getSandboxMode = (options?: ProviderTurnOptions): ProviderTurnOptions['sandboxMode'] =>
   options?.sandboxMode ?? 'workspace-write'
 
+const getRuntimeWorkspaceRoots = (options?: ProviderTurnOptions): string[] =>
+  Array.from(
+    new Set(
+      [options?.cwd, ...(options?.additionalDirectories ?? [])].filter((cwd): cwd is string =>
+        Boolean(cwd)
+      )
+    )
+  )
+
 const getThreadModelOptions = (options?: ProviderTurnOptions): CodexThreadModelOptions => ({
   model: options?.model ?? 'gpt-5.5',
   serviceTier: options?.serviceTier ?? null
@@ -1121,8 +1132,10 @@ const getTurnModelOptions = (options?: ProviderTurnOptions): CodexTurnModelOptio
 
 const getThreadAccessOptions = (options?: ProviderTurnOptions): CodexThreadAccessOptions => {
   const approvalPolicy = getApprovalPolicy(options)
+  const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
   const accessOptions: CodexThreadAccessOptions = {
     approvalPolicy,
+    ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
     sandbox: getSandboxMode(options)
   }
 
@@ -1134,15 +1147,21 @@ const getThreadAccessOptions = (options?: ProviderTurnOptions): CodexThreadAcces
 const getTurnAccessOptions = (options?: ProviderTurnOptions): CodexTurnAccessOptions => {
   const approvalPolicy = getApprovalPolicy(options)
   const sandboxMode = getSandboxMode(options)
-  const accessOptions: CodexTurnAccessOptions = {
-    approvalPolicy,
-    sandboxPolicy:
-      sandboxMode === 'danger-full-access'
-        ? { type: 'dangerFullAccess' }
+  const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
+  const sandboxPolicy: CodexTurnAccessOptions['sandboxPolicy'] =
+    sandboxMode === 'danger-full-access'
+      ? { type: 'dangerFullAccess' }
+      : sandboxMode === 'read-only'
+        ? { type: 'readOnly', networkAccess: false }
         : {
-            type: sandboxMode === 'read-only' ? 'readOnly' : 'workspaceWrite',
+            type: 'workspaceWrite',
+            ...(runtimeWorkspaceRoots.length > 0 ? { writableRoots: runtimeWorkspaceRoots } : {}),
             networkAccess: false
           }
+  const accessOptions: CodexTurnAccessOptions = {
+    approvalPolicy,
+    ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
+    sandboxPolicy
   }
 
   if (approvalPolicy !== 'never') accessOptions.approvalsReviewer = getApprovalsReviewer(options)
@@ -1781,6 +1800,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       const startedThread = await client.request<ThreadStartResponse>('thread/start', {
         cwd: options?.cwd,
+        ...(getRuntimeWorkspaceRoots(options).length > 0
+          ? { runtimeWorkspaceRoots: getRuntimeWorkspaceRoots(options) }
+          : {}),
         model: options?.model,
         serviceTier: options?.serviceTier ?? null,
         approvalPolicy: 'never',
@@ -1815,6 +1837,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const startedTurn = await client.request<TurnStartResponse>('turn/start', {
         threadId,
         cwd: options?.cwd,
+        ...(getRuntimeWorkspaceRoots(options).length > 0
+          ? { runtimeWorkspaceRoots: getRuntimeWorkspaceRoots(options) }
+          : {}),
         input: createUserTextInput(text),
         approvalPolicy: 'never',
         sandboxPolicy: { type: 'readOnly', networkAccess: false },
