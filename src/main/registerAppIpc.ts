@@ -2977,6 +2977,13 @@ export const registerAppIpc = (): void => {
     )
   })
 
+  ipcMain.handle(appIpcChannels.readClipboardText, () => clipboard.readText())
+
+  ipcMain.handle(appIpcChannels.writeClipboardText, (_event, value: unknown) => {
+    if (typeof value !== 'string') throw new Error('Invalid clipboard text')
+    clipboard.writeText(value)
+  })
+
   ipcMain.handle(appIpcChannels.getClipboardImage, async () => {
     const clipboardImage = clipboard.readImage()
     if (clipboardImage.isEmpty()) return null

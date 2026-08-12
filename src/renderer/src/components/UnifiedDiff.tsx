@@ -16,6 +16,7 @@ import { refractor } from 'refractor'
 import jsx from 'refractor/jsx'
 import tsx from 'refractor/tsx'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
+import { appApi } from '../appApi'
 import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { Button } from './Button'
 import { Input } from './Input'
@@ -215,6 +216,84 @@ monaco.editor.defineTheme('sele-dark', {
 
 const getMonacoTheme = (): 'sele-light' | 'sele-dark' =>
   document.documentElement.dataset.colorScheme === 'dark' ? 'sele-dark' : 'sele-light'
+
+type EditorClipboardData = {
+  isFromEmptySelection: boolean
+  multicursorText: string[] | null
+  text: string
+}
+
+let lastEditorClipboardData: EditorClipboardData | null = null
+
+const getEditorClipboardData = (
+  editor: monaco.editor.IStandaloneCodeEditor
+): EditorClipboardData | null => {
+  const model = editor.getModel()
+  const selections = editor.getSelections()
+  if (!model || !selections?.length) return null
+
+  const emptySelectionClipboard = editor.getOption(
+    monaco.editor.EditorOption.emptySelectionClipboard
+  )
+  const sortedSelections = [...selections].sort(monaco.Range.compareRangesUsingStarts)
+  const hasNonEmptySelection = sortedSelections.some((selection) => !selection.isEmpty())
+  if (!hasNonEmptySelection && !emptySelectionClipboard) return null
+
+  const copiedText: string[] = []
+  let previousLineNumber = 0
+
+  for (const selection of sortedSelections) {
+    if (selection.isEmpty()) {
+      if (emptySelectionClipboard && selection.startLineNumber !== previousLineNumber) {
+        const lineNumber = selection.startLineNumber
+        const lineRange = new monaco.Range(
+          lineNumber,
+          model.getLineMinColumn(lineNumber),
+          lineNumber,
+          model.getLineMaxColumn(lineNumber)
+        )
+        copiedText.push(model.getValueInRange(lineRange) + model.getEOL())
+      }
+    } else {
+      copiedText.push(model.getValueInRange(selection))
+    }
+
+    previousLineNumber = selection.startLineNumber
+  }
+
+  if (copiedText.length === 0) return null
+
+  return {
+    isFromEmptySelection:
+      emptySelectionClipboard && selections.length === 1 && selections[0].isEmpty(),
+    multicursorText: copiedText.length > 1 ? copiedText : null,
+    text: copiedText.length === 1 ? copiedText[0] : copiedText.join(model.getEOL())
+  }
+}
+
+const copyEditorSelection = async (
+  editor: monaco.editor.IStandaloneCodeEditor
+): Promise<boolean> => {
+  const clipboardData = getEditorClipboardData(editor)
+  if (!clipboardData) return false
+
+  await appApi.writeClipboardText(clipboardData.text)
+  lastEditorClipboardData = clipboardData
+  return true
+}
+
+const pasteIntoEditor = async (editor: monaco.editor.IStandaloneCodeEditor): Promise<void> => {
+  const text = await appApi.readClipboardText()
+  if (!text) return
+
+  const metadata = lastEditorClipboardData?.text === text ? lastEditorClipboardData : null
+  editor.trigger('keyboard', 'paste', {
+    mode: null,
+    multicursorText: metadata?.multicursorText ?? null,
+    pasteOnNewLine: metadata?.isFromEmptySelection ?? false,
+    text
+  })
+}
 
 let editableDiffInstanceId = 0
 
@@ -912,6 +991,33 @@ export const EditableUnifiedDiff = ({
     modifiedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
       onSaveRef.current()
     )
+    const copyKeybinding = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC
+    const cutKeybinding = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX
+    const pasteKeybinding = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV
+    const copySelection = (sourceEditor: monaco.editor.IStandaloneCodeEditor): void => {
+      void copyEditorSelection(sourceEditor).catch((error) => {
+        console.error('Unable to copy editor selection.', error)
+      })
+    }
+
+    originalEditor.addCommand(copyKeybinding, () => copySelection(originalEditor))
+    modifiedEditor.addCommand(copyKeybinding, () => copySelection(modifiedEditor))
+    if (!readOnly) {
+      modifiedEditor.addCommand(cutKeybinding, () => {
+        void copyEditorSelection(modifiedEditor)
+          .then((copied) => {
+            if (copied) modifiedEditor.trigger('keyboard', 'cut', undefined)
+          })
+          .catch((error) => {
+            console.error('Unable to cut editor selection.', error)
+          })
+      })
+      modifiedEditor.addCommand(pasteKeybinding, () => {
+        void pasteIntoEditor(modifiedEditor).catch((error) => {
+          console.error('Unable to paste into editor.', error)
+        })
+      })
+    }
     const toggleWordWrapKeybinding = monaco.KeyMod.Alt | monaco.KeyCode.KeyZ
     originalEditor.addCommand(toggleWordWrapKeybinding, () => onToggleWordWrapRef.current())
     modifiedEditor.addCommand(toggleWordWrapKeybinding, () => onToggleWordWrapRef.current())
