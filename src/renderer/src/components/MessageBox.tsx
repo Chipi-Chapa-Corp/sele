@@ -63,6 +63,7 @@ import type {
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import type { AppAction } from '../actions'
+import { groupAccountRateLimits } from '../accountRateLimits'
 import { providerApi } from '../providerApi'
 import { getReasoningEffortPresentation } from '../reasoningEffortPresentation'
 import type { AppChatUsageDisplay } from '../settings'
@@ -91,6 +92,7 @@ type MessageBoxProps = {
   container?: AppContainerTarget | null
   model: ProviderModelId
   models: ProviderModel[]
+  modelsLoading?: boolean
   modelsUnavailable?: boolean
   operationsDisabled?: boolean
   pending?: boolean
@@ -817,6 +819,9 @@ const getReasoningEffortOptionLabel = (
 
 const formatModelLabel = (label: string): string => label.replace(/-/g, ' ')
 
+const getModelMenuLabel = (label: string, isDefault: boolean): string =>
+  isDefault && !/\b(?:default|recommended)\b/i.test(label) ? `${label} (default)` : label
+
 const formatOptionLabel = (value: string): string =>
   value
     .split(/[-_\s]+/)
@@ -859,9 +864,6 @@ const getContextPercent = (contextUsage: MessageBoxContextUsage): number | null 
 
   return clampPercent((contextUsage.usedTokens / contextUsage.maxTokens) * 100)
 }
-
-const isMainRateLimit = (limit: AccountRateLimit): boolean =>
-  limit.id == null || limit.id === 'codex' || limit.label.toLocaleLowerCase() === 'codex'
 
 const formatWindowLabel = (windowMinutes: number | null): string => {
   if (windowMinutes == null) return 'current window'
@@ -959,6 +961,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   showSpeedSelector = true,
   model,
   models,
+  modelsLoading = false,
   modelsUnavailable = false,
   operationsDisabled = false,
   pending = false,
@@ -1075,15 +1078,18 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         }
       ]
   const selectedModel = models.find((candidateModel) => candidateModel.id === model)
-  const modelSelectionUnavailable = modelsUnavailable || models.length === 0
+  const modelSelectionUnavailable = modelsUnavailable || modelsLoading || models.length === 0
+  const unavailableModelLabel =
+    modelsLoading && !modelsUnavailable ? 'Loading models…' : 'No models'
   const modelOptions = modelSelectionUnavailable
     ? []
     : models.map((candidateModel): DropdownOption<ProviderModelId> => ({
         value: candidateModel.id,
         label: formatModelLabel(candidateModel.label),
-        menuLabel: candidateModel.isDefault
-          ? `${formatModelLabel(candidateModel.label)} (default)`
-          : formatModelLabel(candidateModel.label),
+        menuLabel: getModelMenuLabel(
+          formatModelLabel(candidateModel.label),
+          candidateModel.isDefault
+        ),
         description: candidateModel.description || undefined,
         icon: <Bot aria-hidden="true" />
       }))
@@ -1091,7 +1097,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     ? [
         {
           value: model,
-          label: 'No models',
+          label: unavailableModelLabel,
           icon: <Bot aria-hidden="true" />,
           disabled: true
         }
@@ -1156,7 +1162,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const approvalSelectorDisabled = selectorsDisabled || fullAccessSelected
   const selectedServiceTierValue = selectedServiceTier ?? standardServiceTierValue
   const selectedModelLabel = modelSelectionUnavailable
-    ? 'No models'
+    ? unavailableModelLabel
     : formatModelLabel(selectedModel?.label ?? model)
   const selectedSandboxModeLabel = selectedSandboxMode?.label ?? formatOptionLabel(sandboxMode)
   const selectedServiceTierLabel = selectedServiceTierOption?.label ?? 'Standard'
@@ -2184,20 +2190,21 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ]
     : undefined
   const accountUsageErrors = accountUsage?.errors ?? []
+  const statisticsSupported = providerId === 'codex'
   const statisticsReported = Boolean(
+    statisticsSupported &&
     accountUsage?.statisticsLoaded &&
     accountUsage.summary &&
     Object.values(accountUsage.summary).some((value) => value !== null)
   )
   const visibleUsageView: UsagePopoverView = statisticsReported ? usageView : 'usage'
-  const statisticsLoading = accountUsageState === 'loading' && !statisticsReported
+  const statisticsLoading =
+    statisticsSupported && accountUsageState === 'loading' && !statisticsReported
   const rateLimits = accountUsage?.rateLimits ?? []
-  const mainRateLimits = rateLimits.filter(isMainRateLimit)
-  const visibleRateLimits = mainRateLimits.length > 0 ? mainRateLimits : rateLimits.slice(0, 1)
-  const detailedRateLimits =
-    mainRateLimits.length > 0
-      ? rateLimits.filter((limit) => !isMainRateLimit(limit))
-      : rateLimits.slice(1)
+  const { visibleRateLimits, detailedRateLimits } = groupAccountRateLimits(
+    rateLimits,
+    selectedModel?.usageScope
+  )
   const globalRateLimit = visibleRateLimits[0] ?? null
   const contextPercent = getContextPercent(contextUsage)
   const contextPercentLabel = contextPercent == null ? null : formatPercent(contextPercent)
@@ -2272,9 +2279,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     const roundedUsedPercent = Math.round(usedPercent)
     const resetTime = formatResetTime(limit.resetsAt)
     const windowLabel = formatWindowLabel(limit.windowMinutes)
-    const limitLabel = `${limit.label} ${windowLabel}${
-      limit.kind === 'secondary' ? ' secondary' : ''
-    }`
+    const limitLabel =
+      limit.displayLabel ??
+      `${limit.label} ${windowLabel}${limit.kind === 'secondary' ? ' secondary' : ''}`
 
     return (
       <div className="message-box__limit" key={key}>
@@ -2629,33 +2636,35 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   role="dialog"
                   aria-label="Usage"
                 >
-                  <SegmentedControl
-                    aria-label="Usage views"
-                    className="message-box__usage-tabs"
-                    options={[
-                      { value: 'usage', label: 'Usage' },
-                      {
-                        value: 'statistics',
-                        label: statisticsLoading
-                          ? 'Statistics'
-                          : statisticsReported
+                  {statisticsSupported && (
+                    <SegmentedControl
+                      aria-label="Usage views"
+                      className="message-box__usage-tabs"
+                      options={[
+                        { value: 'usage', label: 'Usage' },
+                        {
+                          value: 'statistics',
+                          label: statisticsLoading
                             ? 'Statistics'
-                            : 'No statistics',
-                        ariaLabel: statisticsLoading
-                          ? 'Statistics loading'
-                          : statisticsReported
-                            ? 'Statistics'
-                            : 'No statistics available',
-                        disabled: !statisticsReported,
-                        icon: statisticsLoading ? (
-                          <LoaderCircle className="message-box__usage-loading-icon" />
-                        ) : undefined
-                      }
-                    ]}
-                    size="small"
-                    value={visibleUsageView}
-                    onChange={handleUsageViewChange}
-                  />
+                            : statisticsReported
+                              ? 'Statistics'
+                              : 'No statistics',
+                          ariaLabel: statisticsLoading
+                            ? 'Statistics loading'
+                            : statisticsReported
+                              ? 'Statistics'
+                              : 'No statistics available',
+                          disabled: !statisticsReported,
+                          icon: statisticsLoading ? (
+                            <LoaderCircle className="message-box__usage-loading-icon" />
+                          ) : undefined
+                        }
+                      ]}
+                      size="small"
+                      value={visibleUsageView}
+                      onChange={handleUsageViewChange}
+                    />
+                  )}
 
                   {visibleUsageView === 'usage' ? (
                     <div className="message-box__usage-page" role="tabpanel">

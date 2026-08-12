@@ -31,12 +31,14 @@ import {
   setMessageReview
 } from '../database/messageReviews'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
+import { ClaudeProviderAdapter } from './claude/ClaudeProviderAdapter'
 import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
 import type { ProviderAdapter } from './ProviderAdapter'
 
 const adapters: Record<ProviderId, ProviderAdapter> = {
   codex: new CodexProviderAdapter(),
+  claude: new ClaudeProviderAdapter(),
   copilot: new CopilotProviderAdapter()
 }
 
@@ -193,30 +195,31 @@ const getChatUpdateActivity = (detail: ProviderChatDetail): ProviderChatActivity
 export const getChatUpdateSummary = (
   detail: ProviderChatDetail,
   updatedAt: number
-): ProviderChatUpdateSummary => ({
-  id: detail.id,
-  createdAt: detail.createdAt,
-  title: detail.title,
-  preview: truncateChatUpdateText(
-    detail.items.findLast((item) => item.type === 'message')?.content.trim() ?? '',
-    chatUpdatePreviewLimit
-  ),
-  cwd: detail.cwd,
-  cwdKind: detail.cwdKind,
-  projectCwd: detail.projectCwd,
-  branchName: detail.branchName,
-  worktreeBaseBranchName: detail.worktreeBaseBranchName,
-  updatedAt,
-  status: detail.status,
-  pendingApproval: detail.pendingApproval,
-  pinned: detail.pinned,
-  pinnedOrder: detail.pinnedOrder,
-  done: detail.done,
-  seenUpdatedAt: detail.seenUpdatedAt,
-  purpose: detail.purpose,
-  container: detail.container,
-  currentActivity: getChatUpdateActivity(detail)
-})
+): ProviderChatUpdateSummary => {
+  const preview = detail.items.findLast((item) => item.type === 'message')?.content.trim() ?? ''
+  return {
+    id: detail.id,
+    createdAt: detail.createdAt,
+    title: detail.title,
+    preview: truncateChatUpdateText(preview, chatUpdatePreviewLimit),
+    previewLength: preview.length,
+    cwd: detail.cwd,
+    cwdKind: detail.cwdKind,
+    projectCwd: detail.projectCwd,
+    branchName: detail.branchName,
+    worktreeBaseBranchName: detail.worktreeBaseBranchName,
+    updatedAt,
+    status: detail.status,
+    pendingApproval: detail.pendingApproval,
+    pinned: detail.pinned,
+    pinnedOrder: detail.pinnedOrder,
+    done: detail.done,
+    seenUpdatedAt: detail.seenUpdatedAt,
+    purpose: detail.purpose,
+    container: detail.container,
+    currentActivity: getChatUpdateActivity(detail)
+  }
+}
 
 const collectProviderChatIdsByCwd = async (
   providerId: ProviderId,

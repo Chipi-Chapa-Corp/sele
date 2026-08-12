@@ -9,6 +9,8 @@ files:
   - '!{.eslintcache,eslint.config.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # Sele intentionally uses the user's Claude CLI. Do not package the SDK's 295 MB optional CLI.
+  - '!node_modules/@anthropic-ai/claude-agent-sdk-*/**'
 asarUnpack:
   - resources/**
   - node_modules/@github/copilot*/**

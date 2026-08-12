@@ -110,8 +110,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   const workingStatus = chat.status && workingStatuses.has(chat.status) ? chat.status : null
   const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
   const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
-  const trailingStatus =
-    chat.status && !workingStatus && !approvalStatus && !userInputStatus ? chat.status : null
+  const errorStatus = chat.status === 'error' ? chat.status : null
   const pendingApproval = chat.pendingApproval
   const approvalTarget = pendingApproval ? getApprovalTarget(pendingApproval) : null
   const unread = !selected && !chat.done && chat.updatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
@@ -233,6 +232,17 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
                 aria-label={statusLabels[userInputStatus]}
               />
             </span>
+          ) : errorStatus ? (
+            <span
+              className="chat-list-item__status-container chat-list-item__status-container--leading"
+              title={statusLabels[errorStatus]}
+            >
+              <span
+                className="chat-list-item__status chat-list-item__status--error"
+                role="img"
+                aria-label={statusLabels[errorStatus]}
+              />
+            </span>
           ) : (
             showFinishedUnseen && (
               <span
@@ -280,20 +290,6 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
             </>
           ) : (
             <span className="chat-list-item__title">{chat.title}</span>
-          )}
-          {trailingStatus && (
-            <span className="chat-list-item__meta">
-              <span
-                className="chat-list-item__status-container"
-                title={statusLabels[trailingStatus]}
-              >
-                <span
-                  className={`chat-list-item__status chat-list-item__status--${trailingStatus}`}
-                  role="img"
-                  aria-label={statusLabels[trailingStatus]}
-                />
-              </span>
-            </span>
           )}
         </span>
         {!pendingApproval && (

@@ -160,6 +160,7 @@ import {
   type SettingsProviderSkill
 } from '../../shared/providerOwnership'
 import {
+  fallbackClaudeModels,
   fallbackCopilotModels,
   fallbackProviderApprovalModes,
   fallbackProviderModels,
@@ -194,7 +195,12 @@ import { UserInputRequestBox } from './components/UserInputRequestBox'
 import type { AppAction } from './actions'
 import { getAppActionsForProject, getAppActionKeybindingFromEvent } from './actions'
 import { appApi } from './appApi'
-import { mergeChatMetadata } from './chatMetadata'
+import {
+  getComparableChatPreview,
+  isViewedChatCompletion,
+  mergeChatMetadata,
+  type ComparableChatPreview
+} from './chatMetadata'
 import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
 import { getProjectDisplayName, renderProjectGlyph } from './projectPresentation'
@@ -886,6 +892,7 @@ const writeChatGroupingPreference = (preference: ChatGroupingPreference): void =
 
 const providerLabels = {
   codex: 'Codex',
+  claude: 'Claude',
   copilot: 'Copilot'
 } satisfies Record<ProviderId, string>
 
@@ -929,7 +936,11 @@ const mergeSettingsProviderSkills = (
 }
 
 const getFallbackModels = (providerId: ProviderId): ProviderModel[] =>
-  providerId === 'copilot' ? fallbackCopilotModels : fallbackProviderModels
+  providerId === 'copilot'
+    ? fallbackCopilotModels
+    : providerId === 'claude'
+      ? fallbackClaudeModels
+      : fallbackProviderModels
 
 const getProviderUpdatePreference = (
   preferences: ProviderUpdatePreferences,
@@ -3722,6 +3733,7 @@ export const App: React.FC = () => {
   )
   const [providerResourcesRefresh, setProviderResourcesRefresh] = useState(0)
   const [providerResourcesRevision, setProviderResourcesRevision] = useState(0)
+  const [providerModelsRevision, setProviderModelsRevision] = useState(0)
   const [fileEditorTarget, setFileEditorTarget] = useState<FileEditorTarget | null>(null)
   const [selectedReview, setSelectedReview] = useState<Omit<ProviderReview, 'prompt'> | null>(null)
   const [reviewCommentsDraft, setReviewCommentsDraft] = useState<ProviderReviewComment[]>([])
@@ -3758,6 +3770,9 @@ export const App: React.FC = () => {
     storedMessageBoxSelection.sandboxMode ?? fallbackDefaultSandboxMode
   )
   const [models, setModels] = useState<ProviderModel[]>(fallbackProviderModels)
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const providerModelCatalogCacheRef = useRef(new Map<string, ProviderModel[]>())
+  const displayedModelCatalogKeyRef = useRef<string | null>(null)
   const [model, setModel] = useState<ProviderModelId>(
     storedMessageBoxSelection.model ?? fallbackInitialModel.id
   )
@@ -3893,6 +3908,14 @@ export const App: React.FC = () => {
   const configProviderHasSelectedChat = Boolean(selectedChat)
   const configProviderContainer = selectedChat ? selectedChat.container : newSessionContainer
   const configProviderContainerKey = getContainerTargetKey(configProviderContainer)
+  const configProviderModelCatalogKey = `${configProviderId}:${configProviderContainerKey}`
+  const configProviderContainerRef = useRef(configProviderContainer)
+  useEffect(() => {
+    configProviderContainerRef.current = configProviderContainer
+  }, [configProviderContainer, configProviderContainerKey])
+  const configProviderModelsReady =
+    configProviderHasSelectedChat ||
+    (newSessionSourceAvailabilityReady && newSessionProviderAvailable && loadState !== 'loading')
   const [projects, setProjects] = useState<AppProject[]>([])
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -4017,6 +4040,7 @@ export const App: React.FC = () => {
   const selectedChatUpdatedAtRef = useRef<number | null>(null)
   const recentChatCacheLimitRef = useRef(effectiveAppSettings.chat.recentChatCacheLimit)
   const recentChatCacheRef = useRef(new Map<string, RecentChatCacheEntry>())
+  const recentlyViewedActiveChatPreviewsRef = useRef(new Map<string, ComparableChatPreview>())
   const pinnedOrderMutationRef = useRef(0)
   const changesCwdRef = useRef<string | null>(null)
   const changesContainerRef = useRef<AppContainerTarget | null>(null)
@@ -5133,15 +5157,19 @@ export const App: React.FC = () => {
   useEffect(() => {
     let active = true
     const fallbackModels = getFallbackModels(configProviderId)
+    const cachedModels = providerModelCatalogCacheRef.current.get(configProviderModelCatalogKey)
 
-    if (
-      !configProviderHasSelectedChat &&
-      (!newSessionSourceAvailabilityReady ||
-        !newSessionProviderAvailable ||
-        loadState === 'loading')
-    ) {
+    if (!configProviderModelsReady) {
       queueMicrotask(() => {
-        if (active) setModels([])
+        if (!active) return
+        if (cachedModels) {
+          setModels(cachedModels)
+          displayedModelCatalogKeyRef.current = configProviderModelCatalogKey
+        } else if (displayedModelCatalogKeyRef.current !== configProviderModelCatalogKey) {
+          setModels([])
+          displayedModelCatalogKeyRef.current = null
+        }
+        setModelsLoading(false)
       })
 
       return () => {
@@ -5149,33 +5177,49 @@ export const App: React.FC = () => {
       }
     }
 
-    const container = normalizeContainerTarget(configProviderContainer)
+    const container = normalizeContainerTarget(configProviderContainerRef.current)
     queueMicrotask(() => {
-      if (active) setModels(fallbackModels)
+      if (!active) return
+      if (cachedModels) {
+        setModels(cachedModels)
+        setModelsLoading(false)
+        displayedModelCatalogKeyRef.current = configProviderModelCatalogKey
+      } else {
+        setModels(configProviderId === 'claude' ? [] : fallbackModels)
+        setModelsLoading(true)
+        displayedModelCatalogKeyRef.current = null
+      }
     })
 
     providerApi
       .getModels(configProviderId, { container })
       .then((nextModels) => {
-        if (!active || nextModels.length === 0) return
+        if (!active) return
 
-        setModels(nextModels)
+        const resolvedModels = nextModels.length > 0 ? nextModels : fallbackModels
+        providerModelCatalogCacheRef.current.set(configProviderModelCatalogKey, resolvedModels)
+        displayedModelCatalogKeyRef.current = configProviderModelCatalogKey
+        setModels(resolvedModels)
+        setModelsLoading(false)
       })
       .catch(() => {
-        if (active) setModels(fallbackModels)
+        if (!active) return
+        const resolvedModels = cachedModels ?? fallbackModels
+        providerModelCatalogCacheRef.current.set(configProviderModelCatalogKey, resolvedModels)
+        displayedModelCatalogKeyRef.current = configProviderModelCatalogKey
+        setModels(resolvedModels)
+        setModelsLoading(false)
       })
 
     return () => {
       active = false
     }
   }, [
-    configProviderContainer,
     configProviderContainerKey,
-    configProviderHasSelectedChat,
     configProviderId,
-    loadState,
-    newSessionProviderAvailable,
-    newSessionSourceAvailabilityReady
+    configProviderModelCatalogKey,
+    configProviderModelsReady,
+    providerModelsRevision
   ])
 
   useEffect(() => {
@@ -5493,21 +5537,36 @@ export const App: React.FC = () => {
     [applyChatMetadata, applySeenUpdatedAt]
   )
 
-  const markSelectedChatSeen = useCallback((): void => {
-    if (!selectedChat) return
+  const markSelectedChatSeen = useCallback(
+    (rememberPendingCompletion = false): void => {
+      if (!selectedChat) return
 
-    const cacheEntry = recentChatCacheRef.current.get(getChatKey(selectedChat))
-    markChatSeenAt(
-      selectedChat.providerId,
-      selectedChat.id,
-      Math.max(
-        Date.now(),
-        selectedChat.updatedAt,
-        selectedChatUpdatedAtRef.current ?? 0,
-        cacheEntry?.updatedAt ?? 0
+      const chatKey = getChatKey(selectedChat)
+      const cacheEntry = recentChatCacheRef.current.get(chatKey)
+      if (rememberPendingCompletion && isActiveChatStatus(selectedChat.status)) {
+        const selectedDetail = chatDetailRef.current
+        const lastVisibleMessage =
+          selectedDetail?.id === selectedChat.id
+            ? selectedDetail.items.findLast((item) => item.type === 'message')
+            : null
+        const viewedPreview = getComparableChatPreview(
+          lastVisibleMessage?.role === 'assistant' ? lastVisibleMessage.content : null
+        )
+        if (viewedPreview) recentlyViewedActiveChatPreviewsRef.current.set(chatKey, viewedPreview)
+      }
+      markChatSeenAt(
+        selectedChat.providerId,
+        selectedChat.id,
+        Math.max(
+          Date.now(),
+          selectedChat.updatedAt,
+          selectedChatUpdatedAtRef.current ?? 0,
+          cacheEntry?.updatedAt ?? 0
+        )
       )
-    )
-  }, [markChatSeenAt, selectedChat])
+    },
+    [markChatSeenAt, selectedChat]
+  )
 
   const applyViewedChatDetail = useCallback(
     (
@@ -5527,6 +5586,24 @@ export const App: React.FC = () => {
         const seenUpdatedAt = Date.now()
         const updatedChatKey = getChatKey({ providerId: event.providerId, id: event.chatId })
         const viewingUpdatedChat = selectedChatKeyRef.current === updatedChatKey
+        const recentlyViewedPreview =
+          recentlyViewedActiveChatPreviewsRef.current.get(updatedChatKey)
+        const completedWhileRecentlyViewed =
+          !viewingUpdatedChat &&
+          isViewedChatCompletion(
+            recentlyViewedPreview,
+            event.summary.preview,
+            event.summary.previewLength,
+            event.turnCompleted
+          )
+        if (
+          recentlyViewedPreview &&
+          (event.summary.preview !== recentlyViewedPreview.preview ||
+            event.summary.previewLength !== recentlyViewedPreview.length ||
+            event.turnCompleted)
+        ) {
+          recentlyViewedActiveChatPreviewsRef.current.delete(updatedChatKey)
+        }
         const selectedDetail =
           viewingUpdatedChat && event.detail
             ? getChatDetailFromUpdate(
@@ -5553,7 +5630,7 @@ export const App: React.FC = () => {
           }
           providerApi.acknowledgeChatUpdate(event.sequence, false)
         }
-        if (viewingUpdatedChat && event.turnCompleted) {
+        if ((viewingUpdatedChat && event.turnCompleted) || completedWhileRecentlyViewed) {
           markChatSeenAt(event.providerId, event.chatId, seenUpdatedAt)
         }
         if (
@@ -7542,7 +7619,8 @@ export const App: React.FC = () => {
       return
     }
 
-    markSelectedChatSeen()
+    markSelectedChatSeen(true)
+    recentlyViewedActiveChatPreviewsRef.current.delete(getChatKey(chat))
     selectedChatKeyRef.current = getChatKey(chat)
     selectedChatUpdatedAtRef.current = chat.updatedAt
     chatDetailRef.current = null
@@ -7571,7 +7649,7 @@ export const App: React.FC = () => {
   }
 
   const handleBack = (): void => {
-    markSelectedChatSeen()
+    markSelectedChatSeen(true)
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
     resetChatSearch()
@@ -7591,7 +7669,7 @@ export const App: React.FC = () => {
       : null
     const projectCwd = currentChat ? getChatProjectCwd(currentChat) : undefined
     const projectContainer = currentChat?.container ?? undefined
-    markSelectedChatSeen()
+    markSelectedChatSeen(true)
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
     showNewChatView(projectCwd, projectContainer)
@@ -7600,7 +7678,7 @@ export const App: React.FC = () => {
   const handleNewChatInCwd = (group: ChatListGroupData): void => {
     if (group.kind !== 'cwd') return
 
-    markSelectedChatSeen()
+    markSelectedChatSeen(true)
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
     showNewChatView(group.cwd)
@@ -8159,6 +8237,7 @@ export const App: React.FC = () => {
       const availability = await providerApi.updateProvider(suggestion.providerId, {
         container: normalizeContainerTarget(newSessionContainer)
       })
+      setProviderModelsRevision((revision) => revision + 1)
       setProviderUpdateSuggestion(
         availability &&
           shouldSuggestProviderUpdate(
@@ -8593,6 +8672,8 @@ export const App: React.FC = () => {
           turnOptions
         )
         applyChatSummary(providerId, summary, false)
+        // Reading the clock happens only after the asynchronous send completes.
+        // eslint-disable-next-line react-hooks/purity
         markChatSeenAt(providerId, chatId, Date.now())
         setSendState('idle')
         return true
@@ -8626,6 +8707,8 @@ export const App: React.FC = () => {
         turnOptions
       )
       applyChatSummary(providerId, summary, false)
+      // Reading the clock happens only after the asynchronous send completes.
+      // eslint-disable-next-line react-hooks/purity
       markChatSeenAt(providerId, chatId, Date.now())
       setSendState('idle')
       return true
@@ -8693,6 +8776,9 @@ export const App: React.FC = () => {
     })
   }, [])
 
+  // React Compiler cannot currently retain this callback's memoization across the mutable
+  // provider/model selections, while React itself can safely use the explicit dependency list.
+  /* eslint-disable react-hooks/preserve-manual-memoization */
   const handleRetryStoppedTurn = useCallback(
     async (message: ProviderMessage): Promise<void> => {
       if (
@@ -8783,6 +8869,7 @@ export const App: React.FC = () => {
       selectedProviderId
     ]
   )
+  /* eslint-enable react-hooks/preserve-manual-memoization */
 
   const resolveChatApproval = async (
     chat: ProviderChat,
@@ -12597,6 +12684,7 @@ export const App: React.FC = () => {
                   lastActionId={appSettings.lastActionId}
                   model={effectiveModel}
                   models={models}
+                  modelsLoading={modelsLoading}
                   modelsUnavailable={!messageBoxProviderAvailable}
                   notesContextKey={messageBoxNotesGroup?.key}
                   notes={

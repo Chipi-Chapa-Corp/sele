@@ -26,9 +26,13 @@ const isProviderCliInvocation = (): boolean => {
   const args = process.argv.slice(1)
   const hasArg = (argument: string): boolean => args.includes(argument)
   const isCodexInvocation = hasArg('app-server') || hasArg('update') || hasArg('--version')
+  const isClaudeRuntimeInvocation =
+    hasArg('--input-format') && hasArg('--output-format') && hasArg('stream-json')
   const isCopilotRuntimeInvocation = hasArg('--headless') && (hasArg('--stdio') || hasArg('--port'))
 
-  return isCodexInvocation || isCopilotRuntimeInvocation || hasArg('-V')
+  return (
+    isCodexInvocation || isClaudeRuntimeInvocation || isCopilotRuntimeInvocation || hasArg('-V')
+  )
 }
 
 const updateAppColorScheme = (scheme: AppColorScheme): void => {

@@ -44,6 +44,10 @@ type ShellLookupResult = {
 
 const forwardedEnvironmentVariables = new Set([
   'ALL_PROXY',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_BASE_URL',
+  'CLAUDE_CODE_EXECUTABLE',
+  'CLAUDE_CONFIG_DIR',
   'CODEX_HOME',
   'COLORTERM',
   'COPILOT_CLI_PATH',
@@ -56,6 +60,7 @@ const forwardedEnvironmentVariables = new Set([
   'OPENAI_PROJECT_ID',
   'PATH',
   'SELE_CODEX_PATH',
+  'SELE_CLAUDE_PATH',
   'SELE_COPILOT_PATH',
   'SELE_DISABLE_CODEX_RESOURCE_ISOLATION',
   'TERM',
@@ -877,11 +882,17 @@ const getContainerScriptArgs = (
 const getContainerExecutableArgs = (
   container: Extract<AppContainerTarget, { tool: AppContainerTool }>,
   file: string,
-  args: string[]
+  args: string[],
+  options: HostCommandOptions
 ): string[] => {
-  if (container.tool === 'distrobox') return ['enter', container.name, '--', file, ...args]
-  if (container.tool === 'toolbox') return ['run', '--container', container.name, file, ...args]
-  return ['exec', '-i', container.name, file, ...args]
+  // Executable commands may receive more arguments after this function returns
+  // (the Claude SDK does this when it spawns the CLI). Keep those arguments inside
+  // the selected container while still applying its cwd and environment.
+  const script = [
+    ...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : []),
+    getShellExecLine(file, args, options.env, ['"$@"'])
+  ].join('\n')
+  return [...getContainerScriptArgs(container, script, false), 'sele-provider']
 }
 
 const getSshHostCommand = async (
@@ -1116,7 +1127,7 @@ export const getHostExecutableCommand = async (
   return normalizeExecutableCommand(
     await getContainerRuntimeHostCommand(
       container,
-      getContainerExecutableArgs(container, file, args),
+      getContainerExecutableArgs(container, file, args, options),
       options
     )
   )

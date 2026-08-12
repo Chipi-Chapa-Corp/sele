@@ -5,7 +5,7 @@ A focused desktop workspace for working with AI coding agents across local proje
 ![Sele showing an agent conversation, code changes, and project files](screenshots/sele-main.png)
 
 Sele keeps conversations, project context, diffs, file editing, and terminal sessions together
-in one desktop app. It currently supports OpenAI Codex and GitHub Copilot.
+in one desktop app. It supports OpenAI Codex, Anthropic Claude Code, and GitHub Copilot.
 
 ## Install
 
@@ -43,12 +43,13 @@ authenticate the CLI you want to use before starting Sele.
 
 ```bash
 codex --version
+claude --version
 copilot --version
 ```
 
 Desktop process environments may not include the same `PATH` as your interactive terminal.
-If Sele cannot find Codex, or the provider lookup resolves back to Sele and opens duplicate
-windows, point Sele at the real Codex executable explicitly:
+If Sele cannot find a provider, or the provider lookup resolves back to Sele and opens duplicate
+windows, point Sele at the real provider executable explicitly. For Codex:
 
 ```bash
 flatpak override --user --env=SELE_CODEX_PATH="$(command -v codex)" com.chipichapa.sele
@@ -60,6 +61,15 @@ If the Flatpak cannot see a host Copilot install, point Sele at that executable 
 ```bash
 flatpak override --user --env=SELE_COPILOT_PATH="$(command -v copilot)" com.chipichapa.sele
 ```
+
+Claude Code can be configured the same way when it is outside Sele's desktop `PATH`:
+
+```bash
+flatpak override --user --env=SELE_CLAUDE_PATH="$(command -v claude)" com.chipichapa.sele
+launchctl setenv SELE_CLAUDE_PATH "$(command -v claude)"
+```
+
+Authenticate Claude Code with `claude auth login` before using the Claude provider.
 
 For Copilot, start `copilot` once and use `/login` if the CLI is not already authenticated.
 

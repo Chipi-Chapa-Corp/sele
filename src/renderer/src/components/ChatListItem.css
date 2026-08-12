@@ -152,14 +152,6 @@
   font-weight: bold;
 }
 
-.chat-list-item__meta {
-  display: flex;
-  flex: none;
-  gap: 9px;
-  align-items: center;
-  margin-left: auto;
-}
-
 .chat-list-item__status-container {
   display: grid;
   width: 17px;

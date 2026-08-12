@@ -1,6 +1,6 @@
 import type { AppContainerTarget } from './app'
 
-export const providerIds = ['codex', 'copilot'] as const
+export const providerIds = ['codex', 'claude', 'copilot'] as const
 export const providerModelIds = [
   'gpt-5.6-sol',
   'gpt-5.6-terra',
@@ -55,6 +55,7 @@ export type ProviderModel = {
   label: string
   description: string
   isDefault: boolean
+  usageScope?: string
   supportedReasoningEfforts: ProviderReasoningEffortOption[]
   defaultReasoningEffort: ProviderReasoningEffort
   supportedServiceTiers?: ProviderServiceTierOption[]
@@ -211,6 +212,76 @@ export const fallbackCopilotModels: ProviderModel[] = [
   }
 ]
 
+const fallbackClaudeReasoningEfforts: ProviderReasoningEffortOption[] = [
+  {
+    id: 'low',
+    label: 'low',
+    description: 'Fast responses with lighter reasoning',
+    isDefault: false
+  },
+  {
+    id: 'medium',
+    label: 'medium',
+    description: 'Balances speed and reasoning depth',
+    isDefault: false
+  },
+  {
+    id: 'high',
+    label: 'high',
+    description: 'Greater reasoning depth for complex problems',
+    isDefault: true
+  },
+  {
+    id: 'xhigh',
+    label: 'xhigh',
+    description: 'Extra high reasoning depth for complex problems',
+    isDefault: false
+  },
+  {
+    id: 'max',
+    label: 'max',
+    description: 'Maximum reasoning depth on supported Claude models',
+    isDefault: false
+  }
+]
+
+export const fallbackClaudeModels: ProviderModel[] = [
+  {
+    id: 'default',
+    label: 'Claude (recommended)',
+    description: 'Use the model selected by Claude Code.',
+    isDefault: true,
+    supportedReasoningEfforts: fallbackClaudeReasoningEfforts,
+    defaultReasoningEffort: 'high'
+  },
+  {
+    id: 'sonnet',
+    label: 'Claude Sonnet',
+    description: 'Use the latest available Claude Sonnet model.',
+    isDefault: false,
+    supportedReasoningEfforts: fallbackClaudeReasoningEfforts,
+    defaultReasoningEffort: 'high'
+  },
+  {
+    id: 'opus',
+    label: 'Claude Opus',
+    description: 'Use the latest available Claude Opus model.',
+    isDefault: false,
+    supportedReasoningEfforts: fallbackClaudeReasoningEfforts,
+    defaultReasoningEffort: 'high',
+    supportedServiceTiers: [fallbackFastServiceTier],
+    defaultServiceTier: null
+  },
+  {
+    id: 'haiku',
+    label: 'Claude Haiku',
+    description: 'Use the latest available Claude Haiku model.',
+    isDefault: false,
+    supportedReasoningEfforts: [],
+    defaultReasoningEffort: 'medium'
+  }
+]
+
 export const fallbackProviderApprovalModes: ProviderApprovalModeOption[] = [
   {
     id: 'ask-user',
@@ -301,6 +372,8 @@ export type ProviderAccountRateLimitKind = 'primary' | 'secondary'
 export type ProviderAccountRateLimit = {
   id: string | null
   label: string
+  displayLabel?: string
+  usageScope?: string
   kind: ProviderAccountRateLimitKind
   usedPercent: number
   windowMinutes: number | null
@@ -593,6 +666,7 @@ export type ProviderChatActivitySummary = {
 
 export type ProviderChatUpdateSummary = Omit<ProviderChat, 'providerId'> & {
   currentActivity: ProviderChatActivitySummary | null
+  previewLength: number
 }
 
 export type ProviderChatUpdatedEvent = {

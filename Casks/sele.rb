@@ -5,7 +5,7 @@ cask "sele" do
   url "https://github.com/Chipi-Chapa-Corp/sele/releases/latest/download/sele-macos-arm64.dmg",
       verified: "github.com/Chipi-Chapa-Corp/sele/"
   name "Sele"
-  desc "Desktop AI harness for Codex"
+  desc "Desktop AI harness for Codex, Claude, and Copilot"
   homepage "https://github.com/Chipi-Chapa-Corp/sele"
 
   depends_on arch: :arm64

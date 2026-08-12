@@ -68,7 +68,7 @@ export const UserInputRequestBox = ({
         {request.allowFreeform && (
           <div className="chat-user-input__answer">
             <Input
-              aria-label="Answer Copilot's question"
+              aria-label="Answer the agent's question"
               autoFocus
               className="chat-user-input__input"
               disabled={disabled}

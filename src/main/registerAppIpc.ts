@@ -92,6 +92,7 @@ import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { getHostCommand } from './hostProcess'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
+import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
 import { getCopilotExecutable } from './providers/copilot/CopilotExecutable'
 
 export const getAppWindowState = (window: BrowserWindow): AppWindowState => ({
@@ -850,6 +851,14 @@ const isProviderAvailableInSource = async (
     return runAvailabilityCommand(getCopilotExecutable(), ['--version'], null)
   }
 
+  if (providerId === 'claude') {
+    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
+      return isCommandAvailableInSource('claude', container)
+    }
+
+    return runAvailabilityCommand(getClaudeExecutable(), ['--version'], null)
+  }
+
   return false
 }
 
@@ -860,7 +869,7 @@ const getSourceAvailability = async (
   const [gitAvailable, providers] = await Promise.all([
     isCommandAvailableInSource('git', container),
     Promise.all(
-      (['codex', 'copilot'] satisfies ProviderId[]).map(async (providerId) => ({
+      (['codex', 'claude', 'copilot'] satisfies ProviderId[]).map(async (providerId) => ({
         providerId,
         available: await isProviderAvailableInSource(providerId, container)
       }))
