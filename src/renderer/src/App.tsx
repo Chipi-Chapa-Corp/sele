@@ -249,7 +249,12 @@ import {
   scrollChatSearchMatchIntoView,
   setChatSearchHighlights
 } from './chatSearch'
-import { getLatestChatTurnWindow, shiftChatTurnWindow, type ChatTurnWindow } from './chatTurnWindow'
+import {
+  getEffectiveChatTurnWindow,
+  getLatestChatTurnWindow,
+  shiftChatTurnWindow,
+  type ChatTurnWindow
+} from './chatTurnWindow'
 import './App.css'
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -8504,6 +8509,8 @@ export const App: React.FC = () => {
     if (providerUpdateInProgress || sendInFlightRef.current) return false
     sendInFlightRef.current = true
     chatAutoScrollEnabledRef.current = true
+    setChatAtConversationBottom(true)
+    scrollToLatestTurnAfterRenderRef.current = true
     const messageWithComposerMentions = serializeComposerMessage(message, skills, apps)
     const serializedMessage = review
       ? serializeReviewMessage(messageWithComposerMentions, review)
@@ -9209,8 +9216,9 @@ export const App: React.FC = () => {
     if (!selectedChatKey) return null
     return getLatestChatTurnWindow(selectedChatKey, chatTurns.length, chatTurnPageSize)
   }, [chatTurns.length, selectedChatKey])
-  const effectiveChatTurnWindow =
-    chatTurnWindow?.chatKey === selectedChatKey ? chatTurnWindow : defaultChatTurnWindow
+  const effectiveChatTurnWindow = defaultChatTurnWindow
+    ? getEffectiveChatTurnWindow(chatTurnWindow, defaultChatTurnWindow, chatAtConversationBottom)
+    : null
   const renderedChatTurns = useMemo(
     () =>
       effectiveChatTurnWindow

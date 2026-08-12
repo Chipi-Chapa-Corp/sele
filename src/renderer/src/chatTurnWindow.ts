@@ -16,6 +16,25 @@ export const getLatestChatTurnWindow = (
   totalCount
 })
 
+export const getEffectiveChatTurnWindow = (
+  currentWindow: ChatTurnWindow | null,
+  latestWindow: ChatTurnWindow,
+  followLatest: boolean
+): ChatTurnWindow => {
+  if (!currentWindow || currentWindow.chatKey !== latestWindow.chatKey) return latestWindow
+
+  const currentWindowIncludesLatest = currentWindow.endIndex >= currentWindow.totalCount
+  if (
+    followLatest &&
+    currentWindowIncludesLatest &&
+    currentWindow.totalCount !== latestWindow.totalCount
+  ) {
+    return latestWindow
+  }
+
+  return currentWindow
+}
+
 export const shiftChatTurnWindow = (
   currentWindow: ChatTurnWindow,
   direction: 'older' | 'newer',
