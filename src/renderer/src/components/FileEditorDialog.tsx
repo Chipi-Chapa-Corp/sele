@@ -32,6 +32,7 @@ import { marked } from 'marked'
 import type { AppContainerTarget, AppGitChangeKind } from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { getFileDisplayParts } from '../fileDisplayPath'
 import { createLocalImageUrl } from '../localImage'
 import { Button } from './Button'
 import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
@@ -255,6 +256,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
   const [version, setVersion] = useState<string | null>(null)
   const [editable, setEditable] = useState<boolean | null>(null)
+  const [gitRepositoryRoot, setGitRepositoryRoot] = useState<string | null>(null)
   const [editorError, setEditorError] = useState<string | null>(null)
   const [diff, setDiff] = useState('')
   const [diffLoadState, setDiffLoadState] = useState<LoadState>(target.kind ? 'loading' : 'ready')
@@ -262,7 +264,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [diffError, setDiffError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [diffTreeCollapsed, setDiffTreeCollapsed] = useState(false)
-  const [fileView, setFileView] = useState<FileViewMode>('diff')
+  const [fileView, setFileView] = useState<FileViewMode>(() => (target.kind ? 'diff' : 'contents'))
   const [wordWrap, setWordWrap] = useState(false)
   const [markdownView, setMarkdownView] = useState<MarkdownViewMode>('code')
   const [markdownSplitPercentage, setMarkdownSplitPercentage] = useState(
@@ -288,18 +290,17 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const canShowContents = !isImage && target.kind !== 'delete'
   const canOpenFile = canShowContents || canShowImage
   const visibleLoadState = loadStatePath === target.path ? loadState : 'loading'
+  const hasGitDiff = Boolean(target.kind || gitRepositoryRoot)
   const visibleDiffLoadState =
-    diffLoadStatePath === target.path ? diffLoadState : target.kind ? 'loading' : 'ready'
+    diffLoadStatePath === target.path ? diffLoadState : hasGitDiff ? 'loading' : 'ready'
   const canEdit = canShowContents && visibleLoadState === 'ready' && editable === true
-  const canShowDiff = Boolean(target.kind && !canShowImage && (target.kind === 'delete' || canEdit))
+  const canShowDiff = Boolean(hasGitDiff && !canShowImage && (target.kind === 'delete' || canEdit))
   const showFileDiff = canShowDiff && fileView === 'diff'
-  const isFileDiff = Boolean(target.kind)
+  const isFileDiff = canShowDiff
   const hasDiffTree = isFileDiff && diffTargets.length > 0 && Boolean(onSelectTarget)
   const showDiffTree = hasDiffTree && !diffTreeCollapsed
   const displayPath = useMemo(() => target.displayPath.replace(/\\/g, '/'), [target.displayPath])
-  const displayPathParts = useMemo(() => displayPath.split('/').filter(Boolean), [displayPath])
-  const fileName = displayPathParts.at(-1) ?? displayPath
-  const directoryName = displayPathParts.slice(0, -1).join('/') || '.'
+  const { directoryName, fileName } = useMemo(() => getFileDisplayParts(displayPath), [displayPath])
   const dirty = visibleLoadState === 'ready' && contents !== savedContents
   const diffTree = useMemo(() => buildDiffTree(diffTargets), [diffTargets])
   const reviewCommentCountByPath = useMemo(
@@ -316,14 +317,14 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   )
   const renderedFileDiff = useMemo<ProviderFileDiff | null>(
     () =>
-      target.kind
+      canShowDiff
         ? {
             path: target.path,
-            kind: getDiffKind(target.kind),
+            kind: target.kind ? getDiffKind(target.kind) : 'edit',
             diff
           }
         : null,
-    [diff, target.kind, target.path]
+    [canShowDiff, diff, target.kind, target.path]
   )
   const editableFileDiff = useMemo<ProviderFileDiff>(
     () =>
@@ -370,6 +371,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     setLoadState('loading')
     setSaveState('idle')
     setEditorError(null)
+    setGitRepositoryRoot(null)
 
     try {
       const result = await appApi.getFileContents({
@@ -383,6 +385,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setSavedContents(result.contents)
       setVersion(result.version)
       setEditable(result.editable)
+      setGitRepositoryRoot(result.gitRepositoryRoot)
+      if (result.gitRepositoryRoot && !target.kind) setDiffLoadState('loading')
       setLoadState('ready')
     } catch (loadError) {
       if (loadRequestRef.current !== request) return
@@ -390,9 +394,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setEditorError(getErrorMessage(loadError, 'Unable to open this file.'))
       setVersion(null)
       setEditable(null)
+      setGitRepositoryRoot(null)
       setLoadState('error')
     }
-  }, [target.container, target.cwd, target.path])
+  }, [target.container, target.cwd, target.kind, target.path])
 
   const loadImage = useCallback(async (): Promise<void> => {
     const request = loadRequestRef.current + 1
@@ -424,7 +429,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
   const loadDiff = useCallback(
     async (options: LoadDiffOptions = {}): Promise<void> => {
-      if (!target.kind) return
+      if (!target.kind && !gitRepositoryRoot) return
 
       const background = options.background === true
       const request = diffLoadRequestRef.current + 1
@@ -456,7 +461,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         }
       }
     },
-    [target.container, target.cwd, target.kind, target.path, target.previousPath]
+    [gitRepositoryRoot, target.container, target.cwd, target.kind, target.path, target.previousPath]
   )
 
   useEffect(() => {

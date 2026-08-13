@@ -386,6 +386,7 @@ export type AppFileContentsOptions = AppContainerOptions & {
 export type AppFileContentsResult = {
   contents: string
   editable: boolean
+  gitRepositoryRoot: string | null
   version: string
 }
 

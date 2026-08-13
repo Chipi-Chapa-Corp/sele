@@ -1,17 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import {
-  copyFile,
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  writeFile
-} from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
@@ -90,6 +80,7 @@ import {
 } from './database/sshEnvironments'
 import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
+import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
 import { getHostCommand } from './hostProcess'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
 import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
@@ -1830,37 +1821,52 @@ const getRemoteRepositoryFilePath = (repositoryRoot: string, path: string): stri
   return relativePath
 }
 
+const resolveFileTarget = async (
+  cwd: string,
+  path: string
+): Promise<{ absolutePath: string; commandCwd: string }> => {
+  const cwdRepositoryRoot = isAbsolute(path)
+    ? null
+    : await runGit(cwd, ['rev-parse', '--show-toplevel'])
+  const absolutePath = resolveFileTargetPath(cwd, path, cwdRepositoryRoot)
+
+  return {
+    absolutePath,
+    commandCwd: getFileTargetGitCwd(absolutePath)
+  }
+}
+
 const readSshFileContents = async (
   cwd: string,
   path: string
-): Promise<{ contents: string; editable: boolean; version: string }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
-  const relativePath = getRemoteRepositoryFilePath(repositoryRoot, path)
+): Promise<{
+  contents: string
+  editable: boolean
+  gitRepositoryRoot: string | null
+  version: string
+}> => {
+  const target = await resolveFileTarget(cwd, path)
   const script = [
     'set -eu',
-    'root=$(realpath -- .)',
     'file=$(realpath -- "$1")',
-    'case "$file" in "$root"/*) ;; *) echo "File is outside the repository" >&2; exit 1 ;; esac',
     '[ -f "$file" ] || { echo "Choose a regular file to open." >&2; exit 1; }',
     'size=$(wc -c < "$file")',
     `[ "$size" -le ${maxEditableFileBytes} ] || { echo "Files larger than 2 MB cannot be opened." >&2; exit 1; }`,
-    'if [ -L "$1" ]; then editable=0; else editable=1; fi',
-    'printf "%s\\0%s\\0" "$editable" "$size"',
+    'printf "%s\\0%s\\0" "$file" "$size"',
     'cat -- "$file"'
   ].join('\n')
-  const output = await runSshFileCommand(repositoryRoot, [
+  const output = await runSshFileCommand(target.commandCwd, [
     '-lc',
     script,
     'sele-read-file',
-    relativePath
+    target.absolutePath
   ])
-  const editableSeparator = output.indexOf(0)
-  const sizeSeparator = output.indexOf(0, editableSeparator + 1)
-  if (editableSeparator < 0 || sizeSeparator < 0) throw new Error('Invalid remote file response')
+  const pathSeparator = output.indexOf(0)
+  const sizeSeparator = output.indexOf(0, pathSeparator + 1)
+  if (pathSeparator < 0 || sizeSeparator < 0) throw new Error('Invalid remote file response')
 
-  const editable = output.subarray(0, editableSeparator).toString('utf8') === '1'
-  const size = Number(output.subarray(editableSeparator + 1, sizeSeparator).toString('utf8'))
+  const resolvedPath = output.subarray(0, pathSeparator).toString('utf8')
+  const size = Number(output.subarray(pathSeparator + 1, sizeSeparator).toString('utf8'))
   const file = output.subarray(sizeSeparator + 1)
   if (!Number.isSafeInteger(size) || size < 0 || file.byteLength !== size) {
     throw new Error('Invalid remote file response')
@@ -1869,7 +1875,12 @@ const readSshFileContents = async (
   const contents = file.toString('utf8')
   if (!Buffer.from(contents, 'utf8').equals(file)) throw new Error('Binary files cannot be opened.')
 
-  return { contents, editable, version: getFileVersion(file) }
+  const gitRepositoryRoot = await runGit(getFileTargetGitCwd(resolvedPath), [
+    'rev-parse',
+    '--show-toplevel'
+  ])
+
+  return { contents, editable: true, gitRepositoryRoot, version: getFileVersion(file) }
 }
 
 const writeSshFileContents = async (
@@ -1879,25 +1890,24 @@ const writeSshFileContents = async (
   expectedVersion: string
 ): Promise<{ version: string }> => {
   const currentFile = await readSshFileContents(cwd, path)
-  if (!currentFile.editable) throw new Error('Symbolic links cannot be edited.')
   if (currentFile.version !== expectedVersion) {
     throw new Error('This file changed on disk. Reload it before saving.')
   }
 
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
-  const relativePath = getRemoteRepositoryFilePath(repositoryRoot, path)
+  const target = await resolveFileTarget(cwd, path)
   const script = [
     'set -eu',
-    'root=$(realpath -- .)',
     'file=$(realpath -- "$1")',
-    'case "$file" in "$root"/*) ;; *) echo "File is outside the repository" >&2; exit 1 ;; esac',
-    '[ ! -L "$1" ] && [ -f "$file" ] || { echo "File cannot be edited." >&2; exit 1; }',
+    '[ -f "$file" ] || { echo "File cannot be edited." >&2; exit 1; }',
     'cat > "$file"'
   ].join('\n')
-  await runSshFileCommand(repositoryRoot, ['-lc', script, 'sele-write-file', relativePath], {
-    input: Buffer.from(contents, 'utf8')
-  })
+  await runSshFileCommand(
+    target.commandCwd,
+    ['-lc', script, 'sele-write-file', target.absolutePath],
+    {
+      input: Buffer.from(contents, 'utf8')
+    }
+  )
 
   return { version: getFileVersion(contents) }
 }
@@ -1950,48 +1960,32 @@ const getSshLocalImage = async (
   }
 }
 
-const isPathInsideDirectory = (directoryPath: string, filePath: string): boolean => {
-  const relativePath = relative(directoryPath, filePath)
-  const normalizedRelativePath = relativePath.replace(/\\/g, '/')
-
-  return Boolean(
-    normalizedRelativePath &&
-    normalizedRelativePath !== '..' &&
-    !normalizedRelativePath.startsWith('../') &&
-    !isAbsolute(relativePath)
-  )
-}
-
 const resolveReadableFile = async (
   cwd: string,
   path: string
 ): Promise<{
   absolutePath: string
   editable: boolean
-  isSymbolicLink: boolean
+  gitRepositoryRoot: string | null
   size: number
 }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
-
-  const absolutePath = isAbsolute(path) ? path : resolve(repositoryRoot, path)
-  const [fileStat, resolvedFileStat, repositoryRealPath, fileRealPath] = await Promise.all([
-    lstat(absolutePath),
-    stat(absolutePath),
-    realpath(repositoryRoot),
-    realpath(absolutePath)
-  ])
-  const isSymbolicLink = fileStat.isSymbolicLink()
+  const { absolutePath } = await resolveFileTarget(cwd, path)
+  const resolvedFileStat = await stat(absolutePath)
 
   if (!resolvedFileStat.isFile()) throw new Error('Choose a regular file to open.')
   if (resolvedFileStat.size > maxEditableFileBytes) {
     throw new Error('Files larger than 2 MB cannot be opened.')
   }
 
+  const gitRepositoryRoot = await runGit(getFileTargetGitCwd(absolutePath), [
+    'rev-parse',
+    '--show-toplevel'
+  ])
+
   return {
     absolutePath,
-    editable: !isSymbolicLink && isPathInsideDirectory(repositoryRealPath, fileRealPath),
-    isSymbolicLink,
+    editable: true,
+    gitRepositoryRoot,
     size: resolvedFileStat.size
   }
 }
@@ -2001,20 +1995,21 @@ const resolveEditableFile = async (
   path: string
 ): Promise<{ absolutePath: string; size: number }> => {
   const file = await resolveReadableFile(cwd, path)
-
-  if (file.isSymbolicLink) throw new Error('Symbolic links cannot be edited.')
-  if (!file.editable) throw new Error('Files outside the repository cannot be edited.')
-
   return { absolutePath: file.absolutePath, size: file.size }
 }
 
 const readFileContents = async (
   cwd: string,
   path: string
-): Promise<{ contents: string; editable: boolean; version: string }> => {
+): Promise<{
+  contents: string
+  editable: boolean
+  gitRepositoryRoot: string | null
+  version: string
+}> => {
   if (isSshGitTarget()) return readSshFileContents(cwd, path)
 
-  const { absolutePath, editable } = await resolveReadableFile(cwd, path)
+  const { absolutePath, editable, gitRepositoryRoot } = await resolveReadableFile(cwd, path)
   const file = await readFile(absolutePath)
   const contents = file.toString('utf8')
 
@@ -2025,6 +2020,7 @@ const readFileContents = async (
   return {
     contents,
     editable,
+    gitRepositoryRoot,
     version: getFileVersion(file)
   }
 }
@@ -2149,11 +2145,12 @@ const getGitFileDiff = async (
   path: string,
   previousPath?: string | null
 ): Promise<{ diff: string }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  const target = await resolveFileTarget(cwd, path)
+  const repositoryRoot = await runGit(target.commandCwd, ['rev-parse', '--show-toplevel'], true)
   if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
 
   const paths = [
-    normalizePatchPath(repositoryRoot, path),
+    normalizePatchPath(repositoryRoot, target.absolutePath),
     ...(previousPath ? [normalizePatchPath(repositoryRoot, previousPath)] : [])
   ]
   const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-git-index-'))
