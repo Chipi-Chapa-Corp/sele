@@ -12096,9 +12096,7 @@ export const App: React.FC = () => {
                     ? handleSteerPendingMessage
                     : undefined
                 }
-                onInterruptPendingMessage={
-                  chatHasActiveTurn ? handleInterruptPendingMessage : undefined
-                }
+                onInterruptPendingMessage={handleInterruptPendingMessage}
                 onContinueStoppedTurn={
                   item.type === 'working' && item.status === 'stopped'
                     ? handleContinueStoppedTurn

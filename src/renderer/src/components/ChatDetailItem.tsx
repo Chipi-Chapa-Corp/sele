@@ -1951,8 +1951,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
           <Button
             theme="secondary"
             size="small"
-            aria-label={`Interrupt with ${pendingActionLabel} message`}
-            title={`Interrupt with ${pendingActionLabel} message`}
+            aria-label={`Send ${pendingActionLabel} message now`}
+            title={`Send ${pendingActionLabel} message now`}
             callback={() => onInterruptPendingMessage?.(item)}
             icon={
               item.kind === 'queued' ? (

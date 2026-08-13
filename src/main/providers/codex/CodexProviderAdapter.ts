@@ -65,6 +65,7 @@ import {
   reconcileCodexTurnSnapshots,
   shouldPreferCodexRolloutItems
 } from './CodexLiveMerge'
+import { getCodexQueueDrainDecision } from './CodexQueueDrain'
 import {
   disableProviderSkill,
   listDisabledProviderSkills,
@@ -1188,6 +1189,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private hiddenPendingMessageIdsByThread = new Map<string, Set<string>>()
   private queuedTurnsByThread = new Map<string, QueuedTurn[]>()
   private queuedTurnStartThreads = new Set<string>()
+  private pausedQueuedTurnThreads = new Set<string>()
+  private queuedTurnRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private chatUpdatedTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private rolledBackTurnIds = new Map<string, Set<string>>()
   private manuallyStoppedTurnIds = new Map<string, Set<string>>()
@@ -1983,19 +1986,49 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId, options), () =>
-      this.continueChatInContext(chatId, message, options)
+      this.continueChatInContext(chatId, message, options, true)
+    )
+
+  private continueChatImmediately = (
+    chatId: string,
+    message: string,
+    options?: ProviderTurnOptions
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.continueChatInContext(chatId, message, options, false)
     )
 
   private continueChatInContext = async (
     chatId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options: ProviderTurnOptions | undefined,
+    respectQueuedTurns: boolean
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
     const text = message.trim()
     if (!text && !hasAttachmentInput(options)) {
       throw new Error('Cannot continue a chat with an empty message')
     }
+
+    if (
+      respectQueuedTurns &&
+      ((this.queuedTurnsByThread.get(chatId)?.length ?? 0) > 0 ||
+        this.queuedTurnStartThreads.has(chatId) ||
+        Boolean(this.getActiveTurnId(chatId)))
+    ) {
+      const queuedTurn = this.addQueuedTurn(chatId, text, options)
+      if (!queuedTurn) throw new Error('Unable to queue chat message')
+
+      this.pausedQueuedTurnThreads.delete(chatId)
+      this.emitChatUpdated(chatId)
+      this.scheduleQueueDrain(chatId)
+
+      const queuedDetail = this.getCachedChatDetail(chatId)
+      if (!queuedDetail) throw new Error('Unable to queue chat message')
+      return queuedDetail
+    }
+
+    this.pausedQueuedTurnThreads.delete(chatId)
 
     const pendingTurn = this.addPendingTurn(chatId, text, options)
     if (pendingTurn) this.emitChatUpdated(chatId)
@@ -2282,6 +2315,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
     this.emitChatUpdated(chatId)
 
+    this.pausedQueuedTurnThreads.delete(chatId)
     const pendingTurn = this.addPendingTurn(chatId, text, options)
     if (pendingTurn) this.emitChatUpdated(chatId)
 
@@ -2362,6 +2396,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.hiddenPendingMessageIdsByThread.clear()
     this.queuedTurnsByThread.clear()
     this.queuedTurnStartThreads.clear()
+    this.pausedQueuedTurnThreads.clear()
+    this.queuedTurnRetryTimers.forEach((timer) => clearTimeout(timer))
+    this.queuedTurnRetryTimers.clear()
     this.manuallyStoppedTurnIds.clear()
     this.clients.forEach((client) => client.dispose())
     this.clients.clear()
@@ -2407,7 +2444,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     void this.processWaitingSteeringMessage(chatId, steeringMessage.id).catch(() => {
       if (this.removeSteeringMessage(chatId, steeringMessage.id)) this.emitChatUpdated(chatId)
-      if (!this.getActiveTurnId(chatId)) this.startNextQueuedTurn(chatId)
+      if (!this.getActiveTurnId(chatId)) this.scheduleQueueDrain(chatId)
     })
 
     const detail = this.getCachedChatDetail(chatId)
@@ -2430,7 +2467,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (!activeTurnId || activeTurnId !== currentSteeringMessage.turnId) {
       this.removeSteeringMessage(chatId, currentSteeringMessage.id)
       this.emitChatUpdated(chatId)
-      await this.continueChat(chatId, currentSteeringMessage.text, currentSteeringMessage.options)
+      await this.continueChatImmediately(
+        chatId,
+        currentSteeringMessage.text,
+        currentSteeringMessage.options
+      )
       return
     }
 
@@ -2484,7 +2525,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.emitChatUpdated(chatId)
 
       if (isNoActiveTurnError(error)) {
-        await this.continueChat(chatId, steeringMessage.text, steeringMessage.options)
+        await this.continueChatImmediately(chatId, steeringMessage.text, steeringMessage.options)
         return
       }
 
@@ -2506,7 +2547,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const queuedTurn = this.addQueuedTurn(chatId, text, options)
     if (!queuedTurn) throw new Error('Unable to queue chat message')
 
+    this.pausedQueuedTurnThreads.delete(chatId)
     this.emitChatUpdated(chatId)
+    this.scheduleQueueDrain(chatId)
 
     const detail = this.getCachedChatDetail(chatId)
     if (!detail) throw new Error('Unable to queue chat message')
@@ -2529,7 +2572,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       await this.stopActiveTurn(chatId, { startQueuedTurn: false })
     }
 
-    return this.continueChat(chatId, text, options)
+    return this.continueChatImmediately(chatId, text, options)
   }
 
   private startCodexTurn = async (
@@ -2594,6 +2637,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     chatId: string,
     options: { startQueuedTurn: boolean }
   ): Promise<void> => {
+    if ((this.queuedTurnsByThread.get(chatId)?.length ?? 0) > 0) {
+      this.pausedQueuedTurnThreads.add(chatId)
+    }
+    if (options.startQueuedTurn) this.pausedQueuedTurnThreads.delete(chatId)
+
     const turnId = this.getActiveTurnId(chatId)
     this.cancelPendingApprovals(chatId)
 
@@ -2602,7 +2650,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.removeSteeringMessageForThread(chatId)
       this.setThreadStatus(chatId, { type: 'idle' })
       this.emitChatUpdated(chatId)
-      if (options.startQueuedTurn) this.startNextQueuedTurn(chatId)
+      if (options.startQueuedTurn) this.scheduleQueueDrain(chatId)
       return
     }
 
@@ -2617,7 +2665,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (stoppedTurnId !== turnId) this.markTurnCompleted(chatId, turnId)
     this.setThreadStatus(chatId, { type: 'idle' })
     this.emitChatUpdated(chatId)
-    if (options.startQueuedTurn) this.startNextQueuedTurn(chatId)
+    if (options.startQueuedTurn) this.scheduleQueueDrain(chatId)
   }
 
   private createChatDetail = (thread: CodexThread): ProviderChatDetail => ({
@@ -3218,7 +3266,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const nextQueuedTurns = queuedTurns.filter((turn) => !turnIds.has(turn.id))
     if (nextQueuedTurns.length > 0) this.queuedTurnsByThread.set(threadId, nextQueuedTurns)
-    else this.queuedTurnsByThread.delete(threadId)
+    else {
+      this.queuedTurnsByThread.delete(threadId)
+      this.pausedQueuedTurnThreads.delete(threadId)
+      this.clearQueueDrainRetry(threadId)
+    }
   }
 
   private takeQueuedTurn = (threadId: string, turnId: string): QueuedTurn | null => {
@@ -3228,7 +3280,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const nextQueuedTurns = queuedTurns.filter((turn) => turn.id !== turnId)
     if (nextQueuedTurns.length > 0) this.queuedTurnsByThread.set(threadId, nextQueuedTurns)
-    else this.queuedTurnsByThread.delete(threadId)
+    else {
+      this.queuedTurnsByThread.delete(threadId)
+      this.pausedQueuedTurnThreads.delete(threadId)
+      this.clearQueueDrainRetry(threadId)
+    }
 
     this.removeSyntheticTurn(threadId, turnId)
     return queuedTurn
@@ -3545,17 +3601,125 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }))
   }
 
-  private startNextQueuedTurn = (threadId: string): void => {
-    if (this.queuedTurnStartThreads.has(threadId) || this.getActiveTurnId(threadId)) return
+  private getQueueDrainDecision = (
+    threadId: string,
+    includeDrainLock = true
+  ): ReturnType<typeof getCodexQueueDrainDecision> => {
+    const thread = this.threads.get(threadId)
+    return getCodexQueueDrainDecision({
+      hasQueuedTurn: (this.queuedTurnsByThread.get(threadId)?.length ?? 0) > 0,
+      drainInProgress: includeDrainLock && this.queuedTurnStartThreads.has(threadId),
+      paused: this.pausedQueuedTurnThreads.has(threadId),
+      threadStatus: thread?.status.type ?? null,
+      hasActiveTurn: Boolean(this.getActiveTurnId(threadId)),
+      hasPendingApproval: (this.pendingApprovalsByThread.get(threadId)?.length ?? 0) > 0
+    })
+  }
+
+  private clearQueueDrainRetry = (threadId: string): void => {
+    const timer = this.queuedTurnRetryTimers.get(threadId)
+    if (!timer) return
+
+    clearTimeout(timer)
+    this.queuedTurnRetryTimers.delete(threadId)
+  }
+
+  private scheduleQueueDrainRetry = (threadId: string): void => {
+    if (
+      this.queuedTurnRetryTimers.has(threadId) ||
+      this.pausedQueuedTurnThreads.has(threadId) ||
+      (this.queuedTurnsByThread.get(threadId)?.length ?? 0) === 0
+    ) {
+      return
+    }
+
+    const timer = setTimeout(() => {
+      this.queuedTurnRetryTimers.delete(threadId)
+      this.scheduleQueueDrain(threadId)
+    }, 500)
+    this.queuedTurnRetryTimers.set(threadId, timer)
+  }
+
+  private scheduleQueueDrain = (threadId: string): void => {
+    const decision = this.getQueueDrainDecision(threadId)
+    if (decision === 'wait') return
+
+    this.clearQueueDrainRetry(threadId)
+    this.queuedTurnStartThreads.add(threadId)
+    const container = this.getThreadContainer(threadId)
+
+    queueMicrotask(() => {
+      void this.runWithContainer(container, () => this.drainNextQueuedTurn(threadId))
+        .catch(() => this.scheduleQueueDrainRetry(threadId))
+        .finally(() => {
+          this.queuedTurnStartThreads.delete(threadId)
+          const nextDecision = this.getQueueDrainDecision(threadId, false)
+          if (nextDecision === 'start') this.scheduleQueueDrain(threadId)
+          else if (nextDecision === 'reconcile') this.scheduleQueueDrainRetry(threadId)
+        })
+    })
+  }
+
+  private drainNextQueuedTurn = async (threadId: string): Promise<void> => {
+    let decision = this.getQueueDrainDecision(threadId, false)
+    if (decision === 'reconcile') {
+      await this.reconcileIdleThreadForQueueDrain(threadId)
+      decision = this.getQueueDrainDecision(threadId, false)
+    }
+    if (decision !== 'start') return
 
     const queuedTurn = this.queuedTurnsByThread.get(threadId)?.[0]
-    if (!queuedTurn) return
+    if (queuedTurn) await this.runQueuedTurn(threadId, queuedTurn)
+  }
 
-    this.queuedTurnStartThreads.add(threadId)
-    void this.runQueuedTurn(threadId, queuedTurn).finally(() => {
-      this.queuedTurnStartThreads.delete(threadId)
-      this.startNextQueuedTurn(threadId)
+  private reconcileIdleThreadForQueueDrain = async (threadId: string): Promise<void> => {
+    const activeTurnIdBeforeRead = this.getActiveTurnId(threadId)
+    const response = await this.client.request<ThreadReadResponse>('thread/read', {
+      threadId,
+      includeTurns: true
     })
+    const [cwd, name, turns] = await Promise.all([
+      this.resolveThreadCwd(response.thread, this.threads.get(threadId)?.cwd ?? null),
+      this.resolveThreadName(response.thread),
+      this.getTurnsForThread(response.thread)
+    ])
+
+    const currentThread = this.threads.get(threadId)
+    const activeTurnIdAfterRead = this.getActiveTurnId(threadId)
+    if (
+      currentThread?.status.type !== 'idle' ||
+      (activeTurnIdAfterRead && activeTurnIdAfterRead !== activeTurnIdBeforeRead)
+    ) {
+      return
+    }
+
+    const refreshedTurns = this.filterRolledBackTurns(threadId, turns)
+    const refreshedTurnIds = new Set(refreshedTurns.map((turn) => turn.id))
+    const currentTurnsById = new Map(currentThread.turns.map((turn) => [turn.id, turn]))
+    const reconciledTurns = [
+      ...refreshedTurns.map((turn) => {
+        const currentTurn = currentTurnsById.get(turn.id)
+        return currentTurn ? this.mergeTurn(threadId, turn, currentTurn) : turn
+      }),
+      ...currentThread.turns.filter(
+        (turn) => !refreshedTurnIds.has(turn.id) && isCodexTurnTerminal(turn)
+      )
+    ]
+    this.cacheThread({
+      ...response.thread,
+      name,
+      cwd,
+      status: currentThread.status,
+      turns: reconciledTurns
+    })
+
+    const activeTurn = reconciledTurns.findLast((turn) => turn.status === 'inProgress')
+    if (activeTurn) this.activeTurnIds.set(threadId, activeTurn.id)
+    else {
+      this.activeTurnIds.delete(threadId)
+      this.pendingTurnIds.delete(threadId)
+    }
+    this.emitChatUpdated(threadId)
   }
 
   private runQueuedTurn = async (threadId: string, queuedTurn: QueuedTurn): Promise<void> => {
@@ -3580,7 +3744,29 @@ export class CodexProviderAdapter implements ProviderAdapter {
     try {
       await this.startCodexTurn(threadId, queuedTurn.text, queuedTurn.options, queuedTurn.id)
       this.emitChatUpdated(threadId)
-    } catch {
+    } catch (error) {
+      const pendingTurnStillSynthetic = this.pendingTurnIds.get(threadId) === queuedTurn.id
+      const activeTurnId = this.getActiveTurnId(threadId)
+
+      // A turn/started notification can win the race against the turn/start response. In that
+      // case the queued turn is already running and the failed/late response must not undo it.
+      if (!pendingTurnStillSynthetic && activeTurnId && activeTurnId !== queuedTurn.id) {
+        this.emitChatUpdated(threadId)
+        return
+      }
+
+      const competingTurnId = getFoundActiveTurnId(error)
+      if (competingTurnId && competingTurnId !== queuedTurn.id) {
+        this.clearPendingTurnId(threadId, queuedTurn.id)
+        this.removeSyntheticTurn(threadId, queuedTurn.id)
+        const remainingQueuedTurns = this.queuedTurnsByThread.get(threadId) ?? []
+        this.queuedTurnsByThread.set(threadId, [queuedTurn, ...remainingQueuedTurns])
+        this.activeTurnIds.set(threadId, competingTurnId)
+        this.setThreadStatus(threadId, { type: 'active', activeFlags: [] })
+        this.emitChatUpdated(threadId)
+        return
+      }
+
       this.clearPendingTurnId(threadId, queuedTurn.id)
       if (pendingTurn) this.setTurnStatus(threadId, queuedTurn.id, 'failed')
       this.setThreadStatus(threadId, { type: 'idle' })
@@ -3855,7 +4041,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         this.activeTurnIds.delete(threadId)
       }
       if (!this.getActiveTurnId(threadId)) this.setThreadStatus(threadId, { type: 'idle' })
-      this.startNextQueuedTurn(threadId)
+      this.scheduleQueueDrain(threadId)
     } else {
       this.activeTurnIds.set(threadId, reconciledTurn.id)
       this.setThreadStatus(threadId, { type: 'active', activeFlags: [] })
@@ -4010,12 +4196,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (notification.method === 'turn/completed') {
       this.removeSteeringMessageForTurn(threadId, turn.id)
-      if (
-        turn.status === 'completed' &&
-        !wasManuallyStoppedTurn &&
-        !this.hasWaitingSteeringMessageForTurn(threadId, turn.id)
-      ) {
-        this.startNextQueuedTurn(threadId)
+      if (!wasManuallyStoppedTurn && !this.hasWaitingSteeringMessageForTurn(threadId, turn.id)) {
+        this.scheduleQueueDrain(threadId)
       }
     }
   }
@@ -4184,7 +4366,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rememberThreadContainer(threadId)
 
     if (notification.method === 'thread/status/changed' && params.status) {
-      this.setThreadStatus(threadId, params.status as CodexThreadStatus)
+      const status = params.status as CodexThreadStatus
+      this.setThreadStatus(threadId, status)
+      if (status.type === 'idle') this.scheduleQueueDrain(threadId)
     }
 
     if (notification.method === 'thread/name/updated') {
