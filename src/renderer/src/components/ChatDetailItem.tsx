@@ -84,6 +84,8 @@ import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
 
+const workingItemPageSize = 50
+
 type ChatDetailItemProps = {
   canEditOwnMessages?: boolean
   container?: AppContainerTarget | null
@@ -100,7 +102,8 @@ type ChatDetailItemProps = {
   onSteerPendingMessage?: (message: ProviderPendingMessage) => void
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
-  onLoadWorkingStep?: (workingStepId: string) => Promise<void> | void
+  onLoadWorkingStep?: (workingStepId: string, startIndex?: number) => Promise<void> | void
+  onLoadWorkingItem?: (workingStepId: string, workingItemId: string) => Promise<void> | void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => void
@@ -155,6 +158,7 @@ const areChatDetailItemPropsEqual = (
   first.onInterruptPendingMessage === second.onInterruptPendingMessage &&
   first.onEditMessage === second.onEditMessage &&
   first.onLoadWorkingStep === second.onLoadWorkingStep &&
+  first.onLoadWorkingItem === second.onLoadWorkingItem &&
   first.onOpenFileLink === second.onOpenFileLink &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
@@ -173,6 +177,12 @@ type ProviderWorkingMessageItem = Extract<ProviderWorkingItem, { type: 'message'
 type WorkingBlock =
   | { type: 'message'; item: ProviderWorkingMessageItem }
   | { type: 'tools'; items: ProviderToolItem[] }
+
+const isWorkingItemPayloadLoaded = (item: ProviderWorkingItem): boolean => {
+  if (item.type === 'message') return item.contentLoaded !== false
+  if (item.type === 'toolGroup') return item.tools.every((tool) => tool.payloadLoaded !== false)
+  return item.payloadLoaded !== false
+}
 
 type AnimatedIconHandle = {
   startAnimation: () => void
@@ -598,19 +608,27 @@ const Activity: React.FC<{
         <span className="chat-detail__tool-label">{detailLabel}</span>
         <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
       </summary>
-      {open &&
-        (activity === 'edit' || activity === 'create' || activity === 'delete' ? (
-          <DiffContent tools={tools} projectCwd={projectCwd} />
-        ) : activity === 'command' ||
-          activity === 'search' ||
-          activity === 'git' ||
-          activity === 'npm' ||
-          activity === 'npx' ||
-          activity === 'script' ? (
-          <CommandContent tools={tools} />
-        ) : (
-          <RawContent tools={tools} />
-        ))}
+      {open && (
+        <>
+          {activity === 'edit' || activity === 'create' || activity === 'delete' ? (
+            <DiffContent tools={tools} projectCwd={projectCwd} />
+          ) : activity === 'command' ||
+            activity === 'search' ||
+            activity === 'git' ||
+            activity === 'npm' ||
+            activity === 'npx' ||
+            activity === 'script' ? (
+            <CommandContent tools={tools} />
+          ) : (
+            <RawContent tools={tools} />
+          )}
+          {tools.some((tool) => tool.payloadTruncated) && (
+            <span className="chat-detail__working-load-error">
+              Showing a bounded preview of this large payload.
+            </span>
+          )}
+        </>
+      )}
     </details>
   )
 }
@@ -1016,13 +1034,55 @@ const ToolItem: React.FC<{
   item: ProviderToolItem
   activeToolIds: Set<string>
   expanded?: boolean
+  onLoad?: () => Promise<void> | void
   projectCwd?: string | null
-}> = ({ item, activeToolIds, expanded = false, projectCwd }) => {
+}> = ({ item, activeToolIds, expanded = false, onLoad, projectCwd }) => {
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const tools = getToolsFromToolItem(item)
   const activity = tools[0]?.activity ?? 'other'
   const active = tools.some((tool) => activeToolIds.has(tool.id))
-  const rawLabel = item.label || tools[0]?.toolId || 'Tool use'
+  const baseLabel = item.label || tools[0]?.toolId || 'Tool use'
+  const rawLabel =
+    item.type === 'toolGroup' && (item.toolCount ?? item.tools.length) > item.tools.length
+      ? `${baseLabel} · showing ${item.tools.length} of ${item.toolCount}`
+      : baseLabel
   const label = getToolDisplayLabel(rawLabel, activity, active)
+
+  if (!isWorkingItemPayloadLoaded(item)) {
+    const handleLoad = async (): Promise<void> => {
+      if (!onLoad || loadState === 'loading') return
+      setLoadState('loading')
+      try {
+        await onLoad()
+        setLoadState('idle')
+      } catch {
+        setLoadState('error')
+      }
+    }
+
+    return (
+      <div className="chat-detail__tool-read">
+        <button
+          className="chat-detail__working-load"
+          type="button"
+          disabled={!onLoad || loadState === 'loading'}
+          onClick={handleLoad}
+        >
+          <span className="chat-detail__tool-icon">
+            <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
+          </span>
+          <span className="chat-detail__tool-label">
+            {loadState === 'error' ? `Retry loading ${label}` : label}
+          </span>
+          {loadState === 'loading' ? (
+            <LoaderCircle className="chat-detail__working-spinner" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
+          )}
+        </button>
+      </div>
+    )
+  }
 
   if (tools.some((tool) => tool.images.length > 0)) {
     return <GeneratedImageTool active={active} label={label} tools={tools} />
@@ -1347,8 +1407,9 @@ const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolActivity
 const ToolSequence: React.FC<{
   items: ProviderToolItem[]
   activeToolIds: Set<string>
+  onLoadItem?: (itemId: string) => Promise<void> | void
   projectCwd?: string | null
-}> = ({ items, activeToolIds, projectCwd }) => {
+}> = ({ items, activeToolIds, onLoadItem, projectCwd }) => {
   const [open, setOpen] = useState(false)
   const tools = items.flatMap(getToolsFromToolItem)
   const activeTools = tools.filter((tool) => activeToolIds.has(tool.id))
@@ -1376,6 +1437,7 @@ const ToolSequence: React.FC<{
               item={item}
               activeToolIds={activeToolIds}
               key={item.id}
+              onLoad={onLoadItem ? () => onLoadItem(item.id) : undefined}
               projectCwd={projectCwd}
             />
           ))}
@@ -1577,7 +1639,8 @@ const WorkingStep: React.FC<{
   item: ProviderWorkingStep
   cwd?: string | null
   onContinue?: () => Promise<void> | void
-  onLoad?: () => Promise<void> | void
+  onLoad?: (startIndex?: number) => Promise<void> | void
+  onLoadItem?: (itemId: string) => Promise<void> | void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onRetry?: () => void
   projectCwd?: string | null
@@ -1594,6 +1657,7 @@ const WorkingStep: React.FC<{
   cwd,
   onContinue,
   onLoad,
+  onLoadItem,
   onOpenFileLink,
   onRetry,
   projectCwd,
@@ -1614,6 +1678,10 @@ const WorkingStep: React.FC<{
   )
   const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
   const active = item.status === 'working'
+  const itemsStartIndex = item.itemsStartIndex ?? 0
+  const itemCount = Math.max(item.itemCount ?? item.items.length, item.items.length)
+  const hasOlderItems = !unloaded && itemsStartIndex > 0
+  const hasNewerItems = !unloaded && itemsStartIndex + item.items.length < itemCount
   const preserveOpenDuringContinuedWork =
     continueClicked && followingWorkingStepStatus === 'working' && !followingWorkingStepHasNext
   const collapseWithFollowingStep =
@@ -1700,18 +1768,23 @@ const WorkingStep: React.FC<{
       </div>
     ) : null
 
+  const loadPage = async (startIndex: number): Promise<void> => {
+    if (!onLoad || loadState === 'loading') return
+    setLoadState('loading')
+    try {
+      await onLoad(startIndex)
+      setLoadState('idle')
+    } catch {
+      setLoadState('error')
+    }
+  }
+
   if (unloaded) {
     const handleLoad = async (): Promise<void> => {
       if (loadState === 'loading') return
 
-      setLoadState('loading')
       setOpenAfterLoad(true)
-      try {
-        await onLoad?.()
-        setLoadState('idle')
-      } catch {
-        setLoadState('error')
-      }
+      await loadPage(Math.max(0, itemCount - workingItemPageSize))
     }
 
     return (
@@ -1725,7 +1798,7 @@ const WorkingStep: React.FC<{
             aria-label={
               loadState === 'error' ? `Retry loading ${label} section` : `Load ${label} section`
             }
-            disabled={loadState === 'loading'}
+            disabled={!onLoad || loadState === 'loading'}
             onClick={handleLoad}
           >
             {heading}
@@ -1795,6 +1868,16 @@ const WorkingStep: React.FC<{
         </summary>
         {open && (
           <div className="chat-detail__step-content">
+            {hasOlderItems && (
+              <button
+                className="chat-detail__working-load"
+                type="button"
+                disabled={!onLoad || loadState === 'loading'}
+                onClick={() => void loadPage(Math.max(0, itemsStartIndex - workingItemPageSize))}
+              >
+                Load earlier activity
+              </button>
+            )}
             {blocks.map((block, blockIndex) =>
               block.type === 'tools' ? (
                 block.items.length > 1 &&
@@ -1803,6 +1886,7 @@ const WorkingStep: React.FC<{
                     items={block.items}
                     activeToolIds={activeToolIds}
                     key={block.items[0]?.id}
+                    onLoadItem={onLoadItem}
                     projectCwd={projectCwd}
                   />
                 ) : (
@@ -1812,10 +1896,21 @@ const WorkingStep: React.FC<{
                       activeToolIds={activeToolIds}
                       expanded={active && toolItem === lastWorkingItem}
                       key={toolItem.id}
+                      onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
                       projectCwd={projectCwd}
                     />
                   ))
                 )
+              ) : !isWorkingItemPayloadLoaded(block.item) ? (
+                <button
+                  className="chat-detail__working-load"
+                  type="button"
+                  key={block.item.id}
+                  disabled={!onLoadItem}
+                  onClick={() => void Promise.resolve(onLoadItem?.(block.item.id)).catch(() => {})}
+                >
+                  Load reasoning
+                </button>
               ) : (
                 <MarkdownMessage
                   className="chat-detail__working-message"
@@ -1827,6 +1922,21 @@ const WorkingStep: React.FC<{
                   streaming={active && block.item === lastWorkingItem}
                 />
               )
+            )}
+            {hasNewerItems && (
+              <button
+                className="chat-detail__working-load"
+                type="button"
+                disabled={!onLoad || loadState === 'loading'}
+                onClick={() => void loadPage(itemsStartIndex + item.items.length)}
+              >
+                Load newer activity
+              </button>
+            )}
+            {loadState === 'error' && (
+              <span className="chat-detail__working-load-error">
+                Unable to load this activity page. Select it to retry.
+              </span>
             )}
             {showPlaceholder && <WorkingPlaceholder id={`${item.id}:${item.items.length}`} />}
           </div>
@@ -1861,6 +1971,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onInterruptPendingMessage,
   onEditMessage,
   onLoadWorkingStep,
+  onLoadWorkingItem,
   onOpenFileLink,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
@@ -2028,6 +2139,11 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
             streaming={!pending && role === 'assistant' && streaming}
           />
         )}
+        {item.payloadTruncated && (
+          <span className="chat-detail__payload-preview-note">
+            Showing a bounded preview of this large message.
+          </span>
+        )}
         <div className="chat-detail__message-footer">
           {role === 'user' && messageDate}
           {messageActions}
@@ -2047,7 +2163,12 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       hasNextWorkingStep={hasNextWorkingStep}
       item={item}
       cwd={cwd}
-      onLoad={onLoadWorkingStep ? () => onLoadWorkingStep(item.id) : undefined}
+      onLoad={
+        onLoadWorkingStep ? (startIndex) => onLoadWorkingStep(item.id, startIndex) : undefined
+      }
+      onLoadItem={
+        onLoadWorkingItem ? (workingItemId) => onLoadWorkingItem(item.id, workingItemId) : undefined
+      }
       onContinue={
         onContinueStoppedTurn
           ? () => onContinueStoppedTurn(item.id, continuePrompt.trim())

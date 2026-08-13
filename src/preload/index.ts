@@ -143,8 +143,23 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
   getChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.getChat, providerId, chatId),
-  getChatWorkingStep: (providerId, chatId, workingStepId) =>
-    ipcRenderer.invoke(providerIpcChannels.getChatWorkingStep, providerId, chatId, workingStepId),
+  getChatWorkingStepPage: (providerId, chatId, workingStepId, startIndex, limit) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.getChatWorkingStepPage,
+      providerId,
+      chatId,
+      workingStepId,
+      startIndex,
+      limit
+    ),
+  getChatWorkingItem: (providerId, chatId, workingStepId, workingItemId) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.getChatWorkingItem,
+      providerId,
+      chatId,
+      workingStepId,
+      workingItemId
+    ),
   getChatTurnPage: (providerId, chatId, startIndex, limit) =>
     ipcRenderer.invoke(providerIpcChannels.getChatTurnPage, providerId, chatId, startIndex, limit),
   setChatTitle: (providerId, chatId, title) =>

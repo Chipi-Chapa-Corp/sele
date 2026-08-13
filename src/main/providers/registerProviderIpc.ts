@@ -21,14 +21,20 @@ import type {
   ProviderId,
   ProviderImageInput,
   ProviderOneShotOptions,
+  ProviderApp,
+  ProviderResourceUpdateOptions,
   ProviderReview,
   ProviderSourceOptions,
+  ProviderSkill,
   ProviderSkillInput,
+  ProviderSkillScope,
   ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
   ProviderUserInputResponse,
   ProviderUsageOptions,
   ProviderWorkingItem,
+  ProviderWorkingStep,
+  ProviderWorkingStepPage,
   ProviderWorkingStepUpdate
 } from '../../shared/provider'
 import {
@@ -43,10 +49,15 @@ import {
   providerIpcChannels
 } from '../../shared/provider'
 import { requireContainerTarget } from '../containerTarget'
-import { getProviderChatTurns } from '../../shared/chatTurns'
+import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
 import { getChatUpdateSummary, providerApi } from './providerService'
-import { prepareChatDetailForRenderer } from './chatDetailLazy'
-import { unloadHistoricalWorkingSteps } from './workingStepLazy'
+import { prepareChatDetailForRenderer, prepareChatItemsForRenderer } from './chatDetailLazy'
+import {
+  limitWorkingItemPayload,
+  prepareWorkingStepPage,
+  rendererWorkingItemWindowSize,
+  unloadHistoricalWorkingSteps
+} from './workingStepLazy'
 
 type QueuedWindowChatUpdate = Omit<ProviderWindowChatUpdatedEvent, 'detail' | 'sequence'> & {
   detail: ProviderChatDetail | null
@@ -444,6 +455,18 @@ const requireChatTurnLimit = (value: unknown): number => {
   return value
 }
 
+const requireWorkingItemLimit = (value: unknown): number => {
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > rendererWorkingItemWindowSize
+  ) {
+    throw new Error('Invalid working item limit')
+  }
+  return value
+}
+
 const requireGenerationId = (value: unknown): string => {
   if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid generation ID')
   return value
@@ -470,6 +493,97 @@ const requireProviderSkillPath = (value: unknown): string => {
 const requireProviderSkillPaths = (value: unknown): string[] => {
   if (!Array.isArray(value) || value.length > 500) throw new Error('Invalid skill paths')
   return Array.from(new Set(value.map(requireProviderSkillPath)))
+}
+
+const requireProviderResourceString = (
+  value: unknown,
+  label: string,
+  maximumLength: number,
+  allowEmpty = false
+): string => {
+  if (
+    typeof value !== 'string' ||
+    (!allowEmpty && !value.trim()) ||
+    value.length > maximumLength ||
+    /\0/.test(value)
+  ) {
+    throw new Error(`Invalid ${label}`)
+  }
+  return value
+}
+
+const requireOptionalProviderResourceString = (
+  value: unknown,
+  label: string,
+  maximumLength: number
+): string | null =>
+  value == null ? null : requireProviderResourceString(value, label, maximumLength, true)
+
+const providerSkillScopes = new Set<ProviderSkillScope>(['user', 'repo', 'system', 'admin'])
+
+const requireProviderSkill = (value: unknown): ProviderSkill => {
+  if (typeof value !== 'object' || value == null || Array.isArray(value)) {
+    throw new Error('Invalid provider skill')
+  }
+
+  const skill = value as Record<string, unknown>
+  if (!providerSkillScopes.has(skill.scope as ProviderSkillScope)) {
+    throw new Error('Invalid provider skill scope')
+  }
+
+  return {
+    name: requireProviderResourceString(skill.name, 'provider skill name', 512),
+    description: requireProviderResourceString(
+      skill.description,
+      'provider skill description',
+      32_768,
+      true
+    ),
+    shortDescription: requireOptionalProviderResourceString(
+      skill.shortDescription,
+      'provider skill short description',
+      8_192
+    ),
+    displayName: requireOptionalProviderResourceString(
+      skill.displayName,
+      'provider skill display name',
+      512
+    ),
+    path: requireProviderSkillPath(skill.path),
+    scope: skill.scope as ProviderSkillScope,
+    enabled: requireBoolean(skill.enabled)
+  }
+}
+
+const requireProviderApp = (value: unknown): ProviderApp => {
+  if (typeof value !== 'object' || value == null || Array.isArray(value)) {
+    throw new Error('Invalid provider app')
+  }
+
+  const app = value as Record<string, unknown>
+  if (!Array.isArray(app.skillNames) || app.skillNames.length > 500) {
+    throw new Error('Invalid provider app skill names')
+  }
+
+  return {
+    id: requireProviderAppId(app.id),
+    name: requireProviderResourceString(app.name, 'provider app name', 512),
+    description: requireProviderResourceString(
+      app.description,
+      'provider app description',
+      32_768,
+      true
+    ),
+    enabled: requireBoolean(app.enabled),
+    callable: requireBoolean(app.callable),
+    skillNames: Array.from(
+      new Set(
+        app.skillNames.map((name) =>
+          requireProviderResourceString(name, 'provider app skill name', 512)
+        )
+      )
+    )
+  }
 }
 
 const requireProviderAppId = (value: unknown): string => {
@@ -566,11 +680,59 @@ const requireSourceOptions = (value: unknown): ProviderSourceOptions | undefined
     throw new Error('Invalid provider source options')
   }
 
-  const options = value as { container?: unknown }
+  const options = value as { container?: unknown; forceRefresh?: unknown }
   const container =
     options.container === undefined ? undefined : requireContainerTarget(options.container)
+  const forceRefresh =
+    options.forceRefresh === undefined ? undefined : requireBoolean(options.forceRefresh)
 
-  return container === undefined ? {} : { container }
+  return {
+    ...(container === undefined ? {} : { container }),
+    ...(forceRefresh === undefined ? {} : { forceRefresh })
+  }
+}
+
+const requireProviderResourceUpdateOptions = (
+  value: unknown
+): ProviderResourceUpdateOptions | undefined => {
+  if (value == null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid provider resource update options')
+  }
+
+  const sourceOptions = requireSourceOptions(value) ?? {}
+  const options = value as {
+    deferRefresh?: unknown
+    knownApp?: unknown
+    knownSkills?: unknown
+  }
+  const deferRefresh =
+    options.deferRefresh === undefined ? undefined : requireBoolean(options.deferRefresh)
+  const knownApp = options.knownApp === undefined ? undefined : requireProviderApp(options.knownApp)
+  if (
+    options.knownSkills !== undefined &&
+    (!Array.isArray(options.knownSkills) || options.knownSkills.length > 500)
+  ) {
+    throw new Error('Invalid known provider skills')
+  }
+  const knownSkills =
+    options.knownSkills === undefined
+      ? undefined
+      : Array.from(
+          new Map(
+            options.knownSkills.map((skill) => {
+              const requiredSkill = requireProviderSkill(skill)
+              return [requiredSkill.path, requiredSkill]
+            })
+          ).values()
+        )
+
+  return {
+    ...sourceOptions,
+    ...(deferRefresh === undefined ? {} : { deferRefresh }),
+    ...(knownApp === undefined ? {} : { knownApp }),
+    ...(knownSkills === undefined ? {} : { knownSkills })
+  }
 }
 
 const requireChatListOptions = (value: unknown): ProviderChatListOptions | undefined => {
@@ -1031,7 +1193,7 @@ export const registerProviderIpc = (): void => {
         requireProviderSkillPath(path),
         requireBoolean(enabled),
         requireOptionalCwd(cwd),
-        requireSourceOptions(options)
+        requireProviderResourceUpdateOptions(options)
       )
   )
 
@@ -1043,7 +1205,7 @@ export const registerProviderIpc = (): void => {
         requireProviderSkillPaths(paths),
         requireBoolean(enabled),
         requireOptionalCwd(cwd),
-        requireSourceOptions(options)
+        requireProviderResourceUpdateOptions(options)
       )
   )
 
@@ -1054,7 +1216,7 @@ export const registerProviderIpc = (): void => {
         requireProviderId(providerId),
         requireProviderAppId(appId),
         requireBoolean(enabled),
-        requireSourceOptions(options)
+        requireProviderResourceUpdateOptions(options)
       )
   )
 
@@ -1087,15 +1249,50 @@ export const registerProviderIpc = (): void => {
   )
 
   ipcMain.handle(
-    providerIpcChannels.getChatWorkingStep,
-    async (_, providerId: unknown, chatId: unknown, workingStepId: unknown) => {
+    providerIpcChannels.getChatWorkingStepPage,
+    async (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      workingStepId: unknown,
+      startIndex: unknown,
+      limit: unknown
+    ): Promise<ProviderWorkingStepPage> => {
       const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
       const requiredWorkingStepId = requireMessageId(workingStepId)
       const workingStep = detail.items.find(
-        (item) => item.type === 'working' && item.id === requiredWorkingStepId
+        (item): item is ProviderWorkingStep =>
+          item.type === 'working' && item.id === requiredWorkingStepId
       )
       if (!workingStep) throw new Error('Working section not found')
-      return workingStep
+      return prepareWorkingStepPage(
+        workingStep,
+        requireChatTurnStartIndex(startIndex),
+        requireWorkingItemLimit(limit)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.getChatWorkingItem,
+    async (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      workingStepId: unknown,
+      workingItemId: unknown
+    ): Promise<ProviderWorkingItem> => {
+      const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+      const requiredWorkingStepId = requireMessageId(workingStepId)
+      const requiredWorkingItemId = requireMessageId(workingItemId)
+      const workingStep = detail.items.find(
+        (item): item is ProviderWorkingStep =>
+          item.type === 'working' && item.id === requiredWorkingStepId
+      )
+      if (!workingStep) throw new Error('Working section not found')
+      const workingItem = workingStep.items.find((item) => item.id === requiredWorkingItemId)
+      if (!workingItem) throw new Error('Working item not found')
+      return limitWorkingItemPayload(workingItem)
     }
   )
 
@@ -1108,25 +1305,31 @@ export const registerProviderIpc = (): void => {
       startIndex: unknown,
       limit: unknown
     ): Promise<ProviderChatTurnPage> => {
-      const detail = unloadHistoricalWorkingSteps(
-        await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
-      )
-      const turns = getProviderChatTurns(detail.items)
-      const requiredStartIndex = Math.min(requireChatTurnStartIndex(startIndex), turns.length)
+      const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+      const totalCount = getProviderChatTurnCount(detail.items)
+      const requiredStartIndex = Math.min(requireChatTurnStartIndex(startIndex), totalCount)
       const requiredLimit = requireChatTurnLimit(limit)
+      const pageDetail = unloadHistoricalWorkingSteps({
+        ...detail,
+        items: sliceProviderChatTurns(
+          detail.items,
+          requiredStartIndex,
+          requiredStartIndex + requiredLimit
+        )
+      })
+
+      const items = prepareChatItemsForRenderer(
+        pageDetail.items.map((item) =>
+          item.type === 'message' || item.type === 'pendingMessage'
+            ? { ...item, contentLoaded: true }
+            : item
+        )
+      )
 
       return {
-        items: turns
-          .slice(requiredStartIndex, requiredStartIndex + requiredLimit)
-          .flatMap((turn) =>
-            turn.items.map((item) =>
-              item.type === 'message' || item.type === 'pendingMessage'
-                ? { ...item, contentLoaded: true }
-                : item
-            )
-          ),
+        items,
         startIndex: requiredStartIndex,
-        totalCount: turns.length
+        totalCount
       }
     }
   )

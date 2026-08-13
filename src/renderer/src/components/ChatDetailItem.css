@@ -405,6 +405,13 @@
   font-size: 0.9em;
 }
 
+.chat-detail__payload-preview-note {
+  display: block;
+  margin-top: 7px;
+  color: var(--quiet);
+  font-size: 0.86em;
+}
+
 .chat-detail__working-actions {
   display: flex;
   width: 100%;

@@ -13,6 +13,35 @@ export type ProviderChatTurn = {
 const startsChatTurn = (item: ProviderChatItem): boolean =>
   item.type === 'pendingMessage' || (item.type === 'message' && item.role === 'user')
 
+export const getProviderChatTurnStartItemIndexes = (items: ProviderChatItem[]): number[] => {
+  if (items.length === 0) return []
+
+  const indexes = [0]
+  for (let index = 1; index < items.length; index += 1) {
+    if (startsChatTurn(items[index])) indexes.push(index)
+  }
+  return indexes
+}
+
+export const getProviderChatTurnCount = (items: ProviderChatItem[]): number =>
+  getProviderChatTurnStartItemIndexes(items).length
+
+export const sliceProviderChatTurns = (
+  items: ProviderChatItem[],
+  startIndex: number,
+  endIndex: number
+): ProviderChatItem[] => {
+  const turnStartItemIndexes = getProviderChatTurnStartItemIndexes(items)
+  const boundedStartIndex = Math.max(0, Math.min(startIndex, turnStartItemIndexes.length))
+  const boundedEndIndex = Math.max(
+    boundedStartIndex,
+    Math.min(endIndex, turnStartItemIndexes.length)
+  )
+  const startItemIndex = turnStartItemIndexes[boundedStartIndex] ?? items.length
+  const endItemIndex = turnStartItemIndexes[boundedEndIndex] ?? items.length
+  return items.slice(startItemIndex, endItemIndex)
+}
+
 export const getProviderChatTurns = (items: ProviderChatItem[]): ProviderChatTurn[] => {
   const turns: ProviderChatTurn[] = []
   let turnItems: ProviderChatItem[] = []
@@ -46,7 +75,9 @@ export const unloadWorkingStepItems = (step: ProviderWorkingStep): ProviderWorki
   ...step,
   items: [],
   itemsLoaded: false,
-  itemCount: step.itemsLoaded === false ? step.itemCount : step.items.length
+  itemCount:
+    step.itemsLoaded === false ? step.itemCount : Math.max(step.itemCount ?? 0, step.items.length),
+  itemsStartIndex: 0
 })
 
 export const unloadChatItemsOutsideTurnRange = (

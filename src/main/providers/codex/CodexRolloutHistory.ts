@@ -1,10 +1,12 @@
-import { readFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import { createInterface } from 'node:readline'
 import type {
   ProviderChatContextUsage,
   ProviderTokenUsageBreakdown
 } from '../../../shared/provider'
 import type { CodexThreadItem, CodexTurn } from './CodexItemRenderers'
-import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
+import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls.ts'
 
 type RolloutPatchChange = {
   type?: 'add' | 'delete' | 'update'
@@ -54,6 +56,11 @@ type ParsedRollout = {
   turnModels: Map<string, string>
 }
 
+type TurnEntryLookup = {
+  entryPositions: Map<RolloutEntry, number>
+  outputsByKey: Map<string, RolloutEntry>
+}
+
 const isToolCallPayload = (payload: RolloutPayload): boolean =>
   payload.type === 'custom_tool_call' ||
   payload.type === 'function_call' ||
@@ -67,6 +74,8 @@ const getToolCallOutputType = (payload: RolloutPayload): string | null => {
   if (payload.type === 'web_search_call') return 'web_search_end'
   return null
 }
+
+const getOutputKey = (type: string, callId: string): string => `${type}\0${callId}`
 
 const getToolCallName = (payload: RolloutPayload): string =>
   payload.name ??
@@ -102,31 +111,34 @@ const getPayloadModel = (payload: RolloutPayload): string | null => {
 const getRequiredUsageNumber = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 
-const parseRollout = (contents: string): ParsedRollout => {
-  const entries: RolloutEntry[] = []
-  const turnModels = new Map<string, string>()
+const parseRolloutLine = (
+  line: string,
+  index: number,
+  parsed: ParsedRollout
+): RolloutEntry | null => {
+  if (!line.trim()) return null
 
-  contents.split('\n').forEach((line, index) => {
-    if (!line.trim()) return
+  try {
+    const record = JSON.parse(line) as RolloutRecord
+    const payload = record.payload
+    if (!payload) return null
 
-    try {
-      const record = JSON.parse(line) as RolloutRecord
-      const payload = record.payload
-      if (!payload) return
-
-      if (record.type === 'turn_context') {
-        const turnId = getStringValue(payload.turn_id)
-        const model = getPayloadModel(payload)
-        if (turnId && model && !turnModels.has(turnId)) turnModels.set(turnId, model)
+    if (record.type === 'turn_context') {
+      const turnId = getStringValue(payload.turn_id)
+      const model = getPayloadModel(payload)
+      if (turnId && model && !parsed.turnModels.has(turnId)) {
+        parsed.turnModels.set(turnId, model)
       }
-
-      if (payload.type) entries.push({ record, payload, index })
-    } catch {
-      // A malformed rollout row should not prevent the rest of the history from loading.
     }
-  })
 
-  return { entries, turnModels }
+    if (!payload.type) return null
+    const entry = { record, payload, index }
+    parsed.entries.push(entry)
+    return entry
+  } catch {
+    // A malformed rollout row should not prevent the rest of the history from loading.
+    return null
+  }
 }
 
 const groupEntriesByTurn = (entries: RolloutEntry[]): Map<string, RolloutEntry[]> => {
@@ -305,30 +317,21 @@ const getToolCallInput = (payload: RolloutPayload): string | null => {
   return null
 }
 
-const getOutputEntry = (
-  entries: RolloutEntry[],
-  entryIndex: number,
-  payload: RolloutPayload
-): RolloutEntry | null => {
+const getOutputEntry = (lookup: TurnEntryLookup, payload: RolloutPayload): RolloutEntry | null => {
   const outputType = getToolCallOutputType(payload)
   if (!outputType || !payload.call_id) return null
-
-  return (
-    entries.find(
-      (candidate, index) =>
-        index > entryIndex &&
-        candidate.payload.type === outputType &&
-        candidate.payload.call_id === payload.call_id
-    ) ?? null
-  )
+  return lookup.outputsByKey.get(getOutputKey(outputType, payload.call_id)) ?? null
 }
 
 const getPatchEntryForToolCall = (
   entries: RolloutEntry[],
   entryIndex: number,
-  outputEntry: RolloutEntry | null
+  outputEntry: RolloutEntry | null,
+  lookup: TurnEntryLookup
 ): RolloutEntry | null => {
-  const searchEnd = outputEntry ? entries.indexOf(outputEntry) : entryIndex + 8
+  const searchEnd = outputEntry
+    ? (lookup.entryPositions.get(outputEntry) ?? entryIndex)
+    : entryIndex + 8
 
   for (let index = entryIndex + 1; index <= searchEnd && index < entries.length; index += 1) {
     if (entries[index].payload.type === 'patch_apply_end') return entries[index]
@@ -358,9 +361,10 @@ const getRawEntriesBetween = (
   entries: RolloutEntry[],
   startIndex: number,
   endEntry: RolloutEntry | null,
+  lookup: TurnEntryLookup,
   extraEntries: RolloutEntry[] = []
 ): unknown[] => {
-  const endIndex = endEntry ? entries.indexOf(endEntry) : startIndex
+  const endIndex = endEntry ? (lookup.entryPositions.get(endEntry) ?? startIndex) : startIndex
   const rawEntries = entries.slice(startIndex, endIndex + 1).map((entry) => entry.record)
 
   for (const entry of extraEntries) {
@@ -374,11 +378,12 @@ const createToolItems = (
   entry: RolloutEntry,
   entries: RolloutEntry[],
   entryIndex: number,
+  lookup: TurnEntryLookup,
   usedPatchEntryIndexes: Set<number>
 ): CodexThreadItem[] => {
   const { payload } = entry
   const input = getToolCallInput(payload)
-  const outputEntry = getOutputEntry(entries, entryIndex, payload)
+  const outputEntry = getOutputEntry(lookup, payload)
   const output = outputEntry?.payload.output ?? null
 
   if (!input) {
@@ -394,13 +399,13 @@ const createToolItems = (
               ? payload.arguments
               : JSON.stringify(payload.arguments),
         customToolOutput: output,
-        rawToolData: getRawEntriesBetween(entries, entryIndex, outputEntry)
+        rawToolData: getRawEntriesBetween(entries, entryIndex, outputEntry, lookup)
       }
     ]
   }
 
   const nestedCalls = getNestedToolCalls(input)
-  const patchEntry = getPatchEntryForToolCall(entries, entryIndex, outputEntry)
+  const patchEntry = getPatchEntryForToolCall(entries, entryIndex, outputEntry, lookup)
 
   if (patchEntry && isPatchToolCall(input, nestedCalls)) {
     usedPatchEntryIndexes.add(patchEntry.index)
@@ -409,7 +414,7 @@ const createToolItems = (
         type: 'fileChange',
         id: payload.id ?? payload.call_id ?? `patch:${entry.index}`,
         changes: getPatchChanges(patchEntry.payload),
-        rawToolData: getRawEntriesBetween(entries, entryIndex, outputEntry, [patchEntry])
+        rawToolData: getRawEntriesBetween(entries, entryIndex, outputEntry, lookup, [patchEntry])
       }
     ]
   }
@@ -423,7 +428,7 @@ const createToolItems = (
     customToolName: call.name,
     customToolInput: input.slice(call.offset),
     customToolOutput: output,
-    rawToolData: getRawEntriesBetween(entries, entryIndex, outputEntry)
+    rawToolData: getRawEntriesBetween(entries, entryIndex, outputEntry, lookup)
   }))
 }
 
@@ -496,6 +501,16 @@ const createTurn = (
 ): CodexTurn => {
   const items: CodexThreadItem[] = []
   const usedPatchEntryIndexes = new Set<number>()
+  const lookup: TurnEntryLookup = {
+    entryPositions: new Map(entries.map((entry, index) => [entry, index])),
+    outputsByKey: new Map()
+  }
+  for (const entry of entries) {
+    const callId = entry.payload.call_id
+    if (!callId) continue
+    const key = getOutputKey(entry.payload.type, callId)
+    if (!lookup.outputsByKey.has(key)) lookup.outputsByKey.set(key, entry)
+  }
   const hasFinalAgentMessage = entries.some(
     (entry) => entry.payload.type === 'agent_message' && entry.payload.phase === 'final_answer'
   )
@@ -516,7 +531,7 @@ const createTurn = (
     }
 
     if (isToolCallPayload(payload)) {
-      items.push(...createToolItems(entry, entries, entryIndex, usedPatchEntryIndexes))
+      items.push(...createToolItems(entry, entries, entryIndex, lookup, usedPatchEntryIndexes))
       return
     }
 
@@ -554,59 +569,76 @@ const createTurn = (
   }
 }
 
-export const loadRolloutHistory = async (rolloutPath: string | null): Promise<CodexTurn[]> => {
-  if (!rolloutPath) return []
+type RolloutSnapshot = {
+  contextUsage: ProviderChatContextUsage | null
+  cwd: string | null
+  turns: CodexTurn[]
+}
+
+type CachedRolloutSnapshot = {
+  fingerprint: string
+  snapshot: Promise<RolloutSnapshot>
+}
+
+const emptyRolloutSnapshot = (): RolloutSnapshot => ({
+  contextUsage: null,
+  cwd: null,
+  turns: []
+})
+
+const rolloutSnapshotCache = new Map<string, CachedRolloutSnapshot>()
+
+const readRolloutSnapshot = async (rolloutPath: string): Promise<RolloutSnapshot> => {
+  const parsed: ParsedRollout = { entries: [], turnModels: new Map() }
+  let contextUsage: ProviderChatContextUsage | null = null
+  let cwd: string | null = null
+  let lineIndex = 0
+  const lines = createInterface({
+    input: createReadStream(rolloutPath, { encoding: 'utf8' }),
+    crlfDelay: Infinity
+  })
+
+  for await (const line of lines) {
+    const entry = parseRolloutLine(line, lineIndex, parsed)
+    lineIndex += 1
+    if (!entry) continue
+
+    const entryCwd = entry.payload.cwd
+    if (!cwd && typeof entryCwd === 'string' && entryCwd.trim()) cwd = entryCwd
+    const nextContextUsage = normalizeRolloutContextUsage(entry)
+    if (nextContextUsage) contextUsage = nextContextUsage
+  }
+
+  const entriesByTurn = groupEntriesByTurn(parsed.entries)
+  const turns = [...entriesByTurn.entries()].map(([turnId, turnEntries]) =>
+    createTurn(turnId, turnEntries, parsed.turnModels.get(turnId) ?? null)
+  )
+  return { contextUsage, cwd, turns }
+}
+
+const loadRolloutSnapshot = async (rolloutPath: string | null): Promise<RolloutSnapshot> => {
+  if (!rolloutPath) return emptyRolloutSnapshot()
 
   try {
-    const { entries, turnModels } = parseRollout(await readFile(rolloutPath, 'utf8'))
-    const entriesByTurn = groupEntriesByTurn(entries)
-    return [...entriesByTurn.entries()].map(([turnId, turnEntries]) =>
-      createTurn(turnId, turnEntries, turnModels.get(turnId) ?? null)
-    )
+    const metadata = await stat(rolloutPath)
+    const fingerprint = `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeMs}`
+    const cached = rolloutSnapshotCache.get(rolloutPath)
+    if (cached?.fingerprint === fingerprint) return cached.snapshot
+
+    const snapshot = readRolloutSnapshot(rolloutPath).catch(() => emptyRolloutSnapshot())
+    rolloutSnapshotCache.set(rolloutPath, { fingerprint, snapshot })
+    return snapshot
   } catch {
-    return []
+    return emptyRolloutSnapshot()
   }
 }
+
+export const loadRolloutHistory = async (rolloutPath: string | null): Promise<CodexTurn[]> =>
+  (await loadRolloutSnapshot(rolloutPath)).turns
 
 export const loadRolloutContextUsage = async (
   rolloutPath: string | null
-): Promise<ProviderChatContextUsage | null> => {
-  if (!rolloutPath) return null
+): Promise<ProviderChatContextUsage | null> => (await loadRolloutSnapshot(rolloutPath)).contextUsage
 
-  try {
-    const { entries } = parseRollout(await readFile(rolloutPath, 'utf8'))
-
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const contextUsage = normalizeRolloutContextUsage(entries[index])
-      if (contextUsage) return contextUsage
-    }
-  } catch {
-    return null
-  }
-
-  return null
-}
-
-export const loadRolloutCwd = async (rolloutPath: string | null): Promise<string | null> => {
-  if (!rolloutPath) return null
-
-  try {
-    const contents = await readFile(rolloutPath, 'utf8')
-
-    for (const line of contents.split('\n')) {
-      if (!line.trim()) continue
-
-      try {
-        const record = JSON.parse(line) as RolloutRecord
-        const cwd = record.payload?.cwd
-        if (typeof cwd === 'string' && cwd.trim()) return cwd
-      } catch {
-        // Keep scanning; one malformed row should not hide cwd metadata from later rows.
-      }
-    }
-  } catch {
-    return null
-  }
-
-  return null
-}
+export const loadRolloutCwd = async (rolloutPath: string | null): Promise<string | null> =>
+  (await loadRolloutSnapshot(rolloutPath)).cwd

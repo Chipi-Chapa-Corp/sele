@@ -72,7 +72,8 @@ test('unloads working details outside the retained turn range', () => {
     ...firstWorking,
     items: [],
     itemsLoaded: false,
-    itemCount: 1
+    itemCount: 1,
+    itemsStartIndex: 0
   })
   assert.strictEqual(result[3], secondWorking)
 })

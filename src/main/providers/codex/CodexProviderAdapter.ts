@@ -31,6 +31,7 @@ import type {
   ProviderSandboxModeOption,
   ProviderApp,
   ProviderSkill,
+  ProviderResourceUpdateOptions,
   ProviderSourceOptions,
   ProviderTurnOptions,
   ProviderOneShotOptions
@@ -873,6 +874,7 @@ const titleGenerationPromptLimit = 2_000
 // Full chat snapshots cross IPC and trigger renderer work. Keep enough time between snapshots for
 // input and window events even when a long-running chat has a large history.
 const chatUpdateDebounceMs = 250
+const rendererWorkingItemTailLimit = 50
 let localTurnSequence = 0
 
 const titleGenerationOutputSchema = {
@@ -1380,29 +1382,34 @@ export class CodexProviderAdapter implements ProviderAdapter {
     path: string,
     enabled: boolean,
     cwd?: string | null,
-    options: ProviderSourceOptions = {}
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderSkill[]> =>
     this.runWithContainer(options.container, () =>
-      this.setSkillsEnabledInContext([path], enabled, cwd, false)
+      this.setSkillsEnabledInContext([path], enabled, cwd, false, options)
     )
 
   setSkillsEnabled = async (
     paths: string[],
     enabled: boolean,
     cwd?: string | null,
-    options: ProviderSourceOptions = {}
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderSkill[]> =>
     this.runWithContainer(options.container, () =>
-      this.setSkillsEnabledInContext(paths, enabled, cwd, true)
+      this.setSkillsEnabledInContext(paths, enabled, cwd, true, options)
     )
 
   private setSkillsEnabledInContext = async (
     paths: string[],
     enabled: boolean,
     cwd?: string | null,
-    toleratePartialFailure = false
+    toleratePartialFailure = false,
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderSkill[]> => {
-    const skills = await this.getSkillsInContext(cwd)
+    const requestedPaths = new Set(paths)
+    const knownSkills = options.knownSkills?.filter((skill) => requestedPaths.has(skill.path))
+    const useKnownSkills =
+      options.deferRefresh && knownSkills?.length === requestedPaths.size ? knownSkills : null
+    const skills = useKnownSkills ?? (await this.getSkillsInContext(cwd))
     const skillsByPath = new Map(skills.map((skill) => [skill.path, skill]))
     const requestedSkills = paths.map((path) => {
       const skill = skillsByPath.get(path)
@@ -1432,19 +1439,31 @@ export class CodexProviderAdapter implements ProviderAdapter {
       (_, index) => updateResults[index]?.status === 'rejected'
     )
     const retryResults = await Promise.allSettled(failedSkills.map(updateSkill))
+    const failedAfterRetry = new Set(
+      failedSkills
+        .filter((_, index) => retryResults[index]?.status === 'rejected')
+        .map((skill) => skill.path)
+    )
     const failedRetry = retryResults.find((result) => result.status === 'rejected')
     if (!toleratePartialFailure && failedRetry?.status === 'rejected') throw failedRetry.reason
 
+    if (options.deferRefresh) {
+      return requestedSkills.map((skill) =>
+        failedAfterRetry.has(skill.path) ? skill : { ...skill, enabled }
+      )
+    }
     return this.getSkillsInContext(cwd)
   }
 
   getApps = async (options: ProviderSourceOptions = {}): Promise<ProviderApp[]> =>
-    this.runWithContainer(options.container, () => this.getAppsInContext())
+    this.runWithContainer(options.container, () =>
+      this.getAppsInContext(options.forceRefresh ?? false)
+    )
 
-  private getAppsInContext = async (): Promise<ProviderApp[]> => {
+  private getAppsInContext = async (forceRefresh = false): Promise<ProviderApp[]> => {
     const [response, skillNamesByAppId] = await Promise.all([
       this.client.request<AppsInstalledResponse>('app/installed', {
-        forceRefresh: false
+        forceRefresh
       }),
       this.getPluginSkillNamesByAppIdInContext()
     ])
@@ -1542,20 +1561,28 @@ export class CodexProviderAdapter implements ProviderAdapter {
   setAppEnabled = async (
     appId: string,
     enabled: boolean,
-    options: ProviderSourceOptions = {}
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderApp[]> =>
-    this.runWithContainer(options.container, () => this.setAppEnabledInContext(appId, enabled))
+    this.runWithContainer(options.container, () =>
+      this.setAppEnabledInContext(appId, enabled, options)
+    )
 
   private setAppEnabledInContext = async (
     appId: string,
-    enabled: boolean
+    enabled: boolean,
+    options: ProviderResourceUpdateOptions
   ): Promise<ProviderApp[]> => {
-    const apps = await this.getAppsInContext()
-    const app = apps.find((candidate) => candidate.id === appId)
+    const knownApp =
+      options.deferRefresh && options.knownApp?.id === appId ? options.knownApp : null
+    const app =
+      knownApp ?? (await this.getAppsInContext()).find((candidate) => candidate.id === appId)
     if (!app) throw new Error('App is not installed in this environment')
-    const childSkillPaths = (await this.getSkillsInContext())
-      .filter((skill) => providerAppOwnsSkill(app, skill) && skill.enabled !== enabled)
-      .map((skill) => skill.path)
+    const availableSkills =
+      knownApp && options.knownSkills ? options.knownSkills : await this.getSkillsInContext()
+    const childSkills = availableSkills.filter(
+      (skill) => providerAppOwnsSkill(app, skill) && skill.enabled !== enabled
+    )
+    const childSkillPaths = childSkills.map((skill) => skill.path)
 
     const updateApp = async (): Promise<void> => {
       if (app.enabled === enabled) return
@@ -1569,11 +1596,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ],
         reloadUserConfig: true
       })
+      if (options.deferRefresh) return
       await this.client.request('app/installed', { forceRefresh: true })
     }
     const updateSkills = async (): Promise<void> => {
       if (childSkillPaths.length === 0) return
-      await this.setSkillsEnabledInContext(childSkillPaths, enabled, undefined, false)
+      await this.setSkillsEnabledInContext(childSkillPaths, enabled, undefined, false, {
+        ...options,
+        knownSkills: childSkills
+      })
     }
 
     if (enabled) {
@@ -1584,7 +1615,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       await updateSkills()
     }
 
-    return this.getAppsInContext()
+    return options.deferRefresh ? [{ ...app, enabled }] : this.getAppsInContext()
   }
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> =>
@@ -2668,34 +2699,43 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (options.startQueuedTurn) this.scheduleQueueDrain(chatId)
   }
 
-  private createChatDetail = (thread: CodexThread): ProviderChatDetail => ({
-    id: thread.id,
-    createdAt: thread.createdAt * 1_000,
-    title: getThreadTitle(thread),
-    cwd: getThreadApiCwd(thread),
-    cwdKind: 'directory' as const,
-    projectCwd: null,
-    branchName: null,
-    worktreeBaseBranchName: null,
-    status: getThreadStatus(thread),
-    pinned: false,
-    pinnedOrder: null,
-    done: false,
-    seenUpdatedAt: null,
-    purpose: null,
-    container: this.threadContainers.get(thread.id) ?? null,
-    capabilities: codexCapabilities,
-    pendingApproval: this.getProviderPendingApproval(thread.id),
-    pendingUserInput: null,
-    contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
-    items: [
-      ...getChatItems(this.getRenderableTurns(thread), thread.createdAt, {
-        hiddenPendingMessageIds: this.hiddenPendingMessageIdsByThread.get(thread.id),
-        pendingSteeringMessageIds: this.getPendingSteeringMessageIds(thread.id)
-      }),
-      ...this.getProviderPendingMessages(thread.id)
-    ]
-  })
+  private createChatDetail = (
+    thread: CodexThread,
+    options: { workingItemTailLimit?: number } = {}
+  ): ProviderChatDetail => {
+    const renderableTurns = this.getRenderableTurns(thread)
+
+    return {
+      id: thread.id,
+      createdAt: thread.createdAt * 1_000,
+      title: getThreadTitle(thread),
+      cwd: getThreadApiCwd(thread),
+      cwdKind: 'directory' as const,
+      projectCwd: null,
+      branchName: null,
+      worktreeBaseBranchName: null,
+      status: getThreadStatus(thread),
+      pinned: false,
+      pinnedOrder: null,
+      done: false,
+      seenUpdatedAt: null,
+      purpose: null,
+      container: this.threadContainers.get(thread.id) ?? null,
+      capabilities: codexCapabilities,
+      pendingApproval: this.getProviderPendingApproval(thread.id),
+      pendingUserInput: null,
+      contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
+      items: [
+        ...getChatItems(renderableTurns, thread.createdAt, {
+          hiddenPendingMessageIds: this.hiddenPendingMessageIdsByThread.get(thread.id),
+          pendingSteeringMessageIds: this.getPendingSteeringMessageIds(thread.id),
+          workingItemTailLimit: options.workingItemTailLimit,
+          workingItemTailTurnId: renderableTurns.at(-1)?.id
+        }),
+        ...this.getProviderPendingMessages(thread.id)
+      ]
+    }
+  }
 
   private cacheThread = (thread: CodexThread): void => {
     this.threads.set(thread.id, thread)
@@ -2975,8 +3015,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
-    const detail = this.getCachedChatDetail(threadId)
-    if (!detail) return
+    const thread = this.threads.get(threadId)
+    if (!thread) return
+    const detail = this.createChatDetail(thread, {
+      workingItemTailLimit: rendererWorkingItemTailLimit
+    })
 
     this.chatUpdatedListeners.forEach((listener) => listener(detail, metadata))
   }

@@ -13,6 +13,7 @@ import type {
   ProviderModel,
   ProviderAccountRateLimitResetOutcome,
   ProviderAccountUsage,
+  ProviderResourceUpdateOptions,
   ProviderSourceOptions,
   ProviderUsageOptions,
   ProviderActiveSendMode,
@@ -42,18 +43,18 @@ export type ProviderAdapter = {
     path: string,
     enabled: boolean,
     cwd?: string | null,
-    options?: ProviderSourceOptions
+    options?: ProviderResourceUpdateOptions
   ) => Promise<ProviderSkill[]>
   setSkillsEnabled: (
     paths: string[],
     enabled: boolean,
     cwd?: string | null,
-    options?: ProviderSourceOptions
+    options?: ProviderResourceUpdateOptions
   ) => Promise<ProviderSkill[]>
   setAppEnabled: (
     appId: string,
     enabled: boolean,
-    options?: ProviderSourceOptions
+    options?: ProviderResourceUpdateOptions
   ) => Promise<ProviderApp[]>
   getUsage: (options?: ProviderUsageOptions) => Promise<ProviderAccountUsage>
   resetRateLimits: (

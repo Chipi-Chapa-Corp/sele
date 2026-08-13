@@ -68,6 +68,8 @@ export type CodexTurn = {
 type GetChatItemsOptions = {
   hiddenPendingMessageIds?: ReadonlySet<string>
   pendingSteeringMessageIds?: ReadonlySet<string>
+  workingItemTailLimit?: number
+  workingItemTailTurnId?: string
 }
 
 type WorkingItemRenderResult =
@@ -1639,12 +1641,17 @@ const renderChatItems = (
     const finalMessageIndex = getFinalMessageIndex(turn.items, turn.status ?? null)
     let finalMessage: ProviderMessage | null = null
     const workingItems: ProviderWorkingItem[] = []
+    let workingItemCount = 0
+    const workingItemTailLimit =
+      options.workingItemTailTurnId === turn.id
+        ? Math.max(1, options.workingItemTailLimit ?? Number.MAX_SAFE_INTEGER)
+        : Number.MAX_SAFE_INTEGER
     let hasSeenInitialUserMessage = false
     const renderedContextCompactionItemIds = new Set<string>()
     let workingStepCount = 0
     const pushWorkingStep = (status: ProviderWorkingStep['status']): void => {
       if (
-        workingItems.length === 0 &&
+        workingItemCount === 0 &&
         status !== 'stopped' &&
         status !== 'working' &&
         status !== 'queued'
@@ -1656,10 +1663,25 @@ const renderChatItems = (
         type: 'working',
         id: `${turn.id}:working${workingStepCount === 0 ? '' : `:${workingStepCount}`}`,
         status,
-        items: [...workingItems]
+        items: [...workingItems],
+        ...(workingItemTailLimit < Number.MAX_SAFE_INTEGER
+          ? {
+              itemsLoaded: true,
+              itemCount: workingItemCount,
+              itemsStartIndex: Math.max(0, workingItemCount - workingItems.length)
+            }
+          : {})
       })
       workingItems.length = 0
+      workingItemCount = 0
       workingStepCount += 1
+    }
+    const appendWorkingItems = (items: ProviderWorkingItem[]): void => {
+      workingItemCount += items.length
+      workingItems.push(...items)
+      if (workingItems.length > workingItemTailLimit) {
+        workingItems.splice(0, workingItems.length - workingItemTailLimit)
+      }
     }
     const flushBufferedFinalMessage = (): boolean => {
       if (!finalMessage) return false
@@ -1739,14 +1761,14 @@ const renderChatItems = (
 
       if (itemIndex === finalMessageIndex && item.text?.trim()) {
         if (turn.items.slice(itemIndex + 1).some(hasUserMessageContent)) {
-          workingItems.push(...renderWorkingItems(item, turn.id))
+          appendWorkingItems(renderWorkingItems(item, turn.id))
         } else {
           finalMessage = createAssistantMessage(turn, item, completedAt)
         }
         continue
       }
 
-      workingItems.push(...renderWorkingItems(item, turn.id))
+      appendWorkingItems(renderWorkingItems(item, turn.id))
     }
 
     if (!flushBufferedFinalMessage()) pushWorkingStep(workingStatus)
@@ -1757,7 +1779,7 @@ const renderChatItems = (
 
 const finishedTurnChatItemsCache = new WeakMap<
   CodexTurn,
-  { fallbackStartedAt: number | null; items: ProviderChatItem[] }
+  { fallbackStartedAt: number | null; items: ProviderChatItem[]; workingItemTailLimit?: number }
 >()
 
 export const getChatItems = (
@@ -1771,19 +1793,25 @@ export const getChatItems = (
     Boolean(options.pendingSteeringMessageIds?.size)
 
   for (const turn of turns) {
+    const workingItemTailLimit =
+      options.workingItemTailTurnId === turn.id ? options.workingItemTailLimit : undefined
     if (!isFinishedTurn(turn) || hasPendingItemOverrides) {
       chatItems.push(...renderChatItems([turn], fallbackStartedAt, options))
       continue
     }
 
     const cachedTurn = finishedTurnChatItemsCache.get(turn)
-    if (cachedTurn && cachedTurn.fallbackStartedAt === fallbackStartedAt) {
+    if (
+      cachedTurn &&
+      cachedTurn.fallbackStartedAt === fallbackStartedAt &&
+      cachedTurn.workingItemTailLimit === workingItemTailLimit
+    ) {
       chatItems.push(...cachedTurn.items)
       continue
     }
 
     const items = renderChatItems([turn], fallbackStartedAt, options)
-    finishedTurnChatItemsCache.set(turn, { fallbackStartedAt, items })
+    finishedTurnChatItemsCache.set(turn, { fallbackStartedAt, items, workingItemTailLimit })
     chatItems.push(...items)
   }
 

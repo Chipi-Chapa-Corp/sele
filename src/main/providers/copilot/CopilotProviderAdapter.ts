@@ -29,6 +29,7 @@ import type {
   ProviderPendingUserInput,
   ProviderPendingMessage,
   ProviderReasoningEffort,
+  ProviderResourceUpdateOptions,
   ProviderSandboxModeOption,
   ProviderSkill,
   ProviderSourceOptions,
@@ -602,7 +603,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     path: string,
     enabled: boolean,
     cwd?: string | null,
-    options: ProviderSourceOptions = {}
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderSkill[]> =>
     this.setSkillsEnabledInContext([path], enabled, cwd, options, false)
 
@@ -610,17 +611,21 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     paths: string[],
     enabled: boolean,
     cwd?: string | null,
-    options: ProviderSourceOptions = {}
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderSkill[]> => this.setSkillsEnabledInContext(paths, enabled, cwd, options, true)
 
   private setSkillsEnabledInContext = async (
     paths: string[],
     enabled: boolean,
     cwd: string | null | undefined,
-    options: ProviderSourceOptions,
+    options: ProviderResourceUpdateOptions,
     toleratePartialFailure: boolean
   ): Promise<ProviderSkill[]> => {
-    const skills = await this.getSkills(cwd, options)
+    const requestedPaths = new Set(paths)
+    const knownSkills = options.knownSkills?.filter((skill) => requestedPaths.has(skill.path))
+    const useKnownSkills =
+      options.deferRefresh && knownSkills?.length === requestedPaths.size ? knownSkills : null
+    const skills = useKnownSkills ?? (await this.getSkills(cwd, options))
     const skillsByPath = new Map(skills.map((skill) => [skill.path, skill]))
     const requestedSkills = paths.map((path) => {
       const skill = skillsByPath.get(path)
@@ -644,9 +649,19 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       (_, index) => updateResults[index]?.status === 'rejected'
     )
     const retryResults = await Promise.allSettled(failedSkills.map(updateSkill))
+    const failedAfterRetry = new Set(
+      failedSkills
+        .filter((_, index) => retryResults[index]?.status === 'rejected')
+        .map((skill) => skill.path)
+    )
     const failedRetry = retryResults.find((result) => result.status === 'rejected')
     if (!toleratePartialFailure && failedRetry?.status === 'rejected') throw failedRetry.reason
 
+    if (options.deferRefresh) {
+      return requestedSkills.map((skill) =>
+        failedAfterRetry.has(skill.path) ? skill : { ...skill, enabled }
+      )
+    }
     return this.getSkills(cwd, options)
   }
 

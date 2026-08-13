@@ -399,6 +399,13 @@ export type ProviderAccountUsage = {
 
 export type ProviderSourceOptions = {
   container?: AppContainerTarget | null
+  forceRefresh?: boolean
+}
+
+export type ProviderResourceUpdateOptions = ProviderSourceOptions & {
+  deferRefresh?: boolean
+  knownApp?: ProviderApp
+  knownSkills?: ProviderSkill[]
 }
 
 export type ProviderUsageOptions = ProviderSourceOptions & {
@@ -536,6 +543,10 @@ export type ProviderMessage = {
   role: 'user' | 'assistant'
   content: string
   contentLoaded?: boolean
+  contentCharacterCount?: number
+  contentTruncated?: boolean
+  payloadCharacterCount?: number
+  payloadTruncated?: boolean
   attachments?: ProviderMessageAttachment[]
   createdAt?: number | null
   label?: string | null
@@ -546,6 +557,9 @@ export type ProviderWorkingMessage = {
   type: 'message'
   id: string
   content: string
+  contentLoaded?: boolean
+  contentCharacterCount?: number
+  contentTruncated?: boolean
 }
 
 export type ProviderFileDiff = {
@@ -590,11 +604,18 @@ export type ProviderWorkingTool = {
   cwd: string | null
   stdout: string | null
   diffs: ProviderFileDiff[]
+  diffCount?: number
+  diffsStartIndex?: number
   backgroundSessionId: string | null
   finishedBackgroundSessionId: string | null
   rawInput: unknown
   rawOutput: unknown
   images: ProviderToolImage[]
+  imageCount?: number
+  imagesStartIndex?: number
+  payloadLoaded?: boolean
+  payloadCharacterCount?: number
+  payloadTruncated?: boolean
 }
 
 export type ProviderWorkingToolGroup = {
@@ -602,6 +623,8 @@ export type ProviderWorkingToolGroup = {
   id: string
   label: string
   tools: ProviderWorkingTool[]
+  toolCount?: number
+  toolsStartIndex?: number
 }
 
 export type ProviderWorkingItem =
@@ -614,6 +637,7 @@ export type ProviderWorkingStep = {
   items: ProviderWorkingItem[]
   itemsLoaded?: boolean
   itemCount?: number
+  itemsStartIndex?: number
 }
 
 export type ProviderPendingMessageKind = 'steering' | 'queued'
@@ -624,6 +648,10 @@ export type ProviderPendingMessage = {
   kind: ProviderPendingMessageKind
   content: string
   contentLoaded?: boolean
+  contentCharacterCount?: number
+  contentTruncated?: boolean
+  payloadCharacterCount?: number
+  payloadTruncated?: boolean
   attachments?: ProviderMessageAttachment[]
   createdAt?: number | null
 }
@@ -657,6 +685,8 @@ export type ProviderChatDetail = {
   pendingUserInput: ProviderPendingUserInput | null
   contextUsage: ProviderChatContextUsage | null
   items: ProviderChatItem[]
+  itemsStartTurnIndex?: number
+  turnCount?: number
 }
 
 export type ProviderChatActivitySummary = {
@@ -696,6 +726,14 @@ export type ProviderChatTurnPage = {
   items: ProviderChatItem[]
   startIndex: number
   totalCount: number
+}
+
+export type ProviderWorkingStepPage = {
+  items: ProviderWorkingItem[]
+  startIndex: number
+  status: ProviderWorkingStep['status']
+  totalCount: number
+  workingStepId: string
 }
 
 export type ProviderWindowChatUpdatedEvent = Omit<ProviderChatUpdatedEvent, 'detail'> & {
@@ -767,20 +805,20 @@ export type ProviderApi = {
     path: string,
     enabled: boolean,
     cwd?: string | null,
-    options?: ProviderSourceOptions
+    options?: ProviderResourceUpdateOptions
   ) => Promise<ProviderSkill[]>
   setSkillsEnabled: (
     providerId: ProviderId,
     paths: string[],
     enabled: boolean,
     cwd?: string | null,
-    options?: ProviderSourceOptions
+    options?: ProviderResourceUpdateOptions
   ) => Promise<ProviderSkill[]>
   setAppEnabled: (
     providerId: ProviderId,
     appId: string,
     enabled: boolean,
-    options?: ProviderSourceOptions
+    options?: ProviderResourceUpdateOptions
   ) => Promise<ProviderApp[]>
   getUsage: (
     providerId: ProviderId,
@@ -897,11 +935,19 @@ export type ProviderApi = {
 }
 
 export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
-  getChatWorkingStep: (
+  getChatWorkingStepPage: (
     providerId: ProviderId,
     chatId: string,
-    workingStepId: string
-  ) => Promise<ProviderWorkingStep>
+    workingStepId: string,
+    startIndex: number,
+    limit: number
+  ) => Promise<ProviderWorkingStepPage>
+  getChatWorkingItem: (
+    providerId: ProviderId,
+    chatId: string,
+    workingStepId: string,
+    workingItemId: string
+  ) => Promise<ProviderWorkingItem>
   getChatTurnPage: (
     providerId: ProviderId,
     chatId: string,
@@ -943,7 +989,8 @@ export const providerIpcChannels = {
   resetRateLimits: 'provider:reset-rate-limits',
   getChats: 'provider:get-chats',
   getChat: 'provider:get-chat',
-  getChatWorkingStep: 'provider:get-chat-working-step',
+  getChatWorkingStepPage: 'provider:get-chat-working-step-page',
+  getChatWorkingItem: 'provider:get-chat-working-item',
   getChatTurnPage: 'provider:get-chat-turn-page',
   setChatTitle: 'provider:set-chat-title',
   generateOneShot: 'provider:generate-one-shot',

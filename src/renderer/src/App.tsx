@@ -147,7 +147,7 @@ import type {
 } from '../../shared/provider'
 import {
   getProviderChatTurns,
-  unloadChatItemsOutsideTurnRange,
+  unloadWorkingStepItems,
   type ProviderChatTurn
 } from '../../shared/chatTurns'
 import {
@@ -255,6 +255,13 @@ import {
   shiftChatTurnWindow,
   type ChatTurnWindow
 } from './chatTurnWindow'
+import {
+  getChatDetailItemsStartTurnIndex,
+  getChatDetailTurnCount,
+  getLoadedChatDetailTurnEndIndex,
+  mergeChatDetailTurnPage,
+  retainLoadedChatDetailTurnWindow
+} from './chatDetailWindow'
 import './App.css'
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -370,6 +377,12 @@ type GitSyncRecoveryActionOptions = {
 type SettingsTab = 'appearance' | 'chat' | 'providers' | 'links' | 'performance' | 'git'
 type SettingsScope = 'global' | 'project'
 type ProviderResourcesLoadState = 'idle' | 'loading' | 'ready'
+
+type DeferredProviderResourceRefresh = {
+  providerId: ProviderId
+  cwd: string | null
+  container: AppContainerTarget
+}
 type CachedPatchChangedFiles = {
   containerKey: string
   cwd: string
@@ -808,6 +821,9 @@ type UncommittedPatchFilter = {
 const chatListFetchPageSize = 100
 const chatTurnPageSize = 10
 const chatTurnWindowSize = chatTurnPageSize * 2
+const chatWorkingItemPageSize = 50
+const chatWorkingItemWindowSize = chatWorkingItemPageSize * 2
+const loadedWorkingStepCacheSize = 3
 const chatTurnLoadThresholdPx = 80
 const streamingChatUpdateIntervalMs = 50
 const chatSidebarDefaultWidth = 280
@@ -851,28 +867,6 @@ const fallbackDefaultSandboxMode =
   fallbackProviderSandboxModes[0]?.id ??
   'workspace-write'
 
-const mergeLoadedChatTurnItems = (
-  detail: ProviderChatDetail,
-  loadedItems: ProviderChatItem[]
-): ProviderChatDetail => {
-  const loadedItemsById = new Map(loadedItems.map((item) => [item.id, item]))
-  let changed = false
-  const items = detail.items.map((item) => {
-    const loadedItem = loadedItemsById.get(item.id)
-    if (
-      !loadedItem ||
-      loadedItem.type !== item.type ||
-      (loadedItem.type !== 'message' && loadedItem.type !== 'pendingMessage')
-    ) {
-      return item
-    }
-
-    changed = true
-    return { ...loadedItem, contentLoaded: true }
-  })
-
-  return changed ? { ...detail, items } : detail
-}
 const refreshIconReplayMs = 1_050
 
 type ChatGroupingPreference = 'grouped' | 'ungrouped'
@@ -2553,24 +2547,56 @@ const getWorkingStepFromUpdate = (
   currentItem: ProviderChatItem | undefined
 ): ProviderWorkingStep | null => {
   const { items, workingItemsPrefixLastId, workingItemsStartIndex, ...workingStep } = update
+  const currentWorkingStep =
+    currentItem?.type === 'working' && currentItem.id === update.id ? currentItem : null
+  const currentItemsStartIndex = currentWorkingStep?.itemsStartIndex ?? 0
+  const incomingItemsStartIndex = workingStep.itemsStartIndex ?? 0
+  const currentItemsEndIndex = currentItemsStartIndex + (currentWorkingStep?.items.length ?? 0)
+  if (
+    currentWorkingStep?.itemsLoaded !== false &&
+    currentWorkingStep &&
+    currentItemsEndIndex <= incomingItemsStartIndex
+  ) {
+    return {
+      ...workingStep,
+      items: currentWorkingStep.items,
+      itemsLoaded: true,
+      itemCount: Math.max(workingStep.itemCount ?? 0, currentWorkingStep.itemCount ?? 0),
+      itemsStartIndex: currentItemsStartIndex
+    }
+  }
+
+  const currentWorkingItemsStartIndex = (() => {
+    if (workingItemsStartIndex > 0) {
+      const prefixIndex = currentWorkingStep?.items.findIndex(
+        (item) => item.id === workingItemsPrefixLastId
+      )
+      return prefixIndex === undefined || prefixIndex < 0 ? null : prefixIndex + 1
+    }
+    if (!currentWorkingStep) return 0
+    if (currentWorkingStep.itemsLoaded === false) return 0
+    const itemOffset = incomingItemsStartIndex - currentItemsStartIndex
+    return itemOffset < 0 || itemOffset > currentWorkingStep.items.length ? null : itemOffset
+  })()
   if (
     !Number.isSafeInteger(workingItemsStartIndex) ||
     workingItemsStartIndex < 0 ||
-    (workingItemsStartIndex > 0 &&
-      (currentItem?.type !== 'working' ||
-        currentItem.id !== update.id ||
-        currentItem.items.length < workingItemsStartIndex ||
-        currentItem.items[workingItemsStartIndex - 1]?.id !== workingItemsPrefixLastId))
+    currentWorkingItemsStartIndex === null
   ) {
     return null
   }
 
+  const mergedItems =
+    currentWorkingItemsStartIndex === 0
+      ? items
+      : [...currentWorkingStep!.items.slice(0, currentWorkingItemsStartIndex), ...items]
+  const boundedItems = mergedItems.slice(-chatWorkingItemWindowSize)
   return {
     ...workingStep,
-    items:
-      workingItemsStartIndex === 0
-        ? items
-        : [...(currentItem as ProviderWorkingStep).items.slice(0, workingItemsStartIndex), ...items]
+    items: boundedItems,
+    itemsStartIndex:
+      Math.min(currentItemsStartIndex, incomingItemsStartIndex) +
+      Math.max(0, mergedItems.length - boundedItems.length)
   }
 }
 
@@ -2580,13 +2606,37 @@ const getChatDetailFromUpdate = (
   preserveOptimisticTurnUntilUserMessage = false
 ): ProviderChatDetail | null => {
   const { chatItemsPrefixLastId, chatItemsStartIndex, items, ...chatDetail } = update
+  const currentItemsStartTurnIndex = getChatDetailItemsStartTurnIndex(currentDetail)
+  const incomingItemsStartTurnIndex = chatDetail.itemsStartTurnIndex ?? 0
+  const currentTurns = getProviderChatTurns(currentDetail?.items ?? [])
+  const currentItemsEndTurnIndex = currentItemsStartTurnIndex + currentTurns.length
+  if (currentDetail?.id === update.id && currentItemsEndTurnIndex <= incomingItemsStartTurnIndex) {
+    return {
+      ...chatDetail,
+      items: currentDetail.items,
+      itemsStartTurnIndex: currentItemsStartTurnIndex
+    }
+  }
+
+  const currentChatItemsStartIndex = (() => {
+    if (chatItemsStartIndex > 0) {
+      const prefixIndex = currentDetail?.items.findIndex(
+        (item) => item.id === chatItemsPrefixLastId
+      )
+      return prefixIndex === undefined || prefixIndex < 0 ? null : prefixIndex + 1
+    }
+    if (!currentDetail || currentDetail.id !== update.id) return 0
+
+    const turnOffset = incomingItemsStartTurnIndex - currentItemsStartTurnIndex
+    if (turnOffset < 0 || turnOffset > currentTurns.length) return null
+    return currentTurns
+      .slice(0, turnOffset)
+      .reduce((itemCount, turn) => itemCount + turn.items.length, 0)
+  })()
   if (
     !Number.isSafeInteger(chatItemsStartIndex) ||
     chatItemsStartIndex < 0 ||
-    (chatItemsStartIndex > 0 &&
-      (currentDetail?.id !== update.id ||
-        currentDetail.items.length < chatItemsStartIndex ||
-        currentDetail.items[chatItemsStartIndex - 1]?.id !== chatItemsPrefixLastId))
+    currentChatItemsStartIndex === null
   ) {
     return null
   }
@@ -2598,11 +2648,11 @@ const getChatDetailFromUpdate = (
     currentDetail.items.some((item) => item.id.startsWith(optimisticChatItemIdPrefix))
   const mergedItems: ProviderChatItem[] = preserveOptimisticItems
     ? currentDetail.items
-    : chatItemsStartIndex === 0
+    : currentChatItemsStartIndex === 0
       ? []
-      : currentDetail!.items.slice(0, chatItemsStartIndex)
+      : currentDetail!.items.slice(0, currentChatItemsStartIndex)
   for (const [index, item] of items.entries()) {
-    const currentItem = currentDetail?.items[chatItemsStartIndex + index]
+    const currentItem = currentDetail?.items[currentChatItemsStartIndex + index]
     if (item.type !== 'working') {
       if (
         (item.type === 'message' || item.type === 'pendingMessage') &&
@@ -2622,7 +2672,15 @@ const getChatDetailFromUpdate = (
       currentItem?.type === 'working' &&
       currentItem.itemsLoaded !== false
     ) {
-      mergedItems.push(currentItem)
+      mergedItems.push({
+        type: 'working',
+        id: item.id,
+        status: item.status,
+        items: currentItem.items,
+        itemsLoaded: true,
+        itemCount: Math.max(item.itemCount ?? 0, currentItem.itemCount ?? 0),
+        itemsStartIndex: currentItem.itemsStartIndex ?? 0
+      })
       continue
     }
 
@@ -2658,17 +2716,22 @@ const getChatDetailFromUpdate = (
       if (!hasNewProviderUserMessage) {
         return {
           ...chatDetail,
-          items: currentDetail.items
+          items: currentDetail.items,
+          itemsStartTurnIndex: currentItemsStartTurnIndex
         }
       }
     }
   }
 
-  markChatItemsChanged(mergedItems, chatItemsStartIndex, currentDetail?.items ?? null)
+  markChatItemsChanged(mergedItems, currentChatItemsStartIndex, currentDetail?.items ?? null)
 
   return {
     ...chatDetail,
-    items: mergedItems
+    items: mergedItems,
+    itemsStartTurnIndex:
+      currentDetail?.id === update.id
+        ? Math.min(currentItemsStartTurnIndex, incomingItemsStartTurnIndex)
+        : incomingItemsStartTurnIndex
   }
 }
 
@@ -4020,6 +4083,7 @@ export const App: React.FC = () => {
   const chatScrollAdjustmentTargetRef = useRef<{ element: HTMLElement; top: number } | null>(null)
   const scrollToLatestTurnAfterRenderRef = useRef(false)
   const chatDetailRef = useRef<ProviderChatDetail | null>(chatDetail)
+  const loadedWorkingStepIdsRef = useRef<string[]>([])
   const chatSearchContentRef = useRef<HTMLDivElement>(null)
   const chatSearchInputRef = useRef<HTMLInputElement>(null)
   const chatSearchMatchesRef = useRef<Range[]>([])
@@ -4029,6 +4093,11 @@ export const App: React.FC = () => {
   const changesResizeHandleRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const settingsCloseButtonRef = useRef<HTMLButtonElement>(null)
+  const settingsOpenRef = useRef(settingsOpen)
+  const deferredProviderResourceRefreshesRef = useRef(
+    new Map<string, DeferredProviderResourceRefresh>()
+  )
+  const deferredProviderResourceRefreshRunningRef = useRef(false)
   const sendInFlightRef = useRef(false)
   const runPromptActionRef = useRef<(prompt: string, target: 'current' | 'new') => Promise<void>>(
     async () => {}
@@ -4073,6 +4142,39 @@ export const App: React.FC = () => {
   const collapsedFileTreeFoldersByCwdRef = useRef(new Map<string, Record<string, boolean>>())
   const lastOpenedFileTreeFolderByCwdRef = useRef(new Map<string, string>())
   const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
+
+  const flushDeferredProviderResourceRefreshes = useCallback(async (): Promise<void> => {
+    if (deferredProviderResourceRefreshRunningRef.current) return
+    deferredProviderResourceRefreshRunningRef.current = true
+
+    try {
+      while (deferredProviderResourceRefreshesRef.current.size > 0) {
+        const refreshes = Array.from(deferredProviderResourceRefreshesRef.current.values())
+        deferredProviderResourceRefreshesRef.current.clear()
+        await Promise.allSettled(
+          refreshes.map(({ providerId, cwd, container }) =>
+            Promise.allSettled([
+              providerApi.getSkills(providerId, cwd, { container, forceRefresh: true }),
+              providerApi.getApps(providerId, { container, forceRefresh: true })
+            ])
+          )
+        )
+        setProviderResourcesRevision((revision) => revision + 1)
+        setProviderResourcesRefresh((refresh) => refresh + 1)
+      }
+    } finally {
+      deferredProviderResourceRefreshRunningRef.current = false
+    }
+  }, [])
+
+  const queueDeferredProviderResourceRefresh = useCallback(
+    ({ providerId, cwd, container }: DeferredProviderResourceRefresh): void => {
+      const key = `${providerId}:${cwd ?? ''}:${getContainerTargetKey(container)}`
+      deferredProviderResourceRefreshesRef.current.set(key, { providerId, cwd, container })
+      if (!settingsOpenRef.current) void flushDeferredProviderResourceRefreshes()
+    },
+    [flushDeferredProviderResourceRefreshes]
+  )
 
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
     const top = getScrollBottomTop(contentElement)
@@ -4450,6 +4552,11 @@ export const App: React.FC = () => {
   useLayoutEffect(() => {
     applyFontAppearancePreferences(effectiveAppSettings.appearance)
   }, [effectiveAppSettings.appearance])
+
+  useLayoutEffect(() => {
+    settingsOpenRef.current = settingsOpen
+    if (!settingsOpen) void flushDeferredProviderResourceRefreshes()
+  }, [flushDeferredProviderResourceRefreshes, settingsOpen])
 
   useEffect(() => {
     if (!settingsOpen) return
@@ -5609,7 +5716,7 @@ export const App: React.FC = () => {
         ) {
           recentlyViewedActiveChatPreviewsRef.current.delete(updatedChatKey)
         }
-        const selectedDetail =
+        const mergedSelectedDetail =
           viewingUpdatedChat && event.detail
             ? getChatDetailFromUpdate(
                 event.detail,
@@ -5617,6 +5724,28 @@ export const App: React.FC = () => {
                 event.providerId === 'copilot'
               )
             : null
+        const selectedDetail = (() => {
+          if (!mergedSelectedDetail) return null
+          const currentWindow = chatTurnWindowRef.current
+          if (!currentWindow || currentWindow.chatKey !== updatedChatKey) {
+            return mergedSelectedDetail
+          }
+
+          const totalCount = getChatDetailTurnCount(mergedSelectedDetail)
+          const followingLatest = chatAutoScrollEnabledRef.current
+          const retainedWindow = followingLatest
+            ? {
+                startIndex: Math.max(0, totalCount - chatTurnWindowSize),
+                endIndex: totalCount,
+                totalCount
+              }
+            : {
+                startIndex: currentWindow.startIndex,
+                endIndex: currentWindow.endIndex,
+                totalCount
+              }
+          return retainLoadedChatDetailTurnWindow(mergedSelectedDetail, retainedWindow)
+        })()
 
         if (selectedDetail) {
           applyChatDetail(event.providerId, selectedDetail)
@@ -6224,6 +6353,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     chatAutoScrollEnabledRef.current = true
+    loadedWorkingStepIdsRef.current = []
     chatAutoScrollTargetRef.current = null
     chatScrollAdjustmentTargetRef.current = null
     pendingChatScrollAnchorRef.current = null
@@ -7077,6 +7207,7 @@ export const App: React.FC = () => {
   ): Promise<void> => {
     const updateKey = `skill:${resource.skill.path}`
     if (providerResourceUpdatingKey || resource.skill.enabled === enabled) return
+    const container = normalizeContainerTarget(newSessionContainer)
 
     setProviderResourceUpdatingKey(updateKey)
     setProviderResourcesError(null)
@@ -7093,7 +7224,11 @@ export const App: React.FC = () => {
         resource.skill.path,
         enabled,
         settingsProjectCwd,
-        { container: normalizeContainerTarget(newSessionContainer) }
+        {
+          container,
+          deferRefresh: true,
+          knownSkills: [resource.skill]
+        }
       )
     } catch (error) {
       setSettingsProviderSkills((currentResources) =>
@@ -7108,7 +7243,11 @@ export const App: React.FC = () => {
       )
       setProviderResourcesError(getErrorMessage(error, 'Unable to update skill.'))
     } finally {
-      setProviderResourcesRevision((revision) => revision + 1)
+      queueDeferredProviderResourceRefresh({
+        providerId: resource.providerId,
+        cwd: settingsProjectCwd,
+        container
+      })
       setProviderResourceUpdatingKey(null)
     }
   }
@@ -7119,6 +7258,7 @@ export const App: React.FC = () => {
   ): Promise<void> => {
     const updateKey = `app:${resource.providerId}:${resource.app.id}`
     const childSkillPaths = new Set(childSkills.map((childSkill) => childSkill.skill.path))
+    const container = normalizeContainerTarget(newSessionContainer)
     if (
       providerResourceUpdatingKey ||
       (resource.app.enabled === enabled &&
@@ -7146,7 +7286,10 @@ export const App: React.FC = () => {
     )
     try {
       await providerApi.setAppEnabled(resource.providerId, resource.app.id, enabled, {
-        container: normalizeContainerTarget(newSessionContainer)
+        container,
+        deferRefresh: true,
+        knownApp: resource.app,
+        knownSkills: childSkills.map((childSkill) => childSkill.skill)
       })
     } catch (error) {
       const previousChildState = new Map(
@@ -7176,7 +7319,11 @@ export const App: React.FC = () => {
       )
       setProviderResourcesError(getErrorMessage(error, 'Unable to update app.'))
     } finally {
-      setProviderResourcesRevision((revision) => revision + 1)
+      queueDeferredProviderResourceRefresh({
+        providerId: resource.providerId,
+        cwd: settingsProjectCwd,
+        container
+      })
       setProviderResourceUpdatingKey(null)
     }
   }
@@ -7192,6 +7339,7 @@ export const App: React.FC = () => {
     const previousSkillState = new Map(
       changedResources.map((resource) => [resource.skill.path, resource.skill.enabled])
     )
+    const container = normalizeContainerTarget(newSessionContainer)
     const pathsByProvider = new Map<ProviderId, string[]>()
     changedResources.forEach((resource) => {
       pathsByProvider.set(resource.providerId, [
@@ -7213,7 +7361,11 @@ export const App: React.FC = () => {
       const updatedSkillLists = await Promise.all(
         Array.from(pathsByProvider, ([providerId, paths]) =>
           providerApi.setSkillsEnabled(providerId, paths, enabled, settingsProjectCwd, {
-            container: normalizeContainerTarget(newSessionContainer)
+            container,
+            deferRefresh: true,
+            knownSkills: changedResources
+              .filter((resource) => resource.providerId === providerId)
+              .map((resource) => resource.skill)
           })
         )
       )
@@ -7247,7 +7399,13 @@ export const App: React.FC = () => {
       )
       setProviderResourcesError(getErrorMessage(error, 'Unable to update skills.'))
     } finally {
-      setProviderResourcesRevision((revision) => revision + 1)
+      pathsByProvider.forEach((_, providerId) =>
+        queueDeferredProviderResourceRefresh({
+          providerId,
+          cwd: settingsProjectCwd,
+          container
+        })
+      )
       setProviderResourceUpdatingKey(null)
     }
   }
@@ -8750,38 +8908,138 @@ export const App: React.FC = () => {
     await handleSendMessage(prompt)
   }
 
-  const handleLoadWorkingStep = useCallback(async (workingStepId: string): Promise<void> => {
-    const chat = selectedChatRef.current
-    if (!chat) throw new Error('No chat selected')
+  const handleLoadWorkingStep = useCallback(
+    async (workingStepId: string, requestedStartIndex?: number): Promise<void> => {
+      const chat = selectedChatRef.current
+      if (!chat) throw new Error('No chat selected')
 
-    const chatKey = getChatKey(chat)
-    const workingStep = await providerApi.getChatWorkingStep(
-      chat.providerId,
-      chat.id,
-      workingStepId
-    )
-    if (selectedChatKeyRef.current !== chatKey) return
+      const chatKey = getChatKey(chat)
+      const currentWorkingStep = chatDetailRef.current?.items.find(
+        (item): item is ProviderWorkingStep => item.type === 'working' && item.id === workingStepId
+      )
+      const totalCount = currentWorkingStep?.itemCount ?? currentWorkingStep?.items.length ?? 0
+      const startIndex = Math.max(
+        0,
+        requestedStartIndex ?? Math.max(0, totalCount - chatWorkingItemPageSize)
+      )
+      const page = await providerApi.getChatWorkingStepPage(
+        chat.providerId,
+        chat.id,
+        workingStepId,
+        startIndex,
+        chatWorkingItemPageSize
+      )
+      if (selectedChatKeyRef.current !== chatKey) return
 
-    setChatDetail((currentDetail) => {
-      if (currentDetail?.id !== chat.id) return currentDetail
+      const nextLoadedStepIds = [
+        ...loadedWorkingStepIdsRef.current.filter((id) => id !== workingStepId),
+        workingStepId
+      ].slice(-loadedWorkingStepCacheSize)
+      loadedWorkingStepIdsRef.current = nextLoadedStepIds
+      const retainedLoadedStepIds = new Set(nextLoadedStepIds)
 
-      const itemIndex = currentDetail.items.findIndex((item) => item.id === workingStepId)
-      const currentItem = currentDetail.items[itemIndex]
-      if (currentItem?.type !== 'working' || currentItem.itemsLoaded !== false) {
-        return currentDetail
-      }
+      setChatDetail((currentDetail) => {
+        if (currentDetail?.id !== chat.id) return currentDetail
 
-      const items = [...currentDetail.items]
-      items[itemIndex] = {
-        ...workingStep,
-        itemsLoaded: true,
-        itemCount: workingStep.items.length
-      }
-      const nextDetail = { ...currentDetail, items }
-      chatDetailRef.current = nextDetail
-      return nextDetail
-    })
-  }, [])
+        const itemIndex = currentDetail.items.findIndex((item) => item.id === workingStepId)
+        const currentItem = currentDetail.items[itemIndex]
+        if (currentItem?.type !== 'working') return currentDetail
+
+        const currentStartIndex = currentItem.itemsStartIndex ?? 0
+        const currentEndIndex = currentStartIndex + currentItem.items.length
+        const pageEndIndex = page.startIndex + page.items.length
+        const loadingOlder =
+          currentItem.itemsLoaded !== false && page.startIndex < currentStartIndex
+        const mergedItemsByIndex = new Map<number, ProviderWorkingItem>()
+        if (currentItem.itemsLoaded !== false) {
+          currentItem.items.forEach((item, index) => {
+            mergedItemsByIndex.set(currentStartIndex + index, item)
+          })
+        }
+        page.items.forEach((item, index) => {
+          mergedItemsByIndex.set(page.startIndex + index, item)
+        })
+
+        let retainedStartIndex = Math.min(currentStartIndex, page.startIndex)
+        let retainedEndIndex = Math.max(currentEndIndex, pageEndIndex)
+        if (currentItem.itemsLoaded === false) {
+          retainedStartIndex = page.startIndex
+          retainedEndIndex = pageEndIndex
+        } else if (retainedEndIndex - retainedStartIndex > chatWorkingItemWindowSize) {
+          if (loadingOlder) retainedEndIndex = retainedStartIndex + chatWorkingItemWindowSize
+          else retainedStartIndex = retainedEndIndex - chatWorkingItemWindowSize
+        }
+
+        const mergedWorkingItems: ProviderWorkingItem[] = []
+        for (let index = retainedStartIndex; index < retainedEndIndex; index += 1) {
+          const item = mergedItemsByIndex.get(index)
+          if (item) mergedWorkingItems.push(item)
+        }
+
+        const items = currentDetail.items.map((item, index) => {
+          if (index === itemIndex && item.type === 'working') {
+            return {
+              ...item,
+              status: page.status,
+              items: mergedWorkingItems,
+              itemsLoaded: true,
+              itemCount: page.totalCount,
+              itemsStartIndex: retainedStartIndex
+            }
+          }
+          if (
+            item.type === 'working' &&
+            item.itemsLoaded !== false &&
+            item.status !== 'working' &&
+            !retainedLoadedStepIds.has(item.id)
+          ) {
+            return unloadWorkingStepItems(item)
+          }
+          return item
+        })
+        const nextDetail = { ...currentDetail, items }
+        chatDetailRef.current = nextDetail
+        return nextDetail
+      })
+    },
+    []
+  )
+
+  const handleLoadWorkingItem = useCallback(
+    async (workingStepId: string, workingItemId: string): Promise<void> => {
+      const chat = selectedChatRef.current
+      if (!chat) throw new Error('No chat selected')
+
+      const chatKey = getChatKey(chat)
+      const loadedItem = await providerApi.getChatWorkingItem(
+        chat.providerId,
+        chat.id,
+        workingStepId,
+        workingItemId
+      )
+      if (selectedChatKeyRef.current !== chatKey) return
+
+      setChatDetail((currentDetail) => {
+        if (currentDetail?.id !== chat.id) return currentDetail
+        const workingStepIndex = currentDetail.items.findIndex(
+          (item) => item.type === 'working' && item.id === workingStepId
+        )
+        const workingStep = currentDetail.items[workingStepIndex]
+        if (workingStep?.type !== 'working') return currentDetail
+        const workingItemIndex = workingStep.items.findIndex((item) => item.id === workingItemId)
+        if (workingItemIndex < 0) return currentDetail
+
+        const workingItems = [...workingStep.items]
+        workingItems[workingItemIndex] = loadedItem
+        const items = [...currentDetail.items]
+        items[workingStepIndex] = { ...workingStep, items: workingItems }
+        const nextDetail = { ...currentDetail, items }
+        chatDetailRef.current = nextDetail
+        return nextDetail
+      })
+    },
+    []
+  )
 
   // React Compiler cannot currently retain this callback's memoization across the mutable
   // provider/model selections, while React itself can safely use the explicit dependency list.
@@ -9248,10 +9506,13 @@ export const App: React.FC = () => {
     [visibleChatItems]
   )
   const chatTurns = chatConversationModel.turns
+  const loadedChatTurnStartIndex = getChatDetailItemsStartTurnIndex(chatDetail)
+  const loadedChatTurnEndIndex = getLoadedChatDetailTurnEndIndex(chatDetail)
+  const totalChatTurnCount = getChatDetailTurnCount(chatDetail)
   const defaultChatTurnWindow = useMemo<ChatTurnWindow | null>(() => {
     if (!selectedChatKey) return null
-    return getLatestChatTurnWindow(selectedChatKey, chatTurns.length, chatTurnPageSize)
-  }, [chatTurns.length, selectedChatKey])
+    return getLatestChatTurnWindow(selectedChatKey, totalChatTurnCount, chatTurnPageSize)
+  }, [selectedChatKey, totalChatTurnCount])
   const effectiveChatTurnWindow = defaultChatTurnWindow
     ? getEffectiveChatTurnWindow(chatTurnWindow, defaultChatTurnWindow, chatAtConversationBottom)
     : null
@@ -9259,11 +9520,11 @@ export const App: React.FC = () => {
     () =>
       effectiveChatTurnWindow
         ? chatConversationModel.turns.slice(
-            effectiveChatTurnWindow.startIndex,
-            effectiveChatTurnWindow.endIndex
+            Math.max(0, effectiveChatTurnWindow.startIndex - loadedChatTurnStartIndex),
+            Math.max(0, effectiveChatTurnWindow.endIndex - loadedChatTurnStartIndex)
           )
         : [],
-    [chatConversationModel, effectiveChatTurnWindow]
+    [chatConversationModel, effectiveChatTurnWindow, loadedChatTurnStartIndex]
   )
 
   useEffect(() => {
@@ -9282,11 +9543,9 @@ export const App: React.FC = () => {
       }
 
       setChatTurnWindow((currentWindow) => {
-        const totalCount = chatTurns.length
+        const totalCount = totalChatTurnCount
         const viewingLatest =
-          currentWindow?.chatKey !== selectedChatKey ||
-          currentWindow.endIndex >= currentWindow.totalCount ||
-          chatAutoScrollEnabledRef.current
+          currentWindow?.chatKey !== selectedChatKey || chatAutoScrollEnabledRef.current
         const nextWindow: ChatTurnWindow = viewingLatest
           ? getLatestChatTurnWindow(selectedChatKey, totalCount, chatTurnPageSize)
           : {
@@ -9304,7 +9563,7 @@ export const App: React.FC = () => {
     return () => {
       active = false
     }
-  }, [chatTurns.length, selectedChatKey])
+  }, [loadedChatTurnEndIndex, loadedChatTurnStartIndex, selectedChatKey, totalChatTurnCount])
 
   useLayoutEffect(() => {
     const anchor = pendingChatScrollAnchorRef.current
@@ -9360,7 +9619,7 @@ export const App: React.FC = () => {
             return
           }
 
-          const totalCount = getProviderChatTurns(detail.items).length
+          const totalCount = getChatDetailTurnCount(detail)
           const nextWindow = getLatestChatTurnWindow(
             currentWindow.chatKey,
             totalCount,
@@ -9415,14 +9674,7 @@ export const App: React.FC = () => {
         flushSync(() => {
           setChatDetail((currentDetail) => {
             if (currentDetail?.id !== chat.id) return currentDetail
-            const mergedDetail = mergeLoadedChatTurnItems(currentDetail, page.items)
-            const items = unloadChatItemsOutsideTurnRange(
-              mergedDetail.items,
-              nextWindow.startIndex,
-              nextWindow.endIndex
-            )
-            const nextDetail =
-              items === mergedDetail.items ? mergedDetail : { ...mergedDetail, items }
+            const nextDetail = mergeChatDetailTurnPage(currentDetail, page, nextWindow)
             chatDetailRef.current = nextDetail
             return nextDetail
           })
@@ -12104,6 +12356,7 @@ export const App: React.FC = () => {
                 }
                 onEditMessage={handleEditMessage}
                 onLoadWorkingStep={handleLoadWorkingStep}
+                onLoadWorkingItem={handleLoadWorkingItem}
                 onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
                 onRetryStoppedTurn={handleRetryStoppedTurn}
                 previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}

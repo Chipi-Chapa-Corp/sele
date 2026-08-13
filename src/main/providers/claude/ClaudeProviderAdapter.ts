@@ -42,6 +42,7 @@ import {
   type ProviderPendingMessage,
   type ProviderPendingUserInput,
   type ProviderReasoningEffort,
+  type ProviderResourceUpdateOptions,
   type ProviderSandboxModeOption,
   type ProviderSkill,
   type ProviderSourceOptions,
@@ -589,7 +590,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     path: string,
     enabled: boolean,
     cwd?: string | null,
-    options: ProviderSourceOptions = {}
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderSkill[]> =>
     this.setSkillsEnabledInContext([path], enabled, cwd, options, false)
 
@@ -597,17 +598,21 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     paths: string[],
     enabled: boolean,
     cwd?: string | null,
-    options: ProviderSourceOptions = {}
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderSkill[]> => this.setSkillsEnabledInContext(paths, enabled, cwd, options, true)
 
   private setSkillsEnabledInContext = async (
     paths: string[],
     enabled: boolean,
     cwd: string | null | undefined,
-    options: ProviderSourceOptions,
+    options: ProviderResourceUpdateOptions,
     toleratePartialFailure: boolean
   ): Promise<ProviderSkill[]> => {
-    const skills = await this.getSkills(cwd, options)
+    const requestedPaths = new Set(paths)
+    const knownSkills = options.knownSkills?.filter((skill) => requestedPaths.has(skill.path))
+    const useKnownSkills =
+      options.deferRefresh && knownSkills?.length === requestedPaths.size ? knownSkills : null
+    const skills = useKnownSkills ?? (await this.getSkills(cwd, options))
     const skillsByPath = new Map(skills.map((skill) => [skill.path, skill]))
     const changedSkills = paths
       .map((path) => {
@@ -626,16 +631,24 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     )
     const failure = results.find((result) => result.status === 'rejected')
     if (!toleratePartialFailure && failure?.status === 'rejected') throw failure.reason
+    if (options.deferRefresh) {
+      return changedSkills.map((skill, index) =>
+        results[index]?.status === 'fulfilled' ? { ...skill, enabled } : skill
+      )
+    }
     return this.getSkills(cwd, options)
   }
 
   setAppEnabled = async (
     appId: string,
     enabled: boolean,
-    options: ProviderSourceOptions = {}
+    options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderApp[]> =>
     this.withControlQuery(options, async (control) => {
       await control.toggleMcpServer(appId, enabled)
+      if (options.deferRefresh && options.knownApp?.id === appId) {
+        return [{ ...options.knownApp, enabled }]
+      }
       const servers = await control.mcpServerStatus()
       return servers.map((server) => ({
         id: server.name,
