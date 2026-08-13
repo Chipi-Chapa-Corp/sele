@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   startTransition,
   useCallback,
@@ -72,6 +73,7 @@ import type {
   ProviderWorkingTool
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { getWorkingStepItemSegments } from '../chatDetailWindow'
 import { createLocalImageUrl } from '../localImage'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from '../markdownFileLink'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
@@ -589,8 +591,8 @@ const Activity: React.FC<{
   expanded: boolean
   projectCwd?: string | null
 }> = ({ label, tools, active, expanded, projectCwd }) => {
-  const [openState, setOpenState] = useState({ expanded, open: expanded })
-  const open = openState.expanded === expanded ? openState.open : expanded
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
+  const open = manualOpen ?? expanded
   const activity = tools[0]?.activity ?? 'other'
 
   const detailLabel = getToolDisplayLabel(label || tools[0]?.toolId || 'Tool use', activity, active)
@@ -599,7 +601,10 @@ const Activity: React.FC<{
     <details
       className={`chat-detail__tool-group${active ? ' chat-detail__tool-group--active' : ''}`}
       open={open}
-      onToggle={(event) => setOpenState({ expanded, open: event.currentTarget.open })}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open
+        if (nextOpen !== open) setManualOpen(nextOpen)
+      }}
     >
       <summary>
         <span className="chat-detail__tool-icon">
@@ -1669,8 +1674,20 @@ const WorkingStep: React.FC<{
   const [openAfterLoad, setOpenAfterLoad] = useState(false)
   const unloaded = item.itemsLoaded === false
   const linkedToFollowingStep = continuedStoppedTurn || continueClicked
-  const { generatedImages, remaining } = partitionGeneratedImageItems(item.items)
-  const blocks = groupWorkingItems(remaining)
+  const itemSegments = getWorkingStepItemSegments(item, workingItemPageSize)
+  const renderedSegments = itemSegments.map((segment) => {
+    const { generatedImages, remaining } = partitionGeneratedImageItems(segment.items)
+    return {
+      ...segment,
+      blocks: groupWorkingItems(remaining),
+      generatedImages
+    }
+  })
+  const generatedImages = renderedSegments.flatMap((segment) => segment.generatedImages)
+  const blockCount = renderedSegments.reduce((count, segment) => count + segment.blocks.length, 0)
+  const lastBlockSegmentIndex = renderedSegments.findLastIndex(
+    (segment) => segment.blocks.length > 0
+  )
   const lastWorkingItem = item.items.at(-1)
   const signature = useMemo(
     () => `${item.status}:${item.items.map(getWorkingItemSignature).join('|')}`,
@@ -1678,10 +1695,17 @@ const WorkingStep: React.FC<{
   )
   const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
   const active = item.status === 'working'
-  const itemsStartIndex = item.itemsStartIndex ?? 0
   const itemCount = Math.max(item.itemCount ?? item.items.length, item.items.length)
-  const hasOlderItems = !unloaded && itemsStartIndex > 0
-  const hasNewerItems = !unloaded && itemsStartIndex + item.items.length < itemCount
+  const hasHiddenItems =
+    renderedSegments.some((segment, segmentIndex) => {
+      const previousSegment = renderedSegments[segmentIndex - 1]
+      const previousEndIndex = previousSegment
+        ? previousSegment.startIndex + previousSegment.items.length
+        : 0
+      return segment.startIndex > previousEndIndex
+    }) ||
+    (renderedSegments.at(-1)?.startIndex ?? 0) + (renderedSegments.at(-1)?.items.length ?? 0) <
+      itemCount
   const preserveOpenDuringContinuedWork =
     continueClicked && followingWorkingStepStatus === 'working' && !followingWorkingStepHasNext
   const collapseWithFollowingStep =
@@ -1697,17 +1721,8 @@ const WorkingStep: React.FC<{
     thoughtSettings,
     autoCollapseHasNextWorkingStep
   )
-  const openControlKey = [
-    autoCollapseStatus,
-    autoCollapseHasNextWorkingStep ? 'next' : 'latest',
-    thoughtSettings.expandThoughtsOnStart,
-    thoughtSettings.collapseThoughtsOnFinish,
-    thoughtSettings.collapseThoughtsOnNextTurn,
-    thoughtSettings.expandStoppedTurns,
-    thoughtSettings.collapseStoppedOnNextTurn
-  ].join(':')
-  const [openState, setOpenState] = useState({ key: openControlKey, open: defaultOpen })
-  const open = openAfterLoad || (openState.key === openControlKey ? openState.open : defaultOpen)
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
+  const open = openAfterLoad ? true : (manualOpen ?? defaultOpen)
   const showPlaceholder = useSilencePlaceholder(
     signature,
     active && activeToolIds.size === 0,
@@ -1779,6 +1794,20 @@ const WorkingStep: React.FC<{
     }
   }
 
+  const staticWorkingStep = (
+    <>
+      <div
+        className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
+      >
+        <div className="chat-detail__working-heading">{heading}</div>
+      </div>
+      {stoppedTurnActions}
+      {renderedGeneratedImages}
+    </>
+  )
+
+  if (unloaded && itemCount === 0) return staticWorkingStep
+
   if (unloaded) {
     const handleLoad = async (): Promise<void> => {
       if (loadState === 'loading') return
@@ -1819,7 +1848,7 @@ const WorkingStep: React.FC<{
     )
   }
 
-  if (blocks.length === 0) {
+  if (blockCount === 0 && !hasHiddenItems) {
     if (item.status !== 'stopped' && !showPlaceholder && renderedGeneratedImages.length > 0) {
       return (
         <>
@@ -1839,17 +1868,7 @@ const WorkingStep: React.FC<{
       )
     }
 
-    return (
-      <>
-        <div
-          className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
-        >
-          <div className="chat-detail__working-heading">{heading}</div>
-        </div>
-        {stoppedTurnActions}
-        {renderedGeneratedImages}
-      </>
-    )
+    return staticWorkingStep
   }
 
   return (
@@ -1858,8 +1877,13 @@ const WorkingStep: React.FC<{
         className={`chat-detail__step chat-detail__working chat-detail__working--${item.status}`}
         open={open}
         onToggle={(event) => {
-          setOpenAfterLoad(false)
-          setOpenState({ key: openControlKey, open: event.currentTarget.open })
+          const nextOpen = event.currentTarget.open
+          if (openAfterLoad) {
+            setOpenAfterLoad(false)
+            setManualOpen(nextOpen)
+            return
+          }
+          if (nextOpen !== open) setManualOpen(nextOpen)
         }}
       >
         <summary>
@@ -1868,71 +1892,103 @@ const WorkingStep: React.FC<{
         </summary>
         {open && (
           <div className="chat-detail__step-content">
-            {hasOlderItems && (
-              <button
-                className="chat-detail__working-load"
-                type="button"
-                disabled={!onLoad || loadState === 'loading'}
-                onClick={() => void loadPage(Math.max(0, itemsStartIndex - workingItemPageSize))}
-              >
-                Load earlier activity
-              </button>
-            )}
-            {blocks.map((block, blockIndex) =>
-              block.type === 'tools' ? (
-                block.items.length > 1 &&
-                (blockIndex < blocks.length - 1 || item.status !== 'working') ? (
-                  <ToolSequence
-                    items={block.items}
-                    activeToolIds={activeToolIds}
-                    key={block.items[0]?.id}
-                    onLoadItem={onLoadItem}
-                    projectCwd={projectCwd}
-                  />
-                ) : (
-                  block.items.map((toolItem) => (
-                    <ToolItem
-                      item={toolItem}
-                      activeToolIds={activeToolIds}
-                      expanded={active && toolItem === lastWorkingItem}
-                      key={toolItem.id}
-                      onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
-                      projectCwd={projectCwd}
-                    />
-                  ))
-                )
-              ) : !isWorkingItemPayloadLoaded(block.item) ? (
-                <button
-                  className="chat-detail__working-load"
-                  type="button"
-                  key={block.item.id}
-                  disabled={!onLoadItem}
-                  onClick={() => void Promise.resolve(onLoadItem?.(block.item.id)).catch(() => {})}
-                >
-                  Load reasoning
-                </button>
-              ) : (
-                <MarkdownMessage
-                  className="chat-detail__working-message"
-                  content={block.item.content}
-                  key={block.item.id}
-                  localImageContainer={container}
-                  localImageCwd={cwd}
-                  onOpenFileLink={onOpenFileLink}
-                  streaming={active && block.item === lastWorkingItem}
-                />
+            {renderedSegments.map((segment, segmentIndex) => {
+              const previousSegment = renderedSegments[segmentIndex - 1]
+              const previousEndIndex = previousSegment
+                ? previousSegment.startIndex + previousSegment.items.length
+                : 0
+              const hiddenItemCount = Math.max(0, segment.startIndex - previousEndIndex)
+              const loadStartIndex = previousSegment
+                ? previousEndIndex
+                : Math.max(0, segment.startIndex - workingItemPageSize)
+              const pageItemCount = Math.min(workingItemPageSize, hiddenItemCount)
+
+              return (
+                <Fragment key={`${segment.kind}:${segment.startIndex}`}>
+                  {hiddenItemCount > 0 && (
+                    <button
+                      className="chat-detail__working-load chat-detail__working-gap"
+                      type="button"
+                      disabled={!onLoad || loadState === 'loading'}
+                      onClick={() => void loadPage(loadStartIndex)}
+                    >
+                      Load {pageItemCount} more · {hiddenItemCount} hidden
+                    </button>
+                  )}
+                  {segment.blocks.map((block, blockIndex) => {
+                    const isLastRenderedBlock =
+                      segmentIndex === lastBlockSegmentIndex &&
+                      blockIndex === segment.blocks.length - 1
+
+                    return block.type === 'tools' ? (
+                      block.items.length > 1 &&
+                      (!isLastRenderedBlock || item.status !== 'working') ? (
+                        <ToolSequence
+                          items={block.items}
+                          activeToolIds={activeToolIds}
+                          key={block.items[0]?.id}
+                          onLoadItem={onLoadItem}
+                          projectCwd={projectCwd}
+                        />
+                      ) : (
+                        block.items.map((toolItem) => (
+                          <ToolItem
+                            item={toolItem}
+                            activeToolIds={activeToolIds}
+                            expanded={active && toolItem === lastWorkingItem}
+                            key={toolItem.id}
+                            onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
+                            projectCwd={projectCwd}
+                          />
+                        ))
+                      )
+                    ) : !isWorkingItemPayloadLoaded(block.item) ? (
+                      <button
+                        className="chat-detail__working-load"
+                        type="button"
+                        key={block.item.id}
+                        disabled={!onLoadItem}
+                        onClick={() =>
+                          void Promise.resolve(onLoadItem?.(block.item.id)).catch(() => {})
+                        }
+                      >
+                        Load reasoning
+                      </button>
+                    ) : (
+                      <MarkdownMessage
+                        className="chat-detail__working-message"
+                        content={block.item.content}
+                        key={block.item.id}
+                        localImageContainer={container}
+                        localImageCwd={cwd}
+                        onOpenFileLink={onOpenFileLink}
+                        streaming={active && block.item === lastWorkingItem}
+                      />
+                    )
+                  })}
+                </Fragment>
               )
-            )}
-            {hasNewerItems && (
-              <button
-                className="chat-detail__working-load"
-                type="button"
-                disabled={!onLoad || loadState === 'loading'}
-                onClick={() => void loadPage(itemsStartIndex + item.items.length)}
-              >
-                Load newer activity
-              </button>
-            )}
+            })}
+            {(() => {
+              const finalSegment = renderedSegments.at(-1)
+              const finalEndIndex = finalSegment
+                ? finalSegment.startIndex + finalSegment.items.length
+                : 0
+              const hiddenItemCount = Math.max(0, itemCount - finalEndIndex)
+              if (hiddenItemCount === 0) return null
+
+              return (
+                <button
+                  className="chat-detail__working-load chat-detail__working-gap"
+                  type="button"
+                  disabled={!onLoad || loadState === 'loading'}
+                  onClick={() => void loadPage(finalEndIndex)}
+                >
+                  Load {Math.min(workingItemPageSize, hiddenItemCount)} more · {hiddenItemCount}{' '}
+                  hidden
+                </button>
+              )
+            })()}
             {loadState === 'error' && (
               <span className="chat-detail__working-load-error">
                 Unable to load this activity page. Select it to retry.

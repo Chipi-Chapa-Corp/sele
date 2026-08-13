@@ -282,14 +282,20 @@ export const limitWorkingItemPayload = (
   return limitToolPayload(item, budget)
 }
 
-export const unloadWorkingStep = (step: ProviderWorkingStep): ProviderWorkingStep => ({
-  ...step,
-  items: [],
-  itemsLoaded: false,
-  itemCount:
-    step.itemsLoaded === false ? step.itemCount : Math.max(step.itemCount ?? 0, step.items.length),
-  itemsStartIndex: 0
-})
+export const unloadWorkingStep = (step: ProviderWorkingStep): ProviderWorkingStep => {
+  const stepWithoutSegments = { ...step }
+  delete stepWithoutSegments.itemSegments
+  return {
+    ...stepWithoutSegments,
+    items: [],
+    itemsLoaded: false,
+    itemCount:
+      step.itemsLoaded === false
+        ? step.itemCount
+        : Math.max(step.itemCount ?? 0, step.items.length),
+    itemsStartIndex: 0
+  }
+}
 
 export const prepareWorkingStepPage = (
   step: ProviderWorkingStep,
@@ -300,8 +306,15 @@ export const prepareWorkingStepPage = (
     step.itemsLoaded === false
       ? (step.itemCount ?? 0)
       : Math.max(step.itemCount ?? 0, step.items.length)
-  const boundedStartIndex = Math.max(0, Math.min(startIndex, totalCount))
   const boundedLimit = Math.max(1, Math.min(limit, rendererWorkingItemWindowSize))
+  const requestedStartIndex = Math.max(0, Math.min(startIndex, totalCount))
+  // An unloaded renderer shell can briefly have a stale count while the provider rebuilds its
+  // authoritative history. Treat a request at/past EOF as "latest" so opening the section cannot
+  // resolve to an empty page when activity still exists.
+  const boundedStartIndex =
+    totalCount > 0 && requestedStartIndex >= totalCount
+      ? Math.max(0, totalCount - boundedLimit)
+      : requestedStartIndex
   const sourceStartIndex = step.itemsLoaded === false ? 0 : (step.itemsStartIndex ?? 0)
   const relativeStartIndex = Math.max(0, boundedStartIndex - sourceStartIndex)
   const sourceItems = step.items.slice(relativeStartIndex, relativeStartIndex + boundedLimit)

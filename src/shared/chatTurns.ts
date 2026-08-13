@@ -71,14 +71,20 @@ const unloadMessageContent = <TMessage extends ProviderMessage | ProviderPending
   contentLoaded: false
 })
 
-export const unloadWorkingStepItems = (step: ProviderWorkingStep): ProviderWorkingStep => ({
-  ...step,
-  items: [],
-  itemsLoaded: false,
-  itemCount:
-    step.itemsLoaded === false ? step.itemCount : Math.max(step.itemCount ?? 0, step.items.length),
-  itemsStartIndex: 0
-})
+export const unloadWorkingStepItems = (step: ProviderWorkingStep): ProviderWorkingStep => {
+  const stepWithoutSegments = { ...step }
+  delete stepWithoutSegments.itemSegments
+  return {
+    ...stepWithoutSegments,
+    items: [],
+    itemsLoaded: false,
+    itemCount:
+      step.itemsLoaded === false
+        ? step.itemCount
+        : Math.max(step.itemCount ?? 0, step.items.length),
+    itemsStartIndex: 0
+  }
+}
 
 export const unloadChatItemsOutsideTurnRange = (
   items: ProviderChatItem[],

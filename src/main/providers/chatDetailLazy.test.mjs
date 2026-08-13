@@ -172,6 +172,17 @@ test('returns bounded working-item pages with stable logical offsets', () => {
   assert.equal(page.items.at(-1).id, 'step:item:99')
 })
 
+test('loads the real final activity page when a stale renderer count requests past EOF', () => {
+  const step = workingStep('step', 12)
+  const page = prepareWorkingStepPage(step, 50, 50)
+
+  assert.equal(page.startIndex, 0)
+  assert.equal(page.totalCount, 12)
+  assert.equal(page.items.length, 12)
+  assert.equal(page.items[0].id, 'step:item:0')
+  assert.equal(page.items.at(-1).id, 'step:item:11')
+})
+
 test('returns only a bounded preview for one oversized tool payload', () => {
   const item = {
     type: 'tool',

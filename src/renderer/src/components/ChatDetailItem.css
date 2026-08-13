@@ -394,8 +394,14 @@
   cursor: wait;
 }
 
-.chat-detail__working-load .chat-detail__working-label {
-  flex: 1;
+.chat-detail__working-gap {
+  justify-content: center;
+  margin: 7px 0;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 0.86em;
+  text-align: center;
 }
 
 .chat-detail__working-load-error {

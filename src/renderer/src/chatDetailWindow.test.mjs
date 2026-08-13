@@ -3,7 +3,10 @@ import test from 'node:test'
 import {
   getChatDetailItemsStartTurnIndex,
   getChatDetailTurnCount,
+  getWorkingStepItemSegments,
   mergeChatDetailTurnPage,
+  mergeWorkingStepPage,
+  mergeWorkingStepUpdate,
   retainLoadedChatDetailTurnWindow
 } from './chatDetailWindow.ts'
 
@@ -14,6 +17,14 @@ const turnItems = (startIndex, count) =>
     id: `user-${startIndex + offset}`,
     role: 'user',
     content: `Question ${startIndex + offset}`
+  }))
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const workingItems = (startIndex, count) =>
+  Array.from({ length: count }, (_, offset) => ({
+    type: 'message',
+    id: `working-${startIndex + offset}`,
+    content: `Activity ${startIndex + offset}`
   }))
 
 test('merges an older page without retaining turns outside the bounded window', () => {
@@ -73,4 +84,201 @@ test('evicts materialized turns outside a retained viewport', () => {
     result.items.map((item) => item.id),
     Array.from({ length: 10 }, (_, index) => `user-${15 + index}`)
   )
+})
+
+test('keeps the real logical offset when a live retention window has an unloaded leading gap', () => {
+  const detail = {
+    id: 'chat',
+    items: turnItems(90, 10),
+    itemsStartTurnIndex: 90,
+    turnCount: 100
+  }
+  const result = retainLoadedChatDetailTurnWindow(detail, {
+    startIndex: 80,
+    endIndex: 100,
+    totalCount: 100
+  })
+
+  assert.equal(result.itemsStartTurnIndex, 90)
+  assert.equal(result.items.length, 10)
+  assert.deepEqual(
+    result.items
+      .slice(90 - result.itemsStartTurnIndex, 100 - result.itemsStartTurnIndex)
+      .map((item) => item.id),
+    Array.from({ length: 10 }, (_, index) => `user-${90 + index}`)
+  )
+})
+
+test('replaces an active placeholder with its first live working item', () => {
+  const current = {
+    type: 'working',
+    id: 'turn:working',
+    status: 'working',
+    items: [],
+    itemsLoaded: true,
+    itemCount: 0,
+    itemsStartIndex: 0
+  }
+  const update = {
+    type: 'working',
+    id: 'turn:working',
+    status: 'working',
+    items: [{ type: 'message', id: 'reasoning-1', content: 'Inspecting the repository' }],
+    itemsLoaded: true,
+    itemCount: 1,
+    itemsStartIndex: 0,
+    workingItemsStartIndex: 0,
+    workingItemsPrefixLastId: null
+  }
+
+  const result = mergeWorkingStepUpdate(update, current, 50, 100)
+
+  assert.equal(result.items.length, 1)
+  assert.equal(result.items[0].id, 'reasoning-1')
+  assert.equal(result.itemsStartIndex, 0)
+})
+
+test('pins the newest working items when the 51st live item arrives', () => {
+  const current = {
+    type: 'working',
+    id: 'turn:working',
+    status: 'working',
+    items: workingItems(0, 50),
+    itemsLoaded: true,
+    itemCount: 50,
+    itemsStartIndex: 0
+  }
+  const update = {
+    type: 'working',
+    id: 'turn:working',
+    status: 'working',
+    items: workingItems(1, 50),
+    itemsLoaded: true,
+    itemCount: 51,
+    itemsStartIndex: 1,
+    workingItemsStartIndex: 0,
+    workingItemsPrefixLastId: null
+  }
+
+  const result = mergeWorkingStepUpdate(update, current, 50, 100)
+  const segments = getWorkingStepItemSegments(result, 50)
+
+  assert.equal(result.items.length, 50)
+  assert.equal(segments.length, 1)
+  assert.equal(segments[0].kind, 'tail')
+  assert.equal(segments[0].startIndex, 1)
+  assert.equal(segments[0].items[0].id, 'working-1')
+  assert.equal(segments[0].items.at(-1).id, 'working-50')
+})
+
+test('keeps a bounded history window separate from the pinned live tail', () => {
+  let result = {
+    type: 'working',
+    id: 'turn:working',
+    status: 'working',
+    items: workingItems(200, 50),
+    itemsLoaded: true,
+    itemCount: 250,
+    itemsStartIndex: 200
+  }
+
+  result = mergeWorkingStepPage(
+    result,
+    {
+      workingStepId: result.id,
+      status: result.status,
+      items: workingItems(150, 50),
+      startIndex: 150,
+      totalCount: 250
+    },
+    50,
+    100
+  )
+  result = mergeWorkingStepPage(
+    result,
+    {
+      workingStepId: result.id,
+      status: result.status,
+      items: workingItems(100, 50),
+      startIndex: 100,
+      totalCount: 250
+    },
+    50,
+    100
+  )
+
+  let segments = getWorkingStepItemSegments(result, 50)
+  assert.deepEqual(
+    segments.map((segment) => [segment.kind, segment.startIndex, segment.items.length]),
+    [
+      ['history', 100, 100],
+      ['tail', 200, 50]
+    ]
+  )
+  assert.equal(result.items.length, 150)
+
+  result = mergeWorkingStepPage(
+    result,
+    {
+      workingStepId: result.id,
+      status: result.status,
+      items: workingItems(50, 50),
+      startIndex: 50,
+      totalCount: 250
+    },
+    50,
+    100
+  )
+
+  segments = getWorkingStepItemSegments(result, 50)
+  assert.deepEqual(
+    segments.map((segment) => [segment.kind, segment.startIndex, segment.items.length]),
+    [
+      ['history', 50, 100],
+      ['tail', 200, 50]
+    ]
+  )
+  assert.equal(result.items.length, 150)
+  assert.equal(segments[0].items.at(-1).id, 'working-149')
+  assert.equal(segments[1].items[0].id, 'working-200')
+})
+
+test('preserves a browsed history window while advancing the pinned live tail', () => {
+  const current = {
+    type: 'working',
+    id: 'turn:working',
+    status: 'working',
+    items: [...workingItems(50, 100), ...workingItems(200, 50)],
+    itemsLoaded: true,
+    itemCount: 250,
+    itemsStartIndex: 50,
+    itemSegments: [
+      { kind: 'history', startIndex: 50, items: workingItems(50, 100) },
+      { kind: 'tail', startIndex: 200, items: workingItems(200, 50) }
+    ]
+  }
+  const update = {
+    type: 'working',
+    id: 'turn:working',
+    status: 'working',
+    items: workingItems(201, 50),
+    itemsLoaded: true,
+    itemCount: 251,
+    itemsStartIndex: 201,
+    workingItemsStartIndex: 0,
+    workingItemsPrefixLastId: null
+  }
+
+  const result = mergeWorkingStepUpdate(update, current, 50, 100)
+  const segments = getWorkingStepItemSegments(result, 50)
+
+  assert.deepEqual(
+    segments.map((segment) => [segment.kind, segment.startIndex, segment.items.length]),
+    [
+      ['history', 50, 100],
+      ['tail', 201, 50]
+    ]
+  )
+  assert.equal(result.items.length, 150)
+  assert.equal(segments[1].items.at(-1).id, 'working-250')
 })

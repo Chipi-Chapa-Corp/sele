@@ -109,7 +109,6 @@ import type {
   ProviderChat,
   ProviderChatDetail,
   ProviderChatDetailUpdate,
-  ProviderChatItemUpdate,
   ProviderChatUpdateSummary,
   ProviderFileDiff,
   ProviderWorkingItem,
@@ -260,6 +259,8 @@ import {
   getChatDetailTurnCount,
   getLoadedChatDetailTurnEndIndex,
   mergeChatDetailTurnPage,
+  mergeWorkingStepPage,
+  mergeWorkingStepUpdate,
   retainLoadedChatDetailTurnWindow
 } from './chatDetailWindow'
 import './App.css'
@@ -2542,63 +2543,19 @@ const getChatFromDetail = (
   container: detail.container ?? existingChat?.container ?? null
 })
 
-const getWorkingStepFromUpdate = (
-  update: Extract<ProviderChatItemUpdate, { type: 'working' }>,
-  currentItem: ProviderChatItem | undefined
-): ProviderWorkingStep | null => {
-  const { items, workingItemsPrefixLastId, workingItemsStartIndex, ...workingStep } = update
-  const currentWorkingStep =
-    currentItem?.type === 'working' && currentItem.id === update.id ? currentItem : null
-  const currentItemsStartIndex = currentWorkingStep?.itemsStartIndex ?? 0
-  const incomingItemsStartIndex = workingStep.itemsStartIndex ?? 0
-  const currentItemsEndIndex = currentItemsStartIndex + (currentWorkingStep?.items.length ?? 0)
-  if (
-    currentWorkingStep?.itemsLoaded !== false &&
-    currentWorkingStep &&
-    currentItemsEndIndex <= incomingItemsStartIndex
-  ) {
-    return {
-      ...workingStep,
-      items: currentWorkingStep.items,
-      itemsLoaded: true,
-      itemCount: Math.max(workingStep.itemCount ?? 0, currentWorkingStep.itemCount ?? 0),
-      itemsStartIndex: currentItemsStartIndex
-    }
-  }
-
-  const currentWorkingItemsStartIndex = (() => {
-    if (workingItemsStartIndex > 0) {
-      const prefixIndex = currentWorkingStep?.items.findIndex(
-        (item) => item.id === workingItemsPrefixLastId
-      )
-      return prefixIndex === undefined || prefixIndex < 0 ? null : prefixIndex + 1
-    }
-    if (!currentWorkingStep) return 0
-    if (currentWorkingStep.itemsLoaded === false) return 0
-    const itemOffset = incomingItemsStartIndex - currentItemsStartIndex
-    return itemOffset < 0 || itemOffset > currentWorkingStep.items.length ? null : itemOffset
-  })()
-  if (
-    !Number.isSafeInteger(workingItemsStartIndex) ||
-    workingItemsStartIndex < 0 ||
-    currentWorkingItemsStartIndex === null
-  ) {
-    return null
-  }
-
-  const mergedItems =
-    currentWorkingItemsStartIndex === 0
-      ? items
-      : [...currentWorkingStep!.items.slice(0, currentWorkingItemsStartIndex), ...items]
-  const boundedItems = mergedItems.slice(-chatWorkingItemWindowSize)
-  return {
-    ...workingStep,
-    items: boundedItems,
-    itemsStartIndex:
-      Math.min(currentItemsStartIndex, incomingItemsStartIndex) +
-      Math.max(0, mergedItems.length - boundedItems.length)
-  }
-}
+const areContainerTargetsEqual = (
+  first: ProviderChat['container'],
+  second: ProviderChat['container']
+): boolean =>
+  first === second ||
+  ((!first || first.kind === 'host') && (!second || second.kind === 'host')) ||
+  (first?.kind === 'container' &&
+    second?.kind === 'container' &&
+    first.tool === second.tool &&
+    first.name === second.name &&
+    (first.tool !== 'ssh' ||
+      second.tool !== 'ssh' ||
+      getContainerTargetKey(first) === getContainerTargetKey(second)))
 
 const getChatDetailFromUpdate = (
   update: ProviderChatDetailUpdate,
@@ -2606,6 +2563,11 @@ const getChatDetailFromUpdate = (
   preserveOptimisticTurnUntilUserMessage = false
 ): ProviderChatDetail | null => {
   const { chatItemsPrefixLastId, chatItemsStartIndex, items, ...chatDetail } = update
+  const stableContainer =
+    currentDetail?.id === update.id &&
+    areContainerTargetsEqual(currentDetail.container, chatDetail.container)
+      ? currentDetail.container
+      : chatDetail.container
   const currentItemsStartTurnIndex = getChatDetailItemsStartTurnIndex(currentDetail)
   const incomingItemsStartTurnIndex = chatDetail.itemsStartTurnIndex ?? 0
   const currentTurns = getProviderChatTurns(currentDetail?.items ?? [])
@@ -2613,6 +2575,7 @@ const getChatDetailFromUpdate = (
   if (currentDetail?.id === update.id && currentItemsEndTurnIndex <= incomingItemsStartTurnIndex) {
     return {
       ...chatDetail,
+      container: stableContainer,
       items: currentDetail.items,
       itemsStartTurnIndex: currentItemsStartTurnIndex
     }
@@ -2679,12 +2642,18 @@ const getChatDetailFromUpdate = (
         items: currentItem.items,
         itemsLoaded: true,
         itemCount: Math.max(item.itemCount ?? 0, currentItem.itemCount ?? 0),
-        itemsStartIndex: currentItem.itemsStartIndex ?? 0
+        itemsStartIndex: currentItem.itemsStartIndex ?? 0,
+        itemSegments: currentItem.itemSegments
       })
       continue
     }
 
-    const mergedWorkingStep = getWorkingStepFromUpdate(item, currentItem)
+    const mergedWorkingStep = mergeWorkingStepUpdate(
+      item,
+      currentItem,
+      chatWorkingItemPageSize,
+      chatWorkingItemWindowSize
+    )
     if (!mergedWorkingStep) return null
     mergedItems.push(mergedWorkingStep)
   }
@@ -2716,6 +2685,7 @@ const getChatDetailFromUpdate = (
       if (!hasNewProviderUserMessage) {
         return {
           ...chatDetail,
+          container: stableContainer,
           items: currentDetail.items,
           itemsStartTurnIndex: currentItemsStartTurnIndex
         }
@@ -2727,6 +2697,9 @@ const getChatDetailFromUpdate = (
 
   return {
     ...chatDetail,
+    // IPC snapshots clone container targets. Reuse the equivalent target so callbacks and
+    // image-loading effects below the chat item do not restart for every streamed packet.
+    container: stableContainer,
     items: mergedItems,
     itemsStartTurnIndex:
       currentDetail?.id === update.id
@@ -2738,24 +2711,30 @@ const getChatDetailFromUpdate = (
 const getChatDetailFromUpdateSummary = (
   detail: ProviderChatDetail,
   summary: ProviderChatUpdateSummary
-): ProviderChatDetail => ({
-  ...detail,
-  createdAt: summary.createdAt,
-  title: summary.title,
-  cwd: summary.cwd,
-  cwdKind: summary.cwdKind,
-  projectCwd: summary.projectCwd,
-  branchName: summary.branchName,
-  worktreeBaseBranchName: summary.worktreeBaseBranchName,
-  status: summary.status,
-  pendingApproval: summary.pendingApproval,
-  pinned: summary.pinned,
-  pinnedOrder: summary.pinnedOrder,
-  done: summary.done,
-  seenUpdatedAt: summary.seenUpdatedAt,
-  purpose: summary.purpose,
-  container: summary.container ?? detail.container
-})
+): ProviderChatDetail => {
+  const nextContainer = summary.container ?? detail.container
+
+  return {
+    ...detail,
+    createdAt: summary.createdAt,
+    title: summary.title,
+    cwd: summary.cwd,
+    cwdKind: summary.cwdKind,
+    projectCwd: summary.projectCwd,
+    branchName: summary.branchName,
+    worktreeBaseBranchName: summary.worktreeBaseBranchName,
+    status: summary.status,
+    pendingApproval: summary.pendingApproval,
+    pinned: summary.pinned,
+    pinnedOrder: summary.pinnedOrder,
+    done: summary.done,
+    seenUpdatedAt: summary.seenUpdatedAt,
+    purpose: summary.purpose,
+    container: areContainerTargetsEqual(detail.container, nextContainer)
+      ? detail.container
+      : nextContainer
+  }
+}
 
 const arePendingApprovalsEqual = (
   first: ProviderChat['pendingApproval'],
@@ -2770,20 +2749,6 @@ const arePendingApprovalsEqual = (
     first?.cwd === second?.cwd &&
     first?.reason === second?.reason &&
     first?.startedAt === second?.startedAt)
-
-const areContainerTargetsEqual = (
-  first: ProviderChat['container'],
-  second: ProviderChat['container']
-): boolean =>
-  first === second ||
-  ((!first || first.kind === 'host') && (!second || second.kind === 'host')) ||
-  (first?.kind === 'container' &&
-    second?.kind === 'container' &&
-    first.tool === second.tool &&
-    first.name === second.name &&
-    (first.tool !== 'ssh' ||
-      second.tool !== 'ssh' ||
-      getContainerTargetKey(first) === getContainerTargetKey(second)))
 
 const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.id === second.id &&
@@ -8889,24 +8854,25 @@ export const App: React.FC = () => {
     }
   }
 
-  const handleContinueStoppedTurn = async (
-    workingStepId: string,
-    prompt: string
-  ): Promise<void> => {
-    if (selectedChatKey) {
-      setContinuedStoppedWorkingStepsByChat((currentStepsByChat) => {
-        const currentStepIds = currentStepsByChat[selectedChatKey] ?? []
-        if (currentStepIds.includes(workingStepId)) return currentStepsByChat
+  const handleContinueStoppedTurn = useCallback(
+    async (workingStepId: string, prompt: string): Promise<void> => {
+      const chatKey = selectedChatKeyRef.current
+      if (chatKey) {
+        setContinuedStoppedWorkingStepsByChat((currentStepsByChat) => {
+          const currentStepIds = currentStepsByChat[chatKey] ?? []
+          if (currentStepIds.includes(workingStepId)) return currentStepsByChat
 
-        return {
-          ...currentStepsByChat,
-          [selectedChatKey]: [...currentStepIds, workingStepId]
-        }
-      })
-    }
+          return {
+            ...currentStepsByChat,
+            [chatKey]: [...currentStepIds, workingStepId]
+          }
+        })
+      }
 
-    await handleSendMessage(prompt)
-  }
+      await runPromptActionRef.current(prompt, 'current')
+    },
+    []
+  )
 
   const handleLoadWorkingStep = useCallback(
     async (workingStepId: string, requestedStartIndex?: number): Promise<void> => {
@@ -8945,48 +8911,15 @@ export const App: React.FC = () => {
         const currentItem = currentDetail.items[itemIndex]
         if (currentItem?.type !== 'working') return currentDetail
 
-        const currentStartIndex = currentItem.itemsStartIndex ?? 0
-        const currentEndIndex = currentStartIndex + currentItem.items.length
-        const pageEndIndex = page.startIndex + page.items.length
-        const loadingOlder =
-          currentItem.itemsLoaded !== false && page.startIndex < currentStartIndex
-        const mergedItemsByIndex = new Map<number, ProviderWorkingItem>()
-        if (currentItem.itemsLoaded !== false) {
-          currentItem.items.forEach((item, index) => {
-            mergedItemsByIndex.set(currentStartIndex + index, item)
-          })
-        }
-        page.items.forEach((item, index) => {
-          mergedItemsByIndex.set(page.startIndex + index, item)
-        })
-
-        let retainedStartIndex = Math.min(currentStartIndex, page.startIndex)
-        let retainedEndIndex = Math.max(currentEndIndex, pageEndIndex)
-        if (currentItem.itemsLoaded === false) {
-          retainedStartIndex = page.startIndex
-          retainedEndIndex = pageEndIndex
-        } else if (retainedEndIndex - retainedStartIndex > chatWorkingItemWindowSize) {
-          if (loadingOlder) retainedEndIndex = retainedStartIndex + chatWorkingItemWindowSize
-          else retainedStartIndex = retainedEndIndex - chatWorkingItemWindowSize
-        }
-
-        const mergedWorkingItems: ProviderWorkingItem[] = []
-        for (let index = retainedStartIndex; index < retainedEndIndex; index += 1) {
-          const item = mergedItemsByIndex.get(index)
-          if (item) mergedWorkingItems.push(item)
-        }
+        const mergedWorkingStep = mergeWorkingStepPage(
+          currentItem,
+          page,
+          chatWorkingItemPageSize,
+          chatWorkingItemWindowSize
+        )
 
         const items = currentDetail.items.map((item, index) => {
-          if (index === itemIndex && item.type === 'working') {
-            return {
-              ...item,
-              status: page.status,
-              items: mergedWorkingItems,
-              itemsLoaded: true,
-              itemCount: page.totalCount,
-              itemsStartIndex: retainedStartIndex
-            }
-          }
+          if (index === itemIndex && item.type === 'working') return mergedWorkingStep
           if (
             item.type === 'working' &&
             item.itemsLoaded !== false &&
@@ -9031,8 +8964,12 @@ export const App: React.FC = () => {
 
         const workingItems = [...workingStep.items]
         workingItems[workingItemIndex] = loadedItem
+        const itemSegments = workingStep.itemSegments?.map((segment) => ({
+          ...segment,
+          items: segment.items.map((item) => (item.id === workingItemId ? loadedItem : item))
+        }))
         const items = [...currentDetail.items]
-        items[workingStepIndex] = { ...workingStep, items: workingItems }
+        items[workingStepIndex] = { ...workingStep, items: workingItems, itemSegments }
         const nextDetail = { ...currentDetail, items }
         chatDetailRef.current = nextDetail
         return nextDetail

@@ -21,6 +21,7 @@
   min-width: 0;
   padding: 14px;
   border: 0;
+  outline: 0;
   color: inherit;
   cursor: pointer;
   background: transparent;
@@ -75,11 +76,6 @@
 
 .chat-list-item--approval .chat-list-item__main {
   padding-bottom: 8px;
-}
-
-.chat-list-item__main:focus-visible {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: -3px;
 }
 
 .chat-list-item:hover,

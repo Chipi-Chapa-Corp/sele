@@ -630,6 +630,12 @@ export type ProviderWorkingToolGroup = {
 export type ProviderWorkingItem =
   ProviderWorkingMessage | ProviderWorkingTool | ProviderWorkingToolGroup
 
+export type ProviderWorkingItemSegment = {
+  kind: 'history' | 'tail'
+  startIndex: number
+  items: ProviderWorkingItem[]
+}
+
 export type ProviderWorkingStep = {
   type: 'working'
   id: string
@@ -638,6 +644,7 @@ export type ProviderWorkingStep = {
   itemsLoaded?: boolean
   itemCount?: number
   itemsStartIndex?: number
+  itemSegments?: ProviderWorkingItemSegment[]
 }
 
 export type ProviderPendingMessageKind = 'steering' | 'queued'
