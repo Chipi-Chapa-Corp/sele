@@ -371,6 +371,10 @@ export const providerApi: ProviderApi = {
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].editPendingMessage(chatId, messageId, message, options)
     ).then((detail) => applyMetadataToDetail(detail)),
+  steerPendingMessage: (providerId, chatId, messageId) =>
+    adapters[providerId]
+      .steerPendingMessage(chatId, messageId)
+      .then((detail) => applyMetadataToDetail(detail)),
   interruptPendingMessage: (providerId, chatId, messageId) =>
     adapters[providerId]
       .interruptPendingMessage(chatId, messageId)

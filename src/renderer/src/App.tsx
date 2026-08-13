@@ -9039,6 +9039,42 @@ export const App: React.FC = () => {
     ]
   )
 
+  const handleSteerPendingMessage = useCallback(
+    async (message: ProviderPendingMessage): Promise<void> => {
+      if (
+        providerUpdateInProgress ||
+        !selectedProviderId ||
+        !selectedChatId ||
+        sendInFlightRef.current
+      ) {
+        return
+      }
+      sendInFlightRef.current = true
+      setSendState('sending')
+
+      try {
+        const detail = await providerApi.steerPendingMessage(
+          selectedProviderId,
+          selectedChatId,
+          message.id
+        )
+        applyViewedChatDetail(selectedProviderId, detail)
+        setSendState('idle')
+      } catch (error) {
+        handleSendFailure(error, 'Unable to steer with queued message.')
+      } finally {
+        sendInFlightRef.current = false
+      }
+    },
+    [
+      applyViewedChatDetail,
+      handleSendFailure,
+      providerUpdateInProgress,
+      selectedChatId,
+      selectedProviderId
+    ]
+  )
+
   const handleChatContentScroll = (): boolean => {
     const contentElement = contentRef.current
     if (!contentElement) return false
@@ -12055,6 +12091,11 @@ export const App: React.FC = () => {
                 modelLabelsById={modelLabelsById}
                 onDeletePendingMessage={handleDeletePendingMessage}
                 onEditPendingMessage={handleEditPendingMessage}
+                onSteerPendingMessage={
+                  chatHasActiveTurn && !chatHasPendingSteeringMessage
+                    ? handleSteerPendingMessage
+                    : undefined
+                }
                 onInterruptPendingMessage={
                   chatHasActiveTurn ? handleInterruptPendingMessage : undefined
                 }

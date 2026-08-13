@@ -1288,6 +1288,18 @@ export const registerProviderIpc = (): void => {
   )
 
   ipcMain.handle(
+    providerIpcChannels.steerPendingMessage,
+    (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
+      getRendererChatDetail(() =>
+        providerApi.steerPendingMessage(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessageId(messageId)
+        )
+      )
+  )
+
+  ipcMain.handle(
     providerIpcChannels.interruptPendingMessage,
     (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
       getRendererChatDetail(() =>

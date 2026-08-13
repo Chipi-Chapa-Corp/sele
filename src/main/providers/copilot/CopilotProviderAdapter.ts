@@ -957,6 +957,28 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  steerPendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId)
+    await this.refreshPendingMessages(state)
+    if (state.pendingMessages.some((item) => item.kind === 'steering')) {
+      throw new Error('A steering message is already pending.')
+    }
+
+    const pending = state.pendingMessages.find((item) => item.id === messageId)
+    if (!pending || pending.kind !== 'queued' || state.pendingMessages.at(-1)?.id !== messageId) {
+      throw new Error('Copilot can only steer with the most recently queued message.')
+    }
+    const result = await state.session!.rpc.queue.removeMostRecent()
+    if (!result.removed) throw new Error('The queued message is no longer pending.')
+    await state.session!.send({
+      prompt: pending.content,
+      displayPrompt: pending.content,
+      mode: 'immediate'
+    })
+    await this.refreshPendingMessages(state)
+    return this.createChatDetail(state)
+  }
+
   interruptPendingMessage = async (
     chatId: string,
     messageId: string

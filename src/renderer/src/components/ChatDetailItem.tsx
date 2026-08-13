@@ -36,6 +36,7 @@ import {
   ChevronRight,
   CircleQuestionMark,
   Copy,
+  CornerDownRight,
   Eye,
   FilePlus2,
   FileCode2,
@@ -96,6 +97,7 @@ type ChatDetailItemProps = {
   modelLabelsById?: ReadonlyMap<ProviderModelId, string>
   onDeletePendingMessage?: (message: ProviderPendingMessage) => void
   onEditPendingMessage?: (message: ProviderPendingMessage) => void
+  onSteerPendingMessage?: (message: ProviderPendingMessage) => void
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
   onLoadWorkingStep?: (workingStepId: string) => Promise<void> | void
@@ -149,6 +151,7 @@ const areChatDetailItemPropsEqual = (
   first.modelLabelsById === second.modelLabelsById &&
   first.onDeletePendingMessage === second.onDeletePendingMessage &&
   first.onEditPendingMessage === second.onEditPendingMessage &&
+  first.onSteerPendingMessage === second.onSteerPendingMessage &&
   first.onInterruptPendingMessage === second.onInterruptPendingMessage &&
   first.onEditMessage === second.onEditMessage &&
   first.onLoadWorkingStep === second.onLoadWorkingStep &&
@@ -1854,6 +1857,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   modelLabelsById,
   onDeletePendingMessage,
   onEditPendingMessage,
+  onSteerPendingMessage,
   onInterruptPendingMessage,
   onEditMessage,
   onLoadWorkingStep,
@@ -1900,6 +1904,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     const canEdit = !pending && role === 'user' && canEditOwnMessages && Boolean(onEditMessage)
     const canEditPending = pending && Boolean(onEditPendingMessage)
     const canDelete = pending && Boolean(onDeletePendingMessage)
+    const canSteer = pending && item.kind === 'queued' && Boolean(onSteerPendingMessage)
     const canInterrupt = pending && Boolean(onInterruptPendingMessage)
     const timestamp = item.createdAt
     const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById)
@@ -1932,6 +1937,16 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
             icon={<Pencil aria-hidden="true" />}
           />
         )}
+        {canSteer && pending && (
+          <Button
+            theme="secondary"
+            size="small"
+            aria-label="Steer with queued message"
+            title="Steer with queued message"
+            callback={() => onSteerPendingMessage?.(item)}
+            icon={<CornerDownRight aria-hidden="true" />}
+          />
+        )}
         {canInterrupt && pending && (
           <Button
             theme="secondary"
@@ -1958,7 +1973,12 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
             icon={<Trash2 aria-hidden="true" />}
           />
         )}
-        {!canEdit && !canEditPending && !canInterrupt && !canDelete && role === 'user' ? (
+        {!canEdit &&
+        !canEditPending &&
+        !canSteer &&
+        !canInterrupt &&
+        !canDelete &&
+        role === 'user' ? (
           <span className="chat-detail__message-action-placeholder" aria-hidden="true" />
         ) : null}
         <Button

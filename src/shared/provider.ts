@@ -841,6 +841,11 @@ export type ProviderApi = {
     message: string,
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
+  steerPendingMessage: (
+    providerId: ProviderId,
+    chatId: string,
+    messageId: string
+  ) => Promise<ProviderChatDetail>
   interruptPendingMessage: (
     providerId: ProviderId,
     chatId: string,
@@ -949,6 +954,7 @@ export const providerIpcChannels = {
   sendActiveChatMessage: 'provider:send-active-chat-message',
   deletePendingMessage: 'provider:delete-pending-message',
   editPendingMessage: 'provider:edit-pending-message',
+  steerPendingMessage: 'provider:steer-pending-message',
   interruptPendingMessage: 'provider:interrupt-pending-message',
   editMessage: 'provider:edit-message',
   resolveApproval: 'provider:resolve-approval',

@@ -2175,6 +2175,28 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
+  steerPendingMessage = (chatId: string, messageId: string): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId), () =>
+      this.steerPendingMessageInContext(chatId, messageId)
+    )
+
+  private steerPendingMessageInContext = async (
+    chatId: string,
+    messageId: string
+  ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
+    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    if (this.hasPendingSteeringMessage(chatId)) {
+      throw new Error('A steering message is already pending.')
+    }
+
+    const queuedTurn = this.takeQueuedTurn(chatId, messageId)
+    if (!queuedTurn) throw new Error('Pending message cannot be steered')
+
+    this.emitChatUpdated(chatId)
+    return this.steerActiveChat(chatId, queuedTurn.text, queuedTurn.options)
+  }
+
   interruptPendingMessage = (chatId: string, messageId: string): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId), () =>
       this.interruptPendingMessageInContext(chatId, messageId)

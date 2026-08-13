@@ -203,6 +203,8 @@ const providerApi: ProviderRendererApi = {
       message,
       options
     ),
+  steerPendingMessage: (providerId, chatId, messageId) =>
+    ipcRenderer.invoke(providerIpcChannels.steerPendingMessage, providerId, chatId, messageId),
   interruptPendingMessage: (providerId, chatId, messageId) =>
     ipcRenderer.invoke(providerIpcChannels.interruptPendingMessage, providerId, chatId, messageId),
   editMessage: (providerId, chatId, messageId, message, options) =>

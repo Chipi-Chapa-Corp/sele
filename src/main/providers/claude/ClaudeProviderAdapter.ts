@@ -886,6 +886,25 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  steerPendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId)
+    const index = state.queuedMessages.findIndex((item) => item.id === messageId)
+    const pending = state.queuedMessages[index]
+    if (!pending) throw new Error('The Claude message is no longer queued.')
+    if (state.active && !state.input) throw new Error('Claude session is not connected')
+    state.queuedMessages.splice(index, 1)
+
+    if (!state.active) {
+      this.sendQueuedMessageNow(state, pending)
+      return this.createChatDetail(state)
+    }
+
+    this.addUserMessage(state, pending, 'Steering with')
+    state.input!.push(createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
+    this.emitUpdate(state)
+    return this.createChatDetail(state)
+  }
+
   interruptPendingMessage = async (
     chatId: string,
     messageId: string

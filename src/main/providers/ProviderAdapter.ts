@@ -96,6 +96,7 @@ export type ProviderAdapter = {
     message: string,
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
+  steerPendingMessage: (chatId: string, messageId: string) => Promise<ProviderChatDetail>
   interruptPendingMessage: (chatId: string, messageId: string) => Promise<ProviderChatDetail>
   editMessage: (
     chatId: string,
