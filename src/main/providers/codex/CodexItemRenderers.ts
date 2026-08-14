@@ -10,7 +10,7 @@ import type {
   ProviderWorkingStep,
   ProviderWorkingToolStatus
 } from '../../../shared/provider'
-import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
+import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls.ts'
 
 export type CodexUserInput =
   | { type: 'text'; text: string; text_elements?: unknown[] }
@@ -64,6 +64,14 @@ export type CodexTurn = {
   completedAt?: number | null
   items: CodexThreadItem[]
 }
+
+export const hasCompletedCodexFinalAnswer = (turn: CodexTurn | null | undefined): boolean =>
+  Boolean(
+    turn?.items.some(
+      (item) =>
+        item.type === 'agentMessage' && item.phase === 'final_answer' && item.status !== 'running'
+    )
+  )
 
 type GetChatItemsOptions = {
   hiddenPendingMessageIds?: ReadonlySet<string>
@@ -1759,12 +1767,17 @@ const renderChatItems = (
         continue
       }
 
-      if (itemIndex === finalMessageIndex && item.text?.trim()) {
-        if (turn.items.slice(itemIndex + 1).some(hasUserMessageContent)) {
-          appendWorkingItems(renderWorkingItems(item, turn.id))
-        } else {
-          finalMessage = createAssistantMessage(turn, item, completedAt)
+      if (item.type === 'agentMessage' && item.phase === 'final_answer' && item.text?.trim()) {
+        const hasLaterSteeringMessage = turn.items.slice(itemIndex + 1).some(hasUserMessageContent)
+        if (hasLaterSteeringMessage) {
+          pushWorkingStep('worked')
+          chatItems.push(createAssistantMessage(turn, item, completedAt))
+          continue
         }
+      }
+
+      if (itemIndex === finalMessageIndex && item.text?.trim()) {
+        finalMessage = createAssistantMessage(turn, item, completedAt)
         continue
       }
 

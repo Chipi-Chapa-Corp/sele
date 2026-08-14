@@ -49,6 +49,7 @@ import { CodexAppServerClient, type RpcNotification, type RpcRequest } from './C
 import {
   createCodexFileAttachmentInput,
   getChatItems,
+  hasCompletedCodexFinalAnswer,
   hasCodexUserInputAttachments,
   type CodexThreadItem,
   type CodexTurn,
@@ -2463,6 +2464,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const turnId = this.getActiveTurnId(chatId)
     if (!turnId) return this.continueChat(chatId, text, options)
+
+    const activeTurn = this.threads.get(chatId)?.turns.find((candidate) => candidate.id === turnId)
+    if (hasCompletedCodexFinalAnswer(activeTurn)) {
+      return this.queueChatMessage(chatId, text, options)
+    }
 
     if (this.hasPendingSteeringMessage(chatId)) {
       return this.queueChatMessage(chatId, text, options)
