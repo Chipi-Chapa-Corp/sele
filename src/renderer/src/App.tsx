@@ -13,6 +13,7 @@ import {
   useState
 } from 'react'
 import { flushSync } from 'react-dom'
+import { version as appVersion } from '../../../package.json'
 import {
   Apple,
   AppWindow,
@@ -12169,6 +12170,7 @@ export const App: React.FC = () => {
                 />
               </div>
             )}
+            <p className="settings-dialog__version">Sele v{appVersion}</p>
           </aside>
           <div className="settings-dialog__body">{renderSettingsPanel()}</div>
         </section>

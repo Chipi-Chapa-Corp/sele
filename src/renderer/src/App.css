@@ -1360,6 +1360,15 @@
   width: 100%;
 }
 
+.settings-dialog__version {
+  margin: 0;
+  padding: 2px 8px;
+  color: var(--muted);
+  font: inherit;
+  opacity: 0.62;
+  text-align: center;
+}
+
 .settings-dialog__body {
   display: grid;
   min-width: 0;
