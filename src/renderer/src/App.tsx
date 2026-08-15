@@ -5826,6 +5826,7 @@ export const App: React.FC = () => {
 
   const selectedProviderId = selectedChat?.providerId
   const selectedChatId = selectedChat?.id
+  const selectedChatStatus = selectedChat?.status ?? null
   const selectedChatKey =
     selectedProviderId && selectedChatId
       ? getChatKey({ providerId: selectedProviderId, id: selectedChatId })
@@ -6173,7 +6174,7 @@ export const App: React.FC = () => {
     if (
       !usageProviderAvailabilityReady ||
       !usageProviderAvailable ||
-      (!selectedChat && loadState === 'loading')
+      (!selectedChatId && loadState === 'loading')
     ) {
       queueMicrotask(() => {
         if (!active) return
@@ -6219,7 +6220,8 @@ export const App: React.FC = () => {
   }, [
     changesContainer,
     loadState,
-    selectedChat,
+    selectedChatId,
+    selectedChatStatus,
     usageProviderAvailabilityReady,
     usageProviderAvailable,
     usageProviderId
@@ -10754,7 +10756,8 @@ export const App: React.FC = () => {
         container: changesContainer,
         cwd: changesCwd,
         files: commitFiles,
-        message: action === 'amend' ? null : commitMessage
+        message: action === 'amend' ? null : commitMessage,
+        patches: patchChangeSourceSelected ? getCommitPatches(changedFiles) : undefined
       })
       setCommitInput('')
       setCommitState('idle')

@@ -81,7 +81,9 @@ import {
 import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
+import { commitGitFileChanges } from './gitCommit'
 import { getHostCommand } from './hostProcess'
+import { getProcessFailureMessage } from './processFailure'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
 import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
 import { getCopilotExecutable } from './providers/copilot/CopilotExecutable'
@@ -654,6 +656,9 @@ const runWithGitContainer = <T>(
 const getRunGitOptions = (options: boolean | RunGitOptions): RunGitOptions =>
   typeof options === 'boolean' ? { required: options } : options
 
+const getGitCommandLabel = (args: string[]): string =>
+  args[0]?.trim() ? `Git ${args[0].trim()}` : 'Git command'
+
 const runGit = async (
   cwd: string,
   args: string[],
@@ -663,6 +668,7 @@ const runGit = async (
   const container = runOptions.container ?? gitCommandContext.getStore()?.container
   const env = { ...process.env, GIT_MERGE_AUTOEDIT: 'no', ...runOptions.env }
   const hostCommand = await getHostCommand('git', args, { container, cwd, env })
+  const timeoutMs = runOptions.timeoutMs ?? 10_000
 
   return new Promise((resolve, reject) => {
     const child = execFile(
@@ -673,13 +679,19 @@ const runGit = async (
         encoding: 'utf8',
         env: hostCommand.env,
         maxBuffer: 10 * 1024 * 1024,
-        timeout: runOptions.timeoutMs ?? 10_000
+        timeout: timeoutMs
       },
       (error, stdout, stderr) => {
         if (error) {
           if (runOptions.required) {
-            const message = stderr.trim() || error.message
-            reject(new Error(message))
+            reject(
+              new Error(
+                getProcessFailureMessage(error, stdout, stderr, {
+                  label: getGitCommandLabel(args),
+                  timeoutMs
+                })
+              )
+            )
           } else resolve(null)
           return
         }
@@ -2479,7 +2491,9 @@ const commitGitChanges = async (
       patches
     )
     if (uncommittedPatches.length === 0) {
-      throw new Error('No selected patch changes are still uncommitted')
+      throw new Error(
+        'The selected chat changes are no longer present in the working tree. Refresh Changes and try again.'
+      )
     }
 
     await commitGitPatchChanges(repositoryRoot, uncommittedPatches, message, action)
@@ -2489,16 +2503,7 @@ const commitGitChanges = async (
     return { commitHash, pushed: false }
   }
 
-  await runGit(repositoryRoot, ['add', '-A', '--', ...files], true)
-
-  if (action === 'amend') {
-    await runGit(repositoryRoot, ['commit', '--amend', '--no-edit', '--only', '--', ...files], true)
-  } else {
-    const commitMessage = message?.trim()
-    if (!commitMessage) throw new Error('Commit message is required')
-
-    await runGit(repositoryRoot, ['commit', '--only', '-m', commitMessage, '--', ...files], true)
-  }
+  await commitGitFileChanges({ action, files, message, repositoryRoot, runGit })
 
   const commitHash = await runGit(repositoryRoot, ['rev-parse', 'HEAD'], true)
   if (!commitHash) throw new Error('Unable to read commit hash')

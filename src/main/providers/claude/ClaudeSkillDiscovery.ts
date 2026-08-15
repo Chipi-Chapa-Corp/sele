@@ -5,7 +5,7 @@ import type { ProviderSkill } from '../../../shared/provider'
 import { getHostCommand } from '../../hostProcess'
 
 const commandTimeoutMs = 15_000
-const commandMaxBuffer = 4 * 1024 * 1024
+const commandMaxBuffer = 64 * 1024 * 1024
 
 const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
@@ -81,31 +81,34 @@ export const discoverClaudeSkills = async (
     'set -eu',
     `for sele_skill_root in ${roots.join(' ')}; do`,
     '  [ -d "$sele_skill_root" ] || continue',
-    '  find "$sele_skill_root" -type f \\( -name SKILL.md -o -name skill.md \\) -print',
+    '  find "$sele_skill_root" -type f \\( -name SKILL.md -o -name skill.md \\) -exec sh -c \'',
+    '    for sele_skill_path do',
+    '      printf "%s\\0" "$sele_skill_path"',
+    '      while IFS= read -r sele_skill_line || [ -n "$sele_skill_line" ]; do',
+    '        printf "%s\\n" "$sele_skill_line"',
+    '      done < "$sele_skill_path"',
+    '      printf "\\0"',
+    '    done',
+    "  ' sele-claude-skill-reader {} +",
     'done'
   ].join('\n')
 
-  let paths: string[]
+  let output: string
   try {
-    paths = Array.from(
-      new Set(
-        (await runCommand('sh', ['-lc', script], container))
-          .split(/\r?\n/)
-          .map((path) => path.trim())
-          .filter(Boolean)
-      )
-    )
+    output = await runCommand('sh', ['-lc', script], container)
   } catch {
     return []
   }
 
-  const sources = await Promise.allSettled(
-    paths.map((path) => runCommand('cat', [path], container))
-  )
-  return sources
-    .flatMap((result, index): ProviderSkill[] => {
-      if (result.status !== 'fulfilled') return []
-      const skill = parseSkill(paths[index] ?? '', result.value, cwd)
+  const fields = output.split('\0')
+  const sources = new Map<string, string>()
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const path = fields[index]
+    if (path && !sources.has(path)) sources.set(path, fields[index + 1] ?? '')
+  }
+  return [...sources]
+    .flatMap(([path, source]): ProviderSkill[] => {
+      const skill = parseSkill(path, source, cwd)
       return skill ? [skill] : []
     })
     .sort((first, second) => first.name.localeCompare(second.name))

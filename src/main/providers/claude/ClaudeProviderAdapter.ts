@@ -52,9 +52,10 @@ import {
   type ProviderUsageOptions,
   type ProviderUserInputResponse
 } from '../../../shared/provider'
-import { normalizeContainerTarget } from '../../containerTarget'
+import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getHostCommand, getHostExecutableCommand, type HostCommand } from '../../hostProcess'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import { ProviderClientPool } from '../ProviderClientPool'
 import {
   disableProviderSkill,
   listDisabledProviderSkills,
@@ -125,7 +126,7 @@ type ClaudeSessionState = {
   pendingUserInputs: ClaudePendingUserInput[]
   queuedMessages: QueuedClaudeMessage[]
   contextUsage: ProviderChatContextUsage | null
-  permissionHandlerEnabled: boolean
+  queryReadOnly: boolean | null
 }
 
 type ClaudeOneShotGeneration = {
@@ -143,6 +144,13 @@ type StartQueryOptions = {
 type ClaudeQueryRuntime = {
   command: HostCommand
   container: Extract<AppContainerTarget, { kind: 'container' }> | null
+}
+
+type ClaudeControlQueryProfile = 'account' | 'apps'
+
+type ClaudeControlQueryEntry = {
+  query: Query
+  input: AsyncMessageQueue<SDKUserMessage>
 }
 
 class AsyncMessageQueue<T> implements AsyncIterable<T> {
@@ -226,18 +234,31 @@ const emptyUsageSummary = {
 }
 
 const updateDelayMs = 35
+const contextUsageCloseGraceMs = 1_000
+const interruptCloseGraceMs = 500
 const oneShotCancellationRetentionMs = 60_000
 const maxTitleLength = 80
 const maxPreviewLength = 500
 const allowedEffortLevels = new Set<EffortLevel>(['low', 'medium', 'high', 'xhigh', 'max'])
-const readOnlyDisallowedTools = [
-  'Bash',
-  'Edit',
-  'Write',
-  'NotebookEdit',
-  'KillShell',
-  'EnterWorktree'
+const readOnlyAllowedTools = [
+  'AskUserQuestion',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'Glob',
+  'Grep',
+  'Read',
+  'Skill',
+  'TodoWrite',
+  'WebFetch',
+  'WebSearch'
 ]
+const backgroundFeatureRestrictions = {
+  disableAllHooks: true,
+  disableAgentView: true,
+  disableRemoteControl: true,
+  disableWorkflows: true,
+  disableArtifact: true
+} as const
 
 const remoteTranscriptMaxBuffer = 64 * 1024 * 1024
 
@@ -261,6 +282,16 @@ const runHostCommand = (command: HostCommand): Promise<string> =>
         else resolve(stdout)
       }
     )
+  })
+
+const settleWithin = (promise: Promise<unknown>, timeoutMs: number): Promise<void> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs)
+    const finish = (): void => {
+      clearTimeout(timer)
+      resolve()
+    }
+    void promise.then(finish, finish)
   })
 
 /** Lets the SDK's own session parser operate on transcripts in a selected container. */
@@ -517,9 +548,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private canceledOneShotGenerationIds = new Set<string>()
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private hiddenSessionIds = new Set<string>()
+  private resumeDropsTurnSupport = new Map<string, Promise<boolean>>()
+  private controlQueries = new ProviderClientPool<ClaudeControlQueryEntry>((entry) =>
+    this.closeControlQueryEntry(entry)
+  )
 
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> =>
-    this.withControlQuery(options, async (control) => {
+    this.withControlQuery(options, 'account', async (control) => {
       const account = await control.accountInfo()
       return {
         status: 'authenticated' as const,
@@ -539,8 +574,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   updateProvider = async (
     options: ProviderSourceOptions = {}
-  ): Promise<ProviderUpdateAvailability | null> =>
-    updateClaudeProvider({ container: options.container, env: process.env })
+  ): Promise<ProviderUpdateAvailability | null> => {
+    try {
+      return await updateClaudeProvider({ container: options.container, env: process.env })
+    } finally {
+      this.resumeDropsTurnSupport.clear()
+    }
+  }
 
   getApprovalModes = async (): Promise<ProviderApprovalModeOption[]> => claudeApprovalModes
 
@@ -548,7 +588,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> => {
     try {
-      return await this.withControlQuery(options, async (control) => {
+      return await this.withControlQuery(options, 'account', async (control) => {
         const models = await control.supportedModels()
         return models.length > 0 ? mapClaudeModels(models) : fallbackClaudeModels
       })
@@ -569,7 +609,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   getApps = async (options: ProviderSourceOptions = {}): Promise<ProviderApp[]> =>
-    this.withControlQuery(options, async (control) => {
+    this.withControlQuery(options, 'apps', async (control) => {
       const servers = await control.mcpServerStatus()
       return servers
         .map((server) => ({
@@ -644,7 +684,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     enabled: boolean,
     options: ProviderResourceUpdateOptions = {}
   ): Promise<ProviderApp[]> =>
-    this.withControlQuery(options, async (control) => {
+    this.withControlQuery(options, 'apps', async (control) => {
       await control.toggleMcpServer(appId, enabled)
       if (options.deferRefresh && options.knownApp?.id === appId) {
         return [{ ...options.knownApp, enabled }]
@@ -662,7 +702,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
     try {
-      return await this.withControlQuery(options, async (control) => {
+      return await this.withControlQuery(options, 'account', async (control) => {
         const usage = await control.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
         return {
           updatedAt: Date.now(),
@@ -865,8 +905,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.queuedMessages.push(queued)
       this.emitUpdate(state)
     } else if (mode === 'interrupt') {
-      await state.query!.interrupt().catch(() => undefined)
-      this.sendMessageNow(state, message, options)
+      await this.interruptWithMessage(state, this.createQueuedMessage(message, options))
     } else {
       const queued = this.createQueuedMessage(message, options)
       this.addUserMessage(state, queued, 'Steering with')
@@ -927,8 +966,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const pending = state.queuedMessages[index]
     if (!pending) throw new Error('The Claude message is no longer queued.')
     state.queuedMessages.splice(index, 1)
-    await state.query?.interrupt().catch(() => undefined)
-    this.sendQueuedMessageNow(state, pending)
+    await this.interruptWithMessage(state, pending)
     return this.createChatDetail(state)
   }
 
@@ -1009,7 +1047,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.active = false
     state.queuedMessages = []
     this.rejectPendingRequests(state)
-    await state.query?.interrupt().catch(() => undefined)
+    const interrupt = state.query?.interrupt().catch(() => undefined)
+    if (interrupt) await settleWithin(interrupt, interruptCloseGraceMs)
+    await this.closeStateQuery(state)
     this.emitUpdate(state, true)
     return this.createChatDetail(state)
   }
@@ -1025,9 +1065,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
     this.states.forEach((state) => {
-      this.rejectPendingRequests(state)
-      state.input?.close()
-      state.query?.close()
+      void this.closeStateQuery(state)
     })
     this.states.clear()
     this.oneShotGenerations.forEach((generation) => {
@@ -1038,28 +1076,74 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationTimers.forEach((timer) => clearTimeout(timer))
     this.canceledOneShotGenerationTimers.clear()
     this.canceledOneShotGenerationIds.clear()
+    this.resumeDropsTurnSupport.clear()
+    this.controlQueries.dispose()
     this.hiddenSessionIds.clear()
     this.sessionContainers.clear()
   }
 
-  private withControlQuery = async <T>(
+  private closeControlQueryEntry = (entry: ClaudeControlQueryEntry): void => {
+    entry.input.close()
+    try {
+      entry.query.close()
+    } catch {
+      // The process is already unusable; dropping the entry is sufficient.
+    }
+  }
+
+  private createControlQueryEntry = async (
     options: ProviderSourceOptions,
-    run: (control: Query) => Promise<T>
-  ): Promise<T> => {
+    profile: ClaudeControlQueryProfile
+  ): Promise<ClaudeControlQueryEntry> => {
     const input = new AsyncMessageQueue<SDKUserMessage>()
     const runtime = await this.getQueryRuntime(options.container)
     const control = query({
       prompt: input,
       options: {
         ...this.getBaseQueryOptions(undefined, runtime),
-        persistSession: false
+        persistSession: false,
+        settingSources: ['user'],
+        tools: [],
+        settings: backgroundFeatureRestrictions,
+        includePartialMessages: false,
+        forwardSubagentText: false,
+        strictMcpConfig: profile === 'account'
       }
     })
+    const entry = { query: control, input }
     try {
-      return await run(control)
-    } finally {
-      input.close()
-      control.close()
+      await control.initializationResult()
+      return entry
+    } catch (error) {
+      this.closeControlQueryEntry(entry)
+      throw error
+    }
+  }
+
+  private getControlQueryEntry = (
+    options: ProviderSourceOptions,
+    profile: ClaudeControlQueryProfile
+  ): Promise<ClaudeControlQueryEntry> =>
+    this.controlQueries.get(`${profile}:${getContainerTargetKey(options.container)}`, () =>
+      this.createControlQueryEntry(options, profile)
+    )
+
+  private withControlQuery = async <T>(
+    options: ProviderSourceOptions,
+    profile: ClaudeControlQueryProfile,
+    run: (control: Query) => Promise<T>
+  ): Promise<T> => {
+    const key = `${profile}:${getContainerTargetKey(options.container)}`
+    const entry = await this.getControlQueryEntry(options, profile)
+    try {
+      return await run(entry.query)
+    } catch (error) {
+      const healthy = await entry.query.reinitialize().then(
+        () => true,
+        () => false
+      )
+      if (!healthy) this.controlQueries.invalidate(key, entry)
+      throw error
     }
   }
 
@@ -1104,8 +1188,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       // governed by the user's approval selection above.
       allowDangerouslySkipPermissions: true,
       sandbox: getSandbox(options),
-      settings: { fastMode: options?.serviceTier === 'fast' },
-      disallowedTools: options?.sandboxMode === 'read-only' ? readOnlyDisallowedTools : undefined,
+      settings: {
+        fastMode: options?.serviceTier === 'fast',
+        ...(options?.sandboxMode === 'read-only' ? backgroundFeatureRestrictions : {})
+      },
+      tools: options?.sandboxMode === 'read-only' ? readOnlyAllowedTools : undefined,
+      strictMcpConfig: options?.sandboxMode === 'read-only' ? true : undefined,
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,
       forwardSubagentText: true,
@@ -1140,7 +1228,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       pendingUserInputs: [],
       queuedMessages: [],
       contextUsage: null,
-      permissionHandlerEnabled: false
+      queryReadOnly: null
     }
   }
 
@@ -1151,9 +1239,27 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       cwd: state.cwd ?? state.options?.cwd,
       env: process.env
     })
-    const output = await runHostCommand(command).catch(() => '')
-    const version = parseClaudeVersion(output)
-    return version ? supportsClaudeResumeDropsTurn(version) : false
+    const key = JSON.stringify([
+      getContainerTargetKey(state.container),
+      command.file,
+      command.args,
+      command.cwd
+    ])
+    const existing = this.resumeDropsTurnSupport.get(key)
+    if (existing) return existing
+
+    const support = runHostCommand(command).then(
+      (output) => {
+        const version = parseClaudeVersion(output)
+        return version ? supportsClaudeResumeDropsTurn(version) : false
+      },
+      () => {
+        this.resumeDropsTurnSupport.delete(key)
+        return false
+      }
+    )
+    this.resumeDropsTurnSupport.set(key, support)
+    return support
   }
 
   private ensureState = async (
@@ -1204,13 +1310,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.options = options ?? state.options
     const input = new AsyncMessageQueue<SDKUserMessage>()
     const runtime = await this.getQueryRuntime(state.container, state.cwd ?? state.options?.cwd)
-    const permissionHandlerEnabled = getPermissionMode(state.options) !== 'bypassPermissions'
+    const queryReadOnly = state.options?.sandboxMode === 'read-only'
     const isNew = state.messages.length === 0 && !startOptions.forkFrom && !startOptions.resumeAt
     const control = query({
       prompt: input,
       options: {
         ...this.getBaseQueryOptions(state.options, runtime),
-        ...(permissionHandlerEnabled ? { canUseTool: this.createPermissionHandler(state) } : {}),
+        canUseTool: this.createPermissionHandler(state),
         ...(isNew ? { sessionId: state.id } : { resume: startOptions.forkFrom ?? state.id }),
         ...(startOptions.forkFrom ? { forkSession: true, sessionId: state.id } : {}),
         ...(startOptions.resumeAt ? { resumeSessionAt: startOptions.resumeAt } : {}),
@@ -1219,19 +1325,25 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     })
     state.input = input
     state.query = control
-    state.permissionHandlerEnabled = permissionHandlerEnabled
+    state.queryReadOnly = queryReadOnly
     void this.consumeStateQuery(state, control)
   }
 
   private closeStateQuery = async (state: ClaudeSessionState): Promise<void> => {
-    if (!state.query) return
+    const control = state.query
+    if (!control) return
     this.rejectPendingRequests(state)
     state.input?.close()
-    state.query.close()
     state.query = null
     state.input = null
-    state.permissionHandlerEnabled = false
+    state.active = false
+    state.queryReadOnly = null
     state.partialMessages.clear()
+    try {
+      control.close()
+    } catch {
+      // Closing is best-effort after all local references have been released.
+    }
   }
 
   private applyTurnOptions = async (
@@ -1240,8 +1352,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   ): Promise<void> => {
     if (!options || !state.query) return
     state.options = options
-    const needsPermissionHandler = getPermissionMode(options) !== 'bypassPermissions'
-    if (!state.active && state.permissionHandlerEnabled !== needsPermissionHandler) {
+    const needsReadOnlyQuery = options.sandboxMode === 'read-only'
+    if (state.queryReadOnly !== needsReadOnlyQuery) {
+      const interrupt = state.active ? state.query.interrupt().catch(() => undefined) : null
+      if (interrupt) await settleWithin(interrupt, interruptCloseGraceMs)
       await this.startStateQuery(state, options)
       return
     }
@@ -1282,10 +1396,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         return { behavior: 'allow', updatedInput: { ...input, answers } }
       }
 
-      if (
-        state.options?.sandboxMode === 'read-only' &&
-        readOnlyDisallowedTools.includes(toolName)
-      ) {
+      if (state.options?.sandboxMode === 'read-only' && !readOnlyAllowedTools.includes(toolName)) {
         return { behavior: 'deny', message: 'This chat is in read-only mode.' }
       }
       if (state.options?.approvalPolicy === 'never') {
@@ -1317,7 +1428,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     try {
       for await (const event of control) {
         if (state.query !== control) break
-        this.handleQueryEvent(state, event)
+        if (await this.handleQueryEvent(state, control, event)) break
       }
     } catch (error) {
       if (state.query !== control) return
@@ -1333,24 +1444,40 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       })
       this.emitUpdate(state, true)
     } finally {
-      if (state.query === control && state.failed) {
-        state.input?.close()
-        state.query = null
-        state.input = null
+      if (state.query === control) {
+        if (state.active) {
+          state.active = false
+          state.failed = !state.stopped
+          if (state.failed) {
+            this.addTranscriptMessage(state, {
+              type: 'system',
+              uuid: randomUUID(),
+              session_id: state.id,
+              message: { content: 'Claude disconnected before completing the turn.' },
+              parent_tool_use_id: null
+            })
+            this.emitUpdate(state, true)
+          }
+        }
+        await this.closeStateQuery(state)
       }
     }
   }
 
-  private handleQueryEvent = (state: ClaudeSessionState, event: SDKMessage): void => {
+  private handleQueryEvent = async (
+    state: ClaudeSessionState,
+    control: Query,
+    event: SDKMessage
+  ): Promise<boolean> => {
     if (event.type === 'stream_event') {
       if (applyClaudeStreamEvent(state.partialMessages, event)) this.queueUpdate(state)
-      return
+      return false
     }
     if (event.type === 'user' || event.type === 'assistant') {
       if (event.type === 'assistant') clearClaudeStreamMessages(state.partialMessages, event)
       this.addTranscriptMessage(state, toTranscriptMessage(event))
       this.queueUpdate(state)
-      return
+      return false
     }
     if (event.type === 'system' && event.subtype === 'compact_boundary') {
       this.addTranscriptMessage(state, {
@@ -1361,9 +1488,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         parent_tool_use_id: null
       })
       this.queueUpdate(state)
-      return
+      return false
     }
-    if (event.type !== 'result') return
+    if (event.type !== 'result') return false
 
     state.partialMessages.clear()
 
@@ -1401,11 +1528,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         : last,
       updatedAt: Date.now()
     }
-    const activeQuery = state.query
-    void activeQuery
-      ?.getContextUsage()
+    const refreshContextUsage = control
+      .getContextUsage()
       .then((usage) => {
-        if (state.query !== activeQuery) return
+        if (state.query !== control) return
         state.contextUsage = {
           ...(state.contextUsage ?? {
             total: last,
@@ -1419,14 +1545,20 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       })
       .catch(() => undefined)
 
-    const queued = state.queuedMessages.shift()
-    if (queued && !state.failed) {
+    const queued = state.failed ? undefined : state.queuedMessages.shift()
+    if (queued) {
+      void refreshContextUsage
       this.sendQueuedMessageNow(state, queued)
+      return false
     } else {
-      state.active = false
-      state.stopped = wasStopped
+      await settleWithin(refreshContextUsage, contextUsageCloseGraceMs)
+      if (state.query === control) {
+        state.active = false
+        state.stopped = wasStopped
+        this.emitUpdate(state, true)
+      }
+      return true
     }
-    this.emitUpdate(state, true)
   }
 
   private createQueuedMessage = (
@@ -1460,6 +1592,30 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.addUserMessage(state, message)
     state.input.push(createSdkUserMessage(state.id, message.id, message.prompt))
     this.emitUpdate(state)
+  }
+
+  private interruptWithMessage = async (
+    state: ClaudeSessionState,
+    message: QueuedClaudeMessage
+  ): Promise<void> => {
+    state.queuedMessages.unshift(message)
+    this.emitUpdate(state)
+    const control = state.query
+    const interrupted = control
+      ? await control.interrupt().then(
+          () => true,
+          () => false
+        )
+      : false
+    const queuedIndex = state.queuedMessages.findIndex((queued) => queued.id === message.id)
+    if (queuedIndex < 0) return
+    if (interrupted && state.query === control && state.active) return
+
+    state.queuedMessages.splice(queuedIndex, 1)
+    await this.closeStateQuery(state)
+    await this.ensureStateQuery(state, message.options)
+    await this.applyTurnOptions(state, message.options)
+    this.sendQueuedMessageNow(state, message)
   }
 
   private addUserMessage = (

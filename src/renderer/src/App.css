@@ -717,6 +717,8 @@
   margin: 0;
   color: var(--error);
   line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .chat-panel {

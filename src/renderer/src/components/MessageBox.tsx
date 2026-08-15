@@ -164,8 +164,6 @@ type MessageBoxContextUsage = {
 type UsagePopoverView = 'usage' | 'statistics'
 type AccountRateLimit = ProviderAccountUsage['rateLimits'][number]
 
-const minTextareaHeight = 44
-const maxTextareaHeight = 180
 const maxSelectedAttachmentCount = 10
 const maxSelectedSkillCount = 20
 const copilotMultipleSkillsTooltip = "Copilot doesn't support multiple skills invocation"
@@ -1695,18 +1693,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     )
     return () => window.cancelAnimationFrame(frame)
   }, [editing, selectedReview])
-
-  useEffect(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-
-    textarea.style.height = `${minTextareaHeight}px`
-    textarea.style.overflowY = 'hidden'
-
-    const nextHeight = Math.min(textarea.scrollHeight, maxTextareaHeight)
-    textarea.style.height = `${Math.max(minTextareaHeight, nextHeight)}px`
-    textarea.style.overflowY = textarea.scrollHeight > maxTextareaHeight ? 'auto' : 'hidden'
-  }, [message])
 
   const submitMessage = (activeMode: ProviderActiveSendMode = activePrimaryMode): void => {
     const nextMessage = message.trim()
