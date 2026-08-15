@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.4.0" date="2026-08-16">
+      <description>
+        <p>Added app version information in settings, kept completed Codex answers visible alongside steering messages, and preserved existing staged changes when committing selected files.</p>
+      </description>
+    </release>
     <release version="1.3.0" date="2026-08-13">
       <description>
         <p>Added segmented working item windows with gap-preserving paging for smoother navigation through long conversations.</p>
