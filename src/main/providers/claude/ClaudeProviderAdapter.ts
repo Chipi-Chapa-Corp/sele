@@ -70,6 +70,7 @@ import {
 } from './ClaudeItemRenderers'
 import { mapClaudeModels } from './ClaudeModels'
 import { getClaudeUpdateAvailability, updateClaudeProvider } from './ClaudeProviderUpdate'
+import { shouldKeepClaudeQueryAliveAfterResult } from './ClaudeQueryLifecycle'
 import { discoverClaudeSkills } from './ClaudeSkillDiscovery'
 import { applyClaudeStreamEvent, clearClaudeStreamMessages } from './ClaudeStreaming'
 import { mapClaudeRateLimits } from './ClaudeUsage'
@@ -128,6 +129,7 @@ type ClaudeSessionState = {
   contextUsage: ProviderChatContextUsage | null
   queryReadOnly: boolean | null
   queryModel: string | undefined | null
+  backgroundTaskIds: Set<string>
 }
 
 type ClaudeOneShotGeneration = {
@@ -1234,7 +1236,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       queuedMessages: [],
       contextUsage: null,
       queryReadOnly: null,
-      queryModel: null
+      queryModel: null,
+      backgroundTaskIds: new Set()
     }
   }
 
@@ -1346,6 +1349,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.active = false
     state.queryReadOnly = null
     state.queryModel = null
+    state.backgroundTaskIds.clear()
     state.partialMessages.clear()
     try {
       control.close()
@@ -1502,6 +1506,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       this.queueUpdate(state)
       return false
     }
+    if (event.type === 'system' && event.subtype === 'background_tasks_changed') {
+      state.backgroundTaskIds = new Set(event.tasks.map((task) => task.task_id))
+      if (state.backgroundTaskIds.size > 0) state.active = true
+      this.queueUpdate(state, false)
+      return false
+    }
     if (event.type !== 'result') return false
 
     state.partialMessages.clear()
@@ -1563,13 +1573,17 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       this.sendQueuedMessageNow(state, queued)
       return false
     } else {
+      const keepQueryAlive = shouldKeepClaudeQueryAliveAfterResult(
+        state.backgroundTaskIds.size,
+        event.terminal_reason
+      )
       await settleWithin(refreshContextUsage, contextUsageCloseGraceMs)
       if (state.query === control) {
-        state.active = false
+        state.active = keepQueryAlive
         state.stopped = wasStopped
-        this.emitUpdate(state, true)
+        this.emitUpdate(state, !keepQueryAlive)
       }
-      return true
+      return !keepQueryAlive
     }
   }
 
