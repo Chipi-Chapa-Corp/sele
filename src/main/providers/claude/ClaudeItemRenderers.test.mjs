@@ -262,6 +262,28 @@ test('does not render Claude interrupt metadata as a user message', () => {
   assert.equal(items.at(-1).content, 'I started inspecting it.')
 })
 
+test('does not render Claude local command output as a user message', () => {
+  const items = renderClaudeChatItems(
+    [
+      message('user', 'user-1', 'Inspect this'),
+      message(
+        'user',
+        'local-command-1',
+        '<local-command-stdout>Set model to claude-opus-5\u001b[1m</local-command-stdout>'
+      ),
+      message('assistant', 'assistant-1', [{ type: 'text', text: 'Here is the result.' }])
+    ],
+    { active: false, stopped: false }
+  )
+
+  assert.equal(
+    items.some((item) => item.id === 'local-command-1'),
+    false
+  )
+  assert.equal(items[0].content, 'Inspect this')
+  assert.equal(items.at(-1).content, 'Here is the result.')
+})
+
 test('keeps ordinary user text that only mentions the Claude interrupt marker', () => {
   const items = renderClaudeChatItems(
     [message('user', 'user-1', 'Why does it show [Request interrupted by user]?')],

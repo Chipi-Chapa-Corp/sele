@@ -64,7 +64,7 @@ import {
 } from '../providerResources'
 import { getClaudeExecutable } from './ClaudeExecutable'
 import {
-  isClaudeInterruptedRequestMarker,
+  isClaudeInternalUserMessage,
   renderClaudeChatItems,
   type ClaudeTranscriptMessage
 } from './ClaudeItemRenderers'
@@ -127,6 +127,7 @@ type ClaudeSessionState = {
   queuedMessages: QueuedClaudeMessage[]
   contextUsage: ProviderChatContextUsage | null
   queryReadOnly: boolean | null
+  queryModel: string | undefined | null
 }
 
 type ClaudeOneShotGeneration = {
@@ -381,6 +382,10 @@ const truncate = (value: string, limit: number): string =>
 
 const toEffortLevel = (value: ProviderReasoningEffort | undefined): EffortLevel | undefined =>
   value && allowedEffortLevels.has(value as EffortLevel) ? (value as EffortLevel) : undefined
+
+const getClaudeModel = (
+  options: ProviderTurnOptions | ProviderOneShotOptions | undefined
+): string | undefined => (options?.model === 'default' ? undefined : options?.model)
 
 const getRuntimeEnvironment = (env: NodeJS.ProcessEnv | undefined): Record<string, string> =>
   Object.fromEntries(
@@ -1180,7 +1185,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           windowsHide: true
         }),
       additionalDirectories: options?.additionalDirectories,
-      model: options?.model === 'default' ? undefined : options?.model,
+      model: getClaudeModel(options),
       effort: toEffortLevel(options?.reasoningEffort),
       permissionMode,
       // Claude requires this opt-in when permission mode may later be changed to
@@ -1228,7 +1233,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       pendingUserInputs: [],
       queuedMessages: [],
       contextUsage: null,
-      queryReadOnly: null
+      queryReadOnly: null,
+      queryModel: null
     }
   }
 
@@ -1326,6 +1332,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.input = input
     state.query = control
     state.queryReadOnly = queryReadOnly
+    state.queryModel = getClaudeModel(state.options)
     void this.consumeStateQuery(state, control)
   }
 
@@ -1338,6 +1345,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.input = null
     state.active = false
     state.queryReadOnly = null
+    state.queryModel = null
     state.partialMessages.clear()
     try {
       control.close()
@@ -1359,15 +1367,19 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       await this.startStateQuery(state, options)
       return
     }
+    const control = state.query
+    const model = getClaudeModel(options)
+    const modelChanged = state.queryModel !== model
     await Promise.all([
-      state.query.setModel(options.model === 'default' ? undefined : options.model),
-      state.query.setPermissionMode(getPermissionMode(options)),
-      state.query.applyFlagSettings({
+      ...(modelChanged ? [control.setModel(model)] : []),
+      control.setPermissionMode(getPermissionMode(options)),
+      control.applyFlagSettings({
         effortLevel: toEffortLevel(options.reasoningEffort) ?? null,
         fastMode: options.serviceTier === 'fast',
         sandbox: getSandbox(options)
       })
     ])
+    if (modelChanged && state.query === control) state.queryModel = model
   }
 
   private createPermissionHandler =
@@ -1655,7 +1667,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const metadataTitle = state.metadata?.customTitle || state.metadata?.summary
     if (metadataTitle?.trim()) return truncate(metadataTitle.trim(), maxTitleLength)
     const firstUserMessage = state.messages.find(
-      (message) => message.type === 'user' && !isClaudeInterruptedRequestMarker(message)
+      (message) => message.type === 'user' && !isClaudeInternalUserMessage(message)
     )
     const firstPrompt = firstUserMessage
       ? getTextFromContent(getMessageContent(firstUserMessage.message))

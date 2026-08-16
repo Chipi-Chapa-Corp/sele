@@ -247,16 +247,25 @@ const hasToolResults = (blocks: ClaudeContentBlock[]): boolean =>
   blocks.some((block) => block.type === 'tool_result')
 
 const interruptedRequestMarker = '[Request interrupted by user]'
+const localCommandOutputPattern =
+  /^<local-command-(?:stdout|stderr)>[\s\S]*<\/local-command-(?:stdout|stderr)>$/
+
+const getStandaloneUserText = (message: ClaudeTranscriptMessage): string | null => {
+  if (message.type !== 'user' || message.attachments?.length) return null
+  const blocks = getContentBlocks(message.message)
+  if (blocks.length !== 1 || blocks[0]?.type !== 'text' || typeof blocks[0].text !== 'string') {
+    return null
+  }
+  return blocks[0].text.trim()
+}
 
 export const isClaudeInterruptedRequestMarker = (message: ClaudeTranscriptMessage): boolean => {
-  if (message.type !== 'user' || message.attachments?.length) return false
-  const blocks = getContentBlocks(message.message)
-  return (
-    blocks.length === 1 &&
-    blocks[0]?.type === 'text' &&
-    typeof blocks[0].text === 'string' &&
-    blocks[0].text.trim() === interruptedRequestMarker
-  )
+  return getStandaloneUserText(message) === interruptedRequestMarker
+}
+
+export const isClaudeInternalUserMessage = (message: ClaudeTranscriptMessage): boolean => {
+  const text = getStandaloneUserText(message)
+  return text === interruptedRequestMarker || (text != null && localCommandOutputPattern.test(text))
 }
 
 const getModel = (message: unknown): string | null => getString(getMessageRecord(message)?.model)
@@ -317,9 +326,9 @@ export const renderClaudeChatItems = (
   }
 
   for (const message of messages) {
-    // Claude persists an interrupt as a synthetic user-role transcript record. It is
-    // control metadata, not text entered by the person using the app.
-    if (isClaudeInterruptedRequestMarker(message)) continue
+    // Claude persists interrupt markers and local command output as user-role
+    // transcript records. They are control metadata, not text entered by the person.
+    if (isClaudeInternalUserMessage(message)) continue
 
     const blocks = getContentBlocks(message.message)
     const isSubagentMessage = Boolean(message.parent_tool_use_id)
