@@ -70,7 +70,10 @@ import {
 } from './ClaudeItemRenderers'
 import { mapClaudeModels } from './ClaudeModels'
 import { getClaudeUpdateAvailability, updateClaudeProvider } from './ClaudeProviderUpdate'
-import { shouldKeepClaudeQueryAliveAfterResult } from './ClaudeQueryLifecycle'
+import {
+  getClaudeResultLifecycleDecision,
+  getClaudeSessionStateLifecycleDecision
+} from './ClaudeQueryLifecycle'
 import { discoverClaudeSkills } from './ClaudeSkillDiscovery'
 import { applyClaudeStreamEvent, clearClaudeStreamMessages } from './ClaudeStreaming'
 import { mapClaudeRateLimits } from './ClaudeUsage'
@@ -130,6 +133,7 @@ type ClaudeSessionState = {
   queryReadOnly: boolean | null
   queryModel: string | undefined | null
   backgroundTaskIds: Set<string>
+  waitingForSessionIdle: boolean
 }
 
 type ClaudeOneShotGeneration = {
@@ -915,6 +919,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       await this.interruptWithMessage(state, this.createQueuedMessage(message, options))
     } else {
       const queued = this.createQueuedMessage(message, options)
+      state.waitingForSessionIdle = false
       this.addUserMessage(state, queued, 'Steering with')
       state.input!.push(createSdkUserMessage(state.id, queued.id, queued.prompt, 'now'))
       this.emitUpdate(state)
@@ -958,6 +963,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return this.createChatDetail(state)
     }
 
+    state.waitingForSessionIdle = false
     this.addUserMessage(state, pending, 'Steering with')
     state.input!.push(createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
     this.emitUpdate(state)
@@ -1237,7 +1243,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       contextUsage: null,
       queryReadOnly: null,
       queryModel: null,
-      backgroundTaskIds: new Set()
+      backgroundTaskIds: new Set(),
+      waitingForSessionIdle: false
     }
   }
 
@@ -1350,6 +1357,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.queryReadOnly = null
     state.queryModel = null
     state.backgroundTaskIds.clear()
+    state.waitingForSessionIdle = false
     state.partialMessages.clear()
     try {
       control.close()
@@ -1512,6 +1520,29 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       this.queueUpdate(state, false)
       return false
     }
+    if (event.type === 'system' && event.subtype === 'session_state_changed') {
+      // Claude can hold a result open while background work and its follow-up finish. The SDK's
+      // idle state is the authoritative signal that this extended turn is actually over.
+      const lifecycle = getClaudeSessionStateLifecycleDecision(
+        state.waitingForSessionIdle,
+        event.state,
+        state.queuedMessages.length > 0,
+        state.failed
+      )
+      if (lifecycle === 'ignore') return false
+      state.waitingForSessionIdle = false
+      state.backgroundTaskIds.clear()
+      if (lifecycle === 'sendQueued') {
+        const queued = state.queuedMessages.shift()
+        if (queued) {
+          this.sendQueuedMessageNow(state, queued)
+          return false
+        }
+      }
+      state.active = false
+      this.emitUpdate(state, true)
+      return true
+    }
     if (event.type !== 'result') return false
 
     state.partialMessages.clear()
@@ -1569,21 +1600,23 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
     const queued = state.failed ? undefined : state.queuedMessages.shift()
     if (queued) {
+      state.waitingForSessionIdle = false
       void refreshContextUsage
       this.sendQueuedMessageNow(state, queued)
       return false
     } else {
-      const keepQueryAlive = shouldKeepClaudeQueryAliveAfterResult(
+      const lifecycle = getClaudeResultLifecycleDecision(
         state.backgroundTaskIds.size,
         event.terminal_reason
       )
+      state.waitingForSessionIdle = lifecycle.waitForSessionIdle
       await settleWithin(refreshContextUsage, contextUsageCloseGraceMs)
       if (state.query === control) {
-        state.active = keepQueryAlive
+        state.active = lifecycle.keepQueryAlive
         state.stopped = wasStopped
-        this.emitUpdate(state, !keepQueryAlive)
+        this.emitUpdate(state, !lifecycle.keepQueryAlive)
       }
-      return !keepQueryAlive
+      return !lifecycle.keepQueryAlive
     }
   }
 
@@ -1611,6 +1644,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     message: QueuedClaudeMessage
   ): void => {
     if (!state.input) throw new Error('Claude session is not connected')
+    state.waitingForSessionIdle = false
     state.active = true
     state.stopped = false
     state.failed = false

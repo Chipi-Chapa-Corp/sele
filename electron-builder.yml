@@ -61,5 +61,6 @@ flatpak:
     - --share=ipc
     - --device=dri
     - --share=network
+    - --filesystem=host
     - --talk-name=org.freedesktop.Flatpak
 npmRebuild: false
