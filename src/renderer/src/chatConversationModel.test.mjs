@@ -113,3 +113,29 @@ test('appends a new turn without rebuilding completed turns', () => {
   assert.deepEqual(updatedModel.turns[1], { id: pending.id, items: [pending] })
   assert.equal(updatedModel.firstPendingItemId, pending.id)
 })
+
+test('consumes provider change metadata after building its model', () => {
+  const firstUser = message('turn-1:user', 'user')
+  const firstWorking = working('turn-1:working')
+  const secondUser = message('turn-2:user', 'user')
+  const secondWorking = working('turn-2:working')
+  const originalItems = [firstUser, firstWorking, secondUser, secondWorking]
+  const updatedItems = [...originalItems.slice(0, 3), { ...secondWorking, status: 'stopped' }]
+
+  // Build without a cached predecessor. The metadata must still be consumed rather than retaining
+  // originalItems until updatedItems itself becomes unreachable.
+  markChatItemsChanged(updatedItems, 3, originalItems)
+  buildChatConversationModel(updatedItems)
+
+  const originalModel = buildChatConversationModel(originalItems)
+  const originalFirstTurn = originalModel.turns[0]
+  const pending = { type: 'pendingMessage', id: 'pending', kind: 'queued', content: 'Next' }
+  const appendedItems = [...updatedItems, pending]
+  markChatItemsChanged(appendedItems, updatedItems.length, updatedItems)
+  buildChatConversationModel(appendedItems)
+
+  // Building appendedItems evicts updatedItems from the model cache. Rebuilding updatedItems must
+  // now be a full build; stale metadata would incorrectly reuse and retain originalItems.
+  const rebuiltModel = buildChatConversationModel(updatedItems)
+  assert.notStrictEqual(rebuiltModel.turns[0], originalFirstTurn)
+})

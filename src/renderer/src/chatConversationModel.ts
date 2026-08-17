@@ -316,6 +316,7 @@ export const buildChatConversationModel = (
   if (existingModel) return existingModel
 
   const change = chatItemsChanges.get(items)
+  chatItemsChanges.delete(items)
   const resolvedPreviousModel =
     previousModel ?? (change?.previousItems ? modelsByItems.get(change.previousItems) : null)
   if (resolvedPreviousModel && change) {
