@@ -72,7 +72,7 @@ const runTargetShell = async (script: string, container: AppContainerTarget): Pr
   })
 
   return new Promise<string>((resolve, reject) => {
-    execFile(
+    const child = execFile(
       command.file,
       command.args,
       {
@@ -91,6 +91,7 @@ const runTargetShell = async (script: string, container: AppContainerTarget): Pr
         reject(new Error(stderr.trim() || getErrorMessage(error)))
       }
     )
+    child.stdin?.end()
   })
 }
 

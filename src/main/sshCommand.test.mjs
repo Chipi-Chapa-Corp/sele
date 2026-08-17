@@ -27,20 +27,27 @@ test('builds a non-interactive SSH command with configured authentication', () =
     environment.user,
     environment.host
   ])
-  assert.match(args.at(-1), /^exec sh -lc /)
+  assert.match(args.at(-1), /^exec sh -c /)
 })
 
-test('quotes the remote script as one shell argument', () => {
-  const args = getSshCommandArgs(
-    { ...environment, user: null, identityFile: null },
+test('encodes the remote script so the login shell cannot reinterpret it', () => {
+  const script = [
     `printf '%s\\n' "it's remote"`,
-    true
-  )
+    `printf '%s\\n' '$HOME' '\`literal\`' '\\slash' '"double"'`,
+    `read terminalInput; printf '%s\\n' "$terminalInput"`
+  ].join('\n')
+  const args = getSshCommandArgs({ ...environment, user: null, identityFile: null }, script, true)
   const remoteCommand = args.at(-1)
   assert.equal(args[0], '-tt')
-  assert.ok(remoteCommand)
+  assert.equal(
+    remoteCommand,
+    `exec sh -c 'exec sh -lc "$(printf %s "$1" | base64 -d)"' sh '${Buffer.from(script).toString('base64')}'`
+  )
 
-  const result = spawnSync('sh', ['-lc', remoteCommand], { encoding: 'utf8' })
+  const result = spawnSync('sh', ['-lc', remoteCommand], {
+    encoding: 'utf8',
+    input: 'terminal input\n'
+  })
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(result.stdout, "it's remote\n")
+  assert.equal(result.stdout, 'it\'s remote\n$HOME\n`literal`\n\\slash\n"double"\nterminal input\n')
 })
