@@ -111,8 +111,14 @@ const getDefaultPath = (value: unknown): string | undefined => {
 
 const externalLinkProtocols = new Set(['http:', 'https:', 'mailto:', 'tel:'])
 const maxExternalLinkLength = 8_192
-const sourceAvailabilityTimeoutMs = 3_000
+const sourceAvailabilityTimeoutMs = 5_000
 const sourceAvailabilityMaxBuffer = 64 * 1024
+const sourceAvailabilityProviderIds = [
+  'codex',
+  'claude',
+  'copilot'
+] as const satisfies readonly ProviderId[]
+const sourceAvailabilityCommands = ['git', ...sourceAvailabilityProviderIds] as const
 
 const isExternalLinkAction = (value: unknown): value is AppExternalLinkAction =>
   value === 'copy' || value === 'open'
@@ -700,9 +706,7 @@ const runGit = async (
       }
     )
 
-    if (runOptions.input != null) {
-      child.stdin?.end(runOptions.input)
-    }
+    child.stdin?.end(runOptions.input)
   })
 }
 
@@ -801,25 +805,27 @@ const runAvailabilityCommand = async (
   file: string,
   args: string[],
   container: AppContainerTarget | null | undefined
-): Promise<boolean> => {
+): Promise<{ success: boolean; stdout: string }> => {
   const hostCommand = await getHostCommand(file, args, {
     container,
     env: process.env
   }).catch(() => null)
-  if (!hostCommand) return false
+  if (!hostCommand) return { success: false, stdout: '' }
 
   return new Promise((resolve) => {
-    execFile(
+    const child = execFile(
       hostCommand.file,
       hostCommand.args,
       {
         cwd: hostCommand.cwd,
+        encoding: 'utf8',
         env: hostCommand.env,
         maxBuffer: sourceAvailabilityMaxBuffer,
         timeout: sourceAvailabilityTimeoutMs
       },
-      (error) => resolve(!error)
+      (error, stdout) => resolve({ success: !error, stdout })
     )
+    child.stdin?.end()
   })
 }
 
@@ -828,10 +834,14 @@ const isCommandAvailableInSource = (
   container: AppContainerTarget | null | undefined
 ): Promise<boolean> => {
   if (container?.kind === 'container') {
-    return runAvailabilityCommand('sh', ['-lc', `command -v ${command} >/dev/null 2>&1`], container)
+    return runAvailabilityCommand(
+      'sh',
+      ['-lc', `command -v ${command} >/dev/null 2>&1`],
+      container
+    ).then(({ success }) => success)
   }
 
-  return runAvailabilityCommand(command, ['--version'], null)
+  return runAvailabilityCommand(command, ['--version'], null).then(({ success }) => success)
 }
 
 const isProviderAvailableInSource = async (
@@ -843,7 +853,9 @@ const isProviderAvailableInSource = async (
       return isCommandAvailableInSource('codex', container)
     }
 
-    return runAvailabilityCommand(getCodexExecutable(), ['--version'], null)
+    return runAvailabilityCommand(getCodexExecutable(), ['--version'], null).then(
+      ({ success }) => success
+    )
   }
 
   if (providerId === 'copilot') {
@@ -851,7 +863,9 @@ const isProviderAvailableInSource = async (
       return isCommandAvailableInSource('copilot', container)
     }
 
-    return runAvailabilityCommand(getCopilotExecutable(), ['--version'], null)
+    return runAvailabilityCommand(getCopilotExecutable(), ['--version'], null).then(
+      ({ success }) => success
+    )
   }
 
   if (providerId === 'claude') {
@@ -859,7 +873,9 @@ const isProviderAvailableInSource = async (
       return isCommandAvailableInSource('claude', container)
     }
 
-    return runAvailabilityCommand(getClaudeExecutable(), ['--version'], null)
+    return runAvailabilityCommand(getClaudeExecutable(), ['--version'], null).then(
+      ({ success }) => success
+    )
   }
 
   return false
@@ -869,6 +885,24 @@ const getSourceAvailability = async (
   options: AppSourceAvailabilityOptions = {}
 ): Promise<AppSourceAvailability> => {
   const container = options.container
+  if (container?.kind === 'container') {
+    const script = sourceAvailabilityCommands
+      .map(
+        (command) => `command -v ${command} >/dev/null 2>&1 && printf '%s\\n' '${command}' || true`
+      )
+      .join('\n')
+    const { stdout } = await runAvailabilityCommand('sh', ['-lc', script], container)
+    const availableCommands = new Set(stdout.split('\n').filter(Boolean))
+
+    return {
+      gitAvailable: availableCommands.has('git'),
+      providers: sourceAvailabilityProviderIds.map((providerId) => ({
+        providerId,
+        available: availableCommands.has(providerId)
+      }))
+    }
+  }
+
   const [gitAvailable, providers] = await Promise.all([
     isCommandAvailableInSource('git', container),
     Promise.all(
@@ -1814,7 +1848,7 @@ const runSshFileCommand = async (
       }
     )
 
-    if (options.input) child.stdin?.end(options.input)
+    child.stdin?.end(options.input)
   })
 }
 

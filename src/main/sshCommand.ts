@@ -1,7 +1,5 @@
 import type { AppSshEnvironment } from '../shared/app'
 
-const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
-
 export const sshConnectTimeoutSeconds = 10
 
 export const getSshCommandArgs = (
@@ -25,5 +23,5 @@ export const getSshCommandArgs = (
   ...(environment.identityFile ? ['-o', 'IdentitiesOnly=yes', '-i', environment.identityFile] : []),
   ...(environment.user ? ['-l', environment.user] : []),
   environment.host,
-  `exec sh -lc ${quotePosixShellArg(script)}`
+  `exec sh -c 'exec sh -lc "$(printf %s "$1" | base64 -d)"' sh '${Buffer.from(script).toString('base64')}'`
 ]

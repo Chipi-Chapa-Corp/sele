@@ -42,7 +42,7 @@ const runCommand = async (
   })
 
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       hostCommand.file,
       hostCommand.args,
       {
@@ -61,6 +61,7 @@ const runCommand = async (
         resolve({ stdout: stdout.trim(), stderr: stderr.trim() })
       }
     )
+    child.stdin?.end()
   })
 }
 

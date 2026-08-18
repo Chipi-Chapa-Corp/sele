@@ -268,28 +268,58 @@ const backgroundFeatureRestrictions = {
 } as const
 
 const remoteTranscriptMaxBuffer = 64 * 1024 * 1024
+const remoteTranscriptTimeoutMs = 30_000
+const maxConcurrentRemoteTranscriptCommands = 2
+let activeRemoteTranscriptCommands = 0
+const pendingRemoteTranscriptCommands: Array<() => void> = []
+
+const acquireRemoteTranscriptCommand = (): Promise<void> =>
+  new Promise((resolve) => {
+    const acquire = (): void => {
+      activeRemoteTranscriptCommands += 1
+      resolve()
+    }
+
+    if (activeRemoteTranscriptCommands < maxConcurrentRemoteTranscriptCommands) acquire()
+    else pendingRemoteTranscriptCommands.push(acquire)
+  })
+
+const runRemoteTranscriptCommand = async <Result>(run: () => Promise<Result>): Promise<Result> => {
+  await acquireRemoteTranscriptCommand()
+  try {
+    return await run()
+  } finally {
+    activeRemoteTranscriptCommands -= 1
+    pendingRemoteTranscriptCommands.shift()?.()
+  }
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const runHostCommand = (command: HostCommand): Promise<string> =>
-  new Promise((resolve, reject) => {
-    execFile(
-      command.file,
-      command.args,
-      {
-        cwd: command.cwd,
-        env: command.env,
-        encoding: 'utf8',
-        maxBuffer: remoteTranscriptMaxBuffer,
-        windowsHide: true
-      },
-      (error, stdout) => {
-        if (error) reject(error)
-        else resolve(stdout)
-      }
-    )
-  })
+  runRemoteTranscriptCommand(
+    () =>
+      new Promise((resolve, reject) => {
+        const child = execFile(
+          command.file,
+          command.args,
+          {
+            cwd: command.cwd,
+            env: command.env,
+            encoding: 'utf8',
+            maxBuffer: remoteTranscriptMaxBuffer,
+            timeout: remoteTranscriptTimeoutMs,
+            windowsHide: true
+          },
+          (error, stdout) => {
+            if (error) reject(error)
+            else resolve(stdout)
+          }
+        )
+        child.stdin?.end()
+      })
+  )
 
 const settleWithin = (promise: Promise<unknown>, timeoutMs: number): Promise<void> =>
   new Promise((resolve) => {

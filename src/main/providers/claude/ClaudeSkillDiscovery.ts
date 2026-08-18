@@ -16,7 +16,7 @@ const runCommand = async (
 ): Promise<string> => {
   const command = await getHostCommand(file, args, { container, env: process.env })
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       command.file,
       command.args,
       {
@@ -31,6 +31,7 @@ const runCommand = async (
         else reject(new Error(stderr.trim() || error.message))
       }
     )
+    child.stdin?.end()
   })
 }
 

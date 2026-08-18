@@ -59,7 +59,7 @@ const runHostTextCommand = async (
   }
 
   return new Promise((resolve) => {
-    execFile(
+    const child = execFile(
       hostCommand.file,
       hostCommand.args,
       {
@@ -73,6 +73,7 @@ const runHostTextCommand = async (
         resolve(error ? null : stdout.trimEnd())
       }
     )
+    child.stdin?.end()
   })
 }
 
