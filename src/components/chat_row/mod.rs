@@ -3,6 +3,10 @@ use gtk::prelude::*;
 pub(super) const STYLE: &str = include_str!("style.css");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "session/list only exposes stored chats; live ACP updates will supply these states"
+)]
 pub enum ChatStatus {
     Idle,
     Active,
@@ -35,13 +39,28 @@ impl ChatStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChatSummary {
+    pub id: String,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub cwd: String,
     pub name: String,
     pub status: ChatStatus,
 }
 
 impl ChatSummary {
-    pub fn new(name: impl Into<String>, status: ChatStatus) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        agent_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cwd: impl Into<String>,
+        name: impl Into<String>,
+        status: ChatStatus,
+    ) -> Self {
         Self {
+            id: id.into(),
+            agent_id: agent_id.into(),
+            agent_name: agent_name.into(),
+            cwd: cwd.into(),
             name: name.into(),
             status,
         }
@@ -52,7 +71,7 @@ pub(super) fn build_chat_row(chat: &ChatSummary) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     row.set_activatable(true);
     row.set_selectable(true);
-    row.set_tooltip_text(Some(&chat.name));
+    row.set_tooltip_text(Some(&format!("{} · {}", chat.agent_name, chat.name)));
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     content.add_css_class("chat-row-content");

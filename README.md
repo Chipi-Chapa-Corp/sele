@@ -40,6 +40,17 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 ```
 
+Exercise GTK's variable-height transcript anchoring with:
+
+```bash
+cargo run --bin transcript-stress -- --verify --rows=100000 --cycles=20
+```
+
+The native transcript projection uses the versioned database filename
+`sele-native-transcripts-v1.sqlite3`, deliberately separate from the legacy Electron
+`sele.sqlite` database. Set `SELE_TRANSCRIPT_DATABASE_PATH` to explicitly override its
+location during development.
+
 ## License
 
 [GNU General Public License v3.0 only](LICENSE)

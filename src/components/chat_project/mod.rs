@@ -56,6 +56,10 @@ impl ChatProject {
         &self.root
     }
 
+    pub fn list(&self) -> &gtk::ListBox {
+        &self.list
+    }
+
     pub fn select(&self, index: usize) {
         let row = self.list.row_at_index(index as i32);
         self.list.select_row(row.as_ref());

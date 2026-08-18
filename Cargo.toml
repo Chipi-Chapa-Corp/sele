@@ -4,7 +4,22 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "A native desktop harness orchestrator"
+default-run = "sele"
+
+[workspace]
+members = [".", "crates/sele-agent", "crates/sele-core", "crates/sele-store"]
+resolver = "3"
+
+[[bin]]
+name = "sele"
+path = "src/main.rs"
+
+[[bin]]
+name = "transcript-stress"
+path = "src/bin/transcript_stress.rs"
 
 [dependencies]
 adw = { package = "libadwaita", version = "0.9.2", features = ["v1_7"] }
 gtk = { package = "gtk4", version = "0.11.4", features = ["v4_16"] }
+sele-agent = { path = "crates/sele-agent" }
+sele-core = { path = "crates/sele-core" }

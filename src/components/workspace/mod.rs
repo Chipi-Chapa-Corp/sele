@@ -1,18 +1,18 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::prelude::*;
+use sele_agent::{DiscoveryEvent, discover_builtin_sessions};
+use sele_core::{AgentSession, cwd_display_name, group_sessions_by_cwd};
 
 use super::{ChatProject, ChatStatus, ChatSummary};
 
 pub(super) const STYLE: &str = include_str!("style.css");
 
 pub fn build_workspace() -> gtk::Paned {
-    let chats = default_chats();
-    let project = ChatProject::new("Sele", chats);
-
     let chat_list_content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     chat_list_content.add_css_class("chat-list-content");
-    chat_list_content.append(project.widget());
+    chat_list_content.append(&chat_list_status("Loading chats…"));
 
     let chat_list_scroll = gtk::ScrolledWindow::new();
     chat_list_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
@@ -24,7 +24,7 @@ pub fn build_workspace() -> gtk::Paned {
     chat_list.append(&side_header("Chats", gtk::PackType::Start));
     chat_list.append(&chat_list_scroll);
 
-    let chat_name = gtk::Label::new(Some("Build the Rust foundation"));
+    let chat_name = gtk::Label::new(Some("Select a chat"));
     chat_name.add_css_class("heading");
     chat_name.set_halign(gtk::Align::Start);
     chat_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -41,11 +41,7 @@ pub fn build_workspace() -> gtk::Paned {
     let sidebar = workspace_pane("sidebar-pane", 240);
     sidebar.append(&side_header("Sidebar", gtk::PackType::End));
 
-    let selected_chat_name = chat_name.clone();
-    project.connect_chat_activated(move |_, chat| {
-        selected_chat_name.set_text(&chat.name);
-    });
-    project.select(0);
+    load_chat_list(chat_list_content, chat_name);
 
     let content_and_sidebar = gtk::Paned::new(gtk::Orientation::Horizontal);
     content_and_sidebar.add_css_class("workspace-paned");
@@ -116,12 +112,171 @@ fn pane_title(text: &str) -> gtk::Label {
     label
 }
 
-fn default_chats() -> Rc<[ChatSummary]> {
-    Rc::from([
-        ChatSummary::new("Build the Rust foundation", ChatStatus::Finished),
-        ChatSummary::new("Design the chat workspace", ChatStatus::Active),
-        ChatSummary::new("Reconnect harness providers", ChatStatus::Waiting),
-        ChatSummary::new("Investigate failed harness", ChatStatus::Error),
-        ChatSummary::new("Package the native app", ChatStatus::Idle),
-    ])
+fn load_chat_list(chat_list_content: gtk::Box, chat_name: gtk::Label) {
+    let receiver = discover_builtin_sessions();
+    let sessions = Rc::new(RefCell::new(Vec::new()));
+    let failures = Rc::new(RefCell::new(Vec::new()));
+    let selected = Rc::new(RefCell::new(None));
+
+    gtk::glib::MainContext::default().spawn_local(async move {
+        while let Ok(event) = receiver.recv().await {
+            match event {
+                DiscoveryEvent::AgentLoaded {
+                    agent: _,
+                    sessions: discovered,
+                } => {
+                    sessions.borrow_mut().extend(discovered);
+                    render_chat_list(
+                        &chat_list_content,
+                        &chat_name,
+                        &sessions.borrow(),
+                        &failures.borrow(),
+                        &selected,
+                        true,
+                    );
+                }
+                DiscoveryEvent::AgentFailed { agent, error } => {
+                    failures
+                        .borrow_mut()
+                        .push(format!("{}: {error}", agent.name));
+                }
+                DiscoveryEvent::EngineFailed(error) => failures.borrow_mut().push(error),
+                DiscoveryEvent::Finished => {
+                    render_chat_list(
+                        &chat_list_content,
+                        &chat_name,
+                        &sessions.borrow(),
+                        &failures.borrow(),
+                        &selected,
+                        false,
+                    );
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn render_chat_list(
+    container: &gtk::Box,
+    chat_name: &gtk::Label,
+    sessions: &[AgentSession],
+    failures: &[String],
+    selected: &Rc<RefCell<Option<(String, String)>>>,
+    loading: bool,
+) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+
+    let groups = group_sessions_by_cwd(sessions.iter().cloned());
+    if groups.is_empty() {
+        let message = if loading {
+            "Loading chats…"
+        } else if failures.is_empty() {
+            "No chats found"
+        } else {
+            "Couldn’t load chats"
+        };
+        let status = chat_list_status(message);
+        set_failures_tooltip(&status, failures);
+        container.append(&status);
+        return;
+    }
+
+    let current_selection = selected.borrow().clone().filter(|(agent_id, session_id)| {
+        groups.iter().any(|group| {
+            group
+                .sessions
+                .iter()
+                .any(|session| session.agent.id.as_str() == agent_id && session.id == *session_id)
+        })
+    });
+    let current_selection = current_selection.or_else(|| {
+        groups
+            .first()
+            .and_then(|group| group.sessions.first())
+            .map(|session| (session.agent.id.as_str().to_owned(), session.id.clone()))
+    });
+    *selected.borrow_mut() = current_selection.clone();
+
+    let project_lists = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::ListBox>>::new()));
+
+    for group in groups {
+        let cwd = group.cwd.display().to_string();
+        let chats: Rc<[ChatSummary]> = group
+            .sessions
+            .iter()
+            .map(|session| {
+                ChatSummary::new(
+                    &session.id,
+                    session.agent.id.as_str(),
+                    &session.agent.name,
+                    &cwd,
+                    session.display_title(),
+                    ChatStatus::Idle,
+                )
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let project = ChatProject::new(&cwd_display_name(&group.cwd), Rc::clone(&chats));
+        project.widget().set_tooltip_text(Some(&cwd));
+
+        let project_lists_for_activation = Rc::clone(&project_lists);
+        let active_list = project.list().downgrade();
+        let selected_for_activation = Rc::clone(selected);
+        let chat_name_for_activation = chat_name.clone();
+        project.connect_chat_activated(move |index, chat| {
+            for list in project_lists_for_activation.borrow().iter() {
+                if let Some(list) = list.upgrade() {
+                    list.unselect_all();
+                }
+            }
+            if let Some(list) = active_list.upgrade() {
+                let row = list.row_at_index(index as i32);
+                list.select_row(row.as_ref());
+            }
+            *selected_for_activation.borrow_mut() = Some((chat.agent_id.clone(), chat.id.clone()));
+            show_selected_chat(&chat_name_for_activation, chat);
+        });
+        project_lists.borrow_mut().push(project.list().downgrade());
+
+        if let Some((agent_id, session_id)) = &current_selection
+            && let Some(index) = chats
+                .iter()
+                .position(|chat| chat.agent_id == *agent_id && chat.id == *session_id)
+        {
+            project.select(index);
+            show_selected_chat(chat_name, &chats[index]);
+        }
+
+        container.append(project.widget());
+    }
+
+    if loading {
+        container.append(&chat_list_status("Loading other agents…"));
+    } else if !failures.is_empty() {
+        let status = chat_list_status("Some agents unavailable");
+        set_failures_tooltip(&status, failures);
+        container.append(&status);
+    }
+}
+
+fn show_selected_chat(label: &gtk::Label, chat: &ChatSummary) {
+    label.set_text(&chat.name);
+    label.set_tooltip_text(Some(&format!("{} · {}", chat.agent_name, chat.cwd)));
+}
+
+fn chat_list_status(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("chat-list-status");
+    label.set_wrap(true);
+    label.set_xalign(0.0);
+    label
+}
+
+fn set_failures_tooltip(widget: &impl IsA<gtk::Widget>, failures: &[String]) {
+    if !failures.is_empty() {
+        widget.set_tooltip_text(Some(&failures.join("\n")));
+    }
 }
