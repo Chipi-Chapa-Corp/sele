@@ -1441,10 +1441,12 @@ dependencies = [
 name = "sele"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "gtk4",
  "libadwaita",
  "sele-agent",
  "sele-core",
+ "sele-store",
 ]
 
 [[package]]
@@ -1454,6 +1456,7 @@ dependencies = [
  "agent-client-protocol",
  "async-channel",
  "sele-core",
+ "serde_json",
  "tokio",
 ]
 

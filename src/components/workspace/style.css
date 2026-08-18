@@ -30,10 +30,6 @@
   background-color: transparent;
 }
 
-.chat-body {
-  padding: var(--sele-space-md) var(--sele-space-xl) var(--sele-space-xl);
-}
-
 .chat-list-content {
   border-spacing: var(--sele-space-md);
   padding: var(--sele-space-sm) var(--sele-space-md) var(--sele-space-lg);

@@ -44,6 +44,7 @@ pub struct ChatSummary {
     pub agent_name: String,
     pub cwd: String,
     pub name: String,
+    pub updated_at: Option<String>,
     pub status: ChatStatus,
 }
 
@@ -54,6 +55,7 @@ impl ChatSummary {
         agent_name: impl Into<String>,
         cwd: impl Into<String>,
         name: impl Into<String>,
+        updated_at: Option<String>,
         status: ChatStatus,
     ) -> Self {
         Self {
@@ -62,6 +64,7 @@ impl ChatSummary {
             agent_name: agent_name.into(),
             cwd: cwd.into(),
             name: name.into(),
+            updated_at,
             status,
         }
     }

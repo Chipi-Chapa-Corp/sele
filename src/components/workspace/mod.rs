@@ -5,7 +5,7 @@ use gtk::prelude::*;
 use sele_agent::{DiscoveryEvent, discover_builtin_sessions};
 use sele_core::{AgentSession, cwd_display_name, group_sessions_by_cwd};
 
-use super::{ChatProject, ChatStatus, ChatSummary};
+use super::{ChatProject, ChatStatus, ChatSummary, ChatView};
 
 pub(super) const STYLE: &str = include_str!("style.css");
 
@@ -24,24 +24,16 @@ pub fn build_workspace() -> gtk::Paned {
     chat_list.append(&side_header("Chats", gtk::PackType::Start));
     chat_list.append(&chat_list_scroll);
 
-    let chat_name = gtk::Label::new(Some("Select a chat"));
-    chat_name.add_css_class("heading");
-    chat_name.set_halign(gtk::Align::Start);
-    chat_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-
-    let chat_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    chat_body.add_css_class("chat-body");
-    chat_body.set_vexpand(true);
-    chat_body.append(&chat_name);
+    let transcript = ChatView::new();
 
     let chat_view = workspace_pane("chat-view-pane", 320);
     chat_view.append(&chat_drag_strip());
-    chat_view.append(&chat_body);
+    chat_view.append(transcript.widget());
 
     let sidebar = workspace_pane("sidebar-pane", 240);
     sidebar.append(&side_header("Sidebar", gtk::PackType::End));
 
-    load_chat_list(chat_list_content, chat_name);
+    load_chat_list(chat_list_content, transcript);
 
     let content_and_sidebar = gtk::Paned::new(gtk::Orientation::Horizontal);
     content_and_sidebar.add_css_class("workspace-paned");
@@ -112,7 +104,7 @@ fn pane_title(text: &str) -> gtk::Label {
     label
 }
 
-fn load_chat_list(chat_list_content: gtk::Box, chat_name: gtk::Label) {
+fn load_chat_list(chat_list_content: gtk::Box, chat_view: ChatView) {
     let receiver = discover_builtin_sessions();
     let sessions = Rc::new(RefCell::new(Vec::new()));
     let failures = Rc::new(RefCell::new(Vec::new()));
@@ -128,7 +120,7 @@ fn load_chat_list(chat_list_content: gtk::Box, chat_name: gtk::Label) {
                     sessions.borrow_mut().extend(discovered);
                     render_chat_list(
                         &chat_list_content,
-                        &chat_name,
+                        &chat_view,
                         &sessions.borrow(),
                         &failures.borrow(),
                         &selected,
@@ -144,7 +136,7 @@ fn load_chat_list(chat_list_content: gtk::Box, chat_name: gtk::Label) {
                 DiscoveryEvent::Finished => {
                     render_chat_list(
                         &chat_list_content,
-                        &chat_name,
+                        &chat_view,
                         &sessions.borrow(),
                         &failures.borrow(),
                         &selected,
@@ -159,7 +151,7 @@ fn load_chat_list(chat_list_content: gtk::Box, chat_name: gtk::Label) {
 
 fn render_chat_list(
     container: &gtk::Box,
-    chat_name: &gtk::Label,
+    chat_view: &ChatView,
     sessions: &[AgentSession],
     failures: &[String],
     selected: &Rc<RefCell<Option<(String, String)>>>,
@@ -214,6 +206,7 @@ fn render_chat_list(
                     &session.agent.name,
                     &cwd,
                     session.display_title(),
+                    session.updated_at.clone(),
                     ChatStatus::Idle,
                 )
             })
@@ -225,7 +218,7 @@ fn render_chat_list(
         let project_lists_for_activation = Rc::clone(&project_lists);
         let active_list = project.list().downgrade();
         let selected_for_activation = Rc::clone(selected);
-        let chat_name_for_activation = chat_name.clone();
+        let chat_view_for_activation = chat_view.clone();
         project.connect_chat_activated(move |index, chat| {
             for list in project_lists_for_activation.borrow().iter() {
                 if let Some(list) = list.upgrade() {
@@ -237,7 +230,7 @@ fn render_chat_list(
                 list.select_row(row.as_ref());
             }
             *selected_for_activation.borrow_mut() = Some((chat.agent_id.clone(), chat.id.clone()));
-            show_selected_chat(&chat_name_for_activation, chat);
+            chat_view_for_activation.show_chat(chat);
         });
         project_lists.borrow_mut().push(project.list().downgrade());
 
@@ -247,7 +240,7 @@ fn render_chat_list(
                 .position(|chat| chat.agent_id == *agent_id && chat.id == *session_id)
         {
             project.select(index);
-            show_selected_chat(chat_name, &chats[index]);
+            chat_view.show_chat(&chats[index]);
         }
 
         container.append(project.widget());
@@ -260,11 +253,6 @@ fn render_chat_list(
         set_failures_tooltip(&status, failures);
         container.append(&status);
     }
-}
-
-fn show_selected_chat(label: &gtk::Label, chat: &ChatSummary) {
-    label.set_text(&chat.name);
-    label.set_tooltip_text(Some(&format!("{} · {}", chat.agent_name, chat.cwd)));
 }
 
 fn chat_list_status(text: &str) -> gtk::Label {

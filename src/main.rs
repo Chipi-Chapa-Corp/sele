@@ -1,5 +1,6 @@
 mod components;
 mod theme;
+mod transcript_loader;
 mod window;
 
 use adw::prelude::*;

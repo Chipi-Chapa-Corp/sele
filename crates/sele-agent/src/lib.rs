@@ -1,17 +1,25 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    Implementation, InitializeRequest, ListSessionsRequest, McpServer, McpServerStdio,
+    ContentBlock, ContentChunk, EmbeddedResourceResource, Implementation, InitializeRequest,
+    ListSessionsRequest, LoadSessionRequest, McpServer, McpServerStdio, SessionNotification,
+    SessionUpdate, ToolCall, ToolCallStatus,
 };
 use agent_client_protocol::{AcpAgent, Client};
 use async_channel::{Receiver, Sender};
-use sele_core::{AgentDescriptor, AgentSession};
+use sele_core::{
+    AgentDescriptor, AgentSession, TranscriptBlock, TranscriptBlockKind, TranscriptMessage,
+    TranscriptMessageState, TranscriptRole,
+};
 use tokio::task::JoinSet;
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(45);
+const TRANSCRIPT_LOAD_TIMEOUT: Duration = Duration::from_secs(120);
+const TRANSCRIPT_BATCH_SIZE: usize = 64;
 
 #[derive(Clone, Debug)]
 pub struct AgentDefinition {
@@ -54,6 +62,13 @@ pub enum DiscoveryEvent {
     Finished,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TranscriptReplayEvent {
+    Batch(Vec<TranscriptMessage>),
+    Finished,
+    Failed(String),
+}
+
 pub fn builtin_agents() -> Vec<AgentDefinition> {
     vec![
         AgentDefinition::stdio(
@@ -88,6 +103,33 @@ pub fn discover_sessions(definitions: Vec<AgentDefinition>) -> Receiver<Discover
         )));
         let _ = sender.try_send(DiscoveryEvent::Finished);
     }
+    receiver
+}
+
+pub fn replay_builtin_session(session: AgentSession) -> Receiver<TranscriptReplayEvent> {
+    let definition = builtin_agents()
+        .into_iter()
+        .find(|definition| definition.descriptor.id == session.agent.id);
+    let (sender, receiver) = async_channel::unbounded();
+
+    let Some(definition) = definition else {
+        let _ = sender.try_send(TranscriptReplayEvent::Failed(format!(
+            "unknown agent adapter: {}",
+            session.agent.id.as_str()
+        )));
+        return receiver;
+    };
+
+    let engine_sender = sender.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name(format!("sele-{}-transcript", session.agent.id.as_str()))
+        .spawn(move || run_transcript_engine(definition, session, engine_sender))
+    {
+        let _ = sender.try_send(TranscriptReplayEvent::Failed(format!(
+            "could not start transcript engine: {error}"
+        )));
+    }
+
     receiver
 }
 
@@ -139,6 +181,100 @@ fn run_discovery_engine(definitions: Vec<AgentDefinition>, sender: Sender<Discov
 
         let _ = sender.send(DiscoveryEvent::Finished).await;
     });
+}
+
+fn run_transcript_engine(
+    definition: AgentDefinition,
+    session: AgentSession,
+    sender: Sender<TranscriptReplayEvent>,
+) {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            let _ = sender.try_send(TranscriptReplayEvent::Failed(format!(
+                "could not initialize agent runtime: {error}"
+            )));
+            return;
+        }
+    };
+
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            TRANSCRIPT_LOAD_TIMEOUT,
+            replay_agent_session(definition, session, sender.clone()),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(format!(
+                "session load timed out after {} seconds",
+                TRANSCRIPT_LOAD_TIMEOUT.as_secs()
+            ))
+        })
+    });
+
+    match result {
+        Ok(()) => {
+            let _ = sender.try_send(TranscriptReplayEvent::Finished);
+        }
+        Err(error) => {
+            let _ = sender.try_send(TranscriptReplayEvent::Failed(error));
+        }
+    }
+}
+
+async fn replay_agent_session(
+    definition: AgentDefinition,
+    session: AgentSession,
+    sender: Sender<TranscriptReplayEvent>,
+) -> Result<(), String> {
+    let target_session_id = session.id.clone();
+    let normalizer = Arc::new(Mutex::new(TranscriptNormalizer::new(sender)));
+    let normalizer_for_notifications = Arc::clone(&normalizer);
+    let agent = definition.into_acp_agent();
+
+    Client
+        .builder()
+        .name("sele")
+        .on_receive_notification(
+            async move |notification: SessionNotification, _connection| {
+                if notification.session_id.to_string() == target_session_id {
+                    lock_unpoisoned(&normalizer_for_notifications).apply(notification.update);
+                }
+                Ok(())
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
+        .connect_with(agent, async move |connection| {
+            let initialization = connection
+                .send_request(InitializeRequest::new(ProtocolVersion::V1).client_info(
+                    Implementation::new("sele", env!("CARGO_PKG_VERSION")).title("Sele"),
+                ))
+                .block_task()
+                .await?;
+
+            if !initialization.agent_capabilities.load_session {
+                return Err(agent_client_protocol::Error::method_not_found()
+                    .data(serde_json::json!("agent does not support session/load")));
+            }
+
+            connection
+                .send_request(LoadSessionRequest::new(session.id, session.cwd))
+                .block_task()
+                .await?;
+            Ok(())
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+
+    lock_unpoisoned(&normalizer).finish();
+    Ok(())
+}
+
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 async fn discover_agent_sessions(definition: AgentDefinition) -> Result<Vec<AgentSession>, String> {
@@ -199,4 +335,286 @@ async fn discover_agent_sessions(definition: AgentDefinition) -> Result<Vec<Agen
             updated_at: session.updated_at,
         })
         .collect())
+}
+
+struct PendingContentMessage {
+    source_id: Option<String>,
+    message: TranscriptMessage,
+}
+
+struct TranscriptNormalizer {
+    sender: Sender<TranscriptReplayEvent>,
+    next_sequence: i64,
+    active_content: Option<PendingContentMessage>,
+    tools: HashMap<String, (i64, ToolCall)>,
+    batch: Vec<TranscriptMessage>,
+}
+
+impl TranscriptNormalizer {
+    fn new(sender: Sender<TranscriptReplayEvent>) -> Self {
+        Self {
+            sender,
+            next_sequence: 0,
+            active_content: None,
+            tools: HashMap::new(),
+            batch: Vec::with_capacity(TRANSCRIPT_BATCH_SIZE),
+        }
+    }
+
+    fn apply(&mut self, update: SessionUpdate) {
+        match update {
+            SessionUpdate::UserMessageChunk(chunk) => {
+                self.push_content(TranscriptRole::User, chunk);
+            }
+            SessionUpdate::AgentMessageChunk(chunk) => {
+                self.push_content(TranscriptRole::Agent, chunk);
+            }
+            SessionUpdate::AgentThoughtChunk(chunk) => {
+                self.push_content(TranscriptRole::Thought, chunk);
+            }
+            SessionUpdate::ToolCall(tool_call) => self.push_tool_call(tool_call),
+            SessionUpdate::ToolCallUpdate(update) => {
+                self.flush_active_content();
+                let id = update.tool_call_id.to_string();
+                if let Some((_, tool_call)) = self.tools.get_mut(&id) {
+                    tool_call.update(update.fields);
+                } else {
+                    let fallback = update.clone();
+                    let mut tool_call = ToolCall::new(id.clone(), "Tool call");
+                    tool_call.update(fallback.fields);
+                    let sequence = self.take_sequence();
+                    self.tools.insert(id.clone(), (sequence, tool_call));
+                }
+                self.emit_tool(&id);
+            }
+            _ => {}
+        }
+    }
+
+    fn push_content(&mut self, role: TranscriptRole, chunk: ContentChunk) {
+        let source_id = chunk.message_id.map(|id| id.to_string());
+        let continues_active = self
+            .active_content
+            .as_ref()
+            .is_some_and(|active| active.message.role == role && active.source_id == source_id);
+        if !continues_active {
+            self.flush_active_content();
+            let sequence = self.take_sequence();
+            let source = source_id.as_deref().unwrap_or("anonymous");
+            self.active_content = Some(PendingContentMessage {
+                source_id: source_id.clone(),
+                message: TranscriptMessage::new(
+                    format!("{}:{source}:{sequence}", role.as_str()),
+                    sequence,
+                    role,
+                    TranscriptMessageState::Complete,
+                ),
+            });
+        }
+
+        if let Some(active) = &mut self.active_content {
+            let block_sequence = active.message.blocks.len() as i64;
+            active
+                .message
+                .blocks
+                .push(normalize_content(block_sequence, chunk.content));
+        }
+    }
+
+    fn push_tool_call(&mut self, tool_call: ToolCall) {
+        self.flush_active_content();
+        let id = tool_call.tool_call_id.to_string();
+        let sequence = if let Some((sequence, _)) = self.tools.get(&id) {
+            *sequence
+        } else {
+            self.take_sequence()
+        };
+        self.tools.insert(id.clone(), (sequence, tool_call));
+        self.emit_tool(&id);
+    }
+
+    fn emit_tool(&mut self, id: &str) {
+        if let Some((sequence, tool_call)) = self.tools.get(id) {
+            self.batch.push(normalize_tool(*sequence, tool_call));
+            self.flush_full_batch();
+        }
+    }
+
+    fn flush_active_content(&mut self) {
+        if let Some(active) = self.active_content.take() {
+            self.batch.push(active.message);
+            self.flush_full_batch();
+        }
+    }
+
+    fn finish(&mut self) {
+        self.flush_active_content();
+        self.flush_batch();
+    }
+
+    fn take_sequence(&mut self) -> i64 {
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        sequence
+    }
+
+    fn flush_full_batch(&mut self) {
+        if self.batch.len() >= TRANSCRIPT_BATCH_SIZE {
+            self.flush_batch();
+        }
+    }
+
+    fn flush_batch(&mut self) {
+        if self.batch.is_empty() {
+            return;
+        }
+        let batch = std::mem::replace(&mut self.batch, Vec::with_capacity(TRANSCRIPT_BATCH_SIZE));
+        let _ = self.sender.try_send(TranscriptReplayEvent::Batch(batch));
+    }
+}
+
+fn normalize_content(sequence: i64, content: ContentBlock) -> TranscriptBlock {
+    let kind = match content {
+        ContentBlock::Text(text) => TranscriptBlockKind::Text { text: text.text },
+        ContentBlock::Image(image) => TranscriptBlockKind::Image {
+            uri: image
+                .uri
+                .unwrap_or_else(|| format!("data:{};base64,{}", image.mime_type, image.data)),
+            alt: Some("Image".into()),
+        },
+        ContentBlock::ResourceLink(resource) => TranscriptBlockKind::Resource {
+            uri: resource.uri,
+            title: resource.title.or(Some(resource.name)),
+        },
+        ContentBlock::Resource(resource) => match resource.resource {
+            EmbeddedResourceResource::TextResourceContents(resource) => TranscriptBlockKind::Code {
+                language: resource.mime_type,
+                text: resource.text,
+            },
+            EmbeddedResourceResource::BlobResourceContents(resource) => {
+                TranscriptBlockKind::Resource {
+                    uri: resource.uri,
+                    title: resource.mime_type,
+                }
+            }
+            other => TranscriptBlockKind::Other {
+                kind: "acp_embedded_resource".into(),
+                payload_json: serde_json::to_string(&other).unwrap_or_default(),
+            },
+        },
+        other => TranscriptBlockKind::Other {
+            kind: "acp_content".into(),
+            payload_json: serde_json::to_string(&other).unwrap_or_default(),
+        },
+    };
+    TranscriptBlock { sequence, kind }
+}
+
+fn normalize_tool(sequence: i64, tool_call: &ToolCall) -> TranscriptMessage {
+    let id = tool_call.tool_call_id.to_string();
+    let status = tool_status(tool_call.status);
+    let state = match tool_call.status {
+        ToolCallStatus::Pending | ToolCallStatus::InProgress => TranscriptMessageState::Streaming,
+        ToolCallStatus::Completed => TranscriptMessageState::Complete,
+        ToolCallStatus::Failed => TranscriptMessageState::Error,
+        _ => TranscriptMessageState::Complete,
+    };
+    let mut message =
+        TranscriptMessage::new(format!("tool:{id}"), sequence, TranscriptRole::Tool, state);
+    message.blocks.push(TranscriptBlock {
+        sequence: 0,
+        kind: TranscriptBlockKind::ToolCall {
+            tool_call_id: id.clone(),
+            title: tool_call.title.clone(),
+            status: status.into(),
+            payload_json: tool_call
+                .raw_input
+                .as_ref()
+                .and_then(|input| serde_json::to_string(input).ok()),
+        },
+    });
+    if !tool_call.content.is_empty() || tool_call.raw_output.is_some() {
+        message.blocks.push(TranscriptBlock {
+            sequence: 1,
+            kind: TranscriptBlockKind::ToolResult {
+                tool_call_id: id,
+                content: tool_call
+                    .raw_output
+                    .as_ref()
+                    .and_then(|output| serde_json::to_string_pretty(output).ok())
+                    .or_else(|| serde_json::to_string_pretty(&tool_call.content).ok())
+                    .unwrap_or_default(),
+            },
+        });
+    }
+    message
+}
+
+const fn tool_status(status: ToolCallStatus) -> &'static str {
+    match status {
+        ToolCallStatus::Pending => "pending",
+        ToolCallStatus::InProgress => "in_progress",
+        ToolCallStatus::Completed => "completed",
+        ToolCallStatus::Failed => "failed",
+        _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+    use agent_client_protocol::schema::v1::{TextContent, ToolCallUpdate, ToolCallUpdateFields};
+
+    fn text_chunk(text: &str, message_id: &str) -> ContentChunk {
+        ContentChunk::new(ContentBlock::Text(TextContent::new(text))).message_id(message_id)
+    }
+
+    fn normalize(updates: impl IntoIterator<Item = SessionUpdate>) -> Vec<TranscriptMessage> {
+        let (sender, receiver) = async_channel::unbounded();
+        let mut normalizer = TranscriptNormalizer::new(sender);
+        for update in updates {
+            normalizer.apply(update);
+        }
+        normalizer.finish();
+        drop(normalizer);
+
+        let mut messages = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            if let TranscriptReplayEvent::Batch(batch) = event {
+                messages.extend(batch);
+            }
+        }
+        messages
+    }
+
+    #[test]
+    fn joins_chunks_by_role_and_message_id() {
+        let messages = normalize([
+            SessionUpdate::UserMessageChunk(text_chunk("hel", "user-1")),
+            SessionUpdate::UserMessageChunk(text_chunk("lo", "user-1")),
+            SessionUpdate::AgentMessageChunk(text_chunk("world", "agent-1")),
+        ]);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, TranscriptRole::User);
+        assert_eq!(messages[0].blocks.len(), 2);
+        assert_eq!(messages[1].role, TranscriptRole::Agent);
+        assert!(messages[0].sequence < messages[1].sequence);
+    }
+
+    #[test]
+    fn tool_updates_replace_the_same_normalized_message() {
+        let messages = normalize([
+            SessionUpdate::ToolCall(ToolCall::new("tool-1", "Read file")),
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                "tool-1",
+                ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+            )),
+        ]);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].id, messages[1].id);
+        assert_eq!(messages[0].sequence, messages[1].sequence);
+        assert_eq!(messages[1].state, TranscriptMessageState::Complete);
+    }
 }

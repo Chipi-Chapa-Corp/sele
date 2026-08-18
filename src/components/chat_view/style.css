@@ -1,0 +1,45 @@
+.chat-body {
+  border-spacing: var(--sele-space-sm);
+  padding: var(--sele-space-md) var(--sele-space-xl) var(--sele-space-xl);
+}
+
+.transcript-status {
+  color: color-mix(in srgb, currentColor var(--dim-opacity), transparent);
+}
+
+.transcript-list {
+  background-color: transparent;
+}
+
+.transcript-list > row {
+  padding: 0;
+}
+
+.transcript-message {
+  border-spacing: var(--sele-space-sm);
+  margin: var(--sele-space-sm) 0;
+  padding: var(--sele-space-md);
+}
+
+.transcript-message-user {
+  background-color: var(--card-bg-color);
+  border-radius: var(--card-radius);
+}
+
+.transcript-message-thought,
+.transcript-role,
+.transcript-block-secondary {
+  color: color-mix(in srgb, currentColor var(--dim-opacity), transparent);
+}
+
+.transcript-message-error {
+  color: var(--error-color);
+}
+
+.transcript-code,
+.transcript-tool {
+  padding: var(--sele-space-sm);
+  background-color: var(--view-bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--card-radius);
+}
