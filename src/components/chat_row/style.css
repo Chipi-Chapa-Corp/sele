@@ -1,0 +1,42 @@
+:root {
+  --sele-chat-status-size: 10px;
+  --sele-chat-status-ring-width: 2px;
+}
+
+.chat-row-content {
+  border-spacing: var(--sele-space-md);
+  padding: var(--sele-space-sm);
+}
+
+.chat-list.navigation-sidebar > row {
+  min-height: 0;
+  margin: 0 0 var(--sele-space-xs);
+  padding: 0;
+}
+
+.status-dot {
+  min-width: var(--sele-chat-status-size);
+  min-height: var(--sele-chat-status-size);
+  border: var(--sele-chat-status-ring-width) solid var(--border-color);
+  border-radius: var(--sele-chat-status-size);
+}
+
+.status-idle {
+  background-color: color-mix(in srgb, currentColor var(--dim-opacity), transparent);
+}
+
+.status-active {
+  background-color: var(--accent-blue);
+}
+
+.status-waiting {
+  background-color: var(--warning-color);
+}
+
+.status-error {
+  background-color: var(--error-color);
+}
+
+.status-finished {
+  background-color: var(--success-color);
+}

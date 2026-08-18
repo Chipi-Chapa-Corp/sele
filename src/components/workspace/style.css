@@ -1,0 +1,49 @@
+:root {
+  --sele-workspace-resize-handle-width: 5px;
+  --sele-workspace-side-header-height: 54px;
+  --sele-workspace-chat-drag-height: 8px;
+}
+
+.workspace-pane {
+  background-color: var(--window-bg-color);
+  color: var(--window-fg-color);
+}
+
+.chat-list-pane,
+.sidebar-pane {
+  background-color: var(--sidebar-bg-color);
+  color: var(--sidebar-fg-color);
+}
+
+.side-pane-header {
+  min-height: var(--sele-workspace-side-header-height);
+  padding: 0 var(--sele-space-lg);
+  background-color: transparent;
+}
+
+.side-pane-header-content {
+  border-spacing: var(--sele-space-md);
+}
+
+.chat-drag-strip {
+  min-height: var(--sele-workspace-chat-drag-height);
+  background-color: transparent;
+}
+
+.chat-body {
+  padding: var(--sele-space-md) var(--sele-space-xl) var(--sele-space-xl);
+}
+
+.chat-list-content {
+  border-spacing: var(--sele-space-md);
+  padding: var(--sele-space-sm) var(--sele-space-md) var(--sele-space-lg);
+}
+
+.workspace-paned > separator {
+  min-width: var(--sele-workspace-resize-handle-width);
+  background-color: var(--border-color);
+}
+
+.workspace-paned > separator:hover {
+  background-color: var(--accent-color);
+}

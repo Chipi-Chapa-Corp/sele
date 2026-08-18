@@ -4,20 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "A native desktop harness orchestrator"
-build = "build.rs"
 
 [dependencies]
-slint = { version = "1.17.1", default-features = false, features = [
-    "backend-winit",
-    "compat-1-2",
-    "renderer-femtovg",
-    "std",
-] }
-
-[build-dependencies]
-slint-build = "1.17.1"
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-# Slint 1.17 uses Fontique 0.10. Enable its runtime-loaded fontconfig backend so
-# builds do not require the platform's fontconfig development package.
-fontique = { version = "0.10.0", features = ["fontconfig-dlopen"] }
+adw = { package = "libadwaita", version = "0.9.2", features = ["v1_7"] }
+gtk = { package = "gtk4", version = "0.11.4", features = ["v4_16"] }

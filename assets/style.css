@@ -1,0 +1,12 @@
+:root {
+  --sele-space-xs: 4px;
+  --sele-space-sm: 8px;
+  --sele-space-md: 12px;
+  --sele-space-lg: 16px;
+  --sele-space-xl: 24px;
+}
+
+window {
+  background-color: var(--window-bg-color);
+  color: var(--window-fg-color);
+}

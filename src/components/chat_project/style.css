@@ -1,0 +1,30 @@
+:root {
+  --sele-chat-project-chevron-size: 16px;
+  --sele-chat-project-line-width: 1px;
+}
+
+.chat-project {
+  color: var(--accent-color);
+}
+
+.chat-project > box > title {
+  border-spacing: var(--sele-space-sm);
+}
+
+.project-body {
+  border-spacing: 0;
+}
+
+.project-rail {
+  min-width: var(--sele-chat-project-chevron-size);
+}
+
+.chat-list {
+  background-color: transparent;
+  color: var(--sidebar-fg-color);
+}
+
+.project-line {
+  min-width: var(--sele-chat-project-line-width);
+  background-color: var(--border-color);
+}
