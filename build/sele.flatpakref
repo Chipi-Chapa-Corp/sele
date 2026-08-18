@@ -1,8 +1,0 @@
-[Flatpak Ref]
-Name=com.chipichapa.sele
-Branch=stable
-Title=Sele
-Url=https://chipi-chapa-corp.github.io/sele/flatpak
-RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
-IsRuntime=false
-SuggestRemoteName=sele

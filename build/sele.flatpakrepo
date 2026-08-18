@@ -1,9 +1,0 @@
-[Flatpak Repo]
-Title=Sele
-Url=https://chipi-chapa-corp.github.io/sele/flatpak
-Homepage=https://github.com/Chipi-Chapa-Corp/sele
-Comment=Stable releases of Sele
-Description=Stable Flatpak releases of the Sele desktop AI harness
-Icon=https://chipi-chapa-corp.github.io/sele/flatpak/sele.png
-DefaultBranch=stable
-GPGVerify=false

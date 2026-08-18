@@ -1,0 +1,68 @@
+export enum ResizeEdge {
+    leading,
+    trailing,
+}
+
+export component ResizablePane inherits Rectangle {
+    in-out property <length> pane-width: 280px;
+    in property <length> minimum-pane-width: 180px;
+    in property <length> maximum-pane-width: 600px;
+    in property <length> available-pane-width: root.maximum-pane-width;
+    in property <length> separator-width: 7px;
+    in property <ResizeEdge> resize-edge: ResizeEdge.trailing;
+    in property <color> separator-color: #2c3038;
+    in property <color> separator-active-color: #6d82ff;
+
+    width: min(
+        root.available-pane-width,
+        max(root.minimum-pane-width, root.pane-width),
+    );
+
+    content := Rectangle {
+        x: root.resize-edge == ResizeEdge.leading ? root.separator-width : 0px;
+        width: root.width - root.separator-width;
+        height: root.height;
+
+        @children
+    }
+
+    separator-line := Rectangle {
+        x: root.resize-edge == ResizeEdge.leading
+            ? (root.separator-width - self.width) / 2
+            : root.width - (root.separator-width + self.width) / 2;
+        width: 1px;
+        height: root.height;
+        background: separator-touch.has-hover || separator-touch.pressed
+            ? root.separator-active-color
+            : root.separator-color;
+    }
+
+    separator-touch := TouchArea {
+        x: root.resize-edge == ResizeEdge.leading ? 0px : root.width - self.width;
+        width: root.separator-width;
+        height: root.height;
+        mouse-cursor: ew-resize;
+
+        moved => {
+            if (self.pressed) {
+                if (root.resize-edge == ResizeEdge.trailing) {
+                    root.pane-width = min(
+                        root.maximum-pane-width,
+                        max(
+                            root.minimum-pane-width,
+                            root.width + self.mouse-x - self.pressed-x,
+                        ),
+                    );
+                } else {
+                    root.pane-width = min(
+                        root.maximum-pane-width,
+                        max(
+                            root.minimum-pane-width,
+                            root.width - (self.mouse-x - self.pressed-x),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
