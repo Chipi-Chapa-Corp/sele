@@ -1,35 +1,31 @@
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
+use gtk::glib;
 use gtk::glib::prelude::*;
 use gtk::prelude::*;
-use gtk::{gio, glib};
 use sele_agent::AgentRuntime;
-use sele_core::{
-    AgentDescriptor, AgentSession, TranscriptBlockKind, TranscriptMessage, TranscriptMessageState,
-    TranscriptRole, TranscriptSessionKey,
-};
+use sele_core::{AgentDescriptor, AgentSession, TranscriptMessage, TranscriptSessionKey};
 
 use super::ChatSummary;
-use crate::transcript_loader::{
-    PageDirection, TranscriptLoadCancellation, TranscriptLoadEvent, TranscriptPage,
-    TranscriptPageEvent, load_page, load_transcript,
-};
+use crate::transcript_loader::{TranscriptLoadCancellation, TranscriptLoadEvent, load_transcript};
 
 pub(super) const STYLE: &str = include_str!("style.css");
 
-const MAX_LOADED_MESSAGES: u32 = 500;
-const PAGE_TRIGGER_DISTANCE: f64 = 240.0;
-const LARGE_BLOCK_THRESHOLD: usize = 16 * 1024;
+mod message_row;
+
+use message_row::materialized_message_row;
+
+const ROW_BUILD_BUDGET: Duration = Duration::from_millis(2);
+const BOTTOM_STABLE_FRAMES: u8 = 10;
+const TAIL_PREVIEW_MESSAGES: usize = 32;
 
 #[derive(Default)]
-struct PageState {
+struct TranscriptState {
     key: Option<TranscriptSessionKey>,
-    has_older: bool,
-    has_newer: bool,
-    loading_older: bool,
-    loading_newer: bool,
     cancellation: Option<TranscriptLoadCancellation>,
 }
 
@@ -39,10 +35,17 @@ pub struct ChatView {
     title: gtk::Label,
     status: gtk::Label,
     stale_banner: adw::Banner,
-    model: gio::ListStore,
-    list: gtk::ListView,
-    state: Rc<RefCell<PageState>>,
+    messages: gtk::Box,
+    viewport: gtk::ScrolledWindow,
+    preview_messages: gtk::Box,
+    preview_viewport: gtk::ScrolledWindow,
+    state: Rc<RefCell<TranscriptState>>,
     request_id: Rc<Cell<u64>>,
+    render_id: Rc<Cell<u64>>,
+    rendering: Rc<Cell<bool>>,
+    has_transcript: Rc<Cell<bool>>,
+    load_finished: Rc<Cell<bool>>,
+    stick_to_bottom: Rc<Cell<bool>>,
     current_session: Rc<RefCell<Option<AgentSession>>>,
     agent_runtime: AgentRuntime,
 }
@@ -51,10 +54,17 @@ pub struct ChatView {
 struct TranscriptRefresh {
     status: gtk::Label,
     stale_banner: glib::WeakRef<adw::Banner>,
-    model: gio::ListStore,
-    list: gtk::ListView,
-    state: Rc<RefCell<PageState>>,
+    messages: gtk::Box,
+    viewport: gtk::ScrolledWindow,
+    preview_messages: gtk::Box,
+    preview_viewport: gtk::ScrolledWindow,
+    state: Rc<RefCell<TranscriptState>>,
     request_id: Rc<Cell<u64>>,
+    render_id: Rc<Cell<u64>>,
+    rendering: Rc<Cell<bool>>,
+    has_transcript: Rc<Cell<bool>>,
+    load_finished: Rc<Cell<bool>>,
+    stick_to_bottom: Rc<Cell<bool>>,
     current_session: Rc<RefCell<Option<AgentSession>>>,
     agent_runtime: AgentRuntime,
 }
@@ -74,19 +84,30 @@ impl TranscriptRefresh {
 
         let request_id = self.request_id.get().wrapping_add(1);
         self.request_id.set(request_id);
-        *self.state.borrow_mut() = PageState {
+        self.render_id.set(self.render_id.get().wrapping_add(1));
+        self.rendering.set(false);
+        self.load_finished.set(false);
+        self.stick_to_bottom.set(false);
+        self.viewport.set_opacity(1.0);
+        self.preview_viewport.set_visible(false);
+        self.preview_viewport.set_opacity(0.0);
+        clear_messages(&self.preview_messages);
+        *self.state.borrow_mut() = TranscriptState {
             key: Some(TranscriptSessionKey::new(
                 session.agent.id.as_str(),
                 &session.id,
             )),
-            ..PageState::default()
+            ..TranscriptState::default()
         };
         *self.current_session.borrow_mut() = Some(session.clone());
 
         if preserve_messages {
+            self.has_transcript
+                .set(self.messages.first_child().is_some());
             self.status.set_visible(false);
         } else {
-            self.model.remove_all();
+            self.has_transcript.set(false);
+            clear_messages(&self.messages);
             self.show_status("Loading messages…", None);
         }
         if let Some(banner) = self.stale_banner.upgrade() {
@@ -107,29 +128,28 @@ impl TranscriptRefresh {
                     return;
                 }
                 match event {
-                    TranscriptLoadEvent::Cached(page) => {
+                    TranscriptLoadEvent::Cached(messages) => {
                         if !preserve_messages {
-                            refresh.replace_with_latest(page);
+                            refresh.replace_transcript(messages);
                         }
-                        refresh.status.set_visible(false);
                     }
-                    TranscriptLoadEvent::Refreshed(page) => {
-                        refresh.replace_with_latest(page);
+                    TranscriptLoadEvent::Refreshed(messages) => {
+                        refresh.replace_transcript(messages);
                         refresh.hide_stale_banner();
                     }
                     TranscriptLoadEvent::Finished => {
                         refresh.state.borrow_mut().cancellation = None;
+                        refresh.load_finished.set(true);
                         refresh.hide_stale_banner();
-                        if refresh.model.n_items() == 0 {
-                            refresh.show_status("This chat has no messages", None);
-                        } else {
-                            refresh.status.set_visible(false);
+                        if !refresh.rendering.get() {
+                            refresh.show_finished_status();
                         }
                         return;
                     }
                     TranscriptLoadEvent::Failed(error) => {
                         refresh.state.borrow_mut().cancellation = None;
-                        if refresh.model.n_items() == 0 {
+                        refresh.load_finished.set(true);
+                        if !refresh.has_transcript.get() {
                             refresh.hide_stale_banner();
                             refresh.show_status("Couldn’t load messages", Some(&error));
                         } else {
@@ -143,25 +163,81 @@ impl TranscriptRefresh {
         });
     }
 
-    fn replace_with_latest(&self, page: TranscriptPage) {
-        let additions = boxed_messages(page.messages);
-        self.model.splice(0, self.model.n_items(), &additions);
-        {
-            let mut state = self.state.borrow_mut();
-            state.has_older = page.has_more;
-            state.has_newer = false;
-            state.loading_older = false;
-            state.loading_newer = false;
+    fn replace_transcript(&self, mut messages: Vec<TranscriptMessage>) {
+        let render_id = self.render_id.get().wrapping_add(1);
+        self.render_id.set(render_id);
+        messages.sort_by_key(|message| message.sequence);
+        self.has_transcript.set(!messages.is_empty());
+        self.rendering.set(!messages.is_empty());
+        self.stick_to_bottom.set(!messages.is_empty());
+        clear_messages(&self.messages);
+        clear_messages(&self.preview_messages);
+        if messages.is_empty() {
+            self.viewport.set_opacity(1.0);
+            self.preview_viewport.set_visible(false);
+            if self.load_finished.get() {
+                self.show_finished_status();
+            }
+            return;
         }
-        let list = self.list.clone();
-        glib::idle_add_local_once(move || {
-            let Some(count) = list.model().map(|model| model.n_items()) else {
-                return;
-            };
-            if count > 0 {
-                list.scroll_to(count - 1, gtk::ListScrollFlags::NONE, None);
+
+        for message in &messages[messages.len().saturating_sub(TAIL_PREVIEW_MESSAGES)..] {
+            self.preview_messages
+                .append(&materialized_message_row(message));
+        }
+        self.viewport.set_opacity(0.0);
+        self.preview_viewport.set_opacity(0.0);
+        self.preview_viewport.set_visible(true);
+        reveal_tail_after_layout(
+            &self.preview_viewport,
+            &self.status,
+            Rc::clone(&self.render_id),
+            render_id,
+        );
+
+        let queue = Rc::new(RefCell::new(VecDeque::from(messages)));
+        let current_render_id = Rc::clone(&self.render_id);
+        let rendering = Rc::clone(&self.rendering);
+        let stick_to_bottom = Rc::clone(&self.stick_to_bottom);
+        let viewport = self.viewport.clone();
+        let preview_viewport = self.preview_viewport.clone();
+        self.messages.add_tick_callback(move |container, _| {
+            if current_render_id.get() != render_id {
+                return glib::ControlFlow::Break;
+            }
+
+            let started = Instant::now();
+            let mut built = 0;
+            while built == 0 || started.elapsed() < ROW_BUILD_BUDGET {
+                let Some(message) = queue.borrow_mut().pop_back() else {
+                    break;
+                };
+                container.prepend(&materialized_message_row(&message));
+                built += 1;
+            }
+
+            if queue.borrow().is_empty() {
+                rendering.set(false);
+                finish_bottom_pinning_after_layout(
+                    &viewport,
+                    &preview_viewport,
+                    Rc::clone(&stick_to_bottom),
+                    Rc::clone(&current_render_id),
+                    render_id,
+                );
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
             }
         });
+    }
+
+    fn show_finished_status(&self) {
+        if self.has_transcript.get() {
+            self.status.set_visible(false);
+        } else {
+            self.show_status("This chat has no messages", None);
+        }
     }
 
     fn show_stale_banner(&self, error: &str) {
@@ -203,17 +279,68 @@ impl ChatView {
         let stale_banner = adw::Banner::new("Couldn’t refresh — showing cached messages");
         stale_banner.set_button_label(Some("Retry"));
 
-        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let selection = gtk::NoSelection::new(Some(model.clone()));
-        let list = gtk::ListView::new(Some(selection), Some(message_factory()));
-        list.add_css_class("transcript-list");
-        list.set_vexpand(true);
-        list.set_single_click_activate(false);
+        let messages = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        messages.add_css_class("transcript-list");
+
+        let top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        top_spacer.set_vexpand(true);
+
+        let transcript_canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        transcript_canvas.set_vexpand(true);
+        transcript_canvas.append(&top_spacer);
+        transcript_canvas.append(&messages);
 
         let viewport = gtk::ScrolledWindow::new();
         viewport.set_hscrollbar_policy(gtk::PolicyType::Never);
         viewport.set_vexpand(true);
-        viewport.set_child(Some(&list));
+        viewport.set_child(Some(&transcript_canvas));
+
+        let preview_messages = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        preview_messages.add_css_class("transcript-list");
+
+        let preview_top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        preview_top_spacer.set_vexpand(true);
+
+        let preview_canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        preview_canvas.set_vexpand(true);
+        preview_canvas.append(&preview_top_spacer);
+        preview_canvas.append(&preview_messages);
+
+        let preview_viewport = gtk::ScrolledWindow::new();
+        preview_viewport.set_hscrollbar_policy(gtk::PolicyType::Never);
+        preview_viewport.set_hexpand(true);
+        preview_viewport.set_vexpand(true);
+        preview_viewport.set_child(Some(&preview_canvas));
+        preview_viewport.set_opacity(0.0);
+        preview_viewport.set_visible(false);
+
+        let transcript_overlay = gtk::Overlay::new();
+        transcript_overlay.set_vexpand(true);
+        transcript_overlay.set_child(Some(&viewport));
+        transcript_overlay.add_overlay(&preview_viewport);
+
+        let stick_to_bottom = Rc::new(Cell::new(false));
+        viewport.vadjustment().connect_upper_notify({
+            let stick_to_bottom = Rc::clone(&stick_to_bottom);
+            let pin_scheduled = Rc::new(Cell::new(false));
+            move |adjustment| {
+                if !stick_to_bottom.get() || pin_scheduled.replace(true) {
+                    return;
+                }
+
+                let adjustment = adjustment.downgrade();
+                let stick_to_bottom = Rc::clone(&stick_to_bottom);
+                let pin_scheduled = Rc::clone(&pin_scheduled);
+                glib::idle_add_local_once(move || {
+                    pin_scheduled.set(false);
+                    if stick_to_bottom.get()
+                        && let Some(adjustment) = adjustment.upgrade()
+                    {
+                        pin_adjustment_to_bottom(&adjustment);
+                    }
+                });
+            }
+        });
 
         let header = gtk::Box::new(gtk::Orientation::Vertical, 0);
         header.add_css_class("chat-header");
@@ -223,7 +350,7 @@ impl ChatView {
         transcript.add_css_class("transcript-content");
         transcript.set_vexpand(true);
         transcript.append(&status);
-        transcript.append(&viewport);
+        transcript.append(&transcript_overlay);
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("chat-body");
@@ -237,17 +364,23 @@ impl ChatView {
             title,
             status,
             stale_banner,
-            model,
-            list,
-            state: Rc::new(RefCell::new(PageState::default())),
+            messages,
+            viewport,
+            preview_messages,
+            preview_viewport,
+            state: Rc::new(RefCell::new(TranscriptState::default())),
             request_id: Rc::new(Cell::new(0)),
+            render_id: Rc::new(Cell::new(0)),
+            rendering: Rc::new(Cell::new(false)),
+            has_transcript: Rc::new(Cell::new(false)),
+            load_finished: Rc::new(Cell::new(false)),
+            stick_to_bottom,
             current_session: Rc::new(RefCell::new(None)),
             agent_runtime,
         };
         let refresh = view.refresh_context();
         view.stale_banner
             .connect_button_clicked(move |_| refresh.retry());
-        view.connect_pagination(&viewport);
         view
     }
 
@@ -279,321 +412,92 @@ impl ChatView {
         TranscriptRefresh {
             status: self.status.clone(),
             stale_banner: self.stale_banner.downgrade(),
-            model: self.model.clone(),
-            list: self.list.clone(),
+            messages: self.messages.clone(),
+            viewport: self.viewport.clone(),
+            preview_messages: self.preview_messages.clone(),
+            preview_viewport: self.preview_viewport.clone(),
             state: Rc::clone(&self.state),
             request_id: Rc::clone(&self.request_id),
+            render_id: Rc::clone(&self.render_id),
+            rendering: Rc::clone(&self.rendering),
+            has_transcript: Rc::clone(&self.has_transcript),
+            load_finished: Rc::clone(&self.load_finished),
+            stick_to_bottom: Rc::clone(&self.stick_to_bottom),
             current_session: Rc::clone(&self.current_session),
             agent_runtime: self.agent_runtime.clone(),
         }
     }
+}
 
-    fn connect_pagination(&self, viewport: &gtk::ScrolledWindow) {
-        let view = self.clone();
-        viewport
-            .vadjustment()
-            .connect_value_changed(move |adjustment| {
-                if view.model.n_items() == 0 {
-                    return;
-                }
-                if adjustment.value() <= PAGE_TRIGGER_DISTANCE {
-                    view.request_page(PageDirection::Older);
-                }
-                let distance_from_bottom =
-                    adjustment.upper() - adjustment.page_size() - adjustment.value();
-                if distance_from_bottom <= PAGE_TRIGGER_DISTANCE {
-                    view.request_page(PageDirection::Newer);
-                }
-            });
+fn clear_messages(messages: &gtk::Box) {
+    while let Some(row) = messages.first_child() {
+        messages.remove(&row);
     }
+}
 
-    fn request_page(&self, direction: PageDirection) {
-        let (key, pivot, request_id) = {
-            let mut state = self.state.borrow_mut();
-            let allowed = match direction {
-                PageDirection::Older => state.has_older && !state.loading_older,
-                PageDirection::Newer => state.has_newer && !state.loading_newer,
-            };
-            if !allowed {
-                return;
-            }
-            let Some(key) = state.key.clone() else {
-                return;
-            };
-            let position = match direction {
-                PageDirection::Older => 0,
-                PageDirection::Newer => self.model.n_items().saturating_sub(1),
-            };
-            let Some(item) = self
-                .model
-                .item(position)
-                .and_downcast::<glib::BoxedAnyObject>()
-            else {
-                return;
-            };
-            let pivot = item.borrow::<TranscriptMessage>().sequence;
-            match direction {
-                PageDirection::Older => state.loading_older = true,
-                PageDirection::Newer => state.loading_newer = true,
-            }
-            (key, pivot, self.request_id.get())
+fn pin_adjustment_to_bottom(adjustment: &gtk::Adjustment) {
+    adjustment.set_value((adjustment.upper() - adjustment.page_size()).max(adjustment.lower()));
+}
+
+fn reveal_tail_after_layout(
+    preview_viewport: &gtk::ScrolledWindow,
+    status: &gtk::Label,
+    current_render_id: Rc<Cell<u64>>,
+    render_id: u64,
+) {
+    let adjustment = preview_viewport.vadjustment();
+    let frames = Rc::new(Cell::new(0_u8));
+    let status = status.clone();
+    preview_viewport.add_tick_callback(move |viewport, _| {
+        if current_render_id.get() != render_id {
+            return glib::ControlFlow::Break;
+        }
+
+        let frame = frames.get().saturating_add(1);
+        frames.set(frame);
+        if frame < 2 {
+            return glib::ControlFlow::Continue;
+        }
+
+        pin_adjustment_to_bottom(&adjustment);
+        viewport.set_opacity(1.0);
+        status.set_visible(false);
+        glib::ControlFlow::Break
+    });
+}
+
+fn finish_bottom_pinning_after_layout(
+    viewport: &gtk::ScrolledWindow,
+    preview_viewport: &gtk::ScrolledWindow,
+    stick_to_bottom: Rc<Cell<bool>>,
+    current_render_id: Rc<Cell<u64>>,
+    render_id: u64,
+) {
+    let adjustment = viewport.vadjustment();
+    let stable_frames = Rc::new(Cell::new(0_u8));
+    let last_upper = Rc::new(Cell::new(adjustment.upper()));
+    let full_viewport = viewport.clone();
+    let preview_viewport = preview_viewport.clone();
+    viewport.add_tick_callback(move |_, _| {
+        if current_render_id.get() != render_id || !stick_to_bottom.get() {
+            return glib::ControlFlow::Break;
+        }
+
+        pin_adjustment_to_bottom(&adjustment);
+        let upper = adjustment.upper();
+        let unchanged = (upper - last_upper.replace(upper)).abs() < 0.5;
+        let stable = if unchanged {
+            stable_frames.get().saturating_add(1)
+        } else {
+            0
         };
-
-        let receiver = load_page(key, direction, pivot);
-        let view = self.clone();
-        glib::MainContext::default().spawn_local(async move {
-            let Ok(event) = receiver.recv().await else {
-                view.finish_page_request(direction);
-                return;
-            };
-            if view.request_id.get() != request_id {
-                return;
-            }
-            match event {
-                TranscriptPageEvent::Loaded(page) => view.apply_page(direction, page),
-                TranscriptPageEvent::Failed(error) => {
-                    view.finish_page_request(direction);
-                    view.show_status("Couldn’t load more messages", Some(&error));
-                }
-            }
-        });
-    }
-
-    fn apply_page(&self, direction: PageDirection, page: TranscriptPage) {
-        let additions = boxed_messages(page.messages);
-        let addition_count = additions.len() as u32;
-        match direction {
-            PageDirection::Older => {
-                self.model.splice(0, 0, &additions);
-                let overflow = self.model.n_items().saturating_sub(MAX_LOADED_MESSAGES);
-                if overflow > 0 {
-                    self.model.splice(
-                        self.model.n_items() - overflow,
-                        overflow,
-                        &[] as &[glib::BoxedAnyObject],
-                    );
-                }
-                let mut state = self.state.borrow_mut();
-                state.has_older = page.has_more;
-                state.has_newer |= overflow > 0;
-                state.loading_older = false;
-            }
-            PageDirection::Newer => {
-                self.model.splice(self.model.n_items(), 0, &additions);
-                let overflow = self.model.n_items().saturating_sub(MAX_LOADED_MESSAGES);
-                if overflow > 0 {
-                    self.model
-                        .splice(0, overflow, &[] as &[glib::BoxedAnyObject]);
-                }
-                let mut state = self.state.borrow_mut();
-                state.has_newer = page.has_more;
-                state.has_older |= overflow > 0;
-                state.loading_newer = false;
-            }
+        stable_frames.set(stable);
+        if stable < BOTTOM_STABLE_FRAMES {
+            return glib::ControlFlow::Continue;
         }
-        if addition_count == 0 {
-            let mut state = self.state.borrow_mut();
-            match direction {
-                PageDirection::Older => state.has_older = false,
-                PageDirection::Newer => state.has_newer = false,
-            }
-        }
-    }
-
-    fn finish_page_request(&self, direction: PageDirection) {
-        let mut state = self.state.borrow_mut();
-        match direction {
-            PageDirection::Older => state.loading_older = false,
-            PageDirection::Newer => state.loading_newer = false,
-        }
-    }
-
-    fn show_status(&self, text: &str, tooltip: Option<&str>) {
-        self.status.set_text(text);
-        self.status.set_tooltip_text(tooltip);
-        self.status.set_visible(true);
-    }
-}
-
-fn boxed_messages(messages: Vec<TranscriptMessage>) -> Vec<glib::BoxedAnyObject> {
-    messages
-        .into_iter()
-        .map(glib::BoxedAnyObject::new)
-        .collect()
-}
-
-fn message_factory() -> gtk::SignalListItemFactory {
-    let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, object| {
-        let list_item = object
-            .downcast_ref::<gtk::ListItem>()
-            .expect("message factory receives GtkListItem");
-        let row = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        row.add_css_class("transcript-message");
-        row.set_hexpand(true);
-        list_item.set_child(Some(&row));
+        full_viewport.set_opacity(1.0);
+        preview_viewport.set_visible(false);
+        stick_to_bottom.set(false);
+        glib::ControlFlow::Break
     });
-    factory.connect_bind(|_, object| {
-        let list_item = object
-            .downcast_ref::<gtk::ListItem>()
-            .expect("message factory receives GtkListItem");
-        let item = list_item
-            .item()
-            .and_downcast::<glib::BoxedAnyObject>()
-            .expect("transcript model contains messages");
-        let message = item.borrow::<TranscriptMessage>();
-        let row = list_item
-            .child()
-            .and_downcast::<gtk::Box>()
-            .expect("message row is a GtkBox");
-        bind_message(&row, &message);
-    });
-    factory
-}
-
-fn bind_message(row: &gtk::Box, message: &TranscriptMessage) {
-    while let Some(child) = row.first_child() {
-        row.remove(&child);
-    }
-    for class in [
-        "transcript-message-user",
-        "transcript-message-agent",
-        "transcript-message-thought",
-        "transcript-message-tool",
-        "transcript-message-error",
-    ] {
-        row.remove_css_class(class);
-    }
-    row.add_css_class(role_css_class(message.role));
-    if message.state == TranscriptMessageState::Error {
-        row.add_css_class("transcript-message-error");
-    }
-
-    let role = gtk::Label::new(Some(role_label(message.role)));
-    role.add_css_class("transcript-role");
-    role.set_halign(gtk::Align::Start);
-    role.set_xalign(0.0);
-    row.append(&role);
-
-    for block in &message.blocks {
-        row.append(&block_widget(&block.kind));
-    }
-}
-
-fn block_widget(block: &TranscriptBlockKind) -> gtk::Widget {
-    match block {
-        TranscriptBlockKind::Text { text } if text.len() > LARGE_BLOCK_THRESHOLD => {
-            lazy_text_expander("Long message", text, None, None).upcast()
-        }
-        TranscriptBlockKind::Text { text } => selectable_label(text, None).upcast(),
-        TranscriptBlockKind::Code { language, text } => {
-            if text.len() > LARGE_BLOCK_THRESHOLD {
-                let title = language.as_deref().unwrap_or("Large code block");
-                return lazy_text_expander(title, text, Some("monospace"), Some("transcript-code"))
-                    .upcast();
-            }
-            let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            container.add_css_class("transcript-code");
-            if let Some(language) = language {
-                let label = gtk::Label::new(Some(language));
-                label.add_css_class("transcript-block-secondary");
-                label.set_xalign(0.0);
-                container.append(&label);
-            }
-            let code = selectable_label(text, Some("monospace"));
-            container.append(&code);
-            container.upcast()
-        }
-        TranscriptBlockKind::ToolCall { title, status, .. } => {
-            let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            container.add_css_class("transcript-tool");
-            container.append(&selectable_label(title, None));
-            let status = gtk::Label::new(Some(status));
-            status.add_css_class("transcript-block-secondary");
-            status.set_xalign(0.0);
-            container.append(&status);
-            container.upcast()
-        }
-        TranscriptBlockKind::ToolResult { content, .. } => lazy_text_expander(
-            "Result",
-            content,
-            Some("monospace"),
-            Some("transcript-tool"),
-        )
-        .upcast(),
-        TranscriptBlockKind::Image { alt, uri } => {
-            selectable_label(alt.as_deref().unwrap_or(uri), None).upcast()
-        }
-        TranscriptBlockKind::Resource { uri, title } => {
-            selectable_label(title.as_deref().unwrap_or(uri), None).upcast()
-        }
-        TranscriptBlockKind::Other { kind, .. } => {
-            let label = selectable_label(kind, None);
-            label.add_css_class("transcript-block-secondary");
-            label.upcast()
-        }
-    }
-}
-
-fn lazy_text_expander(
-    title: &str,
-    text: &str,
-    content_css_class: Option<&'static str>,
-    expander_css_class: Option<&'static str>,
-) -> gtk::Expander {
-    let title = format!("{title} · {}", format_size(text.len()));
-    let expander = gtk::Expander::new(Some(&title));
-    expander.add_css_class("transcript-block-expander");
-    if let Some(css_class) = expander_css_class {
-        expander.add_css_class(css_class);
-    }
-    let text = Rc::new(text.to_owned());
-    expander.connect_expanded_notify(move |expander| {
-        if expander.is_expanded() && expander.child().is_none() {
-            let label = selectable_label(&text, content_css_class);
-            expander.set_child(Some(&label));
-        }
-    });
-    expander
-}
-
-fn format_size(bytes: usize) -> String {
-    const KIB: f64 = 1024.0;
-    if bytes < 1024 {
-        format!("{bytes} B")
-    } else {
-        format!("{:.1} KiB", bytes as f64 / KIB)
-    }
-}
-
-fn selectable_label(text: &str, css_class: Option<&str>) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    label.set_hexpand(true);
-    label.set_selectable(true);
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    label.set_xalign(0.0);
-    if let Some(css_class) = css_class {
-        label.add_css_class(css_class);
-    }
-    label
-}
-
-const fn role_label(role: TranscriptRole) -> &'static str {
-    match role {
-        TranscriptRole::User => "You",
-        TranscriptRole::Agent => "Agent",
-        TranscriptRole::Thought => "Thought",
-        TranscriptRole::System => "System",
-        TranscriptRole::Tool => "Tool",
-    }
-}
-
-const fn role_css_class(role: TranscriptRole) -> &'static str {
-    match role {
-        TranscriptRole::User => "transcript-message-user",
-        TranscriptRole::Agent | TranscriptRole::System => "transcript-message-agent",
-        TranscriptRole::Thought => "transcript-message-thought",
-        TranscriptRole::Tool => "transcript-message-tool",
-    }
 }

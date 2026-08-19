@@ -273,6 +273,20 @@ impl TranscriptStore {
         self.hydrate_messages(key, rows)
     }
 
+    pub fn all_messages(&self, key: &TranscriptSessionKey) -> StoreResult<Vec<TranscriptMessage>> {
+        let rows = self.query_message_rows(
+            "SELECT m.message_id, m.sequence, m.role, m.state
+             FROM transcript_messages m
+             JOIN transcript_sessions s
+               ON s.provider_id = m.provider_id AND s.session_id = m.session_id
+              AND s.active_generation = m.generation
+             WHERE m.provider_id = ?1 AND m.session_id = ?2
+             ORDER BY m.sequence ASC",
+            params![key.provider_id, key.session_id],
+        )?;
+        self.hydrate_messages(key, rows)
+    }
+
     pub fn messages_before(
         &self,
         key: &TranscriptSessionKey,
@@ -925,6 +939,13 @@ mod tests {
                 .map(|message| message.sequence)
                 .collect::<Vec<_>>(),
             vec![7, 8, 9]
+        );
+        let all = store.all_messages(&session.key).unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|message| message.sequence)
+                .collect::<Vec<_>>(),
+            (0..10).collect::<Vec<_>>()
         );
         let before = store.messages_before(&session.key, 7, 3).unwrap();
         assert_eq!(

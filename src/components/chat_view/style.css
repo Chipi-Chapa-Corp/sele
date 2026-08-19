@@ -21,13 +21,43 @@
 
 .transcript-message {
   border-spacing: var(--sele-space-sm);
+  margin: 0;
+  padding: 0 var(--sele-space-md);
+}
+
+.transcript-message-only {
   margin: var(--sele-space-sm) 0;
   padding: var(--sele-space-md);
 }
 
+.transcript-message-first {
+  margin-top: var(--sele-space-sm);
+  padding: var(--sele-space-md) var(--sele-space-md) 0;
+}
+
+.transcript-message-middle {
+  padding: var(--sele-space-sm) var(--sele-space-md) 0;
+}
+
+.transcript-message-last {
+  margin-bottom: var(--sele-space-sm);
+  padding: var(--sele-space-sm) var(--sele-space-md) var(--sele-space-md);
+}
+
 .transcript-message-user {
   background-color: var(--card-bg-color);
+}
+
+.transcript-message-user.transcript-message-only {
   border-radius: var(--card-radius);
+}
+
+.transcript-message-user.transcript-message-first {
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+}
+
+.transcript-message-user.transcript-message-last {
+  border-radius: 0 0 var(--card-radius) var(--card-radius);
 }
 
 .transcript-message-thought,

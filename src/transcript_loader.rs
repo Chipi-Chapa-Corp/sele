@@ -6,31 +6,11 @@ use sele_agent::{AgentRuntime, TranscriptReplayEvent};
 use sele_core::{AgentSession, TranscriptMessage, TranscriptSession, TranscriptSessionKey};
 use sele_store::{StoreError, TranscriptStore};
 
-pub const TRANSCRIPT_PAGE_SIZE: usize = 100;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PageDirection {
-    Older,
-    Newer,
-}
-
-#[derive(Clone, Debug)]
-pub struct TranscriptPage {
-    pub messages: Vec<TranscriptMessage>,
-    pub has_more: bool,
-}
-
 #[derive(Clone, Debug)]
 pub enum TranscriptLoadEvent {
-    Cached(TranscriptPage),
-    Refreshed(TranscriptPage),
+    Cached(Vec<TranscriptMessage>),
+    Refreshed(Vec<TranscriptMessage>),
     Finished,
-    Failed(String),
-}
-
-#[derive(Clone, Debug)]
-pub enum TranscriptPageEvent {
-    Loaded(TranscriptPage),
     Failed(String),
 }
 
@@ -95,35 +75,6 @@ pub fn load_transcript(
     (receiver, cancellation)
 }
 
-pub fn load_page(
-    key: TranscriptSessionKey,
-    direction: PageDirection,
-    pivot: i64,
-) -> Receiver<TranscriptPageEvent> {
-    let (sender, receiver) = async_channel::bounded(1);
-    let _ = std::thread::Builder::new()
-        .name("sele-transcript-page".into())
-        .spawn(move || {
-            let result = TranscriptStore::open_default().and_then(|store| {
-                let messages = match direction {
-                    PageDirection::Older => {
-                        store.messages_before(&key, pivot, TRANSCRIPT_PAGE_SIZE)?
-                    }
-                    PageDirection::Newer => {
-                        store.messages_after(&key, pivot, TRANSCRIPT_PAGE_SIZE)?
-                    }
-                };
-                Ok(page(messages))
-            });
-            let event = match result {
-                Ok(page) => TranscriptPageEvent::Loaded(page),
-                Err(error) => TranscriptPageEvent::Failed(error.to_string()),
-            };
-            let _ = sender.try_send(event);
-        });
-    receiver
-}
-
 fn run_transcript_load(
     session: AgentSession,
     agent_runtime: AgentRuntime,
@@ -142,9 +93,9 @@ fn run_transcript_load(
         }
     };
     let key = TranscriptSessionKey::new(session.agent.id.as_str(), &session.id);
-    let cached = match store.newest_messages(&key, TRANSCRIPT_PAGE_SIZE) {
+    let cached = match store.all_messages(&key) {
         Ok(messages) => {
-            send(&sender, TranscriptLoadEvent::Cached(page(messages)));
+            send(&sender, TranscriptLoadEvent::Cached(messages));
             true
         }
         Err(StoreError::MissingActiveGeneration(_)) => false,
@@ -206,9 +157,9 @@ fn run_transcript_load(
                     send(&sender, TranscriptLoadEvent::Failed(error.to_string()));
                     return;
                 }
-                match store.newest_messages(&key, TRANSCRIPT_PAGE_SIZE) {
+                match store.all_messages(&key) {
                     Ok(messages) => {
-                        send(&sender, TranscriptLoadEvent::Refreshed(page(messages)));
+                        send(&sender, TranscriptLoadEvent::Refreshed(messages));
                         send(&sender, TranscriptLoadEvent::Finished);
                     }
                     Err(error) => {
@@ -230,11 +181,6 @@ fn run_transcript_load(
         &sender,
         TranscriptLoadEvent::Failed("agent transcript stream ended unexpectedly".into()),
     );
-}
-
-fn page(messages: Vec<TranscriptMessage>) -> TranscriptPage {
-    let has_more = messages.len() == TRANSCRIPT_PAGE_SIZE;
-    TranscriptPage { messages, has_more }
 }
 
 fn send(sender: &Sender<TranscriptLoadEvent>, event: TranscriptLoadEvent) {

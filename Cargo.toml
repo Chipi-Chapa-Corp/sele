@@ -18,6 +18,10 @@ path = "src/main.rs"
 name = "transcript-stress"
 path = "src/bin/transcript_stress.rs"
 
+[[bin]]
+name = "transcript-render-bench"
+path = "src/bin/transcript_render_bench.rs"
+
 [dependencies]
 adw = { package = "libadwaita", version = "0.9.2", features = ["v1_7"] }
 async-channel = "2.5.0"
