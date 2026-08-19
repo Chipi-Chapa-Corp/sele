@@ -1,3 +1,4 @@
+mod button;
 mod chat_row;
 mod chat_sidebar;
 mod chat_view;

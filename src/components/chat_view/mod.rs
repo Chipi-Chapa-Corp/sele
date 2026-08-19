@@ -38,11 +38,153 @@ pub struct ChatView {
     root: gtk::Box,
     title: gtk::Label,
     status: gtk::Label,
+    stale_banner: adw::Banner,
     model: gio::ListStore,
     list: gtk::ListView,
     state: Rc<RefCell<PageState>>,
     request_id: Rc<Cell<u64>>,
+    current_session: Rc<RefCell<Option<AgentSession>>>,
     agent_runtime: AgentRuntime,
+}
+
+#[derive(Clone)]
+struct TranscriptRefresh {
+    status: gtk::Label,
+    stale_banner: glib::WeakRef<adw::Banner>,
+    model: gio::ListStore,
+    list: gtk::ListView,
+    state: Rc<RefCell<PageState>>,
+    request_id: Rc<Cell<u64>>,
+    current_session: Rc<RefCell<Option<AgentSession>>>,
+    agent_runtime: AgentRuntime,
+}
+
+impl TranscriptRefresh {
+    fn retry(&self) {
+        let session = self.current_session.borrow().clone();
+        if let Some(session) = session {
+            self.start(session, true);
+        }
+    }
+
+    fn start(&self, session: AgentSession, preserve_messages: bool) {
+        if let Some(cancellation) = self.state.borrow_mut().cancellation.take() {
+            cancellation.cancel();
+        }
+
+        let request_id = self.request_id.get().wrapping_add(1);
+        self.request_id.set(request_id);
+        *self.state.borrow_mut() = PageState {
+            key: Some(TranscriptSessionKey::new(
+                session.agent.id.as_str(),
+                &session.id,
+            )),
+            ..PageState::default()
+        };
+        *self.current_session.borrow_mut() = Some(session.clone());
+
+        if preserve_messages {
+            self.status.set_visible(false);
+        } else {
+            self.model.remove_all();
+            self.show_status("Loading messages…", None);
+        }
+        if let Some(banner) = self.stale_banner.upgrade() {
+            banner.set_sensitive(!preserve_messages);
+            banner.set_revealed(preserve_messages);
+            if !preserve_messages {
+                banner.set_tooltip_text(None);
+            }
+        }
+
+        let (receiver, cancellation) = load_transcript(session, self.agent_runtime.clone());
+        self.state.borrow_mut().cancellation = Some(cancellation);
+
+        let refresh = self.clone();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(event) = receiver.recv().await {
+                if refresh.request_id.get() != request_id {
+                    return;
+                }
+                match event {
+                    TranscriptLoadEvent::Cached(page) => {
+                        if !preserve_messages {
+                            refresh.replace_with_latest(page);
+                        }
+                        refresh.status.set_visible(false);
+                    }
+                    TranscriptLoadEvent::Refreshed(page) => {
+                        refresh.replace_with_latest(page);
+                        refresh.hide_stale_banner();
+                    }
+                    TranscriptLoadEvent::Finished => {
+                        refresh.state.borrow_mut().cancellation = None;
+                        refresh.hide_stale_banner();
+                        if refresh.model.n_items() == 0 {
+                            refresh.show_status("This chat has no messages", None);
+                        } else {
+                            refresh.status.set_visible(false);
+                        }
+                        return;
+                    }
+                    TranscriptLoadEvent::Failed(error) => {
+                        refresh.state.borrow_mut().cancellation = None;
+                        if refresh.model.n_items() == 0 {
+                            refresh.hide_stale_banner();
+                            refresh.show_status("Couldn’t load messages", Some(&error));
+                        } else {
+                            refresh.status.set_visible(false);
+                            refresh.show_stale_banner(&error);
+                        }
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    fn replace_with_latest(&self, page: TranscriptPage) {
+        let additions = boxed_messages(page.messages);
+        self.model.splice(0, self.model.n_items(), &additions);
+        {
+            let mut state = self.state.borrow_mut();
+            state.has_older = page.has_more;
+            state.has_newer = false;
+            state.loading_older = false;
+            state.loading_newer = false;
+        }
+        let list = self.list.clone();
+        glib::idle_add_local_once(move || {
+            let Some(count) = list.model().map(|model| model.n_items()) else {
+                return;
+            };
+            if count > 0 {
+                list.scroll_to(count - 1, gtk::ListScrollFlags::NONE, None);
+            }
+        });
+    }
+
+    fn show_stale_banner(&self, error: &str) {
+        if let Some(banner) = self.stale_banner.upgrade() {
+            banner.set_sensitive(true);
+            banner.set_tooltip_text(Some(error));
+            banner.set_revealed(true);
+        }
+    }
+
+    fn hide_stale_banner(&self) {
+        if let Some(banner) = self.stale_banner.upgrade() {
+            banner.set_sensitive(true);
+            banner.set_tooltip_text(None);
+            banner.set_revealed(false);
+        }
+    }
+
+    fn show_status(&self, text: &str, tooltip: Option<&str>) {
+        self.status.set_text(text);
+        self.status.set_tooltip_text(tooltip);
+        self.status.set_visible(true);
+    }
 }
 
 impl ChatView {
@@ -58,6 +200,9 @@ impl ChatView {
         status.set_wrap(true);
         status.set_xalign(0.0);
 
+        let stale_banner = adw::Banner::new("Couldn’t refresh — showing cached messages");
+        stale_banner.set_button_label(Some("Retry"));
+
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let selection = gtk::NoSelection::new(Some(model.clone()));
         let list = gtk::ListView::new(Some(selection), Some(message_factory()));
@@ -70,23 +215,38 @@ impl ChatView {
         viewport.set_vexpand(true);
         viewport.set_child(Some(&list));
 
+        let header = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        header.add_css_class("chat-header");
+        header.append(&title);
+
+        let transcript = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        transcript.add_css_class("transcript-content");
+        transcript.set_vexpand(true);
+        transcript.append(&status);
+        transcript.append(&viewport);
+
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("chat-body");
         root.set_vexpand(true);
-        root.append(&title);
-        root.append(&status);
-        root.append(&viewport);
+        root.append(&header);
+        root.append(&stale_banner);
+        root.append(&transcript);
 
         let view = Self {
             root,
             title,
             status,
+            stale_banner,
             model,
             list,
             state: Rc::new(RefCell::new(PageState::default())),
             request_id: Rc::new(Cell::new(0)),
+            current_session: Rc::new(RefCell::new(None)),
             agent_runtime,
         };
+        let refresh = view.refresh_context();
+        view.stale_banner
+            .connect_button_clicked(move |_| refresh.retry());
         view.connect_pagination(&viewport);
         view
     }
@@ -101,21 +261,9 @@ impl ChatView {
             return;
         }
 
-        if let Some(cancellation) = self.state.borrow_mut().cancellation.take() {
-            cancellation.cancel();
-        }
-        let request_id = self.request_id.get().wrapping_add(1);
-        self.request_id.set(request_id);
-        *self.state.borrow_mut() = PageState {
-            key: Some(key),
-            ..PageState::default()
-        };
-
         self.title.set_text(&chat.name);
         self.title
             .set_tooltip_text(Some(&format!("{} · {}", chat.agent_name, chat.cwd)));
-        self.model.remove_all();
-        self.show_status("Loading messages…", None);
 
         let session = AgentSession {
             agent: AgentDescriptor::new(&chat.agent_id, &chat.agent_name),
@@ -124,45 +272,20 @@ impl ChatView {
             title: Some(chat.name.clone()),
             updated_at: chat.updated_at.clone(),
         };
-        let (receiver, cancellation) = load_transcript(session, self.agent_runtime.clone());
-        self.state.borrow_mut().cancellation = Some(cancellation);
+        self.refresh_context().start(session, false);
+    }
 
-        let view = self.clone();
-        glib::MainContext::default().spawn_local(async move {
-            while let Ok(event) = receiver.recv().await {
-                if view.request_id.get() != request_id {
-                    return;
-                }
-                match event {
-                    TranscriptLoadEvent::Cached(page) => {
-                        view.replace_with_latest(page);
-                        view.show_status("Refreshing from agent…", None);
-                    }
-                    TranscriptLoadEvent::Refreshed(page) => {
-                        view.replace_with_latest(page);
-                    }
-                    TranscriptLoadEvent::Finished => {
-                        view.state.borrow_mut().cancellation = None;
-                        if view.model.n_items() == 0 {
-                            view.show_status("This chat has no messages", None);
-                        } else {
-                            view.status.set_visible(false);
-                        }
-                        return;
-                    }
-                    TranscriptLoadEvent::Failed(error) => {
-                        view.state.borrow_mut().cancellation = None;
-                        let message = if view.model.n_items() == 0 {
-                            "Couldn’t load messages"
-                        } else {
-                            "Showing cached messages; refresh failed"
-                        };
-                        view.show_status(message, Some(&error));
-                        return;
-                    }
-                }
-            }
-        });
+    fn refresh_context(&self) -> TranscriptRefresh {
+        TranscriptRefresh {
+            status: self.status.clone(),
+            stale_banner: self.stale_banner.downgrade(),
+            model: self.model.clone(),
+            list: self.list.clone(),
+            state: Rc::clone(&self.state),
+            request_id: Rc::clone(&self.request_id),
+            current_session: Rc::clone(&self.current_session),
+            agent_runtime: self.agent_runtime.clone(),
+        }
     }
 
     fn connect_pagination(&self, viewport: &gtk::ScrolledWindow) {
@@ -232,27 +355,6 @@ impl ChatView {
                     view.finish_page_request(direction);
                     view.show_status("Couldn’t load more messages", Some(&error));
                 }
-            }
-        });
-    }
-
-    fn replace_with_latest(&self, page: TranscriptPage) {
-        let additions = boxed_messages(page.messages);
-        self.model.splice(0, self.model.n_items(), &additions);
-        {
-            let mut state = self.state.borrow_mut();
-            state.has_older = page.has_more;
-            state.has_newer = false;
-            state.loading_older = false;
-            state.loading_newer = false;
-        }
-        let list = self.list.clone();
-        glib::idle_add_local_once(move || {
-            let Some(count) = list.model().map(|model| model.n_items()) else {
-                return;
-            };
-            if count > 0 {
-                list.scroll_to(count - 1, gtk::ListScrollFlags::NONE, None);
             }
         });
     }

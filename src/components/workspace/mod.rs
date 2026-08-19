@@ -5,6 +5,7 @@ use async_channel::Receiver;
 use gtk::prelude::*;
 use sele_agent::{DiscoveryEvent, start_builtin_runtime};
 
+use super::button::build_button;
 use super::{ChatSidebar, ChatView};
 
 pub(super) const STYLE: &str = include_str!("style.css");
@@ -21,7 +22,11 @@ pub fn build_workspace() -> gtk::Paned {
     chat_list_scroll.set_child(Some(chats.widget()));
 
     let chat_list = workspace_pane("chat-list-pane", 220);
-    chat_list.append(&side_header("Chats", gtk::PackType::Start));
+    let (chat_list_header, chat_search_bar, chat_search_entry) = chat_list_header();
+    chat_search_bar.set_key_capture_widget(Some(chats.widget()));
+    chats.bind_search_entry(&chat_search_entry);
+    chat_list.append(&chat_list_header);
+    chat_list.append(&chat_search_bar);
     chat_list.append(&chat_list_scroll);
     chat_list.append(chats.status_widget());
 
@@ -68,26 +73,58 @@ fn workspace_pane(css_class: &str, minimum_width: i32) -> gtk::Box {
     pane
 }
 
-fn side_header(title: &str, controls_side: gtk::PackType) -> gtk::WindowHandle {
-    let handle = gtk::WindowHandle::new();
-    handle.add_css_class("side-pane-header");
+fn side_header(title: &str, controls_side: gtk::PackType) -> adw::HeaderBar {
+    let header = adw::HeaderBar::builder()
+        .show_start_title_buttons(controls_side == gtk::PackType::Start)
+        .show_end_title_buttons(controls_side == gtk::PackType::End)
+        .build();
+    header.add_css_class("flat");
+    header.set_title_widget(Some(&pane_title(title)));
+    header
+}
 
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    content.add_css_class("side-pane-header-content");
-    let controls = gtk::WindowControls::new(controls_side);
-    let title = pane_title(title);
+fn chat_list_header() -> (adw::HeaderBar, gtk::SearchBar, gtk::SearchEntry) {
+    let header = side_header("Chats", gtk::PackType::Start);
+    let settings = header_icon_button("applications-system-symbolic", "Settings");
+    let new_chat = header_icon_button("chat-message-new-symbolic", "New Chat");
+    let search = header_icon_button("system-search-symbolic", "Search");
+    let search_entry = gtk::SearchEntry::new();
+    search_entry.set_hexpand(true);
+    search_entry.set_halign(gtk::Align::Fill);
+    search_entry.set_placeholder_text(Some("Search chats"));
+    let search_bar = gtk::SearchBar::new();
+    search_bar.set_hexpand(true);
+    search_bar.set_halign(gtk::Align::Fill);
+    search_bar.set_child(Some(&search_entry));
+    search_bar.connect_entry(&search_entry);
 
-    if controls_side == gtk::PackType::Start {
-        content.append(&controls);
-        content.append(&title);
-    } else {
-        title.set_hexpand(true);
-        content.append(&title);
-        content.append(&controls);
-    }
+    let search_bar_for_button = search_bar.clone();
+    let search_entry_for_button = search_entry.clone();
+    search.connect_clicked(move |_| {
+        let enabled = !search_bar_for_button.is_search_mode();
+        search_bar_for_button.set_search_mode(enabled);
+        if enabled {
+            search_entry_for_button.grab_focus();
+        }
+    });
 
-    handle.set_child(Some(&content));
-    handle
+    let search_entry_for_bar = search_entry.clone();
+    search_bar.connect_search_mode_enabled_notify(move |bar| {
+        if !bar.is_search_mode() {
+            search_entry_for_bar.set_text("");
+        }
+    });
+
+    header.pack_start(&settings);
+    header.pack_end(&new_chat);
+    header.pack_end(&search);
+    (header, search_bar, search_entry)
+}
+
+fn header_icon_button(icon_name: &str, tooltip: &str) -> gtk::Button {
+    let button = build_button(Some(icon_name), None);
+    button.set_tooltip_text(Some(tooltip));
+    button
 }
 
 fn chat_drag_strip() -> gtk::WindowHandle {

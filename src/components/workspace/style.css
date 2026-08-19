@@ -1,6 +1,5 @@
 :root {
   --sele-workspace-resize-handle-width: 5px;
-  --sele-workspace-side-header-height: 54px;
   --sele-workspace-chat-drag-height: 8px;
 }
 
@@ -13,16 +12,6 @@
 .sidebar-pane {
   background-color: var(--sidebar-bg-color);
   color: var(--sidebar-fg-color);
-}
-
-.side-pane-header {
-  min-height: var(--sele-workspace-side-header-height);
-  padding: 0 var(--sele-space-lg);
-  background-color: transparent;
-}
-
-.side-pane-header-content {
-  border-spacing: var(--sele-space-md);
 }
 
 .chat-drag-strip {

@@ -15,14 +15,37 @@ pub(super) const STYLE: &str = include_str!("style.css");
 #[derive(Clone, Debug)]
 enum TreeItem {
     Project(ProjectNode),
-    Chat(ChatSummary),
+    Chat(ChatNode),
+}
+
+#[derive(Clone, Debug)]
+struct ChatNode {
+    summary: ChatSummary,
+    search_text: String,
 }
 
 #[derive(Clone, Debug)]
 struct ProjectNode {
     name: String,
     cwd: String,
-    chats: Rc<[ChatSummary]>,
+    search_text: String,
+    chats: Rc<[ChatNode]>,
+}
+
+impl ProjectNode {
+    fn matches(&self, terms: &[String]) -> bool {
+        matches_search(&self.search_text, terms)
+            || self
+                .chats
+                .iter()
+                .any(|chat| matches_search(&chat.search_text, terms))
+    }
+}
+
+#[derive(Default)]
+struct SearchState {
+    terms: Vec<String>,
+    child_filters: Vec<glib::WeakRef<gtk::CustomFilter>>,
 }
 
 #[derive(Default)]
@@ -31,32 +54,113 @@ struct CurrentChatState {
     bound_rows: HashMap<TranscriptSessionKey, glib::WeakRef<gtk::Widget>>,
 }
 
+fn project_filter(search: Rc<RefCell<SearchState>>) -> gtk::CustomFilter {
+    gtk::CustomFilter::new(move |object| {
+        let Some(item) = object.downcast_ref::<glib::BoxedAnyObject>() else {
+            return false;
+        };
+        let item = item.borrow::<TreeItem>();
+        let TreeItem::Project(project) = &*item else {
+            return false;
+        };
+        project.matches(&search.borrow().terms)
+    })
+}
+
+fn filtered_chats(
+    project: &ProjectNode,
+    search: &Rc<RefCell<SearchState>>,
+) -> gtk::FilterListModel {
+    let children = gio::ListStore::new::<glib::BoxedAnyObject>();
+    for chat in project.chats.iter().cloned() {
+        children.append(&glib::BoxedAnyObject::new(TreeItem::Chat(chat)));
+    }
+
+    let project_search_text = project.search_text.clone();
+    let search_for_filter = Rc::clone(search);
+    let filter = gtk::CustomFilter::new(move |object| {
+        let Some(item) = object.downcast_ref::<glib::BoxedAnyObject>() else {
+            return false;
+        };
+        let item = item.borrow::<TreeItem>();
+        let TreeItem::Chat(chat) = &*item else {
+            return false;
+        };
+        let terms = &search_for_filter.borrow().terms;
+        matches_search(&project_search_text, terms) || matches_search(&chat.search_text, terms)
+    });
+    search.borrow_mut().child_filters.push(filter.downgrade());
+
+    gtk::FilterListModel::new(Some(children), Some(filter))
+}
+
+fn set_search_query(search: &RefCell<SearchState>, root_filter: &gtk::CustomFilter, query: &str) {
+    let terms = normalize_search_terms(query);
+    let child_filters = {
+        let mut search = search.borrow_mut();
+        if search.terms == terms {
+            return;
+        }
+        search.terms = terms;
+        search
+            .child_filters
+            .drain(..)
+            .filter_map(|filter| filter.upgrade())
+            .collect::<Vec<_>>()
+    };
+
+    root_filter.changed(gtk::FilterChange::Different);
+    for filter in child_filters {
+        filter.changed(gtk::FilterChange::Different);
+        search.borrow_mut().child_filters.push(filter.downgrade());
+    }
+}
+
+fn searchable_text<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
+    values
+        .into_iter()
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalize_search_terms(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+fn matches_search(search_text: &str, terms: &[String]) -> bool {
+    terms.iter().all(|term| search_text.contains(term))
+}
+
 #[derive(Clone)]
 pub struct ChatSidebar {
     root_model: gio::ListStore,
+    root_filter: gtk::CustomFilter,
     tree_model: gtk::TreeListModel,
     selection: gtk::SingleSelection,
     list: gtk::ListView,
     status: gtk::Label,
     current_chat: Rc<RefCell<CurrentChatState>>,
+    search: Rc<RefCell<SearchState>>,
     chat_view: ChatView,
 }
 
 impl ChatSidebar {
     pub fn new(chat_view: ChatView) -> Self {
         let root_model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let tree_model = gtk::TreeListModel::new(root_model.clone(), false, true, |object| {
+        let search = Rc::new(RefCell::new(SearchState::default()));
+        let root_filter = project_filter(Rc::clone(&search));
+        let filtered_root =
+            gtk::FilterListModel::new(Some(root_model.clone()), Some(root_filter.clone()));
+        let search_for_children = Rc::clone(&search);
+        let tree_model = gtk::TreeListModel::new(filtered_root, false, true, move |object| {
             let item = object
                 .downcast_ref::<glib::BoxedAnyObject>()?
                 .borrow::<TreeItem>();
             let TreeItem::Project(project) = &*item else {
                 return None;
             };
-            let children = gio::ListStore::new::<glib::BoxedAnyObject>();
-            for chat in project.chats.iter().cloned() {
-                children.append(&glib::BoxedAnyObject::new(TreeItem::Chat(chat)));
-            }
-            Some(children.upcast())
+            Some(filtered_chats(project, &search_for_children).upcast())
         });
         let selection = gtk::SingleSelection::new(Some(tree_model.clone()));
         selection.set_autoselect(false);
@@ -79,11 +183,13 @@ impl ChatSidebar {
 
         let sidebar = Self {
             root_model,
+            root_filter,
             tree_model,
             selection,
             list,
             status,
             current_chat,
+            search,
             chat_view,
         };
         sidebar.connect_activation();
@@ -96,6 +202,14 @@ impl ChatSidebar {
 
     pub fn status_widget(&self) -> &gtk::Label {
         &self.status
+    }
+
+    pub fn bind_search_entry(&self, entry: &gtk::SearchEntry) {
+        let search = Rc::clone(&self.search);
+        let root_filter = self.root_filter.clone();
+        entry.connect_search_changed(move |entry| {
+            set_search_query(&search, &root_filter, entry.text().as_str());
+        });
     }
 
     pub fn update(&self, sessions: &[AgentSession], failures: &[String], loading: bool) {
@@ -123,7 +237,7 @@ impl ChatSidebar {
                     .sessions
                     .into_iter()
                     .map(|session| {
-                        ChatSummary::new(
+                        let summary = ChatSummary::new(
                             &session.id,
                             session.agent.id.as_str(),
                             &session.agent.name,
@@ -131,12 +245,23 @@ impl ChatSidebar {
                             session.display_title(),
                             session.updated_at,
                             ChatStatus::Idle,
-                        )
+                        );
+                        let search_text = searchable_text([
+                            summary.name.as_str(),
+                            summary.agent_name.as_str(),
+                            summary.cwd.as_str(),
+                        ]);
+                        ChatNode {
+                            summary,
+                            search_text,
+                        }
                     })
                     .collect::<Vec<_>>()
                     .into();
+                let name = cwd_display_name(&group.cwd);
                 glib::BoxedAnyObject::new(TreeItem::Project(ProjectNode {
-                    name: cwd_display_name(&group.cwd),
+                    search_text: searchable_text([name.as_str(), cwd.as_str()]),
+                    name,
                     cwd,
                     chats,
                 }))
@@ -169,6 +294,7 @@ impl ChatSidebar {
             match &*item.borrow::<TreeItem>() {
                 TreeItem::Project(_) => row.set_expanded(!row.is_expanded()),
                 TreeItem::Chat(chat) => {
+                    let chat = &chat.summary;
                     set_current_chat(
                         &current_chat,
                         Some(TranscriptSessionKey::new(&chat.agent_id, &chat.id)),
@@ -188,6 +314,7 @@ impl ChatSidebar {
             let TreeItem::Chat(chat) = &*item else {
                 return None;
             };
+            let chat = &chat.summary;
             (chat.agent_id == key.provider_id && chat.id == key.session_id)
                 .then(|| (position, chat.clone()))
         })
@@ -269,11 +396,14 @@ fn tree_factory(current_chat: Rc<RefCell<CurrentChatState>>) -> gtk::SignalListI
                 content.add_css_class("chat-tree-project");
                 content.set_tooltip_text(Some(&project.cwd));
                 let label = gtk::Label::new(Some(&project.name));
+                label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                label.set_hexpand(true);
                 label.set_xalign(0.0);
                 content.append(&label);
                 list_item.set_selectable(false);
             }
             TreeItem::Chat(chat) => {
+                let chat = &chat.summary;
                 content.add_css_class("chat-tree-chat");
                 content.set_tooltip_text(Some(&format!("{} · {}", chat.agent_name, chat.name)));
 
@@ -396,4 +526,25 @@ fn set_hovered_chat(
         next.add_css_class("chat-row-hovered");
     }
     *hovered.borrow_mut() = next.map(|widget| widget.downgrade());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{matches_search, normalize_search_terms, searchable_text};
+
+    #[test]
+    fn search_is_case_insensitive_and_matches_all_terms() {
+        let text = searchable_text(["Fix Native Search", "Codex", "/Projects/Sele"]);
+
+        assert!(matches_search(&text, &normalize_search_terms("SELE codex")));
+        assert!(!matches_search(
+            &text,
+            &normalize_search_terms("sele claude")
+        ));
+    }
+
+    #[test]
+    fn empty_search_matches_every_row() {
+        assert!(matches_search("any chat", &normalize_search_terms("   ")));
+    }
 }

@@ -22,6 +22,10 @@
   color: var(--accent-color);
 }
 
+.chat-tree treeexpander > expander:checked {
+  -gtk-icon-transform: translateY(-1px);
+}
+
 .chat-tree-chat {
   border-spacing: var(--sele-space-xs);
 }
