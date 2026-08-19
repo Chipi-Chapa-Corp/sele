@@ -49,6 +49,7 @@ impl AgentSession {
     pub fn display_title(&self) -> String {
         self.title
             .as_deref()
+            .and_then(|title| title.lines().next())
             .map(str::trim)
             .filter(|title| !title.is_empty())
             .map(ToOwned::to_owned)
@@ -125,5 +126,13 @@ mod tests {
     fn uses_the_last_path_component_as_the_group_label() {
         assert_eq!(cwd_display_name(Path::new("/work/sele")), "sele");
         assert_eq!(cwd_display_name(Path::new("/")), "/");
+    }
+
+    #[test]
+    fn uses_only_the_trimmed_first_title_line() {
+        let mut session = session("codex", "session", "/work/sele", "2026-01-01T00:00:00Z");
+        session.title = Some("  First line  \nSecond line\nThird line".into());
+
+        assert_eq!(session.display_title(), "First line");
     }
 }

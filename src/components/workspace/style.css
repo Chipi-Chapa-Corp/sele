@@ -1,6 +1,5 @@
 :root {
   --sele-workspace-resize-handle-width: 5px;
-  --sele-workspace-chat-drag-height: 8px;
 }
 
 .workspace-pane {
@@ -12,11 +11,6 @@
 .sidebar-pane {
   background-color: var(--sidebar-bg-color);
   color: var(--sidebar-fg-color);
-}
-
-.chat-drag-strip {
-  min-height: var(--sele-workspace-chat-drag-height);
-  background-color: transparent;
 }
 
 .workspace-paned > separator {

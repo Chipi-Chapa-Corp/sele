@@ -31,7 +31,6 @@ pub fn build_workspace() -> gtk::Paned {
     chat_list.append(chats.status_widget());
 
     let chat_view = workspace_pane("chat-view-pane", 320);
-    chat_view.append(&chat_drag_strip());
     chat_view.append(transcript.widget());
 
     let sidebar = workspace_pane("sidebar-pane", 240);
@@ -125,12 +124,6 @@ fn header_icon_button(icon_name: &str, tooltip: &str) -> gtk::Button {
     let button = build_button(Some(icon_name), None);
     button.set_tooltip_text(Some(tooltip));
     button
-}
-
-fn chat_drag_strip() -> gtk::WindowHandle {
-    let handle = gtk::WindowHandle::new();
-    handle.add_css_class("chat-drag-strip");
-    handle
 }
 
 fn pane_title(text: &str) -> gtk::Label {

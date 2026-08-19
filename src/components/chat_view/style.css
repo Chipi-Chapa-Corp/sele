@@ -1,7 +1,3 @@
-.chat-header {
-  padding: var(--sele-space-md) var(--sele-space-xl) var(--sele-space-sm);
-}
-
 .transcript-content {
   border-spacing: var(--sele-space-sm);
   padding: 0 var(--sele-space-xl) var(--sele-space-xl);
@@ -9,6 +5,15 @@
 
 .transcript-status {
   color: color-mix(in srgb, currentColor var(--dim-opacity), transparent);
+}
+
+.transcript-text-view,
+.transcript-text-view > text {
+  background-color: transparent;
+}
+
+.transcript-text-view > text {
+  padding: var(--sele-space-md);
 }
 
 .transcript-list {

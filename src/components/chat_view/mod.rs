@@ -1,8 +1,6 @@
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::glib::prelude::*;
@@ -16,12 +14,9 @@ use crate::transcript_loader::{TranscriptLoadCancellation, TranscriptLoadEvent, 
 pub(super) const STYLE: &str = include_str!("style.css");
 
 mod message_row;
+mod text_view;
 
-use message_row::materialized_message_row;
-
-const ROW_BUILD_BUDGET: Duration = Duration::from_millis(2);
-const BOTTOM_STABLE_FRAMES: u8 = 10;
-const TAIL_PREVIEW_MESSAGES: usize = 32;
+use text_view::TranscriptTextView;
 
 #[derive(Default)]
 struct TranscriptState {
@@ -32,20 +27,15 @@ struct TranscriptState {
 #[derive(Clone)]
 pub struct ChatView {
     root: gtk::Box,
-    title: gtk::Label,
     status: gtk::Label,
     stale_banner: adw::Banner,
-    messages: gtk::Box,
+    transcript: TranscriptTextView,
     viewport: gtk::ScrolledWindow,
-    preview_messages: gtk::Box,
-    preview_viewport: gtk::ScrolledWindow,
     state: Rc<RefCell<TranscriptState>>,
     request_id: Rc<Cell<u64>>,
-    render_id: Rc<Cell<u64>>,
-    rendering: Rc<Cell<bool>>,
+    reveal_id: Rc<Cell<u64>>,
     has_transcript: Rc<Cell<bool>>,
     load_finished: Rc<Cell<bool>>,
-    stick_to_bottom: Rc<Cell<bool>>,
     current_session: Rc<RefCell<Option<AgentSession>>>,
     agent_runtime: AgentRuntime,
 }
@@ -54,17 +44,13 @@ pub struct ChatView {
 struct TranscriptRefresh {
     status: gtk::Label,
     stale_banner: glib::WeakRef<adw::Banner>,
-    messages: gtk::Box,
+    transcript: TranscriptTextView,
     viewport: gtk::ScrolledWindow,
-    preview_messages: gtk::Box,
-    preview_viewport: gtk::ScrolledWindow,
     state: Rc<RefCell<TranscriptState>>,
     request_id: Rc<Cell<u64>>,
-    render_id: Rc<Cell<u64>>,
-    rendering: Rc<Cell<bool>>,
+    reveal_id: Rc<Cell<u64>>,
     has_transcript: Rc<Cell<bool>>,
     load_finished: Rc<Cell<bool>>,
-    stick_to_bottom: Rc<Cell<bool>>,
     current_session: Rc<RefCell<Option<AgentSession>>>,
     agent_runtime: AgentRuntime,
 }
@@ -84,14 +70,9 @@ impl TranscriptRefresh {
 
         let request_id = self.request_id.get().wrapping_add(1);
         self.request_id.set(request_id);
-        self.render_id.set(self.render_id.get().wrapping_add(1));
-        self.rendering.set(false);
+        self.reveal_id.set(self.reveal_id.get().wrapping_add(1));
         self.load_finished.set(false);
-        self.stick_to_bottom.set(false);
         self.viewport.set_opacity(1.0);
-        self.preview_viewport.set_visible(false);
-        self.preview_viewport.set_opacity(0.0);
-        clear_messages(&self.preview_messages);
         *self.state.borrow_mut() = TranscriptState {
             key: Some(TranscriptSessionKey::new(
                 session.agent.id.as_str(),
@@ -102,12 +83,11 @@ impl TranscriptRefresh {
         *self.current_session.borrow_mut() = Some(session.clone());
 
         if preserve_messages {
-            self.has_transcript
-                .set(self.messages.first_child().is_some());
+            self.has_transcript.set(!self.transcript.is_empty());
             self.status.set_visible(false);
         } else {
             self.has_transcript.set(false);
-            clear_messages(&self.messages);
+            self.transcript.clear();
             self.show_status("Loading messages…", None);
         }
         if let Some(banner) = self.stale_banner.upgrade() {
@@ -141,9 +121,7 @@ impl TranscriptRefresh {
                         refresh.state.borrow_mut().cancellation = None;
                         refresh.load_finished.set(true);
                         refresh.hide_stale_banner();
-                        if !refresh.rendering.get() {
-                            refresh.show_finished_status();
-                        }
+                        refresh.show_finished_status();
                         return;
                     }
                     TranscriptLoadEvent::Failed(error) => {
@@ -164,72 +142,28 @@ impl TranscriptRefresh {
     }
 
     fn replace_transcript(&self, mut messages: Vec<TranscriptMessage>) {
-        let render_id = self.render_id.get().wrapping_add(1);
-        self.render_id.set(render_id);
         messages.sort_by_key(|message| message.sequence);
         self.has_transcript.set(!messages.is_empty());
-        self.rendering.set(!messages.is_empty());
-        self.stick_to_bottom.set(!messages.is_empty());
-        clear_messages(&self.messages);
-        clear_messages(&self.preview_messages);
+        let reveal_id = self.reveal_id.get().wrapping_add(1);
+        self.reveal_id.set(reveal_id);
         if messages.is_empty() {
+            self.transcript.clear();
             self.viewport.set_opacity(1.0);
-            self.preview_viewport.set_visible(false);
             if self.load_finished.get() {
                 self.show_finished_status();
             }
             return;
         }
-
-        for message in &messages[messages.len().saturating_sub(TAIL_PREVIEW_MESSAGES)..] {
-            self.preview_messages
-                .append(&materialized_message_row(message));
-        }
         self.viewport.set_opacity(0.0);
-        self.preview_viewport.set_opacity(0.0);
-        self.preview_viewport.set_visible(true);
-        reveal_tail_after_layout(
-            &self.preview_viewport,
+        self.transcript.replace(&messages);
+        self.transcript.request_scroll_to_end();
+        reveal_bottom_after_layout(
+            &self.transcript,
+            &self.viewport,
             &self.status,
-            Rc::clone(&self.render_id),
-            render_id,
+            reveal_id,
+            Rc::clone(&self.reveal_id),
         );
-
-        let queue = Rc::new(RefCell::new(VecDeque::from(messages)));
-        let current_render_id = Rc::clone(&self.render_id);
-        let rendering = Rc::clone(&self.rendering);
-        let stick_to_bottom = Rc::clone(&self.stick_to_bottom);
-        let viewport = self.viewport.clone();
-        let preview_viewport = self.preview_viewport.clone();
-        self.messages.add_tick_callback(move |container, _| {
-            if current_render_id.get() != render_id {
-                return glib::ControlFlow::Break;
-            }
-
-            let started = Instant::now();
-            let mut built = 0;
-            while built == 0 || started.elapsed() < ROW_BUILD_BUDGET {
-                let Some(message) = queue.borrow_mut().pop_back() else {
-                    break;
-                };
-                container.prepend(&materialized_message_row(&message));
-                built += 1;
-            }
-
-            if queue.borrow().is_empty() {
-                rendering.set(false);
-                finish_bottom_pinning_after_layout(
-                    &viewport,
-                    &preview_viewport,
-                    Rc::clone(&stick_to_bottom),
-                    Rc::clone(&current_render_id),
-                    render_id,
-                );
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
     }
 
     fn show_finished_status(&self) {
@@ -265,11 +199,6 @@ impl TranscriptRefresh {
 
 impl ChatView {
     pub fn new(agent_runtime: AgentRuntime) -> Self {
-        let title = gtk::Label::new(Some("Select a chat"));
-        title.add_css_class("heading");
-        title.set_halign(gtk::Align::Start);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-
         let status = gtk::Label::new(Some("Select a chat to load its messages"));
         status.add_css_class("transcript-status");
         status.set_halign(gtk::Align::Start);
@@ -279,102 +208,36 @@ impl ChatView {
         let stale_banner = adw::Banner::new("Couldn’t refresh — showing cached messages");
         stale_banner.set_button_label(Some("Retry"));
 
-        let messages = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        messages.add_css_class("transcript-list");
-
-        let top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        top_spacer.set_vexpand(true);
-
-        let transcript_canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        transcript_canvas.set_vexpand(true);
-        transcript_canvas.append(&top_spacer);
-        transcript_canvas.append(&messages);
+        let transcript_view = TranscriptTextView::new();
 
         let viewport = gtk::ScrolledWindow::new();
         viewport.set_hscrollbar_policy(gtk::PolicyType::Never);
         viewport.set_vexpand(true);
-        viewport.set_child(Some(&transcript_canvas));
-
-        let preview_messages = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        preview_messages.add_css_class("transcript-list");
-
-        let preview_top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        preview_top_spacer.set_vexpand(true);
-
-        let preview_canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        preview_canvas.set_vexpand(true);
-        preview_canvas.append(&preview_top_spacer);
-        preview_canvas.append(&preview_messages);
-
-        let preview_viewport = gtk::ScrolledWindow::new();
-        preview_viewport.set_hscrollbar_policy(gtk::PolicyType::Never);
-        preview_viewport.set_hexpand(true);
-        preview_viewport.set_vexpand(true);
-        preview_viewport.set_child(Some(&preview_canvas));
-        preview_viewport.set_opacity(0.0);
-        preview_viewport.set_visible(false);
-
-        let transcript_overlay = gtk::Overlay::new();
-        transcript_overlay.set_vexpand(true);
-        transcript_overlay.set_child(Some(&viewport));
-        transcript_overlay.add_overlay(&preview_viewport);
-
-        let stick_to_bottom = Rc::new(Cell::new(false));
-        viewport.vadjustment().connect_upper_notify({
-            let stick_to_bottom = Rc::clone(&stick_to_bottom);
-            let pin_scheduled = Rc::new(Cell::new(false));
-            move |adjustment| {
-                if !stick_to_bottom.get() || pin_scheduled.replace(true) {
-                    return;
-                }
-
-                let adjustment = adjustment.downgrade();
-                let stick_to_bottom = Rc::clone(&stick_to_bottom);
-                let pin_scheduled = Rc::clone(&pin_scheduled);
-                glib::idle_add_local_once(move || {
-                    pin_scheduled.set(false);
-                    if stick_to_bottom.get()
-                        && let Some(adjustment) = adjustment.upgrade()
-                    {
-                        pin_adjustment_to_bottom(&adjustment);
-                    }
-                });
-            }
-        });
-
-        let header = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        header.add_css_class("chat-header");
-        header.append(&title);
+        viewport.set_child(Some(transcript_view.widget()));
 
         let transcript = gtk::Box::new(gtk::Orientation::Vertical, 0);
         transcript.add_css_class("transcript-content");
         transcript.set_vexpand(true);
         transcript.append(&status);
-        transcript.append(&transcript_overlay);
+        transcript.append(&viewport);
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("chat-body");
         root.set_vexpand(true);
-        root.append(&header);
         root.append(&stale_banner);
         root.append(&transcript);
 
         let view = Self {
             root,
-            title,
             status,
             stale_banner,
-            messages,
+            transcript: transcript_view,
             viewport,
-            preview_messages,
-            preview_viewport,
             state: Rc::new(RefCell::new(TranscriptState::default())),
             request_id: Rc::new(Cell::new(0)),
-            render_id: Rc::new(Cell::new(0)),
-            rendering: Rc::new(Cell::new(false)),
+            reveal_id: Rc::new(Cell::new(0)),
             has_transcript: Rc::new(Cell::new(false)),
             load_finished: Rc::new(Cell::new(false)),
-            stick_to_bottom,
             current_session: Rc::new(RefCell::new(None)),
             agent_runtime,
         };
@@ -394,10 +257,6 @@ impl ChatView {
             return;
         }
 
-        self.title.set_text(&chat.name);
-        self.title
-            .set_tooltip_text(Some(&format!("{} · {}", chat.agent_name, chat.cwd)));
-
         let session = AgentSession {
             agent: AgentDescriptor::new(&chat.agent_id, &chat.agent_name),
             id: chat.id.clone(),
@@ -412,26 +271,16 @@ impl ChatView {
         TranscriptRefresh {
             status: self.status.clone(),
             stale_banner: self.stale_banner.downgrade(),
-            messages: self.messages.clone(),
+            transcript: self.transcript.clone(),
             viewport: self.viewport.clone(),
-            preview_messages: self.preview_messages.clone(),
-            preview_viewport: self.preview_viewport.clone(),
             state: Rc::clone(&self.state),
             request_id: Rc::clone(&self.request_id),
-            render_id: Rc::clone(&self.render_id),
-            rendering: Rc::clone(&self.rendering),
+            reveal_id: Rc::clone(&self.reveal_id),
             has_transcript: Rc::clone(&self.has_transcript),
             load_finished: Rc::clone(&self.load_finished),
-            stick_to_bottom: Rc::clone(&self.stick_to_bottom),
             current_session: Rc::clone(&self.current_session),
             agent_runtime: self.agent_runtime.clone(),
         }
-    }
-}
-
-fn clear_messages(messages: &gtk::Box) {
-    while let Some(row) = messages.first_child() {
-        messages.remove(&row);
     }
 }
 
@@ -439,65 +288,50 @@ fn pin_adjustment_to_bottom(adjustment: &gtk::Adjustment) {
     adjustment.set_value((adjustment.upper() - adjustment.page_size()).max(adjustment.lower()));
 }
 
-fn reveal_tail_after_layout(
-    preview_viewport: &gtk::ScrolledWindow,
+fn reveal_bottom_after_layout(
+    transcript: &TranscriptTextView,
+    viewport: &gtk::ScrolledWindow,
     status: &gtk::Label,
-    current_render_id: Rc<Cell<u64>>,
-    render_id: u64,
+    reveal_id: u64,
+    current_reveal_id: Rc<Cell<u64>>,
 ) {
-    let adjustment = preview_viewport.vadjustment();
+    let adjustment = viewport.vadjustment();
     let frames = Rc::new(Cell::new(0_u8));
+    let stable_frames = Rc::new(Cell::new(0_u8));
+    let last_upper = Rc::new(Cell::new(f64::NAN));
+    let last_page_size = Rc::new(Cell::new(f64::NAN));
     let status = status.clone();
-    preview_viewport.add_tick_callback(move |viewport, _| {
-        if current_render_id.get() != render_id {
+    let transcript = transcript.clone();
+    viewport.add_tick_callback(move |viewport, _| {
+        if current_reveal_id.get() != reveal_id {
             return glib::ControlFlow::Break;
         }
 
         let frame = frames.get().saturating_add(1);
         frames.set(frame);
-        if frame < 2 {
-            return glib::ControlFlow::Continue;
-        }
-
+        transcript.request_scroll_to_end();
         pin_adjustment_to_bottom(&adjustment);
-        viewport.set_opacity(1.0);
-        status.set_visible(false);
-        glib::ControlFlow::Break
-    });
-}
 
-fn finish_bottom_pinning_after_layout(
-    viewport: &gtk::ScrolledWindow,
-    preview_viewport: &gtk::ScrolledWindow,
-    stick_to_bottom: Rc<Cell<bool>>,
-    current_render_id: Rc<Cell<u64>>,
-    render_id: u64,
-) {
-    let adjustment = viewport.vadjustment();
-    let stable_frames = Rc::new(Cell::new(0_u8));
-    let last_upper = Rc::new(Cell::new(adjustment.upper()));
-    let full_viewport = viewport.clone();
-    let preview_viewport = preview_viewport.clone();
-    viewport.add_tick_callback(move |_, _| {
-        if current_render_id.get() != render_id || !stick_to_bottom.get() {
-            return glib::ControlFlow::Break;
-        }
-
-        pin_adjustment_to_bottom(&adjustment);
         let upper = adjustment.upper();
-        let unchanged = (upper - last_upper.replace(upper)).abs() < 0.5;
-        let stable = if unchanged {
+        let page_size = adjustment.page_size();
+        let geometry_is_stable = (upper - last_upper.get()).abs() < 0.5
+            && (page_size - last_page_size.get()).abs() < 0.5;
+        last_upper.set(upper);
+        last_page_size.set(page_size);
+        stable_frames.set(if geometry_is_stable {
             stable_frames.get().saturating_add(1)
         } else {
             0
-        };
-        stable_frames.set(stable);
-        if stable < BOTTOM_STABLE_FRAMES {
+        });
+
+        if frame < 3 || (stable_frames.get() < 2 && frame < 30) {
             return glib::ControlFlow::Continue;
         }
-        full_viewport.set_opacity(1.0);
-        preview_viewport.set_visible(false);
-        stick_to_bottom.set(false);
+
+        transcript.request_scroll_to_end();
+        pin_adjustment_to_bottom(&adjustment);
+        viewport.set_opacity(1.0);
+        status.set_visible(false);
         glib::ControlFlow::Break
     });
 }

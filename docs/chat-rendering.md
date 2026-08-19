@@ -2,9 +2,9 @@
 
 ## Decision
 
-Load the complete cached transcript and materialize every message in one `gtk::Box`. This gives the scrollbar exact whole-chat geometry and removes paging transitions entirely. Show a fixed tail preview during construction so GTK's changing adjustment range is never visible. Revisit virtualization when real transcripts approach the measured multi-thousand-message limit.
+Load the complete cached transcript into one read-only `GtkTextView`. Render ordinary text and code through `GtkTextBuffer` tags; insert interactive tool blocks as native GTK widgets through text child anchors. This preserves exact whole-chat geometry without making every message an independently wrapped widget.
 
-Do not use either `GtkListView` design for transcripts. Their estimated row heights change during fast scrolling, producing both stalls and scrollbar jumps. WebKit was excluded.
+Do not use either `GtkListView` design for transcripts. Their estimated row heights change during fast scrolling, producing both stalls and scrollbar jumps. Do not use a fully materialized `GtkBox`: it scrolls smoothly but reflows every child on width changes. WebKit was excluded.
 
 ## Designs tested
 
@@ -74,27 +74,38 @@ Release build, 120 aggressive scroll frames at 1,200 px per frame on a roughly 1
 
 The adjustment range changed zero times during every scroll run. Full materialization is clearly suitable for the current chat and 2× its size. At 5× it remains inside a 60 Hz frame budget but no longer sustains the display's native cadence. At 10×, construction, memory, and roughly 44–55 FPS scrolling make an unlimited all-widget transcript unsuitable as the only long-term strategy.
 
+### Resize
+
+The resize benchmark moves a real horizontal `GtkPaned` separator by 12 px per frame for 120 frames. It uses the complete 565-message Codex fixture. Medians of three release runs on the 75 Hz display:
+
+| Renderer | Build | p50 | p95 | p99 | Frames >25 ms | RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| `box` | 24.6 ms | 65.12 ms | 108.10 ms | 113.07 ms | 120/120 | 151.6 MiB |
+| `text-view` | 9.5 ms | 13.44 ms | 14.21 ms | 14.42 ms | 0/120 | 133.1 MiB |
+
+`GtkTextView` sustains the display cadence while the materialized `GtkBox` falls to roughly 9–15 FPS. Width-dependent scrollbar range changes still occur, as expected, but no resize frame exceeds 25 ms with the text view.
+
 ### Initial presentation
 
-Building every widget synchronously gives correct geometry but blocks the UI. Splitting construction across frames keeps the UI responsive, but visibly prepending older rows changes the adjustment range during GTK layout. Bottom pinning, upper-delta compensation, smaller batches, and waiting for a stable range still exposed movement, blinking, or a late scroll correction.
+The earlier `GtkBox` renderer could not present incremental construction cleanly. Visibly prepending older rows changed the adjustment range during GTK layout. Bottom pinning, upper-delta compensation, smaller batches, and waiting for a stable range still exposed movement, blinking, or a late scroll correction.
 
-The current renderer double-buffers startup:
+Its final experiment double-buffered startup:
 
 1. Materialize the final 32 messages in a fixed preview and position it at the bottom.
 2. Build the complete transcript underneath it with a 2 ms main-thread budget per frame.
 3. Keep the preview unchanged while the full viewport settles for ten stable frames.
 4. Replace the preview with the full viewport at the same bottom position.
 
-The user sees the end immediately, while construction and adjustment changes remain hidden. The final transcript still has exact whole-chat geometry and no pagination.
+That hid construction successfully, but it did not address width reflow. The production text view builds the real fixture in about 9.5 ms, then reveals it at the bottom after layout; it needs neither visible incremental prepending nor a tail preview.
 
 ## Consequences
 
-- `GtkBox` keeps arbitrary native, reusable GTK components for Markdown, tools, diffs, terminals, and editors.
-- The real fixture costs about 7 MiB more RSS than block virtualization. The adversarial fixture costs about 48 MiB more.
+- Ordinary text, Markdown spans, and code live in one optimized text buffer. Interactive tools, diffs, terminals, editors, images, and controls remain native GTK widgets through child anchors.
+- The hybrid text view used about 18.5 MiB less RSS than the materialized box in the real resize fixture.
 - SQLite loads the complete active transcript in chronological order. The chat view has no page model, scroll triggers, trimming, or anchor compensation.
-- GTK widget construction remains on the main thread but uses available time up to a 2 ms budget per frame. The raw benchmark measured 24 ms of construction for the real 565-message chat and 1,365 ms at 5,650 messages.
-- Exact whole-chat scrollbar geometry is stable. Startup time, memory, and eventually scrolling—not scrollbar correctness—set the practical limit.
-- `GtkTextView` is a useful lower-bound measurement, not the chosen component model. Rich block state would have to be mapped into text tags and child anchors instead of normal message components.
+- Transcript buffer construction remains on the GTK thread. The real fixture builds in roughly one 75 Hz frame; large interactive blocks remain lazy or collapsed.
+- Exact whole-chat scrollbar geometry is stable during scrolling. Resizing naturally changes geometry as text rewraps, but the text view performs that work within frame budget.
+- Message and block state must be mapped to buffer ranges, marks, tags, and child anchors. This is more specialized than a normal widget tree but avoids both list estimates and whole-tree reflow.
 
 ## Reproduce
 
@@ -114,3 +125,5 @@ done
 Add `--provider=<provider> --session=<session-id>` to use a session from the Sele transcript cache instead of synthetic data. Run the loop three times and compare medians.
 
 Use `--copies=<count>` to repeat the same fixture for full-materialization scale tests.
+
+Use `--mode=resize --resize-pixels-per-frame=12` to benchmark continuous pane resizing instead of scrolling.

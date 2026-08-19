@@ -23,6 +23,29 @@ const WARMUP_FRAMES: u32 = 30;
 const MAX_SETTLE_FRAMES: u32 = 600;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BenchmarkMode {
+    Scroll,
+    Resize,
+}
+
+impl BenchmarkMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "scroll" => Some(Self::Scroll),
+            "resize" => Some(Self::Resize),
+            _ => None,
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Scroll => "scroll",
+            Self::Resize => "resize",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Renderer {
     BlockList,
     MessageList,
@@ -56,10 +79,12 @@ impl Renderer {
 
 #[derive(Clone, Debug)]
 struct Config {
+    mode: BenchmarkMode,
     renderer: Renderer,
     messages: u32,
     frames: u32,
     pixels_per_frame: f64,
+    resize_pixels_per_frame: i32,
     prepend_messages: u32,
     copies: u32,
     provider: Option<String>,
@@ -69,17 +94,22 @@ struct Config {
 impl Config {
     fn from_args() -> Result<Self, String> {
         let mut config = Self {
+            mode: BenchmarkMode::Scroll,
             renderer: Renderer::BlockList,
             messages: 500,
             frames: 240,
             pixels_per_frame: 1_200.0,
+            resize_pixels_per_frame: 12,
             prepend_messages: 20,
             copies: 1,
             provider: None,
             session: None,
         };
         for argument in env::args().skip(1) {
-            if let Some(value) = argument.strip_prefix("--renderer=") {
+            if let Some(value) = argument.strip_prefix("--mode=") {
+                config.mode = BenchmarkMode::parse(value)
+                    .ok_or_else(|| "--mode must be scroll or resize".to_owned())?;
+            } else if let Some(value) = argument.strip_prefix("--renderer=") {
                 config.renderer = Renderer::parse(value).ok_or_else(|| {
                     "--renderer must be block-list, message-list, list-box, box, or text-view"
                         .to_owned()
@@ -93,6 +123,10 @@ impl Config {
                 config.frames = parse_positive_u32("frames", value)?;
             } else if let Some(value) = argument.strip_prefix("--pixels-per-frame=") {
                 config.pixels_per_frame = parse_positive_f64("pixels-per-frame", value)?;
+            } else if let Some(value) = argument.strip_prefix("--resize-pixels-per-frame=") {
+                config.resize_pixels_per_frame =
+                    i32::try_from(parse_positive_u32("resize-pixels-per-frame", value)?)
+                        .map_err(|_| "--resize-pixels-per-frame is too large".to_owned())?;
             } else if let Some(value) = argument.strip_prefix("--prepend-messages=") {
                 config.prepend_messages = parse_positive_u32("prepend-messages", value)?;
             } else if let Some(value) = argument.strip_prefix("--copies=") {
@@ -689,6 +723,23 @@ fn build_benchmark(application: &adw::Application, config: Config) {
     viewport.set_child(Some(&child));
     content.install_adjustment_handler(&viewport.vadjustment());
 
+    let resize_pane = if config.mode == BenchmarkMode::Resize {
+        let placeholder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        placeholder.set_size_request(120, -1);
+        let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
+        paned.set_start_child(Some(&placeholder));
+        paned.set_end_child(Some(&viewport));
+        paned.set_position(240);
+        paned.set_resize_start_child(false);
+        paned.set_resize_end_child(true);
+        Some(paned)
+    } else {
+        None
+    };
+    let window_content: gtk::Widget = resize_pane
+        .as_ref()
+        .map_or_else(|| viewport.clone().upcast(), |paned| paned.clone().upcast());
+
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title(format!(
@@ -697,7 +748,7 @@ fn build_benchmark(application: &adw::Application, config: Config) {
         ))
         .default_width(900)
         .default_height(720)
-        .content(&viewport)
+        .content(&window_content)
         .build();
     window.present();
 
@@ -705,6 +756,7 @@ fn build_benchmark(application: &adw::Application, config: Config) {
         application,
         config.clone(),
         viewport.clone(),
+        resize_pane,
         content,
         BenchmarkFixture {
             prepend_messages,
@@ -784,6 +836,16 @@ enum Phase {
         direction: f64,
         last_target: f64,
     },
+    ResizeWarmup {
+        remaining: u32,
+        direction: i32,
+        last_position: i32,
+    },
+    ResizeMeasure {
+        remaining: u32,
+        direction: i32,
+        last_position: i32,
+    },
     PrependSettle {
         frames: u32,
         stable_frames: u32,
@@ -799,6 +861,7 @@ struct BenchmarkRunner {
     application: adw::Application,
     config: Config,
     viewport: gtk::ScrolledWindow,
+    resize_pane: Option<gtk::Paned>,
     content: BenchContent,
     prepend_messages: Option<Vec<TranscriptMessage>>,
     message_count: u32,
@@ -829,6 +892,7 @@ impl BenchmarkRunner {
         application: &adw::Application,
         config: Config,
         viewport: gtk::ScrolledWindow,
+        resize_pane: Option<gtk::Paned>,
         content: BenchContent,
         fixture: BenchmarkFixture,
     ) -> Self {
@@ -838,6 +902,7 @@ impl BenchmarkRunner {
             application: application.clone(),
             config,
             viewport,
+            resize_pane,
             content,
             prepend_messages: Some(fixture.prepend_messages),
             message_count: fixture.message_count,
@@ -883,10 +948,23 @@ impl BenchmarkRunner {
                     self.ready_time = self.presented_at.elapsed();
                     let target = scroll_midpoint(&adjustment);
                     adjustment.set_value(target);
-                    Phase::Warmup {
-                        remaining: WARMUP_FRAMES,
-                        direction: 1.0,
-                        last_target: target,
+                    if self.config.mode == BenchmarkMode::Resize {
+                        let position = self
+                            .resize_pane
+                            .as_ref()
+                            .expect("resize mode has a paned container")
+                            .position();
+                        Phase::ResizeWarmup {
+                            remaining: WARMUP_FRAMES,
+                            direction: 1,
+                            last_position: position,
+                        }
+                    } else {
+                        Phase::Warmup {
+                            remaining: WARMUP_FRAMES,
+                            direction: 1.0,
+                            last_target: target,
+                        }
                     }
                 } else {
                     Phase::InitialSettle {
@@ -974,6 +1052,71 @@ impl BenchmarkRunner {
                     }
                 }
             }
+            Phase::ResizeWarmup {
+                remaining,
+                mut direction,
+                last_position,
+            } => {
+                let position = drive_resize(
+                    self.resize_pane
+                        .as_ref()
+                        .expect("resize mode has a paned container"),
+                    last_position,
+                    &mut direction,
+                    self.config.resize_pixels_per_frame,
+                );
+                if remaining <= 1 {
+                    self.last_tick = Some(now);
+                    self.last_measured_upper = adjustment.upper();
+                    Phase::ResizeMeasure {
+                        remaining: self.config.frames,
+                        direction,
+                        last_position: position,
+                    }
+                } else {
+                    Phase::ResizeWarmup {
+                        remaining: remaining - 1,
+                        direction,
+                        last_position: position,
+                    }
+                }
+            }
+            Phase::ResizeMeasure {
+                remaining,
+                mut direction,
+                last_position,
+            } => {
+                if let Some(previous) = self.last_tick.replace(now) {
+                    self.samples.push(now.duration_since(previous));
+                }
+                let upper = adjustment.upper();
+                let upper_delta = (upper - self.last_measured_upper).abs();
+                if upper_delta >= 0.5 {
+                    self.upper_changes += 1;
+                    self.maximum_upper_delta = self.maximum_upper_delta.max(upper_delta);
+                }
+                self.last_measured_upper = upper;
+
+                if remaining <= 1 {
+                    self.print_results(Duration::ZERO, Duration::ZERO, None);
+                    self.application.quit();
+                    return glib::ControlFlow::Break;
+                }
+
+                let position = drive_resize(
+                    self.resize_pane
+                        .as_ref()
+                        .expect("resize mode has a paned container"),
+                    last_position,
+                    &mut direction,
+                    self.config.resize_pixels_per_frame,
+                );
+                Phase::ResizeMeasure {
+                    remaining: remaining - 1,
+                    direction,
+                    last_position: position,
+                }
+            }
             Phase::PrependSettle {
                 mut frames,
                 mut stable_frames,
@@ -1035,7 +1178,8 @@ impl BenchmarkRunner {
         let over_25 = milliseconds.iter().filter(|sample| **sample > 25.0).count();
         let over_50 = milliseconds.iter().filter(|sample| **sample > 50.0).count();
         println!(
-            "renderer={} fixture={} copies={} messages={} model_items={} frames={} pixels_per_frame={:.0} build_ms={:.2} ready_ms={:.2} p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} max_ms={:.2} over_25ms={} over_50ms={} upper_changes={} max_upper_delta_px={:.2} max_value_correction_px={:.2} prepend_messages={} prepend_mutation_ms={:.2} prepend_settle_ms={:.2} anchor_drift_px={} rss_mib={} peak_rss_mib={}",
+            "mode={} renderer={} fixture={} copies={} messages={} model_items={} frames={} pixels_per_frame={:.0} resize_pixels_per_frame={} build_ms={:.2} ready_ms={:.2} p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} max_ms={:.2} over_25ms={} over_50ms={} upper_changes={} max_upper_delta_px={:.2} max_value_correction_px={:.2} prepend_messages={} prepend_mutation_ms={:.2} prepend_settle_ms={:.2} anchor_drift_px={} rss_mib={} peak_rss_mib={}",
+            self.config.mode.name(),
             self.config.renderer.name(),
             if self.config.session.is_some() {
                 "cached"
@@ -1047,6 +1191,7 @@ impl BenchmarkRunner {
             self.item_count,
             milliseconds.len(),
             self.config.pixels_per_frame,
+            self.config.resize_pixels_per_frame,
             self.build_time.as_secs_f64() * 1_000.0,
             self.ready_time.as_secs_f64() * 1_000.0,
             percentile(0.50),
@@ -1106,6 +1251,27 @@ fn drive_scroll(
         *direction = 1.0;
     }
     adjustment.set_value(target);
+    target
+}
+
+fn drive_resize(
+    paned: &gtk::Paned,
+    last_position: i32,
+    direction: &mut i32,
+    pixels_per_frame: i32,
+) -> i32 {
+    const MIN_POSITION: i32 = 140;
+    const MAX_POSITION: i32 = 440;
+
+    let mut target = last_position.saturating_add(*direction * pixels_per_frame);
+    if target >= MAX_POSITION {
+        target = MAX_POSITION;
+        *direction = -1;
+    } else if target <= MIN_POSITION {
+        target = MIN_POSITION;
+        *direction = 1;
+    }
+    paned.set_position(target);
     target
 }
 

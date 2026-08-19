@@ -159,10 +159,19 @@ fn new_message_row() -> gtk::Box {
 }
 
 /// Build a permanently materialized native message row.
+#[allow(dead_code)]
 pub(crate) fn materialized_message_row(message: &TranscriptMessage) -> gtk::Box {
     let row = new_message_row();
     bind_message(&row, message);
     row
+}
+
+/// Build a permanently materialized native widget for an embedded transcript block.
+#[allow(dead_code)]
+pub(crate) fn materialized_block_widget(block: &TranscriptBlockKind) -> gtk::Widget {
+    let widget = create_block_view(kind_for_block(block));
+    bind_block_view(&widget, block);
+    widget
 }
 
 #[allow(dead_code)]
