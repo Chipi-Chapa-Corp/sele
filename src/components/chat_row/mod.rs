@@ -70,12 +70,7 @@ impl ChatSummary {
     }
 }
 
-pub(super) fn build_chat_row(chat: &ChatSummary) -> gtk::ListBoxRow {
-    let row = gtk::ListBoxRow::new();
-    row.set_activatable(true);
-    row.set_selectable(true);
-    row.set_tooltip_text(Some(&format!("{} · {}", chat.agent_name, chat.name)));
-
+pub(super) fn build_chat_content(chat: &ChatSummary) -> gtk::Box {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     content.add_css_class("chat-row-content");
 
@@ -92,8 +87,7 @@ pub(super) fn build_chat_row(chat: &ChatSummary) -> gtk::ListBoxRow {
 
     content.append(&status);
     content.append(&name);
-    row.set_child(Some(&content));
-    row
+    content
 }
 
 #[cfg(test)]

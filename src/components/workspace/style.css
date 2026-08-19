@@ -30,16 +30,6 @@
   background-color: transparent;
 }
 
-.chat-list-content {
-  border-spacing: var(--sele-space-md);
-  padding: var(--sele-space-sm) var(--sele-space-md) var(--sele-space-lg);
-}
-
-.chat-list-status {
-  padding: var(--sele-space-sm);
-  color: color-mix(in srgb, currentColor var(--dim-opacity), transparent);
-}
-
 .workspace-paned > separator {
   min-width: var(--sele-workspace-resize-handle-width);
   background-color: var(--border-color);

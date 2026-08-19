@@ -5,6 +5,7 @@ use std::rc::Rc;
 use gtk::glib::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib};
+use sele_agent::AgentRuntime;
 use sele_core::{
     AgentDescriptor, AgentSession, TranscriptBlockKind, TranscriptMessage, TranscriptMessageState,
     TranscriptRole, TranscriptSessionKey,
@@ -20,6 +21,7 @@ pub(super) const STYLE: &str = include_str!("style.css");
 
 const MAX_LOADED_MESSAGES: u32 = 500;
 const PAGE_TRIGGER_DISTANCE: f64 = 240.0;
+const LARGE_BLOCK_THRESHOLD: usize = 16 * 1024;
 
 #[derive(Default)]
 struct PageState {
@@ -40,10 +42,11 @@ pub struct ChatView {
     list: gtk::ListView,
     state: Rc<RefCell<PageState>>,
     request_id: Rc<Cell<u64>>,
+    agent_runtime: AgentRuntime,
 }
 
 impl ChatView {
-    pub fn new() -> Self {
+    pub fn new(agent_runtime: AgentRuntime) -> Self {
         let title = gtk::Label::new(Some("Select a chat"));
         title.add_css_class("heading");
         title.set_halign(gtk::Align::Start);
@@ -82,6 +85,7 @@ impl ChatView {
             list,
             state: Rc::new(RefCell::new(PageState::default())),
             request_id: Rc::new(Cell::new(0)),
+            agent_runtime,
         };
         view.connect_pagination(&viewport);
         view
@@ -120,7 +124,7 @@ impl ChatView {
             title: Some(chat.name.clone()),
             updated_at: chat.updated_at.clone(),
         };
-        let (receiver, cancellation) = load_transcript(session);
+        let (receiver, cancellation) = load_transcript(session, self.agent_runtime.clone());
         self.state.borrow_mut().cancellation = Some(cancellation);
 
         let view = self.clone();
@@ -376,8 +380,16 @@ fn bind_message(row: &gtk::Box, message: &TranscriptMessage) {
 
 fn block_widget(block: &TranscriptBlockKind) -> gtk::Widget {
     match block {
+        TranscriptBlockKind::Text { text } if text.len() > LARGE_BLOCK_THRESHOLD => {
+            lazy_text_expander("Long message", text, None, None).upcast()
+        }
         TranscriptBlockKind::Text { text } => selectable_label(text, None).upcast(),
         TranscriptBlockKind::Code { language, text } => {
+            if text.len() > LARGE_BLOCK_THRESHOLD {
+                let title = language.as_deref().unwrap_or("Large code block");
+                return lazy_text_expander(title, text, Some("monospace"), Some("transcript-code"))
+                    .upcast();
+            }
             let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
             container.add_css_class("transcript-code");
             if let Some(language) = language {
@@ -400,11 +412,13 @@ fn block_widget(block: &TranscriptBlockKind) -> gtk::Widget {
             container.append(&status);
             container.upcast()
         }
-        TranscriptBlockKind::ToolResult { content, .. } => {
-            let label = selectable_label(content, Some("monospace"));
-            label.add_css_class("transcript-tool");
-            label.upcast()
-        }
+        TranscriptBlockKind::ToolResult { content, .. } => lazy_text_expander(
+            "Result",
+            content,
+            Some("monospace"),
+            Some("transcript-tool"),
+        )
+        .upcast(),
         TranscriptBlockKind::Image { alt, uri } => {
             selectable_label(alt.as_deref().unwrap_or(uri), None).upcast()
         }
@@ -416,6 +430,37 @@ fn block_widget(block: &TranscriptBlockKind) -> gtk::Widget {
             label.add_css_class("transcript-block-secondary");
             label.upcast()
         }
+    }
+}
+
+fn lazy_text_expander(
+    title: &str,
+    text: &str,
+    content_css_class: Option<&'static str>,
+    expander_css_class: Option<&'static str>,
+) -> gtk::Expander {
+    let title = format!("{title} · {}", format_size(text.len()));
+    let expander = gtk::Expander::new(Some(&title));
+    expander.add_css_class("transcript-block-expander");
+    if let Some(css_class) = expander_css_class {
+        expander.add_css_class(css_class);
+    }
+    let text = Rc::new(text.to_owned());
+    expander.connect_expanded_notify(move |expander| {
+        if expander.is_expanded() && expander.child().is_none() {
+            let label = selectable_label(&text, content_css_class);
+            expander.set_child(Some(&label));
+        }
+    });
+    expander
+}
+
+fn format_size(bytes: usize) -> String {
+    const KIB: f64 = 1024.0;
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else {
+        format!("{:.1} KiB", bytes as f64 / KIB)
     }
 }
 

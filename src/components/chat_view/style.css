@@ -43,3 +43,7 @@
   border: 1px solid var(--border-color);
   border-radius: var(--card-radius);
 }
+
+.transcript-block-expander > title {
+  padding: 0;
+}

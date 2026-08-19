@@ -1,0 +1,68 @@
+.chat-tree {
+  --sele-chat-tree-rail-width: 16px;
+  --sele-chat-tree-guide-width: 1px;
+  --sele-chat-row-radius: 9px;
+  --sele-chat-row-hover-bg-color: color-mix(in srgb, currentColor 7%, transparent);
+  --sele-chat-row-selected-bg-color: color-mix(in srgb, currentColor 10%, transparent);
+  --sele-chat-row-selected-hover-bg-color: color-mix(in srgb, currentColor 13%, transparent);
+  padding: var(--sele-space-sm) var(--sele-space-md) var(--sele-space-lg);
+  background-color: transparent;
+  color: var(--sidebar-fg-color);
+}
+
+.chat-tree > row {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.chat-tree-project {
+  padding: var(--sele-space-xs) 0;
+  margin-bottom: var(--sele-space-xs);
+  color: var(--accent-color);
+}
+
+.chat-tree-chat {
+  border-spacing: var(--sele-space-xs);
+}
+
+.chat-tree-chat .chat-row-content {
+  margin-bottom: var(--sele-space-xs);
+  border-radius: var(--sele-chat-row-radius);
+}
+
+.chat-tree.navigation-sidebar row:hover,
+.chat-tree.navigation-sidebar row:active,
+.chat-tree.navigation-sidebar row:selected,
+.chat-tree.navigation-sidebar row:selected:hover,
+.chat-tree.navigation-sidebar row:selected:active {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+.chat-tree-chat .chat-row-content.chat-row-hovered {
+  background-color: var(--sele-chat-row-hover-bg-color);
+}
+
+.chat-tree-chat .chat-row-content.chat-row-selected {
+  background-color: var(--sele-chat-row-selected-bg-color);
+}
+
+.chat-tree-chat .chat-row-content.chat-row-selected.chat-row-hovered {
+  background-color: var(--sele-chat-row-selected-hover-bg-color);
+}
+
+.chat-tree-rail {
+  min-width: var(--sele-chat-tree-rail-width);
+}
+
+.chat-tree-guide {
+  min-width: var(--sele-chat-tree-guide-width);
+  background-color: var(--border-color);
+}
+
+.chat-list-status {
+  padding: var(--sele-space-sm) var(--sele-space-lg);
+  color: color-mix(in srgb, currentColor var(--dim-opacity), transparent);
+}

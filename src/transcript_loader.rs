@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use async_channel::{Receiver, Sender};
-use sele_agent::{TranscriptReplayEvent, replay_builtin_session};
+use sele_agent::{AgentRuntime, TranscriptReplayEvent};
 use sele_core::{AgentSession, TranscriptMessage, TranscriptSession, TranscriptSessionKey};
 use sele_store::{StoreError, TranscriptStore};
 
@@ -34,30 +34,56 @@ pub enum TranscriptPageEvent {
     Failed(String),
 }
 
+#[derive(Debug)]
+struct CancellationState {
+    cancelled: AtomicBool,
+    replay: Mutex<Option<Receiver<TranscriptReplayEvent>>>,
+}
+
 #[derive(Clone, Debug)]
-pub struct TranscriptLoadCancellation(Arc<AtomicBool>);
+pub struct TranscriptLoadCancellation(Arc<CancellationState>);
 
 impl TranscriptLoadCancellation {
+    fn new() -> Self {
+        Self(Arc::new(CancellationState {
+            cancelled: AtomicBool::new(false),
+            replay: Mutex::new(None),
+        }))
+    }
+
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        self.0.cancelled.store(true, Ordering::Release);
+        if let Some(replay) = lock_unpoisoned(&self.0.replay).as_ref() {
+            replay.close();
+        }
     }
 
     fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    fn attach_replay(&self, replay: &Receiver<TranscriptReplayEvent>) {
+        *lock_unpoisoned(&self.0.replay) = Some(replay.clone());
+        if self.is_cancelled() {
+            replay.close();
+        }
     }
 }
 
 pub fn load_transcript(
     session: AgentSession,
+    agent_runtime: AgentRuntime,
 ) -> (Receiver<TranscriptLoadEvent>, TranscriptLoadCancellation) {
     let (sender, receiver) = async_channel::unbounded();
-    let cancellation = TranscriptLoadCancellation(Arc::new(AtomicBool::new(false)));
+    let cancellation = TranscriptLoadCancellation::new();
     let worker_cancellation = cancellation.clone();
     let thread_name = format!("sele-{}-cache", session.agent.id.as_str());
 
     if let Err(error) = std::thread::Builder::new()
         .name(thread_name)
-        .spawn(move || run_transcript_load(session, sender, worker_cancellation))
+        .spawn(move || {
+            run_transcript_load(session, agent_runtime, sender, worker_cancellation);
+        })
     {
         let (fallback_sender, fallback_receiver) = async_channel::unbounded();
         let _ = fallback_sender.try_send(TranscriptLoadEvent::Failed(format!(
@@ -100,6 +126,7 @@ pub fn load_page(
 
 fn run_transcript_load(
     session: AgentSession,
+    agent_runtime: AgentRuntime,
     sender: Sender<TranscriptLoadEvent>,
     cancellation: TranscriptLoadCancellation,
 ) {
@@ -157,7 +184,8 @@ fn run_transcript_load(
         }
     };
 
-    let replay = replay_builtin_session(session);
+    let replay = agent_runtime.replay_session(session);
+    cancellation.attach_replay(&replay);
     while let Ok(event) = replay.recv_blocking() {
         if cancellation.is_cancelled() {
             let _ = store.discard_import(&import);
@@ -211,4 +239,25 @@ fn page(messages: Vec<TranscriptMessage>) -> TranscriptPage {
 
 fn send(sender: &Sender<TranscriptLoadEvent>, event: TranscriptLoadEvent) {
     let _ = sender.try_send(event);
+}
+
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancelling_a_load_closes_the_provider_replay() {
+        let (sender, receiver) = async_channel::unbounded();
+        let cancellation = TranscriptLoadCancellation::new();
+        cancellation.attach_replay(&receiver);
+
+        cancellation.cancel();
+
+        assert!(cancellation.is_cancelled());
+        assert!(sender.is_closed());
+    }
 }

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -69,6 +70,48 @@ pub enum TranscriptReplayEvent {
     Failed(String),
 }
 
+enum AgentCommand {
+    Replay {
+        session: AgentSession,
+        sender: Sender<TranscriptReplayEvent>,
+    },
+}
+
+#[derive(Clone)]
+pub struct AgentRuntime {
+    commands: Arc<HashMap<String, Sender<AgentCommand>>>,
+}
+
+impl AgentRuntime {
+    pub fn replay_session(&self, session: AgentSession) -> Receiver<TranscriptReplayEvent> {
+        let (sender, receiver) = async_channel::unbounded();
+        let Some(commands) = self.commands.get(session.agent.id.as_str()) else {
+            let _ = sender.try_send(TranscriptReplayEvent::Failed(format!(
+                "unknown agent adapter: {}",
+                session.agent.id.as_str()
+            )));
+            return receiver;
+        };
+        if commands
+            .try_send(AgentCommand::Replay {
+                session,
+                sender: sender.clone(),
+            })
+            .is_err()
+        {
+            let _ = sender.try_send(TranscriptReplayEvent::Failed(
+                "agent runtime is unavailable".into(),
+            ));
+        }
+        receiver
+    }
+}
+
+struct ActiveReplay {
+    session_id: String,
+    normalizer: TranscriptNormalizer,
+}
+
 pub fn builtin_agents() -> Vec<AgentDefinition> {
     vec![
         AgentDefinition::stdio(
@@ -88,7 +131,46 @@ pub fn builtin_agents() -> Vec<AgentDefinition> {
 }
 
 pub fn discover_builtin_sessions() -> Receiver<DiscoveryEvent> {
-    discover_sessions(builtin_agents())
+    let (_runtime, receiver) = start_builtin_runtime();
+    receiver
+}
+
+pub fn start_builtin_runtime() -> (AgentRuntime, Receiver<DiscoveryEvent>) {
+    let definitions = builtin_agents();
+    let (discovery_sender, discovery_receiver) = async_channel::unbounded();
+    let remaining = Arc::new(AtomicUsize::new(definitions.len()));
+    let mut commands = HashMap::with_capacity(definitions.len());
+
+    if definitions.is_empty() {
+        let _ = discovery_sender.try_send(DiscoveryEvent::Finished);
+    }
+
+    for definition in definitions {
+        let (command_sender, command_receiver) = async_channel::unbounded();
+        commands.insert(definition.descriptor.id.as_str().to_owned(), command_sender);
+        let descriptor = definition.descriptor.clone();
+        let sender = discovery_sender.clone();
+        let remaining_for_thread = Arc::clone(&remaining);
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("sele-{}-runtime", descriptor.id.as_str()))
+            .spawn(move || {
+                run_persistent_agent(definition, command_receiver, sender, remaining_for_thread);
+            })
+        {
+            let _ = discovery_sender.try_send(DiscoveryEvent::AgentFailed {
+                agent: descriptor,
+                error: format!("could not start agent runtime: {error}"),
+            });
+            finish_initial_discovery(&discovery_sender, &remaining);
+        }
+    }
+
+    (
+        AgentRuntime {
+            commands: Arc::new(commands),
+        },
+        discovery_receiver,
+    )
 }
 
 pub fn discover_sessions(definitions: Vec<AgentDefinition>) -> Receiver<DiscoveryEvent> {
@@ -103,33 +185,6 @@ pub fn discover_sessions(definitions: Vec<AgentDefinition>) -> Receiver<Discover
         )));
         let _ = sender.try_send(DiscoveryEvent::Finished);
     }
-    receiver
-}
-
-pub fn replay_builtin_session(session: AgentSession) -> Receiver<TranscriptReplayEvent> {
-    let definition = builtin_agents()
-        .into_iter()
-        .find(|definition| definition.descriptor.id == session.agent.id);
-    let (sender, receiver) = async_channel::unbounded();
-
-    let Some(definition) = definition else {
-        let _ = sender.try_send(TranscriptReplayEvent::Failed(format!(
-            "unknown agent adapter: {}",
-            session.agent.id.as_str()
-        )));
-        return receiver;
-    };
-
-    let engine_sender = sender.clone();
-    if let Err(error) = std::thread::Builder::new()
-        .name(format!("sele-{}-transcript", session.agent.id.as_str()))
-        .spawn(move || run_transcript_engine(definition, session, engine_sender))
-    {
-        let _ = sender.try_send(TranscriptReplayEvent::Failed(format!(
-            "could not start transcript engine: {error}"
-        )));
-    }
-
     receiver
 }
 
@@ -183,94 +238,201 @@ fn run_discovery_engine(definitions: Vec<AgentDefinition>, sender: Sender<Discov
     });
 }
 
-fn run_transcript_engine(
+fn run_persistent_agent(
     definition: AgentDefinition,
-    session: AgentSession,
-    sender: Sender<TranscriptReplayEvent>,
+    commands: Receiver<AgentCommand>,
+    discovery_sender: Sender<DiscoveryEvent>,
+    remaining: Arc<AtomicUsize>,
 ) {
+    let descriptor = definition.descriptor.clone();
+    let reported = Arc::new(AtomicBool::new(false));
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            let _ = sender.try_send(TranscriptReplayEvent::Failed(format!(
-                "could not initialize agent runtime: {error}"
-            )));
+            report_initial_failure(
+                &discovery_sender,
+                &remaining,
+                &reported,
+                descriptor,
+                format!("could not initialize agent runtime: {error}"),
+            );
             return;
         }
     };
 
-    let result = runtime.block_on(async {
-        tokio::time::timeout(
-            TRANSCRIPT_LOAD_TIMEOUT,
-            replay_agent_session(definition, session, sender.clone()),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            Err(format!(
-                "session load timed out after {} seconds",
-                TRANSCRIPT_LOAD_TIMEOUT.as_secs()
-            ))
-        })
+    let sender_for_connection = discovery_sender.clone();
+    let remaining_for_connection = Arc::clone(&remaining);
+    let reported_for_connection = Arc::clone(&reported);
+    let active_replay = Arc::new(Mutex::new(None::<ActiveReplay>));
+    let active_for_notifications = Arc::clone(&active_replay);
+    let agent = definition.into_acp_agent();
+    let descriptor_for_connection = descriptor.clone();
+    let result = runtime.block_on(async move {
+        Client
+            .builder()
+            .name("sele")
+            .on_receive_notification(
+                async move |notification: SessionNotification, _connection| {
+                    let mut active = lock_unpoisoned(&active_for_notifications);
+                    if let Some(active) = active.as_mut()
+                        && notification.session_id.to_string() == active.session_id
+                    {
+                        active.normalizer.apply(notification.update);
+                    }
+                    Ok(())
+                },
+                agent_client_protocol::on_receive_notification!(),
+            )
+            .connect_with(agent, async move |connection| {
+                let initialization = connection
+                    .send_request(InitializeRequest::new(ProtocolVersion::V1).client_info(
+                        Implementation::new("sele", env!("CARGO_PKG_VERSION")).title("Sele"),
+                    ))
+                    .block_task()
+                    .await?;
+
+                if initialization
+                    .agent_capabilities
+                    .session_capabilities
+                    .list
+                    .is_none()
+                {
+                    return Err(agent_client_protocol::Error::method_not_found()
+                        .data(serde_json::json!("agent does not support session/list")));
+                }
+
+                let mut sessions = Vec::new();
+                let mut cursor = None;
+                let mut seen_cursors = HashSet::new();
+                loop {
+                    let response = connection
+                        .send_request(ListSessionsRequest::new().cursor(cursor))
+                        .block_task()
+                        .await?;
+                    sessions.extend(response.sessions);
+
+                    let Some(next_cursor) = response.next_cursor else {
+                        break;
+                    };
+                    if !seen_cursors.insert(next_cursor.clone()) {
+                        break;
+                    }
+                    cursor = Some(next_cursor);
+                }
+                let normalized = sessions
+                    .into_iter()
+                    .map(|session| AgentSession {
+                        agent: descriptor_for_connection.clone(),
+                        id: session.session_id.to_string(),
+                        cwd: session.cwd,
+                        title: session.title,
+                        updated_at: session.updated_at,
+                    })
+                    .collect();
+                let _ = sender_for_connection
+                    .send(DiscoveryEvent::AgentLoaded {
+                        agent: descriptor_for_connection.clone(),
+                        sessions: normalized,
+                    })
+                    .await;
+                report_initial_success(
+                    &sender_for_connection,
+                    &remaining_for_connection,
+                    &reported_for_connection,
+                );
+
+                while let Ok(command) = commands.recv().await {
+                    match command {
+                        AgentCommand::Replay { session, sender } => {
+                            if sender.is_closed() {
+                                continue;
+                            }
+                            if !initialization.agent_capabilities.load_session {
+                                let _ = sender.try_send(TranscriptReplayEvent::Failed(
+                                    "agent does not support session/load".into(),
+                                ));
+                                continue;
+                            }
+                            *lock_unpoisoned(&active_replay) = Some(ActiveReplay {
+                                session_id: session.id.clone(),
+                                normalizer: TranscriptNormalizer::new(sender.clone()),
+                            });
+                            let request = connection
+                                .send_request(LoadSessionRequest::new(session.id, session.cwd));
+                            let load = tokio::select! {
+                                result = request.block_task() => {
+                                    result.map(Some).map_err(|error| error.to_string())
+                                }
+                                () = sender.closed() => Ok(None),
+                                () = tokio::time::sleep(TRANSCRIPT_LOAD_TIMEOUT) => {
+                                    Err(format!(
+                                        "session load timed out after {} seconds",
+                                        TRANSCRIPT_LOAD_TIMEOUT.as_secs()
+                                    ))
+                                }
+                            };
+                            let active = lock_unpoisoned(&active_replay).take();
+                            match load {
+                                Ok(Some(_)) => {
+                                    if let Some(mut active) = active {
+                                        active.normalizer.finish();
+                                    }
+                                    let _ = sender.try_send(TranscriptReplayEvent::Finished);
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    let _ = sender.try_send(TranscriptReplayEvent::Failed(error));
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            })
+            .await
     });
 
-    match result {
-        Ok(()) => {
-            let _ = sender.try_send(TranscriptReplayEvent::Finished);
-        }
-        Err(error) => {
-            let _ = sender.try_send(TranscriptReplayEvent::Failed(error));
-        }
+    if let Err(error) = result {
+        report_initial_failure(
+            &discovery_sender,
+            &remaining,
+            &reported,
+            descriptor,
+            error.to_string(),
+        );
     }
 }
 
-async fn replay_agent_session(
-    definition: AgentDefinition,
-    session: AgentSession,
-    sender: Sender<TranscriptReplayEvent>,
-) -> Result<(), String> {
-    let target_session_id = session.id.clone();
-    let normalizer = Arc::new(Mutex::new(TranscriptNormalizer::new(sender)));
-    let normalizer_for_notifications = Arc::clone(&normalizer);
-    let agent = definition.into_acp_agent();
+fn report_initial_success(
+    sender: &Sender<DiscoveryEvent>,
+    remaining: &AtomicUsize,
+    reported: &AtomicBool,
+) {
+    if !reported.swap(true, Ordering::AcqRel) {
+        finish_initial_discovery(sender, remaining);
+    }
+}
 
-    Client
-        .builder()
-        .name("sele")
-        .on_receive_notification(
-            async move |notification: SessionNotification, _connection| {
-                if notification.session_id.to_string() == target_session_id {
-                    lock_unpoisoned(&normalizer_for_notifications).apply(notification.update);
-                }
-                Ok(())
-            },
-            agent_client_protocol::on_receive_notification!(),
-        )
-        .connect_with(agent, async move |connection| {
-            let initialization = connection
-                .send_request(InitializeRequest::new(ProtocolVersion::V1).client_info(
-                    Implementation::new("sele", env!("CARGO_PKG_VERSION")).title("Sele"),
-                ))
-                .block_task()
-                .await?;
+fn report_initial_failure(
+    sender: &Sender<DiscoveryEvent>,
+    remaining: &AtomicUsize,
+    reported: &AtomicBool,
+    agent: AgentDescriptor,
+    error: String,
+) {
+    if !reported.swap(true, Ordering::AcqRel) {
+        let _ = sender.try_send(DiscoveryEvent::AgentFailed { agent, error });
+        finish_initial_discovery(sender, remaining);
+    }
+}
 
-            if !initialization.agent_capabilities.load_session {
-                return Err(agent_client_protocol::Error::method_not_found()
-                    .data(serde_json::json!("agent does not support session/load")));
-            }
-
-            connection
-                .send_request(LoadSessionRequest::new(session.id, session.cwd))
-                .block_task()
-                .await?;
-            Ok(())
-        })
-        .await
-        .map_err(|error| error.to_string())?;
-
-    lock_unpoisoned(&normalizer).finish();
-    Ok(())
+fn finish_initial_discovery(sender: &Sender<DiscoveryEvent>, remaining: &AtomicUsize) {
+    if remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
+        let _ = sender.try_send(DiscoveryEvent::Finished);
+    }
 }
 
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
