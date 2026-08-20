@@ -30,15 +30,16 @@ test('moves disabled host skills into Sele storage and restores their original p
       enabled: true
     }
 
-    await disableProviderSkill(skill, null)
+    await disableProviderSkill('codex', skill, null)
     assert.equal(await stat(originalPath).catch(() => null), null)
 
-    const disabledSkills = await listDisabledProviderSkills(null)
+    const disabledSkills = await listDisabledProviderSkills('codex', null)
     assert.deepEqual(disabledSkills, [{ ...skill, enabled: false }])
+    assert.deepEqual(await listDisabledProviderSkills('claude', null), [])
 
     assert.equal(await restoreProviderSkill(originalPath, null), true)
     assert.equal(await readFile(join(originalPath, 'SKILL.md'), 'utf8'), '# Example\n')
-    assert.deepEqual(await listDisabledProviderSkills(null), [])
+    assert.deepEqual(await listDisabledProviderSkills('codex', null), [])
   } finally {
     if (originalDataHome === undefined) delete process.env.XDG_DATA_HOME
     else process.env.XDG_DATA_HOME = originalDataHome
@@ -67,12 +68,46 @@ test('moves the skill folder when a provider reports its SKILL.md path', async (
       enabled: true
     }
 
-    await disableProviderSkill(skill, null)
+    await disableProviderSkill('codex', skill, null)
     assert.equal(await stat(originalDirectory).catch(() => null), null)
-    assert.deepEqual(await listDisabledProviderSkills(null), [{ ...skill, enabled: false }])
+    assert.deepEqual(await listDisabledProviderSkills('codex', null), [
+      { ...skill, enabled: false }
+    ])
 
     assert.equal(await restoreProviderSkill(reportedPath, null), true)
     assert.equal(await readFile(reportedPath, 'utf8'), '# Manifest path\n')
+  } finally {
+    if (originalDataHome === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = originalDataHome
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('filters legacy disabled skills by provider-specific paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sele-provider-legacy-resource-test-'))
+  const originalDataHome = process.env.XDG_DATA_HOME
+  const disabledEntry = join(root, 'data', 'sele', 'providers', 'disabled-skills', 'legacy')
+  process.env.XDG_DATA_HOME = join(root, 'data')
+
+  try {
+    const skill = {
+      name: 'claude-only',
+      description: 'A Claude skill.',
+      shortDescription: 'Claude skill',
+      displayName: 'Claude Only',
+      path: join(root, '.claude', 'skills', 'claude-only', 'SKILL.md'),
+      scope: 'user',
+      enabled: false
+    }
+    await mkdir(disabledEntry, { recursive: true })
+    await writeFile(
+      join(disabledEntry, 'metadata.json'),
+      `${JSON.stringify({ version: 1, skill })}\n`,
+      'utf8'
+    )
+
+    assert.deepEqual(await listDisabledProviderSkills('codex', null), [])
+    assert.deepEqual(await listDisabledProviderSkills('claude', null), [skill])
   } finally {
     if (originalDataHome === undefined) delete process.env.XDG_DATA_HOME
     else process.env.XDG_DATA_HOME = originalDataHome

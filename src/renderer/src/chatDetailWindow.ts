@@ -259,6 +259,27 @@ export const mergeWorkingStepUpdate = (
   const { items, workingItemsPrefixLastId, workingItemsStartIndex, ...workingStep } = update
   const currentWorkingStep =
     currentItem?.type === 'working' && currentItem.id === update.id ? currentItem : null
+
+  if (workingStep.itemsLoaded === false) {
+    const itemCount = Math.max(
+      workingStep.itemCount ?? 0,
+      currentWorkingStep?.itemCount ?? currentWorkingStep?.items.length ?? 0
+    )
+    if (currentWorkingStep && currentWorkingStep.itemsLoaded !== false) {
+      return { ...currentWorkingStep, status: workingStep.status, itemCount }
+    }
+
+    const unloadedStep = { ...workingStep }
+    delete unloadedStep.itemSegments
+    return {
+      ...unloadedStep,
+      items: [],
+      itemsLoaded: false,
+      itemCount,
+      itemsStartIndex: 0
+    }
+  }
+
   const incomingItemsStartIndex = workingStep.itemsStartIndex ?? 0
   if (!Number.isSafeInteger(workingItemsStartIndex) || workingItemsStartIndex < 0) {
     return null

@@ -10,12 +10,21 @@ import {
   PinOff,
   Save,
   ShieldQuestionMark,
-  Target,
   Undo2,
   X
 } from 'lucide-react'
-import { useState, type FocusEvent, type FormEvent, type KeyboardEvent } from 'react'
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type FormEvent,
+  type KeyboardEvent
+} from 'react'
+import { createPortal } from 'react-dom'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
+import { getDefaultProjectName } from '../projectPresentation'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { Button } from './Button'
 import { Input } from './Input'
@@ -23,8 +32,8 @@ import './ChatListItem.css'
 
 type ChatListItemProps = {
   chat: ProviderChat
+  projectDisplayName?: string | null
   selected: boolean
-  showProject: boolean
   committing?: boolean
   canMarkDone?: boolean
   canMarkUndone?: boolean
@@ -50,32 +59,46 @@ const statusLabels = {
 } as const
 const finishedUnseenLabel = 'Finished since last viewed'
 
-const workingStatuses = new Set<NonNullable<ProviderChat['status']>>(['active'])
+const providerLabels = {
+  codex: 'Codex',
+  claude: 'Claude',
+  copilot: 'Copilot'
+} as const
 
-const getLastPathPart = (path: string): string => {
-  const parts = path.split(/[\\/]/).filter(Boolean)
-  return parts.at(-1) ?? path
-}
+const workingStatuses = new Set<NonNullable<ProviderChat['status']>>(['active'])
+const minuteMs = 60_000
+const hourMs = 60 * minuteMs
+const dayMs = 24 * hourMs
+const weekMs = 7 * dayMs
+const monthMs = 30 * dayMs
+const yearMs = 365 * dayMs
 
 const getChatProjectName = (cwd: string | null): string => {
   const normalizedCwd = cwd?.trim()
-  return normalizedCwd ? getLastPathPart(normalizedCwd) : 'Unknown cwd'
+  return normalizedCwd ? getDefaultProjectName(normalizedCwd) : 'Unknown cwd'
 }
 
-const getApprovalTarget = (approval: NonNullable<ProviderChat['pendingApproval']>): string => {
-  if (approval.command) return approval.command
-  if (approval.reason) return approval.reason
-  if (approval.cwd) return approval.cwd
+const formatShortAge = (timestamp: number, now: number): string => {
+  const elapsed = Math.max(0, now - timestamp)
 
-  return approval.type === 'fileChange'
-    ? 'File changes require approval'
-    : 'Command requires approval'
+  if (elapsed < minuteMs) return 'now'
+  if (elapsed < hourMs) return `${Math.floor(elapsed / minuteMs)}m`
+  if (elapsed < dayMs) return `${Math.floor(elapsed / hourMs)}h`
+  if (elapsed < weekMs) return `${Math.floor(elapsed / dayMs)}d`
+  if (elapsed < monthMs) return `${Math.floor(elapsed / weekMs)}w`
+  if (elapsed < yearMs) return `${Math.floor(elapsed / monthMs)}mo`
+  return `${Math.floor(elapsed / yearMs)}y`
+}
+
+type DetailCardPosition = {
+  left: number
+  top: number
 }
 
 export const ChatListItem: React.FC<ChatListItemProps> = ({
   chat,
+  projectDisplayName,
   selected,
-  showProject,
   committing = false,
   canMarkDone = true,
   canMarkUndone = false,
@@ -95,28 +118,77 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(chat.title)
   const [savingName, setSavingName] = useState(false)
+  const [detailHovered, setDetailHovered] = useState(false)
+  const [detailFocused, setDetailFocused] = useState(false)
+  const [detailCardPosition, setDetailCardPosition] = useState<DetailCardPosition | null>(null)
+  const itemRef = useRef<HTMLElement>(null)
+  const detailCardRef = useRef<HTMLDivElement>(null)
+  const detailCardId = useId()
   const now = useSemanticDateNow()
-  const createdAt = formatSemanticLexicalDateDifference(chat.createdAt, { now })
+  const updatedAt = formatSemanticLexicalDateDifference(chat.updatedAt, { now })
   const isGitWorktree = chat.cwdKind === 'gitWorktree'
-  const worktreeContextName = chat.worktreeBaseBranchName ?? getChatProjectName(chat.cwd)
-  const contextName = isGitWorktree
-    ? worktreeContextName
-    : (chat.branchName ?? getChatProjectName(chat.cwd))
-  const projectName = getChatProjectName(chat.projectCwd ?? chat.cwd)
-  const visibleProjectName = showProject && projectName !== contextName ? projectName : null
-  const ProjectIcon = isGitWorktree ? GitFork : Folder
-  const contextTitle =
-    isGitWorktree && chat.cwd ? `${worktreeContextName}: ${chat.cwd}` : (chat.cwd ?? contextName)
+  const branchName = isGitWorktree
+    ? (chat.worktreeBaseBranchName ?? 'Unknown branch')
+    : (chat.branchName ?? 'Unknown branch')
+  const projectName = projectDisplayName?.trim() || getChatProjectName(chat.projectCwd ?? chat.cwd)
+  const LocationIcon = isGitWorktree ? GitFork : Folder
   const workingStatus = chat.status && workingStatuses.has(chat.status) ? chat.status : null
   const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
   const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
   const errorStatus = chat.status === 'error' ? chat.status : null
   const pendingApproval = chat.pendingApproval
-  const approvalTarget = pendingApproval ? getApprovalTarget(pendingApproval) : null
   const unread = !selected && !chat.done && chat.updatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()
+  const detailOpen = (detailHovered || detailFocused) && !editingName && !dragging
+  const shortUpdatedAge = formatShortAge(chat.updatedAt, now)
+
+  useLayoutEffect(() => {
+    if (!detailOpen) return
+
+    const updateDetailCardPosition = (): void => {
+      const item = itemRef.current
+      const detailCard = detailCardRef.current
+      if (!item || !detailCard) return
+
+      const itemBounds = item.getBoundingClientRect()
+      const cardBounds = detailCard.getBoundingClientRect()
+      const viewportPadding = 12
+      const gap = 10
+      let left = itemBounds.right + gap
+
+      if (left + cardBounds.width > window.innerWidth - viewportPadding) {
+        left = itemBounds.left - cardBounds.width - gap
+      }
+
+      left = Math.max(
+        viewportPadding,
+        Math.min(left, window.innerWidth - cardBounds.width - viewportPadding)
+      )
+      const top = Math.max(
+        viewportPadding,
+        Math.min(itemBounds.top, window.innerHeight - cardBounds.height - viewportPadding)
+      )
+
+      setDetailCardPosition((current) =>
+        current?.left === left && current.top === top ? current : { left, top }
+      )
+    }
+
+    updateDetailCardPosition()
+    window.addEventListener('resize', updateDetailCardPosition)
+    window.addEventListener('scroll', updateDetailCardPosition, true)
+    const resizeObserver = new ResizeObserver(updateDetailCardPosition)
+    if (itemRef.current) resizeObserver.observe(itemRef.current)
+    if (detailCardRef.current) resizeObserver.observe(detailCardRef.current)
+
+    return () => {
+      window.removeEventListener('resize', updateDetailCardPosition)
+      window.removeEventListener('scroll', updateDetailCardPosition, true)
+      resizeObserver.disconnect()
+    }
+  }, [detailOpen])
 
   const beginEditingName = (): void => {
     setNameDraft(chat.title)
@@ -169,11 +241,23 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
 
   return (
     <article
+      ref={itemRef}
       className={`chat-list-item${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
       draggable={editingName ? false : draggable}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDragStart={onDragStart}
+      onFocusCapture={(event) => {
+        setDetailFocused(
+          event.target instanceof HTMLElement && event.target.matches(':focus-visible')
+        )
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setDetailFocused(false)
+      }}
+      onPointerDown={() => setDetailFocused(false)}
+      onPointerEnter={() => setDetailHovered(true)}
+      onPointerLeave={() => setDetailHovered(false)}
     >
       {draggable && (
         <span className="chat-list-item__drag-handle" title="Drag to reorder">
@@ -187,6 +271,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
           : {
               type: 'button' as const,
               'aria-current': selected ? ('true' as const) : undefined,
+              'aria-describedby': detailOpen ? detailCardId : undefined,
               onClick
             })}
       >
@@ -292,66 +377,31 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
             <span className="chat-list-item__title">{chat.title}</span>
           )}
         </span>
-        {!pendingApproval && (
-          <span className="chat-list-item__body">
-            <span
-              className={`chat-list-item__context${visibleProjectName ? ' chat-list-item__context--with-project' : ''}`}
-              title={contextTitle}
-            >
-              {visibleProjectName && (
-                <>
-                  <span className="chat-list-item__project-category">{visibleProjectName}</span>
-                  <span className="chat-list-item__separator">·</span>
-                </>
-              )}
-              <ProjectIcon className="chat-list-item__folder" aria-hidden="true" />
-              <span className="chat-list-item__project">{contextName}</span>
-              {createdAt && (
-                <>
-                  <span className="chat-list-item__separator">·</span>
-                  <time dateTime={createdAt.dateTime} title={createdAt.title}>
-                    {createdAt.label}
-                  </time>
-                </>
-              )}
-            </span>
-          </span>
-        )}
       </MainContainer>
-      {pendingApproval && approvalTarget && (
-        <div className="chat-list-item__approval-row">
-          <span className="chat-list-item__approval-target" title={approvalTarget}>
-            <Target className="chat-list-item__approval-target-icon" aria-hidden="true" />
-            <span className="chat-list-item__approval-target-text">{approvalTarget}</span>
-          </span>
-          <span
-            className="chat-list-item__approval-actions"
-            role="group"
-            aria-label="Approval actions"
-          >
-            <Button
-              aria-label={`Reject approval for ${chat.title}`}
-              callback={() => onResolveApproval('deny')}
-              disabled={Boolean(approvalDecisionInFlight)}
-              icon={<X aria-hidden="true" />}
-              size="small"
-              theme="secondary"
-              title="Reject"
-            />
-            <Button
-              aria-label={`Approve approval for ${chat.title}`}
-              callback={() => onResolveApproval('allow')}
-              disabled={Boolean(approvalDecisionInFlight)}
-              icon={<Check aria-hidden="true" />}
-              size="small"
-              theme="primary"
-              title="Approve"
-            />
-          </span>
-        </div>
-      )}
       {!editingName && (
         <span className="chat-list-item__actions">
+          {pendingApproval && (
+            <>
+              <Button
+                aria-label={`Reject approval for ${chat.title}`}
+                callback={() => onResolveApproval('deny')}
+                disabled={Boolean(approvalDecisionInFlight)}
+                icon={<X aria-hidden="true" />}
+                size="small"
+                theme="secondary"
+                title="Reject"
+              />
+              <Button
+                aria-label={`Approve approval for ${chat.title}`}
+                callback={() => onResolveApproval('allow')}
+                disabled={Boolean(approvalDecisionInFlight)}
+                icon={<Check aria-hidden="true" />}
+                size="small"
+                theme="primary"
+                title="Approve"
+              />
+            </>
+          )}
           <Button
             theme="transparent"
             size="small"
@@ -390,6 +440,41 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
           />
         </span>
       )}
+      {detailOpen &&
+        createPortal(
+          <div
+            ref={detailCardRef}
+            className="chat-list-item__detail-card"
+            id={detailCardId}
+            role="tooltip"
+            style={{
+              left: detailCardPosition?.left ?? 0,
+              top: detailCardPosition?.top ?? 0,
+              visibility: detailCardPosition ? 'visible' : 'hidden'
+            }}
+          >
+            <div className="chat-list-item__detail-header">
+              <strong>{chat.title}</strong>
+              {updatedAt && (
+                <time dateTime={updatedAt.dateTime} title={`Last activity: ${updatedAt.title}`}>
+                  {shortUpdatedAge}
+                </time>
+              )}
+            </div>
+            <div className="chat-list-item__detail-location">
+              <span className="chat-list-item__detail-project">{projectName}</span>
+              <LocationIcon
+                aria-label={isGitWorktree ? 'Worktree' : 'Folder'}
+                className="chat-list-item__detail-location-icon"
+              />
+              <span className="chat-list-item__detail-branch">{branchName}</span>
+            </div>
+            <span className="chat-list-item__detail-provider">
+              {providerLabels[chat.providerId]}
+            </span>
+          </div>,
+          document.body
+        )}
     </article>
   )
 }

@@ -26,6 +26,7 @@ type ChatListGroupProps = {
   visibleChatCount?: number
   chatPageSize?: number
   projectIcon?: ReactNode
+  projectNamesByCwd?: ReadonlyMap<string, string>
   onLoadMoreChats?: (group: ChatListGroupData) => void
   onShowLessChats?: (group: ChatListGroupData) => void
   onMarkChatDone: (chat: ProviderChat, done?: boolean) => void
@@ -52,6 +53,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   visibleChatCount = group.chats.length,
   chatPageSize = 20,
   projectIcon = null,
+  projectNamesByCwd,
   onLoadMoreChats,
   onShowLessChats,
   onMarkChatDone,
@@ -158,9 +160,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             canMarkDone={group.kind !== 'done'}
             canMarkUndone={group.kind === 'done'}
             reorderable={group.kind === 'pinned' && canReorderChats}
-            showProjects={
-              group.kind === 'pinned' || group.kind === 'active' || group.kind === 'done'
-            }
+            projectNamesByCwd={projectNamesByCwd}
             onMarkDone={onMarkChatDone}
             onRename={onRenameChat}
             onResolveApproval={onResolveApproval}

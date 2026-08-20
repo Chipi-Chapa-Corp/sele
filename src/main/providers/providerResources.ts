@@ -5,10 +5,16 @@ import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { AppContainerTarget } from '../../shared/app'
-import type { ProviderSkill, ProviderSkillScope } from '../../shared/provider'
+import type { ProviderId, ProviderSkill, ProviderSkillScope } from '../../shared/provider'
 
 type DisabledSkillMetadata = {
   version: 1
+  providerId?: ProviderId
+  skill: ProviderSkill
+}
+
+type DisabledSkillRecord = {
+  providerId: ProviderId | null
   skill: ProviderSkill
 }
 
@@ -98,7 +104,18 @@ const runTargetShell = async (script: string, container: AppContainerTarget): Pr
 const isProviderSkillScope = (value: unknown): value is ProviderSkillScope =>
   value === 'user' || value === 'repo' || value === 'system' || value === 'admin'
 
-const parseDisabledSkillMetadata = (value: unknown): ProviderSkill | null => {
+const isProviderResourceId = (value: unknown): value is ProviderId =>
+  value === 'codex' || value === 'claude' || value === 'copilot'
+
+const inferProviderIdFromSkillPath = (path: string): ProviderId | null => {
+  const normalizedPath = path.replace(/\\/g, '/').toLocaleLowerCase()
+  if (normalizedPath.includes('/.claude/')) return 'claude'
+  if (normalizedPath.includes('/.codex/')) return 'codex'
+  if (normalizedPath.includes('/.copilot/')) return 'copilot'
+  return null
+}
+
+const parseDisabledSkillMetadata = (value: unknown): DisabledSkillRecord | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
 
   const metadata = value as Partial<DisabledSkillMetadata>
@@ -119,19 +136,24 @@ const parseDisabledSkillMetadata = (value: unknown): ProviderSkill | null => {
     return null
   }
 
+  if (metadata.providerId !== undefined && !isProviderResourceId(metadata.providerId)) return null
+
   return {
-    name: skill.name.trim(),
-    description: skill.description.trim(),
-    shortDescription: skill.shortDescription?.trim() || null,
-    displayName: skill.displayName?.trim() || null,
-    path: skill.path,
-    scope: skill.scope,
-    enabled: false
+    providerId: metadata.providerId ?? inferProviderIdFromSkillPath(skill.path),
+    skill: {
+      name: skill.name.trim(),
+      description: skill.description.trim(),
+      shortDescription: skill.shortDescription?.trim() || null,
+      displayName: skill.displayName?.trim() || null,
+      path: skill.path,
+      scope: skill.scope,
+      enabled: false
+    }
   }
 }
 
-const parseDisabledSkillLines = (output: string): ProviderSkill[] =>
-  output.split('\n').flatMap((line): ProviderSkill[] => {
+const parseDisabledSkillLines = (output: string): DisabledSkillRecord[] =>
+  output.split('\n').flatMap((line): DisabledSkillRecord[] => {
     const normalizedLine = line.trim()
     if (!normalizedLine) return []
 
@@ -143,7 +165,7 @@ const parseDisabledSkillLines = (output: string): ProviderSkill[] =>
     }
   })
 
-const readLocalDisabledSkills = async (): Promise<ProviderSkill[]> => {
+const readLocalDisabledSkills = async (): Promise<DisabledSkillRecord[]> => {
   const root = getLocalDisabledSkillRoot()
   let entries: Dirent<string>[]
   try {
@@ -155,7 +177,7 @@ const readLocalDisabledSkills = async (): Promise<ProviderSkill[]> => {
   const skills = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory())
-      .map(async (entry): Promise<ProviderSkill | null> => {
+      .map(async (entry): Promise<DisabledSkillRecord | null> => {
         try {
           const metadata = JSON.parse(
             await readFile(join(root, entry.name, 'metadata.json'), 'utf8')
@@ -167,14 +189,15 @@ const readLocalDisabledSkills = async (): Promise<ProviderSkill[]> => {
       })
   )
 
-  return skills.filter((skill): skill is ProviderSkill => Boolean(skill))
+  return skills.filter((record): record is DisabledSkillRecord => Boolean(record))
 }
 
 export const listDisabledProviderSkills = async (
+  providerId: ProviderId,
   container: AppContainerTarget | null | undefined
 ): Promise<ProviderSkill[]> => {
   const normalizedContainer = normalizeProviderResourceContainer(container)
-  const skills = shouldUseLocalFileSystem(normalizedContainer)
+  const records = shouldUseLocalFileSystem(normalizedContainer)
     ? await readLocalDisabledSkills()
     : parseDisabledSkillLines(
         await runTargetShell(
@@ -192,7 +215,10 @@ export const listDisabledProviderSkills = async (
         )
       )
 
-  return skills.sort((first, second) => first.name.localeCompare(second.name))
+  return records
+    .filter((record) => record.providerId === null || record.providerId === providerId)
+    .map((record) => record.skill)
+    .sort((first, second) => first.name.localeCompare(second.name))
 }
 
 const moveLocalPath = async (source: string, destination: string): Promise<void> => {
@@ -226,7 +252,10 @@ const getLocalSkillDirectory = async (reportedPath: string): Promise<string> => 
   throw new Error('Skill folder no longer exists')
 }
 
-const disableLocalProviderSkill = async (skill: ProviderSkill): Promise<void> => {
+const disableLocalProviderSkill = async (
+  providerId: ProviderId,
+  skill: ProviderSkill
+): Promise<void> => {
   const skillDirectory = await getLocalSkillDirectory(skill.path)
 
   const entry = getLocalDisabledSkillEntry(skill.path)
@@ -236,6 +265,7 @@ const disableLocalProviderSkill = async (skill: ProviderSkill): Promise<void> =>
   try {
     const metadata = {
       version: 1,
+      providerId,
       skill: { ...skill, enabled: false }
     } satisfies DisabledSkillMetadata
     await writeFile(join(entry, 'metadata.json'), `${JSON.stringify(metadata)}\n`, {
@@ -250,17 +280,19 @@ const disableLocalProviderSkill = async (skill: ProviderSkill): Promise<void> =>
 }
 
 export const disableProviderSkill = async (
+  providerId: ProviderId,
   skill: ProviderSkill,
   container: AppContainerTarget | null | undefined
 ): Promise<void> => {
   const normalizedContainer = normalizeProviderResourceContainer(container)
   if (shouldUseLocalFileSystem(normalizedContainer)) {
-    await disableLocalProviderSkill(skill)
+    await disableLocalProviderSkill(providerId, skill)
     return
   }
 
   const metadata = JSON.stringify({
     version: 1,
+    providerId,
     skill: { ...skill, enabled: false }
   } satisfies DisabledSkillMetadata)
   const key = getDisabledSkillKey(skill.path)

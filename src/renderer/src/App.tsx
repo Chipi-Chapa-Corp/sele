@@ -2247,6 +2247,16 @@ const gitCommitPromptFieldOptions = [
     rows: 2
   },
   {
+    key: 'quickCommit',
+    label: 'Quick commit prompt',
+    rows: 3
+  },
+  {
+    key: 'pushAfterQuickCommit',
+    label: 'Push-after-commit instruction',
+    rows: 2
+  },
+  {
     key: 'extraInstructionsPrefix',
     label: 'Extra instructions prefix',
     rows: 1
@@ -3653,6 +3663,27 @@ const getScopedChatCommitPrompt = (
   ]
     .filter((line): line is string => line != null)
     .join('\n')
+}
+
+const getQuickChatCommitPrompt = (
+  recentCommitMessages: string[],
+  extraInstructions: string,
+  pushAfterCommit: boolean,
+  promptSettings: AppGitCommitPromptSettings
+): string => {
+  const recentCommitNames =
+    recentCommitMessages.length > 0
+      ? recentCommitMessages.map((message) => `- ${message}`).join('\n')
+      : '(No recent commits)'
+
+  return [
+    promptSettings.quickCommit.trim(),
+    ['Recent commit names:', recentCommitNames].join('\n'),
+    formatExtraUserInstructionsForPrompt(extraInstructions, promptSettings),
+    pushAfterCommit ? promptSettings.pushAfterQuickCommit.trim() : null
+  ]
+    .filter((section): section is string => Boolean(section))
+    .join('\n\n')
 }
 
 const getCommitMessageGenerationPrompt = (
@@ -6916,6 +6947,9 @@ export const App: React.FC = () => {
           )
         })
   const projectRecordsByCwd = new Map(projects.map((project) => [project.cwd, project]))
+  const projectNamesByCwd = new Map(
+    projects.map((project) => [project.cwd, getProjectDisplayName(project)])
+  )
   const chatGroups = groupChatsForSidebar(filteredChats).map((group) => {
     if (group.kind !== 'cwd' || !group.cwd) return group
 
@@ -9564,6 +9598,7 @@ export const App: React.FC = () => {
         canReorderChats={searchTerms.length === 0}
         visibleChatCount={visibleChatCount}
         chatPageSize={chatPageSize}
+        projectNamesByCwd={projectNamesByCwd}
         onLoadMoreChats={group.kind === 'pinned' ? undefined : handleLoadMoreChatsInGroup}
         onShowLessChats={group.kind === 'pinned' ? undefined : handleShowLessChatsInGroup}
         projectIcon={projectIcon}
@@ -10224,7 +10259,11 @@ export const App: React.FC = () => {
   const aiCommitUnavailable =
     sendState === 'sending' ||
     Boolean(editingMessage) ||
-    (selectedChat ? !chatDetail || chatLoadState !== 'ready' || chatIsBusy : false)
+    (selectedChat
+      ? !chatDetail ||
+        chatLoadState !== 'ready' ||
+        (chatIsBusy && !chatDetail.capabilities.activeMessages)
+      : false)
   const commitBaseDisabled =
     providerUpdateInProgress ||
     commitFiles.length === 0 ||
@@ -10694,21 +10733,31 @@ export const App: React.FC = () => {
 
   const handleScopedChatCommit = async (
     action: GitCommitPromptAction,
-    extraInstructions: string
+    prompt: string
   ): Promise<boolean> => {
     if (providerUpdateInProgress) return false
     if (selectedChat && !chatDetail) return false
     if (!selectedChat && !changesCwd) return false
     if (sendInFlightRef.current) return false
 
-    const prompt = getScopedChatCommitPrompt(
-      action,
-      extraInstructions,
-      effectiveAppSettings.git.commitPrompt
-    )
     const providerId = selectedChat?.providerId ?? newSessionProvider
     const chatId = selectedChat?.id ?? null
     const turnOptions = getGitTurnOptions()
+    if (chatId && chatHasActiveTurn && chatDetail?.capabilities.activeMessages) {
+      setCommitState('sending')
+      setCommitError(null)
+
+      const queued = await handleSendMessage(prompt, 'queue', [], null, [], [], turnOptions)
+      if (queued) {
+        setCommitInput('')
+        setCommitState('idle')
+      } else {
+        setCommitState('error')
+        setCommitError('Unable to queue the AI commit.')
+      }
+      return queued
+    }
+
     const useForkedChat = chatId != null && turnOptions.model !== model
     const useHiddenChat = chatId == null || useForkedChat
     const markerId = chatId ? createChatCommitMarkerId() : null
@@ -10979,7 +11028,45 @@ export const App: React.FC = () => {
 
     commitInFlightRef.current = true
     try {
-      return await handleScopedChatCommit(action, commitInputValue)
+      return await handleScopedChatCommit(
+        action,
+        getScopedChatCommitPrompt(action, commitInputValue, effectiveAppSettings.git.commitPrompt)
+      )
+    } finally {
+      commitInFlightRef.current = false
+    }
+  }
+
+  const handleQuickCommitChangedFiles = async (pushAfterCommit = false): Promise<boolean> => {
+    if (providerUpdateInProgress) return false
+    if (commitInFlightRef.current) return false
+    if (getAiCommitActionDisabled()) return false
+    if (!changesCwd) return false
+
+    commitInFlightRef.current = true
+    setCommitState('idle')
+    setCommitError(null)
+
+    try {
+      const { messages } = await appApi.getRecentGitCommitMessages({
+        container: changesContainer,
+        cwd: changesCwd,
+        limit: 5
+      })
+
+      return await handleScopedChatCommit(
+        'commit',
+        getQuickChatCommitPrompt(
+          messages,
+          commitInputValue,
+          pushAfterCommit,
+          effectiveAppSettings.git.commitPrompt
+        )
+      )
+    } catch (error) {
+      setCommitState('error')
+      setCommitError(getErrorMessage(error, 'Unable to start quick commit.'))
+      return false
     } finally {
       commitInFlightRef.current = false
     }
@@ -11956,7 +12043,7 @@ export const App: React.FC = () => {
             aria-labelledby="settings-git-ai-chat-commit"
           >
             <h2 className="settings-dialog__section-heading" id="settings-git-ai-chat-commit">
-              AI Chat Commit
+              AI commits
             </h2>
             <div className="settings-dialog__section-cards">
               {gitCommitPromptFieldOptions.map((field) => {
@@ -13495,6 +13582,26 @@ export const App: React.FC = () => {
                     theme="primary"
                     fill
                   />
+                  <Button
+                    disabled={getAiCommitActionDisabled()}
+                    callback={() => void handleQuickCommitChangedFiles()}
+                    dropdownActions={[
+                      {
+                        id: 'quick-commit-and-push',
+                        label: 'Commit & Push',
+                        disabled: getAiCommitActionDisabled(),
+                        icon: <Upload aria-hidden="true" />,
+                        callback: () => void handleQuickCommitChangedFiles(true)
+                      }
+                    ]}
+                    dropdownLabel="Quick commit actions"
+                    dropdownMenuAlign="end"
+                    dropdownPlacement="top"
+                    icon={<Sparkles aria-hidden="true" />}
+                    label={<span>Quick commit</span>}
+                    theme="secondary"
+                    fill
+                  />
                 </div>
                 {hasSyncChanges && (
                   <div className="changes-sidebar__sync-row">
@@ -13502,7 +13609,9 @@ export const App: React.FC = () => {
                       title={syncButtonTitle}
                       disabled={syncDisabled}
                       callback={() => void handleSyncChanges(primarySyncAction)}
-                      dropdownActions={syncDropdownActions}
+                      dropdownActions={
+                        primarySyncAction === 'push' ? undefined : syncDropdownActions
+                      }
                       dropdownLabel="Sync actions"
                       dropdownMenuAlign="end"
                       dropdownPlacement="top"

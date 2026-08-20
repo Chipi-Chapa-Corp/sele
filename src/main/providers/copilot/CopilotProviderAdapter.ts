@@ -593,7 +593,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       ]
     })
 
-    const disabledSkills = await listDisabledProviderSkills(options.container)
+    const disabledSkills = await listDisabledProviderSkills('copilot', options.container)
     return mergeProviderSkills(discoveredSkills, disabledSkills)
   }
 
@@ -637,7 +637,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     const updateSkill = async (skill: ProviderSkill): Promise<void> => {
       if (!enabled) {
-        await disableProviderSkill(skill, options.container)
+        await disableProviderSkill('copilot', skill, options.container)
         return
       }
 
@@ -1734,11 +1734,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (!state && container !== undefined) this.sessionContainers.set(metadata.sessionId, container)
     const preview =
       detail?.items.findLast((item) => item.type === 'message')?.content ?? metadata.summary ?? ''
+    const metadataName = metadata.name?.trim()
 
     return {
       id: metadata.sessionId,
       providerId: this.id,
-      title: detail?.title ?? truncate(metadata.name ?? metadata.summary ?? 'Copilot session', 80),
+      title: detail?.title ?? metadataName ?? truncate(metadata.summary ?? 'Copilot session', 80),
       preview: truncate(preview, 500),
       cwd: detail?.cwd ?? metadata.context?.workingDirectory ?? null,
       cwdKind: 'directory',

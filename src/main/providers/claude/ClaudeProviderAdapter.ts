@@ -244,7 +244,7 @@ const updateDelayMs = 35
 const contextUsageCloseGraceMs = 1_000
 const interruptCloseGraceMs = 500
 const oneShotCancellationRetentionMs = 60_000
-const maxTitleLength = 80
+const maxFallbackTitleLength = 80
 const maxPreviewLength = 500
 const allowedEffortLevels = new Set<EffortLevel>(['low', 'medium', 'high', 'xhigh', 'max'])
 const readOnlyAllowedTools = [
@@ -644,7 +644,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderSkill[]> => {
     const [discoveredSkills, disabledSkills] = await Promise.all([
       discoverClaudeSkills(cwd, options.container),
-      listDisabledProviderSkills(options.container)
+      listDisabledProviderSkills('claude', options.container)
     ])
     return mergeProviderSkills(discoveredSkills, disabledSkills)
   }
@@ -705,7 +705,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
     const results = await Promise.allSettled(
       changedSkills.map(async (skill) => {
-        if (!enabled) return disableProviderSkill(skill, options.container)
+        if (!enabled) return disableProviderSkill('claude', skill, options.container)
         const restored = await restoreProviderSkill(skill.path, options.container)
         if (!restored) throw new Error('Skill was not disabled by Sele')
       })
@@ -1743,14 +1743,14 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private getTitle = (state: ClaudeSessionState): string => {
     const metadataTitle = state.metadata?.customTitle || state.metadata?.summary
-    if (metadataTitle?.trim()) return truncate(metadataTitle.trim(), maxTitleLength)
+    if (metadataTitle?.trim()) return metadataTitle.trim()
     const firstUserMessage = state.messages.find(
       (message) => message.type === 'user' && !isClaudeInternalUserMessage(message)
     )
     const firstPrompt = firstUserMessage
       ? getTextFromContent(getMessageContent(firstUserMessage.message))
       : ''
-    return firstPrompt ? truncate(firstPrompt, maxTitleLength) : 'Claude session'
+    return firstPrompt ? truncate(firstPrompt, maxFallbackTitleLength) : 'Claude session'
   }
 
   private getPendingApproval = (state: ClaudeSessionState): ProviderPendingApproval | null => {
@@ -1853,10 +1853,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private createChatFromMetadata = (metadata: SDKSessionInfo): ProviderChat => {
     const state = this.states.get(metadata.sessionId)
     if (state) return this.createChatFromState(state)
-    const title = truncate(
-      metadata.customTitle || metadata.summary || 'Claude session',
-      maxTitleLength
-    )
+    const metadataTitle = metadata.customTitle || metadata.summary
+    const title = metadataTitle?.trim()
+      ? metadataTitle.trim()
+      : truncate(metadata.firstPrompt || 'Claude session', maxFallbackTitleLength)
     return {
       id: metadata.sessionId,
       providerId: this.id,

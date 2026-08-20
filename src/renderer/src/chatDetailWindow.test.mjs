@@ -139,6 +139,31 @@ test('replaces an active placeholder with its first live working item', () => {
   assert.equal(result.itemsStartIndex, 0)
 })
 
+test('keeps an unloaded working shell unloaded across incremental updates', () => {
+  const current = {
+    type: 'working',
+    id: 'turn:working',
+    status: 'worked',
+    items: [],
+    itemsLoaded: false,
+    itemCount: 4,
+    itemsStartIndex: 0
+  }
+  const update = {
+    ...current,
+    workingItemsStartIndex: 0,
+    workingItemsPrefixLastId: null
+  }
+
+  const result = mergeWorkingStepUpdate(update, current, 50, 100)
+
+  assert.equal(result.itemsLoaded, false)
+  assert.equal(result.itemCount, 4)
+  assert.equal(result.items.length, 0)
+  assert.equal(result.itemsStartIndex, 0)
+  assert.equal(result.itemSegments, undefined)
+})
+
 test('pins the newest working items when the 51st live item arrives', () => {
   const current = {
     type: 'working',

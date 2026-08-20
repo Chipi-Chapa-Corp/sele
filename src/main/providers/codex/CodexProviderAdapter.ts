@@ -649,7 +649,7 @@ const getThreadName = (thread: CodexThread): string | null => {
 
 const getThreadTitle = (thread: CodexThread): string => {
   const previewTitle = thread.preview.trim().split('\n')[0]
-  return getThreadName(thread) ?? (previewTitle || 'Untitled chat')
+  return getThreadName(thread) ?? (truncateTitle(previewTitle, 80) || 'Untitled chat')
 }
 
 const getThreadNotificationName = (params: ThreadNotificationParams): string | null =>
@@ -1375,7 +1375,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ]
     })
 
-    const disabledSkills = await listDisabledProviderSkills(this.getCurrentContainer())
+    const disabledSkills = await listDisabledProviderSkills('codex', this.getCurrentContainer())
     return mergeProviderSkills(discoveredSkills, disabledSkills)
   }
 
@@ -1422,7 +1422,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const updateSkill = async (skill: ProviderSkill): Promise<void> => {
       if (!enabled) {
-        await disableProviderSkill(skill, this.getCurrentContainer())
+        await disableProviderSkill('codex', skill, this.getCurrentContainer())
         return
       }
 

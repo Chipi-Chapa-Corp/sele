@@ -11,7 +11,7 @@ type ChatListProps = {
   canMarkDone?: boolean
   canMarkUndone?: boolean
   reorderable?: boolean
-  showProjects?: boolean
+  projectNamesByCwd?: ReadonlyMap<string, string>
   onMarkDone: (chat: ProviderChat, done?: boolean) => void
   onRename: (chat: ProviderChat, title: string) => Promise<void>
   onResolveApproval: (chat: ProviderChat, decision: ProviderApprovalDecision) => void
@@ -32,7 +32,7 @@ export const ChatList: React.FC<ChatListProps> = ({
   canMarkDone = true,
   canMarkUndone = false,
   reorderable = false,
-  showProjects = false,
+  projectNamesByCwd,
   onMarkDone,
   onRename,
   onResolveApproval,
@@ -121,6 +121,7 @@ export const ChatList: React.FC<ChatListProps> = ({
           <ChatListItem
             key={chatKey}
             chat={chat}
+            projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
             selected={chatKey === selectedChatKey}
             committing={committingChatKeys?.has(chatKey)}
             canMarkDone={canMarkDone}
@@ -128,7 +129,6 @@ export const ChatList: React.FC<ChatListProps> = ({
             draggable={reorderable}
             dragging={chatKey === draggedChatKey}
             dropPosition={dropPosition}
-            showProject={showProjects}
             approvalDecisionInFlight={
               chat.pendingApproval && chat.pendingApproval.id === resolvingApprovalId
                 ? 'allow'
