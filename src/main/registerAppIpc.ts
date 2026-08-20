@@ -82,6 +82,7 @@ import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
 import { commitGitFileChanges } from './gitCommit'
+import { limitVisibleUntrackedGitFiles } from './gitChanges'
 import { getHostCommand } from './hostProcess'
 import { getProcessFailureMessage } from './processFailure'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
@@ -1710,6 +1711,7 @@ const getGitChanges = async (
       baseRef: null,
       unpulledCount: 0,
       unpushedCount: 0,
+      untrackedFilesHiddenForPerformance: false,
       files: []
     }
   }
@@ -1724,13 +1726,15 @@ const getGitChanges = async (
       true
     )
 
+    const visibleChanges = limitVisibleUntrackedGitFiles(parsePorcelainChanges(status ?? ''))
+
     return {
       repositoryRoot,
       branchName,
       baseRef: null,
       unpulledCount,
       unpushedCount,
-      files: parsePorcelainChanges(status ?? '')
+      ...visibleChanges
     }
   }
 
@@ -1742,6 +1746,7 @@ const getGitChanges = async (
       baseRef: null,
       unpulledCount,
       unpushedCount,
+      untrackedFilesHiddenForPerformance: false,
       files: []
     }
   }
@@ -1758,6 +1763,7 @@ const getGitChanges = async (
     baseRef: branchBase.ref,
     unpulledCount,
     unpushedCount,
+    untrackedFilesHiddenForPerformance: false,
     files: parseNameStatusChanges(diff ?? '')
   }
 }

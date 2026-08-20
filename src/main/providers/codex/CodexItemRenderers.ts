@@ -10,6 +10,7 @@ import type {
   ProviderWorkingStep,
   ProviderWorkingToolStatus
 } from '../../../shared/provider'
+import { groupWorkingItemsForRenderer, rendererWorkingToolGroupLimit } from '../workingStepLazy.ts'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls.ts'
 
 export type CodexUserInput =
@@ -1685,11 +1686,46 @@ const renderChatItems = (
       workingStepCount += 1
     }
     const appendWorkingItems = (items: ProviderWorkingItem[]): void => {
-      workingItemCount += items.length
-      workingItems.push(...items)
-      if (workingItems.length > workingItemTailLimit) {
-        workingItems.splice(0, workingItems.length - workingItemTailLimit)
+      if (workingItemTailLimit === Number.MAX_SAFE_INTEGER) {
+        workingItemCount += items.length
+        workingItems.push(...items)
+        return
       }
+
+      items.forEach((item) => {
+        const previousItem = workingItems.at(-1)
+        if (item.type !== 'message' && previousItem && previousItem.type !== 'message') {
+          const groupedItem = groupWorkingItemsForRenderer([previousItem, item])[0]
+          if (groupedItem?.type === 'toolGroup') {
+            const toolCount = Math.max(groupedItem.toolCount ?? 0, groupedItem.tools.length)
+            const tools = groupedItem.tools.slice(-rendererWorkingToolGroupLimit)
+            workingItems[workingItems.length - 1] = {
+              ...groupedItem,
+              tools,
+              toolCount,
+              toolsStartIndex: Math.max(0, toolCount - tools.length)
+            }
+          }
+          return
+        }
+
+        workingItemCount += 1
+        if (item.type === 'toolGroup') {
+          const toolCount = Math.max(item.toolCount ?? 0, item.tools.length)
+          const tools = item.tools.slice(-rendererWorkingToolGroupLimit)
+          workingItems.push({
+            ...item,
+            tools,
+            toolCount,
+            toolsStartIndex: Math.max(0, toolCount - tools.length)
+          })
+        } else {
+          workingItems.push(item)
+        }
+        if (workingItems.length > workingItemTailLimit) {
+          workingItems.splice(0, workingItems.length - workingItemTailLimit)
+        }
+      })
     }
     const flushBufferedFinalMessage = (): boolean => {
       if (!finalMessage) return false

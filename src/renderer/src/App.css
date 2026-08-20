@@ -444,6 +444,45 @@
   line-height: 1.4;
 }
 
+.changes-sidebar__performance-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  margin: 4px 6px 10px;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--glass-line);
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+.changes-sidebar__performance-warning-icon {
+  width: 18px;
+  height: 18px;
+  margin-top: calc((1.4em - 18px) / 2);
+  color: var(--ink);
+  stroke-width: 1.8;
+}
+
+.changes-sidebar__performance-warning strong {
+  display: block;
+  color: var(--lead);
+  font-weight: 650;
+}
+
+.changes-sidebar__performance-warning p {
+  margin: 3px 0 0;
+  color: var(--ink);
+}
+
+.changes-sidebar__performance-warning code {
+  padding: 1px 4px;
+  border: 1px solid var(--inline-code-border);
+  border-radius: 4px;
+  background: var(--inline-code-bg);
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
+}
+
 .changes-sidebar__git-state {
   display: grid;
   min-height: 0;

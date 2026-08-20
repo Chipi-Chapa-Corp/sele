@@ -86,3 +86,36 @@ test('only treats a non-streaming final answer as completed', () => {
     true
   )
 })
+
+test('keeps a bounded logical activity sequence in live renderer snapshots', () => {
+  const turn = {
+    id: 'turn-tools',
+    status: 'inProgress',
+    startedAt: 1,
+    items: [
+      userMessage('user-tools', 'Run checks'),
+      ...Array.from({ length: 85 }, (_, index) => ({
+        type: 'commandExecution',
+        id: `command-${index}`,
+        command: `echo ${index}`,
+        aggregatedOutput: `${index}`,
+        status: 'finished'
+      }))
+    ]
+  }
+
+  const items = getChatItems([turn], null, {
+    workingItemTailTurnId: turn.id,
+    workingItemTailLimit: 50
+  })
+  const working = items.find((item) => item.type === 'working')
+  const sequence = working.items[0]
+
+  assert.equal(working.itemCount, 1)
+  assert.equal(working.itemsStartIndex, 0)
+  assert.equal(working.items.length, 1)
+  assert.equal(sequence.type, 'toolGroup')
+  assert.equal(sequence.toolCount, 85)
+  assert.equal(sequence.tools.length, 50)
+  assert.equal(sequence.toolsStartIndex, 35)
+})

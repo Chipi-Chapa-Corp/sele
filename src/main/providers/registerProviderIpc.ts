@@ -35,6 +35,7 @@ import type {
   ProviderWorkingItem,
   ProviderWorkingStep,
   ProviderWorkingStepPage,
+  ProviderWorkingToolPage,
   ProviderWorkingStepUpdate
 } from '../../shared/provider'
 import {
@@ -54,6 +55,7 @@ import { getChatUpdateSummary, providerApi } from './providerService'
 import { prepareChatDetailForRenderer, prepareChatItemsForRenderer } from './chatDetailLazy'
 import {
   limitWorkingItemPayload,
+  prepareWorkingToolPage,
   prepareWorkingStepPage,
   rendererWorkingItemWindowSize,
   unloadHistoricalWorkingSteps
@@ -1290,9 +1292,40 @@ export const registerProviderIpc = (): void => {
           item.type === 'working' && item.id === requiredWorkingStepId
       )
       if (!workingStep) throw new Error('Working section not found')
-      const workingItem = workingStep.items.find((item) => item.id === requiredWorkingItemId)
+      const workingItem =
+        workingStep.items.find((item) => item.id === requiredWorkingItemId) ??
+        workingStep.items
+          .flatMap((item) => (item.type === 'toolGroup' ? item.tools : []))
+          .find((tool) => tool.id === requiredWorkingItemId)
       if (!workingItem) throw new Error('Working item not found')
       return limitWorkingItemPayload(workingItem)
+    }
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.getChatWorkingToolPage,
+    async (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      workingStepId: unknown,
+      workingItemId: unknown,
+      startIndex: unknown,
+      limit: unknown
+    ): Promise<ProviderWorkingToolPage> => {
+      const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+      const requiredWorkingStepId = requireMessageId(workingStepId)
+      const workingStep = detail.items.find(
+        (item): item is ProviderWorkingStep =>
+          item.type === 'working' && item.id === requiredWorkingStepId
+      )
+      if (!workingStep) throw new Error('Working section not found')
+      return prepareWorkingToolPage(
+        workingStep,
+        requireMessageId(workingItemId),
+        requireChatTurnStartIndex(startIndex),
+        requireWorkingItemLimit(limit)
+      )
     }
   )
 

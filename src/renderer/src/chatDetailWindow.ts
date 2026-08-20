@@ -6,7 +6,9 @@ import type {
   ProviderWorkingItem,
   ProviderWorkingItemSegment,
   ProviderWorkingStepPage,
-  ProviderWorkingStep
+  ProviderWorkingStep,
+  ProviderWorkingToolGroup,
+  ProviderWorkingToolPage
 } from '../../shared/provider'
 import { getProviderChatTurns } from '../../shared/chatTurns.ts'
 import type { ChatTurnWindow } from './chatTurnWindow'
@@ -214,6 +216,38 @@ export const mergeWorkingStepPage = (
     ],
     totalCount
   )
+}
+
+export const mergeWorkingToolPage = (
+  currentGroup: ProviderWorkingToolGroup,
+  page: ProviderWorkingToolPage,
+  windowSize: number
+): ProviderWorkingToolGroup => {
+  const boundedWindowSize = Math.max(1, windowSize)
+  const totalCount = Math.max(page.totalCount, currentGroup.toolCount ?? 0)
+  const currentStartIndex =
+    currentGroup.toolsStartIndex ?? Math.max(0, totalCount - currentGroup.tools.length)
+  const toolsByIndex = new Map(
+    currentGroup.tools.map((tool, index) => [currentStartIndex + index, tool] as const)
+  )
+  page.tools.forEach((tool, index) => toolsByIndex.set(page.startIndex + index, tool))
+
+  const indexes = [...toolsByIndex.keys()].sort((first, second) => first - second)
+  const loadingOlder = page.startIndex < currentStartIndex
+  const retainedIndexes =
+    indexes.length <= boundedWindowSize
+      ? indexes
+      : loadingOlder
+        ? indexes.slice(0, boundedWindowSize)
+        : indexes.slice(-boundedWindowSize)
+  const retainedStartIndex = retainedIndexes[0] ?? page.startIndex
+
+  return {
+    ...currentGroup,
+    tools: retainedIndexes.map((index) => toolsByIndex.get(index)!),
+    toolCount: totalCount,
+    toolsStartIndex: retainedStartIndex
+  }
 }
 
 export const mergeWorkingStepUpdate = (

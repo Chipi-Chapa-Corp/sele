@@ -3,11 +3,15 @@ import type {
   ProviderWorkingItem,
   ProviderWorkingStep,
   ProviderWorkingStepPage,
+  ProviderWorkingToolGroup,
+  ProviderWorkingToolPage,
   ProviderWorkingTool
 } from '../../shared/provider'
 
 export const rendererWorkingItemPageSize = 50
 export const rendererWorkingItemWindowSize = rendererWorkingItemPageSize * 2
+export const rendererWorkingToolPageSize = 50
+export const rendererWorkingToolWindowSize = rendererWorkingToolPageSize * 2
 export const rendererWorkingPagePayloadBudgetCharacters = 2_000_000
 export const rendererWorkingItemPayloadPreviewCharacters = 256_000
 export const rendererWorkingToolGroupLimit = 50
@@ -18,6 +22,7 @@ const rendererRawValueDepthLimit = 8
 const rendererPayloadCountEntryLimit = 10_000
 
 const truncatedPayloadMarker = '\n… [truncated to keep the app responsive]'
+const rendererToolSequenceIdPrefix = 'renderer-tool-sequence:'
 
 const addCount = (current: number, value: number): number =>
   Math.min(Number.MAX_SAFE_INTEGER, current + value)
@@ -282,6 +287,111 @@ export const limitWorkingItemPayload = (
   return limitToolPayload(item, budget)
 }
 
+const getDominantToolActivity = (tools: ProviderWorkingTool[]): ProviderWorkingTool['activity'] => {
+  const counts = new Map<ProviderWorkingTool['activity'], number>()
+  tools.forEach((tool) => counts.set(tool.activity, (counts.get(tool.activity) ?? 0) + 1))
+  const highestCount = Math.max(0, ...counts.values())
+  return tools.find((tool) => counts.get(tool.activity) === highestCount)?.activity ?? 'other'
+}
+
+const createToolSequence = (
+  items: Exclude<ProviderWorkingItem, { type: 'message' }>[]
+): ProviderWorkingToolGroup => {
+  const tools = items.flatMap((item) => (item.type === 'toolGroup' ? item.tools : [item]))
+  const firstItem = items[0]
+  const singleExistingGroup = items.length === 1 && firstItem?.type === 'toolGroup'
+  const firstId = firstItem?.id ?? 'empty'
+  const id = singleExistingGroup
+    ? firstId
+    : firstId.startsWith(rendererToolSequenceIdPrefix)
+      ? firstId
+      : `${rendererToolSequenceIdPrefix}${firstId}`
+  const toolActivities = [
+    ...new Set(
+      items.flatMap((item) =>
+        item.type === 'toolGroup' && item.toolActivities?.length
+          ? item.toolActivities
+          : item.type === 'toolGroup'
+            ? item.tools.map((tool) => tool.activity)
+            : [item.activity]
+      )
+    )
+  ]
+  const toolCount = items.reduce(
+    (count, item) =>
+      count + (item.type === 'toolGroup' ? Math.max(item.toolCount ?? 0, item.tools.length) : 1),
+    0
+  )
+
+  return {
+    type: 'toolGroup' as const,
+    id,
+    label: singleExistingGroup ? firstItem.label : '',
+    tools,
+    toolCount,
+    toolsStartIndex: singleExistingGroup ? (firstItem.toolsStartIndex ?? 0) : 0,
+    toolActivities,
+    dominantActivity:
+      singleExistingGroup && firstItem.dominantActivity
+        ? firstItem.dominantActivity
+        : getDominantToolActivity(tools)
+  }
+}
+
+export const groupWorkingItemsForRenderer = (
+  items: ProviderWorkingItem[]
+): ProviderWorkingItem[] => {
+  const groupedItems: ProviderWorkingItem[] = []
+  let pendingTools: Exclude<ProviderWorkingItem, { type: 'message' }>[] = []
+  const flushTools = (): void => {
+    if (pendingTools.length === 0) return
+    groupedItems.push(
+      pendingTools.length === 1 && pendingTools[0]?.type === 'tool'
+        ? pendingTools[0]
+        : createToolSequence(pendingTools)
+    )
+    pendingTools = []
+  }
+
+  items.forEach((item) => {
+    if (item.type === 'message') {
+      flushTools()
+      groupedItems.push(item)
+    } else {
+      pendingTools.push(item)
+    }
+  })
+  flushTools()
+  return groupedItems
+}
+
+export const groupWorkingStepItems = (step: ProviderWorkingStep): ProviderWorkingStep => {
+  if (
+    step.itemsLoaded === false ||
+    step.itemSegments?.length ||
+    (step.itemsStartIndex ?? 0) > 0 ||
+    (step.itemCount ?? step.items.length) > step.items.length
+  ) {
+    return step
+  }
+
+  const groupedItems = groupWorkingItemsForRenderer(step.items)
+
+  const unchanged =
+    groupedItems.length === step.items.length &&
+    groupedItems.every((item, index) => item === step.items[index])
+  if (unchanged && step.itemCount === groupedItems.length && step.itemsStartIndex === 0) return step
+
+  const stepWithoutSegments = { ...step }
+  delete stepWithoutSegments.itemSegments
+  return {
+    ...stepWithoutSegments,
+    items: groupedItems,
+    itemCount: groupedItems.length,
+    itemsStartIndex: 0
+  }
+}
+
 export const unloadWorkingStep = (step: ProviderWorkingStep): ProviderWorkingStep => {
   const stepWithoutSegments = { ...step }
   delete stepWithoutSegments.itemSegments
@@ -302,10 +412,11 @@ export const prepareWorkingStepPage = (
   startIndex: number,
   limit: number
 ): ProviderWorkingStepPage => {
+  const groupedStep = groupWorkingStepItems(step)
   const totalCount =
-    step.itemsLoaded === false
-      ? (step.itemCount ?? 0)
-      : Math.max(step.itemCount ?? 0, step.items.length)
+    groupedStep.itemsLoaded === false
+      ? (groupedStep.itemCount ?? 0)
+      : Math.max(groupedStep.itemCount ?? 0, groupedStep.items.length)
   const boundedLimit = Math.max(1, Math.min(limit, rendererWorkingItemWindowSize))
   const requestedStartIndex = Math.max(0, Math.min(startIndex, totalCount))
   // An unloaded renderer shell can briefly have a stale count while the provider rebuilds its
@@ -315,9 +426,10 @@ export const prepareWorkingStepPage = (
     totalCount > 0 && requestedStartIndex >= totalCount
       ? Math.max(0, totalCount - boundedLimit)
       : requestedStartIndex
-  const sourceStartIndex = step.itemsLoaded === false ? 0 : (step.itemsStartIndex ?? 0)
+  const sourceStartIndex =
+    groupedStep.itemsLoaded === false ? 0 : (groupedStep.itemsStartIndex ?? 0)
   const relativeStartIndex = Math.max(0, boundedStartIndex - sourceStartIndex)
-  const sourceItems = step.items.slice(relativeStartIndex, relativeStartIndex + boundedLimit)
+  const sourceItems = groupedStep.items.slice(relativeStartIndex, relativeStartIndex + boundedLimit)
   let remainingPayloadCharacters = rendererWorkingPagePayloadBudgetCharacters
   const items = sourceItems.map((item) => {
     const payloadCharacterCount = getWorkingItemPayloadCharacterCount(item)
@@ -335,21 +447,65 @@ export const prepareWorkingStepPage = (
   })
 
   return {
-    workingStepId: step.id,
-    status: step.status,
+    workingStepId: groupedStep.id,
+    status: groupedStep.status,
     items,
     startIndex: boundedStartIndex,
     totalCount
   }
 }
 
-const prepareLatestWorkingStep = (step: ProviderWorkingStep): ProviderWorkingStep => {
-  if (step.itemsLoaded === false) return step
-  const totalCount = Math.max(step.itemCount ?? 0, step.items.length)
-  const startIndex = Math.max(0, totalCount - rendererWorkingItemPageSize)
-  const page = prepareWorkingStepPage(step, startIndex, rendererWorkingItemPageSize)
+export const prepareWorkingToolPage = (
+  step: ProviderWorkingStep,
+  workingItemId: string,
+  startIndex: number,
+  limit: number
+): ProviderWorkingToolPage => {
+  const groupedStep = groupWorkingStepItems(step)
+  const workingItem = groupedStep.items.find(
+    (item) => item.type === 'toolGroup' && item.id === workingItemId
+  )
+  if (!workingItem || workingItem.type !== 'toolGroup') {
+    throw new Error('Working tool sequence not found')
+  }
+
+  const totalCount = Math.max(workingItem.toolCount ?? 0, workingItem.tools.length)
+  const boundedLimit = Math.max(1, Math.min(limit, rendererWorkingToolWindowSize))
+  const requestedStartIndex = Math.max(0, Math.min(startIndex, totalCount))
+  const boundedStartIndex =
+    totalCount > 0 && requestedStartIndex >= totalCount
+      ? Math.max(0, totalCount - boundedLimit)
+      : requestedStartIndex
+  const sourceStartIndex = workingItem.toolsStartIndex ?? 0
+  const relativeStartIndex = Math.max(0, boundedStartIndex - sourceStartIndex)
+  const sourceTools = workingItem.tools.slice(relativeStartIndex, relativeStartIndex + boundedLimit)
+  const limitedGroup = limitWorkingItemPayload(
+    {
+      ...workingItem,
+      tools: sourceTools,
+      toolCount: totalCount,
+      toolsStartIndex: boundedStartIndex
+    },
+    rendererWorkingPagePayloadBudgetCharacters
+  )
+
   return {
-    ...step,
+    workingStepId: groupedStep.id,
+    workingItemId,
+    tools: limitedGroup.type === 'toolGroup' ? limitedGroup.tools : [],
+    startIndex: boundedStartIndex,
+    totalCount
+  }
+}
+
+const prepareLatestWorkingStep = (step: ProviderWorkingStep): ProviderWorkingStep => {
+  const groupedStep = groupWorkingStepItems(step)
+  if (groupedStep.itemsLoaded === false) return groupedStep
+  const totalCount = Math.max(groupedStep.itemCount ?? 0, groupedStep.items.length)
+  const startIndex = Math.max(0, totalCount - rendererWorkingItemPageSize)
+  const page = prepareWorkingStepPage(groupedStep, startIndex, rendererWorkingItemPageSize)
+  return {
+    ...groupedStep,
     items: page.items,
     itemsLoaded: true,
     itemCount: page.totalCount,
@@ -365,8 +521,11 @@ export const unloadHistoricalWorkingSteps = (detail: ProviderChatDetail): Provid
   const items = detail.items.map((item, index) => {
     if (item.type !== 'working') return item
 
+    const groupedItem = groupWorkingStepItems(item)
     const nextItem =
-      index === latestWorkingStepIndex ? prepareLatestWorkingStep(item) : unloadWorkingStep(item)
+      index === latestWorkingStepIndex
+        ? prepareLatestWorkingStep(groupedItem)
+        : unloadWorkingStep(groupedItem)
     if (
       nextItem.items !== item.items ||
       nextItem.itemsLoaded !== item.itemsLoaded ||

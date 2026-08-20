@@ -44,6 +44,7 @@ import {
   FileText,
   GitBranch,
   Image as ImageIcon,
+  ImageOff,
   ListChecks,
   LoaderCircle,
   Package,
@@ -87,6 +88,7 @@ import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
 
 const workingItemPageSize = 50
+const workingToolPageSize = 50
 
 type ChatDetailItemProps = {
   canEditOwnMessages?: boolean
@@ -106,6 +108,12 @@ type ChatDetailItemProps = {
   onEditMessage?: (message: ProviderMessage) => void
   onLoadWorkingStep?: (workingStepId: string, startIndex?: number) => Promise<void> | void
   onLoadWorkingItem?: (workingStepId: string, workingItemId: string) => Promise<void> | void
+  onLoadWorkingToolPage?: (
+    workingStepId: string,
+    workingItemId: string,
+    startIndex: number
+  ) => Promise<void> | void
+  onDisclosureToggle?: () => void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => void
@@ -161,6 +169,8 @@ const areChatDetailItemPropsEqual = (
   first.onEditMessage === second.onEditMessage &&
   first.onLoadWorkingStep === second.onLoadWorkingStep &&
   first.onLoadWorkingItem === second.onLoadWorkingItem &&
+  first.onLoadWorkingToolPage === second.onLoadWorkingToolPage &&
+  first.onDisclosureToggle === second.onDisclosureToggle &&
   first.onOpenFileLink === second.onOpenFileLink &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
@@ -303,6 +313,8 @@ const renderHtmlAttributes = (attributes: Record<string, string | number | undef
     .join('')
 
 const defaultChatMarkdownRenderer = new Renderer()
+const loadingImageIconMarkup = renderToStaticMarkup(<ImageIcon aria-hidden="true" />)
+const brokenImageIconMarkup = renderToStaticMarkup(<ImageOff aria-hidden="true" />)
 
 const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => {
   const renderer = new Renderer()
@@ -357,7 +369,7 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
       'aria-label': `Open ${name}`,
       'data-local-image-path': fileTarget.path,
       'data-local-image-name': name
-    })}><span class="chat-detail__markdown-image-loading" aria-label="Loading ${escapeHtml(name)}"></span></button>`
+    })}><span class="chat-detail__markdown-image-loading" aria-label="Loading ${escapeHtml(name)}">${loadingImageIconMarkup}</span></button>`
   }
   renderer.table = function (token: Tokens.Table): string {
     const tableMarkup = defaultChatMarkdownRenderer.table.call(this, token)
@@ -589,8 +601,9 @@ const Activity: React.FC<{
   tools: ProviderWorkingTool[]
   active: boolean
   expanded: boolean
+  onDisclosureToggle?: () => void
   projectCwd?: string | null
-}> = ({ label, tools, active, expanded, projectCwd }) => {
+}> = ({ label, tools, active, expanded, onDisclosureToggle, projectCwd }) => {
   const [manualOpen, setManualOpen] = useState<boolean | null>(null)
   const open = manualOpen ?? expanded
   const activity = tools[0]?.activity ?? 'other'
@@ -606,7 +619,7 @@ const Activity: React.FC<{
         if (nextOpen !== open) setManualOpen(nextOpen)
       }}
     >
-      <summary>
+      <summary onClick={onDisclosureToggle}>
         <span className="chat-detail__tool-icon">
           <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
         </span>
@@ -690,14 +703,22 @@ const GeneratedImageThumbnail: React.FC<{
 
   if (failed) {
     return (
-      <span className="chat-detail__generated-image-error" title={path ?? name}>
-        {name} unavailable
+      <span
+        className="chat-detail__generated-image-error"
+        title={`${path ?? name} unavailable`}
+        aria-label={`${name} unavailable`}
+      >
+        <ImageOff aria-hidden="true" />
       </span>
     )
   }
 
   if (!imageUrl) {
-    return <span className="chat-detail__generated-image-loading" aria-label="Loading image" />
+    return (
+      <span className="chat-detail__generated-image-loading" aria-label="Loading image">
+        <ImageIcon aria-hidden="true" />
+      </span>
+    )
   }
 
   return (
@@ -1040,8 +1061,9 @@ const ToolItem: React.FC<{
   activeToolIds: Set<string>
   expanded?: boolean
   onLoad?: () => Promise<void> | void
+  onDisclosureToggle?: () => void
   projectCwd?: string | null
-}> = ({ item, activeToolIds, expanded = false, onLoad, projectCwd }) => {
+}> = ({ item, activeToolIds, expanded = false, onLoad, onDisclosureToggle, projectCwd }) => {
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const tools = getToolsFromToolItem(item)
   const activity = tools[0]?.activity ?? 'other'
@@ -1110,6 +1132,7 @@ const ToolItem: React.FC<{
       tools={tools}
       active={active}
       expanded={expanded}
+      onDisclosureToggle={onDisclosureToggle}
       projectCwd={projectCwd}
     />
   )
@@ -1204,9 +1227,11 @@ const MarkdownMessageComponent: React.FC<{
 
           const error = document.createElement('span')
           error.className = 'chat-detail__markdown-image-error'
-          error.textContent = `${name} unavailable`
+          error.innerHTML = brokenImageIconMarkup
           button.replaceChildren(error)
           button.setAttribute('aria-disabled', 'true')
+          button.setAttribute('aria-label', `${name} unavailable`)
+          button.title = `${path} unavailable`
         })
     })
 
@@ -1388,8 +1413,8 @@ const MessageDate: React.FC<{
   )
 }
 
-const getSequenceLabel = (tools: ProviderWorkingTool[]): string => {
-  const labels = [...new Set(tools.map((tool) => activityLabels[tool.activity]))]
+const getSequenceLabel = (activities: ProviderToolActivity[]): string => {
+  const labels = [...new Set(activities.map((activity) => activityLabels[activity]))]
   const label = labels.join(', ') || activityLabels.other
 
   return label.charAt(0).toLocaleUpperCase() + label.slice(1)
@@ -1413,14 +1438,42 @@ const ToolSequence: React.FC<{
   items: ProviderToolItem[]
   activeToolIds: Set<string>
   onLoadItem?: (itemId: string) => Promise<void> | void
+  onLoadPage?: (workingItemId: string, startIndex: number) => Promise<void> | void
+  onDisclosureToggle?: () => void
   projectCwd?: string | null
-}> = ({ items, activeToolIds, onLoadItem, projectCwd }) => {
+}> = ({ items, activeToolIds, onLoadItem, onLoadPage, onDisclosureToggle, projectCwd }) => {
   const [open, setOpen] = useState(false)
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
+  const sequenceItem = items.length === 1 && items[0]?.type === 'toolGroup' ? items[0] : null
   const tools = items.flatMap(getToolsFromToolItem)
   const activeTools = tools.filter((tool) => activeToolIds.has(tool.id))
   const active = activeTools.length > 0
-  const dominantActivity = getDominantActivity(active ? activeTools : tools)
-  const label = active ? activeActivityLabels[dominantActivity] : getSequenceLabel(tools)
+  const dominantActivity = active
+    ? getDominantActivity(activeTools)
+    : (sequenceItem?.dominantActivity ?? getDominantActivity(tools))
+  const sequenceActivities = sequenceItem?.toolActivities?.length
+    ? sequenceItem.toolActivities
+    : tools.map((tool) => tool.activity)
+  const baseLabel = active
+    ? activeActivityLabels[dominantActivity]
+    : getSequenceLabel(sequenceActivities)
+  const totalCount = Math.max(sequenceItem?.toolCount ?? 0, tools.length)
+  const startIndex = sequenceItem?.toolsStartIndex ?? Math.max(0, totalCount - tools.length)
+  const endIndex = Math.min(totalCount, startIndex + tools.length)
+  const hiddenBefore = Math.max(0, startIndex)
+  const hiddenAfter = Math.max(0, totalCount - endIndex)
+  const label =
+    totalCount > tools.length ? `${baseLabel} · ${tools.length}/${totalCount}` : baseLabel
+  const loadPage = async (nextStartIndex: number): Promise<void> => {
+    if (!sequenceItem || !onLoadPage || loadState === 'loading') return
+    setLoadState('loading')
+    try {
+      await onLoadPage(sequenceItem.id, nextStartIndex)
+      setLoadState('idle')
+    } catch {
+      setLoadState('error')
+    }
+  }
 
   return (
     <details
@@ -1428,7 +1481,7 @@ const ToolSequence: React.FC<{
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>
+      <summary onClick={onDisclosureToggle}>
         <span className="chat-detail__tool-icon">
           <ToolStatusIcon activity={dominantActivity} active={active} />
         </span>
@@ -1437,15 +1490,41 @@ const ToolSequence: React.FC<{
       </summary>
       {open && (
         <div className="chat-detail__tool-sequence-content">
-          {items.map((item) => (
+          {hiddenBefore > 0 && (
+            <button
+              className="chat-detail__working-load chat-detail__working-gap"
+              type="button"
+              disabled={!onLoadPage || loadState === 'loading'}
+              onClick={() => void loadPage(Math.max(0, startIndex - workingToolPageSize))}
+            >
+              Load {Math.min(workingToolPageSize, hiddenBefore)} previous · {hiddenBefore} hidden
+            </button>
+          )}
+          {tools.map((item) => (
             <ToolItem
               item={item}
               activeToolIds={activeToolIds}
               key={item.id}
               onLoad={onLoadItem ? () => onLoadItem(item.id) : undefined}
+              onDisclosureToggle={onDisclosureToggle}
               projectCwd={projectCwd}
             />
           ))}
+          {hiddenAfter > 0 && (
+            <button
+              className="chat-detail__working-load chat-detail__working-gap"
+              type="button"
+              disabled={!onLoadPage || loadState === 'loading'}
+              onClick={() => void loadPage(endIndex)}
+            >
+              Load {Math.min(workingToolPageSize, hiddenAfter)} newer · {hiddenAfter} hidden
+            </button>
+          )}
+          {loadState === 'error' && (
+            <span className="chat-detail__working-load-error">
+              Unable to load this activity page. Select it to retry.
+            </span>
+          )}
         </div>
       )}
     </details>
@@ -1594,12 +1673,9 @@ const partitionGeneratedImageItems = (
       continue
     }
 
-    const imageTools = item.tools.filter(isGeneratedImageTool)
-    const remainingTools = item.tools.filter((tool) => !isGeneratedImageTool(tool))
-    generatedImages.push(...imageTools)
-
-    if (remainingTools.length === 1) remaining.push(remainingTools[0])
-    else if (remainingTools.length > 1) remaining.push({ ...item, tools: remainingTools })
+    // A grouped sequence owns its child paging. Keep it intact so the loaded child indexes and
+    // counts remain stable; generated images inside it are rendered lazily with the other tools.
+    remaining.push(item)
   }
 
   return { generatedImages, remaining }
@@ -1646,6 +1722,8 @@ const WorkingStep: React.FC<{
   onContinue?: () => Promise<void> | void
   onLoad?: (startIndex?: number) => Promise<void> | void
   onLoadItem?: (itemId: string) => Promise<void> | void
+  onLoadToolPage?: (workingItemId: string, startIndex: number) => Promise<void> | void
+  onDisclosureToggle?: () => void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onRetry?: () => void
   projectCwd?: string | null
@@ -1663,6 +1741,8 @@ const WorkingStep: React.FC<{
   onContinue,
   onLoad,
   onLoadItem,
+  onLoadToolPage,
+  onDisclosureToggle,
   onOpenFileLink,
   onRetry,
   projectCwd,
@@ -1685,9 +1765,6 @@ const WorkingStep: React.FC<{
   })
   const generatedImages = renderedSegments.flatMap((segment) => segment.generatedImages)
   const blockCount = renderedSegments.reduce((count, segment) => count + segment.blocks.length, 0)
-  const lastBlockSegmentIndex = renderedSegments.findLastIndex(
-    (segment) => segment.blocks.length > 0
-  )
   const lastWorkingItem = item.items.at(-1)
   const signature = useMemo(
     () => `${item.status}:${item.items.map(getWorkingItemSignature).join('|')}`,
@@ -1812,6 +1889,7 @@ const WorkingStep: React.FC<{
     const handleLoad = async (): Promise<void> => {
       if (loadState === 'loading') return
 
+      onDisclosureToggle?.()
       setOpenAfterLoad(true)
       await loadPage(Math.max(0, itemCount - workingItemPageSize))
     }
@@ -1886,7 +1964,7 @@ const WorkingStep: React.FC<{
           if (nextOpen !== open) setManualOpen(nextOpen)
         }}
       >
-        <summary>
+        <summary onClick={onDisclosureToggle}>
           {heading}
           <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
         </summary>
@@ -1915,19 +1993,21 @@ const WorkingStep: React.FC<{
                       Load {pageItemCount} more · {hiddenItemCount} hidden
                     </button>
                   )}
-                  {segment.blocks.map((block, blockIndex) => {
-                    const isLastRenderedBlock =
-                      segmentIndex === lastBlockSegmentIndex &&
-                      blockIndex === segment.blocks.length - 1
-
+                  {segment.blocks.map((block) => {
                     return block.type === 'tools' ? (
-                      block.items.length > 1 &&
-                      (!isLastRenderedBlock || item.status !== 'working') ? (
+                      block.items.length > 1 ||
+                      block.items.some(
+                        (toolItem) =>
+                          toolItem.type === 'toolGroup' &&
+                          Math.max(toolItem.toolCount ?? 0, toolItem.tools.length) > 1
+                      ) ? (
                         <ToolSequence
                           items={block.items}
                           activeToolIds={activeToolIds}
                           key={block.items[0]?.id}
                           onLoadItem={onLoadItem}
+                          onLoadPage={onLoadToolPage}
+                          onDisclosureToggle={onDisclosureToggle}
                           projectCwd={projectCwd}
                         />
                       ) : (
@@ -1938,6 +2018,7 @@ const WorkingStep: React.FC<{
                             expanded={active && toolItem === lastWorkingItem}
                             key={toolItem.id}
                             onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
+                            onDisclosureToggle={onDisclosureToggle}
                             projectCwd={projectCwd}
                           />
                         ))
@@ -2028,6 +2109,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onEditMessage,
   onLoadWorkingStep,
   onLoadWorkingItem,
+  onLoadWorkingToolPage,
+  onDisclosureToggle,
   onOpenFileLink,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
@@ -2225,6 +2308,12 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       onLoadItem={
         onLoadWorkingItem ? (workingItemId) => onLoadWorkingItem(item.id, workingItemId) : undefined
       }
+      onLoadToolPage={
+        onLoadWorkingToolPage
+          ? (workingItemId, startIndex) => onLoadWorkingToolPage(item.id, workingItemId, startIndex)
+          : undefined
+      }
+      onDisclosureToggle={onDisclosureToggle}
       onContinue={
         onContinueStoppedTurn
           ? () => onContinueStoppedTurn(item.id, continuePrompt.trim())

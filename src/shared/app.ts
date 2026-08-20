@@ -369,6 +369,7 @@ export type AppGitChangesResult = {
   baseRef: string | null
   unpulledCount: number
   unpushedCount: number
+  untrackedFilesHiddenForPerformance: boolean
   files: AppGitFileChange[]
 }
 

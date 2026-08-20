@@ -625,6 +625,8 @@ export type ProviderWorkingToolGroup = {
   tools: ProviderWorkingTool[]
   toolCount?: number
   toolsStartIndex?: number
+  toolActivities?: ProviderToolActivity[]
+  dominantActivity?: ProviderToolActivity
 }
 
 export type ProviderWorkingItem =
@@ -740,6 +742,14 @@ export type ProviderWorkingStepPage = {
   startIndex: number
   status: ProviderWorkingStep['status']
   totalCount: number
+  workingStepId: string
+}
+
+export type ProviderWorkingToolPage = {
+  tools: ProviderWorkingTool[]
+  startIndex: number
+  totalCount: number
+  workingItemId: string
   workingStepId: string
 }
 
@@ -955,6 +965,14 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
     workingStepId: string,
     workingItemId: string
   ) => Promise<ProviderWorkingItem>
+  getChatWorkingToolPage: (
+    providerId: ProviderId,
+    chatId: string,
+    workingStepId: string,
+    workingItemId: string,
+    startIndex: number,
+    limit: number
+  ) => Promise<ProviderWorkingToolPage>
   getChatTurnPage: (
     providerId: ProviderId,
     chatId: string,
@@ -998,6 +1016,7 @@ export const providerIpcChannels = {
   getChat: 'provider:get-chat',
   getChatWorkingStepPage: 'provider:get-chat-working-step-page',
   getChatWorkingItem: 'provider:get-chat-working-item',
+  getChatWorkingToolPage: 'provider:get-chat-working-tool-page',
   getChatTurnPage: 'provider:get-chat-turn-page',
   setChatTitle: 'provider:set-chat-title',
   generateOneShot: 'provider:generate-one-shot',

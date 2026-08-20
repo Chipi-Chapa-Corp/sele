@@ -95,6 +95,7 @@
 }
 
 .terminal-panel__host .xterm-viewport {
+  background-color: var(--bg);
   scrollbar-color: var(--glass-edge) transparent;
   scrollbar-width: thin;
 }

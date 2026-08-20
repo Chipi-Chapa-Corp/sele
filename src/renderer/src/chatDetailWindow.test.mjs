@@ -6,6 +6,7 @@ import {
   getWorkingStepItemSegments,
   mergeChatDetailTurnPage,
   mergeWorkingStepPage,
+  mergeWorkingToolPage,
   mergeWorkingStepUpdate,
   retainLoadedChatDetailTurnWindow
 } from './chatDetailWindow.ts'
@@ -281,4 +282,66 @@ test('preserves a browsed history window while advancing the pinned live tail', 
   )
   assert.equal(result.items.length, 150)
   assert.equal(segments[1].items.at(-1).id, 'working-250')
+})
+
+test('slides a bounded child window backward and forward inside a tool sequence', () => {
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const tools = (startIndex, count) =>
+    Array.from({ length: count }, (_, offset) => ({
+      type: 'tool',
+      id: `tool-${startIndex + offset}`
+    }))
+  let group = {
+    type: 'toolGroup',
+    id: 'sequence',
+    label: '',
+    tools: tools(450, 50),
+    toolCount: 500,
+    toolsStartIndex: 450
+  }
+
+  group = mergeWorkingToolPage(
+    group,
+    {
+      workingStepId: 'step',
+      workingItemId: 'sequence',
+      tools: tools(400, 50),
+      startIndex: 400,
+      totalCount: 500
+    },
+    100
+  )
+  assert.equal(group.toolsStartIndex, 400)
+  assert.equal(group.tools.length, 100)
+  assert.equal(group.tools.at(-1).id, 'tool-499')
+
+  group = mergeWorkingToolPage(
+    group,
+    {
+      workingStepId: 'step',
+      workingItemId: 'sequence',
+      tools: tools(350, 50),
+      startIndex: 350,
+      totalCount: 500
+    },
+    100
+  )
+  assert.equal(group.toolsStartIndex, 350)
+  assert.equal(group.tools[0].id, 'tool-350')
+  assert.equal(group.tools.at(-1).id, 'tool-449')
+
+  group = mergeWorkingToolPage(
+    group,
+    {
+      workingStepId: 'step',
+      workingItemId: 'sequence',
+      tools: tools(450, 50),
+      startIndex: 450,
+      totalCount: 500
+    },
+    100
+  )
+  assert.equal(group.toolsStartIndex, 400)
+  assert.equal(group.tools[0].id, 'tool-400')
+  assert.equal(group.tools.at(-1).id, 'tool-499')
 })

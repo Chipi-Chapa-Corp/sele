@@ -8,6 +8,7 @@ import {
 import {
   getWorkingItemPayloadCharacterCount,
   limitWorkingItemPayload,
+  prepareWorkingToolPage,
   prepareWorkingStepPage,
   rendererWorkingPagePayloadBudgetCharacters,
   unloadHistoricalWorkingSteps
@@ -23,6 +24,26 @@ const workingStep = (id, itemCount) => ({
     id: `${id}:item:${index}`,
     content: `Item ${index}`
   }))
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const workingTool = (index, activity = 'read') => ({
+  type: 'tool',
+  id: `tool-${index}`,
+  toolId: `tool-call-${index}`,
+  status: 'finished',
+  activity,
+  icon: null,
+  label: `Tool ${index}`,
+  command: null,
+  cwd: null,
+  stdout: null,
+  diffs: [],
+  backgroundSessionId: null,
+  finishedBackgroundSessionId: null,
+  rawInput: null,
+  rawOutput: null,
+  images: []
 })
 
 test('unloads every working section except the latest one', () => {
@@ -170,6 +191,69 @@ test('returns bounded working-item pages with stable logical offsets', () => {
   assert.equal(page.items.length, 50)
   assert.equal(page.items[0].id, 'step:item:50')
   assert.equal(page.items.at(-1).id, 'step:item:99')
+})
+
+test('counts one consecutive tool sequence as one outer working item', () => {
+  const step = {
+    type: 'working',
+    id: 'step',
+    status: 'worked',
+    items: Array.from({ length: 500 }, (_, index) =>
+      workingTool(index, index % 2 === 0 ? 'edit' : 'search')
+    )
+  }
+
+  const page = prepareWorkingStepPage(step, 0, 50)
+  const sequence = page.items[0]
+
+  assert.equal(page.totalCount, 1)
+  assert.equal(page.items.length, 1)
+  assert.equal(sequence.type, 'toolGroup')
+  assert.equal(sequence.toolCount, 500)
+  assert.equal(sequence.tools.length, 50)
+  assert.equal(sequence.toolsStartIndex, 450)
+  assert.deepEqual(sequence.toolActivities, ['edit', 'search'])
+})
+
+test('does not group tool calls across intervening working messages', () => {
+  const step = {
+    type: 'working',
+    id: 'step',
+    status: 'worked',
+    items: [
+      { type: 'message', id: 'message-1', content: 'First thought' },
+      workingTool(1),
+      { type: 'message', id: 'message-2', content: 'Second thought' },
+      workingTool(2)
+    ]
+  }
+
+  const page = prepareWorkingStepPage(step, 0, 50)
+
+  assert.equal(page.totalCount, 4)
+  assert.deepEqual(
+    page.items.map((item) => item.id),
+    ['message-1', 'tool-1', 'message-2', 'tool-2']
+  )
+})
+
+test('pages children inside an existing activity sequence', () => {
+  const step = {
+    type: 'working',
+    id: 'step',
+    status: 'worked',
+    items: Array.from({ length: 500 }, (_, index) => workingTool(index))
+  }
+  const sequence = prepareWorkingStepPage(step, 0, 50).items[0]
+  assert.equal(sequence.type, 'toolGroup')
+
+  const page = prepareWorkingToolPage(step, sequence.id, 400, 50)
+
+  assert.equal(page.startIndex, 400)
+  assert.equal(page.totalCount, 500)
+  assert.equal(page.tools.length, 50)
+  assert.equal(page.tools[0].id, 'tool-400')
+  assert.equal(page.tools.at(-1).id, 'tool-449')
 })
 
 test('loads the real final activity page when a stale renderer count requests past EOF', () => {

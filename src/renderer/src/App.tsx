@@ -65,6 +65,7 @@ import {
   SquarePen,
   Sun,
   Terminal,
+  TriangleAlert,
   ToolCase,
   Undo2,
   Upload,
@@ -261,6 +262,7 @@ import {
   getLoadedChatDetailTurnEndIndex,
   mergeChatDetailTurnPage,
   mergeWorkingStepPage,
+  mergeWorkingToolPage,
   mergeWorkingStepUpdate,
   retainLoadedChatDetailTurnWindow
 } from './chatDetailWindow'
@@ -825,6 +827,8 @@ const chatTurnPageSize = 10
 const chatTurnWindowSize = chatTurnPageSize * 2
 const chatWorkingItemPageSize = 50
 const chatWorkingItemWindowSize = chatWorkingItemPageSize * 2
+const chatWorkingToolPageSize = 50
+const chatWorkingToolWindowSize = chatWorkingToolPageSize * 2
 const loadedWorkingStepCacheSize = 3
 const chatTurnLoadThresholdPx = 80
 const streamingChatUpdateIntervalMs = 50
@@ -1526,6 +1530,19 @@ const ChangesSidebarGitState: React.FC<{ active: boolean; label: string }> = ({
     )}
     <span className="sr-only">{label}</span>
   </div>
+)
+
+const ChangesSidebarGitPerformanceWarning: React.FC = () => (
+  <section className="changes-sidebar__performance-warning" role="alert">
+    <TriangleAlert className="changes-sidebar__performance-warning-icon" aria-hidden="true" />
+    <div>
+      <strong>More than 200 untracked files hidden</strong>
+      <p>
+        They’re not shown to keep this view responsive. Did you mean to add generated artifacts to{' '}
+        <code>.gitignore</code>?
+      </p>
+    </div>
+  </section>
 )
 
 const ChatSidebarLoadingState: React.FC<{ label: string }> = ({ label }) => (
@@ -4048,6 +4065,7 @@ export const App: React.FC = () => {
   const chatViewportAnchorRef = useRef<ChatScrollAnchor | null>(null)
   const chatScrollAdjustmentTargetRef = useRef<{ element: HTMLElement; top: number } | null>(null)
   const scrollToLatestTurnAfterRenderRef = useRef(false)
+  const chatInitialLayoutKeyRef = useRef<string | null>(null)
   const chatDetailRef = useRef<ProviderChatDetail | null>(chatDetail)
   const loadedWorkingStepIdsRef = useRef<string[]>([])
   const chatSearchContentRef = useRef<HTMLDivElement>(null)
@@ -4179,6 +4197,28 @@ export const App: React.FC = () => {
     },
     [scrollChatContentToBottom]
   )
+
+  const handleChatDisclosureToggle = useCallback((): void => {
+    const contentElement = contentRef.current
+    const chatKey = selectedChatKeyRef.current
+    if (!contentElement || !chatKey) return
+
+    if (chatAutoScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(chatAutoScrollFrameRef.current)
+      chatAutoScrollFrameRef.current = null
+    }
+    chatAutoScrollEnabledRef.current = false
+    chatAutoScrollTargetRef.current = null
+    chatUserScrollIntentRef.current = true
+    chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, chatKey)
+    if (chatUserScrollIntentFrameRef.current !== null) {
+      window.cancelAnimationFrame(chatUserScrollIntentFrameRef.current)
+    }
+    chatUserScrollIntentFrameRef.current = window.requestAnimationFrame(() => {
+      chatUserScrollIntentFrameRef.current = null
+      chatUserScrollIntentRef.current = false
+    })
+  }, [])
 
   const resetChatSearch = useCallback((): void => {
     setChatSearchOpen(false)
@@ -5661,7 +5701,6 @@ export const App: React.FC = () => {
   useEffect(
     () =>
       providerApi.onChatUpdated((event) => {
-        const seenUpdatedAt = Date.now()
         const updatedChatKey = getChatKey({ providerId: event.providerId, id: event.chatId })
         const viewingUpdatedChat = selectedChatKeyRef.current === updatedChatKey
         const recentlyViewedPreview =
@@ -5731,7 +5770,15 @@ export const App: React.FC = () => {
           providerApi.acknowledgeChatUpdate(event.sequence, false)
         }
         if ((viewingUpdatedChat && event.turnCompleted) || completedWhileRecentlyViewed) {
-          markChatSeenAt(event.providerId, event.chatId, seenUpdatedAt)
+          markChatSeenAt(
+            event.providerId,
+            event.chatId,
+            Math.max(
+              Date.now(),
+              event.summary.updatedAt,
+              viewingUpdatedChat ? (selectedChatUpdatedAtRef.current ?? 0) : 0
+            )
+          )
         }
         if (
           event.turnCompleted &&
@@ -6294,17 +6341,37 @@ export const App: React.FC = () => {
     }
   }, [])
 
-  useEffect(() => {
-    if (!chatDetail) return
+  useLayoutEffect(() => {
+    if (!chatDetail || !selectedChatKey) {
+      chatInitialLayoutKeyRef.current = null
+      return
+    }
 
     const contentElement = contentRef.current
-    if (!contentElement || !chatAutoScrollEnabledRef.current) return
+    if (!contentElement) return
 
-    if (!isActiveChatStatus(chatDetail.status)) {
+    const initialLayout = chatInitialLayoutKeyRef.current !== selectedChatKey
+    chatInitialLayoutKeyRef.current = selectedChatKey
+    if (initialLayout) {
+      selectedChatKeyRef.current = selectedChatKey
+      chatAutoScrollEnabledRef.current = true
+      chatUserScrollIntentRef.current = false
+      chatAutoScrollTargetRef.current = null
+    } else if (!chatAutoScrollEnabledRef.current) {
+      return
+    }
+
+    if (initialLayout || !isActiveChatStatus(chatDetail.status)) {
       scrollChatContentToBottom(contentElement)
     }
     scheduleChatAutoScroll(contentElement)
-  }, [chatDetail, scheduleChatAutoScroll, scrollChatContentToBottom, selectedChatCommitMarkers])
+  }, [
+    chatDetail,
+    scheduleChatAutoScroll,
+    scrollChatContentToBottom,
+    selectedChatCommitMarkers,
+    selectedChatKey
+  ])
 
   useEffect(() => {
     if (!pendingUserInputId) return
@@ -6346,7 +6413,9 @@ export const App: React.FC = () => {
       }
 
       if (chatAutoScrollEnabledRef.current) {
-        scheduleChatAutoScroll(contentElement)
+        // Media resolves asynchronously after the initial chat layout. Correct the bottom
+        // position inside ResizeObserver so the intermediate height never reaches a paint.
+        scrollChatContentToBottom(contentElement)
         return
       }
 
@@ -6369,7 +6438,7 @@ export const App: React.FC = () => {
     observer.observe(contentInnerElement)
 
     return () => observer.disconnect()
-  }, [scheduleChatAutoScroll, selectedChatKey])
+  }, [scrollChatContentToBottom, selectedChatKey])
 
   useEffect(() => {
     if (selectedChat) return
@@ -8941,6 +9010,53 @@ export const App: React.FC = () => {
     []
   )
 
+  const handleLoadWorkingToolPage = useCallback(
+    async (workingStepId: string, workingItemId: string, startIndex: number): Promise<void> => {
+      const chat = selectedChatRef.current
+      if (!chat) throw new Error('No chat selected')
+
+      const chatKey = getChatKey(chat)
+      const page = await providerApi.getChatWorkingToolPage(
+        chat.providerId,
+        chat.id,
+        workingStepId,
+        workingItemId,
+        startIndex,
+        chatWorkingToolPageSize
+      )
+      if (selectedChatKeyRef.current !== chatKey) return
+
+      setChatDetail((currentDetail) => {
+        if (currentDetail?.id !== chat.id) return currentDetail
+        const workingStepIndex = currentDetail.items.findIndex(
+          (item) => item.type === 'working' && item.id === workingStepId
+        )
+        const workingStep = currentDetail.items[workingStepIndex]
+        if (workingStep?.type !== 'working') return currentDetail
+
+        const mergeItem = (item: ProviderWorkingItem): ProviderWorkingItem =>
+          item.type === 'toolGroup' && item.id === workingItemId
+            ? mergeWorkingToolPage(item, page, chatWorkingToolWindowSize)
+            : item
+        const workingItems = workingStep.items.map(mergeItem)
+        const itemSegments = workingStep.itemSegments?.map((segment) => ({
+          ...segment,
+          items: segment.items.map(mergeItem)
+        }))
+        const items = [...currentDetail.items]
+        items[workingStepIndex] = {
+          ...workingStep,
+          items: workingItems,
+          itemSegments
+        }
+        const nextDetail = { ...currentDetail, items }
+        chatDetailRef.current = nextDetail
+        return nextDetail
+      })
+    },
+    []
+  )
+
   const handleLoadWorkingItem = useCallback(
     async (workingStepId: string, workingItemId: string): Promise<void> => {
       const chat = selectedChatRef.current
@@ -8962,14 +9078,25 @@ export const App: React.FC = () => {
         )
         const workingStep = currentDetail.items[workingStepIndex]
         if (workingStep?.type !== 'working') return currentDetail
-        const workingItemIndex = workingStep.items.findIndex((item) => item.id === workingItemId)
-        if (workingItemIndex < 0) return currentDetail
-
-        const workingItems = [...workingStep.items]
-        workingItems[workingItemIndex] = loadedItem
+        let replaced = false
+        const replaceItem = (item: ProviderWorkingItem): ProviderWorkingItem => {
+          if (item.id === workingItemId) {
+            replaced = true
+            return loadedItem
+          }
+          if (item.type !== 'toolGroup' || loadedItem.type !== 'tool') return item
+          const toolIndex = item.tools.findIndex((tool) => tool.id === workingItemId)
+          if (toolIndex < 0) return item
+          const tools = [...item.tools]
+          tools[toolIndex] = loadedItem
+          replaced = true
+          return { ...item, tools }
+        }
+        const workingItems = workingStep.items.map(replaceItem)
+        if (!replaced) return currentDetail
         const itemSegments = workingStep.itemSegments?.map((segment) => ({
           ...segment,
-          items: segment.items.map((item) => (item.id === workingItemId ? loadedItem : item))
+          items: segment.items.map(replaceItem)
         }))
         const items = [...currentDetail.items]
         items[workingStepIndex] = { ...workingStep, items: workingItems, itemSegments }
@@ -9876,6 +10003,9 @@ export const App: React.FC = () => {
     currentGitChangeSource
   )
   const displayedGitChanges = gitChangesMatchCurrentSource ? gitChanges : null
+  const untrackedFilesHiddenForPerformance = Boolean(
+    changeSource === 'uncommitted' && displayedGitChanges?.untrackedFilesHiddenForPerformance
+  )
   const gitChangedFiles = useMemo(
     () => (changesCwd ? getGitChangedFiles(displayedGitChanges) : []),
     [changesCwd, displayedGitChanges]
@@ -12299,6 +12429,8 @@ export const App: React.FC = () => {
                 onEditMessage={handleEditMessage}
                 onLoadWorkingStep={handleLoadWorkingStep}
                 onLoadWorkingItem={handleLoadWorkingItem}
+                onLoadWorkingToolPage={handleLoadWorkingToolPage}
+                onDisclosureToggle={handleChatDisclosureToggle}
                 onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
                 onRetryStoppedTurn={handleRetryStoppedTurn}
                 previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}
@@ -13124,9 +13256,15 @@ export const App: React.FC = () => {
                       {visibleChangesLoadState === 'error' && (
                         <p className="changes-sidebar__status">Unable to load changes.</p>
                       )}
-                      {visibleChangesLoadState === 'ready' && changedFiles.length === 0 && (
-                        <ChangesSidebarGitState active={false} label={changesEmptyMessage} />
-                      )}
+                      {visibleChangesLoadState === 'ready' &&
+                        untrackedFilesHiddenForPerformance && (
+                          <ChangesSidebarGitPerformanceWarning />
+                        )}
+                      {visibleChangesLoadState === 'ready' &&
+                        !untrackedFilesHiddenForPerformance &&
+                        changedFiles.length === 0 && (
+                          <ChangesSidebarGitState active={false} label={changesEmptyMessage} />
+                        )}
                       {visibleChangesLoadState === 'ready' && changedFiles.length > 0 && (
                         <ul className="changes-sidebar__tree" role="tree">
                           {changeTree.map((node) => renderChangeTreeNode(node, 0))}
