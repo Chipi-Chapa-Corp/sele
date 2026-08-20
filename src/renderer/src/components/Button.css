@@ -139,10 +139,6 @@
   border-radius: 0 var(--control-radius-small) var(--control-radius-small) 0;
 }
 
-:where(.ui-button-group--primary .ui-button--split-toggle) {
-  border-left-color: rgb(255 255 255 / 22%);
-}
-
 :where(.ui-button-group--open .ui-button--split-toggle .ui-button__icon) {
   transform: rotate(180deg);
 }
@@ -264,6 +260,15 @@
   background: var(--secondary-surface);
   box-shadow: none;
   opacity: 1;
+}
+
+:where(
+  .ui-button-group--primary
+    .ui-button--split-main:not(:disabled)
+    + .ui-button--split-toggle:not(:disabled),
+  .ui-button-group--primary .ui-button--split-main:disabled + .ui-button--split-toggle:disabled
+) {
+  border-left-color: rgb(255 255 255 / 22%);
 }
 
 .ui-button-menu-root {

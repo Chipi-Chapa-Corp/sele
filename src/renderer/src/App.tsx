@@ -2247,16 +2247,6 @@ const gitCommitPromptFieldOptions = [
     rows: 2
   },
   {
-    key: 'quickCommit',
-    label: 'Quick commit prompt',
-    rows: 3
-  },
-  {
-    key: 'pushAfterQuickCommit',
-    label: 'Push-after-commit instruction',
-    rows: 2
-  },
-  {
     key: 'extraInstructionsPrefix',
     label: 'Extra instructions prefix',
     rows: 1
@@ -3663,27 +3653,6 @@ const getScopedChatCommitPrompt = (
   ]
     .filter((line): line is string => line != null)
     .join('\n')
-}
-
-const getQuickChatCommitPrompt = (
-  recentCommitMessages: string[],
-  extraInstructions: string,
-  pushAfterCommit: boolean,
-  promptSettings: AppGitCommitPromptSettings
-): string => {
-  const recentCommitNames =
-    recentCommitMessages.length > 0
-      ? recentCommitMessages.map((message) => `- ${message}`).join('\n')
-      : '(No recent commits)'
-
-  return [
-    promptSettings.quickCommit.trim(),
-    ['Recent commit names:', recentCommitNames].join('\n'),
-    formatExtraUserInstructionsForPrompt(extraInstructions, promptSettings),
-    pushAfterCommit ? promptSettings.pushAfterQuickCommit.trim() : null
-  ]
-    .filter((section): section is string => Boolean(section))
-    .join('\n\n')
 }
 
 const getCommitMessageGenerationPrompt = (
@@ -10912,9 +10881,9 @@ export const App: React.FC = () => {
     }
   }
 
-  const handleGenerateCommitMessage = async (): Promise<boolean> => {
-    if (commitMessageGenerationDisabled || !changesCwd) return false
-    if (commitMessageGenerationInFlightRef.current) return false
+  const generateCommitMessage = async (aiInstructions: string): Promise<string | null> => {
+    if (commitMessageGenerationDisabled || !changesCwd) return null
+    if (commitMessageGenerationInFlightRef.current) return null
 
     const generationCwd = changesCwd
     const providerId = selectedChat?.providerId ?? newSessionProvider
@@ -10939,7 +10908,7 @@ export const App: React.FC = () => {
         getCommitMessageGenerationPrompt(
           diff,
           messages,
-          commitInputValue,
+          aiInstructions,
           effectiveAppSettings.git.commitMessageGeneration
         ),
         {
@@ -10952,15 +10921,18 @@ export const App: React.FC = () => {
 
       if (changesCwdRef.current === generationCwd) setCommitInput(commitMessage)
       setCommitMessageGenerationState('idle')
-      return true
+      return commitMessage
     } catch (error) {
       setCommitMessageGenerationState('error')
       setCommitError(getErrorMessage(error, 'Unable to generate a commit name.'))
-      return false
+      return null
     } finally {
       commitMessageGenerationInFlightRef.current = false
     }
   }
+
+  const handleGenerateCommitMessage = async (): Promise<boolean> =>
+    Boolean(await generateCommitMessage(commitInputValue))
 
   const handleCommitChangedFiles = async (
     action: GitCommitPromptAction = 'commit',
@@ -11038,38 +11010,24 @@ export const App: React.FC = () => {
   }
 
   const handleQuickCommitChangedFiles = async (pushAfterCommit = false): Promise<boolean> => {
-    if (providerUpdateInProgress) return false
     if (commitInFlightRef.current) return false
-    if (getAiCommitActionDisabled()) return false
+    if (commitMessageGenerationDisabled) return false
     if (!changesCwd) return false
 
-    commitInFlightRef.current = true
-    setCommitState('idle')
-    setCommitError(null)
-
-    try {
-      const { messages } = await appApi.getRecentGitCommitMessages({
-        container: changesContainer,
-        cwd: changesCwd,
-        limit: 5
-      })
-
-      return await handleScopedChatCommit(
-        'commit',
-        getQuickChatCommitPrompt(
-          messages,
-          commitInputValue,
-          pushAfterCommit,
-          effectiveAppSettings.git.commitPrompt
-        )
-      )
-    } catch (error) {
+    const quickCommitCwd = changesCwd
+    const generatedMessage = await generateCommitMessage(commitInputValue)
+    if (!generatedMessage) return false
+    if (changesCwdRef.current !== quickCommitCwd) {
       setCommitState('error')
-      setCommitError(getErrorMessage(error, 'Unable to start quick commit.'))
+      setCommitError('The selected repository changed before Quick commit could finish.')
       return false
-    } finally {
-      commitInFlightRef.current = false
     }
+
+    const committed = await handleCommitChangedFiles('commit', generatedMessage)
+    if (!committed) return false
+
+    if (pushAfterCommit) await runSyncChanges('push', quickCommitCwd)
+    return true
   }
 
   const handleCancelAiCommit = async (activity: ScopedCommitActivity): Promise<void> => {
@@ -12043,7 +12001,7 @@ export const App: React.FC = () => {
             aria-labelledby="settings-git-ai-chat-commit"
           >
             <h2 className="settings-dialog__section-heading" id="settings-git-ai-chat-commit">
-              AI commits
+              AI Chat Commit
             </h2>
             <div className="settings-dialog__section-cards">
               {gitCommitPromptFieldOptions.map((field) => {
@@ -13583,13 +13541,13 @@ export const App: React.FC = () => {
                     fill
                   />
                   <Button
-                    disabled={getAiCommitActionDisabled()}
+                    disabled={commitMessageGenerationDisabled}
                     callback={() => void handleQuickCommitChangedFiles()}
                     dropdownActions={[
                       {
                         id: 'quick-commit-and-push',
                         label: 'Commit & Push',
-                        disabled: getAiCommitActionDisabled(),
+                        disabled: commitMessageGenerationDisabled,
                         icon: <Upload aria-hidden="true" />,
                         callback: () => void handleQuickCommitChangedFiles(true)
                       }

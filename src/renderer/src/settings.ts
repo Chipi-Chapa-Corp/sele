@@ -43,8 +43,6 @@ export type AppGitCommitPromptSettings = {
   workflow: string
   commitStep: string
   amendStep: string
-  quickCommit: string
-  pushAfterQuickCommit: string
   extraInstructionsPrefix: string
 }
 
@@ -219,10 +217,6 @@ export const defaultAppGitCommitPromptSettings: AppGitCommitPromptSettings = {
   ].join('\n'),
   commitStep: '9. `git commit -m "<appropriate message>"`',
   amendStep: '9. `git commit --amend` (amend last commit instead of creating a new one)',
-  quickCommit:
-    'Create one Git commit containing the work completed in this chat. Choose a concise commit name that matches the recent commit names. Do not ask for confirmation.',
-  pushAfterQuickCommit:
-    'After committing successfully, push the commit to its configured upstream.',
   extraInstructionsPrefix: 'Extra user instructions:'
 }
 
@@ -887,8 +881,6 @@ export const readStoredAppSettings = (): AppSettings => {
           workflow: readPromptField(commitPrompt, 'workflow'),
           commitStep: readPromptField(commitPrompt, 'commitStep'),
           amendStep: readPromptField(commitPrompt, 'amendStep'),
-          quickCommit: readPromptField(commitPrompt, 'quickCommit'),
-          pushAfterQuickCommit: readPromptField(commitPrompt, 'pushAfterQuickCommit'),
           extraInstructionsPrefix: readPromptField(commitPrompt, 'extraInstructionsPrefix')
         },
         commitMessageGeneration: {
