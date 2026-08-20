@@ -72,13 +72,17 @@ pub(super) fn message_label(message: &TranscriptMessage) -> gtk::Label {
         }
     }
 
+    // Providers commonly terminate message chunks with a line ending. It is transport framing,
+    // not an intentional blank paragraph in the rendered bubble.
+    text.truncate(text.trim_end_matches(['\r', '\n']).len());
+
     let label = label(&text);
     if !monospace_ranges.is_empty() {
         let attributes = gtk::pango::AttrList::new();
         for (start, end) in monospace_ranges {
             let mut family = gtk::pango::AttrString::new_family("monospace");
             family.set_start_index(u32::try_from(start).unwrap_or(u32::MAX));
-            family.set_end_index(u32::try_from(end).unwrap_or(u32::MAX));
+            family.set_end_index(u32::try_from(end.min(text.len())).unwrap_or(u32::MAX));
             attributes.insert(family);
         }
         label.set_attributes(Some(&attributes));

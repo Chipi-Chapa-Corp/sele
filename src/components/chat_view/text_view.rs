@@ -24,6 +24,22 @@ impl TranscriptTextView {
         view.set_wrap_mode(gtk::WrapMode::WordChar);
         view.set_vexpand(true);
 
+        // This TextView is only a height-efficient host for child-anchor widgets. Its own buffer
+        // contains no user-facing text, so allowing its native click/drag selection gestures to
+        // run over the gaps between anchors only causes auto-scroll feedback and jitter.
+        let controllers = view.observe_controllers();
+        for index in (0..controllers.n_items()).rev() {
+            let Some(controller) = controllers.item(index) else {
+                continue;
+            };
+            if controller.is::<gtk::GestureDrag>() || controller.is::<gtk::GestureClick>() {
+                let controller = controller
+                    .downcast::<gtk::EventController>()
+                    .expect("gestures are event controllers");
+                view.remove_controller(&controller);
+            }
+        }
+
         let buffer = view.buffer();
         buffer.set_enable_undo(false);
         let end_mark = buffer.create_mark(Some("transcript-end"), &buffer.end_iter(), false);

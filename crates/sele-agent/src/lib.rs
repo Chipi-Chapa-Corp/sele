@@ -738,12 +738,10 @@ fn normalize_tool_result(tool_call: &ToolCall) -> String {
     }
 
     if let Some(output) = &tool_call.raw_output {
-        return display_text_from_value(output).unwrap_or_else(|| {
-            serde_json::to_string_pretty(output).unwrap_or_else(|_| output.to_string())
-        });
+        return display_text_from_value(output).unwrap_or_default();
     }
 
-    serde_json::to_string_pretty(&tool_call.content).unwrap_or_default()
+    String::new()
 }
 
 /// Converts legacy provider-shaped tool output into the human-facing content it contains.
@@ -796,22 +794,26 @@ fn join_display_text<'a>(
 }
 
 fn clean_output_text(text: &str) -> Option<String> {
-    let text = if let Some((metadata, output)) = text.split_once("\nOutput:\n")
-        && [
-            "Chunk ID:",
-            "Wall time:",
-            "Process exited with code",
-            "Original token count:",
-        ]
-        .iter()
-        .any(|marker| metadata.contains(marker))
-    {
-        output
-    } else {
-        text
-    };
+    let text = strip_execution_envelope(text).unwrap_or(text);
     let text = text.trim_end_matches('\n');
     (!text.trim().is_empty()).then(|| text.to_owned())
+}
+
+fn strip_execution_envelope(text: &str) -> Option<&str> {
+    let (metadata, output) = ["\nOutput:\n", "\nFinal output:\n"]
+        .into_iter()
+        .find_map(|separator| text.split_once(separator))?;
+    [
+        "Script completed",
+        "Script running",
+        "Chunk ID",
+        "Wall time",
+        "Process exited",
+        "Original token count",
+    ]
+    .iter()
+    .any(|marker| metadata.contains(marker))
+    .then_some(output)
 }
 
 const fn normalize_tool_kind(kind: ToolKind) -> TranscriptToolKind {
@@ -936,5 +938,14 @@ mod transcript_tests {
             ),
             "real output"
         );
+        assert_eq!(
+            display_tool_result(
+                "Script completed\nWall time 0.1 seconds\nOutput:\nvisible output\n"
+            ),
+            "visible output"
+        );
+        let metadata_only = ToolCall::new("tool-2", "Run command")
+            .raw_output(serde_json::json!({"id":"tool-2","exit_code":0,"wall_time_seconds":0.1}));
+        assert_eq!(normalize_tool_result(&metadata_only), "");
     }
 }

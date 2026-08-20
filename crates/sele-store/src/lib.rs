@@ -18,7 +18,7 @@ pub const DATABASE_PATH_ENV: &str = "SELE_TRANSCRIPT_DATABASE_PATH";
 pub const DEFAULT_DATABASE_FILENAME: &str = "sele-native-transcripts-v1.sqlite3";
 pub const LEGACY_ELECTRON_DATABASE_FILENAME: &str = "sele.sqlite";
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const STORE_KIND: &str = "sele-native-transcript-store-v1";
 
 #[derive(Debug)]
@@ -485,8 +485,13 @@ fn initialize_schema(connection: &Connection, path: &Path) -> StoreResult<()> {
         1 => {
             connection.execute_batch(MIGRATE_V1_TO_V2)?;
             connection.execute_batch(MIGRATE_V2_TO_V3)?;
+            connection.execute_batch(MIGRATE_V3_TO_V4)?;
         }
-        2 => connection.execute_batch(MIGRATE_V2_TO_V3)?,
+        2 => {
+            connection.execute_batch(MIGRATE_V2_TO_V3)?;
+            connection.execute_batch(MIGRATE_V3_TO_V4)?;
+        }
+        3 => connection.execute_batch(MIGRATE_V3_TO_V4)?,
         _ => {}
     }
     Ok(())
@@ -835,7 +840,7 @@ CREATE TABLE transcript_blocks (
 CREATE INDEX transcript_messages_page
 ON transcript_messages (provider_id, session_id, generation, sequence);
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 COMMIT;
 "#;
 
@@ -852,6 +857,16 @@ ALTER TABLE transcript_messages
 ADD COLUMN phase TEXT NOT NULL DEFAULT 'unknown'
 CHECK (phase IN ('commentary', 'final_answer', 'unknown'));
 PRAGMA user_version = 3;
+COMMIT;
+"#;
+
+// Schema v2/v3 persisted richer tool and message metadata, but existing active generations were
+// normalized before those fields existed. Invalidate only their source revision so the normal
+// loader performs one ACP replay and atomically replaces the old generation.
+const MIGRATE_V3_TO_V4: &str = r#"
+BEGIN IMMEDIATE;
+UPDATE transcript_sessions SET source_updated_at = NULL;
+PRAGMA user_version = 4;
 COMMIT;
 "#;
 
@@ -922,7 +937,7 @@ mod tests {
                 "    phase TEXT NOT NULL CHECK (phase IN ('commentary', 'final_answer', 'unknown')),\n",
                 "",
             )
-            .replace("PRAGMA user_version = 3;", "PRAGMA user_version = 1;");
+            .replace("PRAGMA user_version = 4;", "PRAGMA user_version = 1;");
         connection.execute_batch(&v1_schema).unwrap();
         drop(connection);
 
@@ -944,6 +959,38 @@ mod tests {
                 .prepare("SELECT phase FROM transcript_messages")
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn v4_migration_refreshes_pre_metadata_transcripts() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join(DEFAULT_DATABASE_FILENAME);
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(&SCHEMA.replace("PRAGMA user_version = 4;", "PRAGMA user_version = 3;"))
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO transcript_sessions (
+                    provider_id, session_id, cwd, source_updated_at
+                 ) VALUES ('codex', 'old-session', '/work', 'old-revision')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = TranscriptStore::open(&path).unwrap();
+
+        let revision: Option<String> = store
+            .connection
+            .query_row(
+                "SELECT source_updated_at FROM transcript_sessions
+                 WHERE provider_id = 'codex' AND session_id = 'old-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(revision, None);
     }
 
     #[test]
