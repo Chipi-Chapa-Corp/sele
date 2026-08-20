@@ -248,7 +248,7 @@ const fallbackClaudeReasoningEfforts: ProviderReasoningEffortOption[] = [
 export const fallbackClaudeModels: ProviderModel[] = [
   {
     id: 'default',
-    label: 'Claude (recommended)',
+    label: 'Default (recommended)',
     description: 'Use the model selected by Claude Code.',
     isDefault: true,
     supportedReasoningEfforts: fallbackClaudeReasoningEfforts,
@@ -256,7 +256,7 @@ export const fallbackClaudeModels: ProviderModel[] = [
   },
   {
     id: 'sonnet',
-    label: 'Claude Sonnet',
+    label: 'Sonnet',
     description: 'Use the latest available Claude Sonnet model.',
     isDefault: false,
     supportedReasoningEfforts: fallbackClaudeReasoningEfforts,
@@ -264,7 +264,7 @@ export const fallbackClaudeModels: ProviderModel[] = [
   },
   {
     id: 'opus',
-    label: 'Claude Opus',
+    label: 'Opus',
     description: 'Use the latest available Claude Opus model.',
     isDefault: false,
     supportedReasoningEfforts: fallbackClaudeReasoningEfforts,
@@ -274,7 +274,7 @@ export const fallbackClaudeModels: ProviderModel[] = [
   },
   {
     id: 'haiku',
-    label: 'Claude Haiku',
+    label: 'Haiku',
     description: 'Use the latest available Claude Haiku model.',
     isDefault: false,
     supportedReasoningEfforts: [],

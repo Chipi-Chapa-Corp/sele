@@ -15,7 +15,7 @@ test('uses the resolved Claude generation in model labels', () => {
     1
   )
 
-  assert.equal(model.label, 'Claude Opus 4.8')
+  assert.equal(model.label, 'Opus 4.8')
   assert.equal(model.description, 'Best for everyday, complex tasks')
   assert.equal(model.isDefault, false)
   assert.equal(model.supportedServiceTiers?.[0]?.id, 'fast')
@@ -33,12 +33,36 @@ test('shows the resolved model for the default alias', () => {
     0
   )
 
-  assert.equal(model.label, 'Claude Sonnet 5')
+  assert.equal(model.label, 'Sonnet 5')
   assert.equal(
     model.description,
     "Uses Claude Code's recommended model · Efficient for routine tasks"
   )
   assert.equal(model.isDefault, true)
+})
+
+test('extracts the current model name from Claude Code default metadata', () => {
+  const models = mapClaudeModels([
+    {
+      value: 'default',
+      resolvedModel: 'claude-opus-4-8[1m]',
+      displayName: 'Default (recommended)',
+      description: 'Use the default model (currently Opus 4.8 (1M context)) · $5/$25 per Mtok',
+      supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      supportsFastMode: true
+    },
+    {
+      value: 'opus[1m]',
+      resolvedModel: 'claude-opus-4-8[1m]',
+      displayName: 'Opus',
+      description: 'Opus 4.8 with 1M context · Best for everyday, complex tasks'
+    }
+  ])
+
+  assert.equal(models.length, 1)
+  assert.equal(models[0]?.label, 'Opus 4.8 (1M context)')
+  assert.equal(models[0]?.usageScope, 'opus')
+  assert.equal(models[0]?.description, "Uses Claude Code's recommended model · $5/$25 per Mtok")
 })
 
 test('falls back to the resolved model id when the description has no model prefix', () => {
@@ -52,8 +76,22 @@ test('falls back to the resolved model id when the description has no model pref
     1
   )
 
-  assert.equal(model.label, 'Claude Haiku 4.5')
+  assert.equal(model.label, 'Haiku 4.5')
   assert.equal(model.description, 'Fast responses')
+})
+
+test('parses context-qualified resolved model ids', () => {
+  const model = mapClaudeModel(
+    {
+      value: 'opus[1m]',
+      resolvedModel: 'claude-opus-4-8[1m]',
+      displayName: 'Opus',
+      description: 'Best for complex tasks'
+    },
+    1
+  )
+
+  assert.equal(model.label, 'Opus 4.8')
 })
 
 test('collapses an alias that resolves to the recommended model', () => {
@@ -81,8 +119,8 @@ test('collapses an alias that resolves to the recommended model', () => {
   assert.deepEqual(
     models.map((model) => [model.id, model.label, model.isDefault]),
     [
-      ['default', 'Claude Sonnet 5', true],
-      ['opus', 'Claude Opus 5', false]
+      ['default', 'Sonnet 5', true],
+      ['opus', 'Opus 5', false]
     ]
   )
 })

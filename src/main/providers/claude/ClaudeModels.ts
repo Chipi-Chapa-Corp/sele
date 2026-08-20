@@ -10,22 +10,27 @@ const splitDescription = (description: string): { modelName: string | null; deta
   return { modelName: modelName?.trim() || null, detail: details.join(' · ').trim() }
 }
 
+const normalizeDescribedModelName = (modelName: string): string => {
+  const defaultModelMatch = /^Use the default model \(currently (.+)\)$/i.exec(modelName)
+  return defaultModelMatch?.[1]?.trim() || modelName
+}
+
+const stripClaudePrefix = (modelName: string): string => modelName.replace(/^Claude\s+/i, '')
+
 const getCanonicalModelName = (model: ModelInfo): string => {
   const describedName = splitDescription(model.description).modelName
-  if (describedName) return `Claude ${describedName}`
+  if (describedName) return stripClaudePrefix(normalizeDescribedModelName(describedName))
 
   const resolved = model.resolvedModel?.match(
-    /^claude-(sonnet|opus|haiku|fable)-(\d+)(?:-(\d+))?(?:-|$)/i
+    /^claude-(sonnet|opus|haiku|fable)-(\d+)(?:-(\d+))?(?=-|\[|$)/i
   )
   if (resolved) {
     const family = resolved[1]!
     const version = [resolved[2], resolved[3]].filter(Boolean).join('.')
-    return `Claude ${family.charAt(0).toLocaleUpperCase()}${family.slice(1)} ${version}`
+    return `${family.charAt(0).toLocaleUpperCase()}${family.slice(1)} ${version}`
   }
 
-  return model.displayName.toLocaleLowerCase().startsWith('claude ')
-    ? model.displayName
-    : `Claude ${model.displayName}`
+  return stripClaudePrefix(model.displayName)
 }
 
 const getClaudeModelUsageScope = (model: ModelInfo): string | undefined => {
