@@ -13,8 +13,15 @@ use crate::transcript_loader::{TranscriptLoadCancellation, TranscriptLoadEvent, 
 
 pub(super) const STYLE: &str = include_str!("style.css");
 
+mod message_bubble;
 mod message_row;
+mod presentation;
+mod selectable_text;
 mod text_view;
+mod work_section;
+
+pub(super) const WORK_SECTION_STYLE: &str = work_section::STYLE;
+pub(super) const MESSAGE_BUBBLE_STYLE: &str = message_bubble::STYLE;
 
 use text_view::TranscriptTextView;
 
@@ -211,9 +218,12 @@ impl ChatView {
         let transcript_view = TranscriptTextView::new();
 
         let viewport = gtk::ScrolledWindow::new();
-        viewport.set_hscrollbar_policy(gtk::PolicyType::Never);
+        viewport.set_hscrollbar_policy(gtk::PolicyType::External);
+        viewport.set_min_content_width(0);
+        viewport.set_propagate_natural_width(false);
         viewport.set_vexpand(true);
         viewport.set_child(Some(transcript_view.widget()));
+        transcript_view.track_viewport_width(&viewport);
 
         let transcript = gtk::Box::new(gtk::Orientation::Vertical, 0);
         transcript.add_css_class("transcript-content");

@@ -9,7 +9,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use sele_core::{
     TranscriptBlock, TranscriptBlockKind, TranscriptMessage, TranscriptMessageState,
-    TranscriptRole, TranscriptSessionKey,
+    TranscriptRole, TranscriptSessionKey, TranscriptToolKind,
 };
 use sele_store::TranscriptStore;
 
@@ -1343,6 +1343,7 @@ fn tool_call(sequence: i64, index: u32) -> TranscriptBlockKind {
     TranscriptBlockKind::ToolCall {
         tool_call_id: format!("tool-{sequence}-{index}"),
         title: format!("Run tool {index} for message {sequence}"),
+        tool_kind: TranscriptToolKind::Execute,
         status: "completed".into(),
         payload_json: None,
     }

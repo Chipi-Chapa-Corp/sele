@@ -1,10 +1,11 @@
 .transcript-content {
   border-spacing: var(--sele-space-sm);
-  padding: 0 var(--sele-space-xl) var(--sele-space-xl);
+  padding-bottom: var(--sele-space-xl);
 }
 
 .transcript-status {
   color: color-mix(in srgb, currentColor var(--dim-opacity), transparent);
+  padding: 0 var(--sele-space-xl);
 }
 
 .transcript-text-view,
@@ -13,7 +14,7 @@
 }
 
 .transcript-text-view > text {
-  padding: var(--sele-space-md);
+  padding: var(--sele-space-md) 0;
 }
 
 .transcript-list {

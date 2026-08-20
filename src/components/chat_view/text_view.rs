@@ -2,16 +2,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::prelude::*;
-use sele_core::{TranscriptBlockKind, TranscriptMessage, TranscriptRole};
+use sele_core::TranscriptMessage;
 
-use super::message_row::materialized_block_widget;
+use super::message_bubble::{agent_message, user_message};
+use super::presentation::transcript_turns;
+use super::work_section::work_section;
 
 #[derive(Clone)]
 pub(super) struct TranscriptTextView {
     view: gtk::TextView,
     end_mark: gtk::TextMark,
-    role_tag: gtk::TextTag,
-    code_tag: gtk::TextTag,
     anchored_widgets: Rc<RefCell<Vec<gtk::Widget>>>,
 }
 
@@ -27,24 +27,40 @@ impl TranscriptTextView {
         let buffer = view.buffer();
         buffer.set_enable_undo(false);
         let end_mark = buffer.create_mark(Some("transcript-end"), &buffer.end_iter(), false);
-        let role_tag = buffer
-            .create_tag(Some("transcript-role"), &[("weight", &700_i32)])
-            .expect("transcript role tag name is unique");
-        let code_tag = buffer
-            .create_tag(Some("transcript-code"), &[("family", &"monospace")])
-            .expect("transcript code tag name is unique");
 
         Self {
             view,
             end_mark,
-            role_tag,
-            code_tag,
             anchored_widgets: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
     pub(super) fn widget(&self) -> &gtk::TextView {
         &self.view
+    }
+
+    pub(super) fn track_viewport_width(&self, viewport: &gtk::ScrolledWindow) {
+        let widgets = Rc::clone(&self.anchored_widgets);
+        viewport.hadjustment().connect_changed(move |adjustment| {
+            let width = adjustment.page_size().round() as i32;
+            if width <= 0 {
+                return;
+            }
+            for widget in widgets.borrow().iter() {
+                widget.set_width_request(width);
+            }
+        });
+
+        let widgets = Rc::clone(&self.anchored_widgets);
+        viewport.connect_notify_local(Some("width"), move |viewport, _| {
+            let width = viewport.width();
+            if width <= 0 {
+                return;
+            }
+            for widget in widgets.borrow().iter() {
+                widget.set_width_request(width);
+            }
+        });
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -63,47 +79,18 @@ impl TranscriptTextView {
         let buffer = self.view.buffer();
         let mut iter = buffer.end_iter();
 
-        for message in messages {
-            buffer.insert_with_tags(&mut iter, role_label(message.role), &[&self.role_tag]);
-            buffer.insert(&mut iter, "\n");
-
-            for block in &message.blocks {
-                match &block.kind {
-                    TranscriptBlockKind::Text { text } => {
-                        buffer.insert(&mut iter, text);
-                        buffer.insert(&mut iter, "\n");
-                    }
-                    TranscriptBlockKind::Code { language, text } => {
-                        if let Some(language) = language {
-                            buffer.insert_with_tags(&mut iter, language, &[&self.role_tag]);
-                            buffer.insert(&mut iter, "\n");
-                        }
-                        buffer.insert_with_tags(&mut iter, text, &[&self.code_tag]);
-                        buffer.insert(&mut iter, "\n");
-                    }
-                    TranscriptBlockKind::ToolCall { .. }
-                    | TranscriptBlockKind::ToolResult { .. } => {
-                        self.insert_widget(
-                            &buffer,
-                            &mut iter,
-                            materialized_block_widget(&block.kind),
-                        );
-                    }
-                    TranscriptBlockKind::Image { alt, uri } => {
-                        buffer.insert(&mut iter, alt.as_deref().unwrap_or(uri));
-                        buffer.insert(&mut iter, "\n");
-                    }
-                    TranscriptBlockKind::Resource { uri, title } => {
-                        buffer.insert(&mut iter, title.as_deref().unwrap_or(uri));
-                        buffer.insert(&mut iter, "\n");
-                    }
-                    TranscriptBlockKind::Other { kind, .. } => {
-                        buffer.insert(&mut iter, kind);
-                        buffer.insert(&mut iter, "\n");
-                    }
-                }
+        for turn in transcript_turns(messages) {
+            if let Some(user) = turn.user {
+                self.insert_widget(&buffer, &mut iter, user_message(&user));
             }
-            buffer.insert(&mut iter, "\n");
+
+            if !turn.work.is_empty() {
+                self.insert_widget(&buffer, &mut iter, work_section(turn.work));
+            }
+
+            if let Some(final_answer) = turn.final_answer {
+                self.insert_widget(&buffer, &mut iter, agent_message(&final_answer));
+            }
         }
 
         buffer.move_mark(&self.end_mark, &buffer.end_iter());
@@ -120,20 +107,19 @@ impl TranscriptTextView {
         iter: &mut gtk::TextIter,
         widget: gtk::Widget,
     ) {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        row.set_hexpand(true);
+        row.set_overflow(gtk::Overflow::Hidden);
         widget.set_hexpand(true);
-        let anchor = buffer.create_child_anchor(iter);
-        self.view.add_child_at_anchor(&widget, &anchor);
-        self.anchored_widgets.borrow_mut().push(widget);
-        buffer.insert(iter, "\n");
-    }
-}
+        row.append(&widget);
 
-const fn role_label(role: TranscriptRole) -> &'static str {
-    match role {
-        TranscriptRole::User => "You",
-        TranscriptRole::Agent => "Agent",
-        TranscriptRole::Thought => "Thought",
-        TranscriptRole::System => "System",
-        TranscriptRole::Tool => "Tool",
+        let width = self.view.width();
+        if width > 0 {
+            row.set_width_request(width);
+        }
+        let anchor = buffer.create_child_anchor(iter);
+        self.view.add_child_at_anchor(&row, &anchor);
+        self.anchored_widgets.borrow_mut().push(row.upcast());
+        buffer.insert(iter, "\n");
     }
 }

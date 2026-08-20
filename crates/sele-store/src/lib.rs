@@ -9,15 +9,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Params, Transaction, params};
 use sele_core::{
-    TranscriptBlock, TranscriptBlockKind, TranscriptMessage, TranscriptMessageState,
-    TranscriptRole, TranscriptSession, TranscriptSessionKey,
+    TranscriptBlock, TranscriptBlockKind, TranscriptMessage, TranscriptMessagePhase,
+    TranscriptMessageState, TranscriptRole, TranscriptSession, TranscriptSessionKey,
+    TranscriptToolKind,
 };
 
 pub const DATABASE_PATH_ENV: &str = "SELE_TRANSCRIPT_DATABASE_PATH";
 pub const DEFAULT_DATABASE_FILENAME: &str = "sele-native-transcripts-v1.sqlite3";
 pub const LEGACY_ELECTRON_DATABASE_FILENAME: &str = "sele.sqlite";
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 3;
 const STORE_KIND: &str = "sele-native-transcript-store-v1";
 
 #[derive(Debug)]
@@ -260,7 +261,7 @@ impl TranscriptStore {
         limit: usize,
     ) -> StoreResult<Vec<TranscriptMessage>> {
         let mut rows = self.query_message_rows(
-            "SELECT m.message_id, m.sequence, m.role, m.state
+            "SELECT m.message_id, m.sequence, m.role, m.phase, m.state
              FROM transcript_messages m
              JOIN transcript_sessions s
                ON s.provider_id = m.provider_id AND s.session_id = m.session_id
@@ -275,7 +276,7 @@ impl TranscriptStore {
 
     pub fn all_messages(&self, key: &TranscriptSessionKey) -> StoreResult<Vec<TranscriptMessage>> {
         let rows = self.query_message_rows(
-            "SELECT m.message_id, m.sequence, m.role, m.state
+            "SELECT m.message_id, m.sequence, m.role, m.phase, m.state
              FROM transcript_messages m
              JOIN transcript_sessions s
                ON s.provider_id = m.provider_id AND s.session_id = m.session_id
@@ -294,7 +295,7 @@ impl TranscriptStore {
         limit: usize,
     ) -> StoreResult<Vec<TranscriptMessage>> {
         let mut rows = self.query_message_rows(
-            "SELECT m.message_id, m.sequence, m.role, m.state
+            "SELECT m.message_id, m.sequence, m.role, m.phase, m.state
              FROM transcript_messages m
              JOIN transcript_sessions s
                ON s.provider_id = m.provider_id AND s.session_id = m.session_id
@@ -319,7 +320,7 @@ impl TranscriptStore {
         limit: usize,
     ) -> StoreResult<Vec<TranscriptMessage>> {
         let rows = self.query_message_rows(
-            "SELECT m.message_id, m.sequence, m.role, m.state
+            "SELECT m.message_id, m.sequence, m.role, m.phase, m.state
              FROM transcript_messages m
              JOIN transcript_sessions s
                ON s.provider_id = m.provider_id AND s.session_id = m.session_id
@@ -363,7 +364,8 @@ impl TranscriptStore {
                 id: row.get(0)?,
                 sequence: row.get(1)?,
                 role: row.get(2)?,
-                state: row.get(3)?,
+                phase: row.get(3)?,
+                state: row.get(4)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -388,6 +390,7 @@ impl TranscriptStore {
                     id: row.id,
                     sequence: row.sequence,
                     role,
+                    phase: TranscriptMessagePhase::parse(&row.phase),
                     state,
                     blocks: self.load_blocks(key, generation, row.sequence)?,
                 })
@@ -402,7 +405,8 @@ impl TranscriptStore {
         message_sequence: i64,
     ) -> StoreResult<Vec<TranscriptBlock>> {
         let mut statement = self.connection.prepare(
-            "SELECT sequence, kind, text, language, reference_id, title, status, uri, alt, payload_json
+            "SELECT sequence, kind, text, language, reference_id, title, status, tool_kind,
+                    uri, alt, payload_json
              FROM transcript_blocks
              WHERE provider_id = ?1 AND session_id = ?2 AND generation = ?3
                AND message_sequence = ?4
@@ -424,9 +428,10 @@ impl TranscriptStore {
                     reference_id: row.get(4)?,
                     title: row.get(5)?,
                     status: row.get(6)?,
-                    uri: row.get(7)?,
-                    alt: row.get(8)?,
-                    payload_json: row.get(9)?,
+                    tool_kind: row.get(7)?,
+                    uri: row.get(8)?,
+                    alt: row.get(9)?,
+                    payload_json: row.get(10)?,
                 })
             },
         )?;
@@ -459,7 +464,7 @@ fn initialize_schema(connection: &Connection, path: &Path) -> StoreResult<()> {
             return Err(StoreError::ForeignDatabase(path.to_path_buf()));
         }
         connection.execute_batch(SCHEMA)?;
-    } else if version != SCHEMA_VERSION {
+    } else if version > SCHEMA_VERSION {
         return Err(StoreError::UnsupportedSchema {
             found: version,
             supported: SCHEMA_VERSION,
@@ -475,6 +480,14 @@ fn initialize_schema(connection: &Connection, path: &Path) -> StoreResult<()> {
         .optional()?;
     if store_kind.as_deref() != Some(STORE_KIND) {
         return Err(StoreError::ForeignDatabase(path.to_path_buf()));
+    }
+    match version {
+        1 => {
+            connection.execute_batch(MIGRATE_V1_TO_V2)?;
+            connection.execute_batch(MIGRATE_V2_TO_V3)?;
+        }
+        2 => connection.execute_batch(MIGRATE_V2_TO_V3)?,
+        _ => {}
     }
     Ok(())
 }
@@ -524,11 +537,12 @@ fn upsert_messages(
     for message in messages {
         transaction.execute(
             "INSERT INTO transcript_messages (
-                provider_id, session_id, generation, sequence, message_id, role, state
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                provider_id, session_id, generation, sequence, message_id, role, phase, state
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(provider_id, session_id, generation, sequence) DO UPDATE SET
                 message_id = excluded.message_id,
                 role = excluded.role,
+                phase = excluded.phase,
                 state = excluded.state",
             params![
                 import.key.provider_id,
@@ -537,6 +551,7 @@ fn upsert_messages(
                 message.sequence,
                 message.id,
                 message.role.as_str(),
+                message.phase.as_str(),
                 message.state.as_str(),
             ],
         )?;
@@ -568,8 +583,8 @@ fn insert_block(
     transaction.execute(
         "INSERT INTO transcript_blocks (
             provider_id, session_id, generation, message_sequence, sequence, kind,
-            text, language, reference_id, title, status, uri, alt, payload_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            text, language, reference_id, title, status, tool_kind, uri, alt, payload_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             import.key.provider_id,
             import.key.session_id,
@@ -582,6 +597,7 @@ fn insert_block(
             values.reference_id,
             values.title,
             values.status,
+            values.tool_kind,
             values.uri,
             values.alt,
             values.payload_json,
@@ -594,6 +610,7 @@ struct MessageRow {
     id: String,
     sequence: i64,
     role: String,
+    phase: String,
     state: String,
 }
 
@@ -605,6 +622,7 @@ struct BlockRow {
     reference_id: Option<String>,
     title: Option<String>,
     status: Option<String>,
+    tool_kind: Option<String>,
     uri: Option<String>,
     alt: Option<String>,
     payload_json: Option<String>,
@@ -617,6 +635,7 @@ struct BlockValues<'a> {
     reference_id: Option<&'a str>,
     title: Option<&'a str>,
     status: Option<&'a str>,
+    tool_kind: Option<&'a str>,
     uri: Option<&'a str>,
     alt: Option<&'a str>,
     payload_json: Option<&'a str>,
@@ -631,6 +650,7 @@ impl<'a> From<&'a TranscriptBlockKind> for BlockValues<'a> {
             reference_id: None,
             title: None,
             status: None,
+            tool_kind: None,
             uri: None,
             alt: None,
             payload_json: None,
@@ -648,12 +668,14 @@ impl<'a> From<&'a TranscriptBlockKind> for BlockValues<'a> {
             TranscriptBlockKind::ToolCall {
                 tool_call_id,
                 title,
+                tool_kind,
                 status,
                 payload_json,
             } => {
                 values.kind = Cow::Borrowed("tool_call");
                 values.reference_id = Some(tool_call_id);
                 values.title = Some(title);
+                values.tool_kind = Some(tool_kind.as_str());
                 values.status = Some(status);
                 values.payload_json = payload_json.as_deref();
             }
@@ -698,6 +720,7 @@ fn block_from_row(row: BlockRow) -> StoreResult<TranscriptBlock> {
         "tool_call" => TranscriptBlockKind::ToolCall {
             tool_call_id: row.reference_id.ok_or_else(|| missing("reference_id"))?,
             title: row.title.ok_or_else(|| missing("title"))?,
+            tool_kind: TranscriptToolKind::parse(row.tool_kind.as_deref().unwrap_or("other")),
             status: row.status.ok_or_else(|| missing("status"))?,
             payload_json: row.payload_json,
         },
@@ -778,6 +801,7 @@ CREATE TABLE transcript_messages (
     sequence INTEGER NOT NULL,
     message_id TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'agent', 'thought', 'system', 'tool')),
+    phase TEXT NOT NULL CHECK (phase IN ('commentary', 'final_answer', 'unknown')),
     state TEXT NOT NULL CHECK (state IN ('streaming', 'complete', 'error')),
     PRIMARY KEY (provider_id, session_id, generation, sequence),
     UNIQUE (provider_id, session_id, generation, message_id),
@@ -798,6 +822,7 @@ CREATE TABLE transcript_blocks (
     reference_id TEXT,
     title TEXT,
     status TEXT,
+    tool_kind TEXT,
     uri TEXT,
     alt TEXT,
     payload_json TEXT,
@@ -810,7 +835,23 @@ CREATE TABLE transcript_blocks (
 CREATE INDEX transcript_messages_page
 ON transcript_messages (provider_id, session_id, generation, sequence);
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 3;
+COMMIT;
+"#;
+
+const MIGRATE_V1_TO_V2: &str = r#"
+BEGIN IMMEDIATE;
+ALTER TABLE transcript_blocks ADD COLUMN tool_kind TEXT;
+PRAGMA user_version = 2;
+COMMIT;
+"#;
+
+const MIGRATE_V2_TO_V3: &str = r#"
+BEGIN IMMEDIATE;
+ALTER TABLE transcript_messages
+ADD COLUMN phase TEXT NOT NULL DEFAULT 'unknown'
+CHECK (phase IN ('commentary', 'final_answer', 'unknown'));
+PRAGMA user_version = 3;
 COMMIT;
 "#;
 
@@ -868,6 +909,41 @@ mod tests {
         let error = TranscriptStore::open(&path).err().unwrap();
         assert!(matches!(error, StoreError::ForeignDatabase(found) if found == path));
         assert!(!path.with_extension("sqlite3-wal").exists());
+    }
+
+    #[test]
+    fn migrates_the_native_v1_database_in_place() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join(DEFAULT_DATABASE_FILENAME);
+        let connection = Connection::open(&path).unwrap();
+        let v1_schema = SCHEMA
+            .replace("    tool_kind TEXT,\n", "")
+            .replace(
+                "    phase TEXT NOT NULL CHECK (phase IN ('commentary', 'final_answer', 'unknown')),\n",
+                "",
+            )
+            .replace("PRAGMA user_version = 3;", "PRAGMA user_version = 1;");
+        connection.execute_batch(&v1_schema).unwrap();
+        drop(connection);
+
+        let store = TranscriptStore::open(&path).unwrap();
+        let version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        assert!(
+            store
+                .connection
+                .prepare("SELECT tool_kind FROM transcript_blocks")
+                .is_ok()
+        );
+        assert!(
+            store
+                .connection
+                .prepare("SELECT phase FROM transcript_messages")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1020,6 +1096,7 @@ mod tests {
                 kind: TranscriptBlockKind::ToolCall {
                     tool_call_id: "tool-1".into(),
                     title: "Read file".into(),
+                    tool_kind: TranscriptToolKind::Read,
                     status: "running".into(),
                     payload_json: Some("{\"path\":\"README.md\"}".into()),
                 },

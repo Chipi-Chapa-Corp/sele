@@ -1,0 +1,61 @@
+.work-section {
+  margin: var(--sele-space-sm) var(--sele-space-xl);
+}
+
+.work-section-toggle {
+  padding: var(--sele-space-xs) 0 var(--sele-space-sm);
+  color: color-mix(in srgb, currentColor var(--disabled-opacity), transparent);
+}
+
+.work-section-toggle,
+.work-section-toggle:hover,
+.work-section-toggle:active,
+.work-section-toggle:checked {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+.work-section-separator {
+  min-height: 1px;
+  background-color: var(--border-color);
+}
+
+.work-item-toggle {
+  padding: 0;
+}
+
+.work-section-content,
+.work-message-content {
+  border-spacing: var(--sele-space-sm);
+}
+
+.work-section-content {
+  margin: var(--sele-space-sm) 0 var(--sele-space-md) var(--sele-space-md);
+}
+
+.work-message {
+  padding: var(--sele-space-xs) 0;
+}
+
+.work-item-header {
+  border-spacing: var(--sele-space-sm);
+  padding: var(--sele-space-xs) 0;
+}
+
+.work-item-icon {
+  color: color-mix(in srgb, currentColor var(--dim-opacity), transparent);
+}
+
+.work-item-expander > revealer {
+  margin-left: var(--sele-space-xl);
+}
+
+.work-tool-output {
+  padding: var(--sele-space-sm);
+}
+
+.work-tool-row.error,
+.work-item-expander.error {
+  color: var(--error-color);
+}

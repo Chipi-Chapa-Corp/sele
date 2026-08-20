@@ -68,6 +68,7 @@ fn workspace_pane(css_class: &str, minimum_width: i32) -> gtk::Box {
     pane.add_css_class(css_class);
     pane.set_hexpand(true);
     pane.set_vexpand(true);
+    pane.set_overflow(gtk::Overflow::Hidden);
     pane.set_size_request(minimum_width, -1);
     pane
 }

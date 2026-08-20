@@ -14,4 +14,6 @@ pub(crate) const STYLES: &[&str] = &[
     chat_row::STYLE,
     chat_sidebar::STYLE,
     chat_view::STYLE,
+    chat_view::WORK_SECTION_STYLE,
+    chat_view::MESSAGE_BUBBLE_STYLE,
 ];

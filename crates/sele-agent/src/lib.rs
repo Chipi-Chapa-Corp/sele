@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -8,13 +9,13 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, EmbeddedResourceResource, Implementation, InitializeRequest,
     ListSessionsRequest, LoadSessionRequest, McpServer, McpServerStdio, SessionNotification,
-    SessionUpdate, ToolCall, ToolCallStatus,
+    SessionUpdate, ToolCall, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol::{AcpAgent, Client};
 use async_channel::{Receiver, Sender};
 use sele_core::{
     AgentDescriptor, AgentSession, TranscriptBlock, TranscriptBlockKind, TranscriptMessage,
-    TranscriptMessageState, TranscriptRole,
+    TranscriptMessagePhase, TranscriptMessageState, TranscriptRole, TranscriptToolKind,
 };
 use tokio::task::JoinSet;
 
@@ -554,6 +555,7 @@ impl TranscriptNormalizer {
     }
 
     fn push_content(&mut self, role: TranscriptRole, chunk: ContentChunk) {
+        let phase = normalize_message_phase(&chunk);
         let source_id = chunk.message_id.map(|id| id.to_string());
         let continues_active = self
             .active_content
@@ -563,18 +565,23 @@ impl TranscriptNormalizer {
             self.flush_active_content();
             let sequence = self.take_sequence();
             let source = source_id.as_deref().unwrap_or("anonymous");
+            let mut message = TranscriptMessage::new(
+                format!("{}:{source}:{sequence}", role.as_str()),
+                sequence,
+                role,
+                TranscriptMessageState::Complete,
+            );
+            message.phase = phase;
             self.active_content = Some(PendingContentMessage {
                 source_id: source_id.clone(),
-                message: TranscriptMessage::new(
-                    format!("{}:{source}:{sequence}", role.as_str()),
-                    sequence,
-                    role,
-                    TranscriptMessageState::Complete,
-                ),
+                message,
             });
         }
 
         if let Some(active) = &mut self.active_content {
+            if active.message.phase == TranscriptMessagePhase::Unknown {
+                active.message.phase = phase;
+            }
             let block_sequence = active.message.blocks.len() as i64;
             active
                 .message
@@ -635,6 +642,20 @@ impl TranscriptNormalizer {
     }
 }
 
+fn normalize_message_phase(chunk: &ContentChunk) -> TranscriptMessagePhase {
+    match chunk
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("codex"))
+        .and_then(|codex| codex.get("phase"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("commentary") => TranscriptMessagePhase::Commentary,
+        Some("final_answer") => TranscriptMessagePhase::FinalAnswer,
+        _ => TranscriptMessagePhase::Unknown,
+    }
+}
+
 fn normalize_content(sequence: i64, content: ContentBlock) -> TranscriptBlock {
     let kind = match content {
         ContentBlock::Text(text) => TranscriptBlockKind::Text { text: text.text },
@@ -688,6 +709,7 @@ fn normalize_tool(sequence: i64, tool_call: &ToolCall) -> TranscriptMessage {
         kind: TranscriptBlockKind::ToolCall {
             tool_call_id: id.clone(),
             title: tool_call.title.clone(),
+            tool_kind: normalize_tool_kind(tool_call.kind),
             status: status.into(),
             payload_json: tool_call
                 .raw_input
@@ -700,16 +722,111 @@ fn normalize_tool(sequence: i64, tool_call: &ToolCall) -> TranscriptMessage {
             sequence: 1,
             kind: TranscriptBlockKind::ToolResult {
                 tool_call_id: id,
-                content: tool_call
-                    .raw_output
-                    .as_ref()
-                    .and_then(|output| serde_json::to_string_pretty(output).ok())
-                    .or_else(|| serde_json::to_string_pretty(&tool_call.content).ok())
-                    .unwrap_or_default(),
+                content: normalize_tool_result(tool_call),
             },
         });
     }
     message
+}
+
+fn normalize_tool_result(tool_call: &ToolCall) -> String {
+    if !tool_call.content.is_empty()
+        && let Ok(content) = serde_json::to_value(&tool_call.content)
+        && let Some(text) = display_text_from_value(&content)
+    {
+        return text;
+    }
+
+    if let Some(output) = &tool_call.raw_output {
+        return display_text_from_value(output).unwrap_or_else(|| {
+            serde_json::to_string_pretty(output).unwrap_or_else(|_| output.to_string())
+        });
+    }
+
+    serde_json::to_string_pretty(&tool_call.content).unwrap_or_default()
+}
+
+/// Converts legacy provider-shaped tool output into the human-facing content it contains.
+/// New ACP results are normalized before storage; this keeps existing caches readable.
+pub fn display_tool_result(content: &str) -> Cow<'_, str> {
+    if let Ok(value) = serde_json::from_str(content) {
+        return display_text_from_value(&value).map_or(Cow::Borrowed(""), Cow::Owned);
+    }
+    match clean_output_text(content) {
+        Some(cleaned) if cleaned != content => Cow::Owned(cleaned),
+        Some(_) => Cow::Borrowed(content),
+        None => Cow::Borrowed(""),
+    }
+}
+
+fn display_text_from_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => clean_output_text(text),
+        serde_json::Value::Array(values) => join_display_text(values.iter()),
+        serde_json::Value::Object(fields) => {
+            for key in [
+                "output",
+                "stdout",
+                "stderr",
+                "text",
+                "content",
+                "formatted_output",
+                "formattedOutput",
+            ] {
+                if let Some(value) = fields.get(key)
+                    && let Some(text) = display_text_from_value(value)
+                {
+                    return Some(text);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn join_display_text<'a>(
+    values: impl IntoIterator<Item = &'a serde_json::Value>,
+) -> Option<String> {
+    let parts = values
+        .into_iter()
+        .filter_map(display_text_from_value)
+        .collect::<Vec<_>>();
+    (!parts.is_empty()).then(|| parts.join("\n"))
+}
+
+fn clean_output_text(text: &str) -> Option<String> {
+    let text = if let Some((metadata, output)) = text.split_once("\nOutput:\n")
+        && [
+            "Chunk ID:",
+            "Wall time:",
+            "Process exited with code",
+            "Original token count:",
+        ]
+        .iter()
+        .any(|marker| metadata.contains(marker))
+    {
+        output
+    } else {
+        text
+    };
+    let text = text.trim_end_matches('\n');
+    (!text.trim().is_empty()).then(|| text.to_owned())
+}
+
+const fn normalize_tool_kind(kind: ToolKind) -> TranscriptToolKind {
+    match kind {
+        ToolKind::Read => TranscriptToolKind::Read,
+        ToolKind::Edit => TranscriptToolKind::Edit,
+        ToolKind::Delete => TranscriptToolKind::Delete,
+        ToolKind::Move => TranscriptToolKind::Move,
+        ToolKind::Search => TranscriptToolKind::Search,
+        ToolKind::Execute => TranscriptToolKind::Execute,
+        ToolKind::Think => TranscriptToolKind::Think,
+        ToolKind::Fetch => TranscriptToolKind::Fetch,
+        ToolKind::SwitchMode => TranscriptToolKind::SwitchMode,
+        _ => TranscriptToolKind::Other,
+    }
 }
 
 const fn tool_status(status: ToolCallStatus) -> &'static str {
@@ -767,7 +884,7 @@ mod transcript_tests {
     #[test]
     fn tool_updates_replace_the_same_normalized_message() {
         let messages = normalize([
-            SessionUpdate::ToolCall(ToolCall::new("tool-1", "Read file")),
+            SessionUpdate::ToolCall(ToolCall::new("tool-1", "Read file").kind(ToolKind::Read)),
             SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                 "tool-1",
                 ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
@@ -778,5 +895,46 @@ mod transcript_tests {
         assert_eq!(messages[0].id, messages[1].id);
         assert_eq!(messages[0].sequence, messages[1].sequence);
         assert_eq!(messages[1].state, TranscriptMessageState::Complete);
+        assert!(matches!(
+            messages[1].blocks[0].kind,
+            TranscriptBlockKind::ToolCall {
+                tool_kind: TranscriptToolKind::Read,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn preserves_codex_message_phase_metadata() {
+        let mut final_chunk = text_chunk("done", "agent-final");
+        final_chunk.meta = Some(
+            serde_json::json!({"codex": {"phase": "final_answer"}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let messages = normalize([SessionUpdate::AgentMessageChunk(final_chunk)]);
+
+        assert_eq!(messages[0].phase, TranscriptMessagePhase::FinalAnswer);
+    }
+
+    #[test]
+    fn extracts_human_output_from_provider_result_shape() {
+        let tool_call = ToolCall::new("tool-1", "Run command").raw_output(serde_json::json!({
+            "formatted_output": "tests passed\n",
+            "exit_code": 0
+        }));
+
+        assert_eq!(normalize_tool_result(&tool_call), "tests passed");
+        assert_eq!(
+            display_tool_result(r#"{"formatted_output":"cached output","exit_code":0}"#),
+            "cached output"
+        );
+        assert_eq!(
+            display_tool_result(
+                r#"{"output":"Chunk ID: abc\nWall time: 0.1 seconds\nProcess exited with code 0\nOriginal token count: 2\nOutput:\nreal output\n","exit_code":0}"#
+            ),
+            "real output"
+        );
     }
 }

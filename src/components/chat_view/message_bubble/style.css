@@ -1,0 +1,16 @@
+.chat-message-row {
+  padding: var(--sele-space-sm) var(--sele-space-xl);
+}
+
+.chat-message-user {
+  border-spacing: var(--sele-space-sm);
+  padding: var(--sele-space-md);
+}
+
+.chat-message-agent {
+  border-spacing: var(--sele-space-sm);
+}
+
+.chat-message-code {
+  border-spacing: var(--sele-space-xs);
+}

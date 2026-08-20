@@ -77,6 +77,32 @@ pub enum TranscriptMessageState {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TranscriptMessagePhase {
+    Commentary,
+    FinalAnswer,
+    #[default]
+    Unknown,
+}
+
+impl TranscriptMessagePhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Commentary => "commentary",
+            Self::FinalAnswer => "final_answer",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "commentary" => Self::Commentary,
+            "final_answer" => Self::FinalAnswer,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 impl TranscriptMessageState {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -96,11 +122,59 @@ impl TranscriptMessageState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TranscriptToolKind {
+    Read,
+    Edit,
+    Delete,
+    Move,
+    Search,
+    Execute,
+    Think,
+    Fetch,
+    SwitchMode,
+    #[default]
+    Other,
+}
+
+impl TranscriptToolKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Edit => "edit",
+            Self::Delete => "delete",
+            Self::Move => "move",
+            Self::Search => "search",
+            Self::Execute => "execute",
+            Self::Think => "think",
+            Self::Fetch => "fetch",
+            Self::SwitchMode => "switch_mode",
+            Self::Other => "other",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "read" => Self::Read,
+            "edit" => Self::Edit,
+            "delete" => Self::Delete,
+            "move" => Self::Move,
+            "search" => Self::Search,
+            "execute" => Self::Execute,
+            "think" => Self::Think,
+            "fetch" => Self::Fetch,
+            "switch_mode" => Self::SwitchMode,
+            _ => Self::Other,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TranscriptMessage {
     pub id: String,
     pub sequence: i64,
     pub role: TranscriptRole,
+    pub phase: TranscriptMessagePhase,
     pub state: TranscriptMessageState,
     pub blocks: Vec<TranscriptBlock>,
 }
@@ -116,6 +190,7 @@ impl TranscriptMessage {
             id: id.into(),
             sequence,
             role,
+            phase: TranscriptMessagePhase::Unknown,
             state,
             blocks: Vec::new(),
         }
@@ -149,6 +224,7 @@ pub enum TranscriptBlockKind {
     ToolCall {
         tool_call_id: String,
         title: String,
+        tool_kind: TranscriptToolKind,
         status: String,
         payload_json: Option<String>,
     },

@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 mod transcript;
 
 pub use transcript::{
-    TranscriptBlock, TranscriptBlockKind, TranscriptMessage, TranscriptMessageState,
-    TranscriptRole, TranscriptSession, TranscriptSessionKey,
+    TranscriptBlock, TranscriptBlockKind, TranscriptMessage, TranscriptMessagePhase,
+    TranscriptMessageState, TranscriptRole, TranscriptSession, TranscriptSessionKey,
+    TranscriptToolKind,
 };
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
