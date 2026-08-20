@@ -128,6 +128,7 @@ export type AppSettings = {
   performance: AppPerformanceSettings
   git: {
     commitModel: ProviderModelId | null
+    untrackedFilesPrompt: string
     commitPrompt: AppGitCommitPromptSettings
     commitMessageGeneration: AppGitCommitMessageGenerationSettings
     worktree: AppGitWorktreeSettings
@@ -141,6 +142,7 @@ export type AppProjectSettingsOverrides = {
   performance?: Partial<AppPerformanceSettings>
   git?: {
     commitModel?: ProviderModelId | null
+    untrackedFilesPrompt?: string
     commitPrompt?: Partial<AppGitCommitPromptSettings>
     commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
     worktree?: Partial<AppGitWorktreeSettings>
@@ -174,6 +176,9 @@ export const defaultAppPerformanceSettings: AppPerformanceSettings = {
   disableShadows: false,
   maxChatsRendered: appMaxChatsRenderedDefault
 }
+
+export const defaultAppGitUntrackedFilesPrompt =
+  'There are many untracked files in this cwd. Was it meant to be in .gitignore? Resolve or explain'
 
 export const defaultAppGitCommitPromptSettings: AppGitCommitPromptSettings = {
   instructions: [
@@ -308,6 +313,7 @@ export const defaultAppSettings: AppSettings = {
   performance: defaultAppPerformanceSettings,
   git: {
     commitModel: null,
+    untrackedFilesPrompt: defaultAppGitUntrackedFilesPrompt,
     commitPrompt: defaultAppGitCommitPromptSettings,
     commitMessageGeneration: defaultAppGitCommitMessageGenerationSettings,
     worktree: defaultAppGitWorktreeSettings
@@ -541,6 +547,9 @@ const readProjectGitOverrides = (
       overrides.commitModel = git.commitModel
     }
   }
+  if (hasOwnProperty(git, 'untrackedFilesPrompt') && typeof git.untrackedFilesPrompt === 'string') {
+    overrides.untrackedFilesPrompt = git.untrackedFilesPrompt
+  }
 
   const commitPrompt =
     git.commitPrompt && typeof git.commitPrompt === 'object' && !Array.isArray(git.commitPrompt)
@@ -654,6 +663,9 @@ const pruneAppProjectSettingsOverrides = (
     if (hasOwnProperty(overrides.git, 'commitModel')) {
       gitOverrides.commitModel = overrides.git.commitModel ?? null
     }
+    if (hasOwnProperty(overrides.git, 'untrackedFilesPrompt')) {
+      gitOverrides.untrackedFilesPrompt = overrides.git.untrackedFilesPrompt
+    }
     if (overrides.git.commitPrompt && Object.keys(overrides.git.commitPrompt).length > 0) {
       gitOverrides.commitPrompt = { ...overrides.git.commitPrompt }
     }
@@ -695,6 +707,10 @@ export const resolveAppSettings = (
     gitOverrides && hasOwnProperty(gitOverrides, 'commitModel')
       ? (gitOverrides.commitModel ?? null)
       : settings.git.commitModel
+  const untrackedFilesPrompt =
+    gitOverrides && hasOwnProperty(gitOverrides, 'untrackedFilesPrompt')
+      ? (gitOverrides.untrackedFilesPrompt ?? settings.git.untrackedFilesPrompt)
+      : settings.git.untrackedFilesPrompt
 
   return {
     ...settings,
@@ -717,6 +733,7 @@ export const resolveAppSettings = (
     git: {
       ...settings.git,
       commitModel,
+      untrackedFilesPrompt,
       commitPrompt: {
         ...settings.git.commitPrompt,
         ...gitOverrides?.commitPrompt
@@ -855,6 +872,10 @@ export const readStoredAppSettings = (): AppSettings => {
             : isStoredModel(git.commitModel)
               ? git.commitModel
               : defaultAppSettings.git.commitModel,
+        untrackedFilesPrompt:
+          typeof git.untrackedFilesPrompt === 'string'
+            ? git.untrackedFilesPrompt
+            : defaultAppSettings.git.untrackedFilesPrompt,
         commitPrompt: {
           instructions: readPromptField(commitPrompt, 'instructions'),
           workflow: readPromptField(commitPrompt, 'workflow'),
@@ -989,6 +1010,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       performance?: Partial<AppPerformanceSettings>
       git?: {
         commitModel?: ProviderModelId | null
+        untrackedFilesPrompt?: string
         commitPrompt?: Partial<AppGitCommitPromptSettings>
         commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
         worktree?: Partial<AppGitWorktreeSettings>
@@ -1117,12 +1139,16 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
 
     const storedGit: {
       commitModel?: ProviderModelId | null
+      untrackedFilesPrompt?: string
       commitPrompt?: Partial<AppGitCommitPromptSettings>
       commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
       worktree?: Partial<AppGitWorktreeSettings>
     } = {}
     if (settings.git.commitModel !== defaultAppSettings.git.commitModel) {
       storedGit.commitModel = settings.git.commitModel
+    }
+    if (settings.git.untrackedFilesPrompt !== defaultAppSettings.git.untrackedFilesPrompt) {
+      storedGit.untrackedFilesPrompt = settings.git.untrackedFilesPrompt
     }
 
     const storedCommitPrompt: Partial<AppGitCommitPromptSettings> = {}

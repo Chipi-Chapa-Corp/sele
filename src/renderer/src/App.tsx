@@ -486,7 +486,7 @@ type AppProjectSettingPath =
   | { section: 'chat'; key: keyof AppSettings['chat'] }
   | { section: 'links'; key: keyof AppSettings['links'] }
   | { section: 'performance'; key: keyof AppSettings['performance'] }
-  | { section: 'git'; key: 'commitModel' }
+  | { section: 'git'; key: 'commitModel' | 'untrackedFilesPrompt' }
   | { section: 'gitCommitPrompt'; key: keyof AppGitCommitPromptSettings }
   | {
       section: 'gitCommitMessageGeneration'
@@ -554,7 +554,7 @@ const getAppProjectSettingValue = (settings: AppSettings, path: AppProjectSettin
     case 'performance':
       return settings.performance[path.key]
     case 'git':
-      return settings.git.commitModel
+      return settings.git[path.key]
     case 'gitCommitPrompt':
       return settings.git.commitPrompt[path.key]
     case 'gitCommitMessageGeneration':
@@ -578,7 +578,7 @@ const isAppProjectSettingOverridden = (
     case 'performance':
       return hasSettingKey(overrides?.performance, path.key)
     case 'git':
-      return hasSettingKey(overrides?.git, 'commitModel')
+      return hasSettingKey(overrides?.git, path.key)
     case 'gitCommitPrompt':
       return hasSettingKey(overrides?.git?.commitPrompt, path.key)
     case 'gitCommitMessageGeneration':
@@ -627,6 +627,16 @@ const setAppProjectSettingOverrideValue = (
         } as Partial<AppSettings['performance']>
       })
     case 'git':
+      if (path.key === 'untrackedFilesPrompt') {
+        return cleanProjectSettingsOverrides({
+          ...overrides,
+          git: {
+            ...overrides.git,
+            untrackedFilesPrompt: value as string
+          }
+        })
+      }
+
       return cleanProjectSettingsOverrides({
         ...overrides,
         git: {
@@ -697,7 +707,7 @@ const clearAppProjectSettingOverrideValue = (
     }
     case 'git': {
       const git = { ...(overrides.git ?? {}) }
-      delete git.commitModel
+      delete git[path.key]
       return cleanProjectSettingsOverrides({ ...overrides, git })
     }
     case 'gitCommitPrompt': {
@@ -1532,15 +1542,29 @@ const ChangesSidebarGitState: React.FC<{ active: boolean; label: string }> = ({
   </div>
 )
 
-const ChangesSidebarGitPerformanceWarning: React.FC = () => (
+const ChangesSidebarGitPerformanceWarning: React.FC<{
+  disabled: boolean
+  onSolve: () => Promise<void> | void
+}> = ({ disabled, onSolve }) => (
   <section className="changes-sidebar__performance-warning" role="alert">
     <TriangleAlert className="changes-sidebar__performance-warning-icon" aria-hidden="true" />
-    <div>
+    <div className="changes-sidebar__performance-warning-content">
       <strong>More than 200 untracked files hidden</strong>
       <p>
         They’re not shown to keep this view responsive. Did you mean to add generated artifacts to{' '}
         <code>.gitignore</code>?
       </p>
+      <div className="changes-sidebar__performance-warning-actions">
+        <Button
+          title="Ask AI to resolve the untracked files"
+          disabled={disabled}
+          callback={onSolve}
+          icon={<Sparkles aria-hidden="true" />}
+          label={<span>Solve with AI</span>}
+          size="small"
+          theme="secondary"
+        />
+      </div>
     </div>
   </section>
 )
@@ -4850,8 +4874,7 @@ export const App: React.FC = () => {
       }
     }
 
-    const availableProviderIds = newSessionAvailableProviderIds
-    if (availableProviderIds.length === 0) {
+    if (newSessionAvailableProviderIds.length === 0) {
       queueMicrotask(() => {
         if (!active) return
         setSettingsProviderSkills([])
@@ -4864,6 +4887,20 @@ export const App: React.FC = () => {
       }
     }
 
+    if (!newSessionProviderAvailable) {
+      queueMicrotask(() => {
+        if (!active) return
+        setSettingsProviderSkills([])
+        setSettingsProviderApps([])
+        setProviderResourcesError(null)
+        setProviderResourcesLoadState('loading')
+      })
+      return () => {
+        active = false
+      }
+    }
+
+    const providerId = newSessionProvider
     const container = normalizeContainerTarget(newSessionContainer)
     queueMicrotask(() => {
       if (!active) return
@@ -4873,31 +4910,27 @@ export const App: React.FC = () => {
       setProviderResourcesLoadState('loading')
     })
 
-    void Promise.all(
-      availableProviderIds.map(async (providerId) => {
-        const [skills, apps] = await Promise.allSettled([
-          providerApi.getSkills(providerId, settingsProjectCwd, { container }),
-          providerApi.getApps(providerId, { container })
-        ])
-
-        return {
-          providerId,
-          skills: skills.status === 'fulfilled' ? skills.value : [],
-          apps: apps.status === 'fulfilled' ? apps.value : [],
-          failed: skills.status === 'rejected' && apps.status === 'rejected'
-        }
-      })
-    ).then((resources) => {
+    void Promise.allSettled([
+      providerApi.getSkills(providerId, settingsProjectCwd, { container }),
+      providerApi.getApps(providerId, { container })
+    ]).then(([skills, apps]) => {
       if (!active) return
 
-      setSettingsProviderSkills(mergeSettingsProviderSkills(resources))
+      setSettingsProviderSkills(
+        mergeSettingsProviderSkills([
+          {
+            providerId,
+            skills: skills.status === 'fulfilled' ? skills.value : []
+          }
+        ])
+      )
       setSettingsProviderApps(
-        resources
-          .flatMap(({ providerId, apps }) => apps.map((app) => ({ providerId, app })))
+        (apps.status === 'fulfilled' ? apps.value : [])
+          .map((app) => ({ providerId, app }))
           .sort((first, second) => first.app.name.localeCompare(second.app.name))
       )
       setProviderResourcesError(
-        resources.every((resource) => resource.failed)
+        skills.status === 'rejected' && apps.status === 'rejected'
           ? 'Unable to inspect provider resources in this environment.'
           : null
       )
@@ -4911,6 +4944,8 @@ export const App: React.FC = () => {
     newSessionAvailableProviderIds,
     newSessionContainer,
     newSessionContainerKey,
+    newSessionProvider,
+    newSessionProviderAvailable,
     newSessionSourceAvailabilityReady,
     providerResourcesRefresh,
     settingsOpen,
@@ -8255,6 +8290,20 @@ export const App: React.FC = () => {
     }))
   }
 
+  const handleGitUntrackedFilesPromptChange = (untrackedFilesPrompt: string): void => {
+    updateScopedSetting(
+      { section: 'git', key: 'untrackedFilesPrompt' },
+      untrackedFilesPrompt,
+      (currentSettings) => ({
+        ...currentSettings,
+        git: {
+          ...currentSettings.git,
+          untrackedFilesPrompt
+        }
+      })
+    )
+  }
+
   const handleGitCommitPromptChange = (
     key: keyof AppGitCommitPromptSettings,
     value: string
@@ -10259,6 +10308,18 @@ export const App: React.FC = () => {
     sendState === 'sending' ||
     Boolean(editingMessage) ||
     (selectedChat ? chatLoadState !== 'ready' || chatIsBusy : false)
+  const untrackedFilesAiDisabled =
+    providerUpdateInProgress ||
+    syncInProgress ||
+    sendState === 'sending' ||
+    Boolean(editingMessage) ||
+    !changesCwd ||
+    !effectiveAppSettings.git.untrackedFilesPrompt.trim() ||
+    (selectedChat
+      ? !chatDetail ||
+        chatLoadState !== 'ready' ||
+        (chatHasActiveTurn && !chatDetail.capabilities.activeMessages)
+      : !newSessionProviderAvailable)
   const changesEmptyMessage = getChangesEmptyMessage(changeSource, changesCwd)
   const filesEmptyMessage = getFileTreeEmptyMessage(changesCwd)
   const changeTree = useMemo(() => buildChangeTree(changedFiles), [changedFiles])
@@ -11123,6 +11184,20 @@ export const App: React.FC = () => {
     )
   }
 
+  const handleSolveUntrackedFiles = async (): Promise<void> => {
+    if (!untrackedFilesHiddenForPerformance || untrackedFilesAiDisabled || !changesCwd) return
+
+    await handleSendMessage(
+      effectiveAppSettings.git.untrackedFilesPrompt,
+      undefined,
+      [],
+      null,
+      [],
+      [],
+      getGitTurnOptions()
+    )
+  }
+
   const handleMinimizeWindow = (): void => {
     void appApi.minimizeWindow()
   }
@@ -11212,6 +11287,10 @@ export const App: React.FC = () => {
       section: 'git',
       key: 'commitModel'
     } satisfies AppProjectSettingPath
+    const gitUntrackedFilesPromptPath = {
+      section: 'git',
+      key: 'untrackedFilesPrompt'
+    } satisfies AppProjectSettingPath
     const gitCommitGenerationPromptPath = {
       section: 'gitCommitMessageGeneration',
       key: 'prompt'
@@ -11285,75 +11364,60 @@ export const App: React.FC = () => {
           role="tabpanel"
           aria-label="Provider settings"
         >
-          <section
-            className="settings-dialog__section"
-            aria-labelledby="settings-providers-environment"
+          <div
+            className="settings-dialog__provider-configuration"
+            role="group"
+            aria-label="Provider configuration"
           >
-            <h2 className="settings-dialog__section-heading" id="settings-providers-environment">
-              Environment
-            </h2>
-            <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--inline">
-                <div className="settings-dialog__field-header">
-                  <h3>Runtime</h3>
-                  <p>Inspect the skills and connected apps available to this environment.</p>
-                </div>
-                <Dropdown
-                  aria-label="Provider environment"
-                  disabled={Boolean(providerResourceUpdatingKey)}
-                  menuActions={[
-                    ...(sshEnvironmentError
-                      ? [
-                          {
-                            id: 'provider-environment-error',
-                            label: sshEnvironmentError,
-                            title: sshEnvironmentError,
-                            disabled: true,
-                            icon: <X aria-hidden="true" />,
-                            callback: () => {}
-                          }
-                        ]
-                      : []),
-                    {
-                      id: 'provider-add-environment',
-                      label: 'Add environment',
-                      title: 'Add environment',
-                      icon: <PackagePlus aria-hidden="true" />,
-                      callback: () => {
-                        setEditingSshEnvironment(null)
-                        setSshEnvironmentError(null)
-                        setSshEnvironmentDialogOpen(true)
+            <span>Configure</span>
+            <Dropdown
+              aria-label="Provider"
+              disabled={
+                Boolean(providerResourceUpdatingKey) || newSessionProviderOptions.length === 0
+              }
+              emptyContent="No providers found"
+              options={newSessionProviderOptions}
+              size="small"
+              value={newSessionProvider}
+              valueContent={newSessionProviderValueContent}
+              onChange={setNewSessionProvider}
+            />
+            <span>in</span>
+            <Dropdown
+              aria-label="Provider environment"
+              disabled={Boolean(providerResourceUpdatingKey)}
+              menuActions={[
+                ...(sshEnvironmentError
+                  ? [
+                      {
+                        id: 'provider-environment-error',
+                        label: sshEnvironmentError,
+                        title: sshEnvironmentError,
+                        disabled: true,
+                        icon: <X aria-hidden="true" />,
+                        callback: () => {}
                       }
-                    }
-                  ]}
-                  menuAlign="end"
-                  options={containerOptions}
-                  value={newSessionContainerValue}
-                  valueContent={!newSessionSourceAvailabilityReady ? 'Checking' : undefined}
-                  onChange={handleNewSessionContainerChange}
-                />
-              </div>
-              {newSessionSshEnvironmentId && newSessionRemoteRuntime && (
-                <div className="settings-dialog__field settings-dialog__field--inline">
-                  <div className="settings-dialog__field-header">
-                    <h3>Remote runtime</h3>
-                    <p>Choose the host or container used after connecting over SSH.</p>
-                  </div>
-                  <Dropdown
-                    aria-label="Provider remote runtime"
-                    disabled={
-                      Boolean(providerResourceUpdatingKey) || remoteContainerSuggestionsLoading
-                    }
-                    menuAlign="end"
-                    options={remoteRuntimeOptions}
-                    value={getContainerTargetKey(newSessionRemoteRuntime)}
-                    valueContent={remoteContainerSuggestionsLoading ? 'Checking' : undefined}
-                    onChange={handleNewSessionRemoteRuntimeChange}
-                  />
-                </div>
-              )}
-            </div>
-          </section>
+                    ]
+                  : []),
+                {
+                  id: 'provider-add-environment',
+                  label: 'Add environment',
+                  title: 'Add environment',
+                  icon: <PackagePlus aria-hidden="true" />,
+                  callback: () => {
+                    setEditingSshEnvironment(null)
+                    setSshEnvironmentError(null)
+                    setSshEnvironmentDialogOpen(true)
+                  }
+                }
+              ]}
+              options={containerOptions}
+              size="small"
+              value={newSessionContainerValue}
+              valueContent={!newSessionSourceAvailabilityReady ? 'Checking' : undefined}
+              onChange={handleNewSessionContainerChange}
+            />
+          </div>
           {providerResourcesError && (
             <section
               className="settings-dialog__section"
@@ -11852,6 +11916,37 @@ export const App: React.FC = () => {
                   options={gitCommitModelOptions}
                   value={gitCommitModelValue}
                   onChange={handleGitCommitModelChange}
+                />
+              </div>
+            </div>
+          </section>
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-git-untracked-files"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-git-untracked-files">
+              Untracked files
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-git-untracked-files-prompt"
+                >
+                  <h3>Solve with AI prompt</h3>
+                  <p>Sent when resolving a large set of untracked files from the Git tab.</p>
+                </label>
+                {renderProjectSettingAction(gitUntrackedFilesPromptPath, 'Solve with AI prompt')}
+                <textarea
+                  id="settings-git-untracked-files-prompt"
+                  className="settings-dialog__prompt-textarea"
+                  rows={3}
+                  spellCheck={false}
+                  disabled={isScopedSettingControlDisabled(gitUntrackedFilesPromptPath)}
+                  value={settingsPanelSettings.git.untrackedFilesPrompt}
+                  onChange={(event) =>
+                    handleGitUntrackedFilesPromptChange(event.currentTarget.value)
+                  }
                 />
               </div>
             </div>
@@ -13258,7 +13353,10 @@ export const App: React.FC = () => {
                       )}
                       {visibleChangesLoadState === 'ready' &&
                         untrackedFilesHiddenForPerformance && (
-                          <ChangesSidebarGitPerformanceWarning />
+                          <ChangesSidebarGitPerformanceWarning
+                            disabled={untrackedFilesAiDisabled}
+                            onSolve={handleSolveUntrackedFiles}
+                          />
                         )}
                       {visibleChangesLoadState === 'ready' &&
                         !untrackedFilesHiddenForPerformance &&
