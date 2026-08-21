@@ -19,12 +19,24 @@ import {
 import type { AppExternalLinkAction } from '../../shared/app'
 import type { AppAction } from './actions'
 import { normalizeAppActions } from './actions'
-import { appMaxChatsRenderedDefault, normalizeAppMaxChatsRendered } from './performanceSettings'
+import {
+  appMaxChatsRenderedDefault,
+  appRecentlyOpenedFilesLimitDefault,
+  appRecentsMessageLimitDefault,
+  normalizeAppMaxChatsRendered,
+  normalizeAppRecentlyOpenedFilesLimit,
+  normalizeAppRecentsMessageLimit
+} from './performanceSettings'
 
 export {
-  appMaxChatsRenderedMax,
   appMaxChatsRenderedMin,
-  normalizeAppMaxChatsRendered
+  appRecentlyOpenedFilesLimitMax,
+  appRecentlyOpenedFilesLimitMin,
+  appRecentsMessageLimitMax,
+  appRecentsMessageLimitMin,
+  normalizeAppMaxChatsRendered,
+  normalizeAppRecentlyOpenedFilesLimit,
+  normalizeAppRecentsMessageLimit
 } from './performanceSettings'
 
 export type AppThemePreference = 'system' | 'light' | 'dark'
@@ -78,6 +90,8 @@ export type AppChatDropdownSettings = {
 export type AppPerformanceSettings = {
   disableShadows: boolean
   maxChatsRendered: number
+  recentlyOpenedFilesLimit: number
+  recentsMessageLimit: number
 }
 
 export type AppExternalLinkBehavior = 'manual' | AppExternalLinkAction
@@ -174,7 +188,9 @@ export const defaultAppChatDropdownSettings: AppChatDropdownSettings = {
 
 export const defaultAppPerformanceSettings: AppPerformanceSettings = {
   disableShadows: false,
-  maxChatsRendered: appMaxChatsRenderedDefault
+  maxChatsRendered: appMaxChatsRenderedDefault,
+  recentlyOpenedFilesLimit: appRecentlyOpenedFilesLimitDefault,
+  recentsMessageLimit: appRecentsMessageLimitDefault
 }
 
 export const defaultAppGitUntrackedFilesPrompt =
@@ -415,6 +431,12 @@ const getStoredPerformanceBoolean = (
 
 const getStoredMaxChatsRendered = (value: unknown): number => normalizeAppMaxChatsRendered(value)
 
+const getStoredRecentsMessageLimit = (value: unknown): number =>
+  normalizeAppRecentsMessageLimit(value)
+
+const getStoredRecentlyOpenedFilesLimit = (value: unknown): number =>
+  normalizeAppRecentlyOpenedFilesLimit(value)
+
 const readProjectAppearanceOverrides = (
   appearance: Record<string, unknown>
 ): Partial<AppSettings['appearance']> => {
@@ -530,6 +552,14 @@ const readProjectPerformanceOverrides = (
   }
   if (hasOwnProperty(performance, 'maxChatsRendered')) {
     overrides.maxChatsRendered = getStoredMaxChatsRendered(performance.maxChatsRendered)
+  }
+  if (hasOwnProperty(performance, 'recentsMessageLimit')) {
+    overrides.recentsMessageLimit = getStoredRecentsMessageLimit(performance.recentsMessageLimit)
+  }
+  if (hasOwnProperty(performance, 'recentlyOpenedFilesLimit')) {
+    overrides.recentlyOpenedFilesLimit = getStoredRecentlyOpenedFilesLimit(
+      performance.recentlyOpenedFilesLimit
+    )
   }
 
   return overrides
@@ -863,7 +893,11 @@ export const readStoredAppSettings = (): AppSettings => {
       },
       performance: {
         disableShadows: getStoredPerformanceBoolean(performance, 'disableShadows'),
-        maxChatsRendered: getStoredMaxChatsRendered(performance.maxChatsRendered)
+        maxChatsRendered: getStoredMaxChatsRendered(performance.maxChatsRendered),
+        recentlyOpenedFilesLimit: getStoredRecentlyOpenedFilesLimit(
+          performance.recentlyOpenedFilesLimit
+        ),
+        recentsMessageLimit: getStoredRecentsMessageLimit(performance.recentsMessageLimit)
       },
       git: {
         commitModel:
@@ -1131,6 +1165,22 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (settings.performance.maxChatsRendered !== defaultAppSettings.performance.maxChatsRendered) {
       storedPerformance.maxChatsRendered = getStoredMaxChatsRendered(
         settings.performance.maxChatsRendered
+      )
+    }
+    if (
+      settings.performance.recentsMessageLimit !==
+      defaultAppSettings.performance.recentsMessageLimit
+    ) {
+      storedPerformance.recentsMessageLimit = getStoredRecentsMessageLimit(
+        settings.performance.recentsMessageLimit
+      )
+    }
+    if (
+      settings.performance.recentlyOpenedFilesLimit !==
+      defaultAppSettings.performance.recentlyOpenedFilesLimit
+    ) {
+      storedPerformance.recentlyOpenedFilesLimit = getStoredRecentlyOpenedFilesLimit(
+        settings.performance.recentlyOpenedFilesLimit
       )
     }
     if (Object.keys(storedPerformance).length > 0) {

@@ -1,6 +1,7 @@
 import { CheckCheck, ChevronDown, ChevronUp, FolderKanban, PinOff, SquarePen } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
+import { appMaxChatsRenderedDefault } from '../performanceSettings'
 import { formatProjectLabel } from '../projectPresentation'
 import { Button } from './Button'
 import { ChatList } from './ChatList'
@@ -51,7 +52,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   committingChatKeys,
   canReorderChats = true,
   visibleChatCount = group.chats.length,
-  chatPageSize = 20,
+  chatPageSize = appMaxChatsRenderedDefault,
   projectIcon = null,
   projectNamesByCwd,
   onLoadMoreChats,

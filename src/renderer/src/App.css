@@ -440,6 +440,321 @@
   justify-content: center;
 }
 
+.changes-sidebar__recent-groups,
+.changes-sidebar__recent-group,
+.changes-sidebar__recents {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.changes-sidebar__recent-groups {
+  gap: 10px;
+}
+
+.changes-sidebar__recent-group {
+  gap: 10px;
+}
+
+.changes-sidebar__recent-group-header {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--quiet);
+  font-weight: 700;
+}
+
+.changes-sidebar__recent-group-header .ui-button {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.changes-sidebar__recent-group-header:hover .ui-button,
+.changes-sidebar__recent-group-header:has(:focus-visible) .ui-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.changes-sidebar__recents {
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.changes-sidebar__recent-item {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    opacity 160ms ease;
+}
+
+.changes-sidebar__recent-item:hover,
+.changes-sidebar__recent-item:has(:focus-visible) {
+  border-color: transparent;
+  background: var(--glass-subtle);
+}
+
+.changes-sidebar__recent-item--dragging {
+  opacity: 0.38;
+}
+
+.changes-sidebar__recent-item--drop-before::after,
+.changes-sidebar__recent-item--drop-after::after {
+  position: absolute;
+  z-index: 3;
+  right: 6px;
+  left: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: '';
+  pointer-events: none;
+}
+
+.changes-sidebar__recent-item--drop-before::after {
+  top: 0;
+}
+
+.changes-sidebar__recent-item--drop-after::after {
+  bottom: 0;
+}
+
+.changes-sidebar__recent-row {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 12px;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.changes-sidebar__recent-item--pinnable .changes-sidebar__recent-row {
+  padding-right: 50px;
+}
+
+.changes-sidebar__recent-item--pinned {
+  cursor: grab;
+}
+
+.changes-sidebar__recent-item--pinned:active {
+  cursor: grabbing;
+}
+
+.changes-sidebar__recent-item--pinned .changes-sidebar__recent-row {
+  padding-left: 26px;
+  cursor: grab;
+}
+
+button.changes-sidebar__recent-row:not(:disabled) {
+  cursor: pointer;
+}
+
+.changes-sidebar__recent-item--pinned button.changes-sidebar__recent-row:not(:disabled),
+.changes-sidebar__recent-item--pinned a.changes-sidebar__recent-row {
+  cursor: grab;
+}
+
+.changes-sidebar__recent-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.changes-sidebar__recent-row:disabled {
+  opacity: 0.62;
+}
+
+.changes-sidebar__recent-icon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: var(--quiet);
+}
+
+.changes-sidebar__recent-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.changes-sidebar__recent-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lead);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-sidebar__recent-text-body {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: var(--control-icon-size) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 10px 84px 10px 26px;
+}
+
+.changes-sidebar__recent-text-toggle {
+  appearance: none;
+  display: grid;
+  width: var(--control-icon-size);
+  height: 1.58em;
+  min-width: 0;
+  grid-template-columns: var(--control-icon-size);
+  align-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  outline: 0;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+.changes-sidebar__recent-text-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.changes-sidebar__recent-text-chevron {
+  position: relative;
+  top: 1px;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  color: var(--quiet);
+  transition: transform 160ms ease;
+}
+
+.changes-sidebar__recent-text-chevron--expanded {
+  transform: rotate(90deg);
+}
+
+.changes-sidebar__recent-text-content {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lead);
+  line-height: 1.58;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.changes-sidebar__recent-text-content > :first-child:is(ol, ul) > li:first-child {
+  margin-top: 0;
+}
+
+.changes-sidebar__recent-text-content--expanded {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.changes-sidebar__recent-drag-handle {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--quiet);
+  transform: translateY(-50%);
+}
+
+.changes-sidebar__recent-drag-handle {
+  left: 4px;
+  width: 18px;
+  height: 28px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.changes-sidebar__recent-drag-handle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.changes-sidebar__recent-item--pinned:hover .changes-sidebar__recent-drag-handle,
+.changes-sidebar__recent-item--pinned:has(:focus-visible) .changes-sidebar__recent-drag-handle,
+.changes-sidebar__recent-item--dragging .changes-sidebar__recent-drag-handle {
+  opacity: 1;
+}
+
+.changes-sidebar__recent-actions {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.changes-sidebar__recent-item--text .changes-sidebar__recent-actions {
+  top: 11px;
+}
+
+.changes-sidebar__recent-item:hover .changes-sidebar__recent-actions,
+.changes-sidebar__recent-item:has(:focus-visible) .changes-sidebar__recent-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.changes-sidebar__recent-actions .ui-button {
+  border-color: var(--secondary-border);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
+}
+
+.changes-sidebar__recent-actions .ui-button:not(:disabled):hover {
+  border-color: var(--secondary-border-hover);
+  background: var(--secondary-surface-hover);
+  box-shadow: var(--secondary-shadow-hover);
+}
+
+.changes-sidebar__recents--dragging
+  .changes-sidebar__recent-item:not(.changes-sidebar__recent-item--dragging)
+  .changes-sidebar__recent-drag-handle {
+  opacity: 0;
+}
+
+@media (pointer: coarse) {
+  .changes-sidebar__recent-actions,
+  .changes-sidebar__recent-group-header .ui-button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .changes-sidebar__status {
   margin: 20px 0 0;
   color: var(--quiet);

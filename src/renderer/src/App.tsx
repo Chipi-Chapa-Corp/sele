@@ -42,6 +42,7 @@ import {
   GitCommitHorizontal,
   GitMerge,
   GitPullRequestArrow,
+  History,
   Link2,
   LayoutList,
   ListChevronsDownUp,
@@ -177,6 +178,12 @@ import {
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
 import { buildChatConversationModel, markChatItemsChanged } from './chatConversationModel'
+import {
+  getRecentChatReferenceKey,
+  getRecentChatReferences,
+  type PinnedChatTextReference,
+  type RecentChatReference
+} from './chatRecents'
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
 import { BranchSwitcher } from './components/BranchSwitcher'
 import { Button, type ButtonDropdownAction } from './components/Button'
@@ -188,6 +195,7 @@ import { Input } from './components/Input'
 import { MessageBox, type MessageBoxQuoteRequest } from './components/MessageBox'
 import { MessageSelectionQuoteButton } from './components/MessageSelectionQuoteButton'
 import { ProjectDialog } from './components/ProjectDialog'
+import { RecentReferencesList } from './components/RecentReferencesList'
 import { SegmentedControl } from './components/SegmentedControl'
 import { Switch } from './components/Switch'
 import { SshEnvironmentDialog } from './components/SshEnvironmentDialog'
@@ -205,6 +213,20 @@ import {
 import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
 import { getProjectDisplayName, renderProjectGlyph } from './projectPresentation'
+import {
+  getDisplayedRecentChatReferences,
+  readStoredPinnedRecentChatReferences,
+  writeStoredPinnedRecentChatReferences,
+  type PinnedRecentReference,
+  type PinnedRecentChatReferencesByChat
+} from './recentReferencePins'
+import {
+  addRecentlyOpenedFile,
+  getDisplayedRecentlyOpenedFiles,
+  readStoredRecentlyOpenedFiles,
+  writeStoredRecentlyOpenedFiles,
+  type RecentlyOpenedFilesByWorkspace
+} from './recentlyOpenedFiles'
 import { terminalApi } from './terminalApi'
 import {
   type AppAppearancePositionPreference,
@@ -223,8 +245,11 @@ import {
   type AppThemePreference,
   appAppearanceZoomLevelMax,
   appAppearanceZoomLevelMin,
-  appMaxChatsRenderedMax,
   appMaxChatsRenderedMin,
+  appRecentlyOpenedFilesLimitMax,
+  appRecentlyOpenedFilesLimitMin,
+  appRecentsMessageLimitMax,
+  appRecentsMessageLimitMin,
   appFontInheritValue,
   appFontMonospaceValue,
   appFontSizeMax,
@@ -237,6 +262,8 @@ import {
   normalizeAppAppearanceZoomLevel,
   normalizeAppFontSize,
   normalizeAppMaxChatsRendered,
+  normalizeAppRecentlyOpenedFilesLimit,
+  normalizeAppRecentsMessageLimit,
   readStoredAppProjectSettings,
   readStoredAppSettings,
   resolveAppSettings,
@@ -322,7 +349,7 @@ type AnimatedIconComponent = ForwardRefExoticComponent<
 type ChangeSource = 'chat' | 'lastTurn' | 'uncommitted'
 type PatchChangeSource = Extract<ChangeSource, 'chat' | 'lastTurn'>
 type GitChangeSource = Exclude<ChangeSource, 'chat' | 'lastTurn'>
-type ChangesPaneView = 'git' | 'files' | 'terminal'
+type ChangesPaneView = 'recents' | 'git' | 'files' | 'terminal'
 type GitCommitPromptAction = AppGitCommitAction
 type GitSyncAction = 'pull' | 'push' | 'pullAndPush'
 type GitSyncStep = Exclude<GitSyncAction, 'pullAndPush'>
@@ -1538,6 +1565,13 @@ const ChangesSidebarGitState: React.FC<{ active: boolean; label: string }> = ({
     ) : (
       <GitBranch className="changes-sidebar__git-state-icon" aria-hidden="true" />
     )}
+    <span className="sr-only">{label}</span>
+  </div>
+)
+
+const ChangesSidebarRecentsState: React.FC<{ label: string }> = ({ label }) => (
+  <div className="changes-sidebar__git-state" role="status">
+    <History className="changes-sidebar__git-state-icon" aria-hidden="true" />
     <span className="sr-only">{label}</span>
   </div>
 )
@@ -3819,6 +3853,20 @@ export const App: React.FC = () => {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
   const [chatDetail, setChatDetail] = useState<ProviderChatDetail | null>(null)
+  const [recentChatReferencesCache, setRecentChatReferencesCache] = useState<{
+    chatKey: string
+    references: RecentChatReference[]
+  } | null>(null)
+  const [recentChatReferencePage, setRecentChatReferencePage] = useState<{
+    chatKey: string
+    items: ProviderChatItem[]
+    messageLimit: number
+    totalTurnCount: number
+  } | null>(null)
+  const [pinnedRecentChatReferences, setPinnedRecentChatReferences] =
+    useState<PinnedRecentChatReferencesByChat>(readStoredPinnedRecentChatReferences)
+  const [recentlyOpenedFilesByWorkspace, setRecentlyOpenedFilesByWorkspace] =
+    useState<RecentlyOpenedFilesByWorkspace>(readStoredRecentlyOpenedFiles)
   const [chatTurnWindow, setChatTurnWindow] = useState<ChatTurnWindow | null>(null)
   const [chatTurnPageLoadDirection, setChatTurnPageLoadDirection] =
     useState<ChatTurnPageLoadDirection | null>(null)
@@ -4089,6 +4137,8 @@ export const App: React.FC = () => {
   const chatViewportAnchorRef = useRef<ChatScrollAnchor | null>(null)
   const chatScrollAdjustmentTargetRef = useRef<{ element: HTMLElement; top: number } | null>(null)
   const scrollToLatestTurnAfterRenderRef = useRef(false)
+  const pendingPinnedMessageNavigationRef = useRef<PinnedChatTextReference | null>(null)
+  const pinnedMessageScrollCleanupRef = useRef<(() => void) | null>(null)
   const chatInitialLayoutKeyRef = useRef<string | null>(null)
   const chatDetailRef = useRef<ProviderChatDetail | null>(chatDetail)
   const loadedWorkingStepIdsRef = useRef<string[]>([])
@@ -4196,6 +4246,88 @@ export const App: React.FC = () => {
     }
     const chatKey = selectedChatKeyRef.current
     chatViewportAnchorRef.current = chatKey ? readChatScrollAnchor(contentElement, chatKey) : null
+  }, [])
+
+  const scrollPinnedChatMessageIntoView = useCallback((messageId: string): boolean => {
+    const contentElement = contentRef.current
+    if (!contentElement) return false
+
+    const messageElement = Array.from(
+      contentElement.querySelectorAll<HTMLElement>('[data-chat-message-id]')
+    ).find((element) => element.dataset.chatMessageId === messageId)
+    if (!messageElement) return false
+
+    chatAutoScrollEnabledRef.current = false
+    chatAutoScrollTargetRef.current = null
+    chatUserScrollIntentRef.current = false
+    setChatAtConversationBottom(false)
+
+    pinnedMessageScrollCleanupRef.current?.()
+    messageElement.classList.remove('chat-detail__message-block--pin-target')
+
+    let settleTimeout: number | null = null
+    let fallbackTimeout: number | null = null
+    let highlightTimeout: number | null = null
+    let stopped = false
+
+    const stopWatchingScroll = (): void => {
+      contentElement.removeEventListener('scroll', scheduleHighlight)
+      if (settleTimeout !== null) window.clearTimeout(settleTimeout)
+      if (fallbackTimeout !== null) window.clearTimeout(fallbackTimeout)
+      settleTimeout = null
+      fallbackTimeout = null
+    }
+    const cleanup = (): void => {
+      stopped = true
+      stopWatchingScroll()
+      if (highlightTimeout !== null) window.clearTimeout(highlightTimeout)
+      messageElement.classList.remove('chat-detail__message-block--pin-target')
+      if (pinnedMessageScrollCleanupRef.current === cleanup) {
+        pinnedMessageScrollCleanupRef.current = null
+      }
+    }
+    const playHighlight = (): void => {
+      if (stopped) return
+      stopWatchingScroll()
+      if (!messageElement.isConnected || contentRef.current !== contentElement) {
+        cleanup()
+        return
+      }
+
+      messageElement.classList.remove('chat-detail__message-block--pin-target')
+      void messageElement.offsetWidth
+      messageElement.classList.add('chat-detail__message-block--pin-target')
+      highlightTimeout = window.setTimeout(() => {
+        messageElement.classList.remove('chat-detail__message-block--pin-target')
+        if (pinnedMessageScrollCleanupRef.current === cleanup) {
+          pinnedMessageScrollCleanupRef.current = null
+        }
+      }, 1_200)
+    }
+    function scheduleHighlight(): void {
+      if (stopped) return
+      if (settleTimeout !== null) window.clearTimeout(settleTimeout)
+      settleTimeout = window.setTimeout(playHighlight, 120)
+    }
+
+    pinnedMessageScrollCleanupRef.current = cleanup
+    contentElement.addEventListener('scroll', scheduleHighlight, { passive: true })
+    fallbackTimeout = window.setTimeout(playHighlight, 2_000)
+
+    const contentRect = contentElement.getBoundingClientRect()
+    const messageRect = messageElement.getBoundingClientRect()
+    const centeredTop =
+      contentElement.scrollTop +
+      messageRect.top -
+      contentRect.top -
+      (contentElement.clientHeight - messageRect.height) / 2
+    const targetTop = clamp(centeredTop, 0, getScrollBottomTop(contentElement))
+
+    contentElement.scrollTo({ behavior: 'smooth', top: targetTop })
+    if (Math.abs(contentElement.scrollTop - targetTop) <= 1) {
+      window.requestAnimationFrame(playHighlight)
+    }
+    return true
   }, [])
 
   const scheduleChatAutoScroll = useCallback(
@@ -4500,6 +4632,14 @@ export const App: React.FC = () => {
   }, [panePercents])
 
   useEffect(() => {
+    writeStoredPinnedRecentChatReferences(pinnedRecentChatReferences)
+  }, [pinnedRecentChatReferences])
+
+  useEffect(() => {
+    writeStoredRecentlyOpenedFiles(recentlyOpenedFilesByWorkspace)
+  }, [recentlyOpenedFilesByWorkspace])
+
+  useEffect(() => {
     writeStoredAppSettings(appSettings)
   }, [appSettings])
 
@@ -4614,6 +4754,7 @@ export const App: React.FC = () => {
       if (chatUserScrollIntentFrameRef.current !== null) {
         window.cancelAnimationFrame(chatUserScrollIntentFrameRef.current)
       }
+      pinnedMessageScrollCleanupRef.current?.()
     },
     []
   )
@@ -6026,6 +6167,7 @@ export const App: React.FC = () => {
     ? (chatDetail?.container ?? selectedChat.container)
     : newSessionContainer
   const changesContainerKey = getContainerTargetKey(changesContainer)
+  const recentlyOpenedFilesWorkspaceKey = `${changesContainerKey}\0${changesCwd ?? ''}`
   const terminalWorkspaceKey = `${changesContainerKey}\0${changesProjectCwd ?? changesCwd ?? ''}`
   const gitAvailableForCurrentSource =
     gitSourceAvailability?.containerKey === changesContainerKey
@@ -7752,6 +7894,16 @@ export const App: React.FC = () => {
   ]
 
   const handleToggleCwdGroup = (groupKey: string): void => {
+    if (groupKey === doneGroupKey) {
+      setVisibleChatPageCountsByGroup((currentPageCounts) => {
+        if (!(groupKey in currentPageCounts)) return currentPageCounts
+
+        const nextPageCounts = { ...currentPageCounts }
+        delete nextPageCounts[groupKey]
+        return nextPageCounts
+      })
+    }
+
     setCollapsedCwdGroups((currentGroups) => ({
       ...currentGroups,
       [groupKey]: !getCollapsedGroupState(groupKey, currentGroups)
@@ -8230,6 +8382,40 @@ export const App: React.FC = () => {
         performance: {
           ...currentSettings.performance,
           maxChatsRendered
+        }
+      })
+    )
+  }
+
+  const handleRecentsMessageLimitChange = (value: number): void => {
+    if (!Number.isFinite(value)) return
+
+    const recentsMessageLimit = normalizeAppRecentsMessageLimit(value)
+    updateScopedSetting(
+      { section: 'performance', key: 'recentsMessageLimit' },
+      recentsMessageLimit,
+      (currentSettings) => ({
+        ...currentSettings,
+        performance: {
+          ...currentSettings.performance,
+          recentsMessageLimit
+        }
+      })
+    )
+  }
+
+  const handleRecentlyOpenedFilesLimitChange = (value: number): void => {
+    if (!Number.isFinite(value)) return
+
+    const recentlyOpenedFilesLimit = normalizeAppRecentlyOpenedFilesLimit(value)
+    updateScopedSetting(
+      { section: 'performance', key: 'recentlyOpenedFilesLimit' },
+      recentlyOpenedFilesLimit,
+      (currentSettings) => ({
+        ...currentSettings,
+        performance: {
+          ...currentSettings.performance,
+          recentlyOpenedFilesLimit
         }
       })
     )
@@ -9624,6 +9810,151 @@ export const App: React.FC = () => {
   const loadedChatTurnStartIndex = getChatDetailItemsStartTurnIndex(chatDetail)
   const loadedChatTurnEndIndex = getLoadedChatDetailTurnEndIndex(chatDetail)
   const totalChatTurnCount = getChatDetailTurnCount(chatDetail)
+  const recentsMessageLimit = effectiveAppSettings.performance.recentsMessageLimit
+  const recentsStartTurnIndex = Math.max(0, totalChatTurnCount - recentsMessageLimit)
+  const loadedChatItemsCoverRecents = Boolean(
+    chatDetail?.id === selectedChatId &&
+    loadedChatTurnStartIndex <= recentsStartTurnIndex &&
+    loadedChatTurnEndIndex >= totalChatTurnCount
+  )
+  const recentChatReferencePageMatches = Boolean(
+    selectedChatKey &&
+    recentChatReferencePage?.chatKey === selectedChatKey &&
+    recentChatReferencePage.messageLimit === recentsMessageLimit &&
+    recentChatReferencePage.totalTurnCount === totalChatTurnCount
+  )
+  const recentChatReferenceItems = loadedChatItemsCoverRecents
+    ? visibleChatItems
+    : recentChatReferencePageMatches
+      ? (recentChatReferencePage?.items ?? visibleChatItems)
+      : visibleChatItems
+  const extractedRecentChatReferences = useMemo(
+    () => getRecentChatReferences(recentChatReferenceItems, recentsMessageLimit),
+    [recentChatReferenceItems, recentsMessageLimit]
+  )
+  const currentChatDetailIncludesLatest = Boolean(
+    selectedChatKey &&
+    chatDetail?.id === selectedChatId &&
+    loadedChatTurnEndIndex >= totalChatTurnCount
+  )
+  const recentChatReferenceSourceIncludesLatest =
+    currentChatDetailIncludesLatest || recentChatReferencePageMatches
+  const recentChatReferences = useMemo(
+    () =>
+      recentChatReferenceSourceIncludesLatest
+        ? extractedRecentChatReferences
+        : recentChatReferencesCache?.chatKey === selectedChatKey
+          ? recentChatReferencesCache.references
+          : [],
+    [
+      extractedRecentChatReferences,
+      recentChatReferencesCache,
+      recentChatReferenceSourceIncludesLatest,
+      selectedChatKey
+    ]
+  )
+  const selectedPinnedRecentChatReferences = useMemo(
+    () => (selectedChatKey ? (pinnedRecentChatReferences[selectedChatKey] ?? []) : []),
+    [pinnedRecentChatReferences, selectedChatKey]
+  )
+  const displayedRecentChatReferences = useMemo(
+    () =>
+      getDisplayedRecentChatReferences(selectedPinnedRecentChatReferences, recentChatReferences),
+    [recentChatReferences, selectedPinnedRecentChatReferences]
+  )
+  const pinnedChatMessageIds = useMemo(
+    () =>
+      new Set(
+        displayedRecentChatReferences.pinnedReferences
+          .filter((reference): reference is PinnedChatTextReference => reference.kind === 'text')
+          .map((reference) => reference.messageId)
+      ),
+    [displayedRecentChatReferences.pinnedReferences]
+  )
+  const recentlyOpenedFiles = useMemo(() => {
+    return getDisplayedRecentlyOpenedFiles(
+      recentlyOpenedFilesByWorkspace[recentlyOpenedFilesWorkspaceKey] ?? [],
+      [
+        ...displayedRecentChatReferences.pinnedReferences,
+        ...displayedRecentChatReferences.recentReferences
+      ],
+      effectiveAppSettings.performance.recentlyOpenedFilesLimit
+    )
+  }, [
+    displayedRecentChatReferences.pinnedReferences,
+    displayedRecentChatReferences.recentReferences,
+    effectiveAppSettings.performance.recentlyOpenedFilesLimit,
+    recentlyOpenedFilesByWorkspace,
+    recentlyOpenedFilesWorkspaceKey
+  ])
+
+  useEffect(() => {
+    if (
+      changesPaneView !== 'recents' ||
+      !selectedProviderId ||
+      !selectedChatId ||
+      !selectedChatKey ||
+      chatDetail?.id !== selectedChatId ||
+      loadedChatItemsCoverRecents ||
+      recentChatReferencePageMatches ||
+      totalChatTurnCount === 0
+    ) {
+      return
+    }
+
+    let active = true
+    void providerApi
+      .getChatTurnPage(
+        selectedProviderId,
+        selectedChatId,
+        recentsStartTurnIndex,
+        totalChatTurnCount - recentsStartTurnIndex
+      )
+      .then((page) => {
+        if (!active) return
+        setRecentChatReferencePage({
+          chatKey: selectedChatKey,
+          items: page.items,
+          messageLimit: recentsMessageLimit,
+          totalTurnCount: page.totalCount
+        })
+      })
+      .catch(() => {})
+
+    return () => {
+      active = false
+    }
+  }, [
+    chatDetail?.id,
+    changesPaneView,
+    loadedChatItemsCoverRecents,
+    recentChatReferencePageMatches,
+    recentsMessageLimit,
+    recentsStartTurnIndex,
+    selectedChatId,
+    selectedChatKey,
+    selectedProviderId,
+    totalChatTurnCount
+  ])
+
+  useEffect(() => {
+    if (!recentChatReferenceSourceIncludesLatest || !selectedChatKey) return
+
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+      setRecentChatReferencesCache((currentCache) =>
+        currentCache?.chatKey === selectedChatKey &&
+        currentCache.references === extractedRecentChatReferences
+          ? currentCache
+          : { chatKey: selectedChatKey, references: extractedRecentChatReferences }
+      )
+    })
+
+    return () => {
+      active = false
+    }
+  }, [extractedRecentChatReferences, recentChatReferenceSourceIncludesLatest, selectedChatKey])
   const defaultChatTurnWindow = useMemo<ChatTurnWindow | null>(() => {
     if (!selectedChatKey) return null
     return getLatestChatTurnWindow(selectedChatKey, totalChatTurnCount, chatTurnPageSize)
@@ -9641,6 +9972,24 @@ export const App: React.FC = () => {
         : [],
     [chatConversationModel, effectiveChatTurnWindow, loadedChatTurnStartIndex]
   )
+
+  useLayoutEffect(() => {
+    const target = pendingPinnedMessageNavigationRef.current
+    if (!target || selectedChatKey !== getProviderChatKey(target.providerId, target.chatId)) return
+
+    if (scrollPinnedChatMessageIntoView(target.messageId)) {
+      pendingPinnedMessageNavigationRef.current = null
+      return
+    }
+
+    if (
+      effectiveChatTurnWindow &&
+      target.turnIndex >= effectiveChatTurnWindow.startIndex &&
+      target.turnIndex < effectiveChatTurnWindow.endIndex
+    ) {
+      pendingPinnedMessageNavigationRef.current = null
+    }
+  }, [effectiveChatTurnWindow, renderedChatTurns, scrollPinnedChatMessageIntoView, selectedChatKey])
 
   useEffect(() => {
     let active = true
@@ -10526,10 +10875,36 @@ export const App: React.FC = () => {
     setCollapsedChangeTreeFolders(nextCollapsedFolders)
   }
 
+  const openFileEditorTarget = useCallback(
+    (target: FileEditorTarget, recordAsOpened = true): void => {
+      const targetContainer = target.container === undefined ? changesContainer : target.container
+      const normalizedTarget = { ...target, container: targetContainer }
+
+      setFileEditorTarget(normalizedTarget)
+      if (!recordAsOpened) return
+
+      const workspaceKey = `${getContainerTargetKey(targetContainer)}\0${target.cwd}`
+      const normalizedDisplayPath = target.displayPath.replace(/\\/g, '/')
+      const label = normalizedDisplayPath.split('/').at(-1) ?? normalizedDisplayPath
+      setRecentlyOpenedFilesByWorkspace((currentFilesByWorkspace) => ({
+        ...currentFilesByWorkspace,
+        [workspaceKey]: addRecentlyOpenedFile(currentFilesByWorkspace[workspaceKey] ?? [], {
+          kind: 'file',
+          path: target.path,
+          displayPath: target.displayPath,
+          label,
+          line: target.line,
+          endLine: target.endLine
+        })
+      }))
+    },
+    [changesContainer]
+  )
+
   const handleOpenFile = (file: TreeFile): void => {
     if (!changesCwd) return
 
-    setFileEditorTarget({
+    openFileEditorTarget({
       container: changesContainer,
       cwd: changesCwd,
       path: file.path,
@@ -10540,7 +10915,13 @@ export const App: React.FC = () => {
   }
 
   const handleOpenFileLink = useCallback(
-    (path: string, displayPath: string, line?: number, endLine?: number): void => {
+    (
+      path: string,
+      displayPath: string,
+      line?: number,
+      endLine?: number,
+      recordAsOpened = true
+    ): void => {
       if (!changesCwd) return
 
       const normalizedCwd = changesCwd.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -10549,30 +10930,182 @@ export const App: React.FC = () => {
         ? normalizedDisplayPath.slice(normalizedCwd.length + 1)
         : normalizedDisplayPath
 
-      setFileEditorTarget({
-        container: changesContainer,
-        cwd: changesCwd,
-        path,
-        displayPath: relativeDisplayPath,
-        line,
-        endLine
-      })
+      openFileEditorTarget(
+        {
+          container: changesContainer,
+          cwd: changesCwd,
+          path,
+          displayPath: relativeDisplayPath,
+          line,
+          endLine
+        },
+        recordAsOpened
+      )
     },
-    [changesContainer, changesCwd]
+    [changesContainer, changesCwd, openFileEditorTarget]
   )
 
   const handleOpenAttachment = useCallback(
     (attachment: AppSelectedAttachment): void => {
       if (!changesCwd) return
 
-      setFileEditorTarget({
+      openFileEditorTarget({
+        container: changesContainer,
         cwd: changesCwd,
         path: attachment.path,
         displayPath: attachment.name
       })
     },
-    [changesCwd]
+    [changesContainer, changesCwd, openFileEditorTarget]
   )
+
+  const handleToggleRecentReferencePinned = useCallback(
+    (reference: PinnedRecentReference): void => {
+      if (!selectedChatKey) return
+
+      setPinnedRecentChatReferences((currentReferencesByChat) => {
+        const currentReferences = currentReferencesByChat[selectedChatKey] ?? []
+        const referenceKey = getRecentChatReferenceKey(reference)
+        const pinned = currentReferences.some(
+          (candidate) => getRecentChatReferenceKey(candidate) === referenceKey
+        )
+        const nextReferences = pinned
+          ? currentReferences.filter(
+              (candidate) => getRecentChatReferenceKey(candidate) !== referenceKey
+            )
+          : [reference, ...currentReferences]
+        const nextReferencesByChat = { ...currentReferencesByChat }
+
+        if (nextReferences.length > 0) nextReferencesByChat[selectedChatKey] = nextReferences
+        else delete nextReferencesByChat[selectedChatKey]
+        return nextReferencesByChat
+      })
+    },
+    [selectedChatKey]
+  )
+
+  const handleToggleChatMessagePinned = useCallback(
+    (message: ProviderMessage, turnIndex: number, pinned: boolean): void => {
+      const chat = selectedChatRef.current
+      if (!chat || turnIndex < 0 || !message.content.trim()) return
+
+      handleToggleRecentReferencePinned({
+        kind: 'text',
+        chatId: chat.id,
+        content: message.content,
+        messageId: message.id,
+        providerId: chat.providerId,
+        role: message.role,
+        turnIndex
+      })
+      if (!pinned) handleChangesPaneViewChange('recents')
+    },
+    [handleChangesPaneViewChange, handleToggleRecentReferencePinned]
+  )
+
+  const handleGoToPinnedText = useCallback(
+    async (reference: PinnedChatTextReference): Promise<void> => {
+      const targetChatKey = getProviderChatKey(reference.providerId, reference.chatId)
+      if (selectedChatKeyRef.current !== targetChatKey) return
+
+      pendingPinnedMessageNavigationRef.current = reference
+      if (scrollPinnedChatMessageIntoView(reference.messageId)) {
+        pendingPinnedMessageNavigationRef.current = null
+        return
+      }
+
+      const currentDetail = chatDetailRef.current
+      if (!currentDetail || currentDetail.id !== reference.chatId) {
+        pendingPinnedMessageNavigationRef.current = null
+        return
+      }
+
+      const knownTotalCount = Math.max(
+        getChatDetailTurnCount(currentDetail),
+        reference.turnIndex + 1
+      )
+      const centeredStartIndex = Math.max(
+        0,
+        reference.turnIndex - Math.floor(chatTurnWindowSize / 2)
+      )
+      const startIndex = Math.min(
+        centeredStartIndex,
+        Math.max(0, knownTotalCount - chatTurnWindowSize)
+      )
+      const navigationKey = getRecentChatReferenceKey(reference)
+
+      try {
+        const page = await providerApi.getChatTurnPage(
+          reference.providerId,
+          reference.chatId,
+          startIndex,
+          chatTurnWindowSize
+        )
+        const pendingReference = pendingPinnedMessageNavigationRef.current
+        if (
+          selectedChatKeyRef.current !== targetChatKey ||
+          !pendingReference ||
+          getRecentChatReferenceKey(pendingReference) !== navigationKey
+        ) {
+          return
+        }
+
+        const latestDetail = chatDetailRef.current
+        if (!latestDetail || latestDetail.id !== reference.chatId) return
+
+        const nextWindow: ChatTurnWindow = {
+          chatKey: targetChatKey,
+          startIndex: page.startIndex,
+          endIndex: Math.min(page.totalCount, page.startIndex + chatTurnWindowSize),
+          totalCount: page.totalCount
+        }
+        const nextDetail = mergeChatDetailTurnPage(latestDetail, page, nextWindow)
+        chatTurnPageLoadRequestRef.current += 1
+        chatTurnPageLoadInFlightRef.current = false
+        chatTurnScrollDirectionRef.current = null
+        pendingChatScrollAnchorRef.current = null
+        chatViewportAnchorRef.current = null
+        chatAutoScrollEnabledRef.current = false
+        chatAutoScrollTargetRef.current = null
+        chatTurnWindowRef.current = nextWindow
+        chatDetailRef.current = nextDetail
+
+        flushSync(() => {
+          setChatTurnPageLoadDirection(null)
+          setChatAtConversationBottom(false)
+          setChatDetail(nextDetail)
+          setChatTurnWindow(nextWindow)
+        })
+      } catch {
+        const pendingReference = pendingPinnedMessageNavigationRef.current
+        if (pendingReference && getRecentChatReferenceKey(pendingReference) === navigationKey) {
+          pendingPinnedMessageNavigationRef.current = null
+        }
+      }
+    },
+    [scrollPinnedChatMessageIntoView]
+  )
+
+  const handleReorderPinnedRecentReferences = useCallback(
+    (references: PinnedRecentReference[]): void => {
+      if (!selectedChatKey) return
+      setPinnedRecentChatReferences((currentReferencesByChat) => ({
+        ...currentReferencesByChat,
+        [selectedChatKey]: references
+      }))
+    },
+    [selectedChatKey]
+  )
+
+  const handleUnpinAllRecentReferences = useCallback((): void => {
+    if (!selectedChatKey) return
+    setPinnedRecentChatReferences((currentReferencesByChat) => {
+      if (!currentReferencesByChat[selectedChatKey]) return currentReferencesByChat
+      const nextReferencesByChat = { ...currentReferencesByChat }
+      delete nextReferencesByChat[selectedChatKey]
+      return nextReferencesByChat
+    })
+  }, [selectedChatKey])
 
   const handleCloseFileEditor = useCallback((): void => {
     setFileEditorTarget(null)
@@ -10596,9 +11129,12 @@ export const App: React.FC = () => {
     },
     []
   )
-  const handleSelectFileEditorTarget = useCallback((target: FileEditorTarget): void => {
-    setFileEditorTarget(target)
-  }, [])
+  const handleSelectFileEditorTarget = useCallback(
+    (target: FileEditorTarget): void => {
+      openFileEditorTarget(target)
+    },
+    [openFileEditorTarget]
+  )
 
   const renderTreeNode = <TFile extends TreeFile>(
     node: ChangeTreeNode<TFile>,
@@ -11319,6 +11855,14 @@ export const App: React.FC = () => {
       section: 'performance',
       key: 'maxChatsRendered'
     } satisfies AppProjectSettingPath
+    const performanceRecentsMessageLimitPath = {
+      section: 'performance',
+      key: 'recentsMessageLimit'
+    } satisfies AppProjectSettingPath
+    const performanceRecentlyOpenedFilesLimitPath = {
+      section: 'performance',
+      key: 'recentlyOpenedFilesLimit'
+    } satisfies AppProjectSettingPath
     const chatRecentCacheLimitPath = {
       section: 'chat',
       key: 'recentChatCacheLimit'
@@ -11879,12 +12423,65 @@ export const App: React.FC = () => {
                   id="settings-performance-max-chats-rendered"
                   type="number"
                   min={appMaxChatsRenderedMin}
-                  max={appMaxChatsRenderedMax}
                   step={1}
                   disabled={isScopedSettingControlDisabled(performanceMaxChatsRenderedPath)}
                   value={settingsPanelSettings.performance.maxChatsRendered}
                   onChange={(event) =>
                     handleMaxChatsRenderedChange(event.currentTarget.valueAsNumber)
+                  }
+                />
+              </div>
+              <div className={getSettingsFieldClassName()}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-performance-recents-message-limit"
+                >
+                  <h3>Messages scanned for Recents</h3>
+                  <p>
+                    Include links and files from this many latest user messages and final responses.
+                  </p>
+                </label>
+                {renderProjectSettingAction(
+                  performanceRecentsMessageLimitPath,
+                  'Messages scanned for Recents'
+                )}
+                <Input
+                  className="settings-dialog__number-input"
+                  id="settings-performance-recents-message-limit"
+                  type="number"
+                  min={appRecentsMessageLimitMin}
+                  max={appRecentsMessageLimitMax}
+                  step={1}
+                  disabled={isScopedSettingControlDisabled(performanceRecentsMessageLimitPath)}
+                  value={settingsPanelSettings.performance.recentsMessageLimit}
+                  onChange={(event) =>
+                    handleRecentsMessageLimitChange(event.currentTarget.valueAsNumber)
+                  }
+                />
+              </div>
+              <div className={getSettingsFieldClassName()}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-performance-recently-opened-files-limit"
+                >
+                  <h3>Recently opened files</h3>
+                  <p>Show this many recently opened or viewed files in the Recents sidebar.</p>
+                </label>
+                {renderProjectSettingAction(
+                  performanceRecentlyOpenedFilesLimitPath,
+                  'Recently opened files'
+                )}
+                <Input
+                  className="settings-dialog__number-input"
+                  id="settings-performance-recently-opened-files-limit"
+                  type="number"
+                  min={appRecentlyOpenedFilesLimitMin}
+                  max={appRecentlyOpenedFilesLimitMax}
+                  step={1}
+                  disabled={isScopedSettingControlDisabled(performanceRecentlyOpenedFilesLimitPath)}
+                  value={settingsPanelSettings.performance.recentlyOpenedFilesLimit}
+                  onChange={(event) =>
+                    handleRecentlyOpenedFilesLimitChange(event.currentTarget.valueAsNumber)
                   }
                 />
               </div>
@@ -12546,6 +13143,7 @@ export const App: React.FC = () => {
                 followingWorkingStepStatus={followingWorkingStep?.status}
                 hasNextWorkingStep={workingStepIdsWithNextWorkingStep.has(item.id)}
                 item={item}
+                messagePinned={item.type === 'message' && pinnedChatMessageIds.has(item.id)}
                 cwd={changesCwd}
                 modelLabelsById={modelLabelsById}
                 onDeletePendingMessage={handleDeletePendingMessage}
@@ -12567,6 +13165,7 @@ export const App: React.FC = () => {
                 onLoadWorkingToolPage={handleLoadWorkingToolPage}
                 onDisclosureToggle={handleChatDisclosureToggle}
                 onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+                onToggleMessagePinned={handleToggleChatMessagePinned}
                 onRetryStoppedTurn={handleRetryStoppedTurn}
                 previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}
                 projectCwd={changesProjectCwd}
@@ -12575,6 +13174,7 @@ export const App: React.FC = () => {
                 selectedModelId={model}
                 streaming={item.id === streamingChatItemId}
                 thoughtSettings={effectiveAppSettings.chat}
+                turnIndex={turnIndex}
               />
               {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
             </Fragment>
@@ -13289,6 +13889,13 @@ export const App: React.FC = () => {
                   className="changes-sidebar__view-toggle"
                   options={[
                     {
+                      value: 'recents',
+                      label: null,
+                      ariaLabel: 'Recents',
+                      title: 'Recents',
+                      icon: <History aria-hidden="true" />
+                    },
+                    {
                       value: 'git',
                       label: null,
                       ariaLabel: 'Git',
@@ -13315,7 +13922,7 @@ export const App: React.FC = () => {
                 />
                 <div className="changes-sidebar__settings-slot">{renderSettingsButton()}</div>
               </div>
-              {changesPaneView !== 'terminal' && (
+              {(changesPaneView === 'git' || changesPaneView === 'files') && (
                 <div className="changes-sidebar__controls changes-sidebar__controls--files">
                   <label className="sr-only" htmlFor="changes-branch">
                     Branch
@@ -13383,7 +13990,35 @@ export const App: React.FC = () => {
             >
               {changesPaneView !== 'terminal' && (
                 <div className="changes-sidebar__content">
-                  {changesPaneView === 'git' ? (
+                  {changesPaneView === 'recents' ? (
+                    displayedRecentChatReferences.pinnedReferences.length > 0 ||
+                    recentlyOpenedFiles.length > 0 ||
+                    displayedRecentChatReferences.recentReferences.length > 0 ? (
+                      <RecentReferencesList
+                        canOpenFiles={Boolean(changesCwd)}
+                        container={changesContainer}
+                        cwd={changesCwd}
+                        openedFiles={recentlyOpenedFiles}
+                        pinnedReferences={displayedRecentChatReferences.pinnedReferences}
+                        recentReferences={displayedRecentChatReferences.recentReferences}
+                        onOpenFile={(reference, recordAsOpened) =>
+                          handleOpenFileLink(
+                            reference.path,
+                            reference.displayPath,
+                            reference.line,
+                            reference.endLine,
+                            recordAsOpened
+                          )
+                        }
+                        onGoToText={handleGoToPinnedText}
+                        onReorderPinned={handleReorderPinnedRecentReferences}
+                        onTogglePinned={handleToggleRecentReferencePinned}
+                        onUnpinAll={handleUnpinAllRecentReferences}
+                      />
+                    ) : (
+                      <ChangesSidebarRecentsState label="No recent links or files" />
+                    )
+                  ) : changesPaneView === 'git' ? (
                     <>
                       {visibleChangesLoadState === 'loading' && (
                         <ChangesSidebarGitState active label="Loading changes" />
