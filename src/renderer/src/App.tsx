@@ -2346,6 +2346,8 @@ const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
 
 const optimisticChatItemIdPrefix = 'optimistic:'
 
+const getTimestamp = (): number => Date.now()
+
 const createChatCommitMarkerId = (): string => {
   const randomId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
   return `ai-commit:${Date.now()}:${randomId}`
@@ -11476,14 +11478,15 @@ export const App: React.FC = () => {
     if (!changesCwd) return false
 
     commitInFlightRef.current = true
-    const activityId = `git:${changesCwd}:${action}:${Date.now()}`
+    const startedAt = getTimestamp()
+    const activityId = `git:${changesCwd}:${action}:${startedAt}`
     const activity = {
       source: 'git',
       id: activityId,
       projectCwd: changesProjectCwd ?? changesCwd,
       commitAction: action,
       currentAction: getDirectCommitActivityAction(action),
-      startedAt: Date.now()
+      startedAt
     } satisfies DirectCommitActivity
 
     try {
