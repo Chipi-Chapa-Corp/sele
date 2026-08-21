@@ -13218,7 +13218,7 @@ export const App: React.FC = () => {
       )}
       {fileEditorTarget && (
         <FileEditorDialog
-          diffTargets={fileEditorTarget.kind ? fileEditorDiffTargets : []}
+          diffTargets={fileEditorDiffTargets}
           initialReviewComments={reviewCommentsDraft}
           target={fileEditorTarget}
           onClose={handleCloseFileEditor}

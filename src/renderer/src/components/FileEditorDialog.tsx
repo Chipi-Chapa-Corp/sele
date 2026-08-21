@@ -29,7 +29,7 @@ import {
 } from '@react-symbols/icons/utils'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import type { AppContainerTarget, AppGitChangeKind } from '../../../shared/app'
+import type { AppContainerTarget, AppFileTreeResult, AppGitChangeKind } from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { getFileDisplayParts } from '../fileDisplayPath'
@@ -67,6 +67,13 @@ type MarkdownViewMode = 'code' | 'split' | 'preview'
 type FileViewMode = 'diff' | 'contents'
 type LoadDiffOptions = {
   background?: boolean
+}
+type LoadFileTreeOptions = {
+  background?: boolean
+}
+type FileTreeScope = {
+  containerKey: string
+  repositoryRoot: string
 }
 type DiffTreeFileNode = {
   type: 'file'
@@ -225,6 +232,57 @@ const buildDiffTree = (targets: readonly FileEditorTarget[]): DiffTreeNode[] => 
   return finalizeDiffTreeFolder(root)
 }
 
+const getDiffTreeFolderPaths = (nodes: readonly DiffTreeNode[]): string[] =>
+  nodes.flatMap((node) =>
+    node.type === 'folder' ? [node.path, ...getDiffTreeFolderPaths(node.children)] : []
+  )
+
+const getFileTreeAncestorPaths = (path: string): string[] => {
+  const pathParts = path.replace(/\\/g, '/').split('/').filter(Boolean)
+  pathParts.pop()
+
+  return pathParts.map((_, index) => pathParts.slice(0, index + 1).join('/'))
+}
+
+const getActiveFileTreePath = (
+  target: FileEditorTarget,
+  displayPath: string,
+  result: AppFileTreeResult | null
+): string => {
+  const targetPath = target.path.replace(/\\/g, '/')
+  if (!result) return targetPath
+
+  const repositoryRoot = result.repositoryRoot.replace(/\\/g, '/').replace(/\/+$/, '')
+  if (targetPath.startsWith(`${repositoryRoot}/`)) {
+    return targetPath.slice(repositoryRoot.length + 1)
+  }
+
+  const normalizedDisplayPath = displayPath.replace(/\\/g, '/')
+  if (result.files.some((file) => file.path.replace(/\\/g, '/') === normalizedDisplayPath)) {
+    return normalizedDisplayPath
+  }
+
+  return targetPath
+}
+
+const getFileTreeCwd = (target: FileEditorTarget, repositoryRoot: string | null): string => {
+  if (repositoryRoot) return repositoryRoot
+
+  const path = target.path.replace(/\\/g, '/')
+  if (!path.startsWith('/') && !/^[a-z]:\//i.test(path)) return target.cwd
+
+  const lastSeparator = path.lastIndexOf('/')
+  if (lastSeparator === 0) return '/'
+  if (lastSeparator === 2 && /^[a-z]:\//i.test(path)) return path.slice(0, 3)
+  return lastSeparator > 0 ? path.slice(0, lastSeparator) : target.cwd
+}
+
+const isFileTreeCwdInRepository = (cwd: string, repositoryRoot: string): boolean => {
+  const normalizedCwd = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  const normalizedRoot = repositoryRoot.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalizedCwd === normalizedRoot || normalizedCwd.startsWith(`${normalizedRoot}/`)
+}
+
 const getErrorMessage = (error: unknown, fallback: string): string => {
   if (!(error instanceof Error)) return fallback
 
@@ -262,6 +320,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [diffLoadState, setDiffLoadState] = useState<LoadState>(target.kind ? 'loading' : 'ready')
   const [diffLoadStatePath, setDiffLoadStatePath] = useState(target.path)
   const [diffError, setDiffError] = useState<string | null>(null)
+  const [fileTreeResult, setFileTreeResult] = useState<AppFileTreeResult | null>(null)
+  const [fileTreeScope, setFileTreeScope] = useState<FileTreeScope | null>(null)
+  const [fileTreeLoadState, setFileTreeLoadState] = useState<LoadState>('loading')
+  const [fileTreeError, setFileTreeError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [diffTreeCollapsed, setDiffTreeCollapsed] = useState(false)
   const [fileView, setFileView] = useState<FileViewMode>(() => (target.kind ? 'diff' : 'contents'))
@@ -274,6 +336,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     () => window.matchMedia(markdownSplitStackedMedia).matches
   )
   const [collapsedDiffFolders, setCollapsedDiffFolders] = useState<Record<string, boolean>>({})
+  const [collapsedFileFolders, setCollapsedFileFolders] = useState<Record<string, boolean>>({})
+  const [collapsedFileTreeRoot, setCollapsedFileTreeRoot] = useState<string | null>(null)
   const [diffTreeWidth, setDiffTreeWidth] = useState(readStoredDiffTreeWidth)
   const [reviewComments, setReviewComments] = useState<ProviderReviewComment[]>(() => [
     ...initialReviewComments
@@ -282,6 +346,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const markdownSplitRef = useRef<HTMLDivElement>(null)
   const loadRequestRef = useRef(0)
   const diffLoadRequestRef = useRef(0)
+  const fileTreeLoadRequestRef = useRef(0)
   const copyFeedbackTimerRef = useRef<number | null>(null)
   const resizeCleanupRef = useRef<(() => void) | null>(null)
   const isImage = imageFilePattern.test(target.path)
@@ -290,19 +355,79 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const canShowContents = !isImage && target.kind !== 'delete'
   const canOpenFile = canShowContents || canShowImage
   const visibleLoadState = loadStatePath === target.path ? loadState : 'loading'
-  const hasGitDiff = Boolean(target.kind || gitRepositoryRoot)
+  const fileTreeCwd = getFileTreeCwd(target, gitRepositoryRoot)
+  const fileTreeContainerKey = JSON.stringify(target.container ?? { kind: 'host' })
+  const fileTreeMatchesTarget = Boolean(
+    fileTreeResult &&
+    fileTreeScope?.containerKey === fileTreeContainerKey &&
+    isFileTreeCwdInRepository(fileTreeCwd, fileTreeScope.repositoryRoot)
+  )
+  const visibleFileTreeResult = fileTreeMatchesTarget ? fileTreeResult : null
+  const hasGitDiff = Boolean(target.kind || gitRepositoryRoot || visibleFileTreeResult)
   const visibleDiffLoadState =
     diffLoadStatePath === target.path ? diffLoadState : hasGitDiff ? 'loading' : 'ready'
   const canEdit = canShowContents && visibleLoadState === 'ready' && editable === true
   const canShowDiff = Boolean(hasGitDiff && !canShowImage && (target.kind === 'delete' || canEdit))
   const showFileDiff = canShowDiff && fileView === 'diff'
-  const isFileDiff = canShowDiff
-  const hasDiffTree = isFileDiff && diffTargets.length > 0 && Boolean(onSelectTarget)
-  const showDiffTree = hasDiffTree && !diffTreeCollapsed
+  const isFileDiff = hasGitDiff && !canShowImage
+  const useDiffTree = fileView === 'diff' && hasGitDiff && !canShowImage
+  const showFileViewSwitch = canShowContents && hasGitDiff
+  const showTreeSidebar = hasGitDiff && !diffTreeCollapsed
   const displayPath = useMemo(() => target.displayPath.replace(/\\/g, '/'), [target.displayPath])
   const { directoryName, fileName } = useMemo(() => getFileDisplayParts(displayPath), [displayPath])
   const dirty = visibleLoadState === 'ready' && contents !== savedContents
-  const diffTree = useMemo(() => buildDiffTree(diffTargets), [diffTargets])
+  const repositoryFileTargets = useMemo<FileEditorTarget[]>(
+    () =>
+      visibleFileTreeResult?.files.map((file) => ({
+        container: target.container,
+        cwd: visibleFileTreeResult.repositoryRoot,
+        path: file.path,
+        displayPath: file.path,
+        kind: file.kind ?? null,
+        previousPath: file.previousPath ?? null
+      })) ?? [],
+    [target.container, visibleFileTreeResult]
+  )
+  const regularFileTree = useMemo(
+    () => buildDiffTree(repositoryFileTargets.filter((file) => file.kind !== 'delete')),
+    [repositoryFileTargets]
+  )
+  const diffTargetsMatchRepository = useMemo(() => {
+    if (!visibleFileTreeResult || diffTargets.length === 0) return true
+
+    const repositoryRoot = visibleFileTreeResult.repositoryRoot
+      .replace(/\\/g, '/')
+      .replace(/\/+$/, '')
+    return diffTargets.some((file) => {
+      const cwd = file.cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+      return cwd === repositoryRoot || cwd.startsWith(`${repositoryRoot}/`)
+    })
+  }, [diffTargets, visibleFileTreeResult])
+  const effectiveDiffTargets = useMemo(
+    () =>
+      diffTargets.length > 0 && diffTargetsMatchRepository
+        ? diffTargets
+        : repositoryFileTargets.filter((file) => Boolean(file.kind)),
+    [diffTargets, diffTargetsMatchRepository, repositoryFileTargets]
+  )
+  const diffTree = useMemo(() => buildDiffTree(effectiveDiffTargets), [effectiveDiffTargets])
+  const visibleTree = useDiffTree ? diffTree : regularFileTree
+  const activeFileTreePath = useMemo(
+    () => getActiveFileTreePath(target, displayPath, visibleFileTreeResult),
+    [displayPath, target, visibleFileTreeResult]
+  )
+  const defaultCollapsedFileFolders = useMemo(() => {
+    const expandedFolders = new Set(getFileTreeAncestorPaths(activeFileTreePath))
+    return Object.fromEntries(
+      getDiffTreeFolderPaths(regularFileTree)
+        .filter((folderPath) => !expandedFolders.has(folderPath))
+        .map((folderPath) => [folderPath, true])
+    )
+  }, [activeFileTreePath, regularFileTree])
+  const visibleCollapsedFileFolders =
+    collapsedFileTreeRoot === visibleFileTreeResult?.repositoryRoot
+      ? collapsedFileFolders
+      : defaultCollapsedFileFolders
   const reviewCommentCountByPath = useMemo(
     () =>
       reviewComments.reduce<Map<string, number>>((counts, comment) => {
@@ -464,6 +589,40 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     [gitRepositoryRoot, target.container, target.cwd, target.kind, target.path, target.previousPath]
   )
 
+  const loadFileTree = useCallback(
+    async (options: LoadFileTreeOptions = {}): Promise<void> => {
+      const background = options.background === true
+      const request = fileTreeLoadRequestRef.current + 1
+      fileTreeLoadRequestRef.current = request
+      if (!background) {
+        setFileTreeLoadState('loading')
+      }
+      setFileTreeError(null)
+
+      try {
+        const result = await appApi.getFileTree({
+          container: target.container,
+          cwd: fileTreeCwd
+        })
+        if (fileTreeLoadRequestRef.current !== request) return
+
+        setFileTreeResult(result)
+        setFileTreeScope({
+          containerKey: fileTreeContainerKey,
+          repositoryRoot: result.repositoryRoot
+        })
+        setFileTreeLoadState('ready')
+      } catch (loadError) {
+        if (fileTreeLoadRequestRef.current !== request) return
+
+        const message = getErrorMessage(loadError, 'Unable to load the file tree.')
+        setFileTreeError(message)
+        if (!background) setFileTreeLoadState('error')
+      }
+    },
+    [fileTreeContainerKey, fileTreeCwd, target.container]
+  )
+
   useEffect(() => {
     if (!canShowContents) return
     queueMicrotask(() => void loadFile())
@@ -478,6 +637,19 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     if (!canShowDiff) return
     queueMicrotask(() => void loadDiff())
   }, [canShowDiff, loadDiff])
+
+  useEffect(() => {
+    if (fileTreeMatchesTarget) return
+    queueMicrotask(() => void loadFileTree())
+  }, [fileTreeMatchesTarget, loadFileTree])
+
+  useEffect(() => {
+    const repositoryRoot = visibleFileTreeResult?.repositoryRoot ?? null
+    if (!repositoryRoot || collapsedFileTreeRoot === repositoryRoot) return
+
+    setCollapsedFileFolders(defaultCollapsedFileFolders)
+    setCollapsedFileTreeRoot(repositoryRoot)
+  }, [collapsedFileTreeRoot, defaultCollapsedFileFolders, visibleFileTreeResult?.repositoryRoot])
 
   useEffect(
     () => () => {
@@ -522,7 +694,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   }, [onReviewCommentsChange, reviewComments])
 
   useEffect(() => {
-    if (!showDiffTree) return
+    if (!showTreeSidebar) return
 
     const body = bodyRef.current
     if (!body) return
@@ -537,7 +709,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     observer.observe(body)
 
     return () => observer.disconnect()
-  }, [showDiffTree])
+  }, [showTreeSidebar])
 
   const requestClose = useCallback((): void => {
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
@@ -561,6 +733,12 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   )
   const toggleDiffFolder = useCallback((folderPath: string): void => {
     setCollapsedDiffFolders((currentFolders) => ({
+      ...currentFolders,
+      [folderPath]: !currentFolders[folderPath]
+    }))
+  }, [])
+  const toggleFileFolder = useCallback((folderPath: string): void => {
+    setCollapsedFileFolders((currentFolders) => ({
       ...currentFolders,
       [folderPath]: !currentFolders[folderPath]
     }))
@@ -687,9 +865,11 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     [markdownSplitPercentage, markdownSplitStacked]
   )
 
-  const renderDiffTreeNode = (node: DiffTreeNode, depth: number): React.ReactElement => {
+  const renderFileTreeNode = (node: DiffTreeNode, depth: number): React.ReactElement => {
     if (node.type === 'folder') {
-      const collapsed = Boolean(collapsedDiffFolders[node.path])
+      const collapsed = Boolean(
+        (useDiffTree ? collapsedDiffFolders : visibleCollapsedFileFolders)[node.path]
+      )
 
       return (
         <li
@@ -703,7 +883,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
             type="button"
             title={node.path}
             style={{ '--file-diff-tree-depth': depth } as React.CSSProperties}
-            onClick={() => toggleDiffFolder(node.path)}
+            onClick={() =>
+              useDiffTree ? toggleDiffFolder(node.path) : toggleFileFolder(node.path)
+            }
           >
             <span className="file-editor-dialog__tree-chevron" aria-hidden="true">
               {collapsed ? <ChevronRight /> : <ChevronDown />}
@@ -715,7 +897,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
           </button>
           {!collapsed && node.children.length > 0 && (
             <ul className="file-editor-dialog__tree-group" role="group">
-              {node.children.map((childNode) => renderDiffTreeNode(childNode, depth + 1))}
+              {node.children.map((childNode) => renderFileTreeNode(childNode, depth + 1))}
             </ul>
           )}
         </li>
@@ -723,12 +905,23 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     }
 
     const nodeDisplayPath = node.target.displayPath.replace(/\\/g, '/')
-    const active = node.target.path === target.path
+    const active =
+      node.target.path === target.path ||
+      nodeDisplayPath === displayPath ||
+      nodeDisplayPath === activeFileTreePath
     const reviewCommentCount = reviewCommentCountByPath.get(nodeDisplayPath) ?? 0
+    const changeKind = node.target.kind ?? null
+    const itemClassName = [
+      'file-editor-dialog__tree-item',
+      changeKind ? 'file-editor-dialog__tree-item--changed' : null,
+      changeKind ? `file-editor-dialog__tree-item--${changeKind}` : null
+    ]
+      .filter(Boolean)
+      .join(' ')
 
     return (
       <li
-        className={`file-editor-dialog__tree-item file-editor-dialog__tree-item--${node.target.kind ?? 'edit'}`}
+        className={itemClassName}
         key={node.target.path}
         role="treeitem"
         aria-current={active ? 'true' : undefined}
@@ -736,7 +929,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         <button
           className="file-editor-dialog__tree-row file-editor-dialog__tree-row--file"
           type="button"
-          aria-label={`Open diff for ${nodeDisplayPath}`}
+          aria-label={`${useDiffTree ? 'Open diff for' : 'Open'} ${nodeDisplayPath}`}
           data-active={active ? 'true' : undefined}
           title={nodeDisplayPath}
           style={{ '--file-diff-tree-depth': depth } as React.CSSProperties}
@@ -803,6 +996,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setVersion(result.version)
       setSaveState('saved')
       if (canShowDiff) void loadDiff({ background: true })
+      void loadFileTree({ background: true })
     } catch (saveError) {
       setEditorError(getErrorMessage(saveError, 'Unable to save this file.'))
       setSaveState('error')
@@ -812,6 +1006,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     contents,
     dirty,
     loadDiff,
+    loadFileTree,
     saveState,
     target.container,
     target.cwd,
@@ -869,35 +1064,30 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       >
         <header className="file-editor-dialog__header">
           <div className="file-editor-dialog__header-leading">
-            {hasDiffTree && (
+            {hasGitDiff && (
               <Button
-                aria-controls="file-editor-diff-tree"
+                aria-controls="file-editor-tree"
                 aria-expanded={!diffTreeCollapsed}
-                aria-label={
-                  diffTreeCollapsed
-                    ? 'Expand changed files sidebar'
-                    : 'Collapse changed files sidebar'
-                }
+                aria-label={diffTreeCollapsed ? 'Expand file sidebar' : 'Collapse file sidebar'}
                 callback={() => setDiffTreeCollapsed((collapsed) => !collapsed)}
                 icon={diffTreeCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
                 size="small"
                 theme="transparent"
-                title={
-                  diffTreeCollapsed
-                    ? 'Expand changed files sidebar'
-                    : 'Collapse changed files sidebar'
-                }
+                title={diffTreeCollapsed ? 'Expand file sidebar' : 'Collapse file sidebar'}
               />
             )}
-            {canShowDiff && canShowContents && (
-              <SegmentedControl
-                aria-label="File view"
-                className="file-editor-dialog__file-view-switch"
-                options={fileViewOptions}
-                size="small"
-                value={fileView}
-                onChange={setFileView}
-              />
+            {showFileViewSwitch && (
+              <span className="file-editor-dialog__file-view-switch-slot">
+                <SegmentedControl
+                  aria-label="File view"
+                  className="file-editor-dialog__file-view-switch"
+                  disabled={!canShowDiff}
+                  options={fileViewOptions}
+                  size="small"
+                  value={fileView}
+                  onChange={setFileView}
+                />
+              </span>
             )}
             <span className="file-editor-dialog__file-icon" aria-hidden="true">
               <SymbolsFileIcon fileName={fileName} autoAssign />
@@ -945,11 +1135,11 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                 title="Copy image"
               />
             )}
-            {canEdit && (
+            {canShowContents && (
               <Button
                 aria-label={`Save ${displayPath}`}
                 callback={handleSave}
-                disabled={!dirty || saveState === 'saving'}
+                disabled={!canEdit || !dirty || saveState === 'saving'}
                 icon={
                   saveState === 'saving' ? (
                     <LoaderCircle className="file-editor-dialog__spinner" />
@@ -994,33 +1184,51 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         </header>
 
         <div
-          className={`file-editor-dialog__body${showDiffTree ? ' file-editor-dialog__body--with-diff-tree' : ''}`}
+          className={`file-editor-dialog__body${showTreeSidebar ? ' file-editor-dialog__body--with-diff-tree' : ''}`}
           ref={bodyRef}
           style={
-            showDiffTree
+            showTreeSidebar
               ? ({ '--file-diff-tree-width': `${diffTreeWidth}px` } as CSSProperties)
               : undefined
           }
         >
-          {hasDiffTree && (
-            <aside
-              className="file-editor-dialog__tree-sidebar"
-              id="file-editor-diff-tree"
-              aria-label="Changed files"
-              hidden={!showDiffTree}
-            >
-              <div className="file-editor-dialog__tree-scroll">
+          <aside
+            className="file-editor-dialog__tree-sidebar"
+            id="file-editor-tree"
+            aria-label={useDiffTree ? 'Changed files' : 'Files'}
+            hidden={!showTreeSidebar}
+          >
+            <div className="file-editor-dialog__tree-scroll">
+              {!useDiffTree && fileTreeLoadState === 'loading' && (
+                <div className="file-editor-dialog__tree-state" role="status">
+                  <LoaderCircle className="file-editor-dialog__spinner" aria-hidden="true" />
+                  <span>Loading files…</span>
+                </div>
+              )}
+              {!useDiffTree && fileTreeLoadState === 'error' && (
+                <div className="file-editor-dialog__tree-state" role="alert">
+                  <FileCode2 aria-hidden="true" />
+                  <span>{fileTreeError ?? 'Unable to load the file tree.'}</span>
+                </div>
+              )}
+              {(useDiffTree || fileTreeLoadState === 'ready') && visibleTree.length > 0 && (
                 <ul className="file-editor-dialog__tree" role="tree">
-                  {diffTree.map((node) => renderDiffTreeNode(node, 0))}
+                  {visibleTree.map((node) => renderFileTreeNode(node, 0))}
                 </ul>
-              </div>
-            </aside>
-          )}
-          {showDiffTree && (
+              )}
+              {(useDiffTree || fileTreeLoadState === 'ready') && visibleTree.length === 0 && (
+                <div className="file-editor-dialog__tree-state">
+                  <FileCode2 aria-hidden="true" />
+                  <span>{useDiffTree ? 'No changed files.' : 'No files.'}</span>
+                </div>
+              )}
+            </div>
+          </aside>
+          {showTreeSidebar && (
             <div
               className="file-editor-dialog__tree-resize-handle"
               role="separator"
-              aria-label="Resize changed files sidebar"
+              aria-label="Resize file sidebar"
               aria-orientation="vertical"
               aria-valuemax={diffTreeMaxWidth}
               aria-valuemin={diffTreeMinWidth}
@@ -1189,6 +1397,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                       onSave={() => void handleSave()}
                       onToggleWordWrap={toggleWordWrap}
                       readOnly={!canEdit}
+                      showOriginalLineNumbers={showFileDiff}
                       wordWrap={wordWrap}
                     />
                   </div>

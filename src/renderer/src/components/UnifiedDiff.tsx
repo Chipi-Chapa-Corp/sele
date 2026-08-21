@@ -713,6 +713,7 @@ export const EditableUnifiedDiff = ({
   onSave,
   onToggleWordWrap,
   readOnly = false,
+  showOriginalLineNumbers = true,
   wordWrap
 }: {
   ariaLabel: string
@@ -730,6 +731,7 @@ export const EditableUnifiedDiff = ({
   onSave: () => void
   onToggleWordWrap: () => void
   readOnly?: boolean
+  showOriginalLineNumbers?: boolean
   wordWrap: boolean
 }): React.JSX.Element => {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -762,6 +764,7 @@ export const EditableUnifiedDiff = ({
   const onAddCommentRef = useRef(onAddComment)
   const onSaveRef = useRef(onSave)
   const onToggleWordWrapRef = useRef(onToggleWordWrap)
+  const showOriginalLineNumbersRef = useRef(showOriginalLineNumbers)
   const reviewGroups = useMemo(() => groupReviewComments(comments), [comments])
 
   useEffect(() => {
@@ -817,6 +820,10 @@ export const EditableUnifiedDiff = ({
   }, [onToggleWordWrap])
 
   useEffect(() => {
+    showOriginalLineNumbersRef.current = showOriginalLineNumbers
+  }, [showOriginalLineNumbers])
+
+  useEffect(() => {
     const parent = hostRef.current
     if (!parent) return
 
@@ -850,6 +857,7 @@ export const EditableUnifiedDiff = ({
     const editor = monaco.editor.createDiffEditor(parent, {
       ariaLabel,
       automaticLayout: true,
+      compactMode: !showOriginalLineNumbersRef.current,
       diffAlgorithm: 'advanced',
       diffWordWrap: 'off',
       fontFamily: codeFont.family,
@@ -859,6 +867,7 @@ export const EditableUnifiedDiff = ({
       ignoreTrimWhitespace: false,
       lineDecorationsWidth: 10,
       lineNumbers: 'on',
+      lineNumbersMinChars: showOriginalLineNumbersRef.current ? 5 : 3,
       minimap: { enabled: false },
       modifiedAriaLabel: ariaLabel,
       originalAriaLabel: `Original ${ariaLabel}`,
@@ -1061,6 +1070,13 @@ export const EditableUnifiedDiff = ({
       modifiedModel.dispose()
     }
   }, [ariaLabel, readOnly])
+
+  useEffect(() => {
+    editorStateRef.current?.editor.updateOptions({
+      compactMode: !showOriginalLineNumbers,
+      lineNumbersMinChars: showOriginalLineNumbers ? 5 : 3
+    })
+  }, [showOriginalLineNumbers])
 
   useEffect(() => {
     const editorState = editorStateRef.current

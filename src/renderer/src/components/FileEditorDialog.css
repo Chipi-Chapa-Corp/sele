@@ -43,6 +43,7 @@
 .file-editor-dialog__header {
   display: grid;
   min-width: 0;
+  min-height: calc(var(--control-height-small) + 15px);
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
@@ -111,6 +112,14 @@
 .file-editor-dialog__file-view-switch,
 .file-editor-dialog__markdown-view-switch {
   flex: none;
+}
+
+.file-editor-dialog__file-view-switch-slot {
+  display: grid;
+  width: calc((var(--control-height-small) * 2) + 11px);
+  height: calc(var(--control-height-small) + 8px);
+  flex: none;
+  place-items: center;
 }
 
 .file-editor-dialog__file-view-switch .ui-segmented-control__option,
@@ -199,9 +208,13 @@
 }
 
 .file-editor-dialog__tree-item {
-  --file-diff-row-color: var(--file-diff-modified);
+  --file-diff-row-color: var(--muted);
 
   min-width: 0;
+}
+
+.file-editor-dialog__tree-item--changed {
+  --file-diff-row-color: var(--file-diff-modified);
 }
 
 .file-editor-dialog__tree-item--create,
@@ -316,6 +329,23 @@
 .file-editor-dialog__tree-comment-count > svg {
   width: 14px;
   height: 14px;
+}
+
+.file-editor-dialog__tree-state {
+  display: grid;
+  min-height: 120px;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 16px;
+  color: var(--quiet);
+  font-size: 0.9em;
+  text-align: center;
+}
+
+.file-editor-dialog__tree-state > svg {
+  width: 20px;
+  height: 20px;
 }
 
 .file-editor-dialog__diff-view {
