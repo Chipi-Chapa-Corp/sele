@@ -11019,7 +11019,7 @@ export const App: React.FC = () => {
     if (!generatedMessage) return false
     if (changesCwdRef.current !== quickCommitCwd) {
       setCommitState('error')
-      setCommitError('The selected repository changed before Quick commit could finish.')
+      setCommitError('The selected repository changed before AI Commit could finish.')
       return false
     }
 
@@ -13510,20 +13510,6 @@ export const App: React.FC = () => {
                         disabled: getCommitActionDisabled('amend'),
                         icon: <GitCommitHorizontal aria-hidden="true" />,
                         callback: () => void handleCommitChangedFiles('amend')
-                      },
-                      {
-                        id: 'ai-chat-commit',
-                        label: 'AI Chat Commit',
-                        disabled: getAiCommitActionDisabled(),
-                        icon: <Sparkles aria-hidden="true" />,
-                        callback: () => void handleAiCommitChangedFiles('commit')
-                      },
-                      {
-                        id: 'ai-chat-amend',
-                        label: 'AI Chat Amend',
-                        disabled: getAiCommitActionDisabled(),
-                        icon: <Sparkles aria-hidden="true" />,
-                        callback: () => void handleAiCommitChangedFiles('amend')
                       }
                     ]}
                     dropdownLabel="Commit actions"
@@ -13550,13 +13536,27 @@ export const App: React.FC = () => {
                         disabled: commitMessageGenerationDisabled,
                         icon: <Upload aria-hidden="true" />,
                         callback: () => void handleQuickCommitChangedFiles(true)
+                      },
+                      {
+                        id: 'ai-chat-commit',
+                        label: 'Chat Commit',
+                        disabled: getAiCommitActionDisabled(),
+                        icon: <Sparkles aria-hidden="true" />,
+                        callback: () => void handleAiCommitChangedFiles('commit')
+                      },
+                      {
+                        id: 'ai-chat-amend',
+                        label: 'Chat Amend',
+                        disabled: getAiCommitActionDisabled(),
+                        icon: <Sparkles aria-hidden="true" />,
+                        callback: () => void handleAiCommitChangedFiles('amend')
                       }
                     ]}
-                    dropdownLabel="Quick commit actions"
+                    dropdownLabel="AI Commit actions"
                     dropdownMenuAlign="end"
                     dropdownPlacement="top"
                     icon={<Sparkles aria-hidden="true" />}
-                    label={<span>Quick commit</span>}
+                    label={<span>AI Commit</span>}
                     theme="secondary"
                     fill
                   />
