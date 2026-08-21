@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import {
   disableProviderSkill,
   listDisabledProviderSkills,
+  mergeCodexProviderSkills,
   mergeProviderSkills,
   restoreProviderSkill
 } from './providerResources.ts'
@@ -83,6 +84,42 @@ test('moves the skill folder when a provider reports its SKILL.md path', async (
   }
 })
 
+test('can leave a recreated skill in place instead of restoring an older moved copy', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sele-provider-recreated-skill-test-'))
+  const originalDataHome = process.env.XDG_DATA_HOME
+  const originalPath = join(root, 'skills', 'managed-skill')
+  process.env.XDG_DATA_HOME = join(root, 'data')
+
+  try {
+    await mkdir(originalPath, { recursive: true })
+    await writeFile(join(originalPath, 'SKILL.md'), '# Original\n', 'utf8')
+
+    const skill = {
+      name: 'managed-skill',
+      description: 'A managed skill.',
+      shortDescription: null,
+      displayName: null,
+      path: originalPath,
+      scope: 'system',
+      enabled: true
+    }
+
+    await disableProviderSkill('codex', skill, null)
+    await mkdir(originalPath, { recursive: true })
+    await writeFile(join(originalPath, 'SKILL.md'), '# Recreated\n', 'utf8')
+
+    assert.equal(await restoreProviderSkill(originalPath, null, { skipIfOccupied: true }), false)
+    assert.equal(await readFile(join(originalPath, 'SKILL.md'), 'utf8'), '# Recreated\n')
+    assert.deepEqual(await listDisabledProviderSkills('codex', null), [
+      { ...skill, enabled: false }
+    ])
+  } finally {
+    if (originalDataHome === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = originalDataHome
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 test('filters legacy disabled skills by provider-specific paths', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sele-provider-legacy-resource-test-'))
   const originalDataHome = process.env.XDG_DATA_HOME
@@ -127,4 +164,58 @@ test('prefers a discovered enabled skill over stale disabled metadata', () => {
     enabled: true
   }
   assert.deepEqual(mergeProviderSkills([skill], [{ ...skill, enabled: false }]), [skill])
+})
+
+test('Codex prefers native discovery over stale disabled metadata for the same path', () => {
+  const skill = {
+    name: 'review-agent',
+    description: 'Current system skill.',
+    shortDescription: null,
+    displayName: 'Review Agent',
+    path: '/tmp/.codex/skills/.system/review-agent/SKILL.md',
+    scope: 'system',
+    enabled: false
+  }
+
+  assert.deepEqual(
+    mergeCodexProviderSkills(
+      [skill],
+      [{ ...skill, description: 'Stale moved copy.', enabled: false }]
+    ),
+    [skill]
+  )
+})
+
+test('Codex hides a stale disabled plugin version when a current version is discovered', () => {
+  const current = {
+    name: 'gmail:gmail',
+    description: 'Current Gmail skill.',
+    shortDescription: null,
+    displayName: 'Gmail',
+    path: '/tmp/.codex/plugins/cache/gmail/0.1.8/skills/gmail/SKILL.md',
+    scope: 'user',
+    enabled: true
+  }
+  const stale = {
+    ...current,
+    description: 'Old Gmail skill.',
+    path: '/tmp/.codex/plugins/cache/gmail/0.1.7/skills/gmail/SKILL.md',
+    enabled: false
+  }
+
+  assert.deepEqual(mergeCodexProviderSkills([current], [stale]), [current])
+})
+
+test('Codex keeps a legacy disabled user skill that has not been rediscovered', () => {
+  const disabled = {
+    name: 'user-skill',
+    description: 'Disabled user skill.',
+    shortDescription: null,
+    displayName: null,
+    path: '/tmp/.codex/skills/user-skill/SKILL.md',
+    scope: 'user',
+    enabled: false
+  }
+
+  assert.deepEqual(mergeCodexProviderSkills([], [disabled]), [disabled])
 })

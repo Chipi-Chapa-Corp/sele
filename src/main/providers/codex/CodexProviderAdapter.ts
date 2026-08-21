@@ -68,10 +68,10 @@ import {
   shouldPreferCodexRolloutItems
 } from './CodexLiveMerge'
 import { getCodexQueueDrainDecision } from './CodexQueueDrain'
+import { writeCodexSkillEnabled } from './CodexSkillConfig'
 import {
-  disableProviderSkill,
   listDisabledProviderSkills,
-  mergeProviderSkills,
+  mergeCodexProviderSkills,
   restoreProviderSkill
 } from '../providerResources'
 
@@ -1376,7 +1376,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
 
     const disabledSkills = await listDisabledProviderSkills('codex', this.getCurrentContainer())
-    return mergeProviderSkills(discoveredSkills, disabledSkills)
+    return mergeCodexProviderSkills(discoveredSkills, disabledSkills)
   }
 
   setSkillEnabled = async (
@@ -1421,19 +1421,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (changedSkills.length === 0) return skills
 
     const updateSkill = async (skill: ProviderSkill): Promise<void> => {
-      if (!enabled) {
-        await disableProviderSkill('codex', skill, this.getCurrentContainer())
-        return
+      if (enabled) {
+        await restoreProviderSkill(skill.path, this.getCurrentContainer(), {
+          skipIfOccupied: true
+        })
       }
 
-      const restored = await restoreProviderSkill(skill.path, this.getCurrentContainer())
-      if (restored) return
-
-      await this.client.request('skills/config/write', {
-        enabled: true,
-        name: skill.name,
-        path: skill.path
-      })
+      await writeCodexSkillEnabled(this.client, skill.path, enabled)
     }
     const updateResults = await Promise.allSettled(changedSkills.map(updateSkill))
     const failedSkills = changedSkills.filter(

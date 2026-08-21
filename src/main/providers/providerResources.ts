@@ -345,10 +345,16 @@ const restoreLocalProviderSkill = async (path: string): Promise<boolean> => {
 
 export const restoreProviderSkill = async (
   path: string,
-  container: AppContainerTarget | null | undefined
+  container: AppContainerTarget | null | undefined,
+  options: { skipIfOccupied?: boolean } = {}
 ): Promise<boolean> => {
   const normalizedContainer = normalizeProviderResourceContainer(container)
-  if (shouldUseLocalFileSystem(normalizedContainer)) return restoreLocalProviderSkill(path)
+  if (shouldUseLocalFileSystem(normalizedContainer)) {
+    if (options.skipIfOccupied && (await stat(getRestoredSkillDirectory(path)).catch(() => null))) {
+      return false
+    }
+    return restoreLocalProviderSkill(path)
+  }
 
   const key = getDisabledSkillKey(path)
   const marker = '__SELE_SKILL_NOT_DISABLED__'
@@ -363,7 +369,9 @@ export const restoreProviderSkill = async (
       `  printf '%s' ${quotePosixShellArg(marker)}`,
       '  exit 0',
       'fi',
-      '[ ! -e "$sele_destination" ] || { echo "The original skill path is already occupied" >&2; exit 1; }',
+      options.skipIfOccupied
+        ? `[ ! -e "$sele_destination" ] || { printf '%s' ${quotePosixShellArg(marker)}; exit 0; }`
+        : '[ ! -e "$sele_destination" ] || { echo "The original skill path is already occupied" >&2; exit 1; }',
       'mkdir -p "$(dirname "$sele_destination")"',
       'mv "$sele_entry/skill" "$sele_destination"',
       'rm -f "$sele_entry/metadata.json"',
@@ -389,4 +397,28 @@ export const mergeProviderSkills = (
   return Array.from(skillsByPath.values()).sort((first, second) =>
     first.name.localeCompare(second.name)
   )
+}
+
+const isCodexManagedSkillPath = (path: string): boolean => {
+  const normalizedPath = path.replace(/\\/g, '/').toLocaleLowerCase()
+  return normalizedPath.includes('/plugins/cache/') || normalizedPath.includes('/skills/.system/')
+}
+
+export const mergeCodexProviderSkills = (
+  discoveredSkills: ProviderSkill[],
+  disabledSkills: ProviderSkill[]
+): ProviderSkill[] => {
+  const discoveredPaths = new Set(discoveredSkills.map((skill) => skill.path))
+  const discoveredManagedNames = new Set(
+    discoveredSkills
+      .filter((skill) => isCodexManagedSkillPath(skill.path))
+      .map((skill) => skill.name)
+  )
+  const relevantDisabledSkills = disabledSkills.filter(
+    (skill) =>
+      !discoveredPaths.has(skill.path) &&
+      !(isCodexManagedSkillPath(skill.path) && discoveredManagedNames.has(skill.name))
+  )
+
+  return mergeProviderSkills(discoveredSkills, relevantDisabledSkills)
 }
