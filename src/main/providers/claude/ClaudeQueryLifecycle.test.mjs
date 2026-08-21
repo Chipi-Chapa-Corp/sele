@@ -19,7 +19,7 @@ test('waits for authoritative idle when the result requests background execution
     keepQueryAlive: true,
     waitForSessionIdle: true
   })
-  assert.equal(getClaudeSessionStateLifecycleDecision(true, 'idle', false, false), 'complete')
+  assert.equal(getClaudeSessionStateLifecycleDecision(true, 'idle', 0, false), 'complete')
 })
 
 test('closes the Claude query after all work finishes', () => {
@@ -30,17 +30,24 @@ test('closes the Claude query after all work finishes', () => {
 })
 
 test('does not complete a held background result while the session is still running', () => {
-  assert.equal(getClaudeSessionStateLifecycleDecision(true, 'running', false, false), 'ignore')
+  assert.equal(getClaudeSessionStateLifecycleDecision(true, 'running', 0, false), 'ignore')
 })
 
 test('ignores idle notifications when no background result is being held', () => {
-  assert.equal(getClaudeSessionStateLifecycleDecision(false, 'idle', false, false), 'ignore')
+  assert.equal(getClaudeSessionStateLifecycleDecision(false, 'idle', 0, false), 'ignore')
 })
 
-test('sends a queued message when held background work becomes idle', () => {
-  assert.equal(getClaudeSessionStateLifecycleDecision(true, 'idle', true, false), 'sendQueued')
+test('does not close a held query while background work is still running', () => {
+  assert.equal(getClaudeSessionStateLifecycleDecision(true, 'idle', 1, false), 'ignore')
 })
 
-test('does not send a queued message after a failed background result', () => {
-  assert.equal(getClaudeSessionStateLifecycleDecision(true, 'idle', true, true), 'complete')
+test('does not close a held query during a new foreground turn', () => {
+  assert.equal(getClaudeSessionStateLifecycleDecision(true, 'idle', 0, true), 'ignore')
+})
+
+test('failed and stopped results never keep the query visibly or internally active', () => {
+  assert.deepEqual(getClaudeResultLifecycleDecision(2, 'background_requested', true), {
+    keepQueryAlive: false,
+    waitForSessionIdle: false
+  })
 })

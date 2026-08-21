@@ -4295,7 +4295,7 @@ export const App: React.FC = () => {
       setSelectedChat(null)
       setChatDetail(null)
       setChatLoadState('ready')
-      setSendState('idle')
+      setSendState(sendInFlightRef.current ? 'sending' : 'idle')
       setEditingMessage(null)
       setNewChatOpen(true)
     },
@@ -5582,7 +5582,7 @@ export const App: React.FC = () => {
       setSelectedChat(null)
       setChatDetail(null)
       setChatLoadState('ready')
-      setSendState('idle')
+      setSendState(sendInFlightRef.current ? 'sending' : 'idle')
       setEditingMessage(null)
       setSearchOpen(false)
       setSearchQuery('')
@@ -7846,7 +7846,7 @@ export const App: React.FC = () => {
     }
 
     resetChatSearch()
-    setSendState('idle')
+    setSendState(sendInFlightRef.current ? 'sending' : 'idle')
     setEditingMessage(null)
     setNewChatOpen(false)
     setSearchOpen(false)
@@ -7895,7 +7895,7 @@ export const App: React.FC = () => {
     setSelectedChat(null)
     setChatDetail(null)
     setNewChatOpen(false)
-    setSendState('idle')
+    setSendState(sendInFlightRef.current ? 'sending' : 'idle')
     setEditingMessage(null)
   }
 

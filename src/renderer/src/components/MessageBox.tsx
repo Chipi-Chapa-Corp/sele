@@ -1156,7 +1156,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     ? `${selectedApprovalMode.label}: ${selectedApprovalMode.description}`
     : (selectedApprovalMode?.label ?? formatOptionLabel(effectiveApprovalMode))
   const selectedReasoningEffortLabel = selectedReasoningEffortPresentation.label
-  const selectorsDisabled = operationsDisabled || (!active && (disabled || pending))
+  const selectorsDisabled = operationsDisabled || pending || (!active && disabled)
   const approvalSelectorDisabled = selectorsDisabled || fullAccessSelected
   const selectedServiceTierValue = selectedServiceTier ?? standardServiceTierValue
   const selectedModelLabel = modelSelectionUnavailable
@@ -1335,10 +1335,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   ]
     .filter(Boolean)
     .join(' ')
-  const textareaDisabled = operationsDisabled || (active ? false : disabled || pending)
+  const textareaDisabled = operationsDisabled || pending || (!active && disabled)
   const activePrimaryLabel = activePrimaryMode === 'queue' ? 'Queue message' : 'Steer current turn'
   const editingPendingMessage = editSession?.type === 'pending'
-  const usageDisabled = operationsDisabled || (!active && (disabled || pending))
+  const usageDisabled = operationsDisabled || pending || (!active && disabled)
   const usageMenuOpen = usageOpen && !usageDisabled
   const fileMentionMenuOpen = Boolean(
     fileMention &&
@@ -1729,7 +1729,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         selectedAppInputs.length === 0 &&
         !submittingReview) ||
       operationsDisabled ||
-      (!active && (disabled || pending))
+      pending ||
+      (!active && disabled)
     ) {
       return
     }
@@ -2805,7 +2806,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               title={buttonLabel}
               disabled={
                 operationsDisabled ||
-                (activeWithContent ? false : active ? false : disabled || pending || !hasContent)
+                (activeWithContent ? pending : active ? false : disabled || pending || !hasContent)
               }
               callback={activeWithContent ? submitMessage : active ? handleStop : submitMessage}
               dropdownActions={activeDropdownActions}

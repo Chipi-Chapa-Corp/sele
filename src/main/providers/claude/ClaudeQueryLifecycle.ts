@@ -3,13 +3,15 @@ export type ClaudeResultLifecycleDecision = {
   waitForSessionIdle: boolean
 }
 
-export type ClaudeSessionStateLifecycleDecision = 'ignore' | 'complete' | 'sendQueued'
+export type ClaudeSessionStateLifecycleDecision = 'ignore' | 'complete'
 
 export const getClaudeResultLifecycleDecision = (
   backgroundTaskCount: number,
-  terminalReason?: string
+  terminalReason?: string,
+  forceClose = false
 ): ClaudeResultLifecycleDecision => {
-  const keepQueryAlive = backgroundTaskCount > 0 || terminalReason === 'background_requested'
+  const keepQueryAlive =
+    !forceClose && (backgroundTaskCount > 0 || terminalReason === 'background_requested')
   return {
     keepQueryAlive,
     waitForSessionIdle: keepQueryAlive
@@ -19,9 +21,16 @@ export const getClaudeResultLifecycleDecision = (
 export const getClaudeSessionStateLifecycleDecision = (
   waitingForSessionIdle: boolean,
   sessionState: string,
-  hasQueuedMessage: boolean,
-  failed: boolean
+  backgroundTaskCount: number,
+  foregroundActive: boolean
 ): ClaudeSessionStateLifecycleDecision => {
-  if (!waitingForSessionIdle || sessionState !== 'idle') return 'ignore'
-  return hasQueuedMessage && !failed ? 'sendQueued' : 'complete'
+  if (
+    !waitingForSessionIdle ||
+    sessionState !== 'idle' ||
+    backgroundTaskCount > 0 ||
+    foregroundActive
+  ) {
+    return 'ignore'
+  }
+  return 'complete'
 }
