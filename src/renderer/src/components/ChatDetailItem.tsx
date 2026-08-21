@@ -4,7 +4,6 @@ import {
   startTransition,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -49,6 +48,8 @@ import {
   LoaderCircle,
   Package,
   Pencil,
+  Pin,
+  PinOff,
   Play,
   RefreshCw,
   Search,
@@ -100,6 +101,7 @@ type ChatDetailItemProps = {
   followingWorkingStepStatus?: ProviderWorkingStep['status']
   hasNextWorkingStep?: boolean
   item: ProviderChatItem
+  messagePinned?: boolean
   modelLabelsById?: ReadonlyMap<ProviderModelId, string>
   onDeletePendingMessage?: (message: ProviderPendingMessage) => void
   onEditPendingMessage?: (message: ProviderPendingMessage) => void
@@ -115,6 +117,7 @@ type ChatDetailItemProps = {
   ) => Promise<void> | void
   onDisclosureToggle?: () => void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
+  onToggleMessagePinned?: (message: ProviderMessage, turnIndex: number, pinned: boolean) => void
   onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => void
   previousItem?: ProviderChatItem | null
@@ -125,6 +128,7 @@ type ChatDetailItemProps = {
   selectedModelId?: ProviderModelId
   streaming?: boolean
   thoughtSettings?: AppChatThoughtSettings
+  turnIndex?: number
 }
 
 const getThoughtSettings = (settings?: AppChatThoughtSettings): AppChatThoughtSettings =>
@@ -161,6 +165,7 @@ const areChatDetailItemPropsEqual = (
   first.followingWorkingStepHasNext === second.followingWorkingStepHasNext &&
   first.followingWorkingStepStatus === second.followingWorkingStepStatus &&
   first.hasNextWorkingStep === second.hasNextWorkingStep &&
+  first.messagePinned === second.messagePinned &&
   first.modelLabelsById === second.modelLabelsById &&
   first.onDeletePendingMessage === second.onDeletePendingMessage &&
   first.onEditPendingMessage === second.onEditPendingMessage &&
@@ -172,6 +177,7 @@ const areChatDetailItemPropsEqual = (
   first.onLoadWorkingToolPage === second.onLoadWorkingToolPage &&
   first.onDisclosureToggle === second.onDisclosureToggle &&
   first.onOpenFileLink === second.onOpenFileLink &&
+  first.onToggleMessagePinned === second.onToggleMessagePinned &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
   isQueuedPendingMessage(first.previousItem) === isQueuedPendingMessage(second.previousItem) &&
@@ -181,6 +187,7 @@ const areChatDetailItemPropsEqual = (
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
   first.selectedModelId === second.selectedModelId &&
   first.streaming === second.streaming &&
+  first.turnIndex === second.turnIndex &&
   areThoughtSettingsEqual(first.thoughtSettings, second.thoughtSettings) &&
   first.item === second.item
 
@@ -287,7 +294,6 @@ const placeholderOptions = [
 const longRunningActivities = new Set<ProviderToolActivity>(['npm', 'npx', 'script', 'command'])
 const silencePlaceholderDelayMs = 600
 const streamRenderMaxDelayMs = 180
-const streamPacketAnimationMs = 150
 
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>"']/g, (character) => {
@@ -1144,6 +1150,7 @@ const MarkdownMessageComponent: React.FC<{
   localImageContainer?: AppContainerTarget | null
   localImageCwd?: string | null
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
+  preserveLineBreaks?: boolean
   selectionQuoteHost?: boolean
   streaming?: boolean
 }> = ({
@@ -1152,17 +1159,17 @@ const MarkdownMessageComponent: React.FC<{
   localImageContainer,
   localImageCwd,
   onOpenFileLink,
+  preserveLineBreaks = false,
   selectionQuoteHost = false,
   streaming = false
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
-  const packetAnimationRef = useRef<Animation | null>(null)
   const [localImagePreview, setLocalImagePreview] = useState<{
     imageUrl: string
     name: string
     path: string
   } | null>(null)
-  const { animate, revision, visibleContent } = useStreamRenderedContent(content, streaming)
+  const { visibleContent } = useStreamRenderedContent(content, streaming)
   const markdownRenderer = useMemo(
     () => createChatMarkdownRenderer(Boolean(onOpenFileLink)),
     [onOpenFileLink]
@@ -1170,26 +1177,18 @@ const MarkdownMessageComponent: React.FC<{
   const renderedMarkdown = useMemo(
     () =>
       DOMPurify.sanitize(
-        marked.parse(visibleContent, {
-          async: false,
-          gfm: true,
-          renderer: markdownRenderer
-        }),
+        marked.parse(
+          preserveLineBreaks ? withPromptMarkdownLineBreaks(visibleContent) : visibleContent,
+          {
+            async: false,
+            gfm: true,
+            renderer: markdownRenderer
+          }
+        ),
         { ADD_ATTR: ['target'] }
       ),
-    [markdownRenderer, visibleContent]
+    [markdownRenderer, preserveLineBreaks, visibleContent]
   )
-  useLayoutEffect(() => {
-    const markdownContainer = containerRef.current
-    if (!selectionQuoteHost || !markdownContainer) return undefined
-
-    // The quote control portals into this message-owned host. Replacing rendered markdown removes
-    // the previous host in the same commit, so a quote can never outlive its source message DOM.
-    const quoteHost = document.createElement('div')
-    quoteHost.className = 'chat-detail__message-quote-host'
-    markdownContainer.append(quoteHost)
-    return () => quoteHost.remove()
-  }, [renderedMarkdown, selectionQuoteHost])
   useEffect(() => {
     const markdownContainer = containerRef.current
     if (!markdownContainer) return undefined
@@ -1281,33 +1280,6 @@ const MarkdownMessageComponent: React.FC<{
     [onOpenFileLink]
   )
 
-  useEffect(() => {
-    if (!animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-
-    const container = containerRef.current
-    const target = container?.lastElementChild ?? container
-    if (!target) return
-
-    packetAnimationRef.current?.cancel()
-    packetAnimationRef.current = target.animate(
-      [
-        { opacity: 0.72, transform: 'translateY(3px)' },
-        { opacity: 1, transform: 'translateY(0)' }
-      ],
-      {
-        duration: streamPacketAnimationMs,
-        easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
-      }
-    )
-  }, [animate, revision])
-
-  useEffect(
-    () => () => {
-      packetAnimationRef.current?.cancel()
-    },
-    []
-  )
-
   const localImageOptions: Omit<AppLocalImageOptions, 'path'> = {
     container: localImageContainer,
     cwd: localImageCwd,
@@ -1316,13 +1288,13 @@ const MarkdownMessageComponent: React.FC<{
 
   return (
     <>
-      <div
-        className={className}
-        data-streaming={streaming || undefined}
-        ref={containerRef}
-        onClick={handleClick}
-        dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
-      />
+      <div className={className} ref={containerRef} onClick={handleClick}>
+        <div
+          className="chat-detail__message-markdown"
+          dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
+        />
+        {selectionQuoteHost && <div className="chat-detail__message-quote-host" />}
+      </div>
       {localImagePreview && (
         <ImageLightbox
           imageUrl={localImagePreview.imageUrl}
@@ -1336,7 +1308,7 @@ const MarkdownMessageComponent: React.FC<{
   )
 }
 
-const MarkdownMessage = memo(MarkdownMessageComponent)
+export const MarkdownMessage = memo(MarkdownMessageComponent)
 
 const copyTextToClipboard = async (content: string): Promise<void> => {
   if (navigator.clipboard?.writeText) {
@@ -2101,6 +2073,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   followingWorkingStepStatus,
   hasNextWorkingStep = false,
   item,
+  messagePinned = false,
   modelLabelsById,
   onDeletePendingMessage,
   onEditPendingMessage,
@@ -2112,6 +2085,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onLoadWorkingToolPage,
   onDisclosureToggle,
   onOpenFileLink,
+  onToggleMessagePinned,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
   previousItem,
@@ -2121,7 +2095,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   retryStoppedTurnDisabled = false,
   selectedModelId,
   streaming = false,
-  thoughtSettings
+  thoughtSettings,
+  turnIndex = -1
 }) => {
   const [copied, setCopied] = useState(false)
   const resolvedThoughtSettings = getThoughtSettings(thoughtSettings)
@@ -2156,6 +2131,12 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     const canDelete = pending && Boolean(onDeletePendingMessage)
     const canSteer = pending && item.kind === 'queued' && Boolean(onSteerPendingMessage)
     const canInterrupt = pending && Boolean(onInterruptPendingMessage)
+    const canPinMessage =
+      !pending &&
+      Boolean(item.content.trim()) &&
+      Boolean(onToggleMessagePinned) &&
+      turnIndex >= 0 &&
+      (role === 'user' || !streaming)
     const timestamp = item.createdAt
     const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById)
     const attachments = item.attachments ?? []
@@ -2231,6 +2212,17 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
         role === 'user' ? (
           <span className="chat-detail__message-action-placeholder" aria-hidden="true" />
         ) : null}
+        {canPinMessage && !pending && (
+          <Button
+            theme="secondary"
+            size="small"
+            aria-label={messagePinned ? 'Unpin message' : 'Pin message'}
+            aria-pressed={messagePinned}
+            title={messagePinned ? 'Unpin message' : 'Pin message'}
+            callback={() => onToggleMessagePinned?.(item, turnIndex, messagePinned)}
+            icon={messagePinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+          />
+        )}
         <Button
           theme="secondary"
           size="small"
@@ -2258,7 +2250,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       .join(' ')
 
     return (
-      <div className={messageBlockClassName}>
+      <div className={messageBlockClassName} data-chat-message-id={!pending ? item.id : undefined}>
         {messageLabel && <span className="chat-detail__pending-message-label">{messageLabel}</span>}
         {attachments.length > 0 && (
           <MessageAttachments
@@ -2270,10 +2262,11 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
         {item.content.trim() && (
           <MarkdownMessage
             className={`chat-detail__message chat-detail__message--${role}`}
-            content={role === 'user' ? withPromptMarkdownLineBreaks(item.content) : item.content}
+            content={item.content}
             localImageContainer={container}
             localImageCwd={cwd}
             onOpenFileLink={onOpenFileLink}
+            preserveLineBreaks={role === 'user'}
             selectionQuoteHost={!pending && role === 'assistant'}
             streaming={!pending && role === 'assistant' && streaming}
           />

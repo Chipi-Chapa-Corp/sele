@@ -4186,7 +4186,9 @@ export const App: React.FC = () => {
 
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
     const top = getScrollBottomTop(contentElement)
-    contentElement.scrollTop = top
+    if (Math.abs(contentElement.scrollTop - top) >= 0.5) {
+      contentElement.scrollTop = top
+    }
     setChatAtConversationBottom(true)
     chatAutoScrollTargetRef.current = {
       element: contentElement,
@@ -6399,14 +6401,7 @@ export const App: React.FC = () => {
     if (initialLayout || !isActiveChatStatus(chatDetail.status)) {
       scrollChatContentToBottom(contentElement)
     }
-    scheduleChatAutoScroll(contentElement)
-  }, [
-    chatDetail,
-    scheduleChatAutoScroll,
-    scrollChatContentToBottom,
-    selectedChatCommitMarkers,
-    selectedChatKey
-  ])
+  }, [chatDetail, scrollChatContentToBottom, selectedChatCommitMarkers, selectedChatKey])
 
   useEffect(() => {
     if (!pendingUserInputId) return

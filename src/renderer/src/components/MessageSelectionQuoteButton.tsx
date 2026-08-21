@@ -109,6 +109,11 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       setSelectedQuote(null)
     }
 
+    const hideQuote = (): void => {
+      cancelSelectionUpdate()
+      setSelectedQuote(null)
+    }
+
     const clearSelectionAndDismiss = (): void => {
       dismiss()
       window.getSelection()?.removeAllRanges()
@@ -139,7 +144,7 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
     const handleSelectionChange = (): void => {
       const selection = window.getSelection()
       if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-        dismiss()
+        hideQuote()
         return
       }
       if (!selectingWithPointer) scheduleSelectionUpdate()
