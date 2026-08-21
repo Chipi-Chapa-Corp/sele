@@ -88,6 +88,8 @@ import { getProcessFailureMessage } from './processFailure'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
 import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
 import { getCopilotExecutable } from './providers/copilot/CopilotExecutable'
+import { getOpenCodeExecutable } from './providers/opencode/OpenCodeExecutable'
+import { supportsOpenCodeServerContainer } from './providers/opencode/OpenCodeServerClient'
 
 export const getAppWindowState = (window: BrowserWindow): AppWindowState => ({
   isMaximized: window.isMaximized()
@@ -117,7 +119,8 @@ const sourceAvailabilityMaxBuffer = 64 * 1024
 const sourceAvailabilityProviderIds = [
   'codex',
   'claude',
-  'copilot'
+  'copilot',
+  'opencode'
 ] as const satisfies readonly ProviderId[]
 const sourceAvailabilityCommands = ['git', ...sourceAvailabilityProviderIds] as const
 
@@ -879,6 +882,17 @@ const isProviderAvailableInSource = async (
     )
   }
 
+  if (providerId === 'opencode') {
+    if (!(await supportsOpenCodeServerContainer(container))) return false
+    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
+      return isCommandAvailableInSource('opencode', container)
+    }
+
+    return runAvailabilityCommand(getOpenCodeExecutable(), ['--version'], null).then(
+      ({ success }) => success
+    )
+  }
+
   return false
 }
 
@@ -894,12 +908,15 @@ const getSourceAvailability = async (
       .join('\n')
     const { stdout } = await runAvailabilityCommand('sh', ['-lc', script], container)
     const availableCommands = new Set(stdout.split('\n').filter(Boolean))
+    const openCodeServerSupported = await supportsOpenCodeServerContainer(container)
 
     return {
       gitAvailable: availableCommands.has('git'),
       providers: sourceAvailabilityProviderIds.map((providerId) => ({
         providerId,
-        available: availableCommands.has(providerId)
+        available:
+          availableCommands.has(providerId) &&
+          (providerId !== 'opencode' || openCodeServerSupported)
       }))
     }
   }
@@ -907,7 +924,7 @@ const getSourceAvailability = async (
   const [gitAvailable, providers] = await Promise.all([
     isCommandAvailableInSource('git', container),
     Promise.all(
-      (['codex', 'claude', 'copilot'] satisfies ProviderId[]).map(async (providerId) => ({
+      sourceAvailabilityProviderIds.map(async (providerId) => ({
         providerId,
         available: await isProviderAvailableInSource(providerId, container)
       }))

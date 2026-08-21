@@ -1,6 +1,6 @@
 import type { AppContainerTarget } from './app'
 
-export const providerIds = ['codex', 'claude', 'copilot'] as const
+export const providerIds = ['codex', 'claude', 'copilot', 'opencode'] as const
 export const providerModelIds = [
   'gpt-5.6-sol',
   'gpt-5.6-terra',
@@ -206,6 +206,17 @@ export const fallbackCopilotModels: ProviderModel[] = [
     id: 'auto',
     label: 'Auto',
     description: 'Let GitHub Copilot choose an available model.',
+    isDefault: true,
+    supportedReasoningEfforts: [],
+    defaultReasoningEffort: 'medium'
+  }
+]
+
+export const fallbackOpenCodeModels: ProviderModel[] = [
+  {
+    id: 'opencode/big-pickle',
+    label: 'Big Pickle · OpenCode Zen',
+    description: 'Use OpenCode Zen’s default coding model.',
     isDefault: true,
     supportedReasoningEfforts: [],
     defaultReasoningEffort: 'medium'

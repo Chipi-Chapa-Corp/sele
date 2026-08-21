@@ -33,13 +33,15 @@ import {
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
 import { ClaudeProviderAdapter } from './claude/ClaudeProviderAdapter'
 import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
+import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
 import type { ProviderAdapter } from './ProviderAdapter'
 
 const adapters: Record<ProviderId, ProviderAdapter> = {
   codex: new CodexProviderAdapter(),
   claude: new ClaudeProviderAdapter(),
-  copilot: new CopilotProviderAdapter()
+  copilot: new CopilotProviderAdapter(),
+  opencode: new OpenCodeProviderAdapter()
 }
 
 const chatUpdatePreviewLimit = 500

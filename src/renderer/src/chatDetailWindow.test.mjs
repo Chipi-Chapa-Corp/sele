@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  hasProviderUserMessage,
   getChatDetailItemsStartTurnIndex,
   getChatDetailTurnCount,
   getWorkingStepItemSegments,
@@ -8,7 +9,8 @@ import {
   mergeWorkingStepPage,
   mergeWorkingToolPage,
   mergeWorkingStepUpdate,
-  retainLoadedChatDetailTurnWindow
+  retainLoadedChatDetailTurnWindow,
+  shouldPreserveOptimisticTurnUntilUserMessage
 } from './chatDetailWindow.ts'
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -27,6 +29,27 @@ const workingItems = (startIndex, count) =>
     id: `working-${startIndex + offset}`,
     content: `Activity ${startIndex + offset}`
   }))
+
+test('preserves optimistic turns for providers that echo user messages asynchronously', () => {
+  assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('copilot'), true)
+  assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('opencode'), true)
+  assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('codex'), false)
+  assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('claude'), false)
+})
+
+test('does not mistake an empty working shell for an echoed user message', () => {
+  assert.equal(
+    hasProviderUserMessage([{ type: 'working', id: 'working', status: 'working', items: [] }]),
+    false
+  )
+  assert.equal(
+    hasProviderUserMessage([
+      { type: 'message', id: 'user', role: 'user', content: 'Hello' },
+      { type: 'working', id: 'working', status: 'working', items: [] }
+    ]),
+    true
+  )
+})
 
 test('merges an older page without retaining turns outside the bounded window', () => {
   const detail = {

@@ -5,7 +5,8 @@ A focused desktop workspace for working with AI coding agents across local proje
 ![Sele showing an agent conversation, code changes, and project files](screenshots/sele-main.png)
 
 Sele keeps conversations, project context, diffs, file editing, and terminal sessions together
-in one desktop app. It supports OpenAI Codex, Anthropic Claude Code, and GitHub Copilot.
+in one desktop app. It supports OpenAI Codex, Anthropic Claude Code, GitHub Copilot, and
+OpenCode.
 
 ## Install
 
@@ -45,6 +46,7 @@ authenticate the CLI you want to use before starting Sele.
 codex --version
 claude --version
 copilot --version
+opencode --version
 ```
 
 Desktop process environments may not include the same `PATH` as your interactive terminal.
@@ -69,9 +71,22 @@ flatpak override --user --env=SELE_CLAUDE_PATH="$(command -v claude)" com.chipic
 launchctl setenv SELE_CLAUDE_PATH "$(command -v claude)"
 ```
 
+OpenCode also supports an explicit executable path:
+
+```bash
+flatpak override --user --env=SELE_OPENCODE_PATH="$(command -v opencode)" com.chipichapa.sele
+launchctl setenv SELE_OPENCODE_PATH "$(command -v opencode)"
+```
+
 Authenticate Claude Code with `claude auth login` before using the Claude provider.
 
 For Copilot, start `copilot` once and use `/login` if the CLI is not already authenticated.
+
+For OpenCode, connect at least one model provider with `opencode auth login`. Sele runs a
+private, authenticated `opencode serve` process for each supported source. OpenCode works on
+the host, in Sele's current container, and in Distrobox or Toolbox sources. Separately selected
+remote SSH, Docker, and Podman sources are not currently exposed because their loopback server
+is not safely reachable by Sele.
 
 ## Development
 

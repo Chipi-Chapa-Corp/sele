@@ -62,7 +62,8 @@ const finishedUnseenLabel = 'Finished since last viewed'
 const providerLabels = {
   codex: 'Codex',
   claude: 'Claude',
-  copilot: 'Copilot'
+  copilot: 'Copilot',
+  opencode: 'OpenCode'
 } as const
 
 const workingStatuses = new Set<NonNullable<ProviderChat['status']>>(['active'])

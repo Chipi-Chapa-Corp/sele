@@ -3,6 +3,7 @@ import type {
   ProviderChatItem,
   ProviderChatItemUpdate,
   ProviderChatTurnPage,
+  ProviderId,
   ProviderWorkingItem,
   ProviderWorkingItemSegment,
   ProviderWorkingStepPage,
@@ -12,6 +13,12 @@ import type {
 } from '../../shared/provider'
 import { getProviderChatTurns } from '../../shared/chatTurns.ts'
 import type { ChatTurnWindow } from './chatTurnWindow'
+
+export const hasProviderUserMessage = (items: ProviderChatItem[]): boolean =>
+  items.some((item) => item.type === 'message' && item.role === 'user')
+
+export const shouldPreserveOptimisticTurnUntilUserMessage = (providerId: ProviderId): boolean =>
+  providerId === 'copilot' || providerId === 'opencode'
 
 export const getChatDetailTurnCount = (detail: ProviderChatDetail | null | undefined): number =>
   detail?.turnCount ?? getProviderChatTurns(detail?.items ?? []).length

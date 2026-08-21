@@ -164,6 +164,7 @@ import {
 import {
   fallbackClaudeModels,
   fallbackCopilotModels,
+  fallbackOpenCodeModels,
   fallbackProviderApprovalModes,
   fallbackProviderModels,
   fallbackProviderSandboxModes,
@@ -284,6 +285,7 @@ import {
   type ChatTurnWindow
 } from './chatTurnWindow'
 import {
+  hasProviderUserMessage,
   getChatDetailItemsStartTurnIndex,
   getChatDetailTurnCount,
   getLoadedChatDetailTurnEndIndex,
@@ -291,7 +293,8 @@ import {
   mergeWorkingStepPage,
   mergeWorkingToolPage,
   mergeWorkingStepUpdate,
-  retainLoadedChatDetailTurnWindow
+  retainLoadedChatDetailTurnWindow,
+  shouldPreserveOptimisticTurnUntilUserMessage
 } from './chatDetailWindow'
 import './App.css'
 
@@ -935,7 +938,8 @@ const writeChatGroupingPreference = (preference: ChatGroupingPreference): void =
 const providerLabels = {
   codex: 'Codex',
   claude: 'Claude',
-  copilot: 'Copilot'
+  copilot: 'Copilot',
+  opencode: 'OpenCode'
 } satisfies Record<ProviderId, string>
 
 const getFirstSentence = (value: string): string => {
@@ -982,7 +986,9 @@ const getFallbackModels = (providerId: ProviderId): ProviderModel[] =>
     ? fallbackCopilotModels
     : providerId === 'claude'
       ? fallbackClaudeModels
-      : fallbackProviderModels
+      : providerId === 'opencode'
+        ? fallbackOpenCodeModels
+        : fallbackProviderModels
 
 const getProviderUpdatePreference = (
   preferences: ProviderUpdatePreferences,
@@ -2737,8 +2743,8 @@ const getChatDetailFromUpdate = (
   }
 
   if (preserveOptimisticTurnUntilUserMessage && currentDetail?.id === update.id) {
-    // Copilot can report an active turn before its SDK echoes the new user message. Keep the
-    // optimistic turn during that gap so the previous working step is not briefly reactivated.
+    // Some asynchronous provider SDKs can report an active turn before they echo the new user
+    // message. Keep the optimistic turn during that gap so it does not briefly disappear.
     const optimisticTurnStartIndex = currentDetail.items.findIndex((item) =>
       item.id.startsWith(optimisticChatItemIdPrefix)
     )
@@ -5906,7 +5912,7 @@ export const App: React.FC = () => {
             ? getChatDetailFromUpdate(
                 event.detail,
                 chatDetailRef.current,
-                event.providerId === 'copilot'
+                shouldPreserveOptimisticTurnUntilUserMessage(event.providerId)
               )
             : null
         const selectedDetail = (() => {
@@ -9063,7 +9069,7 @@ export const App: React.FC = () => {
         })
         applyViewedChatDetail(
           startingProviderId,
-          detail.items.length === 0
+          !hasProviderUserMessage(detail.items)
             ? {
                 ...detail,
                 items: getOptimisticItems([], messageWithComposerMentions, attachments, review)

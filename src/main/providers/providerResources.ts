@@ -105,13 +105,14 @@ const isProviderSkillScope = (value: unknown): value is ProviderSkillScope =>
   value === 'user' || value === 'repo' || value === 'system' || value === 'admin'
 
 const isProviderResourceId = (value: unknown): value is ProviderId =>
-  value === 'codex' || value === 'claude' || value === 'copilot'
+  value === 'codex' || value === 'claude' || value === 'copilot' || value === 'opencode'
 
 const inferProviderIdFromSkillPath = (path: string): ProviderId | null => {
   const normalizedPath = path.replace(/\\/g, '/').toLocaleLowerCase()
   if (normalizedPath.includes('/.claude/')) return 'claude'
   if (normalizedPath.includes('/.codex/')) return 'codex'
   if (normalizedPath.includes('/.copilot/')) return 'copilot'
+  if (normalizedPath.includes('/.opencode/')) return 'opencode'
   return null
 }
 
