@@ -179,6 +179,11 @@ import {
   providerIds
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
+import {
+  getChatCommitMarkerTerminalStatus,
+  getRecoveredChatCommitMarkerTerminalStatus,
+  type ChatCommitMarkerStatus
+} from './chatCommitMarker'
 import { buildChatConversationModel, markChatItemsChanged } from './chatConversationModel'
 import {
   getRecentChatReferenceKey,
@@ -388,7 +393,6 @@ type StartingScopedCommitActivity = {
   markerId: string
   commitAction: GitCommitPromptAction
 }
-type ChatCommitMarkerStatus = 'pending' | 'finished' | 'stopped' | 'failed'
 type ChatCommitMarker = {
   id: string
   providerId: ProviderId
@@ -2381,17 +2385,6 @@ const trimRecentChatCache = (cache: Map<string, RecentChatCacheEntry>, limit: nu
 
 const isActiveChatStatus = (status: ProviderChatDetail['status'] | undefined): boolean =>
   status === 'active' || status === 'waitingOnApproval' || status === 'waitingOnUserInput'
-
-const getChatCommitMarkerTerminalStatus = (
-  detail: ProviderChatDetail
-): Exclude<ChatCommitMarkerStatus, 'pending'> => {
-  if (detail.status === 'error') return 'failed'
-
-  const lastWorkingStep = detail.items.findLast(
-    (item): item is ProviderWorkingStep => item.type === 'working'
-  )
-  return lastWorkingStep?.status === 'stopped' ? 'stopped' : 'finished'
-}
 
 const getLastChatCommitMarkerAnchorId = (
   items: ProviderChatItem[],
@@ -4550,7 +4543,7 @@ export const App: React.FC = () => {
                 ...currentMarkers,
                 [marker.id]: {
                   ...marker,
-                  status: getChatCommitMarkerTerminalStatus(detail),
+                  status: getRecoveredChatCommitMarkerTerminalStatus(detail),
                   afterItemId:
                     activity.chatId === activity.sourceChatId
                       ? getLastChatCommitMarkerAnchorId(detail.items, marker.afterItemId)
@@ -4603,7 +4596,7 @@ export const App: React.FC = () => {
                 ...currentMarkers,
                 [marker.id]: {
                   ...currentMarker,
-                  status: getChatCommitMarkerTerminalStatus(detail),
+                  status: getRecoveredChatCommitMarkerTerminalStatus(detail),
                   afterItemId:
                     commitChatId === marker.sourceChatId
                       ? getLastChatCommitMarkerAnchorId(detail.items, currentMarker.afterItemId)
