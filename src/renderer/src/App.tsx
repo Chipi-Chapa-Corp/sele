@@ -42,8 +42,8 @@ import {
   GitCommitHorizontal,
   GitMerge,
   GitPullRequestArrow,
+  Globe2,
   History,
-  Link2,
   LayoutList,
   ListChevronsDownUp,
   ListChevronsUpDown,
@@ -108,6 +108,7 @@ import type {
   AppGitRecoveryActionId,
   AppWindowState
 } from '../../shared/app'
+import type { BrowserOpenRequest } from '../../shared/browser'
 import type {
   ProviderChat,
   ProviderChatDetail,
@@ -187,6 +188,7 @@ import {
 } from './chatRecents'
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
 import { BranchSwitcher } from './components/BranchSwitcher'
+import { BrowserPanel } from './components/BrowserPanel'
 import { Button, type ButtonDropdownAction } from './components/Button'
 import { ChatPlan, type ChatPlanData, type ChatPlanItem } from './components/ChatPlan'
 import { Dropdown, type DropdownOption } from './components/Dropdown'
@@ -205,6 +207,7 @@ import { UserInputRequestBox } from './components/UserInputRequestBox'
 import type { AppAction } from './actions'
 import { getAppActionsForProject, getAppActionKeybindingFromEvent } from './actions'
 import { appApi } from './appApi'
+import { browserApi } from './browserApi'
 import {
   getComparableChatPreview,
   isViewedChatCompletion,
@@ -233,13 +236,13 @@ import {
   type AppAppearancePositionPreference,
   type AppAppearanceControlStylePreference,
   type AppAppearanceStylePreference,
+  type AppBrowserView,
   type AppFontSetting,
   type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
   type AppGitWorktreeSettings,
   type AppChatDropdownSettings,
   type AppChatUsageDisplay,
-  type AppExternalLinkBehavior,
   type AppProjectSettingsByCwd,
   type AppProjectSettingsOverrides,
   type AppSettings,
@@ -352,7 +355,7 @@ type AnimatedIconComponent = ForwardRefExoticComponent<
 type ChangeSource = 'chat' | 'lastTurn' | 'uncommitted'
 type PatchChangeSource = Extract<ChangeSource, 'chat' | 'lastTurn'>
 type GitChangeSource = Exclude<ChangeSource, 'chat' | 'lastTurn'>
-type ChangesPaneView = 'recents' | 'git' | 'files' | 'terminal'
+type ChangesPaneView = 'recents' | 'git' | 'files' | 'terminal' | 'browser'
 type GitCommitPromptAction = AppGitCommitAction
 type GitSyncAction = 'pull' | 'push' | 'pullAndPush'
 type GitSyncStep = Exclude<GitSyncAction, 'pullAndPush'>
@@ -408,7 +411,7 @@ type DirectCommitActivity = {
 type GitSyncRecoveryActionOptions = {
   rememberStrategy?: boolean
 }
-type SettingsTab = 'appearance' | 'chat' | 'providers' | 'links' | 'performance' | 'git'
+type SettingsTab = 'appearance' | 'chat' | 'providers' | 'browser' | 'performance' | 'git'
 type SettingsScope = 'global' | 'project'
 type ProviderResourcesLoadState = 'idle' | 'loading' | 'ready'
 
@@ -514,6 +517,7 @@ type AppearanceFontKey = 'applicationFont' | 'chatFont' | 'codeFont'
 type AppProjectSettingPath =
   | { section: 'appearance'; key: keyof AppSettings['appearance'] }
   | { section: 'chat'; key: keyof AppSettings['chat'] }
+  | { section: 'browser'; key: keyof AppSettings['browser'] }
   | { section: 'links'; key: keyof AppSettings['links'] }
   | { section: 'performance'; key: keyof AppSettings['performance'] }
   | { section: 'git'; key: 'commitModel' | 'untrackedFilesPrompt' }
@@ -540,6 +544,9 @@ const cleanProjectSettingsOverrides = (
   }
   if (nextOverrides.chat && Object.keys(nextOverrides.chat).length === 0) {
     delete nextOverrides.chat
+  }
+  if (nextOverrides.browser && Object.keys(nextOverrides.browser).length === 0) {
+    delete nextOverrides.browser
   }
   if (nextOverrides.links && Object.keys(nextOverrides.links).length === 0) {
     delete nextOverrides.links
@@ -579,6 +586,8 @@ const getAppProjectSettingValue = (settings: AppSettings, path: AppProjectSettin
       return settings.appearance[path.key]
     case 'chat':
       return settings.chat[path.key]
+    case 'browser':
+      return settings.browser[path.key]
     case 'links':
       return settings.links[path.key]
     case 'performance':
@@ -603,6 +612,8 @@ const isAppProjectSettingOverridden = (
       return hasSettingKey(overrides?.appearance, path.key)
     case 'chat':
       return hasSettingKey(overrides?.chat, path.key)
+    case 'browser':
+      return hasSettingKey(overrides?.browser, path.key)
     case 'links':
       return hasSettingKey(overrides?.links, path.key)
     case 'performance':
@@ -639,6 +650,14 @@ const setAppProjectSettingOverrideValue = (
           ...overrides.chat,
           [path.key]: value
         } as Partial<AppSettings['chat']>
+      })
+    case 'browser':
+      return cleanProjectSettingsOverrides({
+        ...overrides,
+        browser: {
+          ...overrides.browser,
+          [path.key]: value
+        } as Partial<AppSettings['browser']>
       })
     case 'links':
       return cleanProjectSettingsOverrides({
@@ -724,6 +743,11 @@ const clearAppProjectSettingOverrideValue = (
       const chat = { ...(overrides.chat ?? {}) }
       delete chat[path.key]
       return cleanProjectSettingsOverrides({ ...overrides, chat })
+    }
+    case 'browser': {
+      const browser = { ...(overrides.browser ?? {}) }
+      delete browser[path.key]
+      return cleanProjectSettingsOverrides({ ...overrides, browser })
     }
     case 'links': {
       const links = { ...(overrides.links ?? {}) }
@@ -2125,9 +2149,9 @@ const settingsTabOptions = [
     icon: <Blocks aria-hidden="true" />
   },
   {
-    value: 'links',
-    label: 'Links',
-    icon: <Link2 aria-hidden="true" />
+    value: 'browser',
+    label: 'Browser',
+    icon: <Globe2 aria-hidden="true" />
   },
   {
     value: 'performance',
@@ -2166,6 +2190,12 @@ const themeOptions = [
   label: string
   icon: React.ReactNode
 }[]
+
+const browserViewOptions = [
+  { value: 'chat', label: 'Per chat' },
+  { value: 'project', label: 'Per project' },
+  { value: 'global', label: 'Global' }
+] satisfies readonly DropdownOption<AppBrowserView>[]
 
 const appearancePositionOptions = [
   {
@@ -2231,24 +2261,6 @@ const appearanceControlStyleOptions = [
   value: AppAppearanceControlStylePreference
   label: string
   icon: React.ReactNode
-}[]
-
-const externalLinkOptions = [
-  {
-    value: 'manual',
-    label: 'Manual'
-  },
-  {
-    value: 'copy',
-    label: 'Copy'
-  },
-  {
-    value: 'open',
-    label: 'Open'
-  }
-] satisfies readonly {
-  value: AppExternalLinkBehavior
-  label: string
 }[]
 
 const chatUsageDisplayOptions = [
@@ -3815,7 +3827,7 @@ const isAppActionShortcutTargetBlocked = (target: EventTarget | null): boolean =
 
   return Boolean(
     target.closest(
-      'input, textarea, select, [contenteditable="true"], [role="dialog"], .terminal-panel'
+      'input, textarea, select, [contenteditable="true"], [role="dialog"], .terminal-panel, .browser-panel'
     )
   )
 }
@@ -3857,6 +3869,8 @@ export const App: React.FC = () => {
   const [terminalOpened, setTerminalOpened] = useState(false)
   const [terminalCommandLaunchRequest, setTerminalCommandLaunchRequest] =
     useState<TerminalCommandLaunchRequest | null>(null)
+  const [browserOpened, setBrowserOpened] = useState(false)
+  const [browserOpenRequest, setBrowserOpenRequest] = useState<BrowserOpenRequest | null>(null)
   const [chats, setChats] = useState<ProviderChat[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
@@ -4681,6 +4695,41 @@ export const App: React.FC = () => {
     void appApi.setWindowZoomLevel(effectiveAppSettings.appearance.zoomLevel).catch(() => {})
   }, [effectiveAppSettings.appearance.zoomLevel])
 
+  const handleOpenBrowserRequest = useCallback(
+    (request: BrowserOpenRequest): void => {
+      if (!effectiveAppSettings.browser.enabled) {
+        void appApi.handleExternalLink({ url: request.url, action: 'open' }).catch(() => {})
+        return
+      }
+
+      setBrowserOpened(true)
+      setBrowserOpenRequest(request)
+      setChangesPaneView('browser')
+    },
+    [effectiveAppSettings.browser.enabled]
+  )
+
+  useEffect(() => browserApi.onOpenRequested(handleOpenBrowserRequest), [handleOpenBrowserRequest])
+
+  useEffect(() => {
+    if (effectiveAppSettings.browser.enabled) return
+
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+      setBrowserOpened(false)
+      setBrowserOpenRequest(null)
+      setChangesPaneView((currentView) => (currentView === 'browser' ? 'git' : currentView))
+      if (lastNonTerminalChangesPaneViewRef.current === 'browser') {
+        lastNonTerminalChangesPaneViewRef.current = 'git'
+      }
+    })
+
+    return () => {
+      active = false
+    }
+  }, [effectiveAppSettings.browser.enabled])
+
   useEffect(() => {
     const handleLinkClick = (event: MouseEvent): void => {
       if (event.defaultPrevented || event.button !== 0) return
@@ -4698,28 +4747,17 @@ export const App: React.FC = () => {
       if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) return
 
       event.preventDefault()
-      const behavior = effectiveAppSettings.links.behavior
-      void appApi
-        .handleExternalLink({
-          url: url.toString(),
-          action: behavior === 'manual' ? undefined : behavior
-        })
-        .then((result) => {
-          if (!result?.always || behavior !== 'manual') return
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        handleOpenBrowserRequest({ id: crypto.randomUUID(), url: url.toString() })
+        return
+      }
 
-          setAppSettings((currentSettings) => ({
-            ...currentSettings,
-            links: {
-              behavior: result.action
-            }
-          }))
-        })
-        .catch(() => {})
+      void appApi.handleExternalLink({ url: url.toString(), action: 'open' }).catch(() => {})
     }
 
     document.addEventListener('click', handleLinkClick)
     return () => document.removeEventListener('click', handleLinkClick)
-  }, [effectiveAppSettings.links])
+  }, [handleOpenBrowserRequest])
 
   useLayoutEffect(() => {
     applyShadowPreference(effectiveAppSettings.performance.disableShadows)
@@ -6177,6 +6215,12 @@ export const App: React.FC = () => {
   const changesContainerKey = getContainerTargetKey(changesContainer)
   const recentlyOpenedFilesWorkspaceKey = `${changesContainerKey}\0${changesCwd ?? ''}`
   const terminalWorkspaceKey = `${changesContainerKey}\0${changesProjectCwd ?? changesCwd ?? ''}`
+  const browserWorkspaceKey =
+    effectiveAppSettings.browser.view === 'global'
+      ? 'global'
+      : effectiveAppSettings.browser.view === 'chat'
+        ? `chat:${selectedChatKey ?? `new:${terminalWorkspaceKey}`}`
+        : `project:${terminalWorkspaceKey}`
   const gitAvailableForCurrentSource =
     gitSourceAvailability?.containerKey === changesContainerKey
       ? gitSourceAvailability.availability.gitAvailable
@@ -6234,15 +6278,21 @@ export const App: React.FC = () => {
     }
   }, [changesContainer, changesContainerKey, gitBranchLoadRequest, gitChangeLoadRequest])
 
-  const handleChangesPaneViewChange = useCallback((view: ChangesPaneView): void => {
-    if (view === 'terminal') {
-      setTerminalOpened(true)
-    } else {
-      lastNonTerminalChangesPaneViewRef.current = view
-    }
+  const handleChangesPaneViewChange = useCallback(
+    (view: ChangesPaneView): void => {
+      if (view === 'browser' && !effectiveAppSettings.browser.enabled) return
 
-    setChangesPaneView(view)
-  }, [])
+      if (view === 'terminal') {
+        setTerminalOpened(true)
+      } else {
+        if (view === 'browser') setBrowserOpened(true)
+        lastNonTerminalChangesPaneViewRef.current = view
+      }
+
+      setChangesPaneView(view)
+    },
+    [effectiveAppSettings.browser.enabled]
+  )
 
   const handleToggleTerminal = useCallback((): void => {
     handleChangesPaneViewChange(
@@ -8228,6 +8278,26 @@ export const App: React.FC = () => {
     }))
   }
 
+  const handleBrowserEnabledChange = (enabled: boolean): void => {
+    updateScopedSetting({ section: 'browser', key: 'enabled' }, enabled, (currentSettings) => ({
+      ...currentSettings,
+      browser: {
+        ...currentSettings.browser,
+        enabled
+      }
+    }))
+  }
+
+  const handleBrowserViewChange = (view: AppBrowserView): void => {
+    updateScopedSetting({ section: 'browser', key: 'view' }, view, (currentSettings) => ({
+      ...currentSettings,
+      browser: {
+        ...currentSettings.browser,
+        view
+      }
+    }))
+  }
+
   const handleAppearanceZoomLevelInputChange = (value: string): void => {
     setAppearanceZoomLevelInputDraft({ key: settingsScopeKey, value })
 
@@ -8320,15 +8390,6 @@ export const App: React.FC = () => {
 
   const handleAppearanceFontSizeInputBlur = (): void => {
     setAppearanceFontSizeInputDraft(null)
-  }
-
-  const handleExternalLinkBehaviorChange = (behavior: AppExternalLinkBehavior): void => {
-    updateScopedSetting({ section: 'links', key: 'behavior' }, behavior, (currentSettings) => ({
-      ...currentSettings,
-      links: {
-        behavior
-      }
-    }))
   }
 
   const handleChatUsageDisplayChange = (displayUsage: AppChatUsageDisplay): void => {
@@ -11856,6 +11917,14 @@ export const App: React.FC = () => {
       section: 'chat',
       key: 'continuePrompt'
     } satisfies AppProjectSettingPath
+    const browserEnabledPath = {
+      section: 'browser',
+      key: 'enabled'
+    } satisfies AppProjectSettingPath
+    const browserViewPath = {
+      section: 'browser',
+      key: 'view'
+    } satisfies AppProjectSettingPath
     const performanceDisableShadowsPath = {
       section: 'performance',
       key: 'disableShadows'
@@ -11896,7 +11965,6 @@ export const App: React.FC = () => {
       section: 'gitWorktree',
       key: 'branchNamePrompt'
     } satisfies AppProjectSettingPath
-    const linkBehaviorPath = { section: 'links', key: 'behavior' } satisfies AppProjectSettingPath
     const appearanceThemePath = {
       section: 'appearance',
       key: 'theme'
@@ -12724,31 +12792,49 @@ export const App: React.FC = () => {
       )
     }
 
-    if (settingsTab === 'links') {
+    if (settingsTab === 'browser') {
       return (
         <section
           className="settings-dialog__panel"
-          id="settings-panel-links"
+          id="settings-panel-browser"
           role="tabpanel"
-          aria-label="Link settings"
+          aria-label="Browser settings"
         >
-          <section className="settings-dialog__section" aria-labelledby="settings-links-handling">
-            <h2 className="settings-dialog__section-heading" id="settings-links-handling">
-              External Links
+          <section className="settings-dialog__section" aria-labelledby="settings-browser-behavior">
+            <h2 className="settings-dialog__section-heading" id="settings-browser-behavior">
+              Browser
             </h2>
             <div className="settings-dialog__section-cards">
+              <div className={getSettingsFieldClassName()}>
+                <div className="settings-dialog__field-header">
+                  <h3 id="settings-browser-enabled">Built-in browser</h3>
+                  <p>
+                    Open web links in Browser tabs inside Sele. When off, links open in your default
+                    browser.
+                  </p>
+                </div>
+                {renderProjectSettingAction(browserEnabledPath, 'Built-in browser')}
+                <Switch
+                  className="settings-switch"
+                  aria-labelledby="settings-browser-enabled"
+                  checked={settingsPanelSettings.browser.enabled}
+                  disabled={isScopedSettingControlDisabled(browserEnabledPath)}
+                  onChange={(event) => handleBrowserEnabledChange(event.currentTarget.checked)}
+                />
+              </div>
               <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
-                  <h3>Behavior</h3>
-                  <p>Manual asks each time. Copy and Open always use that action.</p>
+                  <h3>View</h3>
+                  <p>Choose which conversations share a set of Browser tabs.</p>
                 </div>
-                {renderProjectSettingAction(linkBehaviorPath, 'External link behavior')}
-                <SegmentedControl
-                  aria-label="External link behavior"
-                  disabled={isScopedSettingControlDisabled(linkBehaviorPath)}
-                  options={externalLinkOptions}
-                  value={settingsPanelSettings.links.behavior}
-                  onChange={handleExternalLinkBehaviorChange}
+                {renderProjectSettingAction(browserViewPath, 'Browser view')}
+                <SegmentedControl<AppBrowserView>
+                  aria-label="Browser view"
+                  className="settings-dialog__appearance-toggle"
+                  disabled={isScopedSettingControlDisabled(browserViewPath)}
+                  options={browserViewOptions}
+                  value={settingsPanelSettings.browser.view}
+                  onChange={handleBrowserViewChange}
                 />
               </div>
             </div>
@@ -13924,7 +14010,18 @@ export const App: React.FC = () => {
                       ariaLabel: 'Terminal',
                       title: 'Terminal (Ctrl+`)',
                       icon: <Terminal aria-hidden="true" />
-                    }
+                    },
+                    ...(effectiveAppSettings.browser.enabled
+                      ? [
+                          {
+                            value: 'browser' as const,
+                            label: null,
+                            ariaLabel: 'Browser',
+                            title: 'Browser',
+                            icon: <Globe2 aria-hidden="true" />
+                          }
+                        ]
+                      : [])
                   ]}
                   value={changesPaneView}
                   onChange={handleChangesPaneViewChange}
@@ -13994,10 +14091,12 @@ export const App: React.FC = () => {
             </header>
             <div
               className={`changes-sidebar__body${
-                changesPaneView === 'terminal' ? ' changes-sidebar__body--terminal' : ''
+                changesPaneView === 'terminal' || changesPaneView === 'browser'
+                  ? ' changes-sidebar__body--utility'
+                  : ''
               }`}
             >
-              {changesPaneView !== 'terminal' && (
+              {changesPaneView !== 'terminal' && changesPaneView !== 'browser' && (
                 <div className="changes-sidebar__content">
                   {changesPaneView === 'recents' ? (
                     displayedRecentChatReferences.pinnedReferences.length > 0 ||
@@ -14087,6 +14186,20 @@ export const App: React.FC = () => {
                     cwd={changesCwd}
                     projectCwd={changesProjectCwd}
                     workspaceKey={terminalWorkspaceKey}
+                  />
+                </div>
+              )}
+              {browserOpened && effectiveAppSettings.browser.enabled && (
+                <div
+                  className={`changes-sidebar__browser${
+                    changesPaneView === 'browser' ? ' changes-sidebar__browser--active' : ''
+                  }`}
+                  aria-hidden={changesPaneView !== 'browser'}
+                >
+                  <BrowserPanel
+                    active={changesPaneView === 'browser'}
+                    openRequest={browserOpenRequest}
+                    workspaceKey={browserWorkspaceKey}
                   />
                 </div>
               )}

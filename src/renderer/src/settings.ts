@@ -100,6 +100,13 @@ export type AppExternalLinkSettings = {
   behavior: AppExternalLinkBehavior
 }
 
+export type AppBrowserView = 'chat' | 'project' | 'global'
+
+export type AppBrowserSettings = {
+  enabled: boolean
+  view: AppBrowserView
+}
+
 export const appAppearanceZoomLevelDefault = appWindowZoomLevelDefault
 export const appAppearanceZoomLevelMin = appWindowZoomLevelMin
 export const appAppearanceZoomLevelMax = appWindowZoomLevelMax
@@ -138,6 +145,7 @@ export type AppSettings = {
     updateExistingChats: boolean
     updateNewChats: boolean
   } & AppChatDropdownSettings
+  browser: AppBrowserSettings
   links: AppExternalLinkSettings
   performance: AppPerformanceSettings
   git: {
@@ -152,6 +160,7 @@ export type AppSettings = {
 export type AppProjectSettingsOverrides = {
   appearance?: Partial<AppSettings['appearance']>
   chat?: Partial<AppSettings['chat']>
+  browser?: Partial<AppBrowserSettings>
   links?: Partial<AppExternalLinkSettings>
   performance?: Partial<AppPerformanceSettings>
   git?: {
@@ -326,6 +335,10 @@ export const defaultAppSettings: AppSettings = {
   links: {
     behavior: 'manual'
   },
+  browser: {
+    enabled: true,
+    view: 'project'
+  },
   performance: defaultAppPerformanceSettings,
   git: {
     commitModel: null,
@@ -358,6 +371,9 @@ const isAppExternalLinkAction = (value: unknown): value is AppExternalLinkAction
 
 const isAppExternalLinkBehavior = (value: unknown): value is AppExternalLinkBehavior =>
   value === 'manual' || isAppExternalLinkAction(value)
+
+const isAppBrowserView = (value: unknown): value is AppBrowserView =>
+  value === 'chat' || value === 'project' || value === 'global'
 
 const isAppChatUsageDisplay = (value: unknown): value is AppChatUsageDisplay =>
   value === 'chatContext' || value === 'global'
@@ -539,6 +555,21 @@ const readProjectLinkOverrides = (
   return overrides
 }
 
+const readProjectBrowserOverrides = (
+  browser: Record<string, unknown>
+): Partial<AppBrowserSettings> => {
+  const overrides: Partial<AppBrowserSettings> = {}
+
+  if (hasOwnProperty(browser, 'enabled') && typeof browser.enabled === 'boolean') {
+    overrides.enabled = browser.enabled
+  }
+  if (hasOwnProperty(browser, 'view') && isAppBrowserView(browser.view)) {
+    overrides.view = browser.view
+  }
+
+  return overrides
+}
+
 const readProjectPerformanceOverrides = (
   performance: Record<string, unknown>
 ): Partial<AppPerformanceSettings> => {
@@ -683,6 +714,9 @@ const pruneAppProjectSettingsOverrides = (
   if (overrides.links && Object.keys(overrides.links).length > 0) {
     prunedOverrides.links = { ...overrides.links }
   }
+  if (overrides.browser && Object.keys(overrides.browser).length > 0) {
+    prunedOverrides.browser = { ...overrides.browser }
+  }
   if (overrides.performance && Object.keys(overrides.performance).length > 0) {
     prunedOverrides.performance = { ...overrides.performance }
   }
@@ -752,6 +786,10 @@ export const resolveAppSettings = (
       ...settings.chat,
       ...overrides?.chat
     },
+    browser: {
+      ...settings.browser,
+      ...overrides?.browser
+    },
     links: {
       ...settings.links,
       ...overrides?.links
@@ -805,6 +843,12 @@ export const readStoredAppSettings = (): AppSettings => {
       typeof parsedValue.links === 'object' &&
       !Array.isArray(parsedValue.links)
         ? (parsedValue.links as Record<string, unknown>)
+        : {}
+    const browser =
+      parsedValue.browser &&
+      typeof parsedValue.browser === 'object' &&
+      !Array.isArray(parsedValue.browser)
+        ? (parsedValue.browser as Record<string, unknown>)
         : {}
     const performance =
       parsedValue.performance &&
@@ -891,6 +935,13 @@ export const readStoredAppSettings = (): AppSettings => {
               ? appearance.externalLinks
               : defaultAppSettings.links.behavior
       },
+      browser: {
+        enabled:
+          typeof browser.enabled === 'boolean'
+            ? browser.enabled
+            : defaultAppSettings.browser.enabled,
+        view: isAppBrowserView(browser.view) ? browser.view : defaultAppSettings.browser.view
+      },
       performance: {
         disableShadows: getStoredPerformanceBoolean(performance, 'disableShadows'),
         maxChatsRendered: getStoredMaxChatsRendered(performance.maxChatsRendered),
@@ -966,6 +1017,14 @@ const readStoredAppProjectSettingsOverride = (
       : null
   if (links && Object.keys(links).length > 0) overrides.links = links
 
+  const browser =
+    storedOverrides.browser &&
+    typeof storedOverrides.browser === 'object' &&
+    !Array.isArray(storedOverrides.browser)
+      ? readProjectBrowserOverrides(storedOverrides.browser as Record<string, unknown>)
+      : null
+  if (browser && Object.keys(browser).length > 0) overrides.browser = browser
+
   const performance =
     storedOverrides.performance &&
     typeof storedOverrides.performance === 'object' &&
@@ -1040,6 +1099,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       lastActionId?: string
       appearance?: Partial<AppSettings['appearance']>
       chat?: Partial<AppSettings['chat']>
+      browser?: Partial<AppBrowserSettings>
       links?: Partial<AppExternalLinkSettings>
       performance?: Partial<AppPerformanceSettings>
       git?: {
@@ -1151,6 +1211,15 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       storedChat.collapseStoppedOnNextTurn = settings.chat.collapseStoppedOnNextTurn
     }
     if (Object.keys(storedChat).length > 0) storedSettings.chat = storedChat
+
+    const storedBrowser: Partial<AppBrowserSettings> = {}
+    if (settings.browser.enabled !== defaultAppSettings.browser.enabled) {
+      storedBrowser.enabled = settings.browser.enabled
+    }
+    if (settings.browser.view !== defaultAppSettings.browser.view) {
+      storedBrowser.view = settings.browser.view
+    }
+    if (Object.keys(storedBrowser).length > 0) storedSettings.browser = storedBrowser
 
     const storedLinks: Partial<AppExternalLinkSettings> = {}
     if (settings.links.behavior !== defaultAppSettings.links.behavior) {

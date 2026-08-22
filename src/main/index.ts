@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell, type WebContents } from 'electron'
 import { join } from 'path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -14,11 +14,76 @@ import { disposeProviderAdapters } from './providers/providerService'
 import { beginProviderIpcShutdown, registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
 import { disposeTerminalSessions, registerTerminalIpc } from './registerTerminalIpc'
+import {
+  browserIpcChannels,
+  getBrowserCloseShortcutAction,
+  isBrowserPageUrl
+} from '../shared/browser'
 
 const getColorScheme = (): AppColorScheme => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
 
 const getWindowBackgroundColor = (scheme = getColorScheme()): string =>
   scheme === 'dark' ? '#141516' : '#f5f5f3'
+
+const browserSystemProtocols = new Set(['mailto:', 'tel:'])
+
+const getUrlProtocol = (value: string): string | null => {
+  try {
+    return new URL(value).protocol
+  } catch {
+    return null
+  }
+}
+
+const routeNewWindowUrl = (mainWindow: BrowserWindow, url: string): void => {
+  if (isBrowserPageUrl(url)) {
+    mainWindow.webContents.send(browserIpcChannels.openRequested, {
+      id: crypto.randomUUID(),
+      url
+    })
+    return
+  }
+
+  if (browserSystemProtocols.has(getUrlProtocol(url) ?? '')) {
+    void shell.openExternal(url)
+  }
+}
+
+const handleCloseShortcut = (
+  mainWindow: BrowserWindow,
+  event: Electron.Event,
+  input: Electron.Input
+): boolean => {
+  const action = getBrowserCloseShortcutAction(input)
+  if (!action) return false
+
+  event.preventDefault()
+  if (action === 'close-tab') {
+    mainWindow.webContents.send(browserIpcChannels.closeActiveTabRequested)
+  }
+  return true
+}
+
+const secureBrowserWebContents = (mainWindow: BrowserWindow, guest: WebContents): void => {
+  guest.setWindowOpenHandler(({ url }) => {
+    routeNewWindowUrl(mainWindow, url)
+    return { action: 'deny' }
+  })
+
+  const preventUnsupportedNavigation = (event: Electron.Event, url: string): void => {
+    const protocol = getUrlProtocol(url)
+    if (isBrowserPageUrl(url) || url === 'about:blank') return
+
+    event.preventDefault()
+    if (browserSystemProtocols.has(protocol ?? '')) void shell.openExternal(url)
+  }
+
+  guest.on('will-navigate', (event) => preventUnsupportedNavigation(event, event.url))
+  guest.on('will-redirect', (event) => preventUnsupportedNavigation(event, event.url))
+  guest.on('before-input-event', (event, input) => {
+    handleCloseShortcut(mainWindow, event, input)
+  })
+}
 
 let disposeFreezeDiagnostics: (() => void) | null = null
 
@@ -53,7 +118,8 @@ const createWindow = (): void => {
     backgroundColor: getWindowBackgroundColor(),
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js')
+      preload: join(__dirname, '../preload/index.js'),
+      webviewTag: true
     }
   })
 
@@ -68,8 +134,27 @@ const createWindow = (): void => {
   mainWindow.on('enter-full-screen', () => sendAppWindowState(mainWindow))
   mainWindow.on('leave-full-screen', () => sendAppWindowState(mainWindow))
 
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    routeNewWindowUrl(mainWindow, url)
+    return { action: 'deny' }
+  })
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
+
+    if (params.src !== 'about:blank' && !isBrowserPageUrl(params.src)) event.preventDefault()
+  })
+  mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
+    secureBrowserWebContents(mainWindow, guest)
+  })
   mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (handleCloseShortcut(mainWindow, event, input)) return
+
     const action = getAppWindowZoomShortcutAction(input)
     if (!action) return
 

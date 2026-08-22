@@ -14,6 +14,8 @@ import { providerIpcChannels } from '../shared/provider'
 import type { TerminalDataEvent, TerminalExitEvent, TerminalRendererApi } from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
 
+import type { BrowserOpenRequest, BrowserRendererApi } from '../shared/browser'
+import { browserIpcChannels } from '../shared/browser'
 const appApi: AppApi = {
   getColorScheme: () => ipcRenderer.invoke(appIpcChannels.getColorScheme),
   getInstalledFontFamilies: () => ipcRenderer.invoke(appIpcChannels.getInstalledFontFamilies),
@@ -267,8 +269,7 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.markChatSeen, providerId, chatId, seenUpdatedAt),
   setChatPinned: (providerId, chatId, pinned) =>
     ipcRenderer.invoke(providerIpcChannels.setChatPinned, providerId, chatId, pinned),
-  setPinnedChatOrder: (chatIds) =>
-    ipcRenderer.invoke(providerIpcChannels.setPinnedChatOrder, chatIds),
+  setChatOrder: (chatIds) => ipcRenderer.invoke(providerIpcChannels.setChatOrder, chatIds),
   setViewedChat: (providerId, chatId) =>
     ipcRenderer.send(providerIpcChannels.viewedChatChanged, providerId, chatId),
   acknowledgeChatUpdate: (sequence, detailApplied) =>
@@ -323,6 +324,26 @@ contextBridge.exposeInMainWorld('appApi', appApi)
 contextBridge.exposeInMainWorld('providerApi', providerApi)
 contextBridge.exposeInMainWorld('terminalApi', terminalApi)
 
+const browserApi: BrowserRendererApi = {
+  onOpenRequested: (listener): (() => void) => {
+    const handleOpenRequested = (_: IpcRendererEvent, request: BrowserOpenRequest): void => {
+      listener(request)
+    }
+
+    ipcRenderer.on(browserIpcChannels.openRequested, handleOpenRequested)
+    return () => ipcRenderer.removeListener(browserIpcChannels.openRequested, handleOpenRequested)
+  },
+  onCloseActiveTabRequested: (listener): (() => void) => {
+    const handleCloseActiveTabRequested = (): void => listener()
+
+    ipcRenderer.on(browserIpcChannels.closeActiveTabRequested, handleCloseActiveTabRequested)
+    return () =>
+      ipcRenderer.removeListener(
+        browserIpcChannels.closeActiveTabRequested,
+        handleCloseActiveTabRequested
+      )
+  }
+}
 type PerformanceWithMemory = Performance & {
   memory?: {
     usedJSHeapSize?: number
@@ -346,6 +367,7 @@ let lastInteractionAt: number | null = null
 let lastInteractionKind: AppDiagnosticsInteractionKind | null = null
 let lastHeartbeatAt: number | null = null
 let longTaskCount = 0
+contextBridge.exposeInMainWorld('browserApi', browserApi)
 let longTaskTotalDurationMs = 0
 let longTaskMaxDurationMs = 0
 

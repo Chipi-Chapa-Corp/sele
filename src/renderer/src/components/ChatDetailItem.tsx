@@ -78,6 +78,7 @@ import { appApi } from '../appApi'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
 import { createLocalImageUrl } from '../localImage'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from '../markdownFileLink'
+import { getBrowserFaviconUrl } from '../../../shared/browser'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { defaultAppChatThoughtSettings, type AppChatThoughtSettings } from '../settings'
 import { Button } from './Button'
@@ -354,12 +355,23 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
     const href = token.href
     const title = token.title ?? undefined
     const children = this.parser.parseInline(token.tokens)
+    const faviconUrl = getBrowserFaviconUrl(href)
+    const faviconMarkup = faviconUrl
+      ? `<img${renderHtmlAttributes({
+          class: 'chat-detail__link-favicon',
+          src: faviconUrl,
+          alt: ' ',
+          loading: 'lazy',
+          referrerpolicy: 'no-referrer',
+          'aria-hidden': 'true'
+        })}>`
+      : ''
     return `<a${renderHtmlAttributes({
       href,
       title,
       rel: 'noreferrer',
       target: '_blank'
-    })}>${children}</a>`
+    })}>${faviconMarkup}${children}</a>`
   }
   renderer.image = function (token: Tokens.Image): string {
     const fileTarget = getMarkdownFileTarget(token.href)
@@ -1198,6 +1210,14 @@ const MarkdownMessageComponent: React.FC<{
     const imageButtons = markdownContainer.querySelectorAll<HTMLButtonElement>(
       '.chat-detail__markdown-image[data-local-image-path]'
     )
+    const faviconImages = markdownContainer.querySelectorAll<HTMLImageElement>(
+      '.chat-detail__link-favicon'
+    )
+
+    const handleFaviconError = (event: Event): void => {
+      if (event.currentTarget instanceof HTMLImageElement) event.currentTarget.hidden = true
+    }
+    faviconImages.forEach((image) => image.addEventListener('error', handleFaviconError))
 
     imageButtons.forEach((button) => {
       const path = button.dataset.localImagePath
@@ -1236,6 +1256,7 @@ const MarkdownMessageComponent: React.FC<{
 
     return () => {
       current = false
+      faviconImages.forEach((image) => image.removeEventListener('error', handleFaviconError))
       objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl))
     }
   }, [localImageContainer, localImageCwd, renderedMarkdown])
