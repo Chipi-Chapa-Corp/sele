@@ -1,5 +1,13 @@
-import { CheckCheck, ChevronDown, ChevronUp, FolderKanban, PinOff, SquarePen } from 'lucide-react'
-import type { ReactNode } from 'react'
+import {
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  FolderKanban,
+  PinOff,
+  SquarePen
+} from 'lucide-react'
+import type { DragEvent, DragEventHandler, ReactNode } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { appMaxChatsRenderedDefault } from '../performanceSettings'
 import { formatProjectLabel } from '../projectPresentation'
@@ -24,6 +32,9 @@ type ChatListGroupProps = {
   selectedChatKey: string | null
   committingChatKeys?: ReadonlySet<string>
   canReorderChats?: boolean
+  projectDraggable?: boolean
+  projectDragging?: boolean
+  projectDropPosition?: 'before' | 'after' | null
   visibleChatCount?: number
   chatPageSize?: number
   projectIcon?: ReactNode
@@ -31,12 +42,14 @@ type ChatListGroupProps = {
   onLoadMoreChats?: (group: ChatListGroupData) => void
   onShowLessChats?: (group: ChatListGroupData) => void
   onMarkChatDone: (chat: ProviderChat, done?: boolean) => void
+  onProjectDragEnd?: DragEventHandler<HTMLElement>
+  onProjectDragStart?: (event: DragEvent<HTMLElement>, group: ChatListGroupData) => void
   onMarkCwdChatsDone: (group: ChatListGroupData) => void
   onNewChatInCwd: (group: ChatListGroupData) => void
   onRenameChat: (chat: ProviderChat, title: string) => Promise<void>
   onSelectProjectIcon?: (group: ChatListGroupData) => void
   onResolveApproval: (chat: ProviderChat, decision: ProviderApprovalDecision) => void
-  onReorderPinnedChats: (chats: ProviderChat[]) => void
+  onReorderChats: (group: ChatListGroupData, chats: ProviderChat[]) => void
   onSelectChat: (chat: ProviderChat) => void
   onToggle: (groupKey: string) => void
   onToggleChatPinned: (chat: ProviderChat) => void
@@ -51,6 +64,9 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   selectedChatKey,
   committingChatKeys,
   canReorderChats = true,
+  projectDraggable = false,
+  projectDragging = false,
+  projectDropPosition = null,
   visibleChatCount = group.chats.length,
   chatPageSize = appMaxChatsRenderedDefault,
   projectIcon = null,
@@ -58,12 +74,14 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   onLoadMoreChats,
   onShowLessChats,
   onMarkChatDone,
+  onProjectDragEnd,
+  onProjectDragStart,
   onMarkCwdChatsDone,
   onNewChatInCwd,
   onRenameChat,
   onSelectProjectIcon,
   onResolveApproval,
-  onReorderPinnedChats,
+  onReorderChats,
   onSelectChat,
   onToggle,
   onToggleChatPinned,
@@ -80,25 +98,57 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   const canShowLessChats = visibleChatCount > chatPageSize
   const showChatPaginationActions =
     (remainingChatCount > 0 && onLoadMoreChats) || (canShowLessChats && onShowLessChats)
-  const toggle = (
-    <DisclosureToggle
-      className="chat-list-group__toggle"
-      chevronClassName="chat-list-group__chevron"
-      contentClassName={
-        group.kind === 'cwd' ? 'chat-list-group__toggle-content--project' : undefined
-      }
-      aria-controls={contentId}
-      open={open}
-      title={group.cwd ?? groupLabel}
-      onClick={() => onToggle(group.key)}
-    >
-      <span className="chat-list-group__title">{groupLabel}</span>
-    </DisclosureToggle>
+  const toggleContent = (
+    <>
+      <ChevronRight
+        className="ui-disclosure-toggle__chevron chat-list-group__chevron"
+        aria-hidden="true"
+      />
+      <span
+        className={`ui-disclosure-toggle__content${group.kind === 'cwd' ? ' chat-list-group__toggle-content--project' : ''}`}
+      >
+        <span className="chat-list-group__title">{groupLabel}</span>
+      </span>
+    </>
   )
+  const toggle =
+    group.kind === 'cwd' ? (
+      <div
+        className={`ui-disclosure-toggle chat-list-group__toggle${open ? ' ui-disclosure-toggle--open' : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-controls={contentId}
+        aria-expanded={open}
+        draggable={projectDraggable}
+        title={group.cwd ?? groupLabel}
+        onClick={() => onToggle(group.key)}
+        onDragEnd={onProjectDragEnd}
+        onDragStart={(event) => onProjectDragStart?.(event, group)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          onToggle(group.key)
+        }}
+      >
+        {toggleContent}
+      </div>
+    ) : (
+      <DisclosureToggle
+        className="chat-list-group__toggle"
+        chevronClassName="chat-list-group__chevron"
+        aria-controls={contentId}
+        open={open}
+        title={group.cwd ?? groupLabel}
+        onClick={() => onToggle(group.key)}
+      >
+        <span className="chat-list-group__title">{groupLabel}</span>
+      </DisclosureToggle>
+    )
 
   return (
     <section
-      className={`chat-list-group chat-list-group--${group.kind}${open ? ' chat-list-group--open' : ''}`}
+      className={`chat-list-group chat-list-group--${group.kind}${open ? ' chat-list-group--open' : ''}${projectDraggable ? ' chat-list-group--project-reorderable' : ''}${projectDragging ? ' chat-list-group--project-dragging' : ''}${projectDropPosition ? ` chat-list-group--project-drop-${projectDropPosition}` : ''}`}
+      data-project-group-key={projectDraggable ? group.key : undefined}
       aria-label={`${groupLabel} chats`}
     >
       <div className="chat-list-group__header">
@@ -160,13 +210,13 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             committingChatKeys={committingChatKeys}
             canMarkDone={group.kind !== 'done'}
             canMarkUndone={group.kind === 'done'}
-            reorderable={group.kind === 'pinned' && canReorderChats}
+            reorderable={canReorderChats}
             projectNamesByCwd={projectNamesByCwd}
             onMarkDone={onMarkChatDone}
             onRename={onRenameChat}
             onResolveApproval={onResolveApproval}
             onReorder={(nextVisibleChats) =>
-              onReorderPinnedChats([
+              onReorderChats(group, [
                 ...nextVisibleChats,
                 ...group.chats.slice(nextVisibleChats.length)
               ])

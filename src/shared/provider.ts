@@ -465,7 +465,7 @@ export type ProviderUserInputResponse =
 export type ProviderChatMetadata = {
   id: string
   pinned: boolean
-  pinnedOrder: number | null
+  sidebarOrder: number | null
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
@@ -493,7 +493,7 @@ export type ProviderChat = {
   status: ProviderChatStatus | null
   pendingApproval: ProviderPendingApproval | null
   pinned: boolean
-  pinnedOrder: number | null
+  sidebarOrder: number | null
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
@@ -695,7 +695,7 @@ export type ProviderChatDetail = {
   worktreeBaseBranchName: string | null
   status: ProviderChatStatus | null
   pinned: boolean
-  pinnedOrder: number | null
+  sidebarOrder: number | null
   done: boolean
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
@@ -958,7 +958,7 @@ export type ProviderApi = {
     chatId: string,
     pinned: boolean
   ) => Promise<ProviderChatMetadata>
-  setPinnedChatOrder: (chatIds: string[]) => Promise<ProviderChatMetadata[]>
+  setChatOrder: (chatIds: string[]) => Promise<ProviderChatMetadata[]>
   onChatUpdated: (listener: (event: ProviderChatUpdatedEvent) => void) => () => void
 }
 
@@ -1050,7 +1050,7 @@ export const providerIpcChannels = {
   setCwdNotes: 'provider:set-cwd-notes',
   markChatSeen: 'provider:mark-chat-seen',
   setChatPinned: 'provider:set-chat-pinned',
-  setPinnedChatOrder: 'provider:set-pinned-chat-order',
+  setChatOrder: 'provider:set-chat-order',
   continueChatSummary: 'provider:continue-chat-summary',
   sendActiveChatMessageSummary: 'provider:send-active-chat-message-summary',
   stopChatSummary: 'provider:stop-chat-summary',

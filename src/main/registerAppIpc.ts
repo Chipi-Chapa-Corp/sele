@@ -70,7 +70,8 @@ import {
 } from './database/projectIcons'
 import {
   addProject as addStoredProject,
-  getProjects as getStoredProjects
+  getProjects as getStoredProjects,
+  setProjectOrder as setStoredProjectOrder
 } from './database/projects'
 import {
   createSshEnvironment as createStoredSshEnvironment,
@@ -235,6 +236,20 @@ const getProjectIconOptions = (value: unknown): AppProjectIconOptions => {
     cwd: getOptionalCwd(options.cwd),
     ...(options.persist == null ? {} : { persist: options.persist })
   }
+}
+
+const getProjectOrderCwds = (value: unknown): string[] => {
+  if (!Array.isArray(value) || value.length > 1_000) {
+    throw new Error('Invalid project order')
+  }
+
+  const cwds: string[] = []
+  for (const candidate of value) {
+    const cwd = getOptionalCwd(candidate)
+    if (!cwd) throw new Error('Invalid project order')
+    cwds.push(cwd)
+  }
+  return Array.from(new Set(cwds))
 }
 
 const getAddProjectOptions = (value: unknown): AppAddProjectOptions => {
@@ -2685,6 +2700,10 @@ export const registerAppIpc = (): void => {
 
     return project
   })
+
+  ipcMain.handle(appIpcChannels.setProjectOrder, (_event, value: unknown) =>
+    setStoredProjectOrder(getProjectOrderCwds(value))
+  )
 
   ipcMain.handle(appIpcChannels.getSshEnvironments, () => getStoredSshEnvironments())
 

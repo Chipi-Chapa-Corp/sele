@@ -18,8 +18,8 @@ import {
   getChatMetadataByIds,
   setChatContainer,
   setChatDone,
+  setChatOrder,
   setChatPinned,
-  setPinnedChatOrder,
   setChatPurpose,
   setChatSeen,
   setChatsDone
@@ -63,7 +63,7 @@ const applyMetadataToChat = (
 ): ProviderChat => ({
   ...chat,
   pinned: metadata?.pinned ?? false,
-  pinnedOrder: metadata?.pinnedOrder ?? null,
+  sidebarOrder: metadata?.sidebarOrder ?? null,
   done: metadata?.done ?? false,
   seenUpdatedAt: metadata?.seenUpdatedAt ?? null,
   purpose: metadata?.purpose ?? null,
@@ -121,7 +121,7 @@ const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<Provid
     branchName: cwdMetadata.branchName,
     worktreeBaseBranchName: cwdMetadata.worktreeBaseBranchName,
     pinned: metadata.pinned,
-    pinnedOrder: metadata.pinnedOrder,
+    sidebarOrder: metadata.sidebarOrder,
     done: metadata.done,
     seenUpdatedAt: metadata.seenUpdatedAt,
     purpose: metadata.purpose,
@@ -214,7 +214,7 @@ export const getChatUpdateSummary = (
     status: detail.status,
     pendingApproval: detail.pendingApproval,
     pinned: detail.pinned,
-    pinnedOrder: detail.pinnedOrder,
+    sidebarOrder: detail.sidebarOrder,
     done: detail.done,
     seenUpdatedAt: detail.seenUpdatedAt,
     purpose: detail.purpose,
@@ -402,7 +402,7 @@ export const providerApi: ProviderApi = {
   setCwdNotes: (providerId, cwd, notes) => setCwdNotes(providerId, cwd, notes),
   markChatSeen: (_providerId, chatId, seenUpdatedAt) => setChatSeen(chatId, seenUpdatedAt),
   setChatPinned: (_providerId, chatId, pinned) => setChatPinned(chatId, pinned),
-  setPinnedChatOrder: (chatIds) => setPinnedChatOrder(chatIds),
+  setChatOrder: (chatIds) => setChatOrder(chatIds),
   onChatUpdated: (listener) => {
     chatUpdatedListeners.add(listener)
     return () => chatUpdatedListeners.delete(listener)

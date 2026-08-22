@@ -21,7 +21,7 @@ const normalizeSeenUpdatedAt = (seenUpdatedAt: number): number => {
 const getDefaultChatMetadata = (id: string): ProviderChatMetadata => ({
   id,
   pinned: false,
-  pinnedOrder: null,
+  sidebarOrder: null,
   done: false,
   seenUpdatedAt: null,
   purpose: null,
@@ -59,7 +59,7 @@ const mapChatMetadataRow = (row: {
 }): ProviderChatMetadata => ({
   id: row.id,
   pinned: toBoolean(row.pinned),
-  pinnedOrder: toNumberOrNull(row.pinned_order),
+  sidebarOrder: toNumberOrNull(row.pinned_order),
   done: toBoolean(row.done),
   seenUpdatedAt: toNumberOrNull(row.seen_updated_at),
   purpose: row.purpose === 'commit' ? row.purpose : null,
@@ -136,10 +136,11 @@ export const setChatDone = async (chatId: string, done = true): Promise<Provider
 
   await db
     .insertInto('chat')
-    .values({ id: chatId, pinned: 0, done: doneValue })
+    .values({ id: chatId, pinned: 0, pinned_order: null, done: doneValue })
     .onConflict((conflict) =>
       conflict.column('id').doUpdateSet({
-        done: doneValue
+        done: doneValue,
+        pinned_order: null
       })
     )
     .execute()
@@ -153,22 +154,14 @@ export const setChatPinned = async (
 ): Promise<ProviderChatMetadata> => {
   const db = await getDatabase()
   const pinnedValue = pinned ? 1 : 0
-  const firstPinnedOrder = pinned
-    ? await db
-        .selectFrom('chat')
-        .select(sql<number | null>`min(pinned_order)`.as('value'))
-        .where('pinned', '=', 1)
-        .executeTakeFirst()
-    : null
-  const pinnedOrder = pinned ? (toNumberOrNull(firstPinnedOrder?.value) ?? 0) - 1 : null
 
   await db
     .insertInto('chat')
-    .values({ id: chatId, pinned: pinnedValue, pinned_order: pinnedOrder, done: 0 })
+    .values({ id: chatId, pinned: pinnedValue, pinned_order: null, done: 0 })
     .onConflict((conflict) =>
       conflict.column('id').doUpdateSet({
         pinned: pinnedValue,
-        pinned_order: pinnedOrder
+        pinned_order: null
       })
     )
     .execute()
@@ -176,18 +169,17 @@ export const setChatPinned = async (
   return getChatMetadata(chatId)
 }
 
-export const setPinnedChatOrder = async (chatIds: string[]): Promise<ProviderChatMetadata[]> => {
+export const setChatOrder = async (chatIds: string[]): Promise<ProviderChatMetadata[]> => {
   const ids = uniqueChatIds(chatIds)
   if (ids.length === 0) return []
 
   const db = await getDatabase()
   await db.transaction().execute(async (transaction) => {
-    for (const [pinnedOrder, id] of ids.entries()) {
+    for (const [sidebarOrder, id] of ids.entries()) {
       await transaction
-        .updateTable('chat')
-        .set({ pinned_order: pinnedOrder })
-        .where('id', '=', id)
-        .where('pinned', '=', 1)
+        .insertInto('chat')
+        .values({ id, pinned: 0, pinned_order: sidebarOrder, done: 0 })
+        .onConflict((conflict) => conflict.column('id').doUpdateSet({ pinned_order: sidebarOrder }))
         .execute()
     }
   })
@@ -289,10 +281,11 @@ export const setChatsDone = async (
 
     await db
       .insertInto('chat')
-      .values(chunk.map((id) => ({ id, pinned: 0, done: doneValue })))
+      .values(chunk.map((id) => ({ id, pinned: 0, pinned_order: null, done: doneValue })))
       .onConflict((conflict) =>
         conflict.column('id').doUpdateSet({
-          done: doneValue
+          done: doneValue,
+          pinned_order: null
         })
       )
       .execute()

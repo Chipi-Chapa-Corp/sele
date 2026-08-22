@@ -8,7 +8,7 @@ import {
 
 const target = {
   pinned: false,
-  pinnedOrder: null,
+  sidebarOrder: null,
   done: false,
   seenUpdatedAt: null,
   purpose: null,
@@ -23,7 +23,7 @@ const target = {
 const metadata = {
   id: 'chat',
   pinned: true,
-  pinnedOrder: 2,
+  sidebarOrder: 2,
   done: true,
   seenUpdatedAt: 123,
   purpose: null,
@@ -34,7 +34,7 @@ test('preserves a known environment when metadata has no container', () => {
   assert.deepEqual(mergeChatMetadata(target, metadata), {
     ...target,
     pinned: true,
-    pinnedOrder: 2,
+    sidebarOrder: 2,
     done: true,
     seenUpdatedAt: 123
   })

@@ -1,9 +1,52 @@
 .chat-list-group {
+  position: relative;
   display: flex;
   width: 100%;
   min-width: 0;
   flex-direction: column;
   gap: 10px;
+}
+
+.chat-list-group--project-reorderable > .chat-list-group__header {
+  cursor: grab;
+  user-select: none;
+}
+
+.chat-list-group--project-reorderable .chat-list-group__toggle {
+  cursor: grab;
+}
+
+.chat-list-group--project-reorderable:active > .chat-list-group__header {
+  cursor: grabbing;
+}
+
+.chat-list-group--project-reorderable .chat-list-group__toggle:active {
+  cursor: grabbing;
+}
+
+.chat-list-group--project-dragging {
+  opacity: 0.38;
+}
+
+.chat-list-group--project-drop-before::after,
+.chat-list-group--project-drop-after::after {
+  position: absolute;
+  z-index: 2;
+  right: 4px;
+  left: 4px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: '';
+  pointer-events: none;
+}
+
+.chat-list-group--project-drop-before::after {
+  top: -7px;
+}
+
+.chat-list-group--project-drop-after::after {
+  bottom: -7px;
 }
 
 .chat-list-group__header {

@@ -53,6 +53,7 @@ export type LocalDatabase = {
     name: string
     icon: string | null
     additional_cwds_json: string
+    sidebar_order: SqliteNullableNumberColumn
     added_at: number
     updated_at: number
   }
@@ -146,6 +147,7 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('name', 'text', (column) => column.notNull().defaultTo(''))
     .addColumn('icon', 'text')
     .addColumn('additional_cwds_json', 'text', (column) => column.notNull().defaultTo('[]'))
+    .addColumn('sidebar_order', 'integer')
     .addColumn('added_at', 'integer', (column) => column.notNull())
     .addColumn('updated_at', 'integer', (column) => column.notNull())
     .execute()
@@ -225,6 +227,9 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
       .alterTable('projects')
       .addColumn('additional_cwds_json', 'text', (column) => column.notNull().defaultTo('[]'))
       .execute()
+  )
+  await ensureColumn(db, 'projects', 'sidebar_order', () =>
+    db.schema.alterTable('projects').addColumn('sidebar_order', 'integer').execute()
   )
 
   schemaReady = true

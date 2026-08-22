@@ -39,6 +39,7 @@ export type AppProject = {
   name: string
   icon: AppProjectIconKind | null
   additionalCwds: string[]
+  sidebarOrder: number | null
   addedAt: number
   updatedAt: number
 }
@@ -497,6 +498,7 @@ export type AppApi = {
   getDefaultCwd: () => Promise<string>
   getProjects: () => Promise<AppProject[]>
   addProject: (options: AppAddProjectOptions) => Promise<AppProject>
+  setProjectOrder: (cwds: string[]) => Promise<AppProject[]>
   getSshEnvironments: () => Promise<AppSshEnvironment[]>
   createSshEnvironment: (options: AppCreateSshEnvironmentOptions) => Promise<AppSshEnvironment>
   updateSshEnvironment: (options: AppUpdateSshEnvironmentOptions) => Promise<AppSshEnvironment>
@@ -553,6 +555,7 @@ export const appIpcChannels = {
   getDefaultCwd: 'app:get-default-cwd',
   getProjects: 'app:get-projects',
   addProject: 'app:add-project',
+  setProjectOrder: 'app:set-project-order',
   getSshEnvironments: 'app:get-ssh-environments',
   createSshEnvironment: 'app:create-ssh-environment',
   updateSshEnvironment: 'app:update-ssh-environment',

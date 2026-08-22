@@ -42,7 +42,7 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
 ): Target => ({
   ...target,
   pinned: metadata.pinned,
-  pinnedOrder: metadata.pinnedOrder,
+  sidebarOrder: metadata.sidebarOrder,
   done: metadata.done,
   seenUpdatedAt: metadata.seenUpdatedAt,
   purpose: metadata.purpose,

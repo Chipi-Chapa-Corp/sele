@@ -1658,7 +1658,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  ipcMain.handle(providerIpcChannels.setPinnedChatOrder, (_, chatIds: unknown) =>
-    providerApi.setPinnedChatOrder(requireChatIds(chatIds))
+  ipcMain.handle(providerIpcChannels.setChatOrder, (_, chatIds: unknown) =>
+    providerApi.setChatOrder(requireChatIds(chatIds))
   )
 }

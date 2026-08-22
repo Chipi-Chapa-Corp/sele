@@ -7,6 +7,7 @@ export type ProjectRecord = {
   name: string
   icon: AppProjectIconKind | null
   additionalCwds: string[]
+  sidebarOrder: number | null
   addedAt: number
   updatedAt: number
 }
@@ -23,6 +24,7 @@ const mapProjectRow = (row: {
   name: string
   icon: string | null
   additional_cwds_json: string
+  sidebar_order: number | null
   added_at: number
   updated_at: number
 }): ProjectRecord => {
@@ -47,6 +49,10 @@ const mapProjectRow = (row: {
     name: row.name,
     icon: isAppProjectIconKind(row.icon) ? row.icon : null,
     additionalCwds,
+    sidebarOrder:
+      typeof row.sidebar_order === 'number' && Number.isFinite(row.sidebar_order)
+        ? row.sidebar_order
+        : null,
     addedAt: row.added_at,
     updatedAt: row.updated_at
   }
@@ -62,7 +68,15 @@ export const getProjects = async (): Promise<ProjectRecord[]> => {
   const db = await getDatabase()
   const rows = await db
     .selectFrom('projects')
-    .select(['cwd', 'name', 'icon', 'additional_cwds_json', 'added_at', 'updated_at'])
+    .select([
+      'cwd',
+      'name',
+      'icon',
+      'additional_cwds_json',
+      'sidebar_order',
+      'added_at',
+      'updated_at'
+    ])
     .orderBy('updated_at', 'desc')
     .orderBy('cwd', 'asc')
     .execute()
@@ -93,6 +107,7 @@ export const addProject = async (options: AddProjectRecordOptions): Promise<Proj
       name,
       icon,
       additional_cwds_json: JSON.stringify(additionalCwds),
+      sidebar_order: null,
       added_at: updatedAt,
       updated_at: updatedAt
     })
@@ -101,10 +116,51 @@ export const addProject = async (options: AddProjectRecordOptions): Promise<Proj
 
   const row = await db
     .selectFrom('projects')
-    .select(['cwd', 'name', 'icon', 'additional_cwds_json', 'added_at', 'updated_at'])
+    .select([
+      'cwd',
+      'name',
+      'icon',
+      'additional_cwds_json',
+      'sidebar_order',
+      'added_at',
+      'updated_at'
+    ])
     .where('cwd', '=', normalizedCwd)
     .executeTakeFirst()
 
   if (!row) throw new Error('Unable to save project')
   return mapProjectRow(row)
+}
+
+export const setProjectOrder = async (projectCwds: string[]): Promise<ProjectRecord[]> => {
+  const cwds = Array.from(new Set(projectCwds.map(normalizeProjectCwd)))
+  if (cwds.length === 0) return []
+
+  const db = await getDatabase()
+  const addedAt = Date.now()
+  await db.transaction().execute(async (transaction) => {
+    for (const [sidebarOrder, cwd] of cwds.entries()) {
+      await transaction
+        .insertInto('projects')
+        .values({
+          cwd,
+          name: '',
+          icon: null,
+          additional_cwds_json: '[]',
+          sidebar_order: sidebarOrder,
+          added_at: addedAt,
+          updated_at: addedAt
+        })
+        .onConflict((conflict) =>
+          conflict.column('cwd').doUpdateSet({ sidebar_order: sidebarOrder })
+        )
+        .execute()
+    }
+  })
+
+  const projectsByCwd = new Map((await getProjects()).map((project) => [project.cwd, project]))
+  return cwds.flatMap((cwd) => {
+    const project = projectsByCwd.get(cwd)
+    return project ? [project] : []
+  })
 }

@@ -1705,7 +1705,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
             ? 'active'
             : null,
     pinned: false,
-    pinnedOrder: null,
+    sidebarOrder: null,
     done: false,
     seenUpdatedAt: null,
     purpose: null,
@@ -1751,7 +1751,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       status: detail?.status ?? null,
       pendingApproval: detail?.pendingApproval ?? null,
       pinned: false,
-      pinnedOrder: null,
+      sidebarOrder: null,
       done: false,
       seenUpdatedAt: null,
       purpose: null,

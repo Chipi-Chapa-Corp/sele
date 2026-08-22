@@ -219,6 +219,13 @@ import {
   mergeChatMetadata,
   type ComparableChatPreview
 } from './chatMetadata'
+import {
+  collapseProjectGroups,
+  getExpandedProjectGroupKeys,
+  restoreExpandedProjectGroups,
+  sortChatsForSidebarSection,
+  sortProjectGroupsForSidebar
+} from './chatSidebarOrder'
 import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
 import { getProjectDisplayName, renderProjectGlyph } from './projectPresentation'
@@ -2496,39 +2503,19 @@ const getCollapsedGroupState = (
 ): boolean => collapsedGroups[groupKey] ?? getDefaultCollapsedGroupState(groupKey)
 
 const sortChatsForGroup = (chats: ProviderChat[]): ProviderChat[] =>
-  [...chats].sort(compareChatsByCreatedAtDesc)
+  sortChatsForSidebarSection(chats)
 
-const sortPinnedChats = (chats: ProviderChat[]): ProviderChat[] =>
-  [...chats].sort((firstChat, secondChat) => {
-    if (firstChat.pinnedOrder !== null && secondChat.pinnedOrder !== null) {
-      const orderDifference = firstChat.pinnedOrder - secondChat.pinnedOrder
-      if (orderDifference !== 0) return orderDifference
-    } else if (firstChat.pinnedOrder !== null) {
-      return -1
-    } else if (secondChat.pinnedOrder !== null) {
-      return 1
-    }
-
-    if (secondChat.createdAt !== firstChat.createdAt) {
-      return secondChat.createdAt - firstChat.createdAt
-    }
-
-    return getChatKey(firstChat).localeCompare(getChatKey(secondChat))
-  })
-
-const groupChatsForSidebar = (chats: ProviderChat[]): ChatListGroupData[] => {
+const groupChatsForSidebar = (
+  chats: ProviderChat[],
+  projectsByCwd: ReadonlyMap<string, AppProject>
+): ChatListGroupData[] => {
   const groupsByCwd = new Map<string, ChatListGroupData>()
-  const groupCreatedAtByKey = new Map<string, number>()
   const pinnedChats: ProviderChat[] = []
   const doneChats: ProviderChat[] = []
 
   for (const chat of chats) {
     const projectCwd = getChatProjectCwd(chat)
     const key = getChatCwdGroupKey(projectCwd)
-    const groupCreatedAt = groupCreatedAtByKey.get(key)
-    if (groupCreatedAt === undefined || chat.createdAt > groupCreatedAt) {
-      groupCreatedAtByKey.set(key, chat.createdAt)
-    }
 
     if (chat.pinned) {
       pinnedChats.push(chat)
@@ -2556,19 +2543,13 @@ const groupChatsForSidebar = (chats: ProviderChat[]): ChatListGroupData[] => {
     })
   }
 
-  const cwdGroups = Array.from(groupsByCwd.values()).map((group) => ({
-    ...group,
-    chats: sortChatsForGroup(group.chats)
-  }))
-  cwdGroups.sort((firstGroup, secondGroup) => {
-    const firstCreatedAt = groupCreatedAtByKey.get(firstGroup.key) ?? 0
-    const secondCreatedAt = groupCreatedAtByKey.get(secondGroup.key) ?? 0
-    if (secondCreatedAt !== firstCreatedAt) {
-      return secondCreatedAt - firstCreatedAt
-    }
-
-    return firstGroup.label.localeCompare(secondGroup.label)
-  })
+  const cwdGroups = sortProjectGroupsForSidebar(
+    Array.from(groupsByCwd.values()).map((group) => ({
+      ...group,
+      chats: sortChatsForGroup(group.chats)
+    })),
+    projectsByCwd
+  )
   const pinnedGroups =
     pinnedChats.length === 0
       ? []
@@ -2577,7 +2558,7 @@ const groupChatsForSidebar = (chats: ProviderChat[]): ChatListGroupData[] => {
             key: pinnedGroupKey,
             cwd: null,
             label: 'Pinned',
-            chats: sortPinnedChats(pinnedChats),
+            chats: sortChatsForGroup(pinnedChats),
             kind: 'pinned' as const
           }
         ]
@@ -2626,7 +2607,7 @@ const getChatFromDetail = (
   pendingApproval: detail.pendingApproval,
   seenUpdatedAt: detail.seenUpdatedAt ?? existingChat?.seenUpdatedAt ?? null,
   pinned: detail.pinned ?? existingChat?.pinned ?? false,
-  pinnedOrder: detail.pinnedOrder ?? existingChat?.pinnedOrder ?? null,
+  sidebarOrder: detail.sidebarOrder ?? existingChat?.sidebarOrder ?? null,
   done: detail.done ?? existingChat?.done ?? false,
   purpose: detail.purpose ?? existingChat?.purpose ?? null,
   container: detail.container ?? existingChat?.container ?? null
@@ -2815,7 +2796,7 @@ const getChatDetailFromUpdateSummary = (
     status: summary.status,
     pendingApproval: summary.pendingApproval,
     pinned: summary.pinned,
-    pinnedOrder: summary.pinnedOrder,
+    sidebarOrder: summary.sidebarOrder,
     done: summary.done,
     seenUpdatedAt: summary.seenUpdatedAt,
     purpose: summary.purpose,
@@ -2854,7 +2835,7 @@ const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.status === second.status &&
   arePendingApprovalsEqual(first.pendingApproval, second.pendingApproval) &&
   first.pinned === second.pinned &&
-  first.pinnedOrder === second.pinnedOrder &&
+  first.sidebarOrder === second.sidebarOrder &&
   first.done === second.done &&
   first.seenUpdatedAt === second.seenUpdatedAt &&
   first.purpose === second.purpose &&
@@ -2878,7 +2859,7 @@ const getChatFromUpdateSummary = (
     existingChat.status !== summary.status ||
     !arePendingApprovalsEqual(existingChat.pendingApproval, summary.pendingApproval) ||
     existingChat.pinned !== summary.pinned ||
-    existingChat.pinnedOrder !== summary.pinnedOrder ||
+    existingChat.sidebarOrder !== summary.sidebarOrder ||
     existingChat.done !== summary.done ||
     existingChat.seenUpdatedAt !== summary.seenUpdatedAt ||
     existingChat.purpose !== summary.purpose ||
@@ -2900,7 +2881,7 @@ const getChatFromUpdateSummary = (
     status: summary.status,
     pendingApproval: summary.pendingApproval,
     pinned: summary.pinned,
-    pinnedOrder: summary.pinnedOrder,
+    sidebarOrder: summary.sidebarOrder,
     done: summary.done,
     seenUpdatedAt:
       existingChat?.seenUpdatedAt == null
@@ -4066,6 +4047,8 @@ export const App: React.FC = () => {
     readChatGroupingPreference
   )
   const [collapsedCwdGroups, setCollapsedCwdGroups] = useState<Record<string, boolean>>({})
+  const [draggedProjectGroupKey, setDraggedProjectGroupKey] = useState<string | null>(null)
+  const [projectDropInsertionIndex, setProjectDropInsertionIndex] = useState<number | null>(null)
   const [visibleChatPageCountsByGroup, setVisibleChatPageCountsByGroup] = useState<
     Record<string, number>
   >({})
@@ -4183,12 +4166,18 @@ export const App: React.FC = () => {
   const chatAutoScrollTargetRef = useRef<{ element: HTMLElement; top: number } | null>(null)
   const chatUserScrollIntentRef = useRef(false)
   const chatUserScrollIntentFrameRef = useRef<number | null>(null)
+  const chatsRef = useRef(chats)
   const selectedChatKeyRef = useRef<string | null>(null)
   const selectedChatUpdatedAtRef = useRef<number | null>(null)
   const recentChatCacheLimitRef = useRef(effectiveAppSettings.chat.recentChatCacheLimit)
   const recentChatCacheRef = useRef(new Map<string, RecentChatCacheEntry>())
   const recentlyViewedActiveChatPreviewsRef = useRef(new Map<string, ComparableChatPreview>())
-  const pinnedOrderMutationRef = useRef(0)
+  const chatOrderMutationsRef = useRef(new Map<string, number>())
+  const projectOrderMutationRef = useRef(0)
+  const expandedProjectGroupsBeforeDragRef = useRef<Set<string> | null>(null)
+  const draggedProjectGroupKeyRef = useRef<string | null>(null)
+  const projectDropInsertionIndexRef = useRef<number | null>(null)
+  const projectCollapseFrameRef = useRef<number | null>(null)
   const changesCwdRef = useRef<string | null>(null)
   const changesContainerRef = useRef<AppContainerTarget | null>(null)
   const changeSourceRef = useRef(changeSource)
@@ -4410,6 +4399,10 @@ export const App: React.FC = () => {
     () => clampChatPanePercentsToAvailable(preferredPanePercents, panelsWidth),
     [panelsWidth, preferredPanePercents]
   )
+
+  useEffect(() => {
+    chatsRef.current = chats
+  }, [chats])
 
   useEffect(() => {
     selectedChatRef.current = selectedChat
@@ -5310,6 +5303,20 @@ export const App: React.FC = () => {
       }
 
       const availableProviderIds = new Set(newSessionAvailableProviderIds)
+      const initialChatKeysByProvider = new Map(
+        newSessionAvailableProviderIds.map((providerId) => [
+          providerId,
+          new Set(
+            chatsRef.current
+              .filter(
+                (chat) =>
+                  chat.providerId === providerId &&
+                  areContainerTargetsEqual(chat.container, container)
+              )
+              .map(getChatKey)
+          )
+        ])
+      )
       setChats((currentChats) =>
         currentChats.filter(
           (chat) =>
@@ -5336,6 +5343,7 @@ export const App: React.FC = () => {
         const loadProviderChats = async (): Promise<void> => {
           let cursor: string | null = null
           let firstPage = true
+          const loadedProviderChatKeys = new Set<string>()
           const seenCursors = new Set<string>()
 
           do {
@@ -5346,21 +5354,10 @@ export const App: React.FC = () => {
             })
             if (!active) return
 
-            const replaceProviderChats = firstPage
-            if (replaceProviderChats) loadedProviderCount += 1
-            setChats((currentChats) =>
-              mergeChats(
-                replaceProviderChats
-                  ? currentChats.filter(
-                      (chat) =>
-                        chat.providerId !== providerId &&
-                        availableProviderIds.has(chat.providerId) &&
-                        areContainerTargetsEqual(chat.container, container)
-                    )
-                  : currentChats,
-                page.chats
-              )
-            )
+            if (firstPage) loadedProviderCount += 1
+            page.chats.forEach((chat) => loadedProviderChatKeys.add(getChatKey(chat)))
+            // Keep the previous snapshot mounted while later pages are still loading.
+            setChats((currentChats) => mergeChats(currentChats, page.chats))
             setLoadState('ready')
 
             firstPage = false
@@ -5368,6 +5365,19 @@ export const App: React.FC = () => {
             if (cursor && seenCursors.has(cursor)) break
             if (cursor) seenCursors.add(cursor)
           } while (cursor)
+
+          const initialProviderChatKeys = initialChatKeysByProvider.get(providerId) ?? new Set()
+          // Once every page is present, discard only stale entries from the original snapshot.
+          setChats((currentChats) =>
+            mergeChats(
+              currentChats.filter(
+                (chat) =>
+                  chat.providerId !== providerId ||
+                  !initialProviderChatKeys.has(getChatKey(chat)) ||
+                  loadedProviderChatKeys.has(getChatKey(chat))
+              )
+            )
+          )
         }
 
         void loadProviderChats()
@@ -7107,7 +7117,7 @@ export const App: React.FC = () => {
   const projectNamesByCwd = new Map(
     projects.map((project) => [project.cwd, getProjectDisplayName(project)])
   )
-  const chatGroups = groupChatsForSidebar(filteredChats).map((group) => {
+  const chatGroups = groupChatsForSidebar(filteredChats, projectRecordsByCwd).map((group) => {
     if (group.kind !== 'cwd' || !group.cwd) return group
 
     const project = projectRecordsByCwd.get(group.cwd)
@@ -8799,39 +8809,183 @@ export const App: React.FC = () => {
     }
   }
 
-  const handleReorderPinnedChats = (orderedChats: ProviderChat[]): void => {
+  const handleReorderChats = (group: ChatListGroupData, orderedChats: ProviderChat[]): void => {
     if (orderedChats.length < 2) return
 
-    const mutationId = ++pinnedOrderMutationRef.current
+    const mutationId = (chatOrderMutationsRef.current.get(group.key) ?? 0) + 1
+    chatOrderMutationsRef.current.set(group.key, mutationId)
     const previousOrderByChatKey = new Map(
-      orderedChats.map((chat) => [getChatKey(chat), chat.pinnedOrder])
+      orderedChats.map((chat) => [getChatKey(chat), chat.sidebarOrder])
     )
     const nextOrderByChatKey = new Map(
-      orderedChats.map((chat, pinnedOrder) => [getChatKey(chat), pinnedOrder])
+      orderedChats.map((chat, sidebarOrder) => [getChatKey(chat), sidebarOrder])
     )
 
     setChats((currentChats) =>
       currentChats.map((chat) => {
-        const pinnedOrder = nextOrderByChatKey.get(getChatKey(chat))
-        return pinnedOrder === undefined ? chat : { ...chat, pinnedOrder }
+        const sidebarOrder = nextOrderByChatKey.get(getChatKey(chat))
+        return sidebarOrder === undefined ? chat : { ...chat, sidebarOrder }
       })
     )
 
     void providerApi
-      .setPinnedChatOrder(orderedChats.map((chat) => chat.id))
+      .setChatOrder(orderedChats.map((chat) => chat.id))
       .then((metadataList) => {
-        if (pinnedOrderMutationRef.current === mutationId) applyChatMetadata(metadataList)
+        if (chatOrderMutationsRef.current.get(group.key) === mutationId) {
+          applyChatMetadata(metadataList)
+        }
       })
       .catch(() => {
-        if (pinnedOrderMutationRef.current !== mutationId) return
+        if (chatOrderMutationsRef.current.get(group.key) !== mutationId) return
 
         setChats((currentChats) =>
           currentChats.map((chat) => {
-            const pinnedOrder = previousOrderByChatKey.get(getChatKey(chat))
-            return pinnedOrder === undefined ? chat : { ...chat, pinnedOrder }
+            const sidebarOrder = previousOrderByChatKey.get(getChatKey(chat))
+            return sidebarOrder === undefined ? chat : { ...chat, sidebarOrder }
           })
         )
       })
+  }
+
+  const restoreExpandedProjectsAfterDrag = (): void => {
+    if (projectCollapseFrameRef.current !== null) {
+      window.cancelAnimationFrame(projectCollapseFrameRef.current)
+      projectCollapseFrameRef.current = null
+    }
+    const expandedProjectGroupKeys = expandedProjectGroupsBeforeDragRef.current
+    expandedProjectGroupsBeforeDragRef.current = null
+    draggedProjectGroupKeyRef.current = null
+    projectDropInsertionIndexRef.current = null
+    setDraggedProjectGroupKey(null)
+    setProjectDropInsertionIndex(null)
+    if (!expandedProjectGroupKeys) return
+
+    const projectGroupKeys = activeChatGroups.map((group) => group.key)
+    setCollapsedCwdGroups((currentGroups) =>
+      restoreExpandedProjectGroups(currentGroups, projectGroupKeys, expandedProjectGroupKeys)
+    )
+  }
+
+  const handlePersistProjectOrder = (orderedGroups: ChatListGroupData[]): void => {
+    const orderedCwds = orderedGroups.flatMap((group) => (group.cwd ? [group.cwd] : []))
+    if (orderedCwds.length < 2) return
+
+    const mutationId = ++projectOrderMutationRef.current
+    const reorderedAt = Date.now()
+    const previousProjectsByCwd = new Map(projects.map((project) => [project.cwd, project]))
+    const reorderedCwds = new Set(orderedCwds)
+    const optimisticProjects = orderedCwds.map((cwd, sidebarOrder) => {
+      const project = previousProjectsByCwd.get(cwd)
+      return project
+        ? { ...project, sidebarOrder }
+        : {
+            cwd,
+            name: '',
+            icon: null,
+            additionalCwds: [],
+            sidebarOrder,
+            addedAt: reorderedAt,
+            updatedAt: reorderedAt
+          }
+    })
+
+    setProjects((currentProjects) => mergeProjects(currentProjects, optimisticProjects))
+
+    void appApi
+      .setProjectOrder(orderedCwds)
+      .then((storedProjects) => {
+        if (projectOrderMutationRef.current !== mutationId) return
+        setProjects((currentProjects) => mergeProjects(currentProjects, storedProjects))
+      })
+      .catch(() => {
+        if (projectOrderMutationRef.current !== mutationId) return
+        setProjects((currentProjects) =>
+          currentProjects.flatMap((project) => {
+            if (!reorderedCwds.has(project.cwd)) return [project]
+            const previousProject = previousProjectsByCwd.get(project.cwd)
+            if (previousProject) {
+              return [{ ...project, sidebarOrder: previousProject.sidebarOrder }]
+            }
+            return project.updatedAt > reorderedAt ? [project] : []
+          })
+        )
+      })
+  }
+
+  const applyProjectDrop = (draggedProjectKey: string, dropInsertionIndex: number | null): void => {
+    if (dropInsertionIndex !== null) {
+      const draggedIndex = activeChatGroups.findIndex((group) => group.key === draggedProjectKey)
+      if (draggedIndex >= 0) {
+        const nextGroups = [...activeChatGroups]
+        const [draggedGroup] = nextGroups.splice(draggedIndex, 1)
+        const insertionIndex =
+          draggedIndex < dropInsertionIndex ? dropInsertionIndex - 1 : dropInsertionIndex
+        nextGroups.splice(insertionIndex, 0, draggedGroup)
+        if (nextGroups.some((group, index) => group.key !== activeChatGroups[index]?.key)) {
+          handlePersistProjectOrder(nextGroups)
+        }
+      }
+    }
+  }
+
+  const handleProjectDragStart = (
+    event: React.DragEvent<HTMLElement>,
+    group: ChatListGroupData
+  ): void => {
+    if (group.kind !== 'cwd' || chatGroupingPreference !== 'grouped' || searchTerms.length > 0) {
+      return
+    }
+
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', group.key)
+    const projectGroupKeys = activeChatGroups.map((candidate) => candidate.key)
+    expandedProjectGroupsBeforeDragRef.current = getExpandedProjectGroupKeys(
+      projectGroupKeys,
+      collapsedCwdGroups
+    )
+    draggedProjectGroupKeyRef.current = group.key
+    projectDropInsertionIndexRef.current = null
+    setDraggedProjectGroupKey(group.key)
+    setProjectDropInsertionIndex(null)
+    projectCollapseFrameRef.current = window.requestAnimationFrame(() => {
+      projectCollapseFrameRef.current = null
+      if (draggedProjectGroupKeyRef.current !== group.key) return
+      setCollapsedCwdGroups((currentGroups) =>
+        collapseProjectGroups(currentGroups, projectGroupKeys)
+      )
+    })
+  }
+
+  const handleProjectStackDragOver = (event: React.DragEvent<HTMLDivElement>): void => {
+    if (!draggedProjectGroupKeyRef.current) return
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const projectElements = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(':scope > [data-project-group-key]')
+    )
+    let insertionIndex = projectElements.length
+
+    for (let index = 0; index < projectElements.length; index += 1) {
+      const bounds = projectElements[index].getBoundingClientRect()
+      if (event.clientY < bounds.top + bounds.height / 2) {
+        insertionIndex = index
+        break
+      }
+    }
+
+    projectDropInsertionIndexRef.current = insertionIndex
+    setProjectDropInsertionIndex(insertionIndex)
+  }
+
+  const handleProjectDrop = (event: React.DragEvent<HTMLDivElement>): void => {
+    const draggedProjectKey = draggedProjectGroupKeyRef.current
+    if (!draggedProjectKey) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    applyProjectDrop(draggedProjectKey, projectDropInsertionIndexRef.current)
+    restoreExpandedProjectsAfterDrag()
   }
 
   const handleUnpinPinnedChats = async (group: ChatListGroupData): Promise<void> => {
@@ -9798,6 +9952,20 @@ export const App: React.FC = () => {
       ) : (
         <FolderKanban aria-hidden="true" />
       )
+    const projectGroupIndex = activeChatGroups.findIndex((candidate) => candidate.key === group.key)
+    const projectDraggable =
+      group.kind === 'cwd' &&
+      chatGroupingPreference === 'grouped' &&
+      searchTerms.length === 0 &&
+      projectGroupIndex >= 0
+    const projectDropPosition =
+      projectDraggable && projectDropInsertionIndex === projectGroupIndex
+        ? 'before'
+        : projectDraggable &&
+            projectGroupIndex === activeChatGroups.length - 1 &&
+            projectDropInsertionIndex === activeChatGroups.length
+          ? 'after'
+          : null
 
     return (
       <ChatListGroup
@@ -9808,6 +9976,9 @@ export const App: React.FC = () => {
         selectedChatKey={selectedChat ? getChatKey(selectedChat) : null}
         committingChatKeys={committingChatKeys}
         canReorderChats={searchTerms.length === 0}
+        projectDraggable={projectDraggable}
+        projectDragging={group.key === draggedProjectGroupKey}
+        projectDropPosition={projectDropPosition}
         visibleChatCount={visibleChatCount}
         chatPageSize={chatPageSize}
         projectNamesByCwd={projectNamesByCwd}
@@ -9815,12 +9986,14 @@ export const App: React.FC = () => {
         onShowLessChats={group.kind === 'pinned' ? undefined : handleShowLessChatsInGroup}
         projectIcon={projectIcon}
         onMarkChatDone={handleMarkChatDone}
+        onProjectDragEnd={projectDraggable ? restoreExpandedProjectsAfterDrag : undefined}
+        onProjectDragStart={projectDraggable ? handleProjectDragStart : undefined}
         onMarkCwdChatsDone={(nextGroup) => void handleMarkCwdChatsDone(nextGroup)}
         onNewChatInCwd={handleNewChatInCwd}
         onRenameChat={handleRenameChat}
         onSelectProjectIcon={(nextGroup) => void handleSelectProjectIcon(nextGroup)}
         onResolveApproval={(chat, decision) => void handleResolveChatApproval(chat, decision)}
-        onReorderPinnedChats={handleReorderPinnedChats}
+        onReorderChats={handleReorderChats}
         onSelectChat={handleSelectChat}
         onToggle={handleToggleCwdGroup}
         onToggleChatPinned={handleToggleChatPinned}
@@ -13387,7 +13560,11 @@ export const App: React.FC = () => {
                 <p className="chat__status">No matching chats.</p>
               )}
               {filteredChats.length > 0 && (
-                <div className="chat-list-stack">
+                <div
+                  className="chat-list-stack"
+                  onDragOver={handleProjectStackDragOver}
+                  onDrop={handleProjectDrop}
+                >
                   {pinnedChatGroup && renderChatGroup(pinnedChatGroup, 'pinned-chats-list')}
                   {displayedActiveChatGroups.map((group, groupIndex) =>
                     renderChatGroup(group, `cwd-chats-list-${groupIndex}`)
