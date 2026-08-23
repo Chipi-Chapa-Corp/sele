@@ -19,6 +19,7 @@ import {
 import type { AppExternalLinkAction } from '../../shared/app'
 import type { AppAction } from './actions'
 import { normalizeAppActions } from './actions'
+import { appGitLegacyCommitModelKey, type AppGitCommitModels } from './gitCommitModels'
 import {
   appMaxChatsRenderedDefault,
   appRecentlyOpenedFilesLimitDefault,
@@ -149,7 +150,7 @@ export type AppSettings = {
   links: AppExternalLinkSettings
   performance: AppPerformanceSettings
   git: {
-    commitModel: ProviderModelId | null
+    commitModels: AppGitCommitModels
     untrackedFilesPrompt: string
     commitPrompt: AppGitCommitPromptSettings
     commitMessageGeneration: AppGitCommitMessageGenerationSettings
@@ -164,7 +165,7 @@ export type AppProjectSettingsOverrides = {
   links?: Partial<AppExternalLinkSettings>
   performance?: Partial<AppPerformanceSettings>
   git?: {
-    commitModel?: ProviderModelId | null
+    commitModels?: AppGitCommitModels
     untrackedFilesPrompt?: string
     commitPrompt?: Partial<AppGitCommitPromptSettings>
     commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
@@ -341,7 +342,7 @@ export const defaultAppSettings: AppSettings = {
   },
   performance: defaultAppPerformanceSettings,
   git: {
-    commitModel: null,
+    commitModels: {},
     untrackedFilesPrompt: defaultAppGitUntrackedFilesPrompt,
     commitPrompt: defaultAppGitCommitPromptSettings,
     commitMessageGeneration: defaultAppGitCommitMessageGenerationSettings,
@@ -410,6 +411,18 @@ const hasOwnProperty = <Key extends PropertyKey>(
   value: object,
   key: Key
 ): value is object & Record<Key, unknown> => Object.prototype.hasOwnProperty.call(value, key)
+
+const getStoredGitCommitModels = (value: unknown): AppGitCommitModels => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, model]) =>
+        (key === appGitLegacyCommitModelKey || (key.includes('\0') && key.length <= 1024)) &&
+        (model === null || isStoredModel(model))
+    )
+  ) as AppGitCommitModels
+}
 
 const getStoredForcedDropdown = <TValue extends string>(
   value: unknown,
@@ -601,11 +614,12 @@ const readProjectGitOverrides = (
 ): AppProjectSettingsOverrides['git'] => {
   const overrides: NonNullable<AppProjectSettingsOverrides['git']> = {}
 
-  if (hasOwnProperty(git, 'commitModel')) {
-    if (git.commitModel == null) {
-      overrides.commitModel = null
-    } else if (isStoredModel(git.commitModel)) {
-      overrides.commitModel = git.commitModel
+  if (hasOwnProperty(git, 'commitModels')) {
+    const commitModels = getStoredGitCommitModels(git.commitModels)
+    if (Object.keys(commitModels).length > 0) overrides.commitModels = commitModels
+  } else if (hasOwnProperty(git, 'commitModel')) {
+    if (git.commitModel == null || isStoredModel(git.commitModel)) {
+      overrides.commitModels = { [appGitLegacyCommitModelKey]: git.commitModel ?? null }
     }
   }
   if (hasOwnProperty(git, 'untrackedFilesPrompt') && typeof git.untrackedFilesPrompt === 'string') {
@@ -724,8 +738,8 @@ const pruneAppProjectSettingsOverrides = (
   if (overrides.git) {
     const gitOverrides: NonNullable<AppProjectSettingsOverrides['git']> = {}
 
-    if (hasOwnProperty(overrides.git, 'commitModel')) {
-      gitOverrides.commitModel = overrides.git.commitModel ?? null
+    if (overrides.git.commitModels && Object.keys(overrides.git.commitModels).length > 0) {
+      gitOverrides.commitModels = { ...overrides.git.commitModels }
     }
     if (hasOwnProperty(overrides.git, 'untrackedFilesPrompt')) {
       gitOverrides.untrackedFilesPrompt = overrides.git.untrackedFilesPrompt
@@ -767,10 +781,14 @@ export const resolveAppSettings = (
   if (isAppProjectSettingsOverridesEmpty(overrides)) return settings
 
   const gitOverrides = overrides?.git
-  const commitModel =
-    gitOverrides && hasOwnProperty(gitOverrides, 'commitModel')
-      ? (gitOverrides.commitModel ?? null)
-      : settings.git.commitModel
+  const projectCommitModels = gitOverrides?.commitModels
+  const commitModels =
+    projectCommitModels && hasOwnProperty(projectCommitModels, appGitLegacyCommitModelKey)
+      ? { ...projectCommitModels }
+      : {
+          ...settings.git.commitModels,
+          ...projectCommitModels
+        }
   const untrackedFilesPrompt =
     gitOverrides && hasOwnProperty(gitOverrides, 'untrackedFilesPrompt')
       ? (gitOverrides.untrackedFilesPrompt ?? settings.git.untrackedFilesPrompt)
@@ -800,7 +818,7 @@ export const resolveAppSettings = (
     },
     git: {
       ...settings.git,
-      commitModel,
+      commitModels,
       untrackedFilesPrompt,
       commitPrompt: {
         ...settings.git.commitPrompt,
@@ -951,12 +969,11 @@ export const readStoredAppSettings = (): AppSettings => {
         recentsMessageLimit: getStoredRecentsMessageLimit(performance.recentsMessageLimit)
       },
       git: {
-        commitModel:
-          git.commitModel == null
-            ? defaultAppSettings.git.commitModel
-            : isStoredModel(git.commitModel)
-              ? git.commitModel
-              : defaultAppSettings.git.commitModel,
+        commitModels: hasOwnProperty(git, 'commitModels')
+          ? getStoredGitCommitModels(git.commitModels)
+          : hasOwnProperty(git, 'commitModel') && isStoredModel(git.commitModel)
+            ? { [appGitLegacyCommitModelKey]: git.commitModel }
+            : defaultAppSettings.git.commitModels,
         untrackedFilesPrompt:
           typeof git.untrackedFilesPrompt === 'string'
             ? git.untrackedFilesPrompt
@@ -1103,7 +1120,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       links?: Partial<AppExternalLinkSettings>
       performance?: Partial<AppPerformanceSettings>
       git?: {
-        commitModel?: ProviderModelId | null
+        commitModels?: AppGitCommitModels
         untrackedFilesPrompt?: string
         commitPrompt?: Partial<AppGitCommitPromptSettings>
         commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
@@ -1257,14 +1274,14 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
 
     const storedGit: {
-      commitModel?: ProviderModelId | null
+      commitModels?: AppGitCommitModels
       untrackedFilesPrompt?: string
       commitPrompt?: Partial<AppGitCommitPromptSettings>
       commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
       worktree?: Partial<AppGitWorktreeSettings>
     } = {}
-    if (settings.git.commitModel !== defaultAppSettings.git.commitModel) {
-      storedGit.commitModel = settings.git.commitModel
+    if (Object.keys(settings.git.commitModels).length > 0) {
+      storedGit.commitModels = getStoredGitCommitModels(settings.git.commitModels)
     }
     if (settings.git.untrackedFilesPrompt !== defaultAppSettings.git.untrackedFilesPrompt) {
       storedGit.untrackedFilesPrompt = settings.git.untrackedFilesPrompt

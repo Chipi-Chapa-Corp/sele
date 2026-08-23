@@ -231,6 +231,10 @@ import {
   sortChatsForSidebarSection,
   sortProjectGroupsForSidebar
 } from './chatSidebarOrder'
+import {
+  readStoredCollapsedProjectGroups,
+  writeStoredCollapsedProjectGroups
+} from './collapsedProjectGroups'
 import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
 import { getProjectDisplayName, renderProjectGlyph } from './projectPresentation'
@@ -291,6 +295,11 @@ import {
   writeStoredAppProjectSettings,
   writeStoredAppSettings
 } from './settings'
+import {
+  getAppGitCommitModel,
+  setAppGitCommitModel,
+  type AppGitCommitModels
+} from './gitCommitModels'
 import { setThemePreference } from './systemColorScheme'
 import {
   clearChatSearchHighlights,
@@ -400,10 +409,13 @@ type ScopedCommitActivity = {
   startedAt: number
 }
 type StartingScopedCommitActivity = {
+  id: string
   providerId: ProviderId
-  sourceChatId: string
-  markerId: string
+  sourceChatId: string | null
+  markerId: string | null
+  projectCwd: string | null
   commitAction: GitCommitPromptAction
+  startedAt: number
 }
 type ChatCommitMarker = {
   id: string
@@ -541,7 +553,7 @@ type AppProjectSettingPath =
   | { section: 'browser'; key: keyof AppSettings['browser'] }
   | { section: 'links'; key: keyof AppSettings['links'] }
   | { section: 'performance'; key: keyof AppSettings['performance'] }
-  | { section: 'git'; key: 'commitModel' | 'untrackedFilesPrompt' }
+  | { section: 'git'; key: 'commitModels' | 'untrackedFilesPrompt' }
   | { section: 'gitCommitPrompt'; key: keyof AppGitCommitPromptSettings }
   | {
       section: 'gitCommitMessageGeneration'
@@ -711,7 +723,7 @@ const setAppProjectSettingOverrideValue = (
         ...overrides,
         git: {
           ...overrides.git,
-          commitModel: value as ProviderModelId | null
+          commitModels: value as AppGitCommitModels
         }
       })
     case 'gitCommitPrompt':
@@ -3917,6 +3929,7 @@ export const App: React.FC = () => {
   const [chatLoadRequest, setChatLoadRequest] = useState(0)
   const [committedChatUpdate, setCommittedChatUpdate] = useState<CommittedChatUpdate | null>(null)
   const [sendState, setSendState] = useState<SendState>('idle')
+  const [sendInFlightProjectKey, setSendInFlightProjectKey] = useState<string | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
   const [editingMessage, setEditingMessage] = useState<EditingMessage | null>(null)
   const [messageBoxQuoteRequest, setMessageBoxQuoteRequest] =
@@ -3935,8 +3948,11 @@ export const App: React.FC = () => {
   )
   const [models, setModels] = useState<ProviderModel[]>(fallbackProviderModels)
   const [modelsLoading, setModelsLoading] = useState(false)
+  const [gitSettingsModels, setGitSettingsModels] = useState<ProviderModel[]>([])
+  const [gitSettingsModelsLoading, setGitSettingsModelsLoading] = useState(false)
   const providerModelCatalogCacheRef = useRef(new Map<string, ProviderModel[]>())
   const displayedModelCatalogKeyRef = useRef<string | null>(null)
+  const displayedGitSettingsModelCatalogKeyRef = useRef<string | null>(null)
   const [model, setModel] = useState<ProviderModelId>(
     storedMessageBoxSelection.model ?? fallbackInitialModel.id
   )
@@ -4080,6 +4096,11 @@ export const App: React.FC = () => {
   const configProviderModelsReady =
     configProviderHasSelectedChat ||
     (newSessionSourceAvailabilityReady && newSessionProviderAvailable && loadState !== 'loading')
+  const gitSettingsModelCatalogKey = `${newSessionProvider}:${newSessionContainerKey}`
+  const gitSettingsUsesConfigProviderModels =
+    gitSettingsModelCatalogKey === configProviderModelCatalogKey
+  const gitSettingsModelsReady =
+    newSessionSourceAvailabilityReady && newSessionProviderAvailable && loadState !== 'loading'
   const [projects, setProjects] = useState<AppProject[]>([])
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -4091,7 +4112,9 @@ export const App: React.FC = () => {
   const [chatGroupingPreference, setChatGroupingPreference] = useState<ChatGroupingPreference>(
     readChatGroupingPreference
   )
-  const [collapsedCwdGroups, setCollapsedCwdGroups] = useState<Record<string, boolean>>({})
+  const [collapsedCwdGroups, setCollapsedCwdGroups] = useState<Record<string, boolean>>(
+    readStoredCollapsedProjectGroups
+  )
   const [draggedProjectGroupKey, setDraggedProjectGroupKey] = useState<string | null>(null)
   const [projectDropInsertionIndex, setProjectDropInsertionIndex] = useState<number | null>(null)
   const [visibleChatPageCountsByGroup, setVisibleChatPageCountsByGroup] = useState<
@@ -4143,10 +4166,12 @@ export const App: React.FC = () => {
     null
   )
   const [commitInput, setCommitInput] = useState('')
-  const [commitState, setCommitState] = useState<SendState>('idle')
-  const [commitMessageGenerationState, setCommitMessageGenerationState] =
-    useState<SendState>('idle')
-  const [commitError, setCommitError] = useState<string | null>(null)
+  const [commitMessageGenerationProjectKeys, setCommitMessageGenerationProjectKeys] = useState<
+    Set<string>
+  >(() => new Set())
+  const [commitErrorsByProjectKey, setCommitErrorsByProjectKey] = useState<Record<string, string>>(
+    {}
+  )
   const [scopedCommitActivities, setScopedCommitActivities] = useState<
     Record<string, ScopedCommitActivity>
   >(readStoredScopedCommitActivities)
@@ -4155,8 +4180,9 @@ export const App: React.FC = () => {
   )
   const [continuedStoppedWorkingStepsByChat, setContinuedStoppedWorkingStepsByChat] =
     useState<ContinuedStoppedWorkingStepsByChat>(readStoredContinuedStoppedWorkingSteps)
-  const [startingScopedCommitActivity, setStartingScopedCommitActivity] =
-    useState<StartingScopedCommitActivity | null>(null)
+  const [startingScopedCommitActivities, setStartingScopedCommitActivities] = useState<
+    Record<string, StartingScopedCommitActivity>
+  >({})
   const [directCommitActivities, setDirectCommitActivities] = useState<
     Record<string, DirectCommitActivity>
   >({})
@@ -4164,9 +4190,11 @@ export const App: React.FC = () => {
   const [openingAiCommitChatIds, setOpeningAiCommitChatIds] = useState<Set<string>>(() => new Set())
   const [commitChatReturnTarget, setCommitChatReturnTarget] =
     useState<CommitChatReturnTarget | null>(null)
-  const [syncState, setSyncState] = useState<SendState>('idle')
-  const [syncError, setSyncError] = useState<string | null>(null)
-  const [syncRecovery, setSyncRecovery] = useState<GitSyncRecoveryState | null>(null)
+  const [syncProjectKeys, setSyncProjectKeys] = useState<Set<string>>(() => new Set())
+  const [syncErrorsByProjectKey, setSyncErrorsByProjectKey] = useState<Record<string, string>>({})
+  const [syncRecoveriesByProjectKey, setSyncRecoveriesByProjectKey] = useState<
+    Record<string, GitSyncRecoveryState>
+  >({})
   const [panePercents, setPanePercents] = useState<ChatPanePercents | null>(
     readStoredChatPanePercents
   )
@@ -4203,11 +4231,13 @@ export const App: React.FC = () => {
   )
   const deferredProviderResourceRefreshRunningRef = useRef(false)
   const sendInFlightRef = useRef(false)
+  const sendInFlightProjectKeyRef = useRef<string | null>(null)
   const runPromptActionRef = useRef<(prompt: string, target: 'current' | 'new') => Promise<void>>(
     async () => {}
   )
-  const commitInFlightRef = useRef(false)
-  const commitMessageGenerationInFlightRef = useRef(false)
+  const commitInFlightProjectKeysRef = useRef(new Set<string>())
+  const commitMessageGenerationProjectKeysRef = useRef(new Set<string>())
+  const syncProjectKeysRef = useRef(new Set<string>())
   const gitBranchRequestIdRef = useRef(0)
   const chatAutoScrollEnabledRef = useRef(true)
   const chatAutoScrollFrameRef = useRef<number | null>(null)
@@ -4240,6 +4270,7 @@ export const App: React.FC = () => {
   const initialChatCommitMarkersRef = useRef(chatCommitMarkers)
   const scopedCommitActivitiesRef =
     useRef<Record<string, ScopedCommitActivity>>(scopedCommitActivities)
+  const startingScopedCommitActivitiesRef = useRef<Record<string, StartingScopedCommitActivity>>({})
   const loadingCwdNotesRef = useRef(new Set<string>())
   const loadingProjectIconsRef = useRef(new Set<string>())
   const messageBoxSelectionsRef = useRef(storedMessageBoxSelections)
@@ -5709,6 +5740,76 @@ export const App: React.FC = () => {
   ])
 
   useEffect(() => {
+    if (!settingsOpen || settingsTab !== 'git' || gitSettingsUsesConfigProviderModels) return
+
+    let active = true
+    const fallbackModels = getFallbackModels(newSessionProvider)
+    const cachedModels = providerModelCatalogCacheRef.current.get(gitSettingsModelCatalogKey)
+
+    if (!gitSettingsModelsReady) {
+      queueMicrotask(() => {
+        if (!active) return
+        setGitSettingsModels(cachedModels ?? [])
+        setGitSettingsModelsLoading(false)
+        displayedGitSettingsModelCatalogKeyRef.current = cachedModels
+          ? gitSettingsModelCatalogKey
+          : null
+      })
+
+      return () => {
+        active = false
+      }
+    }
+
+    const container = normalizeContainerTarget(newSessionContainer)
+    queueMicrotask(() => {
+      if (!active) return
+      if (cachedModels) {
+        setGitSettingsModels(cachedModels)
+        setGitSettingsModelsLoading(false)
+        displayedGitSettingsModelCatalogKeyRef.current = gitSettingsModelCatalogKey
+      } else {
+        setGitSettingsModels(newSessionProvider === 'claude' ? [] : fallbackModels)
+        setGitSettingsModelsLoading(true)
+        displayedGitSettingsModelCatalogKeyRef.current = gitSettingsModelCatalogKey
+      }
+    })
+
+    providerApi
+      .getModels(newSessionProvider, { container })
+      .then((nextModels) => {
+        if (!active) return
+
+        const resolvedModels = nextModels.length > 0 ? nextModels : fallbackModels
+        providerModelCatalogCacheRef.current.set(gitSettingsModelCatalogKey, resolvedModels)
+        displayedGitSettingsModelCatalogKeyRef.current = gitSettingsModelCatalogKey
+        setGitSettingsModels(resolvedModels)
+        setGitSettingsModelsLoading(false)
+      })
+      .catch(() => {
+        if (!active) return
+        const resolvedModels = cachedModels ?? fallbackModels
+        providerModelCatalogCacheRef.current.set(gitSettingsModelCatalogKey, resolvedModels)
+        displayedGitSettingsModelCatalogKeyRef.current = gitSettingsModelCatalogKey
+        setGitSettingsModels(resolvedModels)
+        setGitSettingsModelsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [
+    gitSettingsModelCatalogKey,
+    gitSettingsModelsReady,
+    gitSettingsUsesConfigProviderModels,
+    newSessionContainer,
+    newSessionProvider,
+    providerModelsRevision,
+    settingsOpen,
+    settingsTab
+  ])
+
+  useEffect(() => {
     if (models.length === 0) return
 
     const defaultModel = getDefaultModel(models)
@@ -6266,18 +6367,17 @@ export const App: React.FC = () => {
         activity.commitAction
       )
     })
-    if (startingScopedCommitActivity) {
+    Object.values(startingScopedCommitActivities).forEach((activity) => {
+      if (!activity.sourceChatId) return
+
       actions.set(
-        getChatKey({
-          providerId: startingScopedCommitActivity.providerId,
-          id: startingScopedCommitActivity.sourceChatId
-        }),
-        startingScopedCommitActivity.commitAction
+        getChatKey({ providerId: activity.providerId, id: activity.sourceChatId }),
+        activity.commitAction
       )
-    }
+    })
 
     return actions
-  }, [scopedCommitActivities, startingScopedCommitActivity])
+  }, [scopedCommitActivities, startingScopedCommitActivities])
   const committingChatKeys = useMemo(
     () => new Set(committingChatActions.keys()),
     [committingChatActions]
@@ -6973,9 +7073,6 @@ export const App: React.FC = () => {
     queueMicrotask(() => {
       if (!active) return
 
-      setSyncState('idle')
-      setSyncError(null)
-      setSyncRecovery(null)
       setGitBranchActionState('idle')
       setGitBranchError(null)
       setGitBranchDeleteRetry(null)
@@ -7969,9 +8066,24 @@ export const App: React.FC = () => {
       })
     }
   }
-  const savedGitCommitModel = settingsPanelSettings.git.commitModel
+  const gitSettingsModelsCurrent = gitSettingsUsesConfigProviderModels
+    ? displayedModelCatalogKeyRef.current === gitSettingsModelCatalogKey
+    : displayedGitSettingsModelCatalogKeyRef.current === gitSettingsModelCatalogKey
+  const gitSettingsModelCatalog = gitSettingsUsesConfigProviderModels ? models : gitSettingsModels
+  const gitSettingsModelCatalogLoading = gitSettingsUsesConfigProviderModels
+    ? modelsLoading
+    : gitSettingsModelsLoading
+  const displayedGitSettingsModels = useMemo(
+    () => (gitSettingsModelsCurrent ? gitSettingsModelCatalog : []),
+    [gitSettingsModelCatalog, gitSettingsModelsCurrent]
+  )
+  const savedGitCommitModel = getAppGitCommitModel(
+    settingsPanelSettings.git.commitModels,
+    newSessionProvider,
+    newSessionContainerKey
+  )
   const savedGitCommitModelOption = savedGitCommitModel
-    ? models.find((candidateModel) => candidateModel.id === savedGitCommitModel)
+    ? displayedGitSettingsModels.find((candidateModel) => candidateModel.id === savedGitCommitModel)
     : undefined
   const modelLabelsById = useMemo(
     () =>
@@ -7980,20 +8092,30 @@ export const App: React.FC = () => {
       ),
     [models]
   )
-  const fallbackGitCommitModel = getDefaultModel(models)
-  const gitCommitModelValue = savedGitCommitModel
-    ? (savedGitCommitModelOption ?? fallbackGitCommitModel).id
-    : gitCurrentChatModelValue
+  const gitCommitModelValue = savedGitCommitModel ?? gitCurrentChatModelValue
   const gitCommitModelOptions = useMemo<DropdownOption<string>[]>(() => {
-    const modelOptions = models.map((candidateModel): DropdownOption<string> => ({
-      value: candidateModel.id,
-      label: formatModelLabel(candidateModel.label),
-      menuLabel: candidateModel.isDefault
-        ? `${formatModelLabel(candidateModel.label)} (default)`
-        : formatModelLabel(candidateModel.label),
-      description: candidateModel.description || undefined,
-      icon: <Bot aria-hidden="true" />
-    }))
+    const modelOptions = displayedGitSettingsModels.map(
+      (candidateModel): DropdownOption<string> => ({
+        value: candidateModel.id,
+        label: formatModelLabel(candidateModel.label),
+        menuLabel: candidateModel.isDefault
+          ? `${formatModelLabel(candidateModel.label)} (default)`
+          : formatModelLabel(candidateModel.label),
+        description: candidateModel.description || undefined,
+        icon: <Bot aria-hidden="true" />
+      })
+    )
+    const unavailableSavedModelOption =
+      savedGitCommitModel && !savedGitCommitModelOption
+        ? [
+            {
+              value: savedGitCommitModel,
+              label: formatModelLabel(savedGitCommitModel),
+              description: 'This configured model is not available in the selected environment.',
+              icon: <Bot aria-hidden="true" />
+            }
+          ]
+        : []
 
     return [
       {
@@ -8002,9 +8124,10 @@ export const App: React.FC = () => {
         description: 'Use the model selected in the chat at the moment you commit.',
         icon: <MessageSquare aria-hidden="true" />
       },
+      ...unavailableSavedModelOption,
       ...modelOptions
     ]
-  }, [models])
+  }, [displayedGitSettingsModels, savedGitCommitModel, savedGitCommitModelOption])
   const effectiveSandboxMode =
     effectiveAppSettings.chat.forceAccess === appChatManualDropdownValue
       ? sandboxMode
@@ -8230,10 +8353,12 @@ export const App: React.FC = () => {
       })
     }
 
-    setCollapsedCwdGroups((currentGroups) => ({
-      ...currentGroups,
-      [groupKey]: !getCollapsedGroupState(groupKey, currentGroups)
-    }))
+    const nextGroups = {
+      ...collapsedCwdGroups,
+      [groupKey]: !getCollapsedGroupState(groupKey, collapsedCwdGroups)
+    }
+    setCollapsedCwdGroups(nextGroups)
+    writeStoredCollapsedProjectGroups(nextGroups)
   }
 
   const handleToggleChatGrouping = (): void => {
@@ -8803,14 +8928,24 @@ export const App: React.FC = () => {
 
   const handleGitCommitModelChange = (nextModel: string): void => {
     const commitModel = nextModel === gitCurrentChatModelValue ? null : nextModel
+    const commitModels = setAppGitCommitModel(
+      settingsPanelSettings.git.commitModels,
+      newSessionProvider,
+      newSessionContainerKey,
+      commitModel
+    )
 
-    updateScopedSetting({ section: 'git', key: 'commitModel' }, commitModel, (currentSettings) => ({
-      ...currentSettings,
-      git: {
-        ...currentSettings.git,
-        commitModel
-      }
-    }))
+    updateScopedSetting(
+      { section: 'git', key: 'commitModels' },
+      commitModels,
+      (currentSettings) => ({
+        ...currentSettings,
+        git: {
+          ...currentSettings.git,
+          commitModels
+        }
+      })
+    )
   }
 
   const handleGitUntrackedFilesPromptChange = (untrackedFilesPrompt: string): void => {
@@ -9383,7 +9518,11 @@ export const App: React.FC = () => {
     })
 
   const getGitTurnOptions = (): ProviderTurnOptions => {
-    const commitModel = effectiveAppSettings.git.commitModel
+    const commitModel = getAppGitCommitModel(
+      effectiveAppSettings.git.commitModels,
+      configProviderId,
+      configProviderContainerKey
+    )
     const turnOptions = getCurrentTurnOptions()
     if (!commitModel) return turnOptions
 
@@ -9418,7 +9557,20 @@ export const App: React.FC = () => {
     sendTarget?: 'current' | 'new'
   ): Promise<boolean> => {
     if (providerUpdateInProgress || sendInFlightRef.current) return false
+    const sendProjectKey = getChatCwdGroupKey(
+      selectedChat ? (changesProjectCwd ?? getChatProjectCwd(selectedChat)) : newSessionCwd
+    )
+    const finishSendInFlight = (): void => {
+      sendInFlightRef.current = false
+      if (sendInFlightProjectKeyRef.current === sendProjectKey) {
+        sendInFlightProjectKeyRef.current = null
+      }
+      setSendInFlightProjectKey((currentKey) => (currentKey === sendProjectKey ? null : currentKey))
+    }
+
     sendInFlightRef.current = true
+    sendInFlightProjectKeyRef.current = sendProjectKey
+    setSendInFlightProjectKey(sendProjectKey)
     chatAutoScrollEnabledRef.current = true
     setChatAtConversationBottom(true)
     scrollToLatestTurnAfterRenderRef.current = true
@@ -9453,7 +9605,7 @@ export const App: React.FC = () => {
 
     if (editingMessage && !sendTarget) {
       if (!selectedChat) {
-        sendInFlightRef.current = false
+        finishSendInFlight()
         return false
       }
 
@@ -9484,7 +9636,7 @@ export const App: React.FC = () => {
         handleSendFailure(error, 'Unable to edit message.')
         return false
       } finally {
-        sendInFlightRef.current = false
+        finishSendInFlight()
       }
     }
 
@@ -9572,7 +9724,7 @@ export const App: React.FC = () => {
         worktreeBranchGenerationRef.current = null
         worktreeCreationCanceledRef.current = false
         setWorktreeCreationState('idle')
-        sendInFlightRef.current = false
+        finishSendInFlight()
       }
     }
 
@@ -9591,7 +9743,6 @@ export const App: React.FC = () => {
         )
         applyChatSummary(providerId, summary, false)
         // Reading the clock happens only after the asynchronous send completes.
-        // eslint-disable-next-line react-hooks/purity
         markChatSeenAt(providerId, chatId, Date.now())
         setSendState('idle')
         return true
@@ -9599,7 +9750,7 @@ export const App: React.FC = () => {
         handleSendFailure(error, 'Unable to send message.')
         return false
       } finally {
-        sendInFlightRef.current = false
+        finishSendInFlight()
       }
     }
 
@@ -9626,7 +9777,6 @@ export const App: React.FC = () => {
       )
       applyChatSummary(providerId, summary, false)
       // Reading the clock happens only after the asynchronous send completes.
-      // eslint-disable-next-line react-hooks/purity
       markChatSeenAt(providerId, chatId, Date.now())
       setSendState('idle')
       return true
@@ -9638,7 +9788,7 @@ export const App: React.FC = () => {
       handleSendFailure(error, 'Unable to send message.')
       return false
     } finally {
-      sendInFlightRef.current = false
+      finishSendInFlight()
     }
   }
 
@@ -9824,9 +9974,6 @@ export const App: React.FC = () => {
     []
   )
 
-  // React Compiler cannot currently retain this callback's memoization across the mutable
-  // provider/model selections, while React itself can safely use the explicit dependency list.
-  /* eslint-disable react-hooks/preserve-manual-memoization */
   const handleRetryStoppedTurn = useCallback(
     async (message: ProviderMessage): Promise<void> => {
       if (
@@ -9877,7 +10024,10 @@ export const App: React.FC = () => {
         files: filePaths.length > 0 ? filePaths.map((path) => ({ path })) : undefined
       })
 
+      const retryProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
       sendInFlightRef.current = true
+      sendInFlightProjectKeyRef.current = retryProjectKey
+      setSendInFlightProjectKey(retryProjectKey)
       chatAutoScrollEnabledRef.current = true
       setSendState('sending')
 
@@ -9890,12 +10040,19 @@ export const App: React.FC = () => {
           turnOptions
         )
         applyViewedChatDetail(selectedProviderId, detail)
+        // Reading the clock happens only after the asynchronous retry completes.
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
         setSendState('idle')
       } catch (error) {
         handleSendFailure(error, 'Unable to retry message.')
       } finally {
         sendInFlightRef.current = false
+        if (sendInFlightProjectKeyRef.current === retryProjectKey) {
+          sendInFlightProjectKeyRef.current = null
+        }
+        setSendInFlightProjectKey((currentKey) =>
+          currentKey === retryProjectKey ? null : currentKey
+        )
       }
     },
     [
@@ -9903,6 +10060,7 @@ export const App: React.FC = () => {
       chatDetail?.capabilities.editMessages,
       changesContainer,
       changesCwd,
+      changesProjectCwd,
       currentProject,
       effectiveApprovalMode,
       effectiveModel,
@@ -9917,7 +10075,6 @@ export const App: React.FC = () => {
       selectedProviderId
     ]
   )
-  /* eslint-enable react-hooks/preserve-manual-memoization */
 
   const resolveChatApproval = async (
     chat: ProviderChat,
@@ -10003,7 +10160,10 @@ export const App: React.FC = () => {
 
   const handleStopChat = async (): Promise<void> => {
     if (providerUpdateInProgress || !selectedChat || sendInFlightRef.current) return
+    const stopProjectKey = getChatCwdGroupKey(getChatProjectCwd(selectedChat))
     sendInFlightRef.current = true
+    sendInFlightProjectKeyRef.current = stopProjectKey
+    setSendInFlightProjectKey(stopProjectKey)
     setSendState('sending')
 
     try {
@@ -10015,6 +10175,10 @@ export const App: React.FC = () => {
       handleSendFailure(error, 'Unable to stop chat.')
     } finally {
       sendInFlightRef.current = false
+      if (sendInFlightProjectKeyRef.current === stopProjectKey) {
+        sendInFlightProjectKeyRef.current = null
+      }
+      setSendInFlightProjectKey((currentKey) => (currentKey === stopProjectKey ? null : currentKey))
     }
   }
 
@@ -10054,7 +10218,12 @@ export const App: React.FC = () => {
       ) {
         return
       }
+      const pendingMessageProjectKey = getChatCwdGroupKey(
+        selectedChatRef.current ? getChatProjectCwd(selectedChatRef.current) : null
+      )
       sendInFlightRef.current = true
+      sendInFlightProjectKeyRef.current = pendingMessageProjectKey
+      setSendInFlightProjectKey(pendingMessageProjectKey)
       setSendState('sending')
 
       try {
@@ -10069,6 +10238,12 @@ export const App: React.FC = () => {
         handleSendFailure(error, 'Unable to send queued message.')
       } finally {
         sendInFlightRef.current = false
+        if (sendInFlightProjectKeyRef.current === pendingMessageProjectKey) {
+          sendInFlightProjectKeyRef.current = null
+        }
+        setSendInFlightProjectKey((currentKey) =>
+          currentKey === pendingMessageProjectKey ? null : currentKey
+        )
       }
     },
     [
@@ -10090,7 +10265,12 @@ export const App: React.FC = () => {
       ) {
         return
       }
+      const pendingMessageProjectKey = getChatCwdGroupKey(
+        selectedChatRef.current ? getChatProjectCwd(selectedChatRef.current) : null
+      )
       sendInFlightRef.current = true
+      sendInFlightProjectKeyRef.current = pendingMessageProjectKey
+      setSendInFlightProjectKey(pendingMessageProjectKey)
       setSendState('sending')
 
       try {
@@ -10105,6 +10285,12 @@ export const App: React.FC = () => {
         handleSendFailure(error, 'Unable to steer with queued message.')
       } finally {
         sendInFlightRef.current = false
+        if (sendInFlightProjectKeyRef.current === pendingMessageProjectKey) {
+          sendInFlightProjectKeyRef.current = null
+        }
+        setSendInFlightProjectKey((currentKey) =>
+          currentKey === pendingMessageProjectKey ? null : currentKey
+        )
       }
     },
     [
@@ -11049,30 +11235,30 @@ export const App: React.FC = () => {
   )
   const commitInputValue = commitInput.trim()
   const commitFiles = useMemo(() => getCommitFiles(changedFiles), [changedFiles])
-  const syncInProgress = syncState === 'sending'
-  const commitMessageGenerationInProgress = commitMessageGenerationState === 'sending'
-  const visibleSyncRecovery = syncRecovery && syncRecovery.cwd === changesCwd ? syncRecovery : null
+  const currentProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
+  const syncInProgress = syncProjectKeys.has(currentProjectKey)
+  const currentProjectSyncError = syncErrorsByProjectKey[currentProjectKey] ?? null
+  const projectSyncRecovery = syncRecoveriesByProjectKey[currentProjectKey] ?? null
+  const visibleSyncRecovery = projectSyncRecovery?.cwd === changesCwd ? projectSyncRecovery : null
+  const commitMessageGenerationInProgress =
+    commitMessageGenerationProjectKeys.has(currentProjectKey)
+  const currentProjectCommitError = commitErrorsByProjectKey[currentProjectKey] ?? null
   const currentProjectCommitActivities = useMemo(() => {
-    const currentProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
-
     return [...Object.values(scopedCommitActivities), ...Object.values(directCommitActivities)]
       .filter((activity) => getChatCwdGroupKey(activity.projectCwd) === currentProjectKey)
       .sort((firstActivity, secondActivity) => firstActivity.startedAt - secondActivity.startedAt)
-  }, [changesCwd, changesProjectCwd, directCommitActivities, scopedCommitActivities])
-  const projectCommitInProgress = currentProjectCommitActivities.length > 0
+  }, [currentProjectKey, directCommitActivities, scopedCommitActivities])
+  const currentProjectAiCommitStarting = Boolean(startingScopedCommitActivities[currentProjectKey])
+  const projectCommitInProgress =
+    currentProjectCommitActivities.length > 0 || currentProjectAiCommitStarting
   const directProjectCommitInProgress = currentProjectCommitActivities.some(
     (activity) => activity.source === 'git'
   )
-  const currentChatAiCommitInProgress = currentProjectCommitActivities.some(
-    (activity) =>
-      activity.source === 'ai' &&
-      (selectedChat
-        ? activity.providerId === selectedChat.providerId &&
-          activity.sourceChatId === selectedChat.id
-        : activity.sourceChatId == null)
-  )
+  const currentProjectSendInProgress =
+    sendState === 'sending' && sendInFlightProjectKey === currentProjectKey
+  const currentProjectSyncInProgress = syncInProgress
   const aiCommitUnavailable =
-    sendState === 'sending' ||
+    currentProjectSendInProgress ||
     Boolean(editingMessage) ||
     (selectedChat
       ? !chatDetail ||
@@ -11083,10 +11269,9 @@ export const App: React.FC = () => {
     providerUpdateInProgress ||
     commitFiles.length === 0 ||
     changesLoadState !== 'ready' ||
-    commitState === 'sending' ||
     commitMessageGenerationInProgress ||
     projectCommitInProgress ||
-    syncInProgress
+    currentProjectSyncInProgress
   const getCommitActionDisabled = (
     action: GitCommitPromptAction,
     message = commitInputValue
@@ -11097,11 +11282,9 @@ export const App: React.FC = () => {
     !changesCwd ||
     uncommittedChangedFiles.length === 0 ||
     changesLoadState !== 'ready' ||
-    commitState === 'sending' ||
+    projectCommitInProgress ||
     commitMessageGenerationInProgress ||
-    directProjectCommitInProgress ||
-    currentChatAiCommitInProgress ||
-    syncInProgress ||
+    currentProjectSyncInProgress ||
     aiCommitUnavailable
   const getAiCommitActionDisabled = (): boolean => aiCommitBaseDisabled
   const commitMessageGenerationDisabled =
@@ -11109,17 +11292,15 @@ export const App: React.FC = () => {
     !changesCwd ||
     uncommittedChangedFiles.length === 0 ||
     changesLoadState !== 'ready' ||
-    commitState === 'sending' ||
     commitMessageGenerationInProgress ||
     projectCommitInProgress ||
-    syncInProgress
+    currentProjectSyncInProgress
   const commitInputLabel = 'Commit message or AI instructions'
   const syncDisabled =
     providerUpdateInProgress ||
     !changesCwd ||
     gitAvailableForCurrentSource === false ||
     syncInProgress ||
-    commitState === 'sending' ||
     commitMessageGenerationInProgress ||
     projectCommitInProgress
   const branchSwitchDisabled =
@@ -11127,8 +11308,7 @@ export const App: React.FC = () => {
     !changesCwd ||
     gitAvailableForCurrentSource === false ||
     gitBranchActionState === 'sending' ||
-    syncInProgress ||
-    commitState === 'sending' ||
+    currentProjectSyncInProgress ||
     commitMessageGenerationInProgress ||
     projectCommitInProgress ||
     chatIsBusy
@@ -11733,6 +11913,12 @@ export const App: React.FC = () => {
       onToggleFolder: handleToggleFileTreeFolder
     })
 
+  const hasAiCommitInProgressForProject = (projectKey: string): boolean =>
+    Boolean(startingScopedCommitActivitiesRef.current[projectKey]) ||
+    Object.values(scopedCommitActivitiesRef.current).some(
+      (activity) => getChatCwdGroupKey(activity.projectCwd) === projectKey
+    )
+
   const handleScopedChatCommit = async (
     action: GitCommitPromptAction,
     prompt: string
@@ -11740,38 +11926,56 @@ export const App: React.FC = () => {
     if (providerUpdateInProgress) return false
     if (selectedChat && !chatDetail) return false
     if (!selectedChat && !changesCwd) return false
-    if (sendInFlightRef.current) return false
 
     const providerId = selectedChat?.providerId ?? newSessionProvider
     const chatId = selectedChat?.id ?? null
-    const turnOptions = getGitTurnOptions()
-    if (chatId && chatHasActiveTurn && chatDetail?.capabilities.activeMessages) {
-      setCommitState('sending')
-      setCommitError(null)
-
-      const queued = await handleSendMessage(prompt, 'queue', [], null, [], [], turnOptions)
-      if (queued) {
-        setCommitInput('')
-        setCommitState('idle')
-      } else {
-        setCommitState('error')
-        setCommitError('Unable to queue the AI commit.')
-      }
-      return queued
+    const projectCwd = changesProjectCwd ?? changesCwd
+    const projectKey = getChatCwdGroupKey(projectCwd)
+    if (
+      projectCommitInProgress ||
+      hasAiCommitInProgressForProject(projectKey) ||
+      commitInFlightProjectKeysRef.current.has(projectKey) ||
+      commitMessageGenerationProjectKeysRef.current.has(projectKey) ||
+      syncProjectKeysRef.current.has(projectKey)
+    ) {
+      return false
+    }
+    if (sendInFlightRef.current && sendInFlightProjectKeyRef.current === projectKey) {
+      return false
     }
 
+    const turnOptions = getGitTurnOptions()
     const useForkedChat = chatId != null && turnOptions.model !== model
     const useHiddenChat = chatId == null || useForkedChat
     const markerId = chatId ? createChatCommitMarkerId() : null
+    // The operation timestamp is captured only when the user starts the commit.
     const markerStartedAt = Date.now()
+    const startingActivity = {
+      id: markerId ?? `starting:${providerId}:${markerStartedAt}:${crypto.randomUUID()}`,
+      providerId,
+      sourceChatId: chatId,
+      markerId,
+      projectCwd,
+      commitAction: action,
+      startedAt: markerStartedAt
+    } satisfies StartingScopedCommitActivity
     const sourceAnchorItemId =
       chatId && chatDetail?.id === chatId ? getLastChatCommitMarkerAnchorId(chatDetail.items) : null
 
-    sendInFlightRef.current = true
+    const nextStartingActivities = {
+      ...startingScopedCommitActivitiesRef.current,
+      [projectKey]: startingActivity
+    }
+    startingScopedCommitActivitiesRef.current = nextStartingActivities
+    setStartingScopedCommitActivities(nextStartingActivities)
     chatAutoScrollEnabledRef.current = true
-    setCommitState('sending')
-    setCommitError(null)
-    setSendState('sending')
+    setCommitErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[projectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[projectKey]
+      return nextErrors
+    })
 
     if (chatId && markerId) {
       setChatCommitMarkers((currentMarkers) => ({
@@ -11788,15 +11992,12 @@ export const App: React.FC = () => {
           finishedAt: null
         }
       }))
-      setStartingScopedCommitActivity({
-        providerId,
-        sourceChatId: chatId,
-        markerId,
-        commitAction: action
-      })
     }
 
-    if (chatId && !useForkedChat && chatDetail?.id === chatId) {
+    const queueInActiveChat = Boolean(
+      chatId && chatHasActiveTurn && chatDetail?.capabilities.activeMessages
+    )
+    if (chatId && !queueInActiveChat && !useForkedChat && chatDetail?.id === chatId) {
       applyViewedChatDetail(providerId, {
         ...chatDetail,
         status: 'active',
@@ -11806,6 +12007,61 @@ export const App: React.FC = () => {
     }
 
     try {
+      if (chatId && queueInActiveChat) {
+        const summary = await providerApi.sendActiveChatMessageSummary(
+          providerId,
+          chatId,
+          prompt,
+          'queue',
+          turnOptions
+        )
+        applyChatSummary(providerId, summary, false)
+        // Reading the clock happens only after the asynchronous send completes.
+        markChatSeenAt(providerId, chatId, Date.now())
+        if (changesCwdRef.current === changesCwd) setCommitInput('')
+        if (markerId) {
+          setChatCommitMarkers((currentMarkers) => {
+            const marker = currentMarkers[markerId]
+            if (!marker) return currentMarkers
+
+            return {
+              ...currentMarkers,
+              [markerId]: {
+                ...marker,
+                commitChatId: chatId,
+                status: isActiveChatStatus(summary.status) ? 'pending' : 'finished',
+                afterItemId: sourceAnchorItemId,
+                finishedAt: isActiveChatStatus(summary.status) ? null : Date.now()
+              }
+            }
+          })
+        }
+        if (isActiveChatStatus(summary.status)) {
+          const activityKey = getProviderChatKey(providerId, chatId)
+          const activity = {
+            source: 'ai',
+            providerId,
+            chatId,
+            sourceChatId: chatId,
+            markerId: markerId ?? `untracked:${providerId}:${chatId}:${markerStartedAt}`,
+            projectCwd,
+            commitAction: action,
+            currentAction: getCommitActivityCurrentActionFromSummary(summary, action),
+            startedAt: markerStartedAt
+          } satisfies ScopedCommitActivity
+
+          setScopedCommitActivities((currentActivities) => {
+            const nextActivities = {
+              ...currentActivities,
+              [activityKey]: activity
+            }
+            scopedCommitActivitiesRef.current = nextActivities
+            return nextActivities
+          })
+        }
+        return true
+      }
+
       const detail =
         chatId == null
           ? await providerApi.startChat(
@@ -11829,7 +12085,7 @@ export const App: React.FC = () => {
       if (useHiddenChat) applyChatDetail(providerId, detail)
       else applyViewedChatDetail(providerId, detail)
 
-      setCommitInput('')
+      if (changesCwdRef.current === changesCwd) setCommitInput('')
       if (markerId) {
         setChatCommitMarkers((currentMarkers) => {
           const marker = currentMarkers[markerId]
@@ -11859,7 +12115,7 @@ export const App: React.FC = () => {
           chatId: detail.id,
           sourceChatId: chatId,
           markerId: markerId ?? `untracked:${providerId}:${detail.id}:${markerStartedAt}`,
-          projectCwd: changesProjectCwd ?? changesCwd,
+          projectCwd,
           commitAction: action,
           currentAction: getCommitActivityCurrentAction(detail, action),
           startedAt: markerStartedAt
@@ -11874,8 +12130,6 @@ export const App: React.FC = () => {
           return nextActivities
         })
       }
-      setCommitState('idle')
-      setSendState('idle')
       return true
     } catch (error) {
       if (markerId) {
@@ -11900,30 +12154,51 @@ export const App: React.FC = () => {
           .then((detail) => applyViewedChatDetail(providerId, detail))
           .catch(() => {})
       }
-      setCommitState('error')
-      setCommitError(getErrorMessage(error, 'Unable to start scoped commit in chat.'))
-      handleSendFailure(error, 'Unable to start scoped commit in chat.')
+      setCommitErrorsByProjectKey((currentErrors) => ({
+        ...currentErrors,
+        [projectKey]: getErrorMessage(error, 'Unable to start scoped commit in chat.')
+      }))
       return false
     } finally {
-      setStartingScopedCommitActivity((currentActivity) =>
-        currentActivity?.providerId === providerId && currentActivity.sourceChatId === chatId
-          ? null
-          : currentActivity
-      )
-      sendInFlightRef.current = false
+      const currentStartingActivity = startingScopedCommitActivitiesRef.current[projectKey]
+      if (currentStartingActivity?.id === startingActivity.id) {
+        const remainingStartingActivities = {
+          ...startingScopedCommitActivitiesRef.current
+        }
+        delete remainingStartingActivities[projectKey]
+        startingScopedCommitActivitiesRef.current = remainingStartingActivities
+        setStartingScopedCommitActivities(remainingStartingActivities)
+      }
     }
   }
 
   const generateCommitMessage = async (aiInstructions: string): Promise<string | null> => {
     if (commitMessageGenerationDisabled || !changesCwd) return null
-    if (commitMessageGenerationInFlightRef.current) return null
 
     const generationCwd = changesCwd
+    const generationProjectKey = getChatCwdGroupKey(changesProjectCwd ?? generationCwd)
+    if (
+      hasAiCommitInProgressForProject(generationProjectKey) ||
+      commitMessageGenerationProjectKeysRef.current.has(generationProjectKey) ||
+      commitInFlightProjectKeysRef.current.has(generationProjectKey) ||
+      syncProjectKeysRef.current.has(generationProjectKey)
+    ) {
+      return null
+    }
+
     const providerId = selectedChat?.providerId ?? newSessionProvider
-    commitMessageGenerationInFlightRef.current = true
-    setCommitMessageGenerationState('sending')
-    setCommitState('idle')
-    setCommitError(null)
+    const nextGenerationProjectKeys = new Set(commitMessageGenerationProjectKeysRef.current).add(
+      generationProjectKey
+    )
+    commitMessageGenerationProjectKeysRef.current = nextGenerationProjectKeys
+    setCommitMessageGenerationProjectKeys(nextGenerationProjectKeys)
+    setCommitErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[generationProjectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[generationProjectKey]
+      return nextErrors
+    })
 
     try {
       const [{ diff }, { messages }] = await Promise.all([
@@ -11953,14 +12228,18 @@ export const App: React.FC = () => {
       if (!commitMessage) throw new Error('AI did not return a commit name.')
 
       if (changesCwdRef.current === generationCwd) setCommitInput(commitMessage)
-      setCommitMessageGenerationState('idle')
       return commitMessage
     } catch (error) {
-      setCommitMessageGenerationState('error')
-      setCommitError(getErrorMessage(error, 'Unable to generate a commit name.'))
+      setCommitErrorsByProjectKey((currentErrors) => ({
+        ...currentErrors,
+        [generationProjectKey]: getErrorMessage(error, 'Unable to generate a commit name.')
+      }))
       return null
     } finally {
-      commitMessageGenerationInFlightRef.current = false
+      const remainingGenerationProjectKeys = new Set(commitMessageGenerationProjectKeysRef.current)
+      remainingGenerationProjectKeys.delete(generationProjectKey)
+      commitMessageGenerationProjectKeysRef.current = remainingGenerationProjectKeys
+      setCommitMessageGenerationProjectKeys(remainingGenerationProjectKeys)
     }
   }
 
@@ -11973,11 +12252,19 @@ export const App: React.FC = () => {
   ): Promise<boolean> => {
     const commitMessage = message.trim()
     if (providerUpdateInProgress) return false
-    if (commitInFlightRef.current) return false
-    if (getCommitActionDisabled(action, commitMessage)) return false
     if (!changesCwd) return false
+    const commitProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
+    if (
+      hasAiCommitInProgressForProject(commitProjectKey) ||
+      commitInFlightProjectKeysRef.current.has(commitProjectKey) ||
+      commitMessageGenerationProjectKeysRef.current.has(commitProjectKey) ||
+      syncProjectKeysRef.current.has(commitProjectKey)
+    ) {
+      return false
+    }
+    if (getCommitActionDisabled(action, commitMessage)) return false
 
-    commitInFlightRef.current = true
+    commitInFlightProjectKeysRef.current.add(commitProjectKey)
     const startedAt = getTimestamp()
     const activityId = `git:${changesCwd}:${action}:${startedAt}`
     const activity = {
@@ -11990,8 +12277,13 @@ export const App: React.FC = () => {
     } satisfies DirectCommitActivity
 
     try {
-      setCommitState('sending')
-      setCommitError(null)
+      setCommitErrorsByProjectKey((currentErrors) => {
+        if (!currentErrors[commitProjectKey]) return currentErrors
+
+        const nextErrors = { ...currentErrors }
+        delete nextErrors[commitProjectKey]
+        return nextErrors
+      })
       setDirectCommitActivities((currentActivities) => ({
         ...currentActivities,
         [activityId]: activity
@@ -12005,13 +12297,14 @@ export const App: React.FC = () => {
         message: action === 'amend' ? null : commitMessage,
         patches: patchChangeSourceSelected ? getCommitPatches(changedFiles) : undefined
       })
-      setCommitInput('')
-      setCommitState('idle')
+      if (changesCwdRef.current === changesCwd) setCommitInput('')
       setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
       return true
     } catch (error) {
-      setCommitState('error')
-      setCommitError(getErrorMessage(error, 'Unable to commit these files.'))
+      setCommitErrorsByProjectKey((currentErrors) => ({
+        ...currentErrors,
+        [commitProjectKey]: getErrorMessage(error, 'Unable to commit these files.')
+      }))
       return false
     } finally {
       setDirectCommitActivities((currentActivities) => {
@@ -12021,7 +12314,7 @@ export const App: React.FC = () => {
         delete nextActivities[activityId]
         return nextActivities
       })
-      commitInFlightRef.current = false
+      commitInFlightProjectKeysRef.current.delete(commitProjectKey)
     }
   }
 
@@ -12029,33 +12322,28 @@ export const App: React.FC = () => {
     action: GitCommitPromptAction = 'commit'
   ): Promise<boolean> => {
     if (providerUpdateInProgress) return false
-    if (commitInFlightRef.current) return false
     if (getAiCommitActionDisabled()) return false
 
-    commitInFlightRef.current = true
-    try {
-      return await handleScopedChatCommit(
-        action,
-        getScopedChatCommitPrompt(action, commitInputValue, effectiveAppSettings.git.commitPrompt)
-      )
-    } finally {
-      commitInFlightRef.current = false
-    }
+    return handleScopedChatCommit(
+      action,
+      getScopedChatCommitPrompt(action, commitInputValue, effectiveAppSettings.git.commitPrompt)
+    )
   }
 
   const handleQuickCommitChangedFiles = async (pushAfterCommit = false): Promise<boolean> => {
-    if (commitInFlightRef.current) return false
     if (commitMessageGenerationDisabled) return false
     if (!changesCwd) return false
 
     const quickCommitCwd = changesCwd
-    const generatedMessage = await generateCommitMessage(commitInputValue)
-    if (!generatedMessage) return false
-    if (changesCwdRef.current !== quickCommitCwd) {
-      setCommitState('error')
-      setCommitError('The selected repository changed before AI Commit could finish.')
+    const quickCommitProjectKey = getChatCwdGroupKey(changesProjectCwd ?? quickCommitCwd)
+    if (
+      commitInFlightProjectKeysRef.current.has(quickCommitProjectKey) ||
+      commitMessageGenerationProjectKeysRef.current.has(quickCommitProjectKey)
+    ) {
       return false
     }
+    const generatedMessage = await generateCommitMessage(commitInputValue)
+    if (!generatedMessage) return false
 
     const committed = await handleCommitChangedFiles('commit', generatedMessage)
     if (!committed) return false
@@ -12066,11 +12354,17 @@ export const App: React.FC = () => {
 
   const handleCancelAiCommit = async (activity: ScopedCommitActivity): Promise<void> => {
     const activityKey = getProviderChatKey(activity.providerId, activity.chatId)
+    const activityProjectKey = getChatCwdGroupKey(activity.projectCwd)
     if (providerUpdateInProgress || cancelingAiCommitKeys.has(activityKey)) return
 
     setCancelingAiCommitKeys((currentKeys) => new Set(currentKeys).add(activityKey))
-    setCommitState('idle')
-    setCommitError(null)
+    setCommitErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[activityProjectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[activityProjectKey]
+      return nextErrors
+    })
 
     try {
       const detail = await providerApi.stopChat(activity.providerId, activity.chatId)
@@ -12101,8 +12395,10 @@ export const App: React.FC = () => {
       })
       setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
     } catch (error) {
-      setCommitState('error')
-      setCommitError(getErrorMessage(error, 'Unable to cancel the AI commit.'))
+      setCommitErrorsByProjectKey((currentErrors) => ({
+        ...currentErrors,
+        [activityProjectKey]: getErrorMessage(error, 'Unable to cancel the AI commit.')
+      }))
     } finally {
       setCancelingAiCommitKeys((currentKeys) => {
         if (!currentKeys.has(activityKey)) return currentKeys
@@ -12123,10 +12419,18 @@ export const App: React.FC = () => {
         : (chatsRef.current.find(
             (chat) => chat.providerId === marker.providerId && chat.id === marker.sourceChatId
           ) ?? null)
+    const markerProjectKey = getChatCwdGroupKey(
+      sourceChat ? getChatProjectCwd(sourceChat) : (changesProjectCwd ?? changesCwd)
+    )
 
     setOpeningAiCommitChatIds((currentIds) => new Set(currentIds).add(commitChatId))
-    setCommitState('idle')
-    setCommitError(null)
+    setCommitErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[markerProjectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[markerProjectKey]
+      return nextErrors
+    })
 
     try {
       const detail = await providerApi.getChat(marker.providerId, commitChatId)
@@ -12146,8 +12450,10 @@ export const App: React.FC = () => {
       )
       applyViewedChatDetail(marker.providerId, detail, { select: true })
     } catch (error) {
-      setCommitState('error')
-      setCommitError(getErrorMessage(error, 'Unable to open the AI commit chat.'))
+      setCommitErrorsByProjectKey((currentErrors) => ({
+        ...currentErrors,
+        [markerProjectKey]: getErrorMessage(error, 'Unable to open the AI commit chat.')
+      }))
     } finally {
       setOpeningAiCommitChatIds((currentIds) => {
         if (!currentIds.has(commitChatId)) return currentIds
@@ -12189,20 +12495,29 @@ export const App: React.FC = () => {
   }
 
   const showRecoverableGitFailure = (
+    projectKey: string,
     cwd: string,
     requestedAction: GitSyncAction,
     failedAction: GitSyncStep,
     failure: AppGitRecoverableFailure
   ): void => {
-    setSyncState('error')
-    setSyncError(null)
-    setSyncRecovery({
-      cwd,
-      requestedAction,
-      failedAction,
-      failure,
-      error: null
+    setSyncErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[projectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[projectKey]
+      return nextErrors
     })
+    setSyncRecoveriesByProjectKey((currentRecoveries) => ({
+      ...currentRecoveries,
+      [projectKey]: {
+        cwd,
+        requestedAction,
+        failedAction,
+        failure,
+        error: null
+      }
+    }))
   }
 
   const runSyncChanges = async (
@@ -12216,9 +12531,35 @@ export const App: React.FC = () => {
   ): Promise<void> => {
     if (providerUpdateInProgress) return
 
-    setSyncState('sending')
-    setSyncError(null)
-    setSyncRecovery(options.recovery ? { ...options.recovery, error: null } : null)
+    const operationProjectKey = getChatCwdGroupKey(changesProjectCwd ?? cwd)
+    if (
+      syncProjectKeysRef.current.has(operationProjectKey) ||
+      hasAiCommitInProgressForProject(operationProjectKey) ||
+      commitInFlightProjectKeysRef.current.has(operationProjectKey) ||
+      commitMessageGenerationProjectKeysRef.current.has(operationProjectKey)
+    ) {
+      return
+    }
+
+    const nextSyncProjectKeys = new Set(syncProjectKeysRef.current).add(operationProjectKey)
+    syncProjectKeysRef.current = nextSyncProjectKeys
+    setSyncProjectKeys(nextSyncProjectKeys)
+    setSyncErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[operationProjectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[operationProjectKey]
+      return nextErrors
+    })
+    setSyncRecoveriesByProjectKey((currentRecoveries) => {
+      const nextRecoveries = { ...currentRecoveries }
+      if (options.recovery) {
+        nextRecoveries[operationProjectKey] = { ...options.recovery, error: null }
+      } else {
+        delete nextRecoveries[operationProjectKey]
+      }
+      return nextRecoveries
+    })
 
     let currentAction: GitSyncStep = action === 'push' ? 'push' : 'pull'
 
@@ -12233,7 +12574,7 @@ export const App: React.FC = () => {
         })
 
         if (pullResult.failure) {
-          showRecoverableGitFailure(cwd, action, 'pull', pullResult.failure)
+          showRecoverableGitFailure(operationProjectKey, cwd, action, 'pull', pullResult.failure)
           return
         }
       }
@@ -12243,13 +12584,18 @@ export const App: React.FC = () => {
         const pushResult = await appApi.pushGitChanges({ container: changesContainer, cwd })
 
         if (pushResult.failure) {
-          showRecoverableGitFailure(cwd, action, 'push', pushResult.failure)
+          showRecoverableGitFailure(operationProjectKey, cwd, action, 'push', pushResult.failure)
           return
         }
       }
 
-      setSyncState('idle')
-      setSyncRecovery(null)
+      setSyncRecoveriesByProjectKey((currentRecoveries) => {
+        if (!currentRecoveries[operationProjectKey]) return currentRecoveries
+
+        const nextRecoveries = { ...currentRecoveries }
+        delete nextRecoveries[operationProjectKey]
+        return nextRecoveries
+      })
       setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
     } catch (error) {
       const message = getErrorMessage(
@@ -12257,15 +12603,31 @@ export const App: React.FC = () => {
         currentAction === 'pull' ? 'Unable to pull changes.' : 'Unable to push changes.'
       )
 
-      setSyncState('error')
-      if (options.recovery) {
-        setSyncRecovery({ ...options.recovery, error: message })
-        setSyncError(null)
+      const recovery = options.recovery
+      if (recovery) {
+        setSyncRecoveriesByProjectKey((currentRecoveries) => ({
+          ...currentRecoveries,
+          [operationProjectKey]: { ...recovery, error: message }
+        }))
         return
       }
 
-      setSyncRecovery(null)
-      setSyncError(message)
+      setSyncRecoveriesByProjectKey((currentRecoveries) => {
+        if (!currentRecoveries[operationProjectKey]) return currentRecoveries
+
+        const nextRecoveries = { ...currentRecoveries }
+        delete nextRecoveries[operationProjectKey]
+        return nextRecoveries
+      })
+      setSyncErrorsByProjectKey((currentErrors) => ({
+        ...currentErrors,
+        [operationProjectKey]: message
+      }))
+    } finally {
+      const remainingSyncProjectKeys = new Set(syncProjectKeysRef.current)
+      remainingSyncProjectKeys.delete(operationProjectKey)
+      syncProjectKeysRef.current = remainingSyncProjectKeys
+      setSyncProjectKeys(remainingSyncProjectKeys)
     }
   }
 
@@ -12276,9 +12638,20 @@ export const App: React.FC = () => {
   }
 
   const handleDismissGitSyncRecovery = (): void => {
-    setSyncRecovery(null)
-    setSyncState('idle')
-    setSyncError(null)
+    setSyncRecoveriesByProjectKey((currentRecoveries) => {
+      if (!currentRecoveries[currentProjectKey]) return currentRecoveries
+
+      const nextRecoveries = { ...currentRecoveries }
+      delete nextRecoveries[currentProjectKey]
+      return nextRecoveries
+    })
+    setSyncErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[currentProjectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[currentProjectKey]
+      return nextErrors
+    })
   }
 
   const handleGitSyncRecoveryAction = async (
@@ -12307,9 +12680,20 @@ export const App: React.FC = () => {
     const recovery = visibleSyncRecovery
     if (!recovery || gitAiResolutionDisabled) return
 
-    setSyncRecovery(null)
-    setSyncState('idle')
-    setSyncError(null)
+    setSyncRecoveriesByProjectKey((currentRecoveries) => {
+      if (!currentRecoveries[currentProjectKey]) return currentRecoveries
+
+      const nextRecoveries = { ...currentRecoveries }
+      delete nextRecoveries[currentProjectKey]
+      return nextRecoveries
+    })
+    setSyncErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[currentProjectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[currentProjectKey]
+      return nextErrors
+    })
     await handleSendMessage(
       getGitAiResolutionPrompt(recovery, rememberStrategy),
       undefined,
@@ -12436,9 +12820,9 @@ export const App: React.FC = () => {
       section: 'chat',
       key: 'recentChatCacheLimit'
     } satisfies AppProjectSettingPath
-    const gitCommitModelPath = {
+    const gitCommitModelsPath = {
       section: 'git',
-      key: 'commitModel'
+      key: 'commitModels'
     } satisfies AppProjectSettingPath
     const gitUntrackedFilesPromptPath = {
       section: 'git',
@@ -13198,6 +13582,57 @@ export const App: React.FC = () => {
           role="tabpanel"
           aria-label="Git settings"
         >
+          <div
+            className="settings-dialog__provider-configuration"
+            role="group"
+            aria-label="Git model configuration"
+          >
+            <span>Configure</span>
+            <Dropdown
+              aria-label="Git model provider"
+              disabled={newSessionProviderOptions.length === 0}
+              emptyContent="No providers found"
+              options={newSessionProviderOptions}
+              size="small"
+              value={newSessionProvider}
+              valueContent={newSessionProviderValueContent}
+              onChange={setNewSessionProvider}
+            />
+            <span>in</span>
+            <Dropdown
+              aria-label="Git model environment"
+              menuActions={[
+                ...(sshEnvironmentError
+                  ? [
+                      {
+                        id: 'git-model-environment-error',
+                        label: sshEnvironmentError,
+                        title: sshEnvironmentError,
+                        disabled: true,
+                        icon: <X aria-hidden="true" />,
+                        callback: () => {}
+                      }
+                    ]
+                  : []),
+                {
+                  id: 'git-model-add-environment',
+                  label: 'Add environment',
+                  title: 'Add environment',
+                  icon: <PackagePlus aria-hidden="true" />,
+                  callback: () => {
+                    setEditingSshEnvironment(null)
+                    setSshEnvironmentError(null)
+                    setSshEnvironmentDialogOpen(true)
+                  }
+                }
+              ]}
+              options={containerOptions}
+              size="small"
+              value={newSessionContainerValue}
+              valueContent={!newSessionSourceAvailabilityReady ? 'Checking' : undefined}
+              onChange={handleNewSessionContainerChange}
+            />
+          </div>
           <section className="settings-dialog__section" aria-labelledby="settings-git-model">
             <h2 className="settings-dialog__section-heading" id="settings-git-model">
               AI model
@@ -13207,11 +13642,16 @@ export const App: React.FC = () => {
                 <div className="settings-dialog__field-header">
                   <h3>Commit model</h3>
                 </div>
-                {renderProjectSettingAction(gitCommitModelPath, 'Commit model')}
+                {renderProjectSettingAction(gitCommitModelsPath, 'Commit model')}
                 <Dropdown
                   id="settings-git-commit-model"
                   aria-label="Commit model"
-                  disabled={isScopedSettingControlDisabled(gitCommitModelPath)}
+                  disabled={isScopedSettingControlDisabled(
+                    gitCommitModelsPath,
+                    !gitSettingsModelsReady ||
+                      !gitSettingsModelsCurrent ||
+                      gitSettingsModelCatalogLoading
+                  )}
                   menuAlign="end"
                   options={gitCommitModelOptions}
                   value={gitCommitModelValue}
@@ -14825,15 +15265,17 @@ export const App: React.FC = () => {
                       placeholder={commitInputLabel}
                       disabled={
                         providerUpdateInProgress ||
-                        commitState === 'sending' ||
                         commitMessageGenerationInProgress ||
-                        directProjectCommitInProgress ||
-                        currentChatAiCommitInProgress
+                        projectCommitInProgress
                       }
                       onChange={(event) => {
-                        setCommitState('idle')
-                        setCommitMessageGenerationState('idle')
-                        setCommitError(null)
+                        setCommitErrorsByProjectKey((currentErrors) => {
+                          if (!currentErrors[currentProjectKey]) return currentErrors
+
+                          const nextErrors = { ...currentErrors }
+                          delete nextErrors[currentProjectKey]
+                          return nextErrors
+                        })
                         setCommitInput(event.target.value)
                       }}
                       onKeyDown={(event) => {
@@ -14878,7 +15320,7 @@ export const App: React.FC = () => {
                     dropdownMenuAlign="end"
                     dropdownPlacement="top"
                     icon={
-                      commitState === 'sending' ? (
+                      directProjectCommitInProgress ? (
                         <AnimatedStatusIcon Icon={AnimatedGitCommitHorizontalIcon} active />
                       ) : (
                         <GitCommitHorizontal aria-hidden="true" />
@@ -15051,14 +15493,14 @@ export const App: React.FC = () => {
                     </div>
                   </section>
                 )}
-                {(commitState === 'error' || commitMessageGenerationState === 'error') && (
+                {currentProjectCommitError && (
                   <p className="changes-sidebar__commit-error" role="status">
-                    {commitError ?? 'Unable to commit these files.'}
+                    {currentProjectCommitError}
                   </p>
                 )}
-                {syncState === 'error' && !syncRecovery && (
+                {currentProjectSyncError && !visibleSyncRecovery && (
                   <p className="changes-sidebar__commit-error" role="status">
-                    {syncError ?? 'Unable to sync changes.'}
+                    {currentProjectSyncError}
                   </p>
                 )}
               </footer>

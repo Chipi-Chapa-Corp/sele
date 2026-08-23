@@ -8,6 +8,7 @@ import {
   normalizeAppRecentlyOpenedFilesLimit,
   normalizeAppRecentsMessageLimit
 } from './performanceSettings.ts'
+import { getAppGitCommitModel, setAppGitCommitModel } from './gitCommitModels.ts'
 
 test('defaults the maximum rendered chats to 100', () => {
   assert.equal(appMaxChatsRenderedDefault, 100)
@@ -40,4 +41,24 @@ test('normalizes the recently opened file count', () => {
   assert.equal(normalizeAppRecentlyOpenedFilesLimit(8.9), 8)
   assert.equal(normalizeAppRecentlyOpenedFilesLimit(-1), 0)
   assert.equal(normalizeAppRecentlyOpenedFilesLimit(10_000), 50)
+})
+
+test('stores Git commit models per provider and environment', () => {
+  const commitModels = setAppGitCommitModel(
+    setAppGitCommitModel({}, 'codex', 'host', 'gpt-5.6'),
+    'claude',
+    'ssh:dev/from:host',
+    'opus'
+  )
+
+  assert.equal(getAppGitCommitModel(commitModels, 'codex', 'host'), 'gpt-5.6')
+  assert.equal(getAppGitCommitModel(commitModels, 'claude', 'ssh:dev/from:host'), 'opus')
+  assert.equal(getAppGitCommitModel(commitModels, 'claude', 'host'), null)
+})
+
+test('allows one Git configuration to use the selected chat model', () => {
+  const commitModels = setAppGitCommitModel({ '*': 'legacy-model' }, 'codex', 'host', null)
+
+  assert.equal(getAppGitCommitModel(commitModels, 'codex', 'host'), null)
+  assert.equal(getAppGitCommitModel(commitModels, 'codex', 'docker:dev'), 'legacy-model')
 })
