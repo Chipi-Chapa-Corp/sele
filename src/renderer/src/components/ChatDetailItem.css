@@ -188,6 +188,7 @@
 
 .chat-detail__message--assistant {
   position: relative;
+  width: 100%;
   max-width: 100%;
   padding: 0;
 }
@@ -492,6 +493,9 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 
 .chat-detail__step-content {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 10px;
   margin: 10px 0 0;
@@ -499,10 +503,18 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 }
 
 .chat-detail__working-message {
+  width: 100%;
   margin: 0;
   min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.chat-detail__message-markdown {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-detail__message-markdown > :first-child,
@@ -731,16 +743,16 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 }
 
 .chat-detail__table-scroll {
+  width: 100%;
   max-width: 100%;
+  box-sizing: border-box;
   margin: 0.8em 0 1em;
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 10px;
 }
 
 .chat-detail__table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: max-content;
   border-spacing: 0;
   border-collapse: separate;
 }
@@ -749,13 +761,8 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 .chat-detail__table td {
   padding: 7px 9px;
   border: 0;
-  border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  text-align: left;
-}
-
-.chat-detail__table tr > :last-child {
-  border-right: 0;
+  text-align: center;
 }
 
 .chat-detail__table tbody tr:last-child > td {

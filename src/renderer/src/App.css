@@ -1612,6 +1612,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
 .chat-detail__messages-layout {
   display: flex;
   width: 100%;
+  min-width: 0;
   min-height: 100%;
   flex-direction: column;
 }
@@ -2008,7 +2009,9 @@ button.changes-sidebar__recent-row:not(:disabled) {
 
 .chat-detail__turn {
   display: flex;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 14px;
 }

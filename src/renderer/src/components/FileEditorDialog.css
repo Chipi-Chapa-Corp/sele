@@ -388,6 +388,8 @@
 
 .file-editor-dialog__inline-diff--markdown {
   display: grid;
+  width: 100%;
+  max-width: 100%;
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -436,7 +438,9 @@
 }
 
 .file-editor-dialog__markdown-preview {
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   margin: 0;
   padding: 32px max(28px, calc((100% - 880px) / 2));
@@ -575,6 +579,7 @@
 
 .file-editor-dialog__markdown-preview table {
   display: block;
+  width: 100%;
   max-width: 100%;
   overflow-x: auto;
   border-spacing: 0;
@@ -584,8 +589,13 @@
 .file-editor-dialog__markdown-preview th,
 .file-editor-dialog__markdown-preview td {
   padding: 7px 10px;
-  border: 1px solid var(--line);
-  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+}
+
+.file-editor-dialog__markdown-preview tbody tr:last-child > td {
+  border-bottom: 0;
 }
 
 .file-editor-dialog__markdown-preview th {
