@@ -104,6 +104,30 @@ const appApi: AppApi = {
 const providerApi: ProviderRendererApi = {
   login: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.login, providerId, options),
+  getAccounts: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getAccounts, providerId, options),
+  createAccount: (providerId, name, options) =>
+    ipcRenderer.invoke(providerIpcChannels.createAccount, providerId, name, options),
+  completeAccountCreation: (providerId, accountId, loginId, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.completeAccountCreation,
+      providerId,
+      accountId,
+      loginId,
+      options
+    ),
+  cancelAccountCreation: (providerId, accountId, loginId, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.cancelAccountCreation,
+      providerId,
+      accountId,
+      loginId,
+      options
+    ),
+  useAccount: (providerId, accountId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.useAccount, providerId, accountId, options),
+  deleteAccount: (providerId, accountId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.deleteAccount, providerId, accountId, options),
   getUpdateAvailability: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getUpdateAvailability, providerId, options),
   updateProvider: (providerId, options) =>

@@ -1,5 +1,6 @@
 import type {
   ProviderApi,
+  ProviderAccountConfiguration,
   ProviderChat,
   ProviderChatActivitySummary,
   ProviderChatDetail,
@@ -31,18 +32,43 @@ import {
   setMessageReview
 } from '../database/messageReviews'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
+import {
+  cancelCodexAccountCreation as removePendingCodexAccount,
+  createCodexAccount,
+  deleteCodexAccount,
+  finalizeCodexAccount,
+  getCodexAccounts,
+  useCodexAccount as selectCodexAccount
+} from './codex/CodexAccounts'
 import { ClaudeProviderAdapter } from './claude/ClaudeProviderAdapter'
 import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
 import type { ProviderAdapter } from './ProviderAdapter'
 
+const codexAdapter = new CodexProviderAdapter()
+
 const adapters: Record<ProviderId, ProviderAdapter> = {
-  codex: new CodexProviderAdapter(),
+  codex: codexAdapter,
   claude: new ClaudeProviderAdapter(),
   copilot: new CopilotProviderAdapter(),
   opencode: new OpenCodeProviderAdapter()
 }
+
+const providerLabels: Record<ProviderId, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+  copilot: 'Copilot',
+  opencode: 'OpenCode'
+}
+
+const getUnavailableAccountConfiguration = (
+  providerId: ProviderId
+): ProviderAccountConfiguration => ({
+  available: false,
+  unavailableMessage: `Accounts configuration is not available for ${providerLabels[providerId]}`,
+  accounts: []
+})
 
 const chatUpdatePreviewLimit = 500
 const chatUpdateActivityLabelLimit = 240
@@ -271,6 +297,74 @@ for (const adapter of Object.values(adapters)) {
 
 export const providerApi: ProviderApi = {
   login: (providerId, options) => adapters[providerId].login(options),
+  getAccounts: (providerId, options) =>
+    providerId === 'codex'
+      ? getCodexAccounts(options?.container)
+      : Promise.resolve(getUnavailableAccountConfiguration(providerId)),
+  createAccount: async (providerId, name, options) => {
+    if (providerId !== 'codex') {
+      throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
+    }
+    const creation = await createCodexAccount(name, options?.container)
+    codexAdapter.resetClientsForContainer(options?.container)
+    return creation
+  },
+  completeAccountCreation: async (providerId, accountId, loginId, options) => {
+    if (providerId !== 'codex') {
+      throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
+    }
+
+    let completion = { success: true, error: null as string | null }
+    if (loginId) {
+      try {
+        completion = await codexAdapter.waitForLogin(loginId, options)
+      } catch (error) {
+        await removePendingCodexAccount(accountId, options?.container).catch(() => {})
+        codexAdapter.resetClientsForContainer(options?.container)
+        throw error
+      }
+    }
+
+    if (!completion.success) {
+      const configuration = await removePendingCodexAccount(accountId, options?.container)
+      codexAdapter.resetClientsForContainer(options?.container)
+      return { ...completion, configuration }
+    }
+
+    try {
+      const configuration = await finalizeCodexAccount(accountId, options?.container)
+      return { ...completion, configuration }
+    } catch (error) {
+      await removePendingCodexAccount(accountId, options?.container).catch(() => {})
+      codexAdapter.resetClientsForContainer(options?.container)
+      throw error
+    }
+  },
+  cancelAccountCreation: async (providerId, accountId, loginId, options) => {
+    if (providerId !== 'codex') {
+      throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
+    }
+    if (loginId) await codexAdapter.cancelLogin(loginId, options).catch(() => {})
+    const configuration = await removePendingCodexAccount(accountId, options?.container)
+    codexAdapter.resetClientsForContainer(options?.container)
+    return configuration
+  },
+  useAccount: async (providerId, accountId, options) => {
+    if (providerId !== 'codex') return getUnavailableAccountConfiguration(providerId)
+    const configuration = await selectCodexAccount(accountId, options?.container)
+    codexAdapter.resetClientsForContainer(options?.container)
+    return configuration
+  },
+  deleteAccount: async (providerId, accountId, options) => {
+    if (providerId !== 'codex') return getUnavailableAccountConfiguration(providerId)
+    const previous = await getCodexAccounts(options?.container)
+    const deletedAccountWasActive = previous.accounts.some(
+      (account) => account.id === accountId && account.active
+    )
+    const configuration = await deleteCodexAccount(accountId, options?.container)
+    if (deletedAccountWasActive) codexAdapter.resetClientsForContainer(options?.container)
+    return configuration
+  },
   getUpdateAvailability: (providerId, options) =>
     adapters[providerId].getUpdateAvailability(options),
   updateProvider: (providerId, options) => adapters[providerId].updateProvider(options),

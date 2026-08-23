@@ -1148,6 +1148,62 @@ export const registerProviderIpc = (): void => {
     providerApi.login(requireProviderId(providerId), requireSourceOptions(options))
   )
 
+  ipcMain.handle(providerIpcChannels.getAccounts, (_, providerId: unknown, options: unknown) =>
+    providerApi.getAccounts(requireProviderId(providerId), requireSourceOptions(options))
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.createAccount,
+    (_, providerId: unknown, name: unknown, options: unknown) =>
+      providerApi.createAccount(
+        requireProviderId(providerId),
+        requireProviderResourceString(name, 'account name', 80),
+        requireSourceOptions(options)
+      )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.completeAccountCreation,
+    (_, providerId: unknown, accountId: unknown, loginId: unknown, options: unknown) =>
+      providerApi.completeAccountCreation(
+        requireProviderId(providerId),
+        requireProviderResourceString(accountId, 'account ID', 128),
+        requireOptionalProviderResourceString(loginId, 'login ID', 128),
+        requireSourceOptions(options)
+      )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.cancelAccountCreation,
+    (_, providerId: unknown, accountId: unknown, loginId: unknown, options: unknown) =>
+      providerApi.cancelAccountCreation(
+        requireProviderId(providerId),
+        requireProviderResourceString(accountId, 'account ID', 128),
+        requireOptionalProviderResourceString(loginId, 'login ID', 128),
+        requireSourceOptions(options)
+      )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.useAccount,
+    (_, providerId: unknown, accountId: unknown, options: unknown) =>
+      providerApi.useAccount(
+        requireProviderId(providerId),
+        requireProviderResourceString(accountId, 'account ID', 128),
+        requireSourceOptions(options)
+      )
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.deleteAccount,
+    (_, providerId: unknown, accountId: unknown, options: unknown) =>
+      providerApi.deleteAccount(
+        requireProviderId(providerId),
+        requireProviderResourceString(accountId, 'account ID', 128),
+        requireSourceOptions(options)
+      )
+  )
+
   ipcMain.handle(
     providerIpcChannels.getUpdateAvailability,
     (_, providerId: unknown, options: unknown) =>

@@ -4,6 +4,7 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { getCurrentContainerHostBridge } from '../../currentContainer'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
+import { getCodexAccountViewCommand } from './CodexAccountView'
 
 type RpcError = {
   code: number
@@ -47,6 +48,11 @@ const getAppServerCommand = (
   options: { container?: AppContainerTarget | null } = {}
 ): AppServerCommand => {
   const appServerArgs = ['app-server', '--listen', 'stdio://']
+  const accountViewCommand = getCodexAccountViewCommand(
+    binary,
+    appServerArgs,
+    process.platform === 'linux' || options.container?.kind === 'container'
+  )
   const canUseSystemd =
     process.platform === 'linux' &&
     !isRunningInFlatpak() &&
@@ -56,8 +62,8 @@ const getAppServerCommand = (
 
   if (!canUseSystemd) {
     return {
-      command: binary,
-      args: appServerArgs,
+      command: accountViewCommand.file,
+      args: accountViewCommand.args,
       resourceUnitName: null
     }
   }
@@ -76,8 +82,8 @@ const getAppServerCommand = (
       '--property=IOWeight=25',
       `--property=MemoryHigh=${codexResourceMemoryHigh}`,
       '--property=OOMScoreAdjust=500',
-      binary,
-      ...appServerArgs
+      accountViewCommand.file,
+      ...accountViewCommand.args
     ],
     resourceUnitName
   }
@@ -104,6 +110,7 @@ export class CodexAppServerClient {
   private pendingRequests = new Map<number, PendingRequest>()
   private notificationListeners = new Set<(notification: RpcNotification) => void>()
   private serverRequestListeners = new Set<(request: RpcRequest) => boolean | void>()
+  private stoppedListeners = new Set<(error: Error) => void>()
   private nextRequestId = 1
   private stderr = ''
 
@@ -120,6 +127,11 @@ export class CodexAppServerClient {
   onServerRequest = (listener: (request: RpcRequest) => boolean | void): (() => void) => {
     this.serverRequestListeners.add(listener)
     return () => this.serverRequestListeners.delete(listener)
+  }
+
+  onStopped = (listener: (error: Error) => void): (() => void) => {
+    this.stoppedListeners.add(listener)
+    return () => this.stoppedListeners.delete(listener)
   }
 
   resolveServerRequest = (id: number, result: unknown): void => {
@@ -303,10 +315,12 @@ export class CodexAppServerClient {
   }
 
   private handleProcessEnd = (error: Error): void => {
+    const hadProcess = Boolean(this.process)
     if (codexResourceIdentity?.pid === this.process?.pid) codexResourceIdentity = null
     this.process = null
     this.startPromise = null
     this.rejectPending(error)
+    if (hadProcess) this.stoppedListeners.forEach((listener) => listener(error))
   }
 
   private rejectPending = (error: Error): void => {

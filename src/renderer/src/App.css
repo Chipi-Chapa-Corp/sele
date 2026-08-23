@@ -1822,6 +1822,13 @@ button.changes-sidebar__recent-row:not(:disabled) {
   flex-direction: column;
 }
 
+.settings-dialog__account-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
 .settings-dialog__field {
   display: grid;
   width: min(100%, 680px);

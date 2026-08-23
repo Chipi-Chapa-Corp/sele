@@ -56,6 +56,7 @@ import {
   PanelLeft,
   PanelRight,
   Pencil,
+  Plus,
   RefreshCw,
   Search,
   Server,
@@ -68,6 +69,7 @@ import {
   Terminal,
   TriangleAlert,
   ToolCase,
+  Trash2,
   Undo2,
   Upload,
   UnlockKeyhole,
@@ -135,6 +137,7 @@ import type {
   ProviderToolActivity,
   ProviderToolIcon,
   ProviderAccountUsage,
+  ProviderAccountConfiguration,
   ProviderReasoningEffort,
   ProviderServiceTier,
   ProviderReview,
@@ -176,9 +179,11 @@ import {
   isProviderSandboxMode,
   isProviderServiceTier,
   providerOneShotGenerationCanceledMessage,
+  providerDefaultAccountId,
   providerIds
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
+import { AccountDialog, type AccountAuthorizationSession } from './components/AccountDialog'
 import {
   getChatCommitMarkerTerminalStatus,
   getRecoveredChatCommitMarkerTerminalStatus,
@@ -3858,6 +3863,16 @@ export const App: React.FC = () => {
   const [settingsScope, setSettingsScope] = useState<SettingsScope>('global')
   const [settingsProviderSkills, setSettingsProviderSkills] = useState<SettingsProviderSkill[]>([])
   const [settingsProviderApps, setSettingsProviderApps] = useState<SettingsProviderApp[]>([])
+  const [settingsProviderAccounts, setSettingsProviderAccounts] =
+    useState<ProviderAccountConfiguration | null>(null)
+  const [providerAccountsLoadState, setProviderAccountsLoadState] = useState<
+    'idle' | 'loading' | 'ready'
+  >('idle')
+  const [providerAccountsError, setProviderAccountsError] = useState<string | null>(null)
+  const [providerAccountsRefresh, setProviderAccountsRefresh] = useState(0)
+  const [providerAccountRevision, setProviderAccountRevision] = useState(0)
+  const [providerAccountUpdatingId, setProviderAccountUpdatingId] = useState<string | null>(null)
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false)
   const [providerResourcesLoadState, setProviderResourcesLoadState] =
     useState<ProviderResourcesLoadState>('idle')
   const [providerResourcesError, setProviderResourcesError] = useState<string | null>(null)
@@ -5105,6 +5120,58 @@ export const App: React.FC = () => {
       active = false
     }
   }, [newSessionContainer, newSessionContainerKey])
+
+  useEffect(() => {
+    if (!settingsOpen || settingsTab !== 'providers') return
+
+    let active = true
+    const providerId = newSessionProvider
+    const container = normalizeContainerTarget(newSessionContainer)
+    queueMicrotask(() => {
+      if (!active) return
+      setSettingsProviderAccounts(null)
+      setProviderAccountsError(null)
+      setProviderAccountsLoadState('loading')
+    })
+
+    providerApi
+      .getAccounts(providerId, { container })
+      .then((configuration) => {
+        if (!active) return
+        setSettingsProviderAccounts(configuration)
+        setProviderAccountsError(null)
+        setProviderAccountsLoadState('ready')
+      })
+      .catch((error) => {
+        if (!active) return
+        setSettingsProviderAccounts(null)
+        setProviderAccountsError(
+          getErrorMessage(error, 'Unable to inspect provider accounts in this environment.')
+        )
+        setProviderAccountsLoadState('ready')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [
+    newSessionContainer,
+    newSessionContainerKey,
+    newSessionProvider,
+    providerAccountsRefresh,
+    settingsOpen,
+    settingsTab
+  ])
+
+  useEffect(() => {
+    let active = true
+    queueMicrotask(() => {
+      if (active) setAccountDialogOpen(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [newSessionContainerKey, newSessionProvider])
 
   useEffect(() => {
     if (!settingsOpen || settingsTab !== 'providers') return
@@ -6585,7 +6652,8 @@ export const App: React.FC = () => {
     selectedChatStatus,
     usageProviderAvailabilityReady,
     usageProviderAvailable,
-    usageProviderId
+    usageProviderId,
+    providerAccountRevision
   ])
 
   useEffect(() => {
@@ -7547,6 +7615,129 @@ export const App: React.FC = () => {
       name: newSessionSshEnvironmentId,
       runtime: getContainerTargetFromSuggestion(suggestion)
     })
+  }
+  const applyProviderAccountConfiguration = (configuration: ProviderAccountConfiguration): void => {
+    setSettingsProviderAccounts(configuration)
+    setProviderAccountsError(null)
+    setProviderAccountsLoadState('ready')
+    providerModelCatalogCacheRef.current.delete(
+      `${newSessionProvider}:${getContainerTargetKey(newSessionContainer)}`
+    )
+    setProviderModelsRevision((revision) => revision + 1)
+    setProviderResourcesRefresh((refresh) => refresh + 1)
+    setAccountUsage(null)
+    setAccountUsageState('loading')
+  }
+  const handleUseProviderAccount = async (accountId: string): Promise<void> => {
+    if (providerAccountUpdatingId) return
+    const container = normalizeContainerTarget(newSessionContainer)
+    setProviderAccountUpdatingId(accountId)
+    setProviderAccountsError(null)
+    try {
+      applyProviderAccountConfiguration(
+        await providerApi.useAccount(newSessionProvider, accountId, { container })
+      )
+      setProviderAccountRevision((revision) => revision + 1)
+    } catch (error) {
+      setProviderAccountsError(getErrorMessage(error, 'Unable to switch accounts.'))
+    } finally {
+      setProviderAccountUpdatingId(null)
+    }
+  }
+  const handleDeleteProviderAccount = async (accountId: string): Promise<void> => {
+    if (providerAccountUpdatingId) return
+    const account = settingsProviderAccounts?.accounts.find(
+      (candidate) => candidate.id === accountId
+    )
+    if (!account || !window.confirm(`Delete the account “${account.name}”?`)) return
+
+    const container = normalizeContainerTarget(newSessionContainer)
+    setProviderAccountUpdatingId(accountId)
+    setProviderAccountsError(null)
+    try {
+      applyProviderAccountConfiguration(
+        await providerApi.deleteAccount(newSessionProvider, accountId, { container })
+      )
+      setProviderAccountRevision((revision) => revision + 1)
+    } catch (error) {
+      setProviderAccountsError(getErrorMessage(error, 'Unable to delete the account.'))
+    } finally {
+      setProviderAccountUpdatingId(null)
+    }
+  }
+  const handleCreateProviderAccount = async (
+    name: string
+  ): Promise<AccountAuthorizationSession> => {
+    const providerId = newSessionProvider
+    const container = normalizeContainerTarget(newSessionContainer)
+    const creation = await providerApi.createAccount(providerId, name, { container })
+    let loginId: string | null = null
+    let userCode: string | null = null
+    let authUrl: string | null = null
+    try {
+      const login = await providerApi.login(providerId, { container })
+      if (login.status === 'pending') {
+        loginId = login.loginId
+        userCode = login.userCode ?? null
+        authUrl = login.authUrl
+      }
+    } catch (error) {
+      try {
+        const restoredConfiguration = await providerApi.cancelAccountCreation(
+          providerId,
+          creation.accountId,
+          loginId,
+          { container }
+        )
+        applyProviderAccountConfiguration(restoredConfiguration)
+        setProviderAccountRevision((revision) => revision + 1)
+      } catch {
+        // Keep the original login error when cleanup cannot be completed.
+      }
+      throw error
+    }
+
+    const completion = (async (): Promise<void> => {
+      try {
+        const result = await providerApi.completeAccountCreation(
+          providerId,
+          creation.accountId,
+          loginId,
+          { container }
+        )
+        applyProviderAccountConfiguration(result.configuration)
+        setProviderAccountRevision((revision) => revision + 1)
+        if (!result.success) {
+          throw new Error(result.error || 'Codex authorization was not completed.')
+        }
+      } catch (error) {
+        const restoredConfiguration = await providerApi
+          .getAccounts(providerId, { container })
+          .catch(() => null)
+        if (restoredConfiguration) applyProviderAccountConfiguration(restoredConfiguration)
+        throw error
+      }
+    })()
+
+    return {
+      userCode,
+      completion,
+      authorize: async () => {
+        if (!authUrl) return
+        if (userCode) await appApi.writeClipboardText(userCode)
+        await appApi.handleExternalLink({ url: authUrl, action: 'open' })
+      },
+      cancel: async () => {
+        const configuration = await providerApi.cancelAccountCreation(
+          providerId,
+          creation.accountId,
+          loginId,
+          { container }
+        )
+        applyProviderAccountConfiguration(configuration)
+        setProviderAccountRevision((revision) => revision + 1)
+      }
+    }
   }
   const handleProviderSkillEnabledChange = async (
     resource: SettingsProviderSkill,
@@ -12312,6 +12503,7 @@ export const App: React.FC = () => {
 
     if (settingsTab === 'providers') {
       const providerResourcesLoading = providerResourcesLoadState !== 'ready'
+      const providerAccountsLoading = providerAccountsLoadState !== 'ready'
       const { appGroups, unparentedSkills } = groupSettingsProviderResources(
         settingsProviderSkills,
         settingsProviderApps
@@ -12334,7 +12526,9 @@ export const App: React.FC = () => {
             <Dropdown
               aria-label="Provider"
               disabled={
-                Boolean(providerResourceUpdatingKey) || newSessionProviderOptions.length === 0
+                Boolean(providerResourceUpdatingKey) ||
+                Boolean(providerAccountUpdatingId) ||
+                newSessionProviderOptions.length === 0
               }
               emptyContent="No providers found"
               options={newSessionProviderOptions}
@@ -12346,7 +12540,7 @@ export const App: React.FC = () => {
             <span>in</span>
             <Dropdown
               aria-label="Provider environment"
-              disabled={Boolean(providerResourceUpdatingKey)}
+              disabled={Boolean(providerResourceUpdatingKey) || Boolean(providerAccountUpdatingId)}
               menuActions={[
                 ...(sshEnvironmentError
                   ? [
@@ -12379,6 +12573,98 @@ export const App: React.FC = () => {
               onChange={handleNewSessionContainerChange}
             />
           </div>
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-providers-accounts"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-providers-accounts">
+              Accounts
+            </h2>
+            <div className="settings-dialog__section-cards">
+              {providerAccountsLoading ? (
+                <div className="settings-dialog__field">
+                  <div className="settings-dialog__field-header">
+                    <h3>Loading accounts…</h3>
+                  </div>
+                </div>
+              ) : providerAccountsError ? (
+                <div className="settings-dialog__field settings-dialog__field--inline">
+                  <div className="settings-dialog__field-header">
+                    <h3>{providerAccountsError}</h3>
+                  </div>
+                  <Button
+                    callback={() => setProviderAccountsRefresh((refresh) => refresh + 1)}
+                    disabled={Boolean(providerAccountUpdatingId)}
+                    icon={<RefreshCw aria-hidden="true" />}
+                    label={<span>Retry</span>}
+                    size="small"
+                    theme="secondary"
+                  />
+                </div>
+              ) : !settingsProviderAccounts?.available ? (
+                <div className="settings-dialog__field">
+                  <div className="settings-dialog__field-header">
+                    <h3>{settingsProviderAccounts?.unavailableMessage}</h3>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {settingsProviderAccounts.accounts.length === 0 && (
+                    <div className="settings-dialog__field">
+                      <div className="settings-dialog__field-header">
+                        <h3>No accounts configured</h3>
+                      </div>
+                    </div>
+                  )}
+                  {settingsProviderAccounts.accounts.map((account) => (
+                    <div
+                      className="settings-dialog__field settings-dialog__field--inline"
+                      key={account.id}
+                    >
+                      <div className="settings-dialog__field-header">
+                        <h3>{account.name}</h3>
+                        {account.active && <p>In use</p>}
+                      </div>
+                      <div className="settings-dialog__account-actions">
+                        <Button
+                          aria-pressed={account.active}
+                          callback={() => handleUseProviderAccount(account.id)}
+                          disabled={account.active || Boolean(providerAccountUpdatingId)}
+                          icon={account.active ? <Check aria-hidden="true" /> : undefined}
+                          label={<span>Use</span>}
+                          size="small"
+                          theme="secondary"
+                        />
+                        {account.id !== providerDefaultAccountId && (
+                          <Button
+                            callback={() => handleDeleteProviderAccount(account.id)}
+                            disabled={Boolean(providerAccountUpdatingId)}
+                            icon={<Trash2 aria-hidden="true" />}
+                            label={<span>Delete</span>}
+                            size="small"
+                            theme="secondary"
+                          />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="settings-dialog__field settings-dialog__field--inline">
+                    <div className="settings-dialog__field-header">
+                      <h3>Create another account</h3>
+                    </div>
+                    <Button
+                      callback={() => setAccountDialogOpen(true)}
+                      disabled={Boolean(providerAccountUpdatingId)}
+                      icon={<Plus aria-hidden="true" />}
+                      label={<span>Create</span>}
+                      size="small"
+                      theme="secondary"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
           {providerResourcesError && (
             <section
               className="settings-dialog__section"
@@ -13592,6 +13878,12 @@ export const App: React.FC = () => {
   return (
     <main className={`chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`}>
       {renderSettingsDialog()}
+      {accountDialogOpen && (
+        <AccountDialog
+          onClose={() => setAccountDialogOpen(false)}
+          onLogin={handleCreateProviderAccount}
+        />
+      )}
       {projectDialogOpen && (
         <ProjectDialog
           defaultPath={newSessionCwd}

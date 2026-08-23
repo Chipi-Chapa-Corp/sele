@@ -1,0 +1,57 @@
+.account-dialog-overlay {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgb(0 0 0 / 34%);
+}
+
+.account-dialog {
+  display: flex;
+  width: min(420px, 100%);
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--menu-border);
+  border-radius: 12px;
+  color: var(--lead);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+}
+
+.account-dialog__header,
+.account-dialog__footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-dialog__error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--error) 34%, transparent);
+  border-radius: 8px;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 7%, transparent);
+  line-height: 1.35;
+}
+
+.account-dialog__authorization {
+  display: grid;
+  gap: 10px;
+}
+
+.account-dialog__authorization p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.account-dialog__footer {
+  justify-content: flex-end;
+  padding-top: 2px;
+}

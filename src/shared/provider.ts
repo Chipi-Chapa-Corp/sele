@@ -339,9 +339,33 @@ export type ProviderAccount = {
   label: string
 }
 
+export type ProviderManagedAccount = {
+  id: string
+  name: string
+  active: boolean
+}
+
+export const providerDefaultAccountId = 'default'
+
+export type ProviderAccountConfiguration = {
+  available: boolean
+  unavailableMessage: string | null
+  accounts: ProviderManagedAccount[]
+}
+
+export type ProviderAccountCreation = {
+  accountId: string
+}
+
+export type ProviderAccountLoginCompletion = {
+  success: boolean
+  error: string | null
+  configuration: ProviderAccountConfiguration
+}
+
 export type ProviderLoginResult =
   | { status: 'authenticated'; account: ProviderAccount }
-  | { status: 'pending'; loginId: string; authUrl: string }
+  | { status: 'pending'; loginId: string; authUrl: string; userCode?: string }
   | { status: 'notRequired' }
 
 export type ProviderUpdateAvailability = {
@@ -811,6 +835,37 @@ export const providerOneShotGenerationCanceledMessage = 'One-shot generation can
 
 export type ProviderApi = {
   login: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderLoginResult>
+  getAccounts: (
+    providerId: ProviderId,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAccountConfiguration>
+  createAccount: (
+    providerId: ProviderId,
+    name: string,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAccountCreation>
+  completeAccountCreation: (
+    providerId: ProviderId,
+    accountId: string,
+    loginId: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAccountLoginCompletion>
+  cancelAccountCreation: (
+    providerId: ProviderId,
+    accountId: string,
+    loginId: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAccountConfiguration>
+  useAccount: (
+    providerId: ProviderId,
+    accountId: string,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAccountConfiguration>
+  deleteAccount: (
+    providerId: ProviderId,
+    accountId: string,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAccountConfiguration>
   getUpdateAvailability: (
     providerId: ProviderId,
     options?: ProviderSourceOptions
@@ -1011,6 +1066,12 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
 
 export const providerIpcChannels = {
   login: 'provider:login',
+  getAccounts: 'provider:get-accounts',
+  createAccount: 'provider:create-account',
+  completeAccountCreation: 'provider:complete-account-creation',
+  cancelAccountCreation: 'provider:cancel-account-creation',
+  useAccount: 'provider:use-account',
+  deleteAccount: 'provider:delete-account',
   getUpdateAvailability: 'provider:get-update-availability',
   updateProvider: 'provider:update',
   getApprovalModes: 'provider:get-approval-modes',

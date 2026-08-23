@@ -45,6 +45,10 @@ import {
 import { providerAppOwnsSkill } from '../../../shared/providerOwnership'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
+import {
+  isRecoverableCodexLoginAccountReadError,
+  isRecoverableCodexStopError
+} from './CodexAccountConfig'
 import { CodexAppServerClient, type RpcNotification, type RpcRequest } from './CodexAppServerClient'
 import {
   createCodexFileAttachmentInput,
@@ -88,6 +92,17 @@ type LoginResponse =
   | { type: 'apiKey' }
   | { type: 'chatgptDeviceCode'; loginId: string; verificationUrl: string; userCode: string }
   | { type: 'chatgptAuthTokens' }
+
+export type CodexLoginCompletion = {
+  success: boolean
+  error: string | null
+}
+
+type CodexLoginWaiter = {
+  resolve: (completion: CodexLoginCompletion) => void
+  reject: (error: Error) => void
+  timeout: ReturnType<typeof setTimeout>
+}
 
 type CodexThreadStatus =
   | { type: 'notLoaded' | 'idle' | 'systemError' }
@@ -356,6 +371,7 @@ type QueuedTurn = {
 }
 type OneShotGeneration = {
   client: CodexAppServerClient
+  containerKey: string
   threadId: string | null
   turnId: string | null
   canceled: boolean
@@ -827,9 +843,6 @@ const getRawResponseMessage = (
   return { text, phase }
 }
 
-const isNoActiveTurnError = (error: unknown): boolean =>
-  error instanceof Error && /no active turn/i.test(error.message)
-
 const getFoundActiveTurnId = (error: unknown): string | null => {
   if (!(error instanceof Error)) return null
 
@@ -1199,6 +1212,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private manuallyStoppedTurnIds = new Map<string, Set<string>>()
   private pendingApprovalsByThread = new Map<string, CodexPendingApproval[]>()
   private contextUsageByThread = new Map<string, ProviderChatContextUsage>()
+  private loginCompletions = new Map<string, CodexLoginCompletion>()
+  private loginWaiters = new Map<string, CodexLoginWaiter>()
 
   private get client(): CodexAppServerClient {
     return this.getClient(this.clientContainerContext.getStore() ?? null)
@@ -1218,6 +1233,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     client.onServerRequest((request) =>
       this.clientContainerContext.run(storedContainer, () => this.handleServerRequest(request))
     )
+    client.onStopped((error) => {
+      this.rejectLoginWaitersForContainer(key, error)
+    })
     this.clients.set(key, client)
     return client
   }
@@ -1253,36 +1271,140 @@ export class CodexProviderAdapter implements ProviderAdapter {
     )
   }
 
+  resetClientsForContainer = (container: AppContainerTarget | null | undefined): void => {
+    const normalizedContainer = normalizeContainerTarget(container)
+    const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
+    const key = getContainerTargetKey(storedContainer)
+    this.rejectLoginWaitersForContainer(key, new Error('Codex app-server stopped'))
+    const client = this.clients.get(key)
+    client?.dispose()
+    this.clients.delete(key)
+
+    this.activeOneShotGenerations.forEach((generation) => {
+      if (generation.containerKey !== key) return
+      generation.canceled = true
+      generation.client.dispose()
+    })
+
+    this.threadContainers.forEach((threadContainer, threadId) => {
+      if (getContainerTargetKey(threadContainer) !== key) return
+      const activeTurnId = this.activeTurnIds.get(threadId)
+      if (activeTurnId) this.markTurnInterrupted(threadId, activeTurnId)
+      this.activeTurnIds.delete(threadId)
+      this.pendingTurnIds.delete(threadId)
+      this.cancelPendingApprovals(threadId)
+      if (!this.threads.has(threadId)) return
+      this.setThreadStatus(threadId, { type: 'idle' })
+      this.emitChatUpdated(threadId)
+    })
+  }
+
+  waitForLogin = (
+    loginId: string,
+    options: ProviderSourceOptions = {}
+  ): Promise<CodexLoginCompletion> =>
+    this.runWithContainer(options.container, () => this.waitForLoginInContext(loginId))
+
+  private waitForLoginInContext = (loginId: string): Promise<CodexLoginCompletion> => {
+    const key = this.getLoginKey(loginId)
+    const completed = this.loginCompletions.get(key)
+    if (completed) {
+      this.loginCompletions.delete(key)
+      return Promise.resolve(completed)
+    }
+    if (this.loginWaiters.has(key)) throw new Error('Codex login is already being awaited')
+
+    return new Promise<CodexLoginCompletion>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.loginWaiters.delete(key)
+        reject(new Error('Codex login timed out'))
+      }, 15 * 60_000)
+      this.loginWaiters.set(key, { resolve, reject, timeout })
+    })
+  }
+
+  cancelLogin = (loginId: string, options: ProviderSourceOptions = {}): Promise<void> =>
+    this.runWithContainer(options.container, async () => {
+      await this.client.request('account/login/cancel', { loginId })
+    })
+
+  private getLoginKey = (loginId: string): string =>
+    `${getContainerTargetKey(this.getCurrentContainer())}\0${loginId}`
+
+  private resolveLogin = (loginId: string, completion: CodexLoginCompletion): void => {
+    const key = this.getLoginKey(loginId)
+    const waiter = this.loginWaiters.get(key)
+    if (waiter) {
+      clearTimeout(waiter.timeout)
+      this.loginWaiters.delete(key)
+      waiter.resolve(completion)
+      return
+    }
+
+    this.loginCompletions.set(key, completion)
+    const cleanup = setTimeout(() => {
+      if (this.loginCompletions.get(key) === completion) this.loginCompletions.delete(key)
+    }, 15 * 60_000)
+    cleanup.unref()
+  }
+
+  private rejectLoginWaitersForContainer = (containerKey: string, error: Error): void => {
+    const prefix = `${containerKey}\0`
+    this.loginWaiters.forEach((waiter, key) => {
+      if (!key.startsWith(prefix)) return
+      clearTimeout(waiter.timeout)
+      this.loginWaiters.delete(key)
+      waiter.reject(error)
+    })
+    this.loginCompletions.forEach((_, key) => {
+      if (key.startsWith(prefix)) this.loginCompletions.delete(key)
+    })
+  }
+
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> =>
     this.runWithContainer(options.container, () => this.loginInContext())
 
   private loginInContext = async (): Promise<ProviderLoginResult> => {
-    const account = await this.client.request<AccountReadResponse>('account/read', {
-      refreshToken: false
-    })
+    const account = await this.client
+      .request<AccountReadResponse>('account/read', {
+        refreshToken: false
+      })
+      .catch((error: unknown) => {
+        if (isRecoverableCodexLoginAccountReadError(error)) return null
+        throw error
+      })
 
-    if (account.account) {
+    if (account?.account) {
       return {
         status: 'authenticated',
         account: { label: getAccountLabel(account.account) }
       }
     }
 
-    if (!account.requiresOpenaiAuth) return { status: 'notRequired' }
+    if (account && !account.requiresOpenaiAuth) return { status: 'notRequired' }
 
     const login = await this.client.request<LoginResponse>('account/login/start', {
-      type: 'chatgpt'
+      type: 'chatgptDeviceCode'
     })
 
-    if (login.type !== 'chatgpt') {
-      throw new Error(`Unsupported Codex login response: ${login.type}`)
+    if (login.type === 'chatgpt') {
+      return {
+        status: 'pending',
+        loginId: login.loginId,
+        authUrl: login.authUrl
+      }
     }
 
-    return {
-      status: 'pending',
-      loginId: login.loginId,
-      authUrl: login.authUrl
+    if (login.type === 'chatgptDeviceCode') {
+      return {
+        status: 'pending',
+        loginId: login.loginId,
+        authUrl: login.verificationUrl,
+        userCode: login.userCode
+      }
     }
+
+    throw new Error(`Unsupported Codex login response: ${login.type}`)
   }
 
   getApprovalModes = async (): Promise<ProviderApprovalModeOption[]> =>
@@ -1800,6 +1922,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const generation: OneShotGeneration | null = generationId
       ? {
           client,
+          containerKey: getContainerTargetKey(this.getCurrentContainer()),
           threadId: null,
           turnId: null,
           canceled: canceledBeforeStart
@@ -2555,7 +2678,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.removeSteeringMessage(chatId, steeringMessageId)
       this.emitChatUpdated(chatId)
 
-      if (isNoActiveTurnError(error)) {
+      if (isRecoverableCodexStopError(error)) {
         await this.continueChatImmediately(chatId, steeringMessage.text, steeringMessage.options)
         return
       }
@@ -2647,7 +2770,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     } catch (error) {
       const serverTurnId = getFoundActiveTurnId(error)
       if (!serverTurnId || serverTurnId === turnId) {
-        if (isNoActiveTurnError(error)) return { turnId, interrupted: false }
+        if (isRecoverableCodexStopError(error)) return { turnId, interrupted: false }
         throw error
       }
 
@@ -2658,7 +2781,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
         })
         return { turnId: serverTurnId, interrupted: true }
       } catch (retryError) {
-        if (isNoActiveTurnError(retryError)) return { turnId: serverTurnId, interrupted: false }
+        if (isRecoverableCodexStopError(retryError)) {
+          return { turnId: serverTurnId, interrupted: false }
+        }
         throw retryError
       }
     }
@@ -4540,6 +4665,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private handleNotification = (notification: RpcNotification): void => {
     const params = notification.params
     if (!params || typeof params !== 'object') return
+
+    if (notification.method === 'account/login/completed') {
+      const loginId = getStringValue((params as Record<string, unknown>).loginId)
+      if (!loginId) return
+      this.resolveLogin(loginId, {
+        success: (params as Record<string, unknown>).success === true,
+        error: getStringValue((params as Record<string, unknown>).error)
+      })
+      return
+    }
 
     if (notification.method === 'turn/started' || notification.method === 'turn/completed') {
       this.handleTurnNotification(notification, params as TurnNotificationParams)
