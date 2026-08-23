@@ -862,122 +862,143 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   word-break: normal;
 }
 
-.chat-detail__activity-content .token.comment,
-.chat-detail__activity-content .token.prolog,
-.chat-detail__activity-content .token.doctype,
-.chat-detail__activity-content .token.cdata {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.comment,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.prolog,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.doctype,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.cdata {
   color: #777772;
 }
 
-.chat-detail__activity-content .token.punctuation {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.punctuation {
   color: #666661;
 }
 
-.chat-detail__activity-content .token.property,
-.chat-detail__activity-content .token.tag,
-.chat-detail__activity-content .token.boolean,
-.chat-detail__activity-content .token.number,
-.chat-detail__activity-content .token.constant,
-.chat-detail__activity-content .token.symbol,
-.chat-detail__activity-content .token.deleted {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.property,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.tag,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.boolean,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.number,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.constant,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.symbol,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.deleted {
   color: #a03c38;
 }
 
-.chat-detail__activity-content .token.selector,
-.chat-detail__activity-content .token.attr-name,
-.chat-detail__activity-content .token.string,
-.chat-detail__activity-content .token.char,
-.chat-detail__activity-content .token.builtin,
-.chat-detail__activity-content .token.inserted {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.selector,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.attr-name,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.string,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.char,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.builtin,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.inserted {
   color: #39744b;
 }
 
-.chat-detail__activity-content .token.operator,
-.chat-detail__activity-content .token.entity,
-.chat-detail__activity-content .token.url,
-.chat-detail__activity-content .language-css .token.string,
-.chat-detail__activity-content .style .token.string,
-.chat-detail__activity-content .token.variable {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.operator,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.entity,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.url,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .language-css .token.string,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .style .token.string,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.variable {
   color: #8c5a24;
 }
 
-.chat-detail__activity-content .token.atrule,
-.chat-detail__activity-content .token.attr-value,
-.chat-detail__activity-content .token.function,
-.chat-detail__activity-content .token.class-name {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.atrule,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.attr-value,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.function,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.class-name {
   color: #76552f;
 }
 
-.chat-detail__activity-content .token.keyword {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.keyword {
   color: #7d438e;
 }
 
-.chat-detail__activity-content .token.regex,
-.chat-detail__activity-content .token.important {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.regex,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.important {
   color: #a75022;
 }
 
-.chat-detail__activity-content .token.bold,
-.chat-detail__activity-content .token.important {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.bold,
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.important {
   font-weight: 700;
 }
 
-.chat-detail__activity-content .token.italic {
+:is(.chat-detail__activity-content, .chat-detail__message-markdown) .token.italic {
   font-style: italic;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.comment,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.prolog,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.doctype,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.cdata {
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  .token.comment,
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  .token.prolog,
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  .token.doctype,
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  .token.cdata {
   color: #898984;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.punctuation {
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  .token.punctuation {
   color: #b4b4af;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.property,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.tag,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.boolean,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.number,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.constant,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.symbol,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.deleted {
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  :is(
+    .token.property,
+    .token.tag,
+    .token.boolean,
+    .token.number,
+    .token.constant,
+    .token.symbol,
+    .token.deleted
+  ) {
   color: #ee8580;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.selector,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.attr-name,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.string,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.char,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.builtin,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.inserted {
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  :is(
+    .token.selector,
+    .token.attr-name,
+    .token.string,
+    .token.char,
+    .token.builtin,
+    .token.inserted
+  ) {
   color: #8fc89d;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.operator,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.entity,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.url,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .language-css .token.string,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .style .token.string,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.variable {
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  :is(.token.operator, .token.entity, .token.url, .token.variable),
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  :is(.language-css, .style)
+  .token.string {
   color: #ddb278;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.atrule,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.attr-value,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.function,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.class-name {
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  :is(.token.atrule, .token.attr-value, .token.function, .token.class-name) {
   color: #d8ac7e;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.keyword {
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  .token.keyword {
   color: #d49ae2;
 }
 
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.regex,
-:root[data-color-scheme='dark'] .chat-detail__activity-content .token.important {
+:root[data-color-scheme='dark']
+  :is(.chat-detail__activity-content, .chat-detail__message-markdown)
+  :is(.token.regex, .token.important) {
   color: #e99b65;
 }
 

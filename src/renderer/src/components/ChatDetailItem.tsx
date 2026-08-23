@@ -76,6 +76,7 @@ import type {
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
+import { renderMarkdownCodeBlock } from '../codeHighlighting'
 import { createLocalImageUrl } from '../localImage'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from '../markdownFileLink'
 import { getBrowserFaviconUrl } from '../../../shared/browser'
@@ -327,6 +328,7 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
   const renderer = new Renderer()
 
   renderer.html = ({ text }) => escapeHtml(text)
+  renderer.code = ({ lang, text }) => renderMarkdownCodeBlock(text, lang)
   renderer.link = function (token: Tokens.Link): string {
     const fileTarget = getMarkdownFileTarget(token.href)
     if (fileTarget && interactiveFileLinks) {

@@ -1,14 +1,12 @@
 import { createElement, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import type { RootContent } from 'hast'
-import { refractor } from 'refractor'
+import { highlightCode } from '../codeHighlighting'
 
 type HighlightedCodeProps = {
   children: string
   language: string | null
 }
-
-const maxHighlightedCodeLength = 100_000
 
 const renderNode = (node: RootContent, key: number): ReactNode => {
   if (node.type === 'text') return node.value
@@ -32,21 +30,10 @@ export const HighlightedCode = ({
   children,
   language
 }: HighlightedCodeProps): React.JSX.Element => {
-  const highlighted = useMemo(() => {
-    if (
-      children.length > maxHighlightedCodeLength ||
-      !language ||
-      !refractor.registered(language)
-    ) {
-      return children
-    }
-
-    try {
-      return refractor.highlight(children, language).children.map(renderNode)
-    } catch {
-      return children
-    }
-  }, [children, language])
+  const highlighted = useMemo(
+    () => highlightCode(children, language)?.map(renderNode) ?? children,
+    [children, language]
+  )
 
   return (
     <pre className="chat-detail__highlighted-code">
