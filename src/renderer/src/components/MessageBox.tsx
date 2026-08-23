@@ -1,6 +1,8 @@
 import {
   type CSSProperties,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
   useCallback,
   useEffect,
   useId,
@@ -64,6 +66,7 @@ import type {
 import { appApi } from '../appApi'
 import type { AppAction } from '../actions'
 import { groupAccountRateLimits } from '../accountRateLimits'
+import { getComposerDraft, updateComposerDraft, type ComposerDraft } from '../composerDraft'
 import { providerApi } from '../providerApi'
 import { getReasoningEffortPresentation } from '../reasoningEffortPresentation'
 import type { AppChatUsageDisplay } from '../settings'
@@ -86,6 +89,7 @@ type MessageBoxProps = {
   activePrimaryMode?: Extract<ProviderActiveSendMode, 'steer' | 'queue'>
   activeSteeringEnabled?: boolean
   autoFocus?: boolean
+  draftScopeKey: string
   disabled?: boolean
   editSession?: { id: string; content: string; type?: 'message' | 'pending' } | null
   error?: string | null
@@ -935,6 +939,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   activePrimaryMode = 'queue',
   activeSteeringEnabled = true,
   autoFocus = false,
+  draftScopeKey,
   disabled = false,
   editSession = null,
   error = null,
@@ -994,10 +999,40 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const usagePopoverId = useId().replace(/:/g, '')
   const fileMentionListboxId = useId().replace(/:/g, '')
   const skillMentionListboxId = useId().replace(/:/g, '')
-  const [message, setMessage] = useState('')
-  const [selectedAttachments, setSelectedAttachments] = useState<AppSelectedAttachment[]>([])
-  const [selectedSkills, setSelectedSkills] = useState<ProviderSkill[]>([])
-  const [selectedApps, setSelectedApps] = useState<ProviderApp[]>([])
+  const [composerDrafts, setComposerDrafts] = useState<ReadonlyMap<string, ComposerDraft>>(
+    () => new Map()
+  )
+  const composerDraft = getComposerDraft(composerDrafts, draftScopeKey)
+  const message = composerDraft.message
+  const selectedAttachments = composerDraft.attachments
+  const selectedSkills = composerDraft.skills
+  const selectedApps = composerDraft.apps
+  const setMessage = useCallback<Dispatch<SetStateAction<string>>>(
+    (action) => {
+      setComposerDrafts((drafts) => updateComposerDraft(drafts, draftScopeKey, 'message', action))
+    },
+    [draftScopeKey]
+  )
+  const setSelectedAttachments = useCallback<Dispatch<SetStateAction<AppSelectedAttachment[]>>>(
+    (action) => {
+      setComposerDrafts((drafts) =>
+        updateComposerDraft(drafts, draftScopeKey, 'attachments', action)
+      )
+    },
+    [draftScopeKey]
+  )
+  const setSelectedSkills = useCallback<Dispatch<SetStateAction<ProviderSkill[]>>>(
+    (action) => {
+      setComposerDrafts((drafts) => updateComposerDraft(drafts, draftScopeKey, 'skills', action))
+    },
+    [draftScopeKey]
+  )
+  const setSelectedApps = useCallback<Dispatch<SetStateAction<ProviderApp[]>>>(
+    (action) => {
+      setComposerDrafts((drafts) => updateComposerDraft(drafts, draftScopeKey, 'apps', action))
+    },
+    [draftScopeKey]
+  )
   const [openedImage, setOpenedImage] = useState<Extract<
     AppSelectedAttachment,
     { kind: 'image' }
@@ -1642,7 +1677,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     })
 
     return () => window.cancelAnimationFrame(animationFrame)
-  }, [editSession])
+  }, [editSession, setMessage, setSelectedApps, setSelectedAttachments, setSelectedSkills])
 
   useEffect(() => {
     if (!quoteRequest || editing || handledQuoteRequestIdRef.current === quoteRequest.id) {
@@ -1674,7 +1709,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       window.cancelAnimationFrame(updateFrame)
       if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
     }
-  }, [editing, quoteRequest])
+  }, [editing, quoteRequest, setMessage])
 
   useEffect(() => {
     if (!autoFocus || operationsDisabled || disabled || pending) return
