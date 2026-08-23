@@ -411,6 +411,11 @@ type ChatCommitMarker = {
   startedAt: number
   finishedAt: number | null
 }
+type CommitChatReturnTarget = {
+  providerId: ProviderId
+  commitChatId: string
+  sourceChat: ProviderChat
+}
 type DirectCommitActivity = {
   source: 'git'
   id: string
@@ -1289,6 +1294,7 @@ const chatCommitMarkerStatuses = new Set<ChatCommitMarkerStatus>([
   'pending',
   'finished',
   'stopped',
+  'interrupted',
   'failed'
 ])
 
@@ -1538,6 +1544,9 @@ const getChatCommitMarkerLabel = (marker: ChatCommitMarker): string => {
   if (marker.status === 'stopped') {
     return marker.commitAction === 'amend' ? 'AI amend stopped' : 'AI commit stopped'
   }
+  if (marker.status === 'interrupted') {
+    return marker.commitAction === 'amend' ? 'AI amend interrupted' : 'AI commit interrupted'
+  }
 
   return marker.commitAction === 'amend' ? 'AI amend finished' : 'AI commit finished'
 }
@@ -1545,17 +1554,15 @@ const getChatCommitMarkerLabel = (marker: ChatCommitMarker): string => {
 const ChatCommitMarkerItem: React.FC<{
   marker: ChatCommitMarker
   canceling?: boolean
+  opening?: boolean
   onCancel?: () => Promise<void> | void
-}> = ({ marker, canceling = false, onCancel }) => {
+  onOpen?: () => Promise<void> | void
+}> = ({ marker, canceling = false, opening = false, onCancel, onOpen }) => {
   const label = getChatCommitMarkerLabel(marker)
   const cancelLabel = `Cancel AI ${marker.commitAction}`
-
-  return (
-    <div
-      className={`chat-detail__commit-marker chat-detail__commit-marker--${marker.status}`}
-      role="status"
-      aria-live={marker.status === 'pending' ? 'polite' : undefined}
-    >
+  const openLabel = `Open AI ${marker.commitAction} chat`
+  const markerContent = (
+    <>
       {marker.status === 'pending' ? (
         <AnimatedStatusIcon
           Icon={AnimatedGitCommitHorizontalIcon}
@@ -1566,7 +1573,7 @@ const ChatCommitMarkerItem: React.FC<{
         <span className="chat-detail__commit-marker-icon" aria-hidden="true">
           {marker.status === 'finished' ? (
             <Check />
-          ) : marker.status === 'stopped' ? (
+          ) : marker.status === 'stopped' || marker.status === 'interrupted' ? (
             <Minus />
           ) : (
             <X />
@@ -1574,6 +1581,29 @@ const ChatCommitMarkerItem: React.FC<{
         </span>
       )}
       <span>{label}</span>
+    </>
+  )
+
+  return (
+    <div
+      className={`chat-detail__commit-marker chat-detail__commit-marker--${marker.status}`}
+      role="status"
+      aria-live={marker.status === 'pending' ? 'polite' : undefined}
+    >
+      {onOpen ? (
+        <button
+          aria-label={openLabel}
+          className="chat-detail__commit-marker-open"
+          disabled={opening}
+          title={openLabel}
+          type="button"
+          onClick={onOpen}
+        >
+          {markerContent}
+        </button>
+      ) : (
+        <span className="chat-detail__commit-marker-open">{markerContent}</span>
+      )}
       {marker.status === 'pending' && onCancel && (
         <span className="chat-detail__commit-marker-cancel">
           <Button
@@ -4116,6 +4146,9 @@ export const App: React.FC = () => {
     Record<string, DirectCommitActivity>
   >({})
   const [cancelingAiCommitKeys, setCancelingAiCommitKeys] = useState<Set<string>>(() => new Set())
+  const [openingAiCommitChatIds, setOpeningAiCommitChatIds] = useState<Set<string>>(() => new Set())
+  const [commitChatReturnTarget, setCommitChatReturnTarget] =
+    useState<CommitChatReturnTarget | null>(null)
   const [syncState, setSyncState] = useState<SendState>('idle')
   const [syncError, setSyncError] = useState<string | null>(null)
   const [syncRecovery, setSyncRecovery] = useState<GitSyncRecoveryState | null>(null)
@@ -4478,6 +4511,11 @@ export const App: React.FC = () => {
         Boolean(marker.commitChatId) &&
         !restoredMarkerIds.has(marker.id)
     )
+    const ambiguousTerminalMarkers = Object.values(initialChatCommitMarkersRef.current).filter(
+      (marker) =>
+        (marker.status === 'stopped' || marker.status === 'interrupted') &&
+        Boolean(marker.commitChatId)
+    )
 
     setChatCommitMarkers((currentMarkers) => {
       let changed = false
@@ -4624,6 +4662,42 @@ export const App: React.FC = () => {
           })
         } catch {
           // Keep the pending marker for a later provider update if recovery is temporarily offline.
+        }
+      })
+    )
+
+    void Promise.all(
+      ambiguousTerminalMarkers.map(async (marker) => {
+        const commitChatId = marker.commitChatId
+        if (!commitChatId) return
+
+        try {
+          const detail = await providerApi.getChat(marker.providerId, commitChatId)
+          if (!active) return
+
+          const recoveredStatus = getChatCommitMarkerTerminalStatus(detail)
+          if (recoveredStatus === 'stopped') return
+
+          setChatCommitMarkers((currentMarkers) => {
+            const currentMarker = currentMarkers[marker.id]
+            if (
+              !currentMarker ||
+              (currentMarker.status !== 'stopped' && currentMarker.status !== 'interrupted')
+            ) {
+              return currentMarkers
+            }
+
+            return {
+              ...currentMarkers,
+              [currentMarker.id]: {
+                ...currentMarker,
+                status: recoveredStatus,
+                finishedAt: Date.now()
+              }
+            }
+          })
+        } catch {
+          // Preserve the stored marker when its backing provider chat is temporarily unavailable.
         }
       })
     )
@@ -5685,11 +5759,12 @@ export const App: React.FC = () => {
       }
       cacheRecentChatDetail(providerId, detail, updatedAt, options.select)
 
-      if (detail.purpose === 'commit') {
+      const hiddenCommit = detail.purpose === 'commit'
+      if (hiddenCommit) {
         setChats((currentChats) =>
           currentChats.filter((chat) => chat.providerId !== providerId || chat.id !== detail.id)
         )
-        return
+        if (!options.select && selectedChatKeyRef.current !== detailKey) return
       }
 
       if (options.select) {
@@ -5707,6 +5782,8 @@ export const App: React.FC = () => {
         )
       }
 
+      if (hiddenCommit) return
+
       setChats((currentChats) => {
         const existingChat =
           currentChats.find((chat) => chat.providerId === providerId && chat.id === detail.id) ??
@@ -5723,14 +5800,15 @@ export const App: React.FC = () => {
     (providerId: ProviderId, summary: ProviderChatUpdateSummary, turnCompleted: boolean): void => {
       removeRecentChatCacheEntry(providerId, summary.id)
 
-      if (summary.purpose === 'commit') {
+      const summaryKey = getProviderChatKey(providerId, summary.id)
+      const hiddenCommit = summary.purpose === 'commit'
+      if (hiddenCommit) {
         setChats((currentChats) =>
           currentChats.filter((chat) => chat.providerId !== providerId || chat.id !== summary.id)
         )
-        return
+        if (selectedChatKeyRef.current !== summaryKey) return
       }
 
-      const summaryKey = getProviderChatKey(providerId, summary.id)
       if (selectedChatKeyRef.current === summaryKey) {
         selectedChatUpdatedAtRef.current = Math.max(
           selectedChatUpdatedAtRef.current ?? 0,
@@ -5754,6 +5832,8 @@ export const App: React.FC = () => {
         const nextChat = getChatFromUpdateSummary(providerId, summary, currentChat, turnCompleted)
         return areChatsEqual(currentChat, nextChat) ? currentChat : nextChat
       })
+      if (hiddenCommit) return
+
       setChats((currentChats) => {
         const existingChat =
           currentChats.find((chat) => chat.providerId === providerId && chat.id === summary.id) ??
@@ -5770,6 +5850,7 @@ export const App: React.FC = () => {
   const showNewChatView = useCallback(
     (projectCwd?: string | null, container?: AppContainerTarget | null): void => {
       resetChatSearch()
+      setCommitChatReturnTarget(null)
       chatDetailRef.current = null
       setSelectedChat(null)
       setChatDetail(null)
@@ -8047,6 +8128,7 @@ export const App: React.FC = () => {
     }
 
     resetChatSearch()
+    setCommitChatReturnTarget(null)
     setSendState(sendInFlightRef.current ? 'sending' : 'idle')
     setEditingMessage(null)
     setNewChatOpen(false)
@@ -8089,6 +8171,7 @@ export const App: React.FC = () => {
 
   const handleBack = (): void => {
     markSelectedChatSeen(true)
+    setCommitChatReturnTarget(null)
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
     resetChatSearch()
@@ -11840,6 +11923,62 @@ export const App: React.FC = () => {
     }
   }
 
+  const handleOpenAiCommitChat = async (marker: ChatCommitMarker): Promise<void> => {
+    const commitChatId = marker.commitChatId
+    if (!commitChatId || openingAiCommitChatIds.has(commitChatId)) return
+    const sourceChat =
+      selectedChat?.providerId === marker.providerId && selectedChat.id === marker.sourceChatId
+        ? selectedChat
+        : (chatsRef.current.find(
+            (chat) => chat.providerId === marker.providerId && chat.id === marker.sourceChatId
+          ) ?? null)
+
+    setOpeningAiCommitChatIds((currentIds) => new Set(currentIds).add(commitChatId))
+    setCommitState('idle')
+    setCommitError(null)
+
+    try {
+      const detail = await providerApi.getChat(marker.providerId, commitChatId)
+      markSelectedChatSeen(true)
+      setSendState(sendInFlightRef.current ? 'sending' : 'idle')
+      setEditingMessage(null)
+      setSearchOpen(false)
+      setSearchQuery('')
+      setCommitChatReturnTarget(
+        sourceChat
+          ? {
+              providerId: marker.providerId,
+              commitChatId,
+              sourceChat
+            }
+          : null
+      )
+      applyViewedChatDetail(marker.providerId, detail, { select: true })
+    } catch (error) {
+      setCommitState('error')
+      setCommitError(getErrorMessage(error, 'Unable to open the AI commit chat.'))
+    } finally {
+      setOpeningAiCommitChatIds((currentIds) => {
+        if (!currentIds.has(commitChatId)) return currentIds
+
+        const nextIds = new Set(currentIds)
+        nextIds.delete(commitChatId)
+        return nextIds
+      })
+    }
+  }
+
+  const handleReturnFromAiCommitChat = (): void => {
+    if (!commitChatReturnTarget) return
+
+    const { providerId, sourceChat } = commitChatReturnTarget
+    const currentSourceChat =
+      chatsRef.current.find(
+        (chat) => chat.providerId === providerId && chat.id === sourceChat.id
+      ) ?? sourceChat
+    handleSelectChat(currentSourceChat)
+  }
+
   const renderChatCommitMarker = (marker: ChatCommitMarker): React.ReactElement => {
     const activity = scopedCommitActivitiesByMarkerId.get(marker.id)
     const activityKey = activity ? getProviderChatKey(activity.providerId, activity.chatId) : null
@@ -11851,7 +11990,9 @@ export const App: React.FC = () => {
           providerUpdateInProgress || Boolean(activityKey && cancelingAiCommitKeys.has(activityKey))
         }
         key={marker.id}
+        opening={Boolean(marker.commitChatId && openingAiCommitChatIds.has(marker.commitChatId))}
         onCancel={activity ? () => handleCancelAiCommit(activity) : undefined}
+        onOpen={marker.commitChatId ? () => handleOpenAiCommitChat(marker) : undefined}
       />
     )
   }
@@ -13674,6 +13815,18 @@ export const App: React.FC = () => {
             )}
             {selectedChat && (
               <div className="chat-detail__messages-shell">
+                {commitChatReturnTarget?.providerId === selectedChat.providerId &&
+                  commitChatReturnTarget.commitChatId === selectedChat.id && (
+                    <div className="chat-detail__commit-back-button">
+                      <Button
+                        aria-label="Back to original chat"
+                        title="Back to original chat"
+                        callback={handleReturnFromAiCommitChat}
+                        icon={<ArrowLeft aria-hidden="true" />}
+                        theme="secondary"
+                      />
+                    </div>
+                  )}
                 <div
                   className="chat-detail__messages"
                   id="chat-search-content"

@@ -262,6 +262,11 @@
   opacity: 1;
 }
 
+:where(.ui-button--transparent:disabled) {
+  border-color: transparent;
+  background: transparent;
+}
+
 :where(
   .ui-button-group--primary
     .ui-button--split-main:not(:disabled)

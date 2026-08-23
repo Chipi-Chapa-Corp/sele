@@ -2073,18 +2073,62 @@ button.changes-sidebar__recent-row:not(:disabled) {
   border-radius: 999px;
 }
 
+.chat-detail__commit-back-button {
+  position: absolute;
+  top: 12px;
+  left: 18px;
+  z-index: 4;
+  border-radius: 999px;
+}
+
+.chat-detail__commit-back-button .ui-button {
+  border-radius: 999px;
+}
+
 .chat-detail__commit-marker {
   display: inline-flex;
   max-width: 82%;
   align-self: flex-start;
   align-items: center;
-  gap: 9px;
-  padding: 12px 15px;
+  gap: 0;
+  padding: 0;
   border: 1px dashed var(--message-border);
   border-radius: 17px 17px 17px 6px;
   color: color-mix(in srgb, var(--lead) 72%, transparent);
   background: color-mix(in srgb, var(--assistant-message) 68%, transparent);
   line-height: 1.4;
+  overflow: hidden;
+}
+
+.chat-detail__commit-marker-open {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 15px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+}
+
+button.chat-detail__commit-marker-open {
+  cursor: pointer;
+}
+
+button.chat-detail__commit-marker-open:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--lead) 6%, transparent);
+}
+
+button.chat-detail__commit-marker-open:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -3px;
+}
+
+button.chat-detail__commit-marker-open:disabled {
+  cursor: wait;
 }
 
 .chat-detail__commit-marker--finished {
@@ -2093,7 +2137,8 @@ button.changes-sidebar__recent-row:not(:disabled) {
   background: var(--assistant-message);
 }
 
-.chat-detail__commit-marker--stopped {
+.chat-detail__commit-marker--stopped,
+.chat-detail__commit-marker--interrupted {
   border-style: solid;
 }
 
@@ -2117,7 +2162,8 @@ button.changes-sidebar__recent-row:not(:disabled) {
   color: var(--error);
 }
 
-.chat-detail__commit-marker--stopped .chat-detail__commit-marker-icon {
+.chat-detail__commit-marker--stopped .chat-detail__commit-marker-icon,
+.chat-detail__commit-marker--interrupted .chat-detail__commit-marker-icon {
   color: var(--muted);
 }
 
@@ -2132,7 +2178,8 @@ button.changes-sidebar__recent-row:not(:disabled) {
 
   display: inline-flex;
   flex: none;
-  margin-left: 3px;
+  margin-left: -6px;
+  padding-right: 9px;
 }
 
 @media (max-width: 800px) {

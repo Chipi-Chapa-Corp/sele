@@ -15,8 +15,13 @@ test('preserves stopped status for a live AI commit cancellation', () => {
   assert.equal(getChatCommitMarkerTerminalStatus(detail(null, 'stopped')), 'stopped')
 })
 
-test('marks a shutdown-interrupted AI commit as failed during recovery', () => {
-  assert.equal(getRecoveredChatCommitMarkerTerminalStatus(detail(null, 'stopped')), 'failed')
+test('renders a provider limit failure as failed instead of stopped', () => {
+  assert.equal(getChatCommitMarkerTerminalStatus(detail(null, 'failed')), 'failed')
+  assert.equal(getRecoveredChatCommitMarkerTerminalStatus(detail(null, 'failed')), 'failed')
+})
+
+test('distinguishes a shutdown-interrupted AI commit during recovery', () => {
+  assert.equal(getRecoveredChatCommitMarkerTerminalStatus(detail(null, 'stopped')), 'interrupted')
 })
 
 test('preserves unambiguous terminal statuses during recovery', () => {
