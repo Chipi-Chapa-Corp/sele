@@ -13,9 +13,9 @@ import type { ProviderRendererApi, ProviderWindowChatUpdatedEvent } from '../sha
 import { providerIpcChannels } from '../shared/provider'
 import type { TerminalDataEvent, TerminalExitEvent, TerminalRendererApi } from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
-
 import type { BrowserOpenRequest, BrowserRendererApi } from '../shared/browser'
 import { browserIpcChannels } from '../shared/browser'
+
 const appApi: AppApi = {
   getColorScheme: () => ipcRenderer.invoke(appIpcChannels.getColorScheme),
   getInstalledFontFamilies: () => ipcRenderer.invoke(appIpcChannels.getInstalledFontFamilies),
@@ -321,10 +321,6 @@ const terminalApi: TerminalRendererApi = {
   }
 }
 
-contextBridge.exposeInMainWorld('appApi', appApi)
-contextBridge.exposeInMainWorld('providerApi', providerApi)
-contextBridge.exposeInMainWorld('terminalApi', terminalApi)
-
 const browserApi: BrowserRendererApi = {
   onOpenRequested: (listener): (() => void) => {
     const handleOpenRequested = (_: IpcRendererEvent, request: BrowserOpenRequest): void => {
@@ -345,6 +341,12 @@ const browserApi: BrowserRendererApi = {
       )
   }
 }
+
+contextBridge.exposeInMainWorld('appApi', appApi)
+contextBridge.exposeInMainWorld('providerApi', providerApi)
+contextBridge.exposeInMainWorld('terminalApi', terminalApi)
+contextBridge.exposeInMainWorld('browserApi', browserApi)
+
 type PerformanceWithMemory = Performance & {
   memory?: {
     usedJSHeapSize?: number
@@ -368,7 +370,6 @@ let lastInteractionAt: number | null = null
 let lastInteractionKind: AppDiagnosticsInteractionKind | null = null
 let lastHeartbeatAt: number | null = null
 let longTaskCount = 0
-contextBridge.exposeInMainWorld('browserApi', browserApi)
 let longTaskTotalDurationMs = 0
 let longTaskMaxDurationMs = 0
 

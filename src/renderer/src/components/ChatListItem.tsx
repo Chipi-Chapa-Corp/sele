@@ -193,17 +193,21 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
 
   const beginEditingName = (): void => {
     setNameDraft(chat.title)
+    setDetailHovered(false)
+    setDetailFocused(false)
     setEditingName(true)
   }
 
   const cancelEditingName = (): void => {
     setNameDraft(chat.title)
+    setDetailFocused(false)
     setEditingName(false)
   }
 
   const saveName = async (): Promise<void> => {
     if (savingName || !normalizedNameDraft) return
     if (normalizedNameDraft === chat.title.trim()) {
+      setDetailFocused(false)
       setEditingName(false)
       return
     }
@@ -211,6 +215,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
     setSavingName(true)
     try {
       await onRename(normalizedNameDraft)
+      setDetailFocused(false)
       setEditingName(false)
     } catch {
       // Keep the input open so the user can retry or cancel.
@@ -249,6 +254,10 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
       onDragOver={onDragOver}
       onDragStart={onDragStart}
       onFocusCapture={(event) => {
+        if (editingName) {
+          setDetailFocused(false)
+          return
+        }
         setDetailFocused(
           event.target instanceof HTMLElement && event.target.matches(':focus-visible')
         )
