@@ -13582,62 +13582,64 @@ export const App: React.FC = () => {
           role="tabpanel"
           aria-label="Git settings"
         >
-          <div
-            className="settings-dialog__provider-configuration"
-            role="group"
-            aria-label="Git model configuration"
-          >
-            <span>Configure</span>
-            <Dropdown
-              aria-label="Git model provider"
-              disabled={newSessionProviderOptions.length === 0}
-              emptyContent="No providers found"
-              options={newSessionProviderOptions}
-              size="small"
-              value={newSessionProvider}
-              valueContent={newSessionProviderValueContent}
-              onChange={setNewSessionProvider}
-            />
-            <span>in</span>
-            <Dropdown
-              aria-label="Git model environment"
-              menuActions={[
-                ...(sshEnvironmentError
-                  ? [
-                      {
-                        id: 'git-model-environment-error',
-                        label: sshEnvironmentError,
-                        title: sshEnvironmentError,
-                        disabled: true,
-                        icon: <X aria-hidden="true" />,
-                        callback: () => {}
-                      }
-                    ]
-                  : []),
-                {
-                  id: 'git-model-add-environment',
-                  label: 'Add environment',
-                  title: 'Add environment',
-                  icon: <PackagePlus aria-hidden="true" />,
-                  callback: () => {
-                    setEditingSshEnvironment(null)
-                    setSshEnvironmentError(null)
-                    setSshEnvironmentDialogOpen(true)
-                  }
-                }
-              ]}
-              options={containerOptions}
-              size="small"
-              value={newSessionContainerValue}
-              valueContent={!newSessionSourceAvailabilityReady ? 'Checking' : undefined}
-              onChange={handleNewSessionContainerChange}
-            />
-          </div>
           <section className="settings-dialog__section" aria-labelledby="settings-git-model">
             <h2 className="settings-dialog__section-heading" id="settings-git-model">
               AI model
             </h2>
             <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field settings-dialog__field--inline">
+                <div
+                  className="settings-dialog__provider-configuration settings-dialog__provider-configuration--row"
+                  role="group"
+                  aria-label="Git model configuration"
+                >
+                  <span>Configure</span>
+                  <Dropdown
+                    aria-label="Git model provider"
+                    disabled={newSessionProviderOptions.length === 0}
+                    emptyContent="No providers found"
+                    options={newSessionProviderOptions}
+                    size="small"
+                    value={newSessionProvider}
+                    valueContent={newSessionProviderValueContent}
+                    onChange={setNewSessionProvider}
+                  />
+                  <span>in</span>
+                  <Dropdown
+                    aria-label="Git model environment"
+                    menuActions={[
+                      ...(sshEnvironmentError
+                        ? [
+                            {
+                              id: 'git-model-environment-error',
+                              label: sshEnvironmentError,
+                              title: sshEnvironmentError,
+                              disabled: true,
+                              icon: <X aria-hidden="true" />,
+                              callback: () => {}
+                            }
+                          ]
+                        : []),
+                      {
+                        id: 'git-model-add-environment',
+                        label: 'Add environment',
+                        title: 'Add environment',
+                        icon: <PackagePlus aria-hidden="true" />,
+                        callback: () => {
+                          setEditingSshEnvironment(null)
+                          setSshEnvironmentError(null)
+                          setSshEnvironmentDialogOpen(true)
+                        }
+                      }
+                    ]}
+                    options={containerOptions}
+                    size="small"
+                    value={newSessionContainerValue}
+                    valueContent={!newSessionSourceAvailabilityReady ? 'Checking' : undefined}
+                    onChange={handleNewSessionContainerChange}
+                  />
+                </div>
+              </div>
               <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
                 <div className="settings-dialog__field-header">
                   <h3>Commit model</h3>

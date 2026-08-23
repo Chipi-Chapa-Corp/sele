@@ -1816,6 +1816,11 @@ button.changes-sidebar__recent-row:not(:disabled) {
   font-weight: 400;
 }
 
+.settings-dialog__provider-configuration--row {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
 .settings-dialog__section-cards {
   display: flex;
   min-width: 0;
