@@ -14055,6 +14055,7 @@ export const App: React.FC = () => {
                   container={changesContainer}
                   contextUsage={messageBoxContextUsage}
                   displayUsage={effectiveAppSettings.chat.displayUsage}
+                  draftProjectKey={terminalWorkspaceKey}
                   draftScopeKey={selectedChatKey ?? 'new-chat'}
                   lastActionId={appSettings.lastActionId}
                   model={effectiveModel}

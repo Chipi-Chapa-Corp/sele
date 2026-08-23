@@ -66,7 +66,16 @@ import type {
 import { appApi } from '../appApi'
 import type { AppAction } from '../actions'
 import { groupAccountRateLimits } from '../accountRateLimits'
-import { getComposerDraft, updateComposerDraft, type ComposerDraft } from '../composerDraft'
+import {
+  addPromptDraft,
+  appendPromptDraft,
+  getComposerDraft,
+  getPromptDrafts,
+  removePromptDraft,
+  updateComposerDraft,
+  type ComposerDraft,
+  type PromptDraft
+} from '../composerDraft'
 import { providerApi } from '../providerApi'
 import { getReasoningEffortPresentation } from '../reasoningEffortPresentation'
 import type { AppChatUsageDisplay } from '../settings'
@@ -78,6 +87,7 @@ import { DisclosureToggle } from './DisclosureToggle'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { ImageLightbox } from './ImageLightbox'
 import { MenuSurface } from './MenuSurface'
+import { PromptDraftsButton } from './PromptDraftsButton'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { SegmentedControl } from './SegmentedControl'
 import './MessageBox.css'
@@ -90,6 +100,7 @@ type MessageBoxProps = {
   activeSteeringEnabled?: boolean
   autoFocus?: boolean
   draftScopeKey: string
+  draftProjectKey: string
   disabled?: boolean
   editSession?: { id: string; content: string; type?: 'message' | 'pending' } | null
   error?: string | null
@@ -940,6 +951,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   activeSteeringEnabled = true,
   autoFocus = false,
   draftScopeKey,
+  draftProjectKey,
   disabled = false,
   editSession = null,
   error = null,
@@ -1002,7 +1014,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [composerDrafts, setComposerDrafts] = useState<ReadonlyMap<string, ComposerDraft>>(
     () => new Map()
   )
+  const [promptDraftsByProject, setPromptDraftsByProject] = useState<
+    ReadonlyMap<string, readonly PromptDraft[]>
+  >(() => new Map())
   const composerDraft = getComposerDraft(composerDrafts, draftScopeKey)
+  const promptDrafts = getPromptDrafts(promptDraftsByProject, draftProjectKey)
   const message = composerDraft.message
   const selectedAttachments = composerDraft.attachments
   const selectedSkills = composerDraft.skills
@@ -2156,10 +2172,47 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       restoreAncestorScrollAfterNativeNavigation(event.currentTarget)
     }
 
+    if (event.key === 'Tab' && !event.nativeEvent.isComposing && !editing && message.trim()) {
+      event.preventDefault()
+      const prompt = message.trim()
+      const draft: PromptDraft = {
+        id:
+          typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        prompt
+      }
+
+      setPromptDraftsByProject((drafts) => addPromptDraft(drafts, draftProjectKey, draft))
+      setMessage('')
+      setFileMention(null)
+      setSkillMention(null)
+      return
+    }
+
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
 
     event.preventDefault()
     submitMessage()
+  }
+
+  const handlePopPromptDraft = (draft: PromptDraft): void => {
+    setPromptDraftsByProject((drafts) => removePromptDraft(drafts, draftProjectKey, draft.id))
+    setMessage((currentMessage) => appendPromptDraft(currentMessage, draft.prompt))
+    setFileMention(null)
+    setSkillMention(null)
+
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+
+      textarea.focus({ preventScroll: true })
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    })
+  }
+
+  const handleRemovePromptDraft = (draftId: string): void => {
+    setPromptDraftsByProject((drafts) => removePromptDraft(drafts, draftProjectKey, draftId))
   }
 
   const hasContent =
@@ -2635,6 +2688,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 callback={handleCancelEdit}
                 label="Cancel"
                 theme="secondary"
+              />
+            )}
+            {promptDrafts.length > 0 && (
+              <PromptDraftsButton
+                drafts={promptDrafts}
+                disabled={textareaDisabled || editing}
+                onPop={handlePopPromptDraft}
+                onRemove={handleRemovePromptDraft}
               />
             )}
             <div className="message-box__usage-control" ref={usageControlRef}>

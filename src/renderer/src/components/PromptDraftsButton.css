@@ -1,0 +1,22 @@
+.prompt-drafts {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(280px, 32vw);
+  flex: 0 1 auto;
+}
+
+.prompt-drafts .ui-button-group,
+.prompt-drafts .ui-button--split-main {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prompt-drafts .ui-button--split-main {
+  padding-inline: 12px;
+}
+
+@media (max-width: 600px) {
+  .prompt-drafts {
+    max-width: 150px;
+  }
+}
