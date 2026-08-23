@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.0" date="2026-08-23">
+      <description>
+        <p>Added the OpenCode provider, an integrated tabbed browser, repository file navigation, project-scoped prompt drafts, persistent sidebar ordering, richer chat references and syntax highlighting, and improved AI commit and provider failure recovery.</p>
+      </description>
+    </release>
     <release version="1.5.0" date="2026-08-17">
       <description>
         <p>Improved Claude reliability by filtering internal user metadata and keeping queries alive during background work, and fixed stale change metadata on rebuilt chat items.</p>
