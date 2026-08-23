@@ -215,7 +215,7 @@ export const fallbackCopilotModels: ProviderModel[] = [
 export const fallbackOpenCodeModels: ProviderModel[] = [
   {
     id: 'opencode/big-pickle',
-    label: 'Big Pickle · OpenCode Zen',
+    label: 'Big Pickle',
     description: 'Use OpenCode Zen’s default coding model.',
     isDefault: true,
     supportedReasoningEfforts: [],
@@ -652,7 +652,7 @@ export type ProviderWorkingItemSegment = {
 export type ProviderWorkingStep = {
   type: 'working'
   id: string
-  status: 'working' | 'worked' | 'stopped' | 'queued'
+  status: 'working' | 'worked' | 'stopped' | 'failed' | 'queued'
   items: ProviderWorkingItem[]
   itemsLoaded?: boolean
   itemCount?: number

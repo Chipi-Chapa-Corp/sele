@@ -24,6 +24,7 @@ export type CopilotRenderedPlan = {
 type RenderOptions = {
   active: boolean
   stopped: boolean
+  failed?: boolean
   pendingItems?: ProviderChatItem[]
   plan?: CopilotRenderedPlan | null
 }
@@ -32,6 +33,7 @@ type Segment = {
   id: string
   workingItems: ProviderWorkingItem[]
   assistantMessages: Array<Extract<SessionEvent, { type: 'assistant.message' }>>
+  failed: boolean
 }
 
 const maxToolOutputLength = 160_000
@@ -388,7 +390,8 @@ export const renderCopilotChatItems = (
       segment = {
         id: `${eventId}:working`,
         workingItems: [],
-        assistantMessages: []
+        assistantMessages: [],
+        failed: false
       }
     }
     return segment
@@ -411,13 +414,20 @@ export const renderCopilotChatItems = (
         content: event.data.content.trim()
       })
     })
+    const failed = currentSegment.failed || (isLast && options.failed === true)
 
-    if (currentSegment.workingItems.length > 0 || (isLast && options.active)) {
+    if (currentSegment.workingItems.length > 0 || (isLast && options.active) || failed) {
       items.push({
         type: 'working',
         id: currentSegment.id,
         status:
-          isLast && options.active ? 'working' : options.stopped && isLast ? 'stopped' : 'worked',
+          isLast && options.active
+            ? 'working'
+            : failed
+              ? 'failed'
+              : options.stopped && isLast
+                ? 'stopped'
+                : 'worked',
         items: currentSegment.workingItems
       })
     }
@@ -450,7 +460,8 @@ export const renderCopilotChatItems = (
       segment = {
         id: `${event.id}:working`,
         workingItems: [],
-        assistantMessages: []
+        assistantMessages: [],
+        failed: false
       }
       continue
     }
@@ -547,7 +558,9 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'session.error') {
-      ensureSegment(event.id).workingItems.push({
+      const currentSegment = ensureSegment(event.id)
+      currentSegment.failed = true
+      currentSegment.workingItems.push({
         type: 'message',
         id: event.id,
         content: event.data.message

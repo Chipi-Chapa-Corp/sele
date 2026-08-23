@@ -51,6 +51,15 @@ test('does not mistake an empty working shell for an echoed user message', () =>
   )
 })
 
+test('counts loaded turns when an asynchronous snapshot still reports zero turns', () => {
+  const items = [
+    { type: 'message', id: 'optimistic:user', role: 'user', content: 'Hello' },
+    { type: 'working', id: 'optimistic:working', status: 'working', items: [] }
+  ]
+
+  assert.equal(getChatDetailTurnCount({ id: 'new-chat', items, turnCount: 0 }), 1)
+})
+
 test('merges an older page without retaining turns outside the bounded window', () => {
   const detail = {
     id: 'chat',

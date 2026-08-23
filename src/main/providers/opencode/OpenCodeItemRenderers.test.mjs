@@ -1,8 +1,140 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { renderOpenCodeChatItems } from './OpenCodeItemRenderers.ts'
+import {
+  getOpenCodeDisplayTitle,
+  getOpenCodeErrorMessage,
+  renderOpenCodeChatItems
+} from './OpenCodeItemRenderers.ts'
 
 const sessionID = 'session-1'
+
+test('uses the first user message while an OpenCode title is still pending', () => {
+  const messages = [
+    {
+      info: {
+        id: 'user-title',
+        sessionID,
+        role: 'user',
+        time: { created: 10 },
+        agent: 'build',
+        model: { providerID: 'opencode', modelID: 'model' }
+      },
+      parts: [
+        {
+          id: 'synthetic-title-text',
+          sessionID,
+          messageID: 'user-title',
+          type: 'text',
+          text: 'Hidden instructions',
+          synthetic: true
+        },
+        {
+          id: 'title-text',
+          sessionID,
+          messageID: 'user-title',
+          type: 'text',
+          text: '  Fix the chat title\nwhile OpenCode generates one  '
+        }
+      ]
+    }
+  ]
+
+  assert.equal(
+    getOpenCodeDisplayTitle('New session - 2026-08-23T00:28:55.451Z', messages),
+    'Fix the chat title while OpenCode generates one'
+  )
+  assert.equal(getOpenCodeDisplayTitle('Generated title', messages), 'Generated title')
+})
+
+test('bounds the temporary OpenCode title to the sidebar title limit', () => {
+  const messages = [
+    {
+      info: {
+        id: 'user-long-title',
+        sessionID,
+        role: 'user',
+        time: { created: 10 },
+        agent: 'build',
+        model: { providerID: 'opencode', modelID: 'model' }
+      },
+      parts: [
+        {
+          id: 'long-title-text',
+          sessionID,
+          messageID: 'user-long-title',
+          type: 'text',
+          text: 'A'.repeat(100)
+        }
+      ]
+    }
+  ]
+  const title = getOpenCodeDisplayTitle('New session - 2026-08-23T00:28:55.451Z', messages)
+
+  assert.equal(title.length, 80)
+  assert.equal(title, `${'A'.repeat(79)}…`)
+})
+
+test('renders a persisted OpenCode network error with a friendly message', () => {
+  const items = renderOpenCodeChatItems(
+    [
+      {
+        info: {
+          id: 'user-failed',
+          sessionID,
+          role: 'user',
+          time: { created: 10 },
+          agent: 'build',
+          model: { providerID: 'openai', modelID: 'gpt' }
+        },
+        parts: [
+          {
+            id: 'user-failed-text',
+            sessionID,
+            messageID: 'user-failed',
+            type: 'text',
+            text: 'Continue'
+          }
+        ]
+      },
+      {
+        info: {
+          id: 'assistant-failed',
+          sessionID,
+          role: 'assistant',
+          parentID: 'user-failed',
+          time: { created: 20, completed: 21 },
+          providerID: 'openai',
+          modelID: 'gpt',
+          agent: 'build',
+          path: { cwd: '/repo', root: '/repo' },
+          cost: 0,
+          tokens: { input: 1, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          finish: 'stop',
+          error: {
+            name: 'ProviderResponseStreamError',
+            data: { message: 'Provider finish_reason: network_error' }
+          }
+        },
+        parts: []
+      }
+    ],
+    { active: false, stopped: false }
+  )
+  const failedStep = items.findLast((item) => item.type === 'working')
+
+  assert.equal(failedStep?.status, 'failed')
+  assert.equal(
+    failedStep?.items.at(-1)?.content,
+    'The connection to the model provider was interrupted. Check your network and try again.'
+  )
+})
+
+test('preserves unknown OpenCode provider error details', () => {
+  assert.equal(
+    getOpenCodeErrorMessage({ name: 'ProviderError', data: { message: 'Account unavailable' } }),
+    'Account unavailable'
+  )
+})
 
 test('renders OpenCode reasoning and tools as work followed by the final answer', () => {
   const messages = [

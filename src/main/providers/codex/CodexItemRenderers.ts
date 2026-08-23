@@ -1571,12 +1571,9 @@ const getFinalMessageIndex = (items: CodexThreadItem[], turnStatus: string | nul
 
 const getWorkingStatus = (turn: CodexTurn): ProviderWorkingStep['status'] => {
   if (turn.status === 'queued') return 'queued'
+  if (turn.status === 'failed') return 'failed'
 
-  if (
-    turn.status === 'interrupted' ||
-    turn.status === 'failed' ||
-    turn.items.some((item) => item.type === 'turnAborted')
-  ) {
+  if (turn.status === 'interrupted' || turn.items.some((item) => item.type === 'turnAborted')) {
     return 'stopped'
   }
 
@@ -1590,11 +1587,24 @@ const getWorkingStatus = (turn: CodexTurn): ProviderWorkingStep['status'] => {
   return 'working'
 }
 
+const getTurnErrorText = (turn: CodexTurn): string | null => {
+  const details = [turn.error?.message, turn.error?.additionalDetails]
+    .flatMap((detail) => (typeof detail === 'string' && detail.trim() ? [detail.trim()] : []))
+    .filter((detail, index, values) => values.indexOf(detail) === index)
+
+  return details.length > 0 ? details.join('\n') : null
+}
+
 const getWorkingStepStatus = (
   workingStatus: ProviderWorkingStep['status'],
   finalMessage: ProviderMessage | null
 ): ProviderWorkingStep['status'] => {
-  if (!finalMessage || workingStatus === 'stopped' || workingStatus === 'queued') {
+  if (
+    !finalMessage ||
+    workingStatus === 'stopped' ||
+    workingStatus === 'failed' ||
+    workingStatus === 'queued'
+  ) {
     return workingStatus
   }
   return 'worked'
@@ -1662,6 +1672,7 @@ const renderChatItems = (
       if (
         workingItemCount === 0 &&
         status !== 'stopped' &&
+        status !== 'failed' &&
         status !== 'working' &&
         status !== 'queued'
       ) {
@@ -1820,6 +1831,12 @@ const renderChatItems = (
       appendWorkingItems(renderWorkingItems(item, turn.id))
     }
 
+    if (workingStatus === 'failed') {
+      const errorText = getTurnErrorText(turn)
+      if (errorText) {
+        appendWorkingItems([{ type: 'message', id: `${turn.id}:failure`, content: errorText }])
+      }
+    }
     if (!flushBufferedFinalMessage()) pushWorkingStep(workingStatus)
   }
 

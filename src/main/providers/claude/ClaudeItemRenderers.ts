@@ -20,6 +20,7 @@ export type ClaudeTranscriptMessage = {
   tool_use_result?: unknown
   label?: string | null
   attachments?: ProviderMessageAttachment[]
+  failed?: boolean
 }
 
 type ClaudeContentBlock = {
@@ -38,6 +39,7 @@ type ClaudeContentBlock = {
 type RenderOptions = {
   active: boolean
   stopped: boolean
+  failed?: boolean
   pendingItems?: ProviderChatItem[]
 }
 
@@ -58,6 +60,7 @@ type SegmentEntry =
 type Segment = {
   id: string
   entries: SegmentEntry[]
+  failed: boolean
 }
 
 const maxToolOutputLength = 160_000
@@ -279,7 +282,7 @@ export const renderClaudeChatItems = (
 
   const ensureSegment = (messageId: string): Segment => {
     if (!segment) {
-      segment = { id: `${messageId}:working`, entries: [] }
+      segment = { id: `${messageId}:working`, entries: [], failed: false }
     }
     return segment
   }
@@ -296,13 +299,15 @@ export const renderClaudeChatItems = (
         ? entry.item
         : { type: 'message', id: entry.message.id, content: entry.message.content }
     )
+    const failed = current.failed || (isLast && options.failed === true)
 
-    if (workingItems.length > 0 || (isLast && options.active)) {
+    if (workingItems.length > 0 || (isLast && options.active) || failed) {
       items.push({
         type: 'working',
         id: current.id,
-        status:
-          finalMessage != null
+        status: failed
+          ? 'failed'
+          : finalMessage != null
             ? 'worked'
             : isLast && options.active
               ? 'working'
@@ -348,7 +353,7 @@ export const renderClaudeChatItems = (
         createdAt: toTimestamp(message.timestamp),
         label: message.label ?? null
       })
-      segment = { id: `${message.uuid}:working`, entries: [] }
+      segment = { id: `${message.uuid}:working`, entries: [], failed: false }
       continue
     }
 
@@ -433,6 +438,7 @@ export const renderClaudeChatItems = (
         items.push({ type: 'contextCompaction', id: message.uuid })
       } else {
         const content = getString(record?.content) ?? getString(message.message)
+        if (message.failed) ensureSegment(message.uuid).failed = true
         if (content) {
           ensureSegment(message.uuid).entries.push({
             kind: 'working',

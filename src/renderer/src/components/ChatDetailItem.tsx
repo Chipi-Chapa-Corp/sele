@@ -1686,7 +1686,7 @@ const getWorkingStepDefaultOpen = (
     )
   }
 
-  if (status === 'stopped') {
+  if (status === 'stopped' || status === 'failed') {
     return (
       thoughtSettings.expandStoppedTurns &&
       !(hasNextWorkingStep && thoughtSettings.collapseStoppedOnNextTurn)
@@ -1803,9 +1803,11 @@ const WorkingStep: React.FC<{
       ? 'Queued'
       : item.status === 'stopped'
         ? 'Stopped'
-        : item.status === 'worked'
-          ? 'Worked'
-          : 'Working'
+        : item.status === 'failed'
+          ? 'Failed'
+          : item.status === 'worked'
+            ? 'Worked'
+            : 'Working'
   const heading = (
     <span className="chat-detail__working-label">
       {active && <LoaderCircle className="chat-detail__working-spinner" aria-hidden="true" />}

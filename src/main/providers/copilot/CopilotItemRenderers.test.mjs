@@ -3,8 +3,33 @@ import test from 'node:test'
 import {
   appendCopilotToolOutput,
   getBoundedCopilotRawToolValue,
+  renderCopilotChatItems,
   truncateCopilotToolOutput
 } from './CopilotItemRenderers.ts'
+
+test('renders a persisted Copilot session error as failed instead of stopped', () => {
+  const items = renderCopilotChatItems(
+    [
+      {
+        id: 'user-failed',
+        type: 'user.message',
+        timestamp: '2026-08-22T20:00:00.000Z',
+        data: { content: 'Continue', delivery: 'immediate' }
+      },
+      {
+        id: 'error-failed',
+        type: 'session.error',
+        timestamp: '2026-08-22T20:00:01.000Z',
+        data: { message: 'Usage limit reached' }
+      }
+    ],
+    { active: false, stopped: false }
+  )
+  const failedStep = items.findLast((item) => item.type === 'working')
+
+  assert.equal(failedStep?.status, 'failed')
+  assert.equal(failedStep?.items.at(-1)?.content, 'Usage limit reached')
+})
 
 test('bounds complete and incrementally streamed Copilot tool output', () => {
   const original = `start:${'x'.repeat(200_000)}:tail`

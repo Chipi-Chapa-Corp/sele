@@ -18,6 +18,7 @@ export type OpenCodeMessageWithParts = {
 type RenderOptions = {
   active: boolean
   stopped: boolean
+  failed?: boolean
   pendingItems?: ProviderChatItem[]
 }
 
@@ -35,17 +36,38 @@ type Segment = {
   id: string
   entries: SegmentEntry[]
   completed: boolean
+  failed: boolean
 }
 
 const maxToolOutputLength = 160_000
 const maxRawToolValueLength = 80_000
+const maxChatTitleLength = 80
 const truncatedMarker = '… [truncated to keep the app responsive]'
+const defaultChatTitlePattern = /^New session - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const getString = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null
+
+export const getOpenCodeErrorMessage = (error: unknown): string => {
+  const errorRecord = isRecord(error) ? error : null
+  const errorData = isRecord(errorRecord?.data) ? errorRecord.data : null
+  const message =
+    getString(errorData?.message) ??
+    getString(errorRecord?.message) ??
+    getString(errorRecord?.name) ??
+    'OpenCode request failed.'
+  const normalizedMessage = message.toLocaleLowerCase()
+  const finishReason = normalizedMessage.match(/provider\s+finish_reason:\s*([a-z0-9_-]+)/)?.[1]
+
+  if (finishReason === 'network_error' || normalizedMessage === 'network_error') {
+    return 'The connection to the model provider was interrupted. Check your network and try again.'
+  }
+
+  return message
+}
 
 const getArgument = (input: unknown, ...keys: string[]): string | null => {
   if (!isRecord(input)) return null
@@ -207,6 +229,21 @@ const getUserText = (parts: Part[]): string =>
     .join('\n')
     .trim()
 
+export const getOpenCodeDisplayTitle = (
+  title: string,
+  messages: OpenCodeMessageWithParts[]
+): string => {
+  if (!defaultChatTitlePattern.test(title)) return title
+  const firstUserMessage = messages.find((message) => message.info.role === 'user')
+  const firstUserText = getUserText(firstUserMessage?.parts ?? [])
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!firstUserText) return title
+  return firstUserText.length <= maxChatTitleLength
+    ? firstUserText
+    : `${firstUserText.slice(0, maxChatTitleLength - 1).trimEnd()}…`
+}
+
 const getAssistantModel = (info: Message): string | null =>
   info.role === 'assistant' ? `${info.providerID}/${info.modelID}` : null
 
@@ -218,7 +255,7 @@ export const renderOpenCodeChatItems = (
   let segment: Segment | null = null
 
   const ensureSegment = (id: string): Segment => {
-    if (!segment) segment = { id: `${id}:working`, entries: [], completed: false }
+    if (!segment) segment = { id: `${id}:working`, entries: [], completed: false, failed: false }
     return segment
   }
 
@@ -235,12 +272,19 @@ export const renderOpenCodeChatItems = (
         : { type: 'message', id: entry.message.id, content: entry.message.content }
     )
     const isWorking = isLast && options.active && !current.completed
+    const failed = current.failed || (isLast && options.failed === true)
 
-    if (workingItems.length > 0 || isWorking) {
+    if (workingItems.length > 0 || isWorking || failed) {
       items.push({
         type: 'working',
         id: current.id,
-        status: isWorking ? 'working' : options.stopped && isLast ? 'stopped' : 'worked',
+        status: isWorking
+          ? 'working'
+          : failed
+            ? 'failed'
+            : options.stopped && isLast
+              ? 'stopped'
+              : 'worked',
         items: workingItems
       })
     }
@@ -271,7 +315,12 @@ export const renderOpenCodeChatItems = (
           createdAt: message.info.time.created
         })
       }
-      segment = { id: `${message.info.id}:working`, entries: [], completed: false }
+      segment = {
+        id: `${message.info.id}:working`,
+        entries: [],
+        completed: false,
+        failed: false
+      }
       return
     }
 
@@ -301,7 +350,7 @@ export const renderOpenCodeChatItems = (
           item: {
             type: 'message',
             id: part.id,
-            content: `Retry ${part.attempt}: ${part.error.data.message}`
+            content: `Retry ${part.attempt}: ${getOpenCodeErrorMessage(part.error)}`
           }
         })
       } else if (part.type === 'compaction') {
@@ -332,14 +381,13 @@ export const renderOpenCodeChatItems = (
       }
     })
     if (message.info.error) {
-      const errorData = 'data' in message.info.error ? message.info.error.data : null
+      current.failed = true
       current.entries.push({
         kind: 'working',
         item: {
           type: 'message',
           id: `${message.info.id}:error`,
-          content:
-            getString(isRecord(errorData) ? errorData.message : null) ?? message.info.error.name
+          content: getOpenCodeErrorMessage(message.info.error)
         }
       })
     }

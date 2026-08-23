@@ -21,7 +21,10 @@ export const shouldPreserveOptimisticTurnUntilUserMessage = (providerId: Provide
   providerId === 'copilot' || providerId === 'opencode'
 
 export const getChatDetailTurnCount = (detail: ProviderChatDetail | null | undefined): number =>
-  detail?.turnCount ?? getProviderChatTurns(detail?.items ?? []).length
+  Math.max(
+    detail?.turnCount ?? 0,
+    (detail?.itemsStartTurnIndex ?? 0) + getProviderChatTurns(detail?.items ?? []).length
+  )
 
 export const getChatDetailItemsStartTurnIndex = (
   detail: ProviderChatDetail | null | undefined

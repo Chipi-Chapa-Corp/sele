@@ -87,6 +87,35 @@ test('only treats a non-streaming final answer as completed', () => {
   )
 })
 
+test('distinguishes a provider failure from an interrupted turn', () => {
+  const failedItems = getChatItems([
+    {
+      id: 'turn-failed',
+      status: 'failed',
+      error: {
+        message: "You've hit your usage limit for GPT-5.3-Codex-Spark.",
+        codexErrorInfo: 'usageLimitExceeded'
+      },
+      items: [userMessage('user-failed', 'Create a commit')]
+    }
+  ])
+  const interruptedItems = getChatItems([
+    {
+      id: 'turn-interrupted',
+      status: 'interrupted',
+      items: [userMessage('user-interrupted', 'Create a commit')]
+    }
+  ])
+
+  const failedStep = failedItems.findLast((item) => item.type === 'working')
+  assert.equal(failedStep?.status, 'failed')
+  assert.equal(
+    failedStep?.items.at(-1)?.content,
+    "You've hit your usage limit for GPT-5.3-Codex-Spark."
+  )
+  assert.equal(interruptedItems.findLast((item) => item.type === 'working')?.status, 'stopped')
+})
+
 test('keeps a bounded logical activity sequence in live renderer snapshots', () => {
   const turn = {
     id: 'turn-tools',

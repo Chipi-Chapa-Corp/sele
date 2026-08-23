@@ -48,7 +48,11 @@ import {
   mergeProviderSkills,
   restoreProviderSkill
 } from '../providerResources'
-import { renderOpenCodeChatItems, type OpenCodeMessageWithParts } from './OpenCodeItemRenderers'
+import {
+  getOpenCodeDisplayTitle,
+  renderOpenCodeChatItems,
+  type OpenCodeMessageWithParts
+} from './OpenCodeItemRenderers'
 import { mapOpenCodeModels, parseOpenCodeModelId } from './OpenCodeModels'
 import { getOpenCodePermissionRules } from './OpenCodePermissions'
 import { OpenCodeServerClient } from './OpenCodeServerClient'
@@ -138,7 +142,6 @@ const emptyUsageSummary = {
 
 const updateDelayMs = 35
 const oneShotCancellationRetentionMs = 60_000
-const maxChatTitleLength = 80
 const maxPreviewLength = 500
 
 const requireData = <T>(result: { data: T }): T => result.data
@@ -696,7 +699,6 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       await entry.client.session.create(
         {
           directory,
-          title: truncate(text || 'File attachment', maxChatTitleLength),
           model: {
             providerID: model.providerID,
             id: model.modelID,
@@ -1206,7 +1208,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): ProviderChat => ({
     id: session.id,
     providerId: 'opencode',
-    title: session.title,
+    title: getOpenCodeDisplayTitle(session.title, messages),
     preview: getMessagePreview(messages),
     cwd: session.directory || null,
     cwdKind: 'directory',
@@ -1274,7 +1276,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return {
       id: session.id,
       createdAt: session.time.created,
-      title: session.title,
+      title: getOpenCodeDisplayTitle(session.title, state.messages),
       cwd: state.directory,
       cwdKind: 'directory',
       projectCwd: null,
@@ -1294,6 +1296,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       items: renderOpenCodeChatItems(state.messages, {
         active: state.active,
         stopped: state.stopped,
+        failed: state.failed,
         pendingItems
       })
     }

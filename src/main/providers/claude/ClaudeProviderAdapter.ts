@@ -1511,7 +1511,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         uuid: randomUUID(),
         session_id: state.id,
         message: { content },
-        parent_tool_use_id: null
+        parent_tool_use_id: null,
+        failed: true
       })
       this.emitUpdate(state, true)
     } finally {
@@ -1525,7 +1526,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
               uuid: randomUUID(),
               session_id: state.id,
               message: { content: 'Claude disconnected before completing the turn.' },
-              parent_tool_use_id: null
+              parent_tool_use_id: null,
+              failed: true
             })
             this.emitUpdate(state, true)
           }
@@ -1598,7 +1600,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           uuid: event.uuid,
           session_id: event.session_id,
           message: { content },
-          parent_tool_use_id: null
+          parent_tool_use_id: null,
+          failed: true
         })
       }
     }
@@ -1888,6 +1891,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       items: renderClaudeChatItems([...state.messages, ...state.partialMessages.values()], {
         active: foregroundActive || state.pendingUserInputs.length > 0,
         stopped: state.stopped,
+        failed: state.failed,
         pendingItems: this.getPendingMessages(state)
       })
     }

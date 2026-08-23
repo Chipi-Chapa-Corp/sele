@@ -1720,6 +1720,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     items: renderCopilotChatItems(state.events, {
       active: state.active || state.pendingUserInputs.length > 0,
       stopped: state.stopped,
+      failed: state.failed,
       pendingItems: state.pendingMessages,
       plan: state.plan
     })

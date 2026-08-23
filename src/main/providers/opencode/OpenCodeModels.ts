@@ -61,7 +61,7 @@ export const mapOpenCodeModels = (
 
       return {
         id,
-        label: `${model.name || model.id} · ${provider.name}`,
+        label: model.name || model.id,
         description: `${formatContextWindow(model.limit.context)}${status}`.trim(),
         isDefault: id === defaultId,
         supportedReasoningEfforts: reasoning.options,

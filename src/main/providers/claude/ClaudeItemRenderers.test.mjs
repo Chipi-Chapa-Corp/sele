@@ -72,6 +72,23 @@ test('renders Claude reasoning, tools, results, and the final response as one tu
   })
 })
 
+test('renders a Claude provider error as failed instead of stopped', () => {
+  const items = renderClaudeChatItems(
+    [
+      message('user', 'user-failed', 'Continue'),
+      {
+        ...message('system', 'error-failed', 'Usage limit reached'),
+        failed: true
+      }
+    ],
+    { active: false, stopped: false, failed: true }
+  )
+  const failedStep = items.findLast((item) => item.type === 'working')
+
+  assert.equal(failedStep?.status, 'failed')
+  assert.equal(failedStep?.items.at(-1)?.content, 'Usage limit reached')
+})
+
 test('keeps Claude questions out of raw tool details and exposes their state', () => {
   const items = renderClaudeChatItems(
     [

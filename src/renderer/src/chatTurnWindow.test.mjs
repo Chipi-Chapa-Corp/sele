@@ -28,6 +28,18 @@ test('shows a newly appended latest turn without waiting for the stored window t
   })
 })
 
+test('advances an initially empty chat window when its first turn arrives', () => {
+  const emptyWindow = {
+    chatKey: 'opencode:new-chat',
+    startIndex: 0,
+    endIndex: 0,
+    totalCount: 0
+  }
+  const firstTurnWindow = getLatestChatTurnWindow('opencode:new-chat', 1, 10)
+
+  assert.equal(getEffectiveChatTurnWindow(emptyWindow, firstTurnWindow, false), firstTurnWindow)
+})
+
 test('does not move a stale latest window while the user is reading earlier content', () => {
   const nextLatestWindow = getLatestChatTurnWindow('codex:chat-1', 101, 10)
 

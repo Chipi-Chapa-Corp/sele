@@ -48,7 +48,7 @@ test('maps OpenCode provider models and reasoning variants', () => {
     [
       {
         id: 'anthropic/claude-sonnet',
-        label: 'Claude Sonnet · Anthropic',
+        label: 'Claude Sonnet',
         description: '200K context window.',
         isDefault: false,
         variants: ['low', 'high'],
@@ -56,7 +56,7 @@ test('maps OpenCode provider models and reasoning variants', () => {
       },
       {
         id: 'openai/gpt',
-        label: 'GPT · OpenAI',
+        label: 'GPT',
         description: '1M context window. Deprecated.',
         isDefault: true,
         variants: [],

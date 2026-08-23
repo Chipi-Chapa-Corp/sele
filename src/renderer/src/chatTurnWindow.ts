@@ -23,6 +23,11 @@ export const getEffectiveChatTurnWindow = (
 ): ChatTurnWindow => {
   if (!currentWindow || currentWindow.chatKey !== latestWindow.chatKey) return latestWindow
 
+  // A new async chat can initially resolve before its first user message is visible. Once that
+  // message arrives, the zero-length window is still the latest view even if mounting the empty
+  // viewport temporarily disabled auto-scroll.
+  if (currentWindow.totalCount === 0 && latestWindow.totalCount > 0) return latestWindow
+
   const currentWindowIncludesLatest = currentWindow.endIndex >= currentWindow.totalCount
   if (
     followLatest &&

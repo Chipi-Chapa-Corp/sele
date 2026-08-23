@@ -5964,18 +5964,11 @@ export const App: React.FC = () => {
           }
 
           const totalCount = getChatDetailTurnCount(mergedSelectedDetail)
-          const followingLatest = chatAutoScrollEnabledRef.current
-          const retainedWindow = followingLatest
-            ? {
-                startIndex: Math.max(0, totalCount - chatTurnWindowSize),
-                endIndex: totalCount,
-                totalCount
-              }
-            : {
-                startIndex: currentWindow.startIndex,
-                endIndex: currentWindow.endIndex,
-                totalCount
-              }
+          const retainedWindow = getEffectiveChatTurnWindow(
+            currentWindow,
+            getLatestChatTurnWindow(updatedChatKey, totalCount, chatTurnWindowSize),
+            chatAutoScrollEnabledRef.current
+          )
           return retainLoadedChatDetailTurnWindow(mergedSelectedDetail, retainedWindow)
         })()
 
