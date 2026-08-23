@@ -20,29 +20,29 @@ case "$active" in
     regular_auth="$codex_home/auth.json"
     if [ -f "$account_auth" ]; then
       selected=$active
-      bwrap_bin=$(command -v bwrap 2>/dev/null || true)
-      if [ "$bwrap_bin" = '' ]; then
-        codex_bin=$(command -v "$1" 2>/dev/null || printf '%s' "$1")
-        codex_bin=$(readlink -f "$codex_bin" 2>/dev/null || printf '%s' "$codex_bin")
-        codex_bin_dir=${'${'}codex_bin%/*}
-        bundled_bwrap="$codex_bin_dir/../codex-resources/bwrap"
-        if [ -x "$bundled_bwrap" ]; then
-          bwrap_bin=$bundled_bwrap
-        else
-          codex_package_root=${'${'}codex_bin_dir%/*}
-          bwrap_bin=$(find "$codex_package_root/node_modules/@openai" -path '*/codex-resources/bwrap' -type f -perm -u+x -print -quit 2>/dev/null || true)
-        fi
-      fi
-      if [ "$bwrap_bin" = '' ]; then
-        printf 'Codex account switching requires bubblewrap in this environment.\n' >&2
+      helper='/usr/local/libexec/sele-codex-account-view'
+      if [ ! -x "$helper" ]; then
+        printf 'Codex account switching needs one-time administrator setup. Select the account again in Settings.\n' >&2
         exit 127
       fi
+      codex_bin=$(command -v "$1" 2>/dev/null || true)
+      codex_bin=$(readlink -f "$codex_bin" 2>/dev/null || true)
+      if [ ! -x "$codex_bin" ]; then
+        printf 'Codex executable was not found: %s\n' "$1" >&2
+        exit 127
+      fi
+      shift
       umask 077
       mkdir -p "$codex_home"
       if [ ! -e "$regular_auth" ]; then
         printf '{}\n' > "$regular_auth"
       fi
-      "$bwrap_bin" --die-with-parent --bind / / --bind "$account_auth" "$regular_auth" -- "$@" <&3 &
+      if [ "$(id -u)" = '0' ]; then
+        "$helper" "$codex_home" "$active" "$codex_bin" "$@" <&3 &
+      else
+        sudo -n -E --preserve-env=PATH -- \
+          "$helper" "$codex_home" "$active" "$codex_bin" "$@" <&3 &
+      fi
     fi
     ;;
 esac

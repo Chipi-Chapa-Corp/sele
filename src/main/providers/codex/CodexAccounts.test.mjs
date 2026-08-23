@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { getCodexAccountViewCommand } from './CodexAccountView.ts'
+import { codexAccountViewHelperScript } from './CodexAccountViewHelper.ts'
 import {
   isRecoverableCodexLoginAccountReadError,
   isRecoverableCodexStopError,
@@ -82,13 +83,24 @@ test('treats a missing thread after an account switch as already stopped', () =>
 test('wraps Codex in the Linux account filesystem view only on Linux', () => {
   const linuxCommand = getCodexAccountViewCommand('/usr/bin/codex', ['app-server'], true)
   assert.equal(linuxCommand.file, 'sh')
-  assert.match(linuxCommand.args[1], /--die-with-parent --bind \/ \/ --bind/)
+  assert.match(linuxCommand.args[1], /sudo -n -E --preserve-env=PATH/)
+  assert.doesNotMatch(linuxCommand.args[1], /bwrap/)
   assert.deepEqual(linuxCommand.args.slice(-2), ['/usr/bin/codex', 'app-server'])
 
   assert.deepEqual(getCodexAccountViewCommand('codex', ['--version'], false), {
     file: 'codex',
     args: ['--version']
   })
+})
+
+test('the privileged account helper creates only a mount namespace and drops privileges', () => {
+  assert.match(
+    codexAccountViewHelperScript,
+    /unshare_bin" --mount --fork --kill-child --propagation private/
+  )
+  assert.match(codexAccountViewHelperScript, /mount_bin" --bind "\$account_auth" "\$regular_auth"/)
+  assert.match(codexAccountViewHelperScript, /setpriv_bin" --reuid "\$caller_uid"/)
+  assert.doesNotMatch(codexAccountViewHelperScript, /--user|bwrap/)
 })
 
 test('the Codex account wrapper preserves stdio for app-server', () => {
@@ -123,18 +135,22 @@ test('the Linux view redirects auth writes while preserving the regular Codex ho
 
     const command = getCodexAccountViewCommand('sh', [
       '-c',
-      'printf account-updated > "$CODEX_HOME/auth.json"'
+      'printf account-updated > "$CODEX_HOME/auth.json"; printf "%s" "$PATH"'
     ])
     const result = spawnSync(command.file, command.args, {
       encoding: 'utf8',
       env: { ...process.env, CODEX_HOME: codexHome }
     })
-    if (result.status !== 0 && /not permitted|bwrap.*not found/i.test(result.stderr)) {
+    if (
+      result.status !== 0 &&
+      /not permitted|administrator setup|sudo:|helper.*unavailable/i.test(result.stderr)
+    ) {
       t.skip(`Filesystem namespaces are unavailable: ${result.stderr.trim()}`)
       return
     }
 
     assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, process.env.PATH)
     assert.equal(await readFile(join(accountHome, 'auth.json'), 'utf8'), 'account-updated')
     assert.equal(await readFile(join(codexHome, 'auth.json'), 'utf8'), 'regular')
   } finally {
@@ -177,7 +193,10 @@ test('a running Linux view exits when the selected account changes', async (t) =
     })
 
     await new Promise((resolve) => setTimeout(resolve, 200))
-    if (child.exitCode !== null && /not permitted|bwrap.*not found/i.test(stderr)) {
+    if (
+      child.exitCode !== null &&
+      /not permitted|administrator setup|sudo:|helper.*unavailable/i.test(stderr)
+    ) {
       t.skip(`Filesystem namespaces are unavailable: ${stderr.trim()}`)
       return
     }

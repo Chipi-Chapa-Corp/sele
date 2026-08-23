@@ -9,8 +9,10 @@ import {
   normalizeCodexAccountName,
   parseCodexAccountsOutput
 } from './CodexAccountConfig'
+import { codexAccountViewSetupScript, getCodexAccountViewSetupArgs } from './CodexAccountViewHelper'
 
 const accountCommandTimeoutMs = 15_000
+const accountSetupTimeoutMs = 5 * 60_000
 const accountCommandMaxBuffer = 1024 * 1024
 
 const inspectAccountsScript = String.raw`
@@ -209,7 +211,8 @@ const requireSelectableAccountId = (value: string): string =>
 const runAccountCommand = async (
   script: string,
   args: string[],
-  container: AppContainerTarget | null | undefined
+  container: AppContainerTarget | null | undefined,
+  timeout = accountCommandTimeoutMs
 ): Promise<string> => {
   const hostCommand = await getHostCommand('sh', ['-lc', script, 'sele-codex-accounts', ...args], {
     container,
@@ -225,7 +228,7 @@ const runAccountCommand = async (
         encoding: 'utf8',
         env: hostCommand.env,
         maxBuffer: accountCommandMaxBuffer,
-        timeout: accountCommandTimeoutMs
+        timeout
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -237,6 +240,17 @@ const runAccountCommand = async (
     )
     child.stdin?.end()
   })
+}
+
+const ensureCodexAccountView = async (
+  container: AppContainerTarget | null | undefined
+): Promise<void> => {
+  await runAccountCommand(
+    codexAccountViewSetupScript,
+    getCodexAccountViewSetupArgs(),
+    container,
+    accountSetupTimeoutMs
+  )
 }
 
 export const getCodexAccounts = async (
@@ -264,6 +278,7 @@ export const createCodexAccount = async (
     throw new Error('An account with this name already exists.')
   }
 
+  await ensureCodexAccountView(container)
   const accountId = randomUUID()
   await runAccountCommand(createAccountScript, [accountId, name], container)
   return { accountId }
@@ -283,6 +298,7 @@ export const useCodexAccount = async (
     throw new Error('Codex account was not found.')
   }
 
+  if (accountId !== codexDefaultAccountId) await ensureCodexAccountView(container)
   await runAccountCommand(useAccountScript, [accountId], container)
   return getCodexAccounts(container)
 }
