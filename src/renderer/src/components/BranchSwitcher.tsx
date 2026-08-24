@@ -1,5 +1,13 @@
 import { Check, ChevronDown, GitBranch, Plus, X } from 'lucide-react'
-import { type CSSProperties, useCallback, useEffect, useId, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState
+} from 'react'
 import { createPortal } from 'react-dom'
 import { Button, ButtonMenuRow } from './Button'
 import { Input } from './Input'
@@ -13,6 +21,7 @@ type BranchSwitcherProps = {
   deleteWorktreePath?: string | null
   disabled?: boolean
   error?: string | null
+  errorActions?: ReactNode
   id?: string
   loading?: boolean
   onClearError?: () => void
@@ -90,6 +99,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   deleteWorktreePath = null,
   disabled = false,
   error = null,
+  errorActions = null,
   id,
   loading = false,
   onClearError,
@@ -426,6 +436,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
           callback={deleteWorktree}
         />
       )}
+      {error && errorActions}
     </div>
   ) : null
 

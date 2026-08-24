@@ -300,6 +300,7 @@ import {
   setAppGitCommitModel,
   type AppGitCommitModels
 } from './gitCommitModels'
+import { getGitAiResolutionPrompt } from './gitErrorResolution'
 import { setThemePreference } from './systemColorScheme'
 import {
   clearChatSearchHighlights,
@@ -553,7 +554,14 @@ type AppProjectSettingPath =
   | { section: 'browser'; key: keyof AppSettings['browser'] }
   | { section: 'links'; key: keyof AppSettings['links'] }
   | { section: 'performance'; key: keyof AppSettings['performance'] }
-  | { section: 'git'; key: 'commitModels' | 'untrackedFilesPrompt' }
+  | {
+      section: 'git'
+      key:
+        | 'commitModels'
+        | 'errorResolutionPrompt'
+        | 'permanentErrorResolutionPrompt'
+        | 'untrackedFilesPrompt'
+    }
   | { section: 'gitCommitPrompt'; key: keyof AppGitCommitPromptSettings }
   | {
       section: 'gitCommitMessageGeneration'
@@ -709,12 +717,12 @@ const setAppProjectSettingOverrideValue = (
         } as Partial<AppSettings['performance']>
       })
     case 'git':
-      if (path.key === 'untrackedFilesPrompt') {
+      if (path.key !== 'commitModels') {
         return cleanProjectSettingsOverrides({
           ...overrides,
           git: {
             ...overrides.git,
-            untrackedFilesPrompt: value as string
+            [path.key]: value as string
           }
         })
       }
@@ -1760,6 +1768,7 @@ const getGitRecoveryPullStrategy = (
 const getGitRecoveryActionIcon = (actionId: AppGitRecoveryActionId): React.ReactNode => {
   if (actionId === 'pull-rebase') return <GitPullRequestArrow aria-hidden="true" />
   if (actionId === 'pull-merge') return <GitMerge aria-hidden="true" />
+  if (actionId === 'set-upstream') return <GitBranch aria-hidden="true" />
 
   return <GitRefreshIcon />
 }
@@ -1771,39 +1780,18 @@ const getGitRecoveryRememberLabel = (actionId: AppGitRecoveryActionId): string |
   return null
 }
 
-const getGitSyncWorkflowLabel = (action: GitSyncAction): string => {
-  if (action === 'pullAndPush') return 'pull remote changes and push local commits'
-  if (action === 'push') return 'push local commits'
-
-  return 'pull remote changes'
-}
-
-const getGitAiResolutionPrompt = (
+const getGitRecoveryAiResolutionPrompt = (
   recovery: GitSyncRecoveryState,
-  rememberStrategy: boolean
-): string => {
-  const workflow = getGitSyncWorkflowLabel(recovery.requestedAction)
-  const promptParts = [
-    `Resolve this Git sync failure in ${recovery.cwd}.`,
-    `Failed command: ${recovery.failure.command}.`,
-    `Failure: ${recovery.failure.title}. ${recovery.failure.message}`
-  ]
-
-  if (rememberStrategy) {
-    promptParts.push(
-      'Make the pull strategy persistent for this repository using repo-local Git config before resolving it.',
-      'Choose rebase or merge based on the repository history, then pull and push.'
-    )
-  } else {
-    promptParts.push(
-      `Resolve it once without changing persistent Git pull configuration, then complete the original workflow: ${workflow}.`
-    )
-  }
-
-  promptParts.push('If conflicts occur, stop and explain the files that need manual resolution.')
-
-  return promptParts.join('\n')
-}
+  promptTemplate: string
+): string =>
+  getGitAiResolutionPrompt(
+    {
+      cwd: recovery.cwd,
+      operation: recovery.failure.command,
+      error: `${recovery.failure.title}. ${recovery.failure.message}`
+    },
+    promptTemplate
+  )
 
 const getDropdownOptions = <TValue extends string>(
   labels: Record<TValue, string>
@@ -4215,6 +4203,8 @@ export const App: React.FC = () => {
   const pinnedMessageScrollCleanupRef = useRef<(() => void) | null>(null)
   const chatInitialLayoutKeyRef = useRef<string | null>(null)
   const chatDetailRef = useRef<ProviderChatDetail | null>(chatDetail)
+  const chatDetailResyncRef = useRef<{ chatKey: string; requestId: number } | null>(null)
+  const chatDetailResyncRequestIdRef = useRef(0)
   const loadedWorkingStepIdsRef = useRef<string[]>([])
   const chatSearchContentRef = useRef<HTMLDivElement>(null)
   const chatSearchInputRef = useRef<HTMLInputElement>(null)
@@ -6222,6 +6212,8 @@ export const App: React.FC = () => {
         })()
 
         if (selectedDetail) {
+          chatDetailResyncRequestIdRef.current += 1
+          chatDetailResyncRef.current = null
           applyChatDetail(event.providerId, selectedDetail)
           setCommittedChatUpdate({
             sequence: event.sequence,
@@ -6231,10 +6223,43 @@ export const App: React.FC = () => {
         } else {
           applyChatSummary(event.providerId, event.summary, event.turnCompleted)
           if (viewingUpdatedChat) {
-            chatDetailRef.current = null
-            setChatDetail(null)
-            setChatLoadState('loading')
-            setChatLoadRequest((currentRequest) => currentRequest + 1)
+            const retainedDetail = chatDetailRef.current
+            if (retainedDetail?.id === event.chatId) {
+              // Keep the selected chat interactive while recovering a missed or unmergeable
+              // detail update. Clearing it would disable and blur the focused message composer.
+              const currentResync = chatDetailResyncRef.current
+              if (!currentResync || currentResync.chatKey !== updatedChatKey) {
+                const requestId = chatDetailResyncRequestIdRef.current + 1
+                chatDetailResyncRequestIdRef.current = requestId
+                chatDetailResyncRef.current = { chatKey: updatedChatKey, requestId }
+
+                void providerApi
+                  .getChat(event.providerId, event.chatId)
+                  .then((detail) => {
+                    const pendingResync = chatDetailResyncRef.current
+                    if (
+                      pendingResync?.requestId !== requestId ||
+                      pendingResync.chatKey !== updatedChatKey
+                    ) {
+                      return
+                    }
+
+                    chatDetailResyncRef.current = null
+                    if (selectedChatKeyRef.current !== updatedChatKey) return
+                    applyChatDetail(event.providerId, detail)
+                  })
+                  .catch(() => {
+                    if (chatDetailResyncRef.current?.requestId === requestId) {
+                      chatDetailResyncRef.current = null
+                    }
+                  })
+              }
+            } else {
+              chatDetailRef.current = null
+              setChatDetail(null)
+              setChatLoadState('loading')
+              setChatLoadRequest((currentRequest) => currentRequest + 1)
+            }
           }
           providerApi.acknowledgeChatUpdate(event.sequence, false)
         }
@@ -6349,6 +6374,8 @@ export const App: React.FC = () => {
       : null
 
   useEffect(() => {
+    chatDetailResyncRequestIdRef.current += 1
+    chatDetailResyncRef.current = null
     providerApi.setViewedChat(selectedProviderId ?? null, selectedChatId ?? null)
   }, [selectedChatId, selectedProviderId])
 
@@ -8960,6 +8987,19 @@ export const App: React.FC = () => {
         }
       })
     )
+  }
+
+  const handleGitErrorResolutionPromptChange = (
+    key: 'errorResolutionPrompt' | 'permanentErrorResolutionPrompt',
+    value: string
+  ): void => {
+    updateScopedSetting({ section: 'git', key }, value, (currentSettings) => ({
+      ...currentSettings,
+      git: {
+        ...currentSettings.git,
+        [key]: value
+      }
+    }))
   }
 
   const handleGitCommitPromptChange = (
@@ -12526,6 +12566,7 @@ export const App: React.FC = () => {
     options: {
       pullStrategy?: AppGitPullStrategy
       rememberStrategy?: boolean
+      setUpstream?: boolean
       recovery?: GitSyncRecoveryState | null
     } = {}
   ): Promise<void> => {
@@ -12581,7 +12622,11 @@ export const App: React.FC = () => {
 
       if (action === 'push' || action === 'pullAndPush') {
         currentAction = 'push'
-        const pushResult = await appApi.pushGitChanges({ container: changesContainer, cwd })
+        const pushResult = await appApi.pushGitChanges({
+          container: changesContainer,
+          cwd,
+          setUpstream: options.setUpstream
+        })
 
         if (pushResult.failure) {
           showRecoverableGitFailure(operationProjectKey, cwd, action, 'push', pushResult.failure)
@@ -12666,6 +12711,11 @@ export const App: React.FC = () => {
       return
     }
 
+    if (actionId === 'set-upstream') {
+      await runSyncChanges('push', recovery.cwd, { recovery, setUpstream: true })
+      return
+    }
+
     const pullStrategy = getGitRecoveryPullStrategy(actionId)
     if (!pullStrategy) return
 
@@ -12676,9 +12726,12 @@ export const App: React.FC = () => {
     )
   }
 
-  const handleGitAiResolution = async (rememberStrategy = false): Promise<void> => {
+  const handleGitAiResolution = async (permanentFix = false): Promise<void> => {
     const recovery = visibleSyncRecovery
-    if (!recovery || gitAiResolutionDisabled) return
+    const promptTemplate = permanentFix
+      ? effectiveAppSettings.git.permanentErrorResolutionPrompt
+      : effectiveAppSettings.git.errorResolutionPrompt
+    if (!recovery || gitAiResolutionDisabled || !promptTemplate.trim()) return
 
     setSyncRecoveriesByProjectKey((currentRecoveries) => {
       if (!currentRecoveries[currentProjectKey]) return currentRecoveries
@@ -12695,15 +12748,156 @@ export const App: React.FC = () => {
       return nextErrors
     })
     await handleSendMessage(
-      getGitAiResolutionPrompt(recovery, rememberStrategy),
+      getGitRecoveryAiResolutionPrompt(recovery, promptTemplate),
       undefined,
       [],
       null,
       [],
       [],
-      getGitTurnOptions()
+      getGitTurnOptions(),
+      'new'
     )
   }
+
+  const handleUnclassifiedGitSyncAiResolution = async (permanentFix = false): Promise<void> => {
+    const promptTemplate = permanentFix
+      ? effectiveAppSettings.git.permanentErrorResolutionPrompt
+      : effectiveAppSettings.git.errorResolutionPrompt
+    if (
+      !currentProjectSyncError ||
+      !changesCwd ||
+      gitAiResolutionDisabled ||
+      !promptTemplate.trim()
+    ) {
+      return
+    }
+
+    const error = currentProjectSyncError
+    setSyncErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[currentProjectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[currentProjectKey]
+      return nextErrors
+    })
+    await handleSendMessage(
+      getGitAiResolutionPrompt(
+        {
+          cwd: changesCwd,
+          error,
+          operation: 'Git sync'
+        },
+        promptTemplate
+      ),
+      undefined,
+      [],
+      null,
+      [],
+      [],
+      getGitTurnOptions(),
+      'new'
+    )
+  }
+
+  const handleGitCommitErrorAiResolution = async (permanentFix = false): Promise<void> => {
+    const promptTemplate = permanentFix
+      ? effectiveAppSettings.git.permanentErrorResolutionPrompt
+      : effectiveAppSettings.git.errorResolutionPrompt
+    if (
+      !currentProjectCommitError ||
+      !changesCwd ||
+      gitAiResolutionDisabled ||
+      !promptTemplate.trim()
+    ) {
+      return
+    }
+
+    const error = currentProjectCommitError
+    setCommitErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[currentProjectKey]) return currentErrors
+
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[currentProjectKey]
+      return nextErrors
+    })
+    await handleSendMessage(
+      getGitAiResolutionPrompt(
+        {
+          cwd: changesCwd,
+          error,
+          operation: 'Git commit'
+        },
+        promptTemplate
+      ),
+      undefined,
+      [],
+      null,
+      [],
+      [],
+      getGitTurnOptions(),
+      'new'
+    )
+  }
+
+  const handleGitBranchErrorAiResolution = async (permanentFix = false): Promise<void> => {
+    const promptTemplate = permanentFix
+      ? effectiveAppSettings.git.permanentErrorResolutionPrompt
+      : effectiveAppSettings.git.errorResolutionPrompt
+    if (!gitBranchError || !changesCwd || gitAiResolutionDisabled || !promptTemplate.trim()) return
+
+    const error = gitBranchError
+    setGitBranchError(null)
+    setGitBranchDeleteRetry(null)
+    setGitBranchWorktreeDeleteRetry(null)
+    if (gitBranchActionState === 'error') setGitBranchActionState('idle')
+    await handleSendMessage(
+      getGitAiResolutionPrompt(
+        {
+          cwd: changesCwd,
+          error,
+          operation: 'Git branch operation'
+        },
+        promptTemplate
+      ),
+      undefined,
+      [],
+      null,
+      [],
+      [],
+      getGitTurnOptions(),
+      'new'
+    )
+  }
+
+  const renderGitAiResolutionButton = (
+    onResolve: (permanentFix?: boolean) => Promise<void>,
+    placement: 'bottom' | 'top' = 'top'
+  ): React.ReactElement => (
+    <Button
+      title={`Ask ${providerLabels[configProviderId]} to resolve this Git error`}
+      disabled={gitAiResolutionDisabled || !effectiveAppSettings.git.errorResolutionPrompt.trim()}
+      callback={() => void onResolve()}
+      dropdownActions={[
+        {
+          id: 'ai-permanent-fix',
+          label: 'Permanent AI fix',
+          title: `Ask ${providerLabels[configProviderId]} to investigate and prefer a safe permanent fix when one exists`,
+          disabled:
+            gitAiResolutionDisabled ||
+            !effectiveAppSettings.git.permanentErrorResolutionPrompt.trim(),
+          callback: () => void onResolve(true)
+        }
+      ]}
+      dropdownLabel="AI resolution options"
+      dropdownMenuAlign="end"
+      dropdownPlacement={placement}
+      icon={<Sparkles aria-hidden="true" />}
+      label={<span>Resolve with AI</span>}
+      theme="secondary"
+      size="small"
+      fill
+    />
+  )
 
   const handleSolveUntrackedFiles = async (): Promise<void> => {
     if (!untrackedFilesHiddenForPerformance || untrackedFilesAiDisabled || !changesCwd) return
@@ -12827,6 +13021,14 @@ export const App: React.FC = () => {
     const gitUntrackedFilesPromptPath = {
       section: 'git',
       key: 'untrackedFilesPrompt'
+    } satisfies AppProjectSettingPath
+    const gitErrorResolutionPromptPath = {
+      section: 'git',
+      key: 'errorResolutionPrompt'
+    } satisfies AppProjectSettingPath
+    const gitPermanentErrorResolutionPromptPath = {
+      section: 'git',
+      key: 'permanentErrorResolutionPrompt'
     } satisfies AppProjectSettingPath
     const gitCommitGenerationPromptPath = {
       section: 'gitCommitMessageGeneration',
@@ -13658,6 +13860,69 @@ export const App: React.FC = () => {
                   options={gitCommitModelOptions}
                   value={gitCommitModelValue}
                   onChange={handleGitCommitModelChange}
+                />
+              </div>
+            </div>
+          </section>
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-git-error-resolution"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-git-error-resolution">
+              Git error resolution
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-git-error-resolution-prompt"
+                >
+                  <h3>Resolve with AI prompt</h3>
+                  <p>
+                    Available variables: {'{cwd}'}, {'{operation}'}, and {'{error}'}.
+                  </p>
+                </label>
+                {renderProjectSettingAction(gitErrorResolutionPromptPath, 'Resolve with AI prompt')}
+                <textarea
+                  id="settings-git-error-resolution-prompt"
+                  className="settings-dialog__prompt-textarea"
+                  rows={7}
+                  spellCheck={false}
+                  disabled={isScopedSettingControlDisabled(gitErrorResolutionPromptPath)}
+                  value={settingsPanelSettings.git.errorResolutionPrompt}
+                  onChange={(event) =>
+                    handleGitErrorResolutionPromptChange(
+                      'errorResolutionPrompt',
+                      event.currentTarget.value
+                    )
+                  }
+                />
+              </div>
+              <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-git-permanent-error-resolution-prompt"
+                >
+                  <h3>Permanent AI fix prompt</h3>
+                  <p>Sent from the Resolve with AI dropdown.</p>
+                </label>
+                {renderProjectSettingAction(
+                  gitPermanentErrorResolutionPromptPath,
+                  'Permanent AI fix prompt'
+                )}
+                <textarea
+                  id="settings-git-permanent-error-resolution-prompt"
+                  className="settings-dialog__prompt-textarea"
+                  rows={7}
+                  spellCheck={false}
+                  disabled={isScopedSettingControlDisabled(gitPermanentErrorResolutionPromptPath)}
+                  value={settingsPanelSettings.git.permanentErrorResolutionPrompt}
+                  onChange={(event) =>
+                    handleGitErrorResolutionPromptChange(
+                      'permanentErrorResolutionPrompt',
+                      event.currentTarget.value
+                    )
+                  }
                 />
               </div>
             </div>
@@ -15093,6 +15358,11 @@ export const App: React.FC = () => {
                     deleteWorktreePath={gitBranchWorktreeDeleteRetry?.worktreePath}
                     disabled={branchSwitchDisabled}
                     error={gitBranchError}
+                    errorActions={
+                      gitBranchError
+                        ? renderGitAiResolutionButton(handleGitBranchErrorAiResolution, 'bottom')
+                        : null
+                    }
                     id="changes-branch"
                     loading={gitBranchLoadState === 'loading'}
                     onClearError={() => {
@@ -15471,39 +15741,37 @@ export const App: React.FC = () => {
                       })}
                     </div>
                     <div className="changes-sidebar__sync-recovery-ai">
-                      <Button
-                        title={`Ask ${providerLabels[configProviderId]} to resolve this Git sync issue once`}
-                        disabled={gitAiResolutionDisabled}
-                        callback={() => void handleGitAiResolution()}
-                        dropdownActions={[
-                          {
-                            id: 'ai-remember',
-                            label: 'Make it remember',
-                            title: `Ask ${providerLabels[configProviderId]} to configure a repo-local pull strategy, then sync`,
-                            callback: () => void handleGitAiResolution(true)
-                          }
-                        ]}
-                        dropdownLabel="AI resolution options"
-                        dropdownMenuAlign="end"
-                        dropdownPlacement="top"
-                        icon={<Sparkles aria-hidden="true" />}
-                        label={<span>AI Resolution</span>}
-                        theme="secondary"
-                        size="small"
-                        fill
-                      />
+                      {renderGitAiResolutionButton(handleGitAiResolution)}
                     </div>
                   </section>
                 )}
                 {currentProjectCommitError && (
-                  <p className="changes-sidebar__commit-error" role="status">
-                    {currentProjectCommitError}
-                  </p>
+                  <section
+                    className="chat-approval changes-sidebar__sync-recovery"
+                    aria-label="Git commit error"
+                  >
+                    <span className="chat-approval__label">Git commit failed</span>
+                    <span className="chat-approval__error" role="status">
+                      {currentProjectCommitError}
+                    </span>
+                    <div className="changes-sidebar__sync-recovery-ai">
+                      {renderGitAiResolutionButton(handleGitCommitErrorAiResolution)}
+                    </div>
+                  </section>
                 )}
                 {currentProjectSyncError && !visibleSyncRecovery && (
-                  <p className="changes-sidebar__commit-error" role="status">
-                    {currentProjectSyncError}
-                  </p>
+                  <section
+                    className="chat-approval changes-sidebar__sync-recovery"
+                    aria-label="Git sync error"
+                  >
+                    <span className="chat-approval__label">Git sync failed</span>
+                    <span className="chat-approval__error" role="status">
+                      {currentProjectSyncError}
+                    </span>
+                    <div className="changes-sidebar__sync-recovery-ai">
+                      {renderGitAiResolutionButton(handleUnclassifiedGitSyncAiResolution)}
+                    </div>
+                  </section>
                 )}
               </footer>
             )}

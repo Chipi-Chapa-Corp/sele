@@ -28,6 +28,10 @@ import {
   normalizeAppRecentlyOpenedFilesLimit,
   normalizeAppRecentsMessageLimit
 } from './performanceSettings'
+import {
+  defaultGitErrorResolutionPrompt,
+  defaultPermanentGitErrorResolutionPrompt
+} from './gitErrorResolution'
 
 export {
   appMaxChatsRenderedMin,
@@ -151,6 +155,8 @@ export type AppSettings = {
   performance: AppPerformanceSettings
   git: {
     commitModels: AppGitCommitModels
+    errorResolutionPrompt: string
+    permanentErrorResolutionPrompt: string
     untrackedFilesPrompt: string
     commitPrompt: AppGitCommitPromptSettings
     commitMessageGeneration: AppGitCommitMessageGenerationSettings
@@ -166,6 +172,8 @@ export type AppProjectSettingsOverrides = {
   performance?: Partial<AppPerformanceSettings>
   git?: {
     commitModels?: AppGitCommitModels
+    errorResolutionPrompt?: string
+    permanentErrorResolutionPrompt?: string
     untrackedFilesPrompt?: string
     commitPrompt?: Partial<AppGitCommitPromptSettings>
     commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
@@ -343,6 +351,8 @@ export const defaultAppSettings: AppSettings = {
   performance: defaultAppPerformanceSettings,
   git: {
     commitModels: {},
+    errorResolutionPrompt: defaultGitErrorResolutionPrompt,
+    permanentErrorResolutionPrompt: defaultPermanentGitErrorResolutionPrompt,
     untrackedFilesPrompt: defaultAppGitUntrackedFilesPrompt,
     commitPrompt: defaultAppGitCommitPromptSettings,
     commitMessageGeneration: defaultAppGitCommitMessageGenerationSettings,
@@ -625,6 +635,18 @@ const readProjectGitOverrides = (
   if (hasOwnProperty(git, 'untrackedFilesPrompt') && typeof git.untrackedFilesPrompt === 'string') {
     overrides.untrackedFilesPrompt = git.untrackedFilesPrompt
   }
+  if (
+    hasOwnProperty(git, 'errorResolutionPrompt') &&
+    typeof git.errorResolutionPrompt === 'string'
+  ) {
+    overrides.errorResolutionPrompt = git.errorResolutionPrompt
+  }
+  if (
+    hasOwnProperty(git, 'permanentErrorResolutionPrompt') &&
+    typeof git.permanentErrorResolutionPrompt === 'string'
+  ) {
+    overrides.permanentErrorResolutionPrompt = git.permanentErrorResolutionPrompt
+  }
 
   const commitPrompt =
     git.commitPrompt && typeof git.commitPrompt === 'object' && !Array.isArray(git.commitPrompt)
@@ -744,6 +766,12 @@ const pruneAppProjectSettingsOverrides = (
     if (hasOwnProperty(overrides.git, 'untrackedFilesPrompt')) {
       gitOverrides.untrackedFilesPrompt = overrides.git.untrackedFilesPrompt
     }
+    if (hasOwnProperty(overrides.git, 'errorResolutionPrompt')) {
+      gitOverrides.errorResolutionPrompt = overrides.git.errorResolutionPrompt
+    }
+    if (hasOwnProperty(overrides.git, 'permanentErrorResolutionPrompt')) {
+      gitOverrides.permanentErrorResolutionPrompt = overrides.git.permanentErrorResolutionPrompt
+    }
     if (overrides.git.commitPrompt && Object.keys(overrides.git.commitPrompt).length > 0) {
       gitOverrides.commitPrompt = { ...overrides.git.commitPrompt }
     }
@@ -793,6 +821,14 @@ export const resolveAppSettings = (
     gitOverrides && hasOwnProperty(gitOverrides, 'untrackedFilesPrompt')
       ? (gitOverrides.untrackedFilesPrompt ?? settings.git.untrackedFilesPrompt)
       : settings.git.untrackedFilesPrompt
+  const errorResolutionPrompt =
+    gitOverrides && hasOwnProperty(gitOverrides, 'errorResolutionPrompt')
+      ? (gitOverrides.errorResolutionPrompt ?? settings.git.errorResolutionPrompt)
+      : settings.git.errorResolutionPrompt
+  const permanentErrorResolutionPrompt =
+    gitOverrides && hasOwnProperty(gitOverrides, 'permanentErrorResolutionPrompt')
+      ? (gitOverrides.permanentErrorResolutionPrompt ?? settings.git.permanentErrorResolutionPrompt)
+      : settings.git.permanentErrorResolutionPrompt
 
   return {
     ...settings,
@@ -819,6 +855,8 @@ export const resolveAppSettings = (
     git: {
       ...settings.git,
       commitModels,
+      errorResolutionPrompt,
+      permanentErrorResolutionPrompt,
       untrackedFilesPrompt,
       commitPrompt: {
         ...settings.git.commitPrompt,
@@ -974,6 +1012,14 @@ export const readStoredAppSettings = (): AppSettings => {
           : hasOwnProperty(git, 'commitModel') && isStoredModel(git.commitModel)
             ? { [appGitLegacyCommitModelKey]: git.commitModel }
             : defaultAppSettings.git.commitModels,
+        errorResolutionPrompt:
+          typeof git.errorResolutionPrompt === 'string'
+            ? git.errorResolutionPrompt
+            : defaultAppSettings.git.errorResolutionPrompt,
+        permanentErrorResolutionPrompt:
+          typeof git.permanentErrorResolutionPrompt === 'string'
+            ? git.permanentErrorResolutionPrompt
+            : defaultAppSettings.git.permanentErrorResolutionPrompt,
         untrackedFilesPrompt:
           typeof git.untrackedFilesPrompt === 'string'
             ? git.untrackedFilesPrompt
@@ -1121,6 +1167,8 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       performance?: Partial<AppPerformanceSettings>
       git?: {
         commitModels?: AppGitCommitModels
+        errorResolutionPrompt?: string
+        permanentErrorResolutionPrompt?: string
         untrackedFilesPrompt?: string
         commitPrompt?: Partial<AppGitCommitPromptSettings>
         commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
@@ -1275,6 +1323,8 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
 
     const storedGit: {
       commitModels?: AppGitCommitModels
+      errorResolutionPrompt?: string
+      permanentErrorResolutionPrompt?: string
       untrackedFilesPrompt?: string
       commitPrompt?: Partial<AppGitCommitPromptSettings>
       commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
@@ -1282,6 +1332,15 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     } = {}
     if (Object.keys(settings.git.commitModels).length > 0) {
       storedGit.commitModels = getStoredGitCommitModels(settings.git.commitModels)
+    }
+    if (settings.git.errorResolutionPrompt !== defaultAppSettings.git.errorResolutionPrompt) {
+      storedGit.errorResolutionPrompt = settings.git.errorResolutionPrompt
+    }
+    if (
+      settings.git.permanentErrorResolutionPrompt !==
+      defaultAppSettings.git.permanentErrorResolutionPrompt
+    ) {
+      storedGit.permanentErrorResolutionPrompt = settings.git.permanentErrorResolutionPrompt
     }
     if (settings.git.untrackedFilesPrompt !== defaultAppSettings.git.untrackedFilesPrompt) {
       storedGit.untrackedFilesPrompt = settings.git.untrackedFilesPrompt

@@ -84,6 +84,12 @@ import { getContainerSuggestions } from './containerSuggestions'
 import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
 import { commitGitFileChanges } from './gitCommit'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
+import {
+  getNoUpstreamPushFailure,
+  getSameNameUpstreamPushArgs,
+  isNoUpstreamPushFailure,
+  selectGitPushRemote
+} from './gitSync'
 import { getHostCommand } from './hostProcess'
 import { getProcessFailureMessage } from './processFailure'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
@@ -1190,18 +1196,21 @@ const getGitSyncOptions = (
   container?: AppContainerTarget | null
   cwd?: string | null
   rememberStrategy: boolean
+  setUpstream: boolean
   strategy?: AppGitPullStrategy
 } => {
-  if (value == null) return { rememberStrategy: false }
+  if (value == null) return { rememberStrategy: false, setUpstream: false }
   if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid Git sync options')
 
   const options = value as {
     container?: unknown
     cwd?: unknown
     rememberStrategy?: unknown
+    setUpstream?: unknown
     strategy?: unknown
   }
   const rememberStrategy = options.rememberStrategy
+  const setUpstream = options.setUpstream
   const strategy = options.strategy
 
   if (rememberStrategy != null && typeof rememberStrategy !== 'boolean') {
@@ -1212,10 +1221,15 @@ const getGitSyncOptions = (
     throw new Error('Invalid Git pull strategy')
   }
 
+  if (setUpstream != null && typeof setUpstream !== 'boolean') {
+    throw new Error('Invalid Git set upstream option')
+  }
+
   return {
     container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
     rememberStrategy: Boolean(rememberStrategy),
+    setUpstream: Boolean(setUpstream),
     strategy: isGitPullStrategy(strategy) ? strategy : undefined
   }
 }
@@ -1345,6 +1359,20 @@ const getGitBranchRemote = async (cwd: string, branchName: string): Promise<stri
   ])
 
   return remote?.trim() || 'origin'
+}
+
+const getGitPushRemote = async (cwd: string, branchName: string): Promise<string> => {
+  const [branchPushRemote, defaultPushRemote, branchRemote, remoteOutput] = await Promise.all([
+    runGit(cwd, ['config', '--get', `branch.${branchName}.pushRemote`]),
+    runGit(cwd, ['config', '--get', 'remote.pushDefault']),
+    runGit(cwd, ['config', '--get', `branch.${branchName}.remote`]),
+    runGit(cwd, ['remote'], true)
+  ])
+  const remotes = (remoteOutput ?? '')
+    .split('\n')
+    .map((remote) => remote.trim())
+    .filter(Boolean)
+  return selectGitPushRemote(remotes, [branchPushRemote, defaultPushRemote, branchRemote])
 }
 
 const isForceBranchDeleteSuggestion = (message: string): boolean =>
@@ -2584,17 +2612,37 @@ const commitGitChanges = async (
 }
 
 const pushGitChanges = async (
-  cwd: string
+  cwd: string,
+  setUpstream = false
 ): Promise<{ pushed: boolean; failure?: AppGitRecoverableFailure | null }> => {
   const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
   if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
 
+  let args = ['push']
+  if (setUpstream) {
+    const branchName = await getCurrentBranchName(repositoryRoot)
+    if (!branchName) throw new Error('Cannot set an upstream while HEAD is detached.')
+
+    const remoteName = await getGitPushRemote(repositoryRoot, branchName)
+    args = getSameNameUpstreamPushArgs(remoteName, branchName)
+  }
+
   try {
-    await runGit(repositoryRoot, ['push'], true)
+    await runGit(repositoryRoot, args, true)
   } catch (error) {
     const message = getGitErrorMessage(error)
+    if (!setUpstream && isNoUpstreamPushFailure(message)) {
+      const branchName = await getCurrentBranchName(repositoryRoot)
+      if (branchName) {
+        return {
+          pushed: false,
+          failure: getNoUpstreamPushFailure(branchName, `git ${args.join(' ')}`)
+        }
+      }
+    }
+
     if (isPushRejectedFailure(message)) {
-      return { pushed: false, failure: getPushRejectedFailure('git push') }
+      return { pushed: false, failure: getPushRejectedFailure(`git ${args.join(' ')}`) }
     }
 
     throw new Error(message)
@@ -2953,7 +3001,7 @@ export const registerAppIpc = (): void => {
   ipcMain.handle(appIpcChannels.pushGitChanges, async (_event, value: unknown) => {
     const options = getGitSyncOptions(value)
     return runWithGitContainer(options.container, () =>
-      pushGitChanges(options.cwd ?? process.cwd())
+      pushGitChanges(options.cwd ?? process.cwd(), options.setUpstream)
     )
   })
 
