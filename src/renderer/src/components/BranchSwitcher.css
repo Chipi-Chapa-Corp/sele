@@ -163,6 +163,9 @@
 }
 
 :where(.branch-switcher__error) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
   max-height: min(180px, 28vh);
   margin: 0;
