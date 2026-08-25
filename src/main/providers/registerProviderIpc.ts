@@ -1444,6 +1444,18 @@ export const registerProviderIpc = (): void => {
   )
 
   ipcMain.handle(
+    providerIpcChannels.forkChat,
+    (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
+      getRendererChatDetail(() =>
+        providerApi.forkChat(
+          requireProviderId(providerId),
+          requireChatId(chatId),
+          requireMessageId(messageId)
+        )
+      )
+  )
+
+  ipcMain.handle(
     providerIpcChannels.sendActiveChatMessage,
     (_, providerId: unknown, chatId: unknown, message: unknown, mode: unknown, options: unknown) =>
       getRendererChatDetail(() =>

@@ -84,6 +84,11 @@ export type ProviderAdapter = {
     options?: ProviderTurnOptions,
     onForkCreated?: (chatId: string) => Promise<void>
   ) => Promise<ProviderChatDetail>
+  forkChat: (
+    chatId: string,
+    messageId: string,
+    onForkCreated?: (chatId: string) => Promise<void>
+  ) => Promise<ProviderChatDetail>
   sendActiveChatMessage: (
     chatId: string,
     message: string,

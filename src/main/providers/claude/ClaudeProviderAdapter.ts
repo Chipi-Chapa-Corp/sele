@@ -930,6 +930,33 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  forkChat = async (
+    chatId: string,
+    messageId: string,
+    onForkCreated?: (chatId: string) => Promise<void>
+  ): Promise<ProviderChatDetail> => {
+    const source = await this.ensureState(chatId)
+    if (source.active) throw new Error('Cannot fork a chat with an active response.')
+
+    const targetIndex = source.messages.findIndex(
+      (entry) => entry.type === 'assistant' && entry.uuid === messageId
+    )
+    if (targetIndex < 0) throw new Error('Message cannot be forked.')
+
+    const id = randomUUID()
+    const state = this.createState(id, source.options, source.container)
+    state.cwd = source.cwd
+    state.messages = source.messages
+      .slice(0, targetIndex + 1)
+      .map((entry) => ({ ...entry, session_id: id }))
+    state.messageIds = new Set(state.messages.map((entry) => entry.uuid))
+    this.states.set(id, state)
+    this.sessionContainers.set(id, state.container)
+    await this.startStateQuery(state, source.options, { forkFrom: chatId, resumeAt: messageId })
+    await onForkCreated?.(id)
+    return this.createChatDetail(state)
+  }
+
   sendActiveChatMessage = async (
     chatId: string,
     message: string,

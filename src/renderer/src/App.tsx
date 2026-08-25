@@ -3920,6 +3920,7 @@ export const App: React.FC = () => {
   const [sendState, setSendState] = useState<SendState>('idle')
   const [sendInFlightProjectKey, setSendInFlightProjectKey] = useState<string | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
+  const [forkingMessageId, setForkingMessageId] = useState<string | null>(null)
   const [editingMessage, setEditingMessage] = useState<EditingMessage | null>(null)
   const [messageBoxQuoteRequest, setMessageBoxQuoteRequest] =
     useState<MessageBoxQuoteRequest | null>(null)
@@ -4222,6 +4223,7 @@ export const App: React.FC = () => {
   )
   const deferredProviderResourceRefreshRunningRef = useRef(false)
   const sendInFlightRef = useRef(false)
+  const forkInFlightRef = useRef(false)
   const sendInFlightProjectKeyRef = useRef<string | null>(null)
   const runPromptActionRef = useRef<(prompt: string, target: 'current' | 'new') => Promise<void>>(
     async () => {}
@@ -10507,6 +10509,45 @@ export const App: React.FC = () => {
   const chatIsBusy =
     chatHasActiveTurn || (sendState === 'sending' && hasActiveWorkingStep(chatDetail))
 
+  const handleForkMessage = useCallback(
+    async (message: ProviderMessage): Promise<void> => {
+      if (
+        message.role !== 'assistant' ||
+        !selectedChat ||
+        chatHasActiveTurn ||
+        providerUpdateInProgress ||
+        forkInFlightRef.current
+      ) {
+        return
+      }
+
+      forkInFlightRef.current = true
+      setSendState('idle')
+      setSendError(null)
+      setForkingMessageId(message.id)
+      try {
+        const detail = await providerApi.forkChat(
+          selectedChat.providerId,
+          selectedChat.id,
+          message.id
+        )
+        applyViewedChatDetail(selectedChat.providerId, detail, { select: true })
+      } catch (error) {
+        handleSendFailure(error, 'Unable to fork chat.')
+      } finally {
+        forkInFlightRef.current = false
+        setForkingMessageId(null)
+      }
+    },
+    [
+      applyViewedChatDetail,
+      chatHasActiveTurn,
+      handleSendFailure,
+      providerUpdateInProgress,
+      selectedChat
+    ]
+  )
+
   const handleQuoteSelectedMessageText = useCallback((content: string): void => {
     setMessageBoxQuoteRequest((currentRequest) => ({
       id: (currentRequest?.id ?? 0) + 1,
@@ -14524,6 +14565,9 @@ export const App: React.FC = () => {
                     : undefined
                 }
                 onEditMessage={handleEditMessage}
+                onForkMessage={
+                  chatHasActiveTurn || forkingMessageId ? undefined : handleForkMessage
+                }
                 onLoadWorkingStep={handleLoadWorkingStep}
                 onLoadWorkingItem={handleLoadWorkingItem}
                 onLoadWorkingToolPage={handleLoadWorkingToolPage}

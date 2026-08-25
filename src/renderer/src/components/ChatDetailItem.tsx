@@ -42,6 +42,7 @@ import {
   FileCode2,
   FileText,
   GitBranch,
+  GitFork,
   Image as ImageIcon,
   ImageOff,
   ListChecks,
@@ -110,6 +111,7 @@ type ChatDetailItemProps = {
   onSteerPendingMessage?: (message: ProviderPendingMessage) => void
   onInterruptPendingMessage?: (message: ProviderPendingMessage) => void
   onEditMessage?: (message: ProviderMessage) => void
+  onForkMessage?: (message: ProviderMessage) => Promise<void> | void
   onLoadWorkingStep?: (workingStepId: string, startIndex?: number) => Promise<void> | void
   onLoadWorkingItem?: (workingStepId: string, workingItemId: string) => Promise<void> | void
   onLoadWorkingToolPage?: (
@@ -174,6 +176,7 @@ const areChatDetailItemPropsEqual = (
   first.onSteerPendingMessage === second.onSteerPendingMessage &&
   first.onInterruptPendingMessage === second.onInterruptPendingMessage &&
   first.onEditMessage === second.onEditMessage &&
+  first.onForkMessage === second.onForkMessage &&
   first.onLoadWorkingStep === second.onLoadWorkingStep &&
   first.onLoadWorkingItem === second.onLoadWorkingItem &&
   first.onLoadWorkingToolPage === second.onLoadWorkingToolPage &&
@@ -2105,6 +2108,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onSteerPendingMessage,
   onInterruptPendingMessage,
   onEditMessage,
+  onForkMessage,
   onLoadWorkingStep,
   onLoadWorkingItem,
   onLoadWorkingToolPage,
@@ -2162,6 +2166,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       Boolean(onToggleMessagePinned) &&
       turnIndex >= 0 &&
       (role === 'user' || !streaming)
+    const canForkMessage = !pending && role === 'assistant' && !streaming && Boolean(onForkMessage)
     const timestamp = item.createdAt
     const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById)
     const attachments = item.attachments ?? []
@@ -2237,6 +2242,16 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
         role === 'user' ? (
           <span className="chat-detail__message-action-placeholder" aria-hidden="true" />
         ) : null}
+        {canForkMessage && !pending && (
+          <Button
+            theme="secondary"
+            size="small"
+            aria-label="Fork chat from message"
+            title="Fork"
+            callback={() => onForkMessage?.(item)}
+            icon={<GitFork aria-hidden="true" />}
+          />
+        )}
         {canPinMessage && !pending && (
           <Button
             theme="secondary"

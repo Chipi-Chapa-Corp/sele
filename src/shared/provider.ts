@@ -943,6 +943,11 @@ export type ProviderApi = {
     purpose: ProviderChatPurpose,
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
+  forkChat: (
+    providerId: ProviderId,
+    chatId: string,
+    messageId: string
+  ) => Promise<ProviderChatDetail>
   sendActiveChatMessage: (
     providerId: ProviderId,
     chatId: string,
@@ -1096,6 +1101,7 @@ export const providerIpcChannels = {
   startChat: 'provider:start-chat',
   continueChat: 'provider:continue-chat',
   continueChatInFork: 'provider:continue-chat-in-fork',
+  forkChat: 'provider:fork-chat',
   sendActiveChatMessage: 'provider:send-active-chat-message',
   deletePendingMessage: 'provider:delete-pending-message',
   editPendingMessage: 'provider:edit-pending-message',

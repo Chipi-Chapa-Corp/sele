@@ -917,6 +917,35 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  forkChat = async (
+    chatId: string,
+    messageId: string,
+    onForkCreated?: (chatId: string) => Promise<void>
+  ): Promise<ProviderChatDetail> => {
+    const source = await this.ensureSession(chatId)
+    if (source.active) throw new Error('Cannot fork a chat with an active response.')
+    await this.loadEvents(source)
+
+    const targetIndex = source.events.findIndex(
+      (event) =>
+        event.type === 'assistant.message' &&
+        (event.id === messageId || event.data.messageId === messageId)
+    )
+    if (targetIndex < 0) throw new Error('Message cannot be forked.')
+
+    const nextUserMessage = source.events
+      .slice(targetIndex + 1)
+      .find((event) => event.type === 'user.message' && !event.agentId)
+    const fork = await source.client!.rpc.sessions.fork({
+      sessionId: chatId,
+      ...(nextUserMessage ? { toEventId: nextUserMessage.id } : {})
+    })
+    this.sessionContainers.set(fork.sessionId, source.container)
+    await onForkCreated?.(fork.sessionId)
+    const state = await this.ensureSession(fork.sessionId, source.options, source.container)
+    return this.createChatDetail(state)
+  }
+
   sendActiveChatMessage = async (
     chatId: string,
     message: string,

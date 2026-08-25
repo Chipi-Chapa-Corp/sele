@@ -455,6 +455,15 @@ export const providerApi: ProviderApi = {
       throw error
     }
   },
+  forkChat: async (providerId, chatId, messageId) => {
+    const sourceMetadata = await getChatMetadata(chatId)
+    const detail = await adapters[providerId].forkChat(chatId, messageId, async (forkedChatId) => {
+      if (sourceMetadata.container) {
+        await setChatContainer(forkedChatId, sourceMetadata.container)
+      }
+    })
+    return applyMetadataToDetail(detail)
+  },
   sendActiveChatMessage: (providerId, chatId, message, mode, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].sendActiveChatMessage(chatId, message, mode, options)

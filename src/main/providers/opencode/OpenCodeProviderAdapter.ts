@@ -748,6 +748,37 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state, true)
   }
 
+  forkChat = async (
+    chatId: string,
+    messageId: string,
+    onForkCreated?: (chatId: string) => Promise<void>
+  ): Promise<ProviderChatDetail> => {
+    const sourceState = await this.ensureState(chatId)
+    if (sourceState.active) throw new Error('Cannot fork a chat with an active response.')
+
+    const target = sourceState.messages.find(
+      (entry) =>
+        entry.info.role === 'assistant' && entry.parts.some((part) => part.id === messageId)
+    )
+    if (!target) throw new Error('Message cannot be forked.')
+
+    const entry = await this.getClientEntry(sourceState.container)
+    const fork = requireData(
+      await entry.client.session.fork(
+        {
+          sessionID: chatId,
+          directory: sourceState.directory,
+          messageID: target.info.id
+        },
+        { throwOnError: true }
+      )
+    )
+    const state = this.rememberSession(fork, entry.container)
+    await this.refreshState(state, entry.client)
+    await onForkCreated?.(fork.id)
+    return this.createChatDetail(state, true)
+  }
+
   sendActiveChatMessage = async (
     chatId: string,
     message: string,

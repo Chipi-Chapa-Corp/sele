@@ -224,6 +224,8 @@ const providerApi: ProviderRendererApi = {
       purpose,
       options
     ),
+  forkChat: (providerId, chatId, messageId) =>
+    ipcRenderer.invoke(providerIpcChannels.forkChat, providerId, chatId, messageId),
   sendActiveChatMessage: (providerId, chatId, message, mode, options) =>
     ipcRenderer.invoke(
       providerIpcChannels.sendActiveChatMessage,

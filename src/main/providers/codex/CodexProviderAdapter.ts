@@ -2280,6 +2280,56 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
+  forkChat = (
+    chatId: string,
+    messageId: string,
+    onForkCreated?: (chatId: string) => Promise<void>
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId), () =>
+      this.forkChatInContext(chatId, messageId, onForkCreated)
+    )
+
+  private forkChatInContext = async (
+    chatId: string,
+    messageId: string,
+    onForkCreated?: (chatId: string) => Promise<void>
+  ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
+    if (!this.threads.has(chatId)) await this.getChat(chatId)
+
+    const sourceThread = this.threads.get(chatId)
+    if (!sourceThread) throw new Error('Unable to load chat for forking')
+    if (this.getActiveTurnId(chatId)) throw new Error('Cannot fork a chat with an active turn')
+
+    const targetTurn = sourceThread.turns.find((turn) => messageId.startsWith(`${turn.id}:`))
+    if (!targetTurn) throw new Error('Message cannot be forked')
+
+    const fork = await this.client.request<ThreadForkResponse>('thread/fork', {
+      threadId: chatId,
+      lastTurnId: targetTurn.id
+    })
+    this.rememberThreadContainer(fork.thread.id)
+
+    const [cwd, name, turns] = await Promise.all([
+      this.resolveThreadCwd(fork.thread, sourceThread.cwd ?? null),
+      this.resolveThreadName(fork.thread),
+      this.getTurnsForThread(fork.thread)
+    ])
+
+    const thread = {
+      ...fork.thread,
+      name,
+      cwd,
+      turns
+    } satisfies CodexThread
+    this.cacheThread(thread)
+    await onForkCreated?.(thread.id)
+
+    const detail = this.getCachedChatDetail(thread.id)
+    if (!detail) throw new Error('Unable to load forked chat')
+    return detail
+  }
+
   sendActiveChatMessage = (
     chatId: string,
     message: string,
