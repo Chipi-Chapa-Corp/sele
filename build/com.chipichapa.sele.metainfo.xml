@@ -64,6 +64,11 @@
   </screenshots>
 
   <releases>
+    <release version="2.1.0" date="2026-08-25">
+      <description>
+        <p>Added Codex account management, concurrent Git operations across projects, AI-assisted Git error recovery, drag-and-drop message attachments, improved model selection and table styling, and more reliable Windows command launching.</p>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-08-23">
       <description>
         <p>Added the OpenCode provider, an integrated tabbed browser, repository file navigation, project-scoped prompt drafts, persistent sidebar ordering, richer chat references and syntax highlighting, and improved AI commit and provider failure recovery.</p>
