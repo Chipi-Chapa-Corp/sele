@@ -204,6 +204,7 @@ import { ChatPlan, type ChatPlanData, type ChatPlanItem } from './components/Cha
 import { Dropdown, type DropdownOption } from './components/Dropdown'
 import { FileEditorDialog, type FileEditorTarget } from './components/FileEditorDialog'
 import { getReasoningEffortPresentation } from './reasoningEffortPresentation'
+import { reconcileModelSelection, reconcileReasoningSelection } from './modelSelection'
 import { Input } from './components/Input'
 import { MessageBox, type MessageBoxQuoteRequest } from './components/MessageBox'
 import { MessageSelectionQuoteButton } from './components/MessageSelectionQuoteButton'
@@ -5800,43 +5801,46 @@ export const App: React.FC = () => {
   ])
 
   useEffect(() => {
-    if (models.length === 0) return
-
-    const defaultModel = getDefaultModel(models)
+    const catalog = {
+      activeKey: configProviderModelCatalogKey,
+      displayedKey: displayedModelCatalogKeyRef.current,
+      loading: modelsLoading
+    }
 
     setModel((currentModel) => {
-      const currentModelExists = models.some((nextModel) => nextModel.id === currentModel)
-
-      if (!currentModelExists) {
-        modelManuallySelectedRef.current = false
-        return defaultModel.id
-      }
-      if (!modelManuallySelectedRef.current && currentModel === fallbackInitialModel.id) {
-        return defaultModel.id
-      }
-
-      return currentModel
+      const selection = reconcileModelSelection(
+        models,
+        { model: currentModel, manuallySelected: modelManuallySelectedRef.current },
+        fallbackInitialModel.id,
+        catalog
+      )
+      modelManuallySelectedRef.current = selection.manuallySelected
+      return selection.model
     })
-  }, [models])
+  }, [configProviderModelCatalogKey, models, modelsLoading])
 
   useEffect(() => {
     const selectedModel = models.find((nextModel) => nextModel.id === model)
-    if (!selectedModel) return
+    const catalog = {
+      activeKey: configProviderModelCatalogKey,
+      displayedKey: displayedModelCatalogKeyRef.current,
+      loading: modelsLoading
+    }
 
     setReasoningEffort((currentReasoningEffort) => {
-      if (!modelHasReasoningEffortOptions(selectedModel)) {
-        reasoningManuallySelectedRef.current = false
-        return getDefaultReasoningEffort(selectedModel)
-      }
-      if (!reasoningManuallySelectedRef.current) return getDefaultReasoningEffort(selectedModel)
-      if (modelSupportsReasoningEffort(selectedModel, currentReasoningEffort)) {
-        return currentReasoningEffort
-      }
-
-      reasoningManuallySelectedRef.current = false
-      return getDefaultReasoningEffort(selectedModel)
+      const selection = reconcileReasoningSelection(
+        selectedModel,
+        {
+          reasoningEffort: currentReasoningEffort,
+          manuallySelected: reasoningManuallySelectedRef.current
+        },
+        catalog
+      )
+      reasoningManuallySelectedRef.current = selection.manuallySelected
+      return selection.reasoningEffort
     })
 
+    if (catalog.loading || catalog.displayedKey !== catalog.activeKey || !selectedModel) return
     setServiceTier((currentServiceTier) =>
       modelSupportsServiceTier(selectedModel, currentServiceTier)
         ? currentServiceTier
@@ -5846,8 +5850,10 @@ export const App: React.FC = () => {
     effectiveAppSettings.chat.forceModel,
     effectiveAppSettings.chat.forceReasoning,
     effectiveAppSettings.chat.forceSpeed,
+    configProviderModelCatalogKey,
     model,
-    models
+    models,
+    modelsLoading
   ])
 
   const removeRecentChatCacheEntry = useCallback((providerId: ProviderId, chatId: string): void => {
