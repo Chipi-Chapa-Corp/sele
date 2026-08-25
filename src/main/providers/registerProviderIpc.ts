@@ -1,9 +1,5 @@
 import { extname, isAbsolute } from 'node:path'
 import { BrowserWindow, ipcMain, type WebContents } from 'electron'
-import {
-  getProviderChatDiagnostics,
-  type ProviderChatDiagnostics
-} from '../../shared/chatDiagnostics'
 import type {
   ProviderApprovalDecision,
   ProviderActiveSendMode,
@@ -87,12 +83,6 @@ type ChatUpdateDeliveryState = {
 
 const chatUpdateDeliveryByWebContentsId = new Map<number, ChatUpdateDeliveryState>()
 let nextChatUpdateSequence = 1
-let queuedChatUpdateCount = 0
-let sentChatUpdateCount = 0
-let acknowledgedChatUpdateCount = 0
-let lastChatUpdateQueuedAt: number | null = null
-let lastChatUpdateSentAt: number | null = null
-let lastChatUpdateAcknowledgedAt: number | null = null
 let providerIpcShuttingDown = false
 
 export const beginProviderIpcShutdown = (): void => {
@@ -147,57 +137,6 @@ const getEmptyProviderAccountUsage = (error: unknown): ProviderAccountUsage => (
 const getEmptyProviderChatPage = (): ProviderChatPage => ({
   chats: [],
   nextCursor: null
-})
-
-export type ProviderIpcDiagnostics = {
-  queuedChatUpdateCount: number
-  sentChatUpdateCount: number
-  acknowledgedChatUpdateCount: number
-  lastChatUpdateQueuedAt: number | null
-  lastChatUpdateSentAt: number | null
-  lastChatUpdateAcknowledgedAt: number | null
-  windows: Array<{
-    webContentsId: number
-    ready: boolean
-    hasViewedChat: boolean
-    inFlightSequence: number | null
-    inFlightItemCount: number | null
-    acknowledgedItemCount: number | null
-    pendingChatCount: number
-    trackedChatCount: number
-    chatDetailSource: 'in-flight' | 'acknowledged' | null
-    chat: ProviderChatDiagnostics | null
-  }>
-}
-
-export const getProviderIpcDiagnostics = (): ProviderIpcDiagnostics => ({
-  queuedChatUpdateCount,
-  sentChatUpdateCount,
-  acknowledgedChatUpdateCount,
-  lastChatUpdateQueuedAt,
-  lastChatUpdateSentAt,
-  lastChatUpdateAcknowledgedAt,
-  windows: Array.from(chatUpdateDeliveryByWebContentsId.entries()).map(([webContentsId, state]) => {
-    const diagnosticDetail =
-      state.inFlightUpdate?.detail ?? state.acknowledgedDetail?.detail ?? null
-
-    return {
-      webContentsId,
-      ready: state.ready,
-      hasViewedChat: state.viewedChatKey !== null,
-      inFlightSequence: state.inFlightUpdate?.sequence ?? null,
-      inFlightItemCount: state.inFlightUpdate?.detail?.items.length ?? null,
-      acknowledgedItemCount: state.acknowledgedDetail?.detail.items.length ?? null,
-      pendingChatCount: state.pendingByChatKey.size,
-      trackedChatCount: state.latestUpdateAtByChatKey.size,
-      chatDetailSource: state.inFlightUpdate
-        ? 'in-flight'
-        : state.acknowledgedDetail
-          ? 'acknowledged'
-          : null,
-      chat: diagnosticDetail ? getProviderChatDiagnostics(diagnosticDetail.items) : null
-    }
-  })
 })
 
 const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
@@ -358,8 +297,6 @@ const sendChatUpdate = (
     chatKey,
     detail: rendererDetail
   }
-  sentChatUpdateCount += 1
-  lastChatUpdateSentAt = Date.now()
   webContents.send(providerIpcChannels.chatUpdated, {
     ...update,
     detail: detailUpdate,
@@ -387,8 +324,6 @@ const queueChatUpdateForWindow = (
 ): void => {
   if (webContents.isDestroyed()) return
 
-  queuedChatUpdateCount += 1
-  lastChatUpdateQueuedAt = Date.now()
   const state = getChatUpdateDeliveryState(webContents)
   const chatKey = getProviderChatKey(event.providerId, event.chatId)
   const latestUpdateAt = state.latestUpdateAtByChatKey.get(chatKey)
@@ -1120,9 +1055,6 @@ export const registerProviderIpc = (): void => {
       const state = getChatUpdateDeliveryState(event.sender)
       const inFlightUpdate = state.inFlightUpdate
       if (!inFlightUpdate || inFlightUpdate.sequence !== sequenceValue) return
-      acknowledgedChatUpdateCount += 1
-      lastChatUpdateAcknowledgedAt = Date.now()
-
       if (
         detailAppliedValue &&
         inFlightUpdate.detail &&

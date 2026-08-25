@@ -1914,7 +1914,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const text = message.trim()
     if (!text) throw new Error('Cannot generate from an empty message')
 
-    const client = new CodexAppServerClient(this.getCurrentContainer(), false)
+    const client = new CodexAppServerClient(this.getCurrentContainer())
     const generationId = options?.generationId?.trim() || null
     const canceledBeforeStart = generationId
       ? this.takeCanceledOneShotGeneration(generationId)

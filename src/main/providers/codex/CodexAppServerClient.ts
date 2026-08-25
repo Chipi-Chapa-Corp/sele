@@ -40,7 +40,6 @@ const codexResourceMemoryHigh = '2G'
 type AppServerCommand = {
   command: string
   args: string[]
-  resourceUnitName: string | null
 }
 
 const getAppServerCommand = (
@@ -63,8 +62,7 @@ const getAppServerCommand = (
   if (!canUseSystemd) {
     return {
       command: accountViewCommand.file,
-      args: accountViewCommand.args,
-      resourceUnitName: null
+      args: accountViewCommand.args
     }
   }
 
@@ -84,26 +82,12 @@ const getAppServerCommand = (
       '--property=OOMScoreAdjust=500',
       accountViewCommand.file,
       ...accountViewCommand.args
-    ],
-    resourceUnitName
+    ]
   }
 }
 
-export type CodexResourceIdentity = {
-  pid: number
-  systemdUnitName: string | null
-}
-
-let codexResourceIdentity: CodexResourceIdentity | null = null
-
-export const getCodexResourceIdentity = (): CodexResourceIdentity | null =>
-  codexResourceIdentity ? { ...codexResourceIdentity } : null
-
 export class CodexAppServerClient {
-  constructor(
-    private readonly container: AppContainerTarget | null = null,
-    private readonly trackResourceIdentity = true
-  ) {}
+  constructor(private readonly container: AppContainerTarget | null = null) {}
 
   private process: ChildProcessWithoutNullStreams | null = null
   private startPromise: Promise<void> | null = null
@@ -143,12 +127,8 @@ export class CodexAppServerClient {
   }
 
   dispose = (): void => {
-    const processId = this.process?.pid
     this.process?.kill()
     this.process = null
-    if (this.trackResourceIdentity && codexResourceIdentity?.pid === processId) {
-      codexResourceIdentity = null
-    }
     this.startPromise = null
     this.rejectPending(new Error('Codex app-server stopped'))
   }
@@ -182,12 +162,6 @@ export class CodexAppServerClient {
     })
 
     this.process = child
-    if (this.trackResourceIdentity && child.pid) {
-      codexResourceIdentity = {
-        pid: child.pid,
-        systemdUnitName: appServerCommand.resourceUnitName
-      }
-    }
     this.stderr = ''
 
     createInterface({ input: child.stdout }).on('line', this.handleLine)
@@ -316,7 +290,6 @@ export class CodexAppServerClient {
 
   private handleProcessEnd = (error: Error): void => {
     const hadProcess = Boolean(this.process)
-    if (codexResourceIdentity?.pid === this.process?.pid) codexResourceIdentity = null
     this.process = null
     this.startPromise = null
     this.rejectPending(error)

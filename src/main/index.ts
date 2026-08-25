@@ -9,7 +9,6 @@ import {
   type AppColorScheme
 } from '../shared/app'
 import { disposeDatabase } from './database/sqlite'
-import { registerFreezeDiagnostics } from './freezeDiagnostics'
 import { disposeProviderAdapters } from './providers/providerService'
 import { beginProviderIpcShutdown, registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
@@ -84,8 +83,6 @@ const secureBrowserWebContents = (mainWindow: BrowserWindow, guest: WebContents)
     handleCloseShortcut(mainWindow, event, input)
   })
 }
-
-let disposeFreezeDiagnostics: (() => void) | null = null
 
 const isProviderCliInvocation = (): boolean => {
   const args = process.argv.slice(1)
@@ -194,7 +191,6 @@ const startApp = (): void => {
     registerAppIpc()
     registerProviderIpc()
     registerTerminalIpc()
-    disposeFreezeDiagnostics = registerFreezeDiagnostics()
 
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
@@ -225,8 +221,6 @@ if (isProviderCliInvocation()) {
 
 app.on('before-quit', () => {
   beginProviderIpcShutdown()
-  disposeFreezeDiagnostics?.()
-  disposeFreezeDiagnostics = null
   disposeProviderAdapters()
   disposeTerminalSessions()
   void disposeDatabase()

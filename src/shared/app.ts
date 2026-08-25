@@ -225,49 +225,6 @@ export type AppContainerSuggestion = {
   current?: boolean
 }
 
-export type AppDiagnosticsInteractionKind =
-  'edit-message' | 'message-input' | 'notes-toggle' | 'plan-toggle' | 'stop-response'
-
-export type AppDiagnosticsInteraction = {
-  timestamp: number
-  kind: AppDiagnosticsInteractionKind
-}
-
-export type AppDiagnosticsHeartbeat = {
-  timestamp: number
-  eventLoopLagMs: number
-  longTaskCount: number
-  longTaskTotalDurationMs: number
-  longTaskMaxDurationMs: number
-  jsHeapUsedBytes: number | null
-  jsHeapTotalBytes: number | null
-  domNodeCount: number
-  activeAnimationCount: number
-  animatedIconCount: number
-  streamingMessageCount: number
-  workingSpinnerCount: number
-  selectedChatItemCount: number
-  recentChatCacheEntryCount: number
-  recentChatCacheItemCount: number
-  selectedChatTurnCount: number
-  renderedChatTurnCount: number
-  mountedChatTurnCount: number
-  renderedToolElementCount: number
-  openToolDetailsCount: number
-  openToolSequenceCount: number
-  chatScrollHeightPx: number
-  chatViewportHeightPx: number
-  chatSearchOpen: boolean
-  messageInputLength: number
-  messageInputFocused: boolean
-  openNotesCount: number
-  openPlanCount: number
-  openWorkingDetailsCount: number
-  lastInteractionAt: number | null
-  lastInteractionKind: AppDiagnosticsInteractionKind | null
-  visibilityState: string
-}
-
 export type AppGitChangeSource = 'branch' | 'uncommitted'
 
 export type AppGitChangeKind = 'edit' | 'create' | 'delete' | 'rename' | 'untracked'
@@ -590,7 +547,5 @@ export const appIpcChannels = {
   getClipboardImage: 'app:get-clipboard-image',
   getLocalImage: 'app:get-local-image',
   copyLocalImage: 'app:copy-local-image',
-  saveLocalImage: 'app:save-local-image',
-  diagnosticsHeartbeat: 'app:diagnostics-heartbeat',
-  diagnosticsInteraction: 'app:diagnostics-interaction'
+  saveLocalImage: 'app:save-local-image'
 } as const

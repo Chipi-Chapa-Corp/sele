@@ -10540,7 +10540,6 @@ export const App: React.FC = () => {
     () => buildChatConversationModel(visibleChatItems),
     [visibleChatItems]
   )
-  const chatTurns = chatConversationModel.turns
   const loadedChatTurnStartIndex = getChatDetailItemsStartTurnIndex(chatDetail)
   const loadedChatTurnEndIndex = getLoadedChatDetailTurnEndIndex(chatDetail)
   const totalChatTurnCount = getChatDetailTurnCount(chatDetail)
@@ -11027,35 +11026,6 @@ export const App: React.FC = () => {
     lastStreamingChatItem?.type === 'message' && lastStreamingChatItem.role === 'assistant'
       ? lastStreamingChatItem.id
       : null
-  useEffect(() => {
-    let recentChatCacheItemCount = 0
-    for (const entry of recentChatCacheRef.current.values()) {
-      recentChatCacheItemCount += entry.detail.items.length
-    }
-
-    const rootDataset = document.documentElement.dataset
-    rootDataset.selectedChatItemCount = String(chatDetail?.items.length ?? 0)
-    rootDataset.recentChatCacheEntryCount = String(recentChatCacheRef.current.size)
-    rootDataset.recentChatCacheItemCount = String(recentChatCacheItemCount)
-    rootDataset.selectedChatTurnCount = String(chatTurns.length)
-    rootDataset.renderedChatTurnCount = String(renderedChatTurns.length)
-    rootDataset.chatSearchOpen = chatSearchOpen ? 'true' : 'false'
-
-    return () => {
-      delete rootDataset.selectedChatItemCount
-      delete rootDataset.recentChatCacheEntryCount
-      delete rootDataset.recentChatCacheItemCount
-      delete rootDataset.selectedChatTurnCount
-      delete rootDataset.renderedChatTurnCount
-      delete rootDataset.chatSearchOpen
-    }
-  }, [
-    chatDetail?.items.length,
-    chatSearchOpen,
-    chatTurns.length,
-    renderedChatTurns.length,
-    selectedChatKey
-  ])
 
   const messageBoxContextUsage = useMemo(() => {
     const contextUsage = chatDetail?.contextUsage ?? null
