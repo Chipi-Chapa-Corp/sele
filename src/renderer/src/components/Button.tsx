@@ -64,6 +64,7 @@ type ButtonProps = NativeButtonProps & {
   dropdownLabel?: string
   dropdownMenuAlign?: 'start' | 'end'
   dropdownPlacement?: 'bottom' | 'top'
+  onClick?: MouseEventHandler<HTMLButtonElement>
 }
 
 const getButtonClassName = (
@@ -244,6 +245,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     dropdownPlacement = 'bottom',
     icon = null,
     label = null,
+    onClick,
     theme = 'secondary',
     size = 'normal',
     fill = false,
@@ -351,7 +353,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     setMenuStyle(null)
   }
 
-  const handleClick = (): void => {
+  const handleClick: MouseEventHandler<HTMLButtonElement> = (event): void => {
+    onClick?.(event)
+    if (event.defaultPrevented) return
+
     void callback()
   }
 

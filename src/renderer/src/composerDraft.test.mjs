@@ -4,9 +4,11 @@ import {
   addPromptDraft,
   appendPromptDraft,
   getComposerDraft,
+  getComposerDraftScopeKey,
   getPromptDraftPreview,
   getPromptDrafts,
   removePromptDraft,
+  restoreFailedComposerMessage,
   updateComposerDraft
 } from './composerDraft.ts'
 
@@ -45,6 +47,25 @@ test('keeps attachments in the chat where they were selected', () => {
 
   assert.deepEqual(getComposerDraft(drafts, 'chat:one').attachments, [attachment])
   assert.deepEqual(getComposerDraft(drafts, 'chat:two').attachments, [])
+})
+
+test('scopes new-chat drafts to their workspace', () => {
+  assert.equal(getComposerDraftScopeKey('codex:chat-one', 'workspace:one'), 'codex:chat-one')
+  assert.equal(getComposerDraftScopeKey(null, 'workspace:one'), 'new-chat:workspace:one')
+  assert.equal(getComposerDraftScopeKey(null, 'workspace:two'), 'new-chat:workspace:two')
+})
+
+test('restores a failed message only when the composer is still empty', () => {
+  let drafts = new Map()
+
+  drafts = restoreFailedComposerMessage(drafts, 'chat:one', 'Failed prompt')
+  assert.equal(getComposerDraft(drafts, 'chat:one').message, 'Failed prompt')
+
+  drafts = updateComposerDraft(drafts, 'chat:one', 'message', 'New prompt')
+  const unchangedDrafts = restoreFailedComposerMessage(drafts, 'chat:one', 'Older prompt')
+
+  assert.equal(unchangedDrafts, drafts)
+  assert.equal(getComposerDraft(unchangedDrafts, 'chat:one').message, 'New prompt')
 })
 
 test('keeps prompt draft stacks isolated by project and ordered oldest to newest', () => {

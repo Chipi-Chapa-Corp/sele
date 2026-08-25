@@ -72,12 +72,14 @@ import {
   getComposerDraft,
   getPromptDrafts,
   removePromptDraft,
+  restoreFailedComposerMessage,
   updateComposerDraft,
   type ComposerDraft,
   type PromptDraft
 } from '../composerDraft'
 import { providerApi } from '../providerApi'
 import { getReasoningEffortPresentation } from '../reasoningEffortPresentation'
+import { getModifiedActiveSendMode } from '../messageSendMode'
 import type { AppChatUsageDisplay } from '../settings'
 import { AttachmentChip } from './AttachmentChip'
 import { ActionsButton } from './ActionsButton'
@@ -1071,6 +1073,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [composerCache, setComposerCache] = useState<ComposerCache | null>(null)
   const [composerLoadErrorScope, setComposerLoadErrorScope] = useState<string | null>(null)
   const [activeSkillMentionIndex, setActiveSkillMentionIndex] = useState(0)
+  const [controlPressed, setControlPressed] = useState(false)
   const editSessionIdRef = useRef<string | null>(null)
   const handledQuoteRequestIdRef = useRef<number | null>(null)
   const messageRef = useRef(message)
@@ -1389,7 +1392,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     .filter(Boolean)
     .join(' ')
   const textareaDisabled = operationsDisabled || pending || (!active && disabled)
-  const activePrimaryLabel = activePrimaryMode === 'queue' ? 'Queue message' : 'Steer current turn'
+  const modifiedActiveSendMode = getModifiedActiveSendMode(
+    activePrimaryMode,
+    activeSteeringEnabled,
+    controlPressed
+  )
+  const activePrimaryLabel =
+    modifiedActiveSendMode === 'queue' ? 'Queue message' : 'Steer current turn'
   const editingPendingMessage = editSession?.type === 'pending'
   const usageDisabled = operationsDisabled || pending || (!active && disabled)
   const usageMenuOpen = usageOpen && !usageDisabled
@@ -1740,6 +1749,23 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [autoFocus, operationsDisabled, disabled, pending])
 
   useEffect(() => {
+    const handleControlChange = (event: KeyboardEvent): void => {
+      setControlPressed(event.ctrlKey)
+    }
+    const handleWindowBlur = (): void => setControlPressed(false)
+
+    window.addEventListener('keydown', handleControlChange)
+    window.addEventListener('keyup', handleControlChange)
+    window.addEventListener('blur', handleWindowBlur)
+
+    return () => {
+      window.removeEventListener('keydown', handleControlChange)
+      window.removeEventListener('keyup', handleControlChange)
+      window.removeEventListener('blur', handleWindowBlur)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!selectedReview || editing) return
     const frame = window.requestAnimationFrame(() =>
       textareaRef.current?.focus({ preventScroll: true })
@@ -1828,15 +1854,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       .then((sent) => {
         if (sent || !nextMessage) return
 
-        setMessage((currentMessage) =>
-          currentMessage ? `${nextMessage}\n\n${currentMessage}` : nextMessage
+        setComposerDrafts((drafts) =>
+          restoreFailedComposerMessage(drafts, draftScopeKey, nextMessage)
         )
       })
       .catch(() => {
         if (!nextMessage) return
 
-        setMessage((currentMessage) =>
-          currentMessage ? `${nextMessage}\n\n${currentMessage}` : nextMessage
+        setComposerDrafts((drafts) =>
+          restoreFailedComposerMessage(drafts, draftScopeKey, nextMessage)
         )
       })
   }
@@ -2271,7 +2297,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
 
     event.preventDefault()
-    submitMessage()
+    submitMessage(
+      active
+        ? getModifiedActiveSendMode(activePrimaryMode, activeSteeringEnabled, event.ctrlKey)
+        : activePrimaryMode
+    )
   }
 
   const handlePopPromptDraft = (draft: PromptDraft): void => {
@@ -2309,7 +2339,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         : 'Send message'
   const activeDropdownActions = activeWithContent
     ? [
-        ...(activePrimaryMode === 'steer'
+        ...(modifiedActiveSendMode === 'steer'
           ? [
               {
                 id: 'queue',
@@ -2995,6 +3025,20 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 (activeWithContent ? pending : active ? false : disabled || pending || !hasContent)
               }
               callback={activeWithContent ? submitMessage : active ? handleStop : submitMessage}
+              onClick={
+                activeWithContent
+                  ? (event) => {
+                      event.preventDefault()
+                      submitMessage(
+                        getModifiedActiveSendMode(
+                          activePrimaryMode,
+                          activeSteeringEnabled,
+                          event.ctrlKey
+                        )
+                      )
+                    }
+                  : undefined
+              }
               dropdownActions={activeDropdownActions}
               dropdownLabel="Message actions"
               dropdownMenuAlign="end"
@@ -3002,7 +3046,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               icon={
                 editingPendingMessage ? (
                   <ListPlus aria-hidden="true" />
-                ) : activeWithContent && activePrimaryMode === 'steer' ? (
+                ) : activeWithContent && modifiedActiveSendMode === 'steer' ? (
                   <CornerDownRight aria-hidden="true" />
                 ) : activeWithContent ? (
                   <ListPlus aria-hidden="true" />

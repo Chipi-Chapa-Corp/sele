@@ -189,7 +189,7 @@
 .chat__panels {
   --chat-sidebar-width: 23.333%;
   --chat-changes-width: 20%;
-  --chat-resize-handle-width: 9px;
+  --chat-resize-handle-width: 20px;
 
   display: grid;
   grid-template-columns:
@@ -1146,10 +1146,10 @@ button.changes-sidebar__recent-row:not(:disabled) {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  background: var(--floating-bg);
-  box-shadow: var(--panel-shadow);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   container: chat-panel / inline-size;
   z-index: 1;
 }
@@ -1162,14 +1162,37 @@ button.changes-sidebar__recent-row:not(:disabled) {
   justify-content: flex-start;
 }
 
+.chat-panel__new-chat-empty {
+  display: grid;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  place-items: center;
+  overflow: hidden;
+  padding: 32px;
+  pointer-events: none;
+}
+
+.chat-panel__new-chat-art {
+  display: block;
+  width: min(420px, 62%);
+  height: min(460px, 78%);
+  color: var(--quiet);
+  opacity: 0.1;
+}
+
+:root[data-color-scheme='dark'] .chat-panel__new-chat-art {
+  opacity: 0.05;
+}
+
 .chat-panel__composer {
   position: relative;
   width: 100%;
   flex: none;
   margin: 0;
-  padding: 12px 28px 14px;
-  border-top: 1px solid var(--glass-line);
-  background: var(--composer-bg);
+  padding: 12px 28px 0;
+  border-top: 0;
+  background: transparent;
   transition: transform 220ms ease;
 }
 
@@ -1186,7 +1209,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
   right: 0;
   left: 0;
   height: 100vh;
-  background: var(--composer-bg);
+  background: transparent;
   pointer-events: none;
 }
 
@@ -1317,6 +1340,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   margin: 0 0 8px;
   color: var(--ink);
@@ -1329,8 +1353,8 @@ button.changes-sidebar__recent-row:not(:disabled) {
 
 .chat-panel--empty .chat-panel__composer {
   margin-top: auto;
-  margin-bottom: auto;
-  transform: translateY(-6vh);
+  margin-bottom: 0;
+  transform: translateY(0);
 }
 
 .chat-panel--selected .chat-panel__composer {
@@ -2278,7 +2302,7 @@ button.chat-detail__commit-marker-open:disabled {
     display: none;
     height: auto;
     padding: 0;
-    border-radius: 18px;
+    border-radius: 0;
   }
 
   .chat--has-selection .chat-panel {
@@ -2411,7 +2435,7 @@ button.chat-detail__commit-marker-open:disabled {
 
   .chat-panel__composer {
     width: 100%;
-    padding: 12px 21px 14px;
+    padding: 12px 21px 0;
   }
 
   .chat-panel--new {
@@ -2420,6 +2444,6 @@ button.chat-detail__commit-marker-open:disabled {
 
   .chat-panel--new .chat-panel__composer {
     margin-top: auto;
-    margin-bottom: auto;
+    margin-bottom: 0;
   }
 }

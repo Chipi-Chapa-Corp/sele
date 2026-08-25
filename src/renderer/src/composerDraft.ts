@@ -35,6 +35,9 @@ export const getComposerDraft = (
   scopeKey: string
 ): ComposerDraft => drafts.get(scopeKey) ?? emptyComposerDraft
 
+export const getComposerDraftScopeKey = (chatKey: string | null, workspaceKey: string): string =>
+  chatKey ?? `new-chat:${workspaceKey}`
+
 export const updateComposerDraft = <Field extends keyof ComposerDraft>(
   drafts: ReadonlyMap<string, ComposerDraft>,
   scopeKey: string,
@@ -52,6 +55,16 @@ export const updateComposerDraft = <Field extends keyof ComposerDraft>(
   else nextDrafts.set(scopeKey, nextDraft)
 
   return nextDrafts
+}
+
+export const restoreFailedComposerMessage = (
+  drafts: ReadonlyMap<string, ComposerDraft>,
+  scopeKey: string,
+  message: string
+): ReadonlyMap<string, ComposerDraft> => {
+  if (!message || getComposerDraft(drafts, scopeKey).message) return drafts
+
+  return updateComposerDraft(drafts, scopeKey, 'message', message)
 }
 
 export const getPromptDrafts = (

@@ -9,7 +9,7 @@
   border: 1px solid var(--panel-border);
   border-radius: 18px;
   background: var(--floating-bg);
-  box-shadow: var(--panel-shadow);
+  box-shadow: none;
 }
 
 .browser-panel__tab-toolbar,

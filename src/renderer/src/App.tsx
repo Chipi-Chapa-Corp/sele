@@ -14,6 +14,8 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { version as appVersion } from '../../../package.json'
+import puppyKeylineOutlineUrl from './assets/puppy-keyline-outline.svg'
+import { getComposerDraftScopeKey } from './composerDraft'
 import {
   Apple,
   AppWindow,
@@ -943,7 +945,7 @@ const changesSidebarDefaultWidth = 240
 const chatSidebarMinWidth = 220
 const changesSidebarMinWidth = 220
 const chatBlockMinWidth = 320
-const chatResizeHandleWidth = 9
+const chatResizeHandleWidth = 20
 const chatResizeHandleCount = 2
 const chatPaneDefaultReferenceWidth = 1200
 const chatPanePreferenceStorageKey = 'sele:chat-pane-preference:v1'
@@ -14911,6 +14913,42 @@ export const App: React.FC = () => {
                 onQuote={handleQuoteSelectedMessageText}
               />
             )}
+            {!selectedChat && newChatOpen && (
+              <div className="chat-panel__new-chat-empty" aria-hidden="true">
+                <svg
+                  className="chat-panel__new-chat-art"
+                  viewBox="0 0 1296 1213"
+                  preserveAspectRatio="xMidYMid meet"
+                >
+                  <defs>
+                    <filter
+                      id="new-chat-puppy-keyline-thick"
+                      x="-5%"
+                      y="-5%"
+                      width="110%"
+                      height="110%"
+                      colorInterpolationFilters="sRGB"
+                    >
+                      <feMorphology
+                        in="SourceAlpha"
+                        operator="dilate"
+                        radius="3"
+                        result="thickOutline"
+                      />
+                      <feFlood floodColor="currentColor" result="outlineColor" />
+                      <feComposite in="outlineColor" in2="thickOutline" operator="in" />
+                    </filter>
+                  </defs>
+                  <image
+                    href={puppyKeylineOutlineUrl}
+                    width="1296"
+                    height="1213"
+                    preserveAspectRatio="xMidYMid meet"
+                    filter="url(#new-chat-puppy-keyline-thick)"
+                  />
+                </svg>
+              </div>
+            )}
             {!effectiveAppSettings.chat.hidePlans && (
               <ChatPlan key={selectedChatKey ?? 'no-chat'} plan={messageBoxPlan} />
             )}
@@ -15028,110 +15066,112 @@ export const App: React.FC = () => {
                     </div>
                   </section>
                 )}
-                {!selectedChat && newChatOpen && (
-                  <div className="chat-panel__new-session">
-                    <span>New session of</span>
-                    <Dropdown
-                      aria-label="Project"
-                      title={newSessionCwd ?? 'Choose folder'}
-                      disabled={providerUpdateInProgress || sendState === 'sending'}
-                      menuActions={[
-                        {
-                          id: 'add-project',
-                          label: 'Add project..',
-                          title: 'Add project..',
-                          icon: <FolderPlus aria-hidden="true" />,
-                          callback: () => setProjectDialogOpen(true)
-                        }
-                      ]}
-                      options={projectOptions}
-                      placement="top"
-                      size="small"
-                      value={newSessionProjectValue}
-                      onChange={(cwd) => setNewSessionCwd(cwd)}
-                    />
-                    <span>with</span>
-                    <Dropdown
-                      aria-label="Provider"
-                      disabled={
-                        providerUpdateInProgress ||
-                        sendState === 'sending' ||
-                        newSessionProviderOptions.length === 0
+              </div>
+              {!selectedChat && newChatOpen && (
+                <div className="chat-panel__new-session">
+                  <span>At</span>
+                  <Dropdown
+                    aria-label="Project"
+                    title={newSessionCwd ?? 'Choose folder'}
+                    disabled={providerUpdateInProgress || sendState === 'sending'}
+                    menuActions={[
+                      {
+                        id: 'add-project',
+                        label: 'Add project..',
+                        title: 'Add project..',
+                        icon: <FolderPlus aria-hidden="true" />,
+                        callback: () => setProjectDialogOpen(true)
                       }
-                      emptyContent="No providers found"
-                      options={newSessionProviderOptions}
-                      placement="top"
-                      size="small"
-                      value={newSessionProvider}
-                      valueContent={newSessionProviderValueContent}
-                      onChange={setNewSessionProvider}
-                    />
-                    <span>in</span>
-                    <Dropdown
-                      aria-label="Session location"
-                      disabled={providerUpdateInProgress || sendState === 'sending'}
-                      options={newSessionLocationOptions}
-                      placement="top"
-                      size="small"
-                      value={newSessionLocation}
-                      onChange={setNewSessionLocation}
-                    />
-                    <span>{newSessionSshEnvironmentId ? 'over' : 'from'}</span>
-                    <Dropdown
-                      aria-label="Runtime"
-                      disabled={providerUpdateInProgress || sendState === 'sending'}
-                      menuActions={[
-                        ...(sshEnvironmentError
-                          ? [
-                              {
-                                id: 'environment-error',
-                                label: sshEnvironmentError,
-                                title: sshEnvironmentError,
-                                disabled: true,
-                                icon: <X aria-hidden="true" />,
-                                callback: () => {}
-                              }
-                            ]
-                          : []),
-                        {
-                          id: 'add-environment',
-                          label: 'Add environment',
-                          title: 'Add environment',
-                          icon: <PackagePlus aria-hidden="true" />,
-                          callback: () => {
-                            setEditingSshEnvironment(null)
-                            setSshEnvironmentError(null)
-                            setSshEnvironmentDialogOpen(true)
-                          }
+                    ]}
+                    options={projectOptions}
+                    placement="top"
+                    size="small"
+                    value={newSessionProjectValue}
+                    onChange={(cwd) => setNewSessionCwd(cwd)}
+                  />
+                  <span>with</span>
+                  <Dropdown
+                    aria-label="Provider"
+                    disabled={
+                      providerUpdateInProgress ||
+                      sendState === 'sending' ||
+                      newSessionProviderOptions.length === 0
+                    }
+                    emptyContent="No providers found"
+                    options={newSessionProviderOptions}
+                    placement="top"
+                    size="small"
+                    value={newSessionProvider}
+                    valueContent={newSessionProviderValueContent}
+                    onChange={setNewSessionProvider}
+                  />
+                  <span>in</span>
+                  <Dropdown
+                    aria-label="Session location"
+                    disabled={providerUpdateInProgress || sendState === 'sending'}
+                    options={newSessionLocationOptions}
+                    placement="top"
+                    size="small"
+                    value={newSessionLocation}
+                    onChange={setNewSessionLocation}
+                  />
+                  <span>{newSessionSshEnvironmentId ? 'over' : 'from'}</span>
+                  <Dropdown
+                    aria-label="Runtime"
+                    disabled={providerUpdateInProgress || sendState === 'sending'}
+                    menuActions={[
+                      ...(sshEnvironmentError
+                        ? [
+                            {
+                              id: 'environment-error',
+                              label: sshEnvironmentError,
+                              title: sshEnvironmentError,
+                              disabled: true,
+                              icon: <X aria-hidden="true" />,
+                              callback: () => {}
+                            }
+                          ]
+                        : []),
+                      {
+                        id: 'add-environment',
+                        label: 'Add environment',
+                        title: 'Add environment',
+                        icon: <PackagePlus aria-hidden="true" />,
+                        callback: () => {
+                          setEditingSshEnvironment(null)
+                          setSshEnvironmentError(null)
+                          setSshEnvironmentDialogOpen(true)
                         }
-                      ]}
-                      options={containerOptions}
-                      placement="top"
-                      size="small"
-                      value={newSessionContainerValue}
-                      onChange={handleNewSessionContainerChange}
-                    />
-                    {newSessionSshEnvironmentId && newSessionRemoteRuntime && (
-                      <>
-                        <span>from</span>
-                        <Dropdown
-                          aria-label="Remote runtime"
-                          disabled={
-                            providerUpdateInProgress ||
-                            sendState === 'sending' ||
-                            remoteContainerSuggestionsLoading
-                          }
-                          options={remoteRuntimeOptions}
-                          placement="top"
-                          size="small"
-                          value={getContainerTargetKey(newSessionRemoteRuntime)}
-                          valueContent={remoteContainerSuggestionsLoading ? 'Checking' : undefined}
-                          onChange={handleNewSessionRemoteRuntimeChange}
-                        />
-                      </>
-                    )}
-                  </div>
-                )}
+                      }
+                    ]}
+                    options={containerOptions}
+                    placement="top"
+                    size="small"
+                    value={newSessionContainerValue}
+                    onChange={handleNewSessionContainerChange}
+                  />
+                  {newSessionSshEnvironmentId && newSessionRemoteRuntime && (
+                    <>
+                      <span>from</span>
+                      <Dropdown
+                        aria-label="Remote runtime"
+                        disabled={
+                          providerUpdateInProgress ||
+                          sendState === 'sending' ||
+                          remoteContainerSuggestionsLoading
+                        }
+                        options={remoteRuntimeOptions}
+                        placement="top"
+                        size="small"
+                        value={getContainerTargetKey(newSessionRemoteRuntime)}
+                        valueContent={remoteContainerSuggestionsLoading ? 'Checking' : undefined}
+                        onChange={handleNewSessionRemoteRuntimeChange}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
+              <div className="chat-panel__composer-inner">
                 {!selectedChat && newChatOpen && worktreeCreationState !== 'idle' && (
                   <section
                     className="chat-approval chat-worktree-creation"
@@ -15221,7 +15261,7 @@ export const App: React.FC = () => {
                   contextUsage={messageBoxContextUsage}
                   displayUsage={effectiveAppSettings.chat.displayUsage}
                   draftProjectKey={terminalWorkspaceKey}
-                  draftScopeKey={selectedChatKey ?? 'new-chat'}
+                  draftScopeKey={getComposerDraftScopeKey(selectedChatKey, terminalWorkspaceKey)}
                   lastActionId={appSettings.lastActionId}
                   model={effectiveModel}
                   models={models}
