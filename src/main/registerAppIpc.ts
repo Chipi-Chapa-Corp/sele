@@ -463,6 +463,32 @@ const getImageFile = async (imagePath: string, maxBytes: number): Promise<AppLoc
 const getImageDataUrl = (image: AppLocalImage): string =>
   `data:${image.mimeType};base64,${Buffer.from(image.data).toString('base64')}`
 
+const getMessageAttachments = async (paths: string[]): Promise<AppSelectedAttachment[]> =>
+  Promise.all(
+    paths.map(async (path): Promise<AppSelectedAttachment> => {
+      const fileStat = await stat(path).catch(() => null)
+      if (!fileStat) throw new Error('Unable to read one of the selected files.')
+      if (!fileStat.isFile()) throw new Error('Only files can be attached to a message.')
+
+      const name = basename(path)
+      if (!messageImageExtensions.has(extname(path).toLocaleLowerCase())) {
+        return { kind: 'file', name, path }
+      }
+
+      const image = await getImageFile(path, maxLocalImageBytes)
+      if (!image) {
+        throw new Error('Choose PNG, JPEG, GIF, or WebP images smaller than 32 MB.')
+      }
+
+      return {
+        kind: 'image',
+        dataUrl: getImageDataUrl(image),
+        name,
+        path
+      }
+    })
+  )
+
 const getProjectIconFile = async (
   imagePath: string
 ): Promise<{ dataUrl: string; updatedAt: number } | null> => {
@@ -3081,26 +3107,20 @@ export const registerAppIpc = (): void => {
       throw new Error(`Choose up to ${maxMessageAttachmentCount} files at a time.`)
     }
 
-    return Promise.all(
-      result.filePaths.map(async (path): Promise<AppSelectedAttachment> => {
-        const name = basename(path)
-        if (!messageImageExtensions.has(extname(path).toLocaleLowerCase())) {
-          return { kind: 'file', name, path }
-        }
+    return getMessageAttachments(result.filePaths)
+  })
 
-        const image = await getImageFile(path, maxLocalImageBytes)
-        if (!image) {
-          throw new Error('Choose PNG, JPEG, GIF, or WebP images smaller than 32 MB.')
-        }
+  ipcMain.handle(appIpcChannels.getDroppedMessageAttachments, async (_event, value: unknown) => {
+    if (
+      !Array.isArray(value) ||
+      value.length === 0 ||
+      value.length > maxMessageAttachmentCount ||
+      value.some((path) => typeof path !== 'string' || !path || !isAbsolute(path))
+    ) {
+      throw new Error(`Drop up to ${maxMessageAttachmentCount} files at a time.`)
+    }
 
-        return {
-          kind: 'image',
-          dataUrl: getImageDataUrl(image),
-          name,
-          path
-        }
-      })
-    )
+    return getMessageAttachments([...new Set(value)])
   })
 
   ipcMain.handle(appIpcChannels.readClipboardText, () => clipboard.readText())

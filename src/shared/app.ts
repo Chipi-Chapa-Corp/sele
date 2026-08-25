@@ -530,6 +530,7 @@ export type AppApi = {
   getProjectIcon: (options: AppProjectIconOptions) => Promise<AppProjectIcon | null>
   selectProjectIcon: (options: AppProjectIconOptions) => Promise<AppProjectIcon | null>
   selectMessageAttachments: () => Promise<AppSelectedAttachment[]>
+  getDroppedMessageAttachments: (files: File[]) => Promise<AppSelectedAttachment[]>
   readClipboardText: () => Promise<string>
   writeClipboardText: (text: string) => Promise<void>
   getClipboardImage: () => Promise<AppSelectedImage | null>
@@ -583,6 +584,7 @@ export const appIpcChannels = {
   getProjectIcon: 'app:get-project-icon',
   selectProjectIcon: 'app:select-project-icon',
   selectMessageAttachments: 'app:select-message-attachments',
+  getDroppedMessageAttachments: 'app:get-dropped-message-attachments',
   readClipboardText: 'app:read-clipboard-text',
   writeClipboardText: 'app:write-clipboard-text',
   getClipboardImage: 'app:get-clipboard-image',

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type {
   AppApi,
@@ -63,6 +63,11 @@ const appApi: AppApi = {
   getProjectIcon: (options) => ipcRenderer.invoke(appIpcChannels.getProjectIcon, options),
   selectProjectIcon: (options) => ipcRenderer.invoke(appIpcChannels.selectProjectIcon, options),
   selectMessageAttachments: () => ipcRenderer.invoke(appIpcChannels.selectMessageAttachments),
+  getDroppedMessageAttachments: (files) =>
+    ipcRenderer.invoke(
+      appIpcChannels.getDroppedMessageAttachments,
+      files.map((file) => webUtils.getPathForFile(file))
+    ),
   readClipboardText: () => ipcRenderer.invoke(appIpcChannels.readClipboardText),
   writeClipboardText: (text) => ipcRenderer.invoke(appIpcChannels.writeClipboardText, text),
   getClipboardImage: () => ipcRenderer.invoke(appIpcChannels.getClipboardImage),

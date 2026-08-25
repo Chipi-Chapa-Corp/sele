@@ -1055,6 +1055,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   > | null>(null)
   const [attachmentSelectionPending, setAttachmentSelectionPending] = useState(false)
   const [attachmentSelectionError, setAttachmentSelectionError] = useState<string | null>(null)
+  const [attachmentDragActive, setAttachmentDragActive] = useState(false)
   const [dismissedError, setDismissedError] = useState<string | null>(null)
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageView, setUsageView] = useState<UsagePopoverView>('usage')
@@ -1081,6 +1082,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const skillsBeforeEditRef = useRef<ProviderSkill[] | null>(null)
   const appsBeforeEditRef = useRef<ProviderApp[] | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const attachmentDragDepthRef = useRef(0)
   const usageControlRef = useRef<HTMLDivElement>(null)
   const editing = Boolean(editSession)
   const fullAccessSelected = sandboxMode === 'danger-full-access'
@@ -1897,6 +1899,82 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     }
   }
 
+  const handleAttachmentDragEnter = (event: React.DragEvent<HTMLDivElement>): void => {
+    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+
+    event.preventDefault()
+    attachmentDragDepthRef.current += 1
+    if (!attachmentSelectionPending && !textareaDisabled && !editing) {
+      setAttachmentDragActive(true)
+    }
+  }
+
+  const handleAttachmentDragOver = (event: React.DragEvent<HTMLDivElement>): void => {
+    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect =
+      attachmentSelectionPending || textareaDisabled || editing ? 'none' : 'copy'
+  }
+
+  const handleAttachmentDragLeave = (event: React.DragEvent<HTMLDivElement>): void => {
+    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+
+    event.preventDefault()
+    attachmentDragDepthRef.current = Math.max(0, attachmentDragDepthRef.current - 1)
+    if (attachmentDragDepthRef.current === 0) setAttachmentDragActive(false)
+  }
+
+  const handleAttachmentDrop = async (event: React.DragEvent<HTMLDivElement>): Promise<void> => {
+    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+
+    event.preventDefault()
+    attachmentDragDepthRef.current = 0
+    setAttachmentDragActive(false)
+
+    if (attachmentSelectionPending || textareaDisabled || editing) return
+
+    const files = Array.from(event.dataTransfer.files)
+    if (files.length === 0) return
+    if (selectedAttachments.length >= maxSelectedAttachmentCount) {
+      setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
+      return
+    }
+    if (files.length > maxSelectedAttachmentCount) {
+      setAttachmentSelectionError(`Drop up to ${maxSelectedAttachmentCount} files at a time.`)
+      return
+    }
+
+    setAttachmentSelectionPending(true)
+    setAttachmentSelectionError(null)
+
+    try {
+      const attachments = await appApi.getDroppedMessageAttachments(files)
+      setSelectedAttachments((currentAttachments) => {
+        const existingPaths = new Set(currentAttachments.map((attachment) => attachment.path))
+        const nextAttachments = [
+          ...currentAttachments,
+          ...attachments.filter((attachment) => !existingPaths.has(attachment.path))
+        ]
+
+        if (nextAttachments.length > maxSelectedAttachmentCount) {
+          setAttachmentSelectionError(
+            `Attach up to ${maxSelectedAttachmentCount} files per message.`
+          )
+        }
+
+        return nextAttachments.slice(0, maxSelectedAttachmentCount)
+      })
+      textareaRef.current?.focus({ preventScroll: true })
+    } catch (dropError) {
+      setAttachmentSelectionError(
+        dropError instanceof Error ? dropError.message : 'Unable to attach dropped files.'
+      )
+    } finally {
+      setAttachmentSelectionPending(false)
+    }
+  }
+
   const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
     const hasImage = Array.from(event.clipboardData.items).some(
       (item) => item.kind === 'file' && item.type.startsWith('image/')
@@ -2444,7 +2522,19 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           Chat settings
         </label>
       )}
-      <div className="message-box__input">
+      <div
+        className="message-box__input"
+        onDragEnter={handleAttachmentDragEnter}
+        onDragLeave={handleAttachmentDragLeave}
+        onDragOver={handleAttachmentDragOver}
+        onDrop={(event) => void handleAttachmentDrop(event)}
+      >
+        {attachmentDragActive && (
+          <div className="message-box__attachment-drop-target" aria-hidden="true">
+            <Paperclip />
+            <span>Drop files to attach</span>
+          </div>
+        )}
         {(selectedAttachments.length > 0 ||
           selectedSkills.length > 0 ||
           selectedApps.length > 0 ||

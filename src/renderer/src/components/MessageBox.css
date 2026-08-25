@@ -370,6 +370,29 @@
   gap: 8px;
 }
 
+.message-box__attachment-drop-target {
+  position: absolute;
+  inset: -6px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 96px;
+  border: 2px dashed color-mix(in srgb, var(--accent) 68%, transparent);
+  border-radius: 14px;
+  color: var(--menu-option-check-color);
+  background: color-mix(in srgb, var(--composer-bg) 92%, var(--accent-soft));
+  box-shadow: 0 0 0 4px var(--focus-ring);
+  font-weight: 720;
+  pointer-events: none;
+}
+
+.message-box__attachment-drop-target svg {
+  width: 18px;
+  height: 18px;
+}
+
 .message-box__attachment-previews {
   display: flex;
   min-width: 0;
