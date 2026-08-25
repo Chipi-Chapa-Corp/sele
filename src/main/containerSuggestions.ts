@@ -12,6 +12,7 @@ import {
   parseRemoteContainerDiscoveryOutput,
   remoteContainerDiscoveryTimeoutMs
 } from './remoteContainerDiscovery'
+import { getProcessFailureMessage } from './processFailure'
 
 type ContainerEntry = {
   tool: AppContainerTool
@@ -24,6 +25,11 @@ type ContainerEntry = {
 
 const containerCommandMaxBuffer = 512 * 1024
 const containerCommandTimeoutMs = 5_000
+
+type HostTextCommandOptions = {
+  required?: boolean
+  timeout?: number
+}
 
 const containerToolLabels = {
   distrobox: 'Distrobox',
@@ -49,31 +55,62 @@ const runHostTextCommand = async (
   file: string,
   args: string[],
   container?: AppContainerTarget | null,
-  timeout = containerCommandTimeoutMs
+  options: HostTextCommandOptions = {}
 ): Promise<string | null> => {
+  const required = options.required ?? false
+  const timeout = options.timeout ?? containerCommandTimeoutMs
   let hostCommand
   try {
     hostCommand = await getHostCommand(file, args, { container })
-  } catch {
+  } catch (error) {
+    if (required) {
+      throw new Error(
+        getProcessFailureMessage(error, '', '', {
+          label: 'SSH container discovery',
+          timeoutMs: timeout
+        })
+      )
+    }
     return null
   }
 
-  return new Promise((resolve) => {
-    const child = execFile(
-      hostCommand.file,
-      hostCommand.args,
-      {
-        cwd: hostCommand.cwd,
-        encoding: 'utf8',
-        env: hostCommand.env,
-        maxBuffer: containerCommandMaxBuffer,
-        timeout
-      },
-      (error, stdout) => {
-        resolve(error ? null : stdout.trimEnd())
+  return new Promise((resolve, reject) => {
+    const handleFailure = (error: unknown, stdout = '', stderr = ''): void => {
+      if (!required) {
+        resolve(null)
+        return
       }
-    )
-    child.stdin?.end()
+
+      reject(
+        new Error(
+          getProcessFailureMessage(error, stdout, stderr, {
+            label: 'SSH container discovery',
+            timeoutMs: timeout
+          })
+        )
+      )
+    }
+
+    try {
+      const child = execFile(
+        hostCommand.file,
+        hostCommand.args,
+        {
+          cwd: hostCommand.cwd,
+          encoding: 'utf8',
+          env: hostCommand.env,
+          maxBuffer: containerCommandMaxBuffer,
+          timeout
+        },
+        (error, stdout, stderr) => {
+          if (error) handleFailure(error, stdout, stderr)
+          else resolve(stdout.trimEnd())
+        }
+      )
+      child.stdin?.end()
+    } catch (error) {
+      handleFailure(error)
+    }
   })
 }
 
@@ -328,7 +365,7 @@ const getRemoteContainers = async (container: AppContainerTarget): Promise<Conta
     'sh',
     ['-lc', getRemoteContainerDiscoveryScript()],
     container,
-    remoteContainerDiscoveryTimeoutMs
+    { required: true, timeout: remoteContainerDiscoveryTimeoutMs }
   )
   if (output == null) {
     throw new Error('Unable to check containers over SSH. Verify the connection and try again.')

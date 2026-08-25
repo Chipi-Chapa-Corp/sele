@@ -18,6 +18,7 @@ import {
   getTargetTerminalScript,
   quotePosixShellArg
 } from './targetShell'
+import { normalizeWindowsExecutableCommand } from './windowsExecutableCommand'
 
 type HostCommandOptions = {
   container?: AppContainerTarget | null
@@ -1008,25 +1009,6 @@ const buildFlatpakExecutableCommand = async (
   env: command.env
 })
 
-const normalizeWindowsExecutableCommand = (command: HostCommand): HostCommand => {
-  if (
-    process.platform !== 'win32' ||
-    !['.bat', '.cmd'].includes(extname(command.file).toLowerCase())
-  ) {
-    return command
-  }
-
-  const commandShell =
-    getEnvironmentValue(command.env, 'comspec') ??
-    getEnvironmentValue(process.env, 'comspec') ??
-    'cmd.exe'
-  return {
-    ...command,
-    file: commandShell,
-    args: ['/d', '/s', '/c', 'call', command.file, ...command.args]
-  }
-}
-
 const buildResolvedLocalCommand = async (
   file: string,
   args: string[],
@@ -1099,7 +1081,8 @@ export const getHostCommand = (
   file: string,
   args: string[],
   options: HostCommandOptions = {}
-): Promise<HostCommand> => getContainerHostCommand(file, args, options)
+): Promise<HostCommand> =>
+  getContainerHostCommand(file, args, options).then(normalizeWindowsExecutableCommand)
 
 export const getHostExecutableCommand = async (
   file: string,

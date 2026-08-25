@@ -864,19 +864,23 @@ const runAvailabilityCommand = async (
   if (!hostCommand) return { success: false, stdout: '' }
 
   return new Promise((resolve) => {
-    const child = execFile(
-      hostCommand.file,
-      hostCommand.args,
-      {
-        cwd: hostCommand.cwd,
-        encoding: 'utf8',
-        env: hostCommand.env,
-        maxBuffer: sourceAvailabilityMaxBuffer,
-        timeout: sourceAvailabilityTimeoutMs
-      },
-      (error, stdout) => resolve({ success: !error, stdout })
-    )
-    child.stdin?.end()
+    try {
+      const child = execFile(
+        hostCommand.file,
+        hostCommand.args,
+        {
+          cwd: hostCommand.cwd,
+          encoding: 'utf8',
+          env: hostCommand.env,
+          maxBuffer: sourceAvailabilityMaxBuffer,
+          timeout: sourceAvailabilityTimeoutMs
+        },
+        (error, stdout) => resolve({ success: !error, stdout })
+      )
+      child.stdin?.end()
+    } catch {
+      resolve({ success: false, stdout: '' })
+    }
   })
 }
 
@@ -973,7 +977,7 @@ const getSourceAvailability = async (
     Promise.all(
       sourceAvailabilityProviderIds.map(async (providerId) => ({
         providerId,
-        available: await isProviderAvailableInSource(providerId, container)
+        available: await isProviderAvailableInSource(providerId, container).catch(() => false)
       }))
     )
   ])
