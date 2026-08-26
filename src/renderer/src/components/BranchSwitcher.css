@@ -177,3 +177,10 @@
   line-height: 1.35;
   white-space: pre-wrap;
 }
+
+.branch-switcher__error-actions {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}

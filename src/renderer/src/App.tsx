@@ -921,9 +921,16 @@ type PatchFilterScope = {
   source: PatchChangeSource
   signature: string
 }
+type ScopedGitOperationError<TScope> = {
+  scope: TScope
+  cwd: string
+  error: string
+  operation: string
+}
 type SourceAvailabilityState = {
   containerKey: string
   availability: AppSourceAvailability
+  error: string | null
 }
 type UncommittedPatchFilter = {
   scope: PatchFilterScope
@@ -4122,6 +4129,9 @@ export const App: React.FC = () => {
   const [gitChangesScope, setGitChangesScope] = useState<GitChangesScope | null>(null)
   const [gitChangeLoadState, setGitChangeLoadState] = useState<LoadState>('ready')
   const [gitChangeLoadScope, setGitChangeLoadScope] = useState<GitChangesScope | null>(null)
+  const [gitChangeLoadError, setGitChangeLoadError] =
+    useState<ScopedGitOperationError<GitChangesScope> | null>(null)
+  const [gitChangeLoadErrorDismissed, setGitChangeLoadErrorDismissed] = useState(false)
   const [gitChangeLoadRequest, setGitChangeLoadRequest] = useState(0)
   const [gitBranches, setGitBranches] = useState<AppGitBranchesResult | null>(null)
   const [gitBranchesScope, setGitBranchesScope] = useState<GitBranchesScope | null>(null)
@@ -4141,6 +4151,8 @@ export const App: React.FC = () => {
   const [uncommittedPatchFilter, setUncommittedPatchFilter] =
     useState<UncommittedPatchFilter | null>(null)
   const [uncommittedPatchFilterState, setUncommittedPatchFilterState] = useState<LoadState>('ready')
+  const [uncommittedPatchFilterError, setUncommittedPatchFilterError] =
+    useState<ScopedGitOperationError<PatchFilterScope> | null>(null)
   const [cachedPatchChangedFiles, setCachedPatchChangedFiles] =
     useState<CachedPatchChangedFiles | null>(null)
   const [fileTree, setFileTree] = useState<AppFileTreeResult | null>(null)
@@ -4187,6 +4199,7 @@ export const App: React.FC = () => {
   const [syncRecoveriesByProjectKey, setSyncRecoveriesByProjectKey] = useState<
     Record<string, GitSyncRecoveryState>
   >({})
+  const visibleGitErrorProjectKeyRef = useRef<string | null>(null)
   const [panePercents, setPanePercents] = useState<ChatPanePercents | null>(
     readStoredChatPanePercents
   )
@@ -5128,9 +5141,9 @@ export const App: React.FC = () => {
       .then((availability) => {
         if (!active) return
 
-        setNewSessionSourceAvailability({ containerKey, availability })
+        setNewSessionSourceAvailability({ containerKey, availability, error: null })
       })
-      .catch(() => {
+      .catch((error) => {
         if (!active) return
 
         setNewSessionSourceAvailability({
@@ -5138,7 +5151,8 @@ export const App: React.FC = () => {
           availability: {
             gitAvailable: false,
             providers: providerIds.map((providerId) => ({ providerId, available: false }))
-          }
+          },
+          error: getErrorMessage(error, 'Unable to check source availability.')
         })
       })
 
@@ -6506,6 +6520,8 @@ export const App: React.FC = () => {
     gitSourceAvailability?.containerKey === changesContainerKey
       ? gitSourceAvailability.availability.gitAvailable
       : lastGitAvailable
+  const gitAvailabilityError =
+    gitSourceAvailability?.containerKey === changesContainerKey ? gitSourceAvailability.error : null
   const gitAvailabilityScopeKey = gitAvailableForCurrentSource === false ? 'missing' : 'available'
 
   useEffect(() => {
@@ -6526,7 +6542,7 @@ export const App: React.FC = () => {
       .then((availability) => {
         if (!active) return
 
-        setGitSourceAvailability({ containerKey, availability })
+        setGitSourceAvailability({ containerKey, availability, error: null })
         setLastGitAvailable(availability.gitAvailable)
         setGitAvailabilityChangeId((currentChangeId) => {
           const previousAvailable = gitAvailableRef.current
@@ -6536,7 +6552,7 @@ export const App: React.FC = () => {
             : currentChangeId + 1
         })
       })
-      .catch(() => {
+      .catch((error) => {
         if (!active) return
 
         setGitSourceAvailability({
@@ -6544,7 +6560,8 @@ export const App: React.FC = () => {
           availability: {
             gitAvailable: false,
             providers: providerIds.map((providerId) => ({ providerId, available: false }))
-          }
+          },
+          error: getErrorMessage(error, 'Unable to check Git availability.')
         })
         setLastGitAvailable(false)
         setGitAvailabilityChangeId((currentChangeId) => {
@@ -7114,6 +7131,9 @@ export const App: React.FC = () => {
       setGitBranchError(null)
       setGitBranchDeleteRetry(null)
       setGitBranchWorktreeDeleteRetry(null)
+      setGitChangeLoadError(null)
+      setUncommittedPatchFilterError(null)
+      setGitChangeLoadErrorDismissed(false)
     })
 
     return () => {
@@ -7164,7 +7184,7 @@ export const App: React.FC = () => {
         setGitBranches(null)
         setGitBranchesScope(scope)
         setGitBranchLoadState('error')
-        setGitBranchError('Git is not available in this source.')
+        setGitBranchError(gitAvailabilityError ?? 'Git is not available in this source.')
       })
 
       return () => {
@@ -7199,6 +7219,7 @@ export const App: React.FC = () => {
     }
   }, [
     changesCwd,
+    gitAvailabilityError,
     gitAvailabilityChangeId,
     gitAvailabilityScopeKey,
     gitAvailableForCurrentSource,
@@ -7220,7 +7241,15 @@ export const App: React.FC = () => {
     if (gitAvailableForCurrentSource === false) {
       queueMicrotask(() => {
         if (!active) return
+        const error = gitAvailabilityError ?? 'Git is not available in this source.'
         setGitChangeLoadScope(gitChangeScope)
+        setGitChangeLoadErrorDismissed(false)
+        setGitChangeLoadError({
+          scope: gitChangeScope,
+          cwd: changesCwd,
+          error,
+          operation: 'Load Git changes'
+        })
         if (visibleChangeSource === 'uncommitted') setGitChangeLoadState('error')
       })
 
@@ -7233,6 +7262,8 @@ export const App: React.FC = () => {
       queueMicrotask(() => {
         if (!active) return
         setGitChangeLoadScope(gitChangeScope)
+        setGitChangeLoadErrorDismissed(false)
+        setGitChangeLoadError(null)
         setGitChangeLoadState('loading')
       })
     }
@@ -7248,11 +7279,21 @@ export const App: React.FC = () => {
         setGitChanges(result)
         setGitChangesScope(gitChangeScope)
         setGitChangeLoadScope(gitChangeScope)
+        setGitChangeLoadErrorDismissed(false)
+        setGitChangeLoadError(null)
         if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('ready')
       })
-      .catch(() => {
+      .catch((error) => {
         if (!active) return
+        const message = getErrorMessage(error, 'Unable to load changes.')
         setGitChangeLoadScope(gitChangeScope)
+        setGitChangeLoadErrorDismissed(false)
+        setGitChangeLoadError({
+          scope: gitChangeScope,
+          cwd: changesCwd,
+          error: message,
+          operation: 'Load Git changes'
+        })
         if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('error')
       })
 
@@ -7261,6 +7302,7 @@ export const App: React.FC = () => {
     }
   }, [
     changesCwd,
+    gitAvailabilityError,
     gitAvailabilityChangeId,
     gitAvailabilityScopeKey,
     gitAvailableForCurrentSource,
@@ -7272,7 +7314,10 @@ export const App: React.FC = () => {
 
     if (!changesCwd || !isPatchChangeSource(changeSource)) {
       queueMicrotask(() => {
-        if (active) setUncommittedPatchFilterState('ready')
+        if (!active) return
+        setGitChangeLoadErrorDismissed(false)
+        setUncommittedPatchFilterError(null)
+        setUncommittedPatchFilterState('ready')
       })
 
       return () => {
@@ -7297,6 +7342,8 @@ export const App: React.FC = () => {
         if (!active) return
 
         setUncommittedPatchFilter({ scope, patches: [] })
+        setGitChangeLoadErrorDismissed(false)
+        setUncommittedPatchFilterError(null)
         setUncommittedPatchFilterState('ready')
       })
 
@@ -7306,7 +7353,10 @@ export const App: React.FC = () => {
     }
 
     queueMicrotask(() => {
-      if (active) setUncommittedPatchFilterState('loading')
+      if (!active) return
+      setGitChangeLoadErrorDismissed(false)
+      setUncommittedPatchFilterError(null)
+      setUncommittedPatchFilterState('loading')
     })
 
     appApi
@@ -7315,10 +7365,21 @@ export const App: React.FC = () => {
         if (!active) return
 
         setUncommittedPatchFilter({ scope, patches: result.patches })
+        setGitChangeLoadErrorDismissed(false)
+        setUncommittedPatchFilterError(null)
         setUncommittedPatchFilterState('ready')
       })
-      .catch(() => {
-        if (active) setUncommittedPatchFilterState('error')
+      .catch((error) => {
+        if (!active) return
+
+        setGitChangeLoadErrorDismissed(false)
+        setUncommittedPatchFilterError({
+          scope,
+          cwd: changesCwd,
+          error: getErrorMessage(error, 'Unable to filter Git changes.'),
+          operation: 'Filter Git changes'
+        })
+        setUncommittedPatchFilterState('error')
       })
 
     return () => {
@@ -11110,6 +11171,13 @@ export const App: React.FC = () => {
     changeSource,
     patchFilterSignature
   )
+  const patchFilterErrorMatches = isPatchFilterScope(
+    uncommittedPatchFilterError?.scope ?? null,
+    changesContainerKey,
+    changesCwd,
+    changeSource,
+    patchFilterSignature
+  )
   const patchChangedFiles = useMemo(
     () =>
       patchFilterMatches
@@ -11183,9 +11251,15 @@ export const App: React.FC = () => {
     changesCwd,
     currentGitChangeSource
   )
+  const gitChangeLoadErrorMatchesCurrentSource = isGitChangesScope(
+    gitChangeLoadError?.scope ?? null,
+    gitAvailabilityScopeKey,
+    changesCwd,
+    currentGitChangeSource
+  )
   const changesLoadState =
     patchChangeSourceSelected && patchSourcePatches.length > 0
-      ? patchFilterMatches
+      ? patchFilterMatches || patchFilterErrorMatches
         ? uncommittedPatchFilterState
         : 'loading'
       : patchChangeSourceSelected || !changesCwd
@@ -11193,6 +11267,27 @@ export const App: React.FC = () => {
         : gitChangeLoadMatchesCurrentSource
           ? gitChangeLoadState
           : 'loading'
+  const visibleGitChangeLoadError =
+    changesLoadState !== 'error' || !changesCwd
+      ? null
+      : patchChangeSourceSelected && patchSourcePatches.length > 0
+        ? patchFilterErrorMatches
+          ? uncommittedPatchFilterError
+          : {
+              scope: null,
+              cwd: changesCwd,
+              error: 'Unable to filter Git changes.',
+              operation: 'Filter Git changes'
+            }
+        : gitChangeLoadErrorMatchesCurrentSource
+          ? gitChangeLoadError
+          : {
+              scope: null,
+              cwd: changesCwd,
+              error: 'Unable to load changes.',
+              operation: 'Load Git changes'
+            }
+  const displayedGitChangeLoadError = gitChangeLoadErrorDismissed ? null : visibleGitChangeLoadError
   const fileTreeLoadMatchesCurrentCwd = isFileTreeScope(
     fileTreeLoadScope,
     changesContainerKey,
@@ -11295,6 +11390,30 @@ export const App: React.FC = () => {
   const commitInputValue = commitInput.trim()
   const commitFiles = useMemo(() => getCommitFiles(changedFiles), [changedFiles])
   const currentProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
+  useEffect(() => {
+    const previousProjectKey = visibleGitErrorProjectKeyRef.current
+    visibleGitErrorProjectKeyRef.current = currentProjectKey
+    if (!previousProjectKey || previousProjectKey === currentProjectKey) return
+
+    setCommitErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[previousProjectKey]) return currentErrors
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[previousProjectKey]
+      return nextErrors
+    })
+    setSyncErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[previousProjectKey]) return currentErrors
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[previousProjectKey]
+      return nextErrors
+    })
+    setSyncRecoveriesByProjectKey((currentRecoveries) => {
+      if (!currentRecoveries[previousProjectKey]) return currentRecoveries
+      const nextRecoveries = { ...currentRecoveries }
+      delete nextRecoveries[previousProjectKey]
+      return nextRecoveries
+    })
+  }, [currentProjectKey])
   const syncInProgress = syncProjectKeys.has(currentProjectKey)
   const currentProjectSyncError = syncErrorsByProjectKey[currentProjectKey] ?? null
   const projectSyncRecovery = syncRecoveriesByProjectKey[currentProjectKey] ?? null
@@ -11596,6 +11715,13 @@ export const App: React.FC = () => {
       gitBranchWorktreeDeleteRetry.force,
       true
     )
+  }
+
+  const handleDismissGitBranchError = (): void => {
+    setGitBranchError(null)
+    setGitBranchDeleteRetry(null)
+    setGitBranchWorktreeDeleteRetry(null)
+    if (gitBranchActionState === 'error') setGitBranchActionState('idle')
   }
 
   const handleToggleActiveTreeFolders = (): void => {
@@ -12743,6 +12869,47 @@ export const App: React.FC = () => {
       recovery.cwd,
       { pullStrategy, recovery, rememberStrategy: options.rememberStrategy }
     )
+  }
+
+  const handleGitChangeLoadErrorAiResolution = async (permanentFix = false): Promise<void> => {
+    const context = visibleGitChangeLoadError
+    const promptTemplate = permanentFix
+      ? effectiveAppSettings.git.permanentErrorResolutionPrompt
+      : effectiveAppSettings.git.errorResolutionPrompt
+    if (!context || gitAiResolutionDisabled || !promptTemplate.trim()) return
+
+    await handleSendMessage(
+      getGitAiResolutionPrompt(context, promptTemplate),
+      undefined,
+      [],
+      null,
+      [],
+      [],
+      getGitTurnOptions(),
+      'new'
+    )
+  }
+
+  const handleDismissGitChangeLoadError = (): void => {
+    setGitChangeLoadErrorDismissed(true)
+  }
+
+  const handleDismissGitCommitError = (): void => {
+    setCommitErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[currentProjectKey]) return currentErrors
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[currentProjectKey]
+      return nextErrors
+    })
+  }
+
+  const handleDismissUnclassifiedGitSyncError = (): void => {
+    setSyncErrorsByProjectKey((currentErrors) => {
+      if (!currentErrors[currentProjectKey]) return currentErrors
+      const nextErrors = { ...currentErrors }
+      delete nextErrors[currentProjectKey]
+      return nextErrors
+    })
   }
 
   const handleGitAiResolution = async (permanentFix = false): Promise<void> => {
@@ -15419,18 +15586,23 @@ export const App: React.FC = () => {
                     disabled={branchSwitchDisabled}
                     error={gitBranchError}
                     errorActions={
-                      gitBranchError
-                        ? renderGitAiResolutionButton(handleGitBranchErrorAiResolution, 'bottom')
-                        : null
+                      gitBranchError ? (
+                        <div className="branch-switcher__error-actions">
+                          {renderGitAiResolutionButton(handleGitBranchErrorAiResolution, 'bottom')}
+                          <Button
+                            aria-label="Dismiss Git branch error"
+                            title="Dismiss"
+                            callback={handleDismissGitBranchError}
+                            icon={<X aria-hidden="true" />}
+                            theme="transparent"
+                            size="small"
+                          />
+                        </div>
+                      ) : null
                     }
                     id="changes-branch"
                     loading={gitBranchLoadState === 'loading'}
-                    onClearError={() => {
-                      setGitBranchError(null)
-                      setGitBranchDeleteRetry(null)
-                      setGitBranchWorktreeDeleteRetry(null)
-                      if (gitBranchActionState === 'error') setGitBranchActionState('idle')
-                    }}
+                    onClearError={handleDismissGitBranchError}
                     onDelete={handleDeleteBranch}
                     onDeleteWorktree={handleDeleteBranchWorktree}
                     onForceDelete={handleForceDeleteBranch}
@@ -15513,7 +15685,42 @@ export const App: React.FC = () => {
                       {visibleChangesLoadState === 'loading' && (
                         <ChangesSidebarGitState active label="Loading changes" />
                       )}
-                      {visibleChangesLoadState === 'error' && (
+                      {displayedGitChangeLoadError && (
+                        <section
+                          className="chat-approval changes-sidebar__sync-recovery changes-sidebar__git-load-error"
+                          aria-label="Git changes error"
+                          role="alert"
+                        >
+                          <div className="changes-sidebar__sync-recovery-header">
+                            <span className="chat-approval__label">Git changes failed</span>
+                            <Button
+                              aria-label="Dismiss Git changes error"
+                              title="Dismiss"
+                              callback={handleDismissGitChangeLoadError}
+                              icon={<X aria-hidden="true" />}
+                              theme="transparent"
+                              size="small"
+                            />
+                          </div>
+                          <span className="chat-approval__error">
+                            {displayedGitChangeLoadError.error}
+                          </span>
+                          <div className="changes-sidebar__sync-recovery-actions">
+                            <Button
+                              callback={() =>
+                                setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
+                              }
+                              icon={<GitRefreshIcon />}
+                              label={<span>Retry</span>}
+                              theme="secondary"
+                              size="small"
+                              fill
+                            />
+                            {renderGitAiResolutionButton(handleGitChangeLoadErrorAiResolution)}
+                          </div>
+                        </section>
+                      )}
+                      {visibleChangesLoadState === 'error' && !visibleGitChangeLoadError && (
                         <p className="changes-sidebar__status">Unable to load changes.</p>
                       )}
                       {visibleChangesLoadState === 'ready' &&
@@ -15810,7 +16017,17 @@ export const App: React.FC = () => {
                     className="chat-approval changes-sidebar__sync-recovery"
                     aria-label="Git commit error"
                   >
-                    <span className="chat-approval__label">Git commit failed</span>
+                    <div className="changes-sidebar__sync-recovery-header">
+                      <span className="chat-approval__label">Git commit failed</span>
+                      <Button
+                        aria-label="Dismiss Git commit error"
+                        title="Dismiss"
+                        callback={handleDismissGitCommitError}
+                        icon={<X aria-hidden="true" />}
+                        theme="transparent"
+                        size="small"
+                      />
+                    </div>
                     <span className="chat-approval__error" role="status">
                       {currentProjectCommitError}
                     </span>
@@ -15824,7 +16041,17 @@ export const App: React.FC = () => {
                     className="chat-approval changes-sidebar__sync-recovery"
                     aria-label="Git sync error"
                   >
-                    <span className="chat-approval__label">Git sync failed</span>
+                    <div className="changes-sidebar__sync-recovery-header">
+                      <span className="chat-approval__label">Git sync failed</span>
+                      <Button
+                        aria-label="Dismiss Git sync error"
+                        title="Dismiss"
+                        callback={handleDismissUnclassifiedGitSyncError}
+                        icon={<X aria-hidden="true" />}
+                        theme="transparent"
+                        size="small"
+                      />
+                    </div>
                     <span className="chat-approval__error" role="status">
                       {currentProjectSyncError}
                     </span>

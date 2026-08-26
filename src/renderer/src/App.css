@@ -1066,6 +1066,11 @@ button.changes-sidebar__recent-row:not(:disabled) {
   border-radius: 8px;
 }
 
+.changes-sidebar__git-load-error {
+  flex: none;
+  margin: 4px 0 10px;
+}
+
 .changes-sidebar__sync-recovery .chat-approval__summary {
   white-space: normal;
   font-family: inherit;
