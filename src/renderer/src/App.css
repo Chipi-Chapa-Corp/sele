@@ -1153,15 +1153,34 @@ button.changes-sidebar__recent-row:not(:disabled) {
 }
 
 .chat-panel__new-chat-art {
+  --new-chat-puppy-opacity: 0.1;
+
   display: block;
   width: min(420px, 62%);
   height: min(460px, 78%);
   color: var(--quiet);
-  opacity: 0.1;
+  opacity: var(--new-chat-puppy-opacity);
+  animation: new-chat-puppy-fade-in 10s ease-out both;
 }
 
 :root[data-color-scheme='dark'] .chat-panel__new-chat-art {
-  opacity: 0.05;
+  --new-chat-puppy-opacity: 0.05;
+}
+
+@keyframes new-chat-puppy-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: var(--new-chat-puppy-opacity);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-panel__new-chat-art {
+    animation: none;
+  }
 }
 
 .chat-panel__composer {
