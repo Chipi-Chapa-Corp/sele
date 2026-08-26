@@ -415,28 +415,28 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
           {error}
         </div>
       )}
-      {error && canForceDelete && onForceDelete && (
-        <Button
-          theme="secondary"
-          size="small"
-          fill
-          disabled={busy}
-          label="Force Delete"
-          callback={forceDeleteBranch}
-        />
+      {error && (canForceDelete || deleteWorktreePath || errorActions) && (
+        <div className="branch-switcher__error-actions">
+          {canForceDelete && onForceDelete && (
+            <Button
+              theme="secondary"
+              disabled={busy}
+              label="Force Delete"
+              callback={forceDeleteBranch}
+            />
+          )}
+          {deleteWorktreePath && onDeleteWorktree && (
+            <Button
+              theme="secondary"
+              disabled={busy}
+              label="Delete Worktree"
+              title={`Delete worktree at ${deleteWorktreePath}`}
+              callback={deleteWorktree}
+            />
+          )}
+          {errorActions}
+        </div>
       )}
-      {error && deleteWorktreePath && onDeleteWorktree && (
-        <Button
-          theme="secondary"
-          size="small"
-          fill
-          disabled={busy}
-          label="Delete Worktree"
-          title={`Delete worktree at ${deleteWorktreePath}`}
-          callback={deleteWorktree}
-        />
-      )}
-      {error && errorActions}
     </div>
   ) : null
 

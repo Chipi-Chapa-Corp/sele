@@ -407,12 +407,21 @@ export type AppGitCommitResult = {
 
 export type AppGitPushOptions = AppContainerOptions & {
   cwd?: string | null
+  rememberTarget?: boolean
+  target?: AppGitPushTarget
   setUpstream?: boolean
 }
 
 export type AppGitPullStrategy = 'ff-only' | 'rebase' | 'merge'
+export type AppGitPushTarget = 'current-branch' | 'upstream-branch'
 
-export type AppGitRecoveryActionId = 'pull-rebase' | 'pull-merge' | 'pull-and-push' | 'set-upstream'
+export type AppGitRecoveryActionId =
+  | 'pull-rebase'
+  | 'pull-merge'
+  | 'pull-and-push'
+  | 'set-upstream'
+  | 'push-current-branch'
+  | 'push-upstream-branch'
 
 export type AppGitRecoveryAction = {
   id: AppGitRecoveryActionId
@@ -421,10 +430,11 @@ export type AppGitRecoveryAction = {
 }
 
 export type AppGitRecoverableFailure = {
-  kind: 'pull-diverged' | 'push-rejected' | 'push-no-upstream'
+  kind: 'pull-diverged' | 'push-rejected' | 'push-no-upstream' | 'push-upstream-mismatch'
   title: string
   message: string
   command: string
+  error: string
   actions: AppGitRecoveryAction[]
 }
 

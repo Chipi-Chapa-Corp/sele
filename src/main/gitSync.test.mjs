@@ -8,8 +8,13 @@ import { promisify } from 'node:util'
 
 import {
   getNoUpstreamPushFailure,
+  getPushDefaultForTarget,
+  getPushToCurrentBranchArgs,
+  getPushToUpstreamBranchArgs,
   getSameNameUpstreamPushArgs,
+  getUpstreamBranchMismatchPushFailure,
   isNoUpstreamPushFailure,
+  isUpstreamBranchMismatchPushFailure,
   selectGitPushRemote
 } from './gitSync.ts'
 
@@ -27,11 +32,13 @@ test('recognizes the standard missing-upstream push error', () => {
 })
 
 test('offers a same-name upstream recovery', () => {
-  assert.deepEqual(getNoUpstreamPushFailure('feature/demo', 'git push'), {
+  const error = 'fatal: The current branch feature/demo has no upstream branch.'
+  assert.deepEqual(getNoUpstreamPushFailure('feature/demo', 'git push', error), {
     kind: 'push-no-upstream',
     title: 'Branch has no upstream',
     message: 'The local branch feature/demo is not connected to a remote branch yet.',
     command: 'git push',
+    error,
     actions: [
       {
         id: 'set-upstream',
@@ -49,6 +56,57 @@ test('builds an explicit same-name push refspec', () => {
     'fork',
     'feature/demo:feature/demo'
   ])
+})
+
+test('recognizes an upstream branch name mismatch', () => {
+  assert.equal(
+    isUpstreamBranchMismatchPushFailure(
+      'fatal: The upstream branch of your current branch does not match the name of your current branch.'
+    ),
+    true
+  )
+  assert.equal(isUpstreamBranchMismatchPushFailure('fatal: failed to push some refs'), false)
+})
+
+test('offers both explicit targets for an upstream branch name mismatch', () => {
+  const error =
+    'fatal: The upstream branch of your current branch does not match the name of your current branch.'
+  assert.deepEqual(
+    getUpstreamBranchMismatchPushFailure('main', 'release/main', 'git push', error),
+    {
+      kind: 'push-upstream-mismatch',
+      title: 'Upstream branch name differs',
+      message: 'The local branch main tracks the differently named remote branch release/main.',
+      command: 'git push',
+      error,
+      actions: [
+        {
+          id: 'push-current-branch',
+          label: 'Push to main',
+          description: 'Push HEAD to the remote branch main.'
+        },
+        {
+          id: 'push-upstream-branch',
+          label: 'Push to release/main',
+          description: 'Push HEAD to the configured upstream branch release/main.'
+        }
+      ]
+    }
+  )
+})
+
+test('builds explicit push arguments for both mismatched branch targets', () => {
+  assert.deepEqual(getPushToCurrentBranchArgs('origin'), ['push', 'origin', 'HEAD'])
+  assert.deepEqual(getPushToUpstreamBranchArgs('origin', 'release/main'), [
+    'push',
+    'origin',
+    'HEAD:release/main'
+  ])
+})
+
+test('maps remembered mismatch targets to repository push defaults', () => {
+  assert.equal(getPushDefaultForTarget('current-branch'), 'current')
+  assert.equal(getPushDefaultForTarget('upstream-branch'), 'upstream')
 })
 
 test('selects the configured push remote before safe fallbacks', () => {

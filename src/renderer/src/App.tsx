@@ -108,6 +108,7 @@ import type {
   AppGitPatchChange,
   AppProjectIcon,
   AppGitPullStrategy,
+  AppGitPushTarget,
   AppGitRecoverableFailure,
   AppGitRecoveryActionId,
   AppWindowState
@@ -446,6 +447,7 @@ type DirectCommitActivity = {
   startedAt: number
 }
 type GitSyncRecoveryActionOptions = {
+  rememberPushTarget?: boolean
   rememberStrategy?: boolean
 }
 type SettingsTab = 'appearance' | 'chat' | 'providers' | 'browser' | 'performance' | 'git'
@@ -1779,6 +1781,9 @@ const getGitRecoveryActionIcon = (actionId: AppGitRecoveryActionId): React.React
   if (actionId === 'pull-rebase') return <GitPullRequestArrow aria-hidden="true" />
   if (actionId === 'pull-merge') return <GitMerge aria-hidden="true" />
   if (actionId === 'set-upstream') return <GitBranch aria-hidden="true" />
+  if (actionId === 'push-current-branch' || actionId === 'push-upstream-branch') {
+    return <Upload aria-hidden="true" />
+  }
 
   return <GitRefreshIcon />
 }
@@ -1798,7 +1803,7 @@ const getGitRecoveryAiResolutionPrompt = (
     {
       cwd: recovery.cwd,
       operation: recovery.failure.command,
-      error: `${recovery.failure.title}. ${recovery.failure.message}`
+      error: recovery.error ?? recovery.failure.error
     },
     promptTemplate
   )
@@ -11418,6 +11423,12 @@ export const App: React.FC = () => {
   const currentProjectSyncError = syncErrorsByProjectKey[currentProjectKey] ?? null
   const projectSyncRecovery = syncRecoveriesByProjectKey[currentProjectKey] ?? null
   const visibleSyncRecovery = projectSyncRecovery?.cwd === changesCwd ? projectSyncRecovery : null
+  const visibleSyncRecoveryActions = visibleSyncRecovery
+    ? visibleSyncRecovery.failure.kind === 'pull-diverged' ||
+      visibleSyncRecovery.failure.kind === 'push-upstream-mismatch'
+      ? visibleSyncRecovery.failure.actions.slice(0, 1)
+      : visibleSyncRecovery.failure.actions
+    : []
   const commitMessageGenerationInProgress =
     commitMessageGenerationProjectKeys.has(currentProjectKey)
   const currentProjectCommitError = commitErrorsByProjectKey[currentProjectKey] ?? null
@@ -12710,6 +12721,8 @@ export const App: React.FC = () => {
     cwd: string,
     options: {
       pullStrategy?: AppGitPullStrategy
+      pushTarget?: AppGitPushTarget
+      rememberPushTarget?: boolean
       rememberStrategy?: boolean
       setUpstream?: boolean
       recovery?: GitSyncRecoveryState | null
@@ -12770,6 +12783,8 @@ export const App: React.FC = () => {
         const pushResult = await appApi.pushGitChanges({
           container: changesContainer,
           cwd,
+          rememberTarget: options.rememberPushTarget,
+          target: options.pushTarget,
           setUpstream: options.setUpstream
         })
 
@@ -12858,6 +12873,15 @@ export const App: React.FC = () => {
 
     if (actionId === 'set-upstream') {
       await runSyncChanges('push', recovery.cwd, { recovery, setUpstream: true })
+      return
+    }
+
+    if (actionId === 'push-current-branch' || actionId === 'push-upstream-branch') {
+      await runSyncChanges('push', recovery.cwd, {
+        recovery,
+        rememberPushTarget: options.rememberPushTarget,
+        pushTarget: actionId === 'push-current-branch' ? 'current-branch' : 'upstream-branch'
+      })
       return
     }
 
@@ -13080,8 +13104,6 @@ export const App: React.FC = () => {
       icon={<Sparkles aria-hidden="true" />}
       label={<span>Resolve with AI</span>}
       theme="secondary"
-      size="small"
-      fill
     />
   )
 
@@ -15587,17 +15609,15 @@ export const App: React.FC = () => {
                     error={gitBranchError}
                     errorActions={
                       gitBranchError ? (
-                        <div className="branch-switcher__error-actions">
+                        <>
                           {renderGitAiResolutionButton(handleGitBranchErrorAiResolution, 'bottom')}
                           <Button
-                            aria-label="Dismiss Git branch error"
-                            title="Dismiss"
                             callback={handleDismissGitBranchError}
                             icon={<X aria-hidden="true" />}
-                            theme="transparent"
-                            size="small"
+                            label={<span>Dismiss</span>}
+                            theme="secondary"
                           />
-                        </div>
+                        </>
                       ) : null
                     }
                     id="changes-branch"
@@ -15687,25 +15707,14 @@ export const App: React.FC = () => {
                       )}
                       {displayedGitChangeLoadError && (
                         <section
-                          className="chat-approval changes-sidebar__sync-recovery changes-sidebar__git-load-error"
+                          className="changes-sidebar__git-error"
                           aria-label="Git changes error"
                           role="alert"
                         >
-                          <div className="changes-sidebar__sync-recovery-header">
-                            <span className="chat-approval__label">Git changes failed</span>
-                            <Button
-                              aria-label="Dismiss Git changes error"
-                              title="Dismiss"
-                              callback={handleDismissGitChangeLoadError}
-                              icon={<X aria-hidden="true" />}
-                              theme="transparent"
-                              size="small"
-                            />
-                          </div>
-                          <span className="chat-approval__error">
+                          <span className="changes-sidebar__git-error-message">
                             {displayedGitChangeLoadError.error}
                           </span>
-                          <div className="changes-sidebar__sync-recovery-actions">
+                          <div className="changes-sidebar__git-error-actions">
                             <Button
                               callback={() =>
                                 setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
@@ -15713,10 +15722,14 @@ export const App: React.FC = () => {
                               icon={<GitRefreshIcon />}
                               label={<span>Retry</span>}
                               theme="secondary"
-                              size="small"
-                              fill
                             />
                             {renderGitAiResolutionButton(handleGitChangeLoadErrorAiResolution)}
+                            <Button
+                              callback={handleDismissGitChangeLoadError}
+                              icon={<X aria-hidden="true" />}
+                              label={<span>Dismiss</span>}
+                              theme="secondary"
+                            />
                           </div>
                         </section>
                       )}
@@ -15929,50 +15942,91 @@ export const App: React.FC = () => {
                   </div>
                 )}
                 {visibleSyncRecovery && (
-                  <section
-                    className="chat-approval changes-sidebar__sync-recovery"
-                    aria-label="Git recovery options"
-                  >
-                    <div className="changes-sidebar__sync-recovery-header">
-                      <span className="chat-approval__label">
-                        {visibleSyncRecovery.failure.title}
-                      </span>
-                      <Button
-                        aria-label="Dismiss Git recovery options"
-                        title="Dismiss"
-                        disabled={syncInProgress}
-                        callback={handleDismissGitSyncRecovery}
-                        icon={<X aria-hidden="true" />}
-                        theme="transparent"
-                        size="small"
-                      />
-                    </div>
-                    <span
-                      className="chat-approval__summary"
-                      title={visibleSyncRecovery.failure.message}
-                    >
-                      {visibleSyncRecovery.failure.message}
+                  <section className="changes-sidebar__git-error" aria-label="Git recovery options">
+                    <span className="changes-sidebar__git-error-message" role="status">
+                      {visibleSyncRecovery.error ?? visibleSyncRecovery.failure.error}
                     </span>
-                    <span
-                      className="chat-approval__cwd changes-sidebar__sync-recovery-command"
-                      title={visibleSyncRecovery.failure.command}
-                    >
-                      {visibleSyncRecovery.failure.command}
-                    </span>
-                    {visibleSyncRecovery.error && (
-                      <span className="chat-approval__error" role="status">
-                        {visibleSyncRecovery.error}
-                      </span>
-                    )}
-                    <div
-                      className={`changes-sidebar__sync-recovery-actions${
-                        visibleSyncRecovery.failure.actions.length === 1
-                          ? ' changes-sidebar__sync-recovery-actions--single'
-                          : ''
-                      }`}
-                    >
-                      {visibleSyncRecovery.failure.actions.map((action, actionIndex) => {
+                    <div className="changes-sidebar__git-error-actions">
+                      {visibleSyncRecoveryActions.map((action, actionIndex) => {
                         const rememberLabel = getGitRecoveryRememberLabel(action.id)
+                        const alternativeAction =
+                          action.id === 'pull-rebase'
+                            ? visibleSyncRecovery.failure.actions.find(
+                                (candidateAction) => candidateAction.id === 'pull-merge'
+                              )
+                            : action.id === 'push-current-branch'
+                              ? visibleSyncRecovery.failure.actions.find(
+                                  (candidateAction) => candidateAction.id === 'push-upstream-branch'
+                                )
+                              : null
+                        const rememberedPushActions: ButtonDropdownAction[] =
+                          action.id === 'push-current-branch' &&
+                          alternativeAction?.id === 'push-upstream-branch'
+                            ? [
+                                {
+                                  id: 'push-current-branch-remember',
+                                  label: `Remember ${action.label.replace(/^Push to /, '')}`,
+                                  title: `Remember ${action.label.toLowerCase()} for this repository`,
+                                  icon: getGitRecoveryActionIcon(action.id),
+                                  callback: () =>
+                                    void handleGitSyncRecoveryAction(action.id, {
+                                      rememberPushTarget: true
+                                    })
+                                },
+                                {
+                                  id: 'push-upstream-branch-remember',
+                                  label: `Remember ${alternativeAction.label.replace(/^Push to /, '')}`,
+                                  title: `Remember ${alternativeAction.label.toLowerCase()} for this repository`,
+                                  icon: getGitRecoveryActionIcon(alternativeAction.id),
+                                  callback: () =>
+                                    void handleGitSyncRecoveryAction(alternativeAction.id, {
+                                      rememberPushTarget: true
+                                    })
+                                }
+                              ]
+                            : []
+                        const dropdownActions: ButtonDropdownAction[] = [
+                          ...(rememberLabel
+                            ? [
+                                {
+                                  id: `${action.id}-remember`,
+                                  label: rememberLabel,
+                                  title: `${rememberLabel} for this repository`,
+                                  callback: () =>
+                                    void handleGitSyncRecoveryAction(action.id, {
+                                      rememberStrategy: true
+                                    })
+                                }
+                              ]
+                            : []),
+                          ...(alternativeAction
+                            ? [
+                                {
+                                  id: alternativeAction.id,
+                                  label: alternativeAction.label,
+                                  title: alternativeAction.description,
+                                  icon: getGitRecoveryActionIcon(alternativeAction.id),
+                                  callback: () =>
+                                    void handleGitSyncRecoveryAction(alternativeAction.id)
+                                },
+                                ...(alternativeAction.id === 'pull-merge'
+                                  ? [
+                                      {
+                                        id: 'pull-merge-remember',
+                                        label: 'Remember merge',
+                                        title: 'Remember merge for this repository',
+                                        icon: getGitRecoveryActionIcon(alternativeAction.id),
+                                        callback: () =>
+                                          void handleGitSyncRecoveryAction(alternativeAction.id, {
+                                            rememberStrategy: true
+                                          })
+                                      }
+                                    ]
+                                  : [])
+                              ]
+                            : []),
+                          ...rememberedPushActions
+                        ]
 
                         return (
                           <Button
@@ -15981,19 +16035,7 @@ export const App: React.FC = () => {
                             disabled={syncInProgress}
                             callback={() => void handleGitSyncRecoveryAction(action.id)}
                             dropdownActions={
-                              rememberLabel
-                                ? [
-                                    {
-                                      id: `${action.id}-remember`,
-                                      label: rememberLabel,
-                                      title: `${rememberLabel} for this repository`,
-                                      callback: () =>
-                                        void handleGitSyncRecoveryAction(action.id, {
-                                          rememberStrategy: true
-                                        })
-                                    }
-                                  ]
-                                : undefined
+                              dropdownActions.length > 0 ? dropdownActions : undefined
                             }
                             dropdownLabel={`${action.label} options`}
                             dropdownMenuAlign="end"
@@ -16001,62 +16043,49 @@ export const App: React.FC = () => {
                             icon={getGitRecoveryActionIcon(action.id)}
                             label={<span>{action.label}</span>}
                             theme={actionIndex === 0 ? 'primary' : 'secondary'}
-                            size="small"
-                            fill
                           />
                         )
                       })}
-                    </div>
-                    <div className="changes-sidebar__sync-recovery-ai">
                       {renderGitAiResolutionButton(handleGitAiResolution)}
+                      <Button
+                        disabled={syncInProgress}
+                        callback={handleDismissGitSyncRecovery}
+                        icon={<X aria-hidden="true" />}
+                        label={<span>Dismiss</span>}
+                        theme="secondary"
+                      />
                     </div>
                   </section>
                 )}
                 {currentProjectCommitError && (
-                  <section
-                    className="chat-approval changes-sidebar__sync-recovery"
-                    aria-label="Git commit error"
-                  >
-                    <div className="changes-sidebar__sync-recovery-header">
-                      <span className="chat-approval__label">Git commit failed</span>
-                      <Button
-                        aria-label="Dismiss Git commit error"
-                        title="Dismiss"
-                        callback={handleDismissGitCommitError}
-                        icon={<X aria-hidden="true" />}
-                        theme="transparent"
-                        size="small"
-                      />
-                    </div>
-                    <span className="chat-approval__error" role="status">
+                  <section className="changes-sidebar__git-error" aria-label="Git commit error">
+                    <span className="changes-sidebar__git-error-message" role="status">
                       {currentProjectCommitError}
                     </span>
-                    <div className="changes-sidebar__sync-recovery-ai">
+                    <div className="changes-sidebar__git-error-actions">
                       {renderGitAiResolutionButton(handleGitCommitErrorAiResolution)}
+                      <Button
+                        callback={handleDismissGitCommitError}
+                        icon={<X aria-hidden="true" />}
+                        label={<span>Dismiss</span>}
+                        theme="secondary"
+                      />
                     </div>
                   </section>
                 )}
                 {currentProjectSyncError && !visibleSyncRecovery && (
-                  <section
-                    className="chat-approval changes-sidebar__sync-recovery"
-                    aria-label="Git sync error"
-                  >
-                    <div className="changes-sidebar__sync-recovery-header">
-                      <span className="chat-approval__label">Git sync failed</span>
-                      <Button
-                        aria-label="Dismiss Git sync error"
-                        title="Dismiss"
-                        callback={handleDismissUnclassifiedGitSyncError}
-                        icon={<X aria-hidden="true" />}
-                        theme="transparent"
-                        size="small"
-                      />
-                    </div>
-                    <span className="chat-approval__error" role="status">
+                  <section className="changes-sidebar__git-error" aria-label="Git sync error">
+                    <span className="changes-sidebar__git-error-message" role="status">
                       {currentProjectSyncError}
                     </span>
-                    <div className="changes-sidebar__sync-recovery-ai">
+                    <div className="changes-sidebar__git-error-actions">
                       {renderGitAiResolutionButton(handleUnclassifiedGitSyncAiResolution)}
+                      <Button
+                        callback={handleDismissUnclassifiedGitSyncError}
+                        icon={<X aria-hidden="true" />}
+                        label={<span>Dismiss</span>}
+                        theme="secondary"
+                      />
                     </div>
                   </section>
                 )}

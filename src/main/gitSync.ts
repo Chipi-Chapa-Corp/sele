@@ -1,16 +1,21 @@
-import type { AppGitRecoverableFailure } from '../shared/app'
+import type { AppGitPushTarget, AppGitRecoverableFailure } from '../shared/app'
 
 export const isNoUpstreamPushFailure = (message: string): boolean =>
   message.toLocaleLowerCase().includes('has no upstream branch')
 
+export const isUpstreamBranchMismatchPushFailure = (message: string): boolean =>
+  message.toLocaleLowerCase().includes('the upstream branch of your current branch does not match')
+
 export const getNoUpstreamPushFailure = (
   branchName: string,
-  command: string
+  command: string,
+  error: string
 ): AppGitRecoverableFailure => ({
   kind: 'push-no-upstream',
   title: 'Branch has no upstream',
   message: `The local branch ${branchName} is not connected to a remote branch yet.`,
   command,
+  error,
   actions: [
     {
       id: 'set-upstream',
@@ -26,6 +31,45 @@ export const getSameNameUpstreamPushArgs = (remoteName: string, branchName: stri
   remoteName,
   `${branchName}:${branchName}`
 ]
+
+export const getUpstreamBranchMismatchPushFailure = (
+  currentBranchName: string,
+  upstreamBranchName: string,
+  command: string,
+  error: string
+): AppGitRecoverableFailure => ({
+  kind: 'push-upstream-mismatch',
+  title: 'Upstream branch name differs',
+  message: `The local branch ${currentBranchName} tracks the differently named remote branch ${upstreamBranchName}.`,
+  command,
+  error,
+  actions: [
+    {
+      id: 'push-current-branch',
+      label: `Push to ${currentBranchName}`,
+      description: `Push HEAD to the remote branch ${currentBranchName}.`
+    },
+    {
+      id: 'push-upstream-branch',
+      label: `Push to ${upstreamBranchName}`,
+      description: `Push HEAD to the configured upstream branch ${upstreamBranchName}.`
+    }
+  ]
+})
+
+export const getPushToCurrentBranchArgs = (remoteName: string): string[] => [
+  'push',
+  remoteName,
+  'HEAD'
+]
+
+export const getPushToUpstreamBranchArgs = (
+  remoteName: string,
+  upstreamBranchName: string
+): string[] => ['push', remoteName, `HEAD:${upstreamBranchName}`]
+
+export const getPushDefaultForTarget = (target: AppGitPushTarget): 'current' | 'upstream' =>
+  target === 'current-branch' ? 'current' : 'upstream'
 
 export const selectGitPushRemote = (
   remotes: string[],
