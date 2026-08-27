@@ -1393,11 +1393,11 @@ button.changes-sidebar__recent-row:not(:disabled) {
 }
 
 .chat-home__actions {
-  display: grid;
+  display: flex;
   width: 100%;
   min-width: 0;
   flex: 1;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  justify-content: space-between;
   gap: 0.4rem;
   align-items: center;
 }
@@ -1405,7 +1405,6 @@ button.changes-sidebar__recent-row:not(:disabled) {
 .chat-home__actions-left {
   display: flex;
   align-items: center;
-  justify-self: start;
   gap: 0.4rem;
 }
 
@@ -1416,7 +1415,6 @@ button.changes-sidebar__recent-row:not(:disabled) {
 .chat-home__actions-right {
   display: flex;
   align-items: center;
-  justify-self: end;
   gap: 0.4rem;
 }
 
