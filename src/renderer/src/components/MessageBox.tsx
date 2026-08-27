@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -285,6 +286,38 @@ type ChatConfigDropdownProps = {
 
 type ChatConfigMenuStyle = CSSProperties & {
   '--chat-config-menu-max-height': string
+}
+
+type MentionMenuStyle = CSSProperties & {
+  '--menu-surface-max-height': string
+}
+
+const getMentionMenuStyle = (anchorRect: DOMRect): MentionMenuStyle => {
+  const viewportInset = 9.6
+  const menuOffset = 6.4
+  const maxMenuHeight = Math.min(336, window.innerHeight * 0.56)
+  const menuWidth = Math.min(416, anchorRect.width, window.innerWidth - viewportInset * 2)
+  const maxLeft = Math.max(viewportInset, window.innerWidth - menuWidth - viewportInset)
+  const spaceAbove = Math.max(0, anchorRect.top - menuOffset - viewportInset)
+  const spaceBelow = Math.max(
+    0,
+    window.innerHeight - anchorRect.bottom - menuOffset - viewportInset
+  )
+  const openUp = spaceAbove >= spaceBelow
+  const availableHeight = Math.min(maxMenuHeight, openUp ? spaceAbove : spaceBelow)
+  const menuStyle: MentionMenuStyle = {
+    '--menu-surface-max-height': toCssRem(availableHeight),
+    left: toCssRem(Math.min(Math.max(viewportInset, anchorRect.left), maxLeft)),
+    width: toCssRem(menuWidth)
+  }
+
+  if (openUp) {
+    menuStyle.bottom = toCssRem(window.innerHeight - anchorRect.top + menuOffset)
+  } else {
+    menuStyle.top = toCssRem(anchorRect.bottom + menuOffset)
+  }
+
+  return menuStyle
 }
 
 const getChatConfigMenuStyle = (buttonRect: DOMRect): ChatConfigMenuStyle => {
@@ -1074,6 +1107,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [composerCache, setComposerCache] = useState<ComposerCache | null>(null)
   const [composerLoadErrorScope, setComposerLoadErrorScope] = useState<string | null>(null)
   const [activeSkillMentionIndex, setActiveSkillMentionIndex] = useState(0)
+  const [mentionMenuStyle, setMentionMenuStyle] = useState<MentionMenuStyle | null>(null)
   const [controlPressed, setControlPressed] = useState(false)
   const editSessionIdRef = useRef<string | null>(null)
   const handledQuoteRequestIdRef = useRef<number | null>(null)
@@ -1086,6 +1120,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const skillsBeforeEditRef = useRef<ProviderSkill[] | null>(null)
   const appsBeforeEditRef = useRef<ProviderApp[] | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaWrapRef = useRef<HTMLDivElement>(null)
+  const mentionMenuRef = useRef<HTMLDivElement>(null)
   const attachmentDragDepthRef = useRef(0)
   const usageControlRef = useRef<HTMLDivElement>(null)
   const editing = Boolean(editSession)
@@ -1492,6 +1528,49 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           : [],
     [composerResults, fileMentionMenuOpen, fileMentionResults, skillMentionMenuOpen]
   )
+  const mentionMenuOpen = skillMentionMenuOpen || fileMentionMenuOpen
+
+  const updateMentionMenuPosition = useCallback((): void => {
+    const anchorRect = textareaWrapRef.current?.getBoundingClientRect()
+
+    if (
+      !anchorRect ||
+      anchorRect.bottom < 0 ||
+      anchorRect.top > window.innerHeight ||
+      anchorRect.width <= 0
+    ) {
+      setMentionMenuStyle(null)
+      return
+    }
+
+    setMentionMenuStyle(getMentionMenuStyle(anchorRect))
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!mentionMenuOpen) return
+
+    updateMentionMenuPosition()
+
+    const handleScroll = (event: Event): void => {
+      if (event.target instanceof Node && mentionMenuRef.current?.contains(event.target)) return
+
+      updateMentionMenuPosition()
+    }
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => updateMentionMenuPosition())
+
+    if (textareaWrapRef.current) resizeObserver?.observe(textareaWrapRef.current)
+    window.addEventListener('resize', updateMentionMenuPosition)
+    window.addEventListener('scroll', handleScroll, true)
+
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', updateMentionMenuPosition)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [mentionMenuOpen, updateMentionMenuPosition])
 
   useEffect(() => {
     messageRef.current = message
@@ -2684,33 +2763,40 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             )}
           </div>
         )}
-        <div className="message-box__textarea-wrap">
-          {(skillMentionMenuOpen || fileMentionMenuOpen) && (
-            <div className="message-box__file-mention-menu">
-              <Dropdown
-                activeIndex={
-                  skillMentionMenuOpen ? activeSkillMentionIndex : activeFileMentionIndex
-                }
-                aria-label={skillMentionMenuOpen ? 'Skills and apps' : 'Files'}
-                emptyContent={mentionDropdownEmptyContent}
-                listboxId={skillMentionMenuOpen ? skillMentionListboxId : fileMentionListboxId}
-                menuOnly
-                options={mentionDropdownOptions}
-                value=""
-                onActiveIndexChange={
-                  skillMentionMenuOpen ? setActiveSkillMentionIndex : setActiveFileMentionIndex
-                }
-                onChange={handleSelectMentionDropdown}
-              />
-            </div>
-          )}
+        <div ref={textareaWrapRef} className="message-box__textarea-wrap">
+          {mentionMenuOpen &&
+            mentionMenuStyle &&
+            createPortal(
+              <div
+                ref={mentionMenuRef}
+                className="message-box__file-mention-menu"
+                style={mentionMenuStyle}
+              >
+                <Dropdown
+                  activeIndex={
+                    skillMentionMenuOpen ? activeSkillMentionIndex : activeFileMentionIndex
+                  }
+                  aria-label={skillMentionMenuOpen ? 'Skills and apps' : 'Files'}
+                  emptyContent={mentionDropdownEmptyContent}
+                  listboxId={skillMentionMenuOpen ? skillMentionListboxId : fileMentionListboxId}
+                  menuOnly
+                  options={mentionDropdownOptions}
+                  value=""
+                  onActiveIndexChange={
+                    skillMentionMenuOpen ? setActiveSkillMentionIndex : setActiveFileMentionIndex
+                  }
+                  onChange={handleSelectMentionDropdown}
+                />
+              </div>,
+              document.body
+            )}
           <textarea
             ref={textareaRef}
             id="message-input"
             disabled={textareaDisabled}
             rows={1}
             value={message}
-            placeholder="Message the assistant"
+            placeholder="Use @ for files and $ for skills"
             aria-autocomplete="list"
             aria-controls={
               skillMentionMenuOpen
