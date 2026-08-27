@@ -1473,21 +1473,37 @@ button.changes-sidebar__recent-row:not(:disabled) {
 
 .chat-detail__search {
   display: grid;
-  width: 100%;
+  width: calc(100% - 2.8rem);
+  max-width: var(--chat-content-max-width);
   min-width: 0;
   flex: none;
   grid-template-columns: minmax(6rem, 1fr) minmax(3.2rem, auto) auto;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.5rem 1.7rem;
-  border-bottom: 0.0625rem solid var(--glass-line);
+  margin: 0.6rem auto 0;
+  padding: 0.4rem 0.6rem;
+  border: 0.0625rem solid var(--glass-line);
+  border-radius: 0.9rem;
   background: var(--composer-bg);
+}
+
+.chat-detail__search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
 }
 
 .chat-detail__search-input {
   min-height: var(--control-height-small);
-  padding-inline: 0.5rem;
-  border-radius: var(--control-radius-small);
+  padding-inline: 0.4rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-detail__search .chat-detail__search-input:focus {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .chat-detail__search-status {
@@ -1515,8 +1531,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
     .message-box__chat-config-trigger,
     .chat-panel__new-session .ui-dropdown__trigger,
     .chat-home__header .ui-button--secondary,
-    .chat-home__search-field .ui-input,
-    .chat-detail__search .ui-input
+    .chat-home__search-field .ui-input
   ) {
   border-color: transparent;
   color: var(--lead);
@@ -1581,8 +1596,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
     .chat-home__header .ui-button--secondary:disabled,
     .chat-home__header .ui-button--transparent:disabled,
     .chat-detail__search .ui-button--transparent:disabled,
-    .chat-home__search-field .ui-input:disabled,
-    .chat-detail__search .ui-input:disabled
+    .chat-home__search-field .ui-input:disabled
   ) {
   border-color: transparent;
   color: var(--control-disabled-color);
@@ -1590,8 +1604,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
   box-shadow: none;
 }
 
-:root[data-control-style='transparent']
-  :where(.chat-home__search-field .ui-input:focus, .chat-detail__search .ui-input:focus) {
+:root[data-control-style='transparent'] :where(.chat-home__search-field .ui-input:focus) {
   background: transparent;
   box-shadow: 0 0 0 0.1875rem var(--focus-ring);
 }
@@ -2447,7 +2460,7 @@ button.chat-detail__commit-marker-open:disabled {
   }
 
   .chat-detail__search {
-    padding-inline: 1.05rem;
+    width: calc(100% - 2.1rem);
   }
 
   .chat-panel__composer {
