@@ -10933,7 +10933,6 @@ export const App: React.FC = () => {
     ? providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
       Boolean(activeSubagentChatView) ||
-      Boolean(selectedChatAiCommitAction) ||
       (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
     : providerUpdateInProgress || !newSessionProviderAvailable
   const canEditOwnMessages = Boolean(
@@ -16077,7 +16076,6 @@ export const App: React.FC = () => {
                   operationsDisabled={
                     providerUpdateInProgress ||
                     Boolean(activeSubagentChatView) ||
-                    Boolean(selectedChatAiCommitAction) ||
                     !messageBoxProviderAvailable
                   }
                   pending={sendState === 'sending'}
