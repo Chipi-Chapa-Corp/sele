@@ -1,3 +1,5 @@
+import type { ReactElement } from 'react'
+
 type VegvisirStroke = {
   d: string
   delayMs: number
@@ -419,7 +421,7 @@ const vegvisirStrokes: VegvisirStroke[] = [
   }
 ]
 
-export const VegvisirArt = () => (
+export const VegvisirArt = (): ReactElement => (
   <svg
     aria-hidden="true"
     className="chat-panel__new-chat-vegvisir"
