@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Globe2, Plus, RefreshCw, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  Globe2,
+  Plus,
+  RefreshCw,
+  X
+} from 'lucide-react'
 import type {
   DidFailLoadEvent,
   DidNavigateEvent,
   DidNavigateInPageEvent,
+  FoundInPageEvent,
   PageTitleUpdatedEvent,
   WebviewTag
 } from 'electron'
 import { appWindowZoomLevelToFactor } from '../../../shared/app'
-import type { BrowserOpenRequest } from '../../../shared/browser'
+import type { BrowserOpenRequest, BrowserPageShortcutRequest } from '../../../shared/browser'
 import {
   getBrowserFaviconUrl,
   getBrowserPageLabel,
@@ -68,6 +78,7 @@ type BrowserPageProps = {
   tab: BrowserTab
   visible: boolean
   onElementChange: (tabId: string, element: WebviewTag | null) => void
+  onFindResult: (tabId: string, event: FoundInPageEvent) => void
   onStateChange: (tabId: string, change: BrowserPageStateChange) => void
 }
 
@@ -75,6 +86,11 @@ const emptyBrowserRuntime: BrowserTabRuntime = {
   canGoBack: false,
   canGoForward: false,
   loading: false
+}
+
+const emptyBrowserFindResult = {
+  activeMatchOrdinal: 0,
+  matches: 0
 }
 
 const createBrowserTab = (
@@ -155,6 +171,7 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
   tab,
   visible,
   onElementChange,
+  onFindResult,
   onStateChange
 }) => {
   const webviewRef = useRef<WebviewTag>(null)
@@ -204,6 +221,7 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
       })
       updateNavigationState()
     }
+    const handleFoundInPage = (event: FoundInPageEvent): void => onFindResult(tab.id, event)
 
     webview.addEventListener('dom-ready', updateNavigationState)
     webview.addEventListener('did-start-loading', handleStartLoading)
@@ -212,6 +230,7 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
     webview.addEventListener('did-navigate-in-page', handleNavigateInPage)
     webview.addEventListener('page-title-updated', handleTitleUpdated)
     webview.addEventListener('did-fail-load', handleFailLoad)
+    webview.addEventListener('found-in-page', handleFoundInPage)
 
     return () => {
       onElementChange(tab.id, null)
@@ -222,8 +241,9 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
       webview.removeEventListener('did-navigate-in-page', handleNavigateInPage)
       webview.removeEventListener('page-title-updated', handleTitleUpdated)
       webview.removeEventListener('did-fail-load', handleFailLoad)
+      webview.removeEventListener('found-in-page', handleFoundInPage)
     }
-  }, [hasPage, onElementChange, onStateChange, tab.id])
+  }, [hasPage, onElementChange, onFindResult, onStateChange, tab.id])
 
   useEffect(() => {
     const webview = webviewRef.current
@@ -332,11 +352,20 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     new Set(openRequest && isBrowserPageUrl(openRequest.url) ? [openRequest.id] : [])
   )
   const webviewsRef = useRef(new Map<string, WebviewTag>())
+  const findInputRef = useRef<HTMLInputElement>(null)
+  const findRequestIdRef = useRef<number | null>(null)
+  const browserActiveRef = useRef(active)
+  const activeTabIdRef = useRef<string | null>(null)
+  const activeTabUrlRef = useRef<string | null>(null)
+  const findQueryRef = useRef('')
   const [workspaces, setWorkspaces] = useState(() =>
     createInitialBrowserWorkspaces(workspaceKey, openRequest)
   )
   const [runtimes, setRuntimes] = useState<Map<string, BrowserTabRuntime>>(() => new Map())
   const [addressDrafts, setAddressDrafts] = useState<Record<string, string>>({})
+  const [findOpen, setFindOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState('')
+  const [findResult, setFindResult] = useState(emptyBrowserFindResult)
 
   const workspace = workspaces.get(workspaceKey) ?? null
   const tabs = workspace?.tabs ?? []
@@ -346,6 +375,25 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     ? (runtimes.get(activeTabId) ?? emptyBrowserRuntime)
     : emptyBrowserRuntime
   const addressDraft = activeTab ? (addressDrafts[activeTab.id] ?? activeTab.url) : ''
+  const findResultLabel = findQuery
+    ? findResult.matches > 0
+      ? `${findResult.activeMatchOrdinal} of ${findResult.matches}`
+      : 'No results'
+    : ''
+
+  useEffect(() => {
+    browserActiveRef.current = active
+    activeTabIdRef.current = activeTabId
+    activeTabUrlRef.current = activeTab?.url ?? null
+    findQueryRef.current = findQuery
+  }, [active, activeTab?.url, activeTabId, findQuery])
+
+  useEffect(() => {
+    browserApi.setActive(active)
+    return () => {
+      if (active) browserApi.setActive(false)
+    }
+  }, [active])
 
   useEffect(() => {
     writeStoredBrowserWorkspaces(
@@ -435,6 +483,17 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     }
   }, [])
 
+  const handleFindResult = useCallback((tabId: string, event: FoundInPageEvent): void => {
+    if (tabId !== activeTabIdRef.current || event.result.requestId !== findRequestIdRef.current) {
+      return
+    }
+
+    setFindResult({
+      activeMatchOrdinal: event.result.activeMatchOrdinal,
+      matches: event.result.matches
+    })
+  }, [])
+
   const handlePageStateChange = useCallback(
     (tabId: string, change: BrowserPageStateChange): void => {
       if (
@@ -500,7 +559,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
         return currentWorkspaces
       })
     },
-    []
+    [setAddressDrafts]
   )
 
   const handleFocusTab = useCallback(
@@ -582,6 +641,110 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
       }),
     [active, activeTabId, handleCloseTab, workspaceKey]
   )
+
+  const openPageFind = useCallback((): void => {
+    if (!activeTabIdRef.current) return
+
+    setFindOpen(true)
+    window.requestAnimationFrame(() => {
+      findInputRef.current?.focus({ preventScroll: true })
+      findInputRef.current?.select()
+    })
+  }, [])
+
+  const closePageFind = useCallback((): void => {
+    const activeTabId = activeTabIdRef.current
+    const webview = activeTabId ? webviewsRef.current.get(activeTabId) : null
+    try {
+      webview?.stopFindInPage('clearSelection')
+    } catch {
+      // The guest may have just navigated or been destroyed.
+    }
+    findRequestIdRef.current = null
+    setFindOpen(false)
+    setFindResult(emptyBrowserFindResult)
+    window.requestAnimationFrame(() => webview?.focus())
+  }, [])
+
+  const findNext = useCallback((forward: boolean): void => {
+    const activeTabId = activeTabIdRef.current
+    const findQuery = findQueryRef.current
+    if (!activeTabId || !findQuery) return
+
+    const webview = webviewsRef.current.get(activeTabId)
+    if (!webview) return
+
+    try {
+      findRequestIdRef.current = webview.findInPage(findQuery, {
+        findNext: false,
+        forward
+      })
+    } catch {
+      // The guest may have just navigated or been destroyed.
+    }
+  }, [])
+
+  const handlePageShortcut = useCallback(
+    (request: BrowserPageShortcutRequest): void => {
+      const activeTabId = activeTabIdRef.current
+      if (!browserActiveRef.current || !activeTabId) return
+
+      const webview = webviewsRef.current.get(activeTabId)
+      if (!webview) return
+      if (request.webContentsId !== null) {
+        try {
+          if (webview.getWebContentsId() !== request.webContentsId) return
+        } catch {
+          return
+        }
+      }
+
+      if (request.action === 'find') {
+        openPageFind()
+      } else if (activeTabUrlRef.current) {
+        webview.reload()
+      }
+    },
+    [openPageFind]
+  )
+
+  useEffect(() => browserApi.onPageShortcutRequested(handlePageShortcut), [handlePageShortcut])
+
+  useEffect(() => {
+    if (!findOpen || !activeTabId) return
+
+    const webview = webviewsRef.current.get(activeTabId)
+    if (!webview) return
+
+    findRequestIdRef.current = null
+    setFindResult(emptyBrowserFindResult)
+    try {
+      webview.stopFindInPage('clearSelection')
+    } catch {
+      return
+    }
+    if (!findQuery || activeRuntime.loading) return
+
+    let requestId: number
+    try {
+      requestId = webview.findInPage(findQuery, {
+        findNext: true,
+        forward: true
+      })
+      findRequestIdRef.current = requestId
+    } catch {
+      return
+    }
+
+    return () => {
+      if (findRequestIdRef.current === requestId) findRequestIdRef.current = null
+      try {
+        webview.stopFindInPage('clearSelection')
+      } catch {
+        // The guest may have just navigated or been destroyed.
+      }
+    }
+  }, [activeRuntime.loading, activeTabId, findOpen, findQuery])
 
   const navigateToAddress = (): void => {
     if (!activeTab) return
@@ -712,6 +875,71 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
           }}
         />
       </form>
+      {findOpen && (
+        <form
+          className="browser-panel__find"
+          role="search"
+          aria-label="Find in page"
+          onSubmit={(event) => {
+            event.preventDefault()
+            findNext(true)
+          }}
+        >
+          <Input
+            ref={findInputRef}
+            aria-label="Find in page"
+            autoComplete="off"
+            className="browser-panel__find-input"
+            placeholder="Find in page"
+            spellCheck={false}
+            type="search"
+            value={findQuery}
+            onChange={(event) => {
+              const value = event.currentTarget.value
+              findQueryRef.current = value
+              setFindQuery(value)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                closePageFind()
+              } else if (event.key === 'Enter') {
+                event.preventDefault()
+                findNext(!event.shiftKey)
+              }
+            }}
+          />
+          <span className="browser-panel__find-result" aria-live="polite">
+            {findResultLabel}
+          </span>
+          <Button
+            aria-label="Previous match"
+            callback={() => findNext(false)}
+            disabled={!findQuery || findResult.matches === 0}
+            icon={<ChevronUp aria-hidden="true" />}
+            size="small"
+            theme="transparent"
+            title="Previous match"
+          />
+          <Button
+            aria-label="Next match"
+            callback={() => findNext(true)}
+            disabled={!findQuery || findResult.matches === 0}
+            icon={<ChevronDown aria-hidden="true" />}
+            size="small"
+            theme="transparent"
+            title="Next match"
+          />
+          <Button
+            aria-label="Close page search"
+            callback={closePageFind}
+            icon={<X aria-hidden="true" />}
+            size="small"
+            theme="transparent"
+            title="Close page search"
+          />
+        </form>
+      )}
       <div className="browser-panel__workspace">
         {tabs.length === 0 && (
           <div className="browser-panel__empty">
@@ -741,6 +969,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
                   tab.id === currentWorkspace.activeTabId
                 }
                 onElementChange={handleElementChange}
+                onFindResult={handleFindResult}
                 onStateChange={handlePageStateChange}
               />
             ))

@@ -19,9 +19,13 @@ const isCookieImportBrowser = (value: unknown): value is BrowserCookieImportBrow
   value === 'chrome' || value === 'firefox' || value === 'zen'
 
 const browserGuestDefaultScales = new WeakMap<WebContents, number>()
+const activeBrowserRendererIds = new Set<number>()
 
 export const getBrowserGuestDefaultScale = (guest: WebContents): number =>
   browserGuestDefaultScales.get(guest) ?? browserScalePercentDefault
+
+export const isBrowserRendererActive = (renderer: WebContents): boolean =>
+  activeBrowserRendererIds.has(renderer.id)
 
 const getPageZoomOptions = (value: unknown): BrowserPageZoomOptions => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -79,6 +83,19 @@ const getCookieImportOptions = (value: unknown): BrowserCookieImportOptions => {
 }
 
 export const registerBrowserIpc = (): void => {
+  ipcMain.on(browserIpcChannels.setActive, (event, value: unknown) => {
+    if (typeof value !== 'boolean') return
+
+    const rendererId = event.sender.id
+    if (!value) {
+      activeBrowserRendererIds.delete(rendererId)
+      return
+    }
+
+    if (activeBrowserRendererIds.has(rendererId)) return
+    activeBrowserRendererIds.add(rendererId)
+    event.sender.once('destroyed', () => activeBrowserRendererIds.delete(rendererId))
+  })
   ipcMain.handle(browserIpcChannels.findCookieProfiles, (_event, value: unknown) =>
     discoverBrowserCookieProfiles(getCookieProfileDiscoveryOptions(value))
   )

@@ -6,7 +6,11 @@ import type { ProviderRendererApi, ProviderWindowChatUpdatedEvent } from '../sha
 import { providerIpcChannels } from '../shared/provider'
 import type { TerminalDataEvent, TerminalExitEvent, TerminalRendererApi } from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
-import type { BrowserOpenRequest, BrowserRendererApi } from '../shared/browser'
+import type {
+  BrowserOpenRequest,
+  BrowserPageShortcutRequest,
+  BrowserRendererApi
+} from '../shared/browser'
 import { browserIpcChannels } from '../shared/browser'
 
 const appApi: AppApi = {
@@ -367,8 +371,22 @@ const browserApi: BrowserRendererApi = {
         handleCloseActiveTabRequested
       )
   },
+  onPageShortcutRequested: (listener): (() => void) => {
+    const handlePageShortcutRequested = (
+      _: IpcRendererEvent,
+      request: BrowserPageShortcutRequest
+    ): void => listener(request)
+
+    ipcRenderer.on(browserIpcChannels.pageShortcutRequested, handlePageShortcutRequested)
+    return () =>
+      ipcRenderer.removeListener(
+        browserIpcChannels.pageShortcutRequested,
+        handlePageShortcutRequested
+      )
+  },
   resolvePageZoomScale: (options) =>
-    ipcRenderer.invoke(browserIpcChannels.resolvePageZoomScale, options)
+    ipcRenderer.invoke(browserIpcChannels.resolvePageZoomScale, options),
+  setActive: (active) => ipcRenderer.send(browserIpcChannels.setActive, active)
 }
 
 contextBridge.exposeInMainWorld('appApi', appApi)

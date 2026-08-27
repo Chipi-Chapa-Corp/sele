@@ -32,6 +32,33 @@
   padding-bottom: 0.5rem;
 }
 
+.browser-panel__find {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.2rem;
+  padding: 0 var(--changes-sidebar-x, 0.7rem) 0.5rem;
+}
+
+.browser-panel__find-input {
+  width: min(20rem, 100%);
+  height: var(--control-height-small);
+  min-height: var(--control-height-small);
+  flex: 0 1 20rem;
+  padding-inline: 0.5rem;
+}
+
+.browser-panel__find-result {
+  min-width: 4.5rem;
+  color: var(--quiet);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .browser-panel__tabs {
   width: 100%;
   min-width: 0;

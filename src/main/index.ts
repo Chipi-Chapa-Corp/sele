@@ -18,12 +18,17 @@ import { disposeProviderAdapters } from './providers/providerService'
 import { beginProviderIpcShutdown, registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
 import { disposeTerminalSessions, registerTerminalIpc } from './registerTerminalIpc'
-import { getBrowserGuestDefaultScale, registerBrowserIpc } from './registerBrowserIpc'
+import {
+  getBrowserGuestDefaultScale,
+  isBrowserRendererActive,
+  registerBrowserIpc
+} from './registerBrowserIpc'
 import {
   browserIpcChannels,
   getBrowserCloseShortcutAction,
   getBrowserPageScale,
   getBrowserPageHostname,
+  getBrowserPageShortcutAction,
   getBrowserPageZoomFactor,
   getNextBrowserZoomScale,
   isBrowserPageUrl
@@ -73,6 +78,23 @@ const handleCloseShortcut = (
   return true
 }
 
+const handleBrowserPageShortcut = (
+  mainWindow: BrowserWindow,
+  event: Electron.Event,
+  input: Electron.Input,
+  webContentsId: number | null
+): boolean => {
+  const action = getBrowserPageShortcutAction(input)
+  if (!action) return false
+
+  event.preventDefault()
+  mainWindow.webContents.send(browserIpcChannels.pageShortcutRequested, {
+    action,
+    webContentsId
+  })
+  return true
+}
+
 const getNextZoomLevel = (
   currentZoomLevel: number,
   action: NonNullable<ReturnType<typeof getAppWindowZoomShortcutAction>>
@@ -100,6 +122,7 @@ const secureBrowserWebContents = (mainWindow: BrowserWindow, guest: WebContents)
   guest.on('will-redirect', (event) => preventUnsupportedNavigation(event, event.url))
   guest.on('before-input-event', (event, input) => {
     if (handleCloseShortcut(mainWindow, event, input)) return
+    if (handleBrowserPageShortcut(mainWindow, event, input, guest.id)) return
 
     const zoomAction = getAppWindowZoomShortcutAction(input)
     if (!zoomAction) return
@@ -191,6 +214,12 @@ const createWindow = (): void => {
   })
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (handleCloseShortcut(mainWindow, event, input)) return
+    if (
+      isBrowserRendererActive(mainWindow.webContents) &&
+      handleBrowserPageShortcut(mainWindow, event, input, null)
+    ) {
+      return
+    }
 
     const action = getAppWindowZoomShortcutAction(input)
     if (!action) return

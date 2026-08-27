@@ -12,6 +12,7 @@ import {
   getBrowserFaviconUrl,
   getBrowserPageLabel,
   getBrowserPageHostname,
+  getBrowserPageShortcutAction,
   getBrowserPageScale,
   getBrowserPageZoomFactor,
   getNextBrowserZoomScale,
@@ -73,6 +74,36 @@ test('captures close-tab shortcuts without allowing a window-close variant', () 
     null
   )
   assert.equal(getBrowserCloseShortcutAction({ type: 'keyDown', control: true, key: 'q' }), null)
+})
+
+test('recognizes browser reload and page-search shortcuts', () => {
+  assert.equal(
+    getBrowserPageShortcutAction({ type: 'keyDown', control: true, code: 'KeyR', key: 'r' }),
+    'reload'
+  )
+  assert.equal(
+    getBrowserPageShortcutAction({ type: 'keyDown', meta: true, code: 'KeyR', key: 'r' }),
+    'reload'
+  )
+  assert.equal(getBrowserPageShortcutAction({ type: 'keyDown', code: 'F5', key: 'F5' }), 'reload')
+  assert.equal(
+    getBrowserPageShortcutAction({ type: 'keyDown', control: true, code: 'KeyF', key: 'f' }),
+    'find'
+  )
+  assert.equal(getBrowserPageShortcutAction({ type: 'keyDown', code: 'F2', key: 'F2' }), 'find')
+})
+
+test('rejects modified, repeated, and key-up browser page shortcuts', () => {
+  assert.equal(
+    getBrowserPageShortcutAction({ type: 'keyDown', control: true, shift: true, key: 'r' }),
+    null
+  )
+  assert.equal(getBrowserPageShortcutAction({ type: 'keyDown', alt: true, key: 'F5' }), null)
+  assert.equal(getBrowserPageShortcutAction({ type: 'keyDown', repeat: true, key: 'F2' }), null)
+  assert.equal(
+    getBrowserPageShortcutAction({ type: 'keyUp', control: true, code: 'KeyF', key: 'f' }),
+    null
+  )
 })
 
 test('recognizes unshifted equals as browser zoom in', () => {

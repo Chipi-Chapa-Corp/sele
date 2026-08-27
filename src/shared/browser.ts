@@ -5,6 +5,13 @@ export type BrowserOpenRequest = {
   url: string
 }
 
+export type BrowserPageShortcutAction = 'find' | 'reload'
+
+export type BrowserPageShortcutRequest = {
+  action: BrowserPageShortcutAction
+  webContentsId: number | null
+}
+
 export type BrowserCookieImportBrowser = 'chrome' | 'firefox' | 'zen'
 
 export type BrowserCookieProfile = {
@@ -88,7 +95,9 @@ export type BrowserRendererApi = {
   importCookies: (options: BrowserCookieImportOptions) => Promise<BrowserCookieImportResult>
   onOpenRequested: (listener: (request: BrowserOpenRequest) => void) => () => void
   onCloseActiveTabRequested: (listener: () => void) => () => void
+  onPageShortcutRequested: (listener: (request: BrowserPageShortcutRequest) => void) => () => void
   resolvePageZoomScale: (options: BrowserPageZoomOptions) => Promise<number>
+  setActive: (active: boolean) => void
 }
 
 export const browserIpcChannels = {
@@ -96,7 +105,9 @@ export const browserIpcChannels = {
   importCookies: 'browser:import-cookies',
   openRequested: 'browser:open-requested',
   closeActiveTabRequested: 'browser:close-active-tab-requested',
-  resolvePageZoomScale: 'browser:resolve-page-zoom-scale'
+  pageShortcutRequested: 'browser:page-shortcut-requested',
+  resolvePageZoomScale: 'browser:resolve-page-zoom-scale',
+  setActive: 'browser:set-active'
 } as const
 
 export type BrowserCloseShortcutInput = {
@@ -117,20 +128,47 @@ export type BrowserCloseShortcutInput = {
 
 export type BrowserCloseShortcutAction = 'close-tab' | 'suppress-window-close'
 
+const hasPrimaryModifier = (input: BrowserCloseShortcutInput): boolean =>
+  Boolean(input.control || input.ctrlKey || input.meta || input.metaKey)
+
+const hasAltModifier = (input: BrowserCloseShortcutInput): boolean =>
+  Boolean(input.alt || input.altKey)
+
+const hasShiftModifier = (input: BrowserCloseShortcutInput): boolean =>
+  Boolean(input.shift || input.shiftKey)
+
+export const getBrowserPageShortcutAction = (
+  input: BrowserCloseShortcutInput
+): BrowserPageShortcutAction | null => {
+  if (input.type && input.type !== 'keyDown' && input.type !== 'keydown') return null
+  if (input.repeat || input.isAutoRepeat || hasAltModifier(input) || hasShiftModifier(input)) {
+    return null
+  }
+
+  const primaryModifier = hasPrimaryModifier(input)
+  const key = input.key?.toLocaleLowerCase()
+  const reloadKey = key === 'r' || input.code === 'KeyR'
+  const findKey = key === 'f' || input.code === 'KeyF'
+
+  if (primaryModifier && reloadKey) return 'reload'
+  if (primaryModifier && findKey) return 'find'
+  if (primaryModifier) return null
+  if (key === 'f5' || input.code === 'F5') return 'reload'
+  if (key === 'f2' || input.code === 'F2') return 'find'
+
+  return null
+}
+
 export const getBrowserCloseShortcutAction = (
   input: BrowserCloseShortcutInput
 ): BrowserCloseShortcutAction | null => {
   if (input.type && input.type !== 'keyDown' && input.type !== 'keydown') return null
-  if (
-    input.alt ||
-    input.altKey ||
-    (!input.control && !input.ctrlKey && !input.meta && !input.metaKey)
-  ) {
+  if (hasAltModifier(input) || !hasPrimaryModifier(input)) {
     return null
   }
   if (input.key?.toLocaleLowerCase() !== 'w' && input.code !== 'KeyW') return null
 
-  return input.shift || input.shiftKey || input.repeat || input.isAutoRepeat
+  return hasShiftModifier(input) || input.repeat || input.isAutoRepeat
     ? 'suppress-window-close'
     : 'close-tab'
 }
