@@ -19,6 +19,8 @@ import type {
   ProviderActiveSendMode,
   ProviderTurnOptions,
   ProviderOneShotOptions,
+  ProviderSubagent,
+  ProviderSubagentDetail,
   ProviderUserInputResponse
 } from '../../shared/provider'
 import type { AppContainerTarget } from '../../shared/app'
@@ -65,6 +67,20 @@ export type ProviderAdapter = {
     chatId: string,
     options?: { container?: AppContainerTarget | null }
   ) => Promise<ProviderChatDetail>
+  getSubagents: (
+    chatId: string,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<ProviderSubagent[]>
+  getSubagent: (
+    chatId: string,
+    subagentId: string,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<ProviderSubagentDetail>
+  cancelSubagent: (
+    chatId: string,
+    subagentId: string,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<void>
   setChatTitle: (chatId: string, title: string) => Promise<ProviderChatDetail>
   generateOneShot: (message: string, options?: ProviderOneShotOptions) => Promise<string>
   cancelOneShot: (generationId: string) => Promise<void>

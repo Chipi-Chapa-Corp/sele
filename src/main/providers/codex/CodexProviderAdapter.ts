@@ -33,6 +33,8 @@ import type {
   ProviderSkill,
   ProviderResourceUpdateOptions,
   ProviderSourceOptions,
+  ProviderSubagent,
+  ProviderSubagentDetail,
   ProviderTurnOptions,
   ProviderOneShotOptions
 } from '../../../shared/provider'
@@ -74,6 +76,13 @@ import {
 import { getCodexQueueDrainDecision } from './CodexQueueDrain'
 import { writeCodexSkillEnabled } from './CodexSkillConfig'
 import {
+  createCodexSubagentSummary,
+  createCodexSubagentTranscriptItems,
+  getCodexSubagentAfterItemIds,
+  isCodexSubagentThread,
+  selectCodexSubagentTurns
+} from './CodexSubagents'
+import {
   listDisabledProviderSkills,
   mergeCodexProviderSkills,
   restoreProviderSkill
@@ -114,6 +123,10 @@ type CodexThreadStatus =
 type CodexThread = {
   id: string
   name?: string | null
+  parentThreadId?: string | null
+  agentNickname?: string | null
+  agentRole?: string | null
+  source?: unknown
   preview: string
   createdAt: number
   updatedAt: number
@@ -716,6 +729,16 @@ const countItemsByType = (turn: CodexTurn, matches: (item: CodexThreadItem) => b
 
 const shouldUseRolloutTurnItems = (structuredTurn: CodexTurn, rolloutTurn: CodexTurn): boolean => {
   if (structuredTurn.status === 'inProgress' || structuredTurn.status === 'queued') return false
+  if (
+    structuredTurn.items.some(
+      (item) => item.type === 'subAgentActivity' && item.kind === 'completed' && item.agentThreadId
+    )
+  ) {
+    // Completion activities are durable timeline boundaries. Rollout files currently persist
+    // subagent starts but not completions, so preferring rollout items here would move every
+    // restored marker to the end of the transcript.
+    return false
+  }
 
   const structuredToolCount = countItemsByType(structuredTurn, isHistoricalToolItem)
   const rolloutToolCount = countItemsByType(rolloutTurn, isHistoricalToolItem)
@@ -1812,9 +1835,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       archived: false
     })
 
-    const threadNames = await loadSessionThreadNames(response.data.map((thread) => thread.id))
+    const rootThreads = response.data.filter((thread) => !isCodexSubagentThread(thread))
+    const threadNames = await loadSessionThreadNames(rootThreads.map((thread) => thread.id))
     const chats = await Promise.all(
-      response.data.map(async (thread) => {
+      rootThreads.map(async (thread) => {
         const namedThread = this.withResolvedThreadName(thread, threadNames.get(thread.id) ?? null)
         this.rememberThreadContainer(namedThread.id)
 
@@ -1882,6 +1906,150 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (contextUsage) this.contextUsageByThread.set(thread.id, contextUsage)
 
     return this.createChatDetail(thread)
+  }
+
+  getSubagents = (
+    chatId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderSubagent[]> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.getSubagentsInContext(chatId)
+    )
+
+  private getSubagentsInContext = async (chatId: string): Promise<ProviderSubagent[]> => {
+    this.rememberThreadContainer(chatId)
+    const subagentThreads: CodexThread[] = []
+    let cursor: string | null = null
+
+    do {
+      const response = await this.client.request<ThreadListResponse>('thread/list', {
+        cursor,
+        limit: 100,
+        sortKey: 'created_at',
+        sortDirection: 'asc',
+        archived: false,
+        ancestorThreadId: chatId,
+        sourceKinds: ['subAgentThreadSpawn']
+      })
+      response.data.forEach((thread) => {
+        this.rememberThreadContainer(thread.id)
+        subagentThreads.push(thread)
+      })
+      cursor = response.nextCursor ?? null
+    } while (cursor)
+
+    if (!this.threads.has(chatId)) await this.getChatInContext(chatId)
+    const parentIds = new Set(
+      subagentThreads.map((thread) => thread.parentThreadId ?? chatId).filter(Boolean)
+    )
+    const afterItemIdsByParentId = new Map<string, Map<string, string>>()
+
+    await Promise.all(
+      Array.from(parentIds, async (parentId) => {
+        try {
+          const response = await this.client.request<ThreadReadResponse>('thread/read', {
+            threadId: parentId,
+            includeTurns: true
+          })
+          const turns =
+            parentId === chatId
+              ? getThreadTurns(response.thread)
+              : selectCodexSubagentTurns(getThreadTurns(response.thread), response.thread.createdAt)
+          afterItemIdsByParentId.set(parentId, getCodexSubagentAfterItemIds(turns))
+        } catch {
+          // A missing nested parent should not hide otherwise readable descendants.
+        }
+      })
+    )
+
+    return subagentThreads.map((thread) => {
+      const parentId = thread.parentThreadId ?? chatId
+      return createCodexSubagentSummary(
+        thread,
+        chatId,
+        afterItemIdsByParentId.get(parentId)?.get(thread.id) ?? null
+      )
+    })
+  }
+
+  getSubagent = (
+    chatId: string,
+    subagentId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderSubagentDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.getSubagentInContext(chatId, subagentId)
+    )
+
+  private getSubagentInContext = async (
+    chatId: string,
+    subagentId: string
+  ): Promise<ProviderSubagentDetail> => {
+    const summary = (await this.getSubagentsInContext(chatId)).find(
+      (candidate) => candidate.id === subagentId
+    )
+    if (!summary) throw new Error('Codex subagent was not found.')
+
+    const response = await this.client.request<ThreadReadResponse>('thread/read', {
+      threadId: subagentId,
+      includeTurns: true
+    })
+    const [cwd, name, turns] = await Promise.all([
+      this.resolveThreadCwd(response.thread),
+      this.resolveThreadName(response.thread),
+      this.getTurnsForThread(response.thread)
+    ])
+    const thread: CodexThread = {
+      ...response.thread,
+      name,
+      cwd,
+      turns: selectCodexSubagentTurns(
+        this.filterRolledBackTurns(response.thread.id, turns),
+        response.thread.createdAt
+      )
+    }
+    this.rememberThreadContainer(thread.id)
+    this.cacheThread(thread)
+
+    const refreshedSummary = {
+      ...summary,
+      ...createCodexSubagentSummary(thread, chatId, summary.afterItemId)
+    }
+
+    return {
+      ...refreshedSummary,
+      items: createCodexSubagentTranscriptItems(
+        refreshedSummary,
+        this.createChatDetail(thread).items
+      )
+    }
+  }
+
+  cancelSubagent = (
+    chatId: string,
+    subagentId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<void> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.cancelSubagentInContext(chatId, subagentId)
+    )
+
+  private cancelSubagentInContext = async (chatId: string, subagentId: string): Promise<void> => {
+    const exists = (await this.getSubagentsInContext(chatId)).some(
+      (subagent) => subagent.id === subagentId
+    )
+    if (!exists) throw new Error('Codex subagent was not found.')
+
+    const response = await this.client.request<ThreadReadResponse>('thread/read', {
+      threadId: subagentId,
+      includeTurns: true
+    })
+    const activeTurnId = getThreadTurns(response.thread).findLast(
+      (turn) => turn.status === 'inProgress'
+    )?.id
+    if (!activeTurnId) return
+
+    await this.interruptTurnWithClient(this.client, subagentId, activeTurnId)
   }
 
   setChatTitle = (chatId: string, title: string): Promise<ProviderChatDetail> =>
@@ -3191,7 +3359,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
     const thread = this.threads.get(threadId)
-    if (!thread) return
+    if (!thread || isCodexSubagentThread(thread)) return
     const detail = this.createChatDetail(thread, {
       workingItemTailLimit: rendererWorkingItemTailLimit
     })

@@ -47,9 +47,17 @@ export type CodexThreadItem = {
   customToolName?: string
   customToolInput?: string | null
   customToolOutput?: unknown
+  senderThreadId?: string
+  receiverThreadIds?: string[]
+  agentThreadId?: string
+  kind?: string
+  agentPath?: string
+  prompt?: string | null
+  model?: string | null
+  agentsStates?: Record<string, { status?: string; message?: string | null }>
   rawToolData?: unknown[]
   summary?: string[]
-  status?: ProviderWorkingToolStatus
+  status?: ProviderWorkingToolStatus | 'inProgress' | 'completed' | 'failed' | 'interrupted'
 }
 
 export type CodexTurn = {
@@ -65,6 +73,9 @@ export type CodexTurn = {
   completedAt?: number | null
   items: CodexThreadItem[]
 }
+
+export const getCodexSubagentTimelineAnchorId = (turnId: string, agentThreadId: string): string =>
+  `${turnId}:subagent-completed:${agentThreadId}`
 
 export const hasCompletedCodexFinalAnswer = (turn: CodexTurn | null | undefined): boolean =>
   Boolean(
@@ -88,6 +99,7 @@ type WorkingItemRenderResult =
       activity: ProviderToolActivity
       toolId: string
       status: ProviderWorkingToolStatus
+      compact?: boolean
       label: string
       command: string | null
       cwd: string | null
@@ -1028,6 +1040,9 @@ const getFileDiffs = (item: CodexThreadItem): ProviderFileDiff[] =>
 
 const defaultRawToolOutput = Symbol('defaultRawToolOutput')
 
+const getWorkingToolStatus = (status: CodexThreadItem['status']): ProviderWorkingToolStatus =>
+  status === 'running' || status === 'inProgress' ? 'running' : 'finished'
+
 const renderTool = (
   item: CodexThreadItem,
   activity: ProviderToolActivity,
@@ -1038,14 +1053,16 @@ const renderTool = (
   toolId = getToolId(item),
   rawOutput: unknown | typeof defaultRawToolOutput = defaultRawToolOutput,
   images: ProviderToolImage[] = [],
-  icon: ProviderToolIcon | null = null
+  icon: ProviderToolIcon | null = null,
+  compact = false
 ): WorkingItemRenderResult => {
-  const showRawValues = activity === 'other'
+  const showRawValues = activity === 'other' && !compact
 
   return {
     type: 'tool',
     toolId,
-    status: item.status ?? 'finished',
+    status: getWorkingToolStatus(item.status),
+    ...(compact ? { compact: true } : {}),
     activity,
     icon,
     label,
@@ -1463,9 +1480,20 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
   {
     matches: (item) => item.type === 'collabAgentToolCall',
     render: (item) =>
-      item.tool
-        ? (renderMappedTool(item, item.tool) ??
-          renderTool(item, 'other', item.tool, null, null, [], item.tool))
+      item.tool === 'wait'
+        ? renderTool(
+            item,
+            'other',
+            'Waited for subagent',
+            null,
+            null,
+            [],
+            'wait',
+            null,
+            [],
+            'subagent',
+            true
+          )
         : null
   },
   {
@@ -1660,6 +1688,7 @@ const renderChatItems = (
     const finalMessageIndex = getFinalMessageIndex(turn.items, turn.status ?? null)
     let finalMessage: ProviderMessage | null = null
     const workingItems: ProviderWorkingItem[] = []
+    const pendingTimelineAnchors: ProviderChatItem[] = []
     let workingItemCount = 0
     const workingItemTailLimit =
       options.workingItemTailTurnId === turn.id
@@ -1671,6 +1700,7 @@ const renderChatItems = (
     const pushWorkingStep = (status: ProviderWorkingStep['status']): void => {
       if (
         workingItemCount === 0 &&
+        pendingTimelineAnchors.length === 0 &&
         status !== 'stopped' &&
         status !== 'failed' &&
         status !== 'working' &&
@@ -1695,6 +1725,8 @@ const renderChatItems = (
       workingItems.length = 0
       workingItemCount = 0
       workingStepCount += 1
+      chatItems.push(...pendingTimelineAnchors)
+      pendingTimelineAnchors.length = 0
     }
     const appendWorkingItems = (items: ProviderWorkingItem[]): void => {
       if (workingItemTailLimit === Number.MAX_SAFE_INTEGER) {
@@ -1811,6 +1843,14 @@ const renderChatItems = (
             hasSeenInitialUserMessage = true
           }
         }
+        continue
+      }
+
+      if (item.type === 'subAgentActivity' && item.kind === 'completed' && item.agentThreadId) {
+        pendingTimelineAnchors.push({
+          type: 'timelineAnchor',
+          id: getCodexSubagentTimelineAnchorId(turn.id, item.agentThreadId)
+        })
         continue
       }
 

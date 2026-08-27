@@ -33,6 +33,8 @@ import type {
   ProviderSandboxModeOption,
   ProviderSkill,
   ProviderSourceOptions,
+  ProviderSubagent,
+  ProviderSubagentDetail,
   ProviderTokenUsageBreakdown,
   ProviderTurnOptions,
   ProviderUserInputResponse,
@@ -56,6 +58,10 @@ import {
 } from '../providerResources'
 import { getCopilotExecutable } from './CopilotExecutable'
 import { renderCopilotChatItems, type CopilotRenderedPlan } from './CopilotItemRenderers'
+import {
+  createCopilotSubagentSummaries,
+  createCopilotSubagentTranscriptItems
+} from './CopilotSubagents'
 
 type PendingPermission = {
   id: string
@@ -761,6 +767,63 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const state = await this.ensureSession(chatId, undefined, options.container)
     await this.loadEvents(state)
     return this.createChatDetail(state)
+  }
+
+  getSubagents = async (
+    chatId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderSubagent[]> => {
+    const state = await this.ensureSession(chatId, undefined, options.container)
+    await this.loadEvents(state)
+    const tasks = await state
+      .session!.rpc.tasks.list()
+      .then((result) => result.tasks.filter((task) => task.type === 'agent'))
+      .catch(() => [])
+    return createCopilotSubagentSummaries(state.events, tasks)
+  }
+
+  getSubagent = async (
+    chatId: string,
+    subagentId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderSubagentDetail> => {
+    const state = await this.ensureSession(chatId, undefined, options.container)
+    await this.loadEvents(state)
+    const tasks = await state
+      .session!.rpc.tasks.list()
+      .then((result) => result.tasks.filter((task) => task.type === 'agent'))
+      .catch(() => [])
+    const summary = createCopilotSubagentSummaries(state.events, tasks).find(
+      (candidate) => candidate.id === subagentId
+    )
+    if (!summary) throw new Error('Copilot subagent was not found.')
+
+    return {
+      ...summary,
+      items: createCopilotSubagentTranscriptItems(
+        summary,
+        renderCopilotChatItems(state.events, {
+          agentId: subagentId,
+          active: summary.status === 'pending' || summary.status === 'running',
+          stopped: summary.status === 'stopped',
+          failed: summary.status === 'failed'
+        })
+      )
+    }
+  }
+
+  cancelSubagent = async (
+    chatId: string,
+    subagentId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<void> => {
+    const state = await this.ensureSession(chatId, undefined, options.container)
+    const tasks = await state.session!.rpc.tasks.list()
+    if (!tasks.tasks.some((task) => task.type === 'agent' && task.id === subagentId)) {
+      throw new Error('Copilot subagent was not found.')
+    }
+    await state.session!.rpc.tasks.cancel({ id: subagentId })
+    this.emitUpdate(state)
   }
 
   setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {

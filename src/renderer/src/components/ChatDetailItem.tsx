@@ -8,9 +8,10 @@ import {
   useRef,
   useState
 } from 'react'
-import type { ForwardRefExoticComponent, HTMLAttributes, RefAttributes } from 'react'
+import type { ForwardRefExoticComponent, HTMLAttributes, ReactNode, RefAttributes } from 'react'
 import {
   AudioLinesIcon as AnimatedAudioLinesIcon,
+  BotIcon as AnimatedBotIcon,
   BoxIcon as AnimatedBoxIcon,
   BookTextIcon as AnimatedBookTextIcon,
   CircleHelpIcon as AnimatedCircleHelpIcon,
@@ -32,6 +33,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ArrowUp,
   BookOpenText,
+  Bot,
   Check,
   ChevronRight,
   CircleQuestionMark,
@@ -133,6 +135,7 @@ type ChatDetailItemProps = {
   streaming?: boolean
   thoughtSettings?: AppChatThoughtSettings
   turnIndex?: number
+  workingStepContent?: ReactNode
 }
 
 const getThoughtSettings = (settings?: AppChatThoughtSettings): AppChatThoughtSettings =>
@@ -193,6 +196,7 @@ const areChatDetailItemPropsEqual = (
   first.selectedModelId === second.selectedModelId &&
   first.streaming === second.streaming &&
   first.turnIndex === second.turnIndex &&
+  first.workingStepContent === second.workingStepContent &&
   areThoughtSettingsEqual(first.thoughtSettings, second.thoughtSettings) &&
   first.item === second.item
 
@@ -267,7 +271,8 @@ const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
   'image-generation': AnimatedSparklesIcon,
   'openai-docs': AnimatedBookTextIcon,
   plan: AnimatedListIcon,
-  question: AnimatedCircleHelpIcon
+  question: AnimatedCircleHelpIcon,
+  subagent: AnimatedBotIcon
 }
 
 const placeholderOptions = [
@@ -420,11 +425,12 @@ const activeLabelReplacements: Array<[RegExp, string]> = [
   [/^Deleted\b/, 'Deleting'],
   [/^Applied\b/, 'Applying'],
   [/^Updated\b/, 'Updating'],
-  [/^Generated\b/, 'Generating']
+  [/^Generated\b/, 'Generating'],
+  [/^Waited\b/, 'Waiting']
 ]
 
 const finishedLabelPrefixes =
-  /^(Read|Searched|Checked|Viewed|Ran|Used|Changed|Created|Deleted|Applied|Updated|Generated)\b/
+  /^(Read|Searched|Checked|Viewed|Ran|Used|Changed|Created|Deleted|Applied|Updated|Generated|Waited)\b/
 
 const getActiveToolLabel = (label: string, activity: ProviderToolActivity): string => {
   for (const [pattern, replacement] of activeLabelReplacements) {
@@ -563,6 +569,7 @@ const ToolTypeIcon: React.FC<{
   if (icon === 'openai-docs') return <BookOpenText aria-hidden="true" />
   if (icon === 'plan') return <ListChecks aria-hidden="true" />
   if (icon === 'question') return <CircleQuestionMark aria-hidden="true" />
+  if (icon === 'subagent') return <Bot aria-hidden="true" />
 
   if (activity === 'read') return <FileText aria-hidden="true" />
   if (activity === 'search') return <Search aria-hidden="true" />
@@ -1138,7 +1145,7 @@ const ToolItem: React.FC<{
     return <GeneratedImageTool active={active} label={label} tools={tools} />
   }
 
-  if (activity === 'read' || !tools.some(hasToolDetails)) {
+  if (tools.every((tool) => tool.compact) || activity === 'read' || !tools.some(hasToolDetails)) {
     return (
       <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>
         <span className="chat-detail__tool-icon">
@@ -1595,7 +1602,10 @@ const getActiveToolIds = (item: ProviderWorkingStep): Set<string> => {
       if (tool.backgroundSessionId && !closedBackgroundSessionIds.has(tool.backgroundSessionId)) {
         activeToolIds.add(tool.id)
       }
-      if (tool.status === 'running' && longRunningActivities.has(tool.activity)) {
+      if (
+        tool.status === 'running' &&
+        (longRunningActivities.has(tool.activity) || tool.icon === 'subagent')
+      ) {
         activeToolIds.add(tool.id)
       }
     }
@@ -1637,6 +1647,11 @@ const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] => {
   for (const item of items) {
     if (item.type === 'message') {
       blocks.push({ type: 'message', item })
+      continue
+    }
+
+    if (item.type === 'tool' && item.compact) {
+      blocks.push({ type: 'tools', items: [item] })
       continue
     }
 
@@ -1709,6 +1724,7 @@ const getWorkingStepDefaultOpen = (
 }
 
 const WorkingStep: React.FC<{
+  activityContent?: ReactNode
   container?: AppContainerTarget | null
   continueDisabled?: boolean
   continuedStoppedTurn?: boolean
@@ -1728,6 +1744,7 @@ const WorkingStep: React.FC<{
   retryDisabled?: boolean
   thoughtSettings: AppChatThoughtSettings
 }> = ({
+  activityContent,
   container,
   continueDisabled = false,
   continuedStoppedTurn = false,
@@ -1926,7 +1943,7 @@ const WorkingStep: React.FC<{
     )
   }
 
-  if (blockCount === 0 && !hasHiddenItems) {
+  if (blockCount === 0 && !hasHiddenItems && activityContent == null) {
     if (item.status !== 'stopped' && !showPlaceholder && renderedGeneratedImages.length > 0) {
       return (
         <>
@@ -2075,6 +2092,7 @@ const WorkingStep: React.FC<{
                 Unable to load this activity page. Select it to retry.
               </span>
             )}
+            {activityContent}
             {showPlaceholder && <WorkingPlaceholder id={`${item.id}:${item.items.length}`} />}
           </div>
         )}
@@ -2125,7 +2143,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   selectedModelId,
   streaming = false,
   thoughtSettings,
-  turnIndex = -1
+  turnIndex = -1,
+  workingStepContent
 }) => {
   const [copied, setCopied] = useState(false)
   const resolvedThoughtSettings = getThoughtSettings(thoughtSettings)
@@ -2136,6 +2155,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     const timeout = window.setTimeout(() => setCopied(false), 1_200)
     return () => window.clearTimeout(timeout)
   }, [copied])
+
+  if (item.type === 'timelineAnchor') return null
 
   if (item.type === 'contextCompaction') {
     return (
@@ -2327,6 +2348,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
 
   return (
     <WorkingStep
+      activityContent={workingStepContent}
       container={container}
       continueDisabled={continueStoppedTurnDisabled || !continuePrompt.trim()}
       continuedStoppedTurn={continuedStoppedTurn}

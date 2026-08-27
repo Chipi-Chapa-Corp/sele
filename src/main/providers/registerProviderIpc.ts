@@ -24,6 +24,7 @@ import type {
   ProviderSkill,
   ProviderSkillInput,
   ProviderSkillScope,
+  ProviderSubagentDetail,
   ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
   ProviderUserInputResponse,
@@ -1236,6 +1237,40 @@ export const registerProviderIpc = (): void => {
     getRendererChatDetail(() =>
       providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
     )
+  )
+
+  ipcMain.handle(providerIpcChannels.getSubagents, (_, providerId: unknown, chatId: unknown) =>
+    providerApi.getSubagents(requireProviderId(providerId), requireChatId(chatId))
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.getSubagent,
+    async (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      subagentId: unknown
+    ): Promise<ProviderSubagentDetail> => {
+      const detail = await providerApi.getSubagent(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireChatId(subagentId)
+      )
+      return {
+        ...detail,
+        items: prepareChatItemsForRenderer(detail.items)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.cancelSubagent,
+    (_, providerId: unknown, chatId: unknown, subagentId: unknown) =>
+      providerApi.cancelSubagent(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireChatId(subagentId)
+      )
   )
 
   ipcMain.handle(

@@ -4,7 +4,9 @@ import { basename } from 'node:path'
 import {
   getSessionInfo,
   getSessionMessages,
+  getSubagentMessages,
   listSessions,
+  listSubagents,
   query,
   renameSession,
   type CanUseTool,
@@ -46,6 +48,8 @@ import {
   type ProviderSandboxModeOption,
   type ProviderSkill,
   type ProviderSourceOptions,
+  type ProviderSubagent,
+  type ProviderSubagentDetail,
   type ProviderTokenUsageBreakdown,
   type ProviderTurnOptions,
   type ProviderUpdateAvailability,
@@ -77,6 +81,7 @@ import {
 import { getClaudeQueueDrainDecision } from './ClaudeQueueDrain'
 import { discoverClaudeSkills } from './ClaudeSkillDiscovery'
 import { applyClaudeStreamEvent, clearClaudeStreamMessages } from './ClaudeStreaming'
+import { createClaudeSubagentSummary } from './ClaudeSubagents'
 import { mapClaudeRateLimits } from './ClaudeUsage'
 import { parseClaudeVersion, supportsClaudeResumeDropsTurn } from './ClaudeVersion'
 
@@ -136,6 +141,7 @@ type ClaudeSessionState = {
   queryReadOnly: boolean | null
   queryModel: string | undefined | null
   backgroundTaskIds: Set<string>
+  subagentTaskStatuses: Map<string, ProviderSubagent['status']>
   waitingForSessionIdle: boolean
 }
 
@@ -366,18 +372,22 @@ done
   }
 
   load = async (key: SessionKey): Promise<SessionStoreEntry[] | null> => {
-    if (key.subpath) return null
     const output = await this.run(
       `
 root=\${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}/projects
-for path in "$root"/*/"$1.jsonl"; do
+if [ -n "$2" ]; then
+  suffix="$1/$2.jsonl"
+else
+  suffix="$1.jsonl"
+fi
+for path in "$root"/*/"$suffix"; do
   [ -f "$path" ] || continue
   cat "$path"
   exit 0
 done
 exit 4
 `,
-      [key.sessionId]
+      [key.sessionId, key.subpath ?? '']
     ).catch((error: unknown) => {
       const code = isRecord(error) ? error.code : undefined
       if (code === 4) return null
@@ -393,6 +403,24 @@ exit 4
         return []
       }
     })
+  }
+
+  listSubkeys = async (key: { projectKey: string; sessionId: string }): Promise<string[]> => {
+    const output = await this.run(
+      `
+root=\${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}/projects
+for path in "$root"/*/"$1"/subagents/*.jsonl; do
+  [ -f "$path" ] || continue
+  file=\${path##*/}
+  printf 'subagents/%s\n' "\${file%.jsonl}"
+done
+`,
+      [key.sessionId]
+    )
+    return output
+      .split('\n')
+      .map((subpath) => subpath.trim())
+      .filter(Boolean)
   }
 
   append = async (key: SessionKey, entries: SessionStoreEntry[]): Promise<void> => {
@@ -797,6 +825,87 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, undefined, options.container)
     return this.createChatDetail(state)
+  }
+
+  getSubagents = async (
+    chatId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderSubagent[]> => {
+    const state = await this.ensureState(chatId, undefined, options.container)
+    const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
+    const agentIds = await listSubagents(chatId, {
+      ...(state.cwd ? { dir: state.cwd } : {}),
+      ...(sessionStore ? { sessionStore } : {})
+    })
+    const subagents = await Promise.all(
+      agentIds.map(async (agentId) => {
+        const summary = createClaudeSubagentSummary(
+          agentId,
+          await getSubagentMessages(chatId, agentId, {
+            ...(state.cwd ? { dir: state.cwd } : {}),
+            ...(sessionStore ? { sessionStore } : {})
+          })
+        )
+        return {
+          ...summary,
+          status:
+            state.subagentTaskStatuses.get(agentId) ??
+            (state.backgroundTaskIds.has(agentId) ? 'running' : 'completed')
+        }
+      })
+    )
+    return subagents.sort(
+      (first, second) =>
+        (first.createdAt ?? Number.MAX_SAFE_INTEGER) - (second.createdAt ?? Number.MAX_SAFE_INTEGER)
+    )
+  }
+
+  getSubagent = async (
+    chatId: string,
+    subagentId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderSubagentDetail> => {
+    const state = await this.ensureState(chatId, undefined, options.container)
+    const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
+    const listOptions = {
+      ...(state.cwd ? { dir: state.cwd } : {}),
+      ...(sessionStore ? { sessionStore } : {})
+    }
+    const agentIds = await listSubagents(chatId, listOptions)
+    if (!agentIds.includes(subagentId)) throw new Error('Claude subagent was not found.')
+
+    const messages = await getSubagentMessages(chatId, subagentId, listOptions)
+    const summary = {
+      ...createClaudeSubagentSummary(subagentId, messages),
+      status:
+        state.subagentTaskStatuses.get(subagentId) ??
+        (state.backgroundTaskIds.has(subagentId) ? ('running' as const) : ('completed' as const))
+    }
+    const transcript = messages.map((message) => ({
+      ...toTranscriptMessage(message),
+      parent_tool_use_id: null
+    }))
+    return {
+      ...summary,
+      items: renderClaudeChatItems(transcript, {
+        active: false,
+        stopped: false
+      })
+    }
+  }
+
+  cancelSubagent = async (
+    chatId: string,
+    subagentId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<void> => {
+    const state = await this.ensureState(chatId, undefined, options.container)
+    if (!state.query) return
+
+    await state.query.stopTask(subagentId)
+    state.backgroundTaskIds.delete(subagentId)
+    state.subagentTaskStatuses.set(subagentId, 'stopped')
+    this.emitUpdate(state)
   }
 
   setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {
@@ -1318,6 +1427,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       queryReadOnly: null,
       queryModel: null,
       backgroundTaskIds: new Set(),
+      subagentTaskStatuses: new Map(),
       waitingForSessionIdle: false
     }
   }
@@ -1597,6 +1707,19 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         state.waitingForSessionIdle = false
         return true
       }
+      return false
+    }
+    if (event.type === 'system' && event.subtype === 'task_started') {
+      state.subagentTaskStatuses.set(event.task_id, 'running')
+      this.queueUpdate(state, false)
+      return false
+    }
+    if (event.type === 'system' && event.subtype === 'task_notification') {
+      state.subagentTaskStatuses.set(
+        event.task_id,
+        event.status === 'failed' ? 'failed' : event.status === 'stopped' ? 'stopped' : 'completed'
+      )
+      this.queueUpdate(state, false)
       return false
     }
     if (event.type === 'system' && event.subtype === 'session_state_changed') {

@@ -357,6 +357,9 @@ export const groupWorkingItemsForRenderer = (
     if (item.type === 'message') {
       flushTools()
       groupedItems.push(item)
+    } else if (item.type === 'tool' && item.compact) {
+      flushTools()
+      groupedItems.push(item)
     } else {
       pendingTools.push(item)
     }

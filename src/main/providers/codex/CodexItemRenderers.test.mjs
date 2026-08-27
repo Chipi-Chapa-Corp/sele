@@ -63,6 +63,165 @@ test('keeps a final answer visible when a steering message follows it', () => {
   )
 })
 
+test('keeps completed subagents in one parent working section', () => {
+  const items = getChatItems([
+    {
+      id: 'turn-1',
+      status: 'completed',
+      startedAt: 1,
+      completedAt: 2,
+      items: [
+        userMessage('user-1', 'Coordinate the work'),
+        {
+          type: 'agentMessage',
+          id: 'commentary-1',
+          text: 'The mapper is working.',
+          phase: 'commentary',
+          status: 'finished'
+        },
+        {
+          type: 'subAgentActivity',
+          id: 'activity-1',
+          kind: 'completed',
+          agentThreadId: 'child-1'
+        },
+        {
+          type: 'agentMessage',
+          id: 'commentary-2',
+          text: 'Now I will verify its result.',
+          phase: 'commentary',
+          status: 'finished'
+        },
+        {
+          type: 'subAgentActivity',
+          id: 'activity-2',
+          kind: 'completed',
+          agentThreadId: 'child-2'
+        },
+        finalAnswer('answer-1', 'Everything is done.')
+      ]
+    }
+  ])
+
+  assert.deepEqual(
+    items.map((item) => [item.type, item.id]),
+    [
+      ['message', 'turn-1:user-1'],
+      ['working', 'turn-1:working'],
+      ['timelineAnchor', 'turn-1:subagent-completed:child-1'],
+      ['timelineAnchor', 'turn-1:subagent-completed:child-2'],
+      ['message', 'turn-1:answer-1']
+    ]
+  )
+})
+
+test('creates a working section for a subagent completion without parent commentary', () => {
+  const items = getChatItems([
+    {
+      id: 'turn-1',
+      status: 'completed',
+      items: [
+        userMessage('user-1', 'Delegate this work'),
+        {
+          type: 'subAgentActivity',
+          id: 'activity-1',
+          kind: 'completed',
+          agentThreadId: 'child-1'
+        },
+        finalAnswer('answer-1', 'Done.')
+      ]
+    }
+  ])
+
+  assert.deepEqual(
+    items.map((item) => [item.type, item.id]),
+    [
+      ['message', 'turn-1:user-1'],
+      ['working', 'turn-1:working'],
+      ['timelineAnchor', 'turn-1:subagent-completed:child-1'],
+      ['message', 'turn-1:answer-1']
+    ]
+  )
+})
+
+test('hides Codex collaboration tool calls from the parent transcript', () => {
+  const items = getChatItems([
+    {
+      id: 'turn-1',
+      status: 'completed',
+      items: [
+        userMessage('user-1', 'Delegate this work'),
+        {
+          type: 'collabAgentToolCall',
+          id: 'collab-1',
+          tool: 'spawnAgent',
+          status: 'completed'
+        },
+        finalAnswer('answer-1', 'Done.')
+      ]
+    }
+  ])
+
+  assert.deepEqual(
+    items.map((item) => [item.type, item.id]),
+    [
+      ['message', 'turn-1:user-1'],
+      ['message', 'turn-1:answer-1']
+    ]
+  )
+})
+
+test('renders Codex waits as compact subagent status rows', () => {
+  const activeItems = getChatItems([
+    {
+      id: 'turn-waiting',
+      status: 'inProgress',
+      items: [
+        userMessage('user-waiting', 'Wait for the delegated work'),
+        {
+          type: 'collabAgentToolCall',
+          id: 'wait-active',
+          tool: 'wait',
+          status: 'inProgress'
+        }
+      ]
+    }
+  ])
+  const activeWorking = activeItems.find((item) => item.type === 'working')
+  const activeWait = activeWorking?.items.find((item) => item.type === 'tool')
+
+  assert.equal(activeWait?.label, 'Waited for subagent')
+  assert.equal(activeWait?.status, 'running')
+  assert.equal(activeWait?.icon, 'subagent')
+  assert.equal(activeWait?.compact, true)
+  assert.equal(activeWait?.rawInput, null)
+  assert.equal(activeWait?.rawOutput, null)
+
+  const completedItems = getChatItems([
+    {
+      id: 'turn-waited',
+      status: 'completed',
+      items: [
+        userMessage('user-waited', 'Wait for the delegated work'),
+        {
+          type: 'collabAgentToolCall',
+          id: 'wait-completed',
+          tool: 'wait',
+          status: 'completed'
+        },
+        finalAnswer('answer-waited', 'The delegated work finished.')
+      ]
+    }
+  ])
+  const completedWorking = completedItems.find((item) => item.type === 'working')
+  const completedWait = completedWorking?.items.find((item) => item.type === 'tool')
+
+  assert.equal(completedWait?.label, 'Waited for subagent')
+  assert.equal(completedWait?.status, 'finished')
+  assert.equal(completedWait?.icon, 'subagent')
+  assert.equal(completedWait?.compact, true)
+})
+
 test('only treats a non-streaming final answer as completed', () => {
   assert.equal(
     hasCompletedCodexFinalAnswer({

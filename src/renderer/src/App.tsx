@@ -148,6 +148,8 @@ import type {
   ProviderReviewComment,
   ProviderSandboxMode,
   ProviderSandboxModeOption,
+  ProviderSubagent,
+  ProviderSubagentDetail,
   ProviderAppInput,
   ProviderSkill,
   ProviderSkillInput,
@@ -218,6 +220,7 @@ import { RecentReferencesList } from './components/RecentReferencesList'
 import { SegmentedControl } from './components/SegmentedControl'
 import { Switch } from './components/Switch'
 import { SshEnvironmentDialog } from './components/SshEnvironmentDialog'
+import { getSubagentMarkerPlacements, getSubagentMarkerPresentation } from './subagentUi'
 import { TerminalPanel, type TerminalCommandLaunchRequest } from './components/TerminalPanel'
 import { UserInputRequestBox } from './components/UserInputRequestBox'
 import type { AppAction } from './actions'
@@ -445,6 +448,19 @@ type CommitChatReturnTarget = {
   providerId: ProviderId
   commitChatId: string
   sourceChat: ProviderChat
+}
+type SubagentListState = {
+  rootChatKey: string
+  items: ProviderSubagent[]
+  loadState: LoadState
+  error: string | null
+}
+type SubagentChatView = {
+  rootChatKey: string
+  summary: ProviderSubagent
+  detail: ProviderSubagentDetail | null
+  loadState: LoadState
+  error: string | null
 }
 type DirectCommitActivity = {
   source: 'git'
@@ -1650,6 +1666,67 @@ const ChatCommitMarkerItem: React.FC<{
         <span className="chat-detail__commit-marker-open">{markerContent}</span>
       )}
       {marker.status === 'pending' && onCancel && (
+        <span className="chat-detail__commit-marker-cancel">
+          <Button
+            aria-label={cancelLabel}
+            callback={onCancel}
+            disabled={canceling}
+            icon={<X aria-hidden="true" />}
+            size="small"
+            theme="transparent"
+            title={cancelLabel}
+          />
+        </span>
+      )}
+    </div>
+  )
+}
+
+const ChatSubagentMarkerItem: React.FC<{
+  canceling?: boolean
+  onCancel?: () => Promise<void> | void
+  subagent: ProviderSubagent
+  onOpen: () => Promise<void> | void
+}> = ({ canceling = false, onCancel, subagent, onOpen }) => {
+  const presentation = getSubagentMarkerPresentation(subagent)
+  const cancelLabel = `Cancel ${subagent.title}`
+  const openLabel = `Open ${subagent.title} chat`
+
+  return (
+    <div
+      className={`chat-detail__commit-marker chat-detail__commit-marker--${presentation.status}`}
+      role="status"
+      aria-live={presentation.status === 'pending' ? 'polite' : undefined}
+    >
+      <button
+        aria-label={openLabel}
+        className="chat-detail__commit-marker-open"
+        title={openLabel}
+        type="button"
+        onClick={() => void onOpen()}
+      >
+        {presentation.status === 'pending' ? (
+          <AnimatedStatusIcon
+            Icon={AnimatedMessageSquareMoreIcon}
+            active
+            className="chat-detail__commit-marker-icon"
+          />
+        ) : (
+          <span className="chat-detail__commit-marker-icon" aria-hidden="true">
+            {presentation.status === 'failed' ? (
+              <X />
+            ) : presentation.status === 'stopped' ? (
+              <Minus />
+            ) : subagent.status === 'completed' ? (
+              <Check />
+            ) : (
+              <Bot />
+            )}
+          </span>
+        )}
+        <span>{presentation.label}</span>
+      </button>
+      {presentation.status === 'pending' && onCancel && (
         <span className="chat-detail__commit-marker-cancel">
           <Button
             aria-label={cancelLabel}
@@ -4211,6 +4288,9 @@ export const App: React.FC = () => {
   const [openingAiCommitChatIds, setOpeningAiCommitChatIds] = useState<Set<string>>(() => new Set())
   const [commitChatReturnTarget, setCommitChatReturnTarget] =
     useState<CommitChatReturnTarget | null>(null)
+  const [subagentListState, setSubagentListState] = useState<SubagentListState | null>(null)
+  const [subagentChatView, setSubagentChatView] = useState<SubagentChatView | null>(null)
+  const [cancelingSubagentIds, setCancelingSubagentIds] = useState<Set<string>>(() => new Set())
   const [syncProjectKeys, setSyncProjectKeys] = useState<Set<string>>(() => new Set())
   const [syncErrorsByProjectKey, setSyncErrorsByProjectKey] = useState<Record<string, string>>({})
   const [syncRecoveriesByProjectKey, setSyncRecoveriesByProjectKey] = useState<
@@ -4224,8 +4304,10 @@ export const App: React.FC = () => {
   const [windowState, setWindowState] = useState<AppWindowState>({ isMaximized: false })
   const panelsRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const subagentContentRef = useRef<HTMLDivElement>(null)
   const chatTurnWindowRef = useRef<ChatTurnWindow | null>(chatTurnWindow)
   const chatTurnPageLoadRequestRef = useRef(0)
+  const subagentChatLoadRequestRef = useRef(0)
   const chatTurnPageLoadInFlightRef = useRef(false)
   const chatTurnScrollDirectionRef = useRef<'up' | 'down' | null>(null)
   const previousChatScrollTopRef = useRef<number | null>(null)
@@ -6427,6 +6509,142 @@ export const App: React.FC = () => {
     selectedProviderId && selectedChatId
       ? getChatKey({ providerId: selectedProviderId, id: selectedChatId })
       : null
+  const activeSubagentChatView =
+    subagentChatView?.rootChatKey === selectedChatKey ? subagentChatView : null
+  const activeSubagentId = activeSubagentChatView?.summary.id ?? null
+  const selectedChatSubagents = useMemo(
+    () => (subagentListState?.rootChatKey === selectedChatKey ? subagentListState.items : []),
+    [selectedChatKey, subagentListState]
+  )
+
+  useEffect(() => {
+    if (
+      !selectedProviderId ||
+      !selectedChatId ||
+      !selectedChatKey ||
+      chatDetail?.id !== selectedChatId ||
+      chatDetail.purpose === 'commit'
+    ) {
+      setSubagentListState(null)
+      setSubagentChatView(null)
+      return
+    }
+
+    let active = true
+    setSubagentListState((currentState) =>
+      currentState?.rootChatKey === selectedChatKey
+        ? currentState
+        : { rootChatKey: selectedChatKey, items: [], loadState: 'loading', error: null }
+    )
+
+    const timeoutId = window.setTimeout(() => {
+      void providerApi
+        .getSubagents(selectedProviderId, selectedChatId)
+        .then((subagents) => {
+          if (!active || selectedChatKeyRef.current !== selectedChatKey) return
+
+          setSubagentListState({
+            rootChatKey: selectedChatKey,
+            items: subagents,
+            loadState: 'ready',
+            error: null
+          })
+          setSubagentChatView((currentView) => {
+            if (currentView?.rootChatKey !== selectedChatKey) return currentView
+            const updatedSummary = subagents.find(
+              (subagent) => subagent.id === currentView.summary.id
+            )
+            return updatedSummary ? { ...currentView, summary: updatedSummary } : currentView
+          })
+        })
+        .catch((error) => {
+          if (!active || selectedChatKeyRef.current !== selectedChatKey) return
+
+          setSubagentListState((currentState) => ({
+            rootChatKey: selectedChatKey,
+            items: currentState?.rootChatKey === selectedChatKey ? currentState.items : [],
+            loadState: 'error',
+            error: getErrorMessage(error, 'Unable to load subagent chats.')
+          }))
+        })
+    }, 120)
+
+    return () => {
+      active = false
+      window.clearTimeout(timeoutId)
+    }
+  }, [
+    chatDetail?.id,
+    chatDetail?.items,
+    chatDetail?.purpose,
+    selectedChatId,
+    selectedChatKey,
+    selectedProviderId
+  ])
+
+  useEffect(() => {
+    if (!selectedProviderId || !selectedChatId || !selectedChatKey || !activeSubagentId) return
+
+    let active = true
+    let timeoutId: number | null = null
+    const requestId = subagentChatLoadRequestRef.current
+
+    const scheduleRefresh = (delay: number): void => {
+      timeoutId = window.setTimeout(() => void refresh(), delay)
+    }
+    const refresh = async (): Promise<void> => {
+      try {
+        const detail = await providerApi.getSubagent(
+          selectedProviderId,
+          selectedChatId,
+          activeSubagentId
+        )
+        if (
+          !active ||
+          subagentChatLoadRequestRef.current !== requestId ||
+          selectedChatKeyRef.current !== selectedChatKey
+        ) {
+          return
+        }
+
+        setSubagentChatView((currentView) =>
+          currentView?.rootChatKey === selectedChatKey &&
+          currentView.summary.id === activeSubagentId
+            ? {
+                rootChatKey: selectedChatKey,
+                summary: detail,
+                detail,
+                loadState: 'ready',
+                error: null
+              }
+            : currentView
+        )
+
+        if (
+          detail.status === 'pending' ||
+          detail.status === 'running' ||
+          detail.status === 'idle' ||
+          detail.status === 'unknown'
+        ) {
+          scheduleRefresh(1_500)
+        }
+      } catch {
+        if (
+          active &&
+          subagentChatLoadRequestRef.current === requestId &&
+          selectedChatKeyRef.current === selectedChatKey
+        ) {
+          scheduleRefresh(2_000)
+        }
+      }
+    }
+
+    scheduleRefresh(750)
+    return () => {
+      active = false
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
+    }
+  }, [activeSubagentId, selectedChatId, selectedChatKey, selectedProviderId])
 
   useEffect(() => {
     chatDetailResyncRequestIdRef.current += 1
@@ -8584,6 +8802,8 @@ export const App: React.FC = () => {
 
     resetChatSearch()
     setCommitChatReturnTarget(null)
+    subagentChatLoadRequestRef.current += 1
+    setSubagentChatView(null)
     setSendState(sendInFlightRef.current ? 'sending' : 'idle')
     setEditingMessage(null)
     setNewChatOpen(false)
@@ -8625,8 +8845,15 @@ export const App: React.FC = () => {
   }
 
   const handleBack = (): void => {
+    if (activeSubagentChatView) {
+      handleReturnFromSubagentChat()
+      return
+    }
+
     markSelectedChatSeen(true)
     setCommitChatReturnTarget(null)
+    subagentChatLoadRequestRef.current += 1
+    setSubagentChatView(null)
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
     resetChatSearch()
@@ -8649,6 +8876,8 @@ export const App: React.FC = () => {
     markSelectedChatSeen(true)
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
+    subagentChatLoadRequestRef.current += 1
+    setSubagentChatView(null)
     showNewChatView(projectCwd, projectContainer)
   }
 
@@ -8658,6 +8887,8 @@ export const App: React.FC = () => {
     markSelectedChatSeen(true)
     selectedChatKeyRef.current = null
     selectedChatUpdatedAtRef.current = null
+    subagentChatLoadRequestRef.current += 1
+    setSubagentChatView(null)
     showNewChatView(group.cwd)
   }
 
@@ -9733,7 +9964,13 @@ export const App: React.FC = () => {
     turnOptionsOverride?: ProviderTurnOptions,
     sendTarget?: 'current' | 'new'
   ): Promise<boolean> => {
-    if (providerUpdateInProgress || sendInFlightRef.current) return false
+    if (
+      providerUpdateInProgress ||
+      sendInFlightRef.current ||
+      (activeSubagentChatView && sendTarget !== 'new')
+    ) {
+      return false
+    }
     const sendProjectKey = getChatCwdGroupKey(
       selectedChat ? (changesProjectCwd ?? getChatProjectCwd(selectedChat)) : newSessionCwd
     )
@@ -10694,11 +10931,13 @@ export const App: React.FC = () => {
   const messageBoxDisabled = selectedChat
     ? providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
+      Boolean(activeSubagentChatView) ||
       Boolean(selectedChatAiCommitAction) ||
       (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
     : providerUpdateInProgress || !newSessionProviderAvailable
   const canEditOwnMessages = Boolean(
     selectedChat &&
+    !activeSubagentChatView &&
     chatDetail?.capabilities.editMessages &&
     chatLoadState === 'ready' &&
     sendState !== 'sending' &&
@@ -10706,9 +10945,22 @@ export const App: React.FC = () => {
     !editingMessage
   )
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
+  const subagentVisibleChatItems = useMemo(
+    () => activeSubagentChatView?.detail?.items ?? [],
+    [activeSubagentChatView?.detail?.items]
+  )
   const chatConversationModel = useMemo(
     () => buildChatConversationModel(visibleChatItems),
     [visibleChatItems]
+  )
+  const subagentChatConversationModel = useMemo(
+    () => buildChatConversationModel(subagentVisibleChatItems),
+    [subagentVisibleChatItems]
+  )
+  const subagentChatItemIndexesById = subagentChatConversationModel.itemIndexesById
+  const { workingStepId: subagentMarkersByWorkingStepId } = useMemo(
+    () => getSubagentMarkerPlacements(selectedChatSubagents, visibleChatItems),
+    [selectedChatSubagents, visibleChatItems]
   )
   const loadedChatTurnStartIndex = getChatDetailItemsStartTurnIndex(chatDetail)
   const loadedChatTurnEndIndex = getLoadedChatDetailTurnEndIndex(chatDetail)
@@ -12696,6 +12948,8 @@ export const App: React.FC = () => {
       setEditingMessage(null)
       setSearchOpen(false)
       setSearchQuery('')
+      subagentChatLoadRequestRef.current += 1
+      setSubagentChatView(null)
       setCommitChatReturnTarget(
         sourceChat
           ? {
@@ -12733,6 +12987,129 @@ export const App: React.FC = () => {
     handleSelectChat(currentSourceChat)
   }
 
+  const handleOpenSubagentChat = async (subagent: ProviderSubagent): Promise<void> => {
+    if (!selectedProviderId || !selectedChatId || !selectedChatKey) return
+
+    const requestId = subagentChatLoadRequestRef.current + 1
+    subagentChatLoadRequestRef.current = requestId
+    resetChatSearch()
+    setEditingMessage(null)
+    setSubagentChatView({
+      rootChatKey: selectedChatKey,
+      summary: subagent,
+      detail: null,
+      loadState: 'loading',
+      error: null
+    })
+
+    try {
+      const detail = await providerApi.getSubagent(selectedProviderId, selectedChatId, subagent.id)
+      if (
+        subagentChatLoadRequestRef.current !== requestId ||
+        selectedChatKeyRef.current !== selectedChatKey
+      ) {
+        return
+      }
+
+      setSubagentChatView({
+        rootChatKey: selectedChatKey,
+        summary: detail,
+        detail,
+        loadState: 'ready',
+        error: null
+      })
+      window.requestAnimationFrame(() => {
+        const contentElement = subagentContentRef.current
+        if (contentElement) scrollChatContentToBottom(contentElement)
+      })
+    } catch (error) {
+      if (
+        subagentChatLoadRequestRef.current !== requestId ||
+        selectedChatKeyRef.current !== selectedChatKey
+      ) {
+        return
+      }
+
+      setSubagentChatView({
+        rootChatKey: selectedChatKey,
+        summary: subagent,
+        detail: null,
+        loadState: 'error',
+        error: getErrorMessage(error, 'Unable to open this subagent chat.')
+      })
+    }
+  }
+
+  const handleCancelSubagent = async (subagent: ProviderSubagent): Promise<void> => {
+    if (
+      !selectedProviderId ||
+      !selectedChatId ||
+      !selectedChatKey ||
+      cancelingSubagentIds.has(subagent.id)
+    ) {
+      return
+    }
+
+    setCancelingSubagentIds((currentIds) => new Set(currentIds).add(subagent.id))
+    try {
+      await providerApi.cancelSubagent(selectedProviderId, selectedChatId, subagent.id)
+      const stoppedSubagent: ProviderSubagent = {
+        ...subagent,
+        status: 'stopped',
+        updatedAt: Date.now()
+      }
+      setSubagentListState((currentState) =>
+        currentState?.rootChatKey === selectedChatKey
+          ? {
+              ...currentState,
+              items: currentState.items.map((item) =>
+                item.id === subagent.id ? stoppedSubagent : item
+              ),
+              loadState: 'ready',
+              error: null
+            }
+          : currentState
+      )
+      setSubagentChatView((currentView) =>
+        currentView?.rootChatKey === selectedChatKey && currentView.summary.id === subagent.id
+          ? {
+              ...currentView,
+              summary: stoppedSubagent,
+              detail: currentView.detail
+                ? { ...currentView.detail, ...stoppedSubagent }
+                : currentView.detail
+            }
+          : currentView
+      )
+    } catch (error) {
+      setSubagentListState((currentState) =>
+        currentState?.rootChatKey === selectedChatKey
+          ? {
+              ...currentState,
+              error: getErrorMessage(error, 'Unable to cancel this subagent.')
+            }
+          : currentState
+      )
+    } finally {
+      setCancelingSubagentIds((currentIds) => {
+        if (!currentIds.has(subagent.id)) return currentIds
+        const nextIds = new Set(currentIds)
+        nextIds.delete(subagent.id)
+        return nextIds
+      })
+    }
+  }
+
+  const handleReturnFromSubagentChat = (): void => {
+    subagentChatLoadRequestRef.current += 1
+    resetChatSearch()
+    setSubagentChatView(null)
+    window.requestAnimationFrame(() => {
+      const contentElement = contentRef.current
+      if (contentElement) scrollChatContentToBottom(contentElement)
+    })
+  }
+
   const renderChatCommitMarker = (marker: ChatCommitMarker): React.ReactElement => {
     const activity = scopedCommitActivitiesByMarkerId.get(marker.id)
     const activityKey = activity ? getProviderChatKey(activity.providerId, activity.chatId) : null
@@ -12750,6 +13127,20 @@ export const App: React.FC = () => {
       />
     )
   }
+
+  const renderChatSubagentMarker = (subagent: ProviderSubagent): React.ReactElement => (
+    <ChatSubagentMarkerItem
+      canceling={cancelingSubagentIds.has(subagent.id)}
+      key={subagent.id}
+      onCancel={
+        subagent.status === 'pending' || subagent.status === 'running'
+          ? () => handleCancelSubagent(subagent)
+          : undefined
+      }
+      subagent={subagent}
+      onOpen={() => handleOpenSubagentChat(subagent)}
+    />
+  )
 
   const showRecoverableGitFailure = (
     projectKey: string,
@@ -14888,6 +15279,11 @@ export const App: React.FC = () => {
                 streaming={item.id === streamingChatItemId}
                 thoughtSettings={effectiveAppSettings.chat}
                 turnIndex={turnIndex}
+                workingStepContent={
+                  item.type === 'working'
+                    ? subagentMarkersByWorkingStepId.get(item.id)?.map(renderChatSubagentMarker)
+                    : undefined
+                }
               />
               {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
             </Fragment>
@@ -14901,7 +15297,48 @@ export const App: React.FC = () => {
     )
   }
 
+  const renderSubagentChatTurn = (
+    turnIndex: number,
+    turn: ProviderChatTurn
+  ): React.ReactElement => (
+    <div
+      className="chat-detail__turn"
+      data-chat-turn-id={turn.id}
+      data-chat-turn-index={turnIndex}
+      key={turn.id}
+    >
+      {turn.items.map((item) => {
+        const itemIndex = subagentChatItemIndexesById.get(item.id) ?? -1
+        const followingWorkingStep = subagentChatConversationModel.followingWorkingStepsById.get(
+          item.id
+        )
+
+        return (
+          <ChatDetailItem
+            container={changesContainer}
+            followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
+            followingWorkingStepStatus={followingWorkingStep?.status}
+            hasNextWorkingStep={subagentChatConversationModel.workingStepIdsWithNextWorkingStep.has(
+              item.id
+            )}
+            item={item}
+            key={item.id}
+            cwd={changesCwd}
+            modelLabelsById={modelLabelsById}
+            onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+            previousItem={itemIndex > 0 ? subagentVisibleChatItems[itemIndex - 1] : null}
+            projectCwd={changesProjectCwd}
+            selectedModelId={model}
+            thoughtSettings={effectiveAppSettings.chat}
+            turnIndex={turnIndex}
+          />
+        )
+      })}
+    </div>
+  )
+
   const showChatTurnDownButton = Boolean(
+    !activeSubagentChatView &&
     effectiveChatTurnWindow &&
     (!chatAtConversationBottom ||
       effectiveChatTurnWindow.endIndex < effectiveChatTurnWindow.totalCount)
@@ -15066,7 +15503,9 @@ export const App: React.FC = () => {
           )}
           <section
             className={`chat-panel${selectedChat ? ' chat-panel--selected' : ' chat-panel--empty'}${newChatOpen ? ' chat-panel--new' : ''}`}
-            aria-label={selectedChat?.title ?? 'No chat selected'}
+            aria-label={
+              activeSubagentChatView?.summary.title ?? selectedChat?.title ?? 'No chat selected'
+            }
           >
             {selectedChat && chatSearchOpen && (
               <div className="chat-detail__search" role="search" aria-label="Find in conversation">
@@ -15139,7 +15578,18 @@ export const App: React.FC = () => {
             )}
             {selectedChat && (
               <div className="chat-detail__messages-shell">
-                {commitChatReturnTarget?.providerId === selectedChat.providerId &&
+                {activeSubagentChatView ? (
+                  <div className="chat-detail__commit-back-button">
+                    <Button
+                      aria-label="Back to parent chat"
+                      title="Back to parent chat"
+                      callback={handleReturnFromSubagentChat}
+                      icon={<ArrowLeft aria-hidden="true" />}
+                      theme="secondary"
+                    />
+                  </div>
+                ) : (
+                  commitChatReturnTarget?.providerId === selectedChat.providerId &&
                   commitChatReturnTarget.commitChatId === selectedChat.id && (
                     <div className="chat-detail__commit-back-button">
                       <Button
@@ -15150,50 +15600,90 @@ export const App: React.FC = () => {
                         theme="secondary"
                       />
                     </div>
-                  )}
+                  )
+                )}
                 <div
                   className="chat-detail__messages"
                   id="chat-search-content"
-                  key={selectedChatKey}
-                  onScroll={handleNativeChatContentScroll}
-                  onWheel={handleNativeChatContentWheel}
+                  key={
+                    activeSubagentChatView
+                      ? `${selectedChatKey}:subagent:${activeSubagentChatView.summary.id}`
+                      : selectedChatKey
+                  }
+                  onScroll={activeSubagentChatView ? undefined : handleNativeChatContentScroll}
+                  onWheel={activeSubagentChatView ? undefined : handleNativeChatContentWheel}
                   ref={(element) => {
-                    contentRef.current = element
+                    if (activeSubagentChatView) {
+                      subagentContentRef.current = element
+                      if (element) contentRef.current = null
+                    } else {
+                      contentRef.current = element
+                      if (element) subagentContentRef.current = null
+                    }
                     chatSearchContentRef.current = element
                   }}
                 >
                   <div className="chat-detail__messages-layout">
                     <div className="chat-detail__messages-header" />
                     <div className="chat-detail__messages-inner">
-                      {renderedChatTurns.map((turn, index) =>
-                        renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)
-                      )}
+                      {activeSubagentChatView
+                        ? subagentChatConversationModel.turns.map((turn, index) =>
+                            renderSubagentChatTurn(index, turn)
+                          )
+                        : renderedChatTurns.map((turn, index) =>
+                            renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)
+                          )}
                     </div>
                     <div className="chat-detail__messages-footer" />
                   </div>
                 </div>
-                {chatLoadState === 'loading' && (
+                {!activeSubagentChatView && chatLoadState === 'loading' && (
                   <p className="chat__status chat-detail__messages-status">Loading messages…</p>
                 )}
-                {chatLoadState === 'error' && (
+                {!activeSubagentChatView && chatLoadState === 'error' && (
                   <p className="chat__status chat-detail__messages-status">
                     Unable to load messages.
                   </p>
                 )}
-                {!editingMessage &&
+                {!activeSubagentChatView &&
+                  !editingMessage &&
                   chatLoadState === 'ready' &&
                   visibleChatItems.length === 0 &&
-                  selectedChatCommitMarkers.length === 0 && (
+                  selectedChatCommitMarkers.length === 0 &&
+                  selectedChatSubagents.length === 0 && (
                     <p className="chat__status chat-detail__messages-status">No messages found.</p>
                   )}
-                {chatTurnPageLoadDirection && chatTurnPageLoadDirection !== 'latest' && (
-                  <span
-                    className={`chat-detail__turn-page-loading chat-detail__turn-page-loading--${chatTurnPageLoadDirection}`}
+                {activeSubagentChatView?.loadState === 'loading' &&
+                  !activeSubagentChatView.detail && (
+                    <p className="chat__status chat-detail__messages-status">
+                      Loading subagent chat…
+                    </p>
+                  )}
+                {activeSubagentChatView?.loadState === 'error' && (
+                  <p
+                    className="chat__status chat-detail__messages-status"
                     role="status"
+                    title={activeSubagentChatView.error ?? undefined}
                   >
-                    Loading…
-                  </span>
+                    Unable to load this subagent chat.
+                  </p>
                 )}
+                {activeSubagentChatView?.loadState === 'ready' &&
+                  subagentVisibleChatItems.length === 0 && (
+                    <p className="chat__status chat-detail__messages-status">
+                      No messages found in this subagent chat.
+                    </p>
+                  )}
+                {!activeSubagentChatView &&
+                  chatTurnPageLoadDirection &&
+                  chatTurnPageLoadDirection !== 'latest' && (
+                    <span
+                      className={`chat-detail__turn-page-loading chat-detail__turn-page-loading--${chatTurnPageLoadDirection}`}
+                      role="status"
+                    >
+                      Loading…
+                    </span>
+                  )}
                 {showChatTurnDownButton && (
                   <div className="chat-detail__down-button">
                     <Button
@@ -15208,7 +15698,7 @@ export const App: React.FC = () => {
                 )}
               </div>
             )}
-            {selectedChat && (
+            {selectedChat && !activeSubagentChatView && (
               <MessageSelectionQuoteButton
                 containerRef={contentRef}
                 enabled={!editingMessage}
@@ -15494,7 +15984,7 @@ export const App: React.FC = () => {
                     </div>
                   </section>
                 )}
-                {selectedChat && pendingApproval && (
+                {selectedChat && !activeSubagentChatView && pendingApproval && (
                   <section className="chat-approval" aria-label="Approval request">
                     <div className="chat-approval__main">
                       <span className="chat-approval__label">
@@ -15535,7 +16025,7 @@ export const App: React.FC = () => {
                     </div>
                   </section>
                 )}
-                {selectedChat && pendingUserInput && (
+                {selectedChat && !activeSubagentChatView && pendingUserInput && (
                   <UserInputRequestBox
                     disabled={providerUpdateInProgress || userInputResolving}
                     error={userInputError}
@@ -15548,7 +16038,9 @@ export const App: React.FC = () => {
                   />
                 )}
                 <MessageBox
-                  active={editingMessage ? false : chatHasActiveTurn}
+                  active={
+                    activeSubagentChatView ? false : editingMessage ? false : chatHasActiveTurn
+                  }
                   activePrimaryMode="queue"
                   activeSteeringEnabled={!chatHasPendingSteeringMessage}
                   actions={appSettings.actions}
@@ -15579,6 +16071,7 @@ export const App: React.FC = () => {
                   notesLabel={messageBoxNotesGroup?.label}
                   operationsDisabled={
                     providerUpdateInProgress ||
+                    Boolean(activeSubagentChatView) ||
                     Boolean(selectedChatAiCommitAction) ||
                     !messageBoxProviderAvailable
                   }

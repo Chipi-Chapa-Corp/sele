@@ -57,3 +57,50 @@ test('bounds nested Copilot raw tool values and handles cycles', () => {
   assert.ok(bounded.output.length < cyclic.output.length)
   assert.match(bounded.output, /truncated to keep the app responsive/)
 })
+
+test('keeps subagent events out of the parent transcript and renders them in their own scope', () => {
+  const events = [
+    {
+      id: 'root-user',
+      type: 'user.message',
+      timestamp: '2026-08-27T10:00:00.000Z',
+      data: { content: 'Investigate', delivery: 'immediate' }
+    },
+    {
+      id: 'child-user',
+      type: 'user.message',
+      agentId: 'agent-1',
+      timestamp: '2026-08-27T10:00:01.000Z',
+      data: { content: 'Inspect the tests', delivery: 'immediate' }
+    },
+    {
+      id: 'child-answer',
+      type: 'assistant.message',
+      agentId: 'agent-1',
+      timestamp: '2026-08-27T10:00:02.000Z',
+      data: { content: 'The tests are sound.', messageId: 'child-answer' }
+    },
+    {
+      id: 'root-answer',
+      type: 'assistant.message',
+      timestamp: '2026-08-27T10:00:03.000Z',
+      data: { content: 'Investigation complete.', messageId: 'root-answer' }
+    }
+  ]
+
+  const rootItems = renderCopilotChatItems(events, { active: false, stopped: false })
+  const childItems = renderCopilotChatItems(events, {
+    agentId: 'agent-1',
+    active: false,
+    stopped: false
+  })
+
+  assert.deepEqual(
+    rootItems.filter((item) => item.type === 'message').map((item) => item.content),
+    ['Investigate', 'Investigation complete.']
+  )
+  assert.deepEqual(
+    childItems.filter((item) => item.type === 'message').map((item) => item.content),
+    ['Inspect the tests', 'The tests are sound.']
+  )
+})

@@ -9,6 +9,8 @@ import type {
   ProviderChatUpdatedEvent,
   ProviderId,
   ProviderReview,
+  ProviderSubagent,
+  ProviderSubagentDetail,
   ProviderUserInputResponse,
   ProviderUsageOptions,
   ProviderWorkingItem,
@@ -394,6 +396,22 @@ export const providerApi: ProviderApi = {
     return applyMetadataToDetail(
       await adapters[providerId].getChat(chatId, { container: metadata.container })
     )
+  },
+  getSubagents: async (providerId, chatId): Promise<ProviderSubagent[]> => {
+    const metadata = await getChatMetadata(chatId)
+    return adapters[providerId].getSubagents(chatId, { container: metadata.container })
+  },
+  getSubagent: async (providerId, chatId, subagentId): Promise<ProviderSubagentDetail> => {
+    const metadata = await getChatMetadata(chatId)
+    return adapters[providerId].getSubagent(chatId, subagentId, {
+      container: metadata.container
+    })
+  },
+  cancelSubagent: async (providerId, chatId, subagentId): Promise<void> => {
+    const metadata = await getChatMetadata(chatId)
+    return adapters[providerId].cancelSubagent(chatId, subagentId, {
+      container: metadata.container
+    })
   },
   setChatTitle: (providerId, chatId, title) =>
     adapters[providerId]

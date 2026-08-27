@@ -22,6 +22,7 @@ export type CopilotRenderedPlan = {
 }
 
 type RenderOptions = {
+  agentId?: string | null
   active: boolean
   stopped: boolean
   failed?: boolean
@@ -370,7 +371,8 @@ const getAttachments = (
   })
 }
 
-const isRootEvent = (event: SessionEvent): boolean => !event.agentId
+const isScopedEvent = (event: SessionEvent, agentId: string | null | undefined): boolean =>
+  agentId ? event.agentId === agentId : !event.agentId
 
 export const renderCopilotChatItems = (
   events: SessionEvent[],
@@ -445,7 +447,9 @@ export const renderCopilotChatItems = (
   }
 
   for (const event of events) {
-    if (event.type === 'user.message' && isRootEvent(event)) {
+    if (!isScopedEvent(event, options.agentId)) continue
+
+    if (event.type === 'user.message') {
       flushSegment(false)
       const attachments = getAttachments(event)
       items.push({
@@ -466,7 +470,7 @@ export const renderCopilotChatItems = (
       continue
     }
 
-    if (event.type === 'assistant.reasoning' && isRootEvent(event)) {
+    if (event.type === 'assistant.reasoning') {
       const content = event.data.content.trim()
       if (content) {
         ensureSegment(event.id).workingItems.push({
@@ -478,7 +482,7 @@ export const renderCopilotChatItems = (
       continue
     }
 
-    if (event.type === 'assistant.intent' && isRootEvent(event)) {
+    if (event.type === 'assistant.intent') {
       const content = event.data.intent.trim()
       if (content) {
         const workingItems = ensureSegment(event.id).workingItems
@@ -490,7 +494,7 @@ export const renderCopilotChatItems = (
       continue
     }
 
-    if (event.type === 'assistant.message' && isRootEvent(event)) {
+    if (event.type === 'assistant.message') {
       const currentSegment = ensureSegment(event.id)
       if (event.data.reasoningText?.trim()) {
         currentSegment.workingItems.push({

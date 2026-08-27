@@ -619,7 +619,7 @@ export type ProviderToolActivity =
 export type ProviderWorkingToolStatus = 'running' | 'finished'
 
 export type ProviderToolIcon =
-  'image-view' | 'image-generation' | 'openai-docs' | 'plan' | 'question'
+  'image-view' | 'image-generation' | 'openai-docs' | 'plan' | 'question' | 'subagent'
 
 export type ProviderToolImage = {
   path?: string | null
@@ -631,6 +631,7 @@ export type ProviderWorkingTool = {
   type: 'tool'
   id: string
   toolId: string
+  compact?: boolean
   status: ProviderWorkingToolStatus
   activity: ProviderToolActivity
   icon: ProviderToolIcon | null
@@ -705,8 +706,36 @@ export type ProviderContextCompaction = {
   id: string
 }
 
+export type ProviderTimelineAnchor = {
+  type: 'timelineAnchor'
+  id: string
+}
+
 export type ProviderChatItem =
-  ProviderMessage | ProviderWorkingStep | ProviderPendingMessage | ProviderContextCompaction
+  | ProviderMessage
+  | ProviderWorkingStep
+  | ProviderPendingMessage
+  | ProviderContextCompaction
+  | ProviderTimelineAnchor
+
+export type ProviderSubagentStatus =
+  'pending' | 'running' | 'idle' | 'completed' | 'failed' | 'stopped' | 'unknown'
+
+export type ProviderSubagent = {
+  id: string
+  parentId: string | null
+  beforeItemId?: string | null
+  afterItemId?: string | null
+  title: string
+  description: string | null
+  status: ProviderSubagentStatus
+  createdAt: number | null
+  updatedAt: number | null
+}
+
+export type ProviderSubagentDetail = ProviderSubagent & {
+  items: ProviderChatItem[]
+}
 
 export type ProviderChatDetail = {
   id: string
@@ -913,6 +942,13 @@ export type ProviderApi = {
   ) => Promise<ProviderAccountRateLimitResetOutcome>
   getChats: (providerId: ProviderId, options?: ProviderChatListOptions) => Promise<ProviderChatPage>
   getChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
+  getSubagents: (providerId: ProviderId, chatId: string) => Promise<ProviderSubagent[]>
+  getSubagent: (
+    providerId: ProviderId,
+    chatId: string,
+    subagentId: string
+  ) => Promise<ProviderSubagentDetail>
+  cancelSubagent: (providerId: ProviderId, chatId: string, subagentId: string) => Promise<void>
   setChatTitle: (
     providerId: ProviderId,
     chatId: string,
@@ -1091,6 +1127,9 @@ export const providerIpcChannels = {
   resetRateLimits: 'provider:reset-rate-limits',
   getChats: 'provider:get-chats',
   getChat: 'provider:get-chat',
+  getSubagents: 'provider:get-subagents',
+  getSubagent: 'provider:get-subagent',
+  cancelSubagent: 'provider:cancel-subagent',
   getChatWorkingStepPage: 'provider:get-chat-working-step-page',
   getChatWorkingItem: 'provider:get-chat-working-item',
   getChatWorkingToolPage: 'provider:get-chat-working-tool-page',

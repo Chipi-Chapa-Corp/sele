@@ -34,6 +34,8 @@ import {
   type ProviderSandboxModeOption,
   type ProviderSkill,
   type ProviderSourceOptions,
+  type ProviderSubagent,
+  type ProviderSubagentDetail,
   type ProviderTokenUsageBreakdown,
   type ProviderTurnOptions,
   type ProviderUpdateAvailability,
@@ -58,6 +60,7 @@ import { getOpenCodePermissionRules } from './OpenCodePermissions'
 import { OpenCodeServerClient } from './OpenCodeServerClient'
 import { getOpenCodeUpdateAvailability, updateOpenCodeProvider } from './OpenCodeProviderUpdate'
 import { parseOpenCodeSessionEvent } from './OpenCodeEvents'
+import { createOpenCodeSubagentSummary, isOpenCodeSubagentSession } from './OpenCodeSubagents'
 
 type OpenCodeClientEntry = {
   server: OpenCodeServerClient
@@ -565,6 +568,72 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options.container)
     return this.createChatDetail(state)
+  }
+
+  getSubagents = async (
+    chatId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderSubagent[]> => {
+    const state = await this.ensureState(chatId, options.container)
+    const client = (await this.getClientEntry(state.container)).client
+    const [sessions, statuses] = await Promise.all([
+      this.loadSubagentSessions(client, state.session!),
+      client.session
+        .status({ directory: state.directory }, { throwOnError: true })
+        .then(requireData)
+        .catch(() => ({}))
+    ])
+    return sessions.map((session) =>
+      createOpenCodeSubagentSummary(session, chatId, statuses[session.id])
+    )
+  }
+
+  getSubagent = async (
+    chatId: string,
+    subagentId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderSubagentDetail> => {
+    const rootState = await this.ensureState(chatId, options.container)
+    const entry = await this.getClientEntry(rootState.container)
+    const sessions = await this.loadSubagentSessions(entry.client, rootState.session!)
+    const session = sessions.find((candidate) => candidate.id === subagentId)
+    if (!session) throw new Error('OpenCode subagent was not found.')
+
+    const state = this.rememberSession(session, entry.container)
+    await this.refreshState(state, entry.client)
+    const detail = await this.createChatDetail(state)
+    const summary = createOpenCodeSubagentSummary(
+      state.session!,
+      chatId,
+      state.active ? { type: 'busy' } : undefined
+    )
+    return {
+      ...summary,
+      status: state.failed ? 'failed' : state.stopped ? 'stopped' : summary.status,
+      items: detail.items
+    }
+  }
+
+  cancelSubagent = async (
+    chatId: string,
+    subagentId: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<void> => {
+    const rootState = await this.ensureState(chatId, options.container)
+    const entry = await this.getClientEntry(rootState.container)
+    const sessions = await this.loadSubagentSessions(entry.client, rootState.session!)
+    const session = sessions.find((candidate) => candidate.id === subagentId)
+    if (!session) throw new Error('OpenCode subagent was not found.')
+
+    await entry.client.session.abort(
+      { sessionID: session.id, directory: session.directory },
+      { throwOnError: true }
+    )
+    const state = this.states.get(session.id)
+    if (state) {
+      state.active = false
+      state.stopped = true
+    }
   }
 
   setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {
@@ -1169,6 +1238,34 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       cursor += sessions.length
     }
     throw new Error(`OpenCode session was not found: ${chatId}`)
+  }
+
+  private loadSubagentSessions = async (
+    client: OpencodeClient,
+    rootSession: Session | GlobalSession
+  ): Promise<Session[]> => {
+    const subagents: Session[] = []
+    const pending: Array<Session | GlobalSession> = [rootSession]
+    const seen = new Set([rootSession.id])
+
+    while (pending.length > 0) {
+      const parent = pending.shift()!
+      const children = requireData(
+        await client.session.children(
+          { sessionID: parent.id, directory: parent.directory },
+          { throwOnError: true }
+        )
+      ).filter(isOpenCodeSubagentSession)
+
+      children.forEach((child) => {
+        if (seen.has(child.id)) return
+        seen.add(child.id)
+        subagents.push(child)
+        pending.push(child)
+      })
+    }
+
+    return subagents.sort((first, second) => first.time.created - second.time.created)
   }
 
   private ensureState = async (
