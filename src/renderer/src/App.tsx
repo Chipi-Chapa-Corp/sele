@@ -4220,6 +4220,7 @@ export const App: React.FC = () => {
   >({})
   const changeSource = getFixedChangeSource()
   const [changesPaneView, setChangesPaneView] = useState<ChangesPaneView>('git')
+  const [changesSidebarExpanded, setChangesSidebarExpanded] = useState(false)
   const [gitChanges, setGitChanges] = useState<AppGitChangesResult | null>(null)
   const [gitChangesScope, setGitChangesScope] = useState<GitChangesScope | null>(null)
   const [gitChangeLoadState, setGitChangeLoadState] = useState<LoadState>('ready')
@@ -5524,7 +5525,8 @@ export const App: React.FC = () => {
       const resizeHandle = event.currentTarget
       const pointerId = event.pointerId
       const startWidths = getChatPaneWidthsFromPercents(displayedPanePercents, totalWidth)
-      const handleWidth = chatResizeHandleWidth * chatResizeHandleCount
+      const handleWidth =
+        chatResizeHandleWidth * (changesSidebarExpanded ? 1 : chatResizeHandleCount)
       const previousCursor = document.body.style.cursor
       const previousUserSelect = document.body.style.userSelect
 
@@ -5539,7 +5541,10 @@ export const App: React.FC = () => {
         setPanePercents(() => {
           if (edge === 'left') {
             const maxSidebarWidth =
-              totalWidth - startWidths.changes - handleWidth - chatBlockMinWidth
+              totalWidth -
+              handleWidth -
+              (changesSidebarExpanded ? changesSidebarMinWidth : startWidths.changes) -
+              (changesSidebarExpanded ? 0 : chatBlockMinWidth)
 
             const nextWidths = {
               sidebar: Math.round(
@@ -5580,7 +5585,7 @@ export const App: React.FC = () => {
       window.addEventListener('pointerup', handlePointerUp)
       window.addEventListener('pointercancel', handlePointerUp)
     },
-    [displayedPanePercents]
+    [changesSidebarExpanded, displayedPanePercents]
   )
 
   useEffect(() => {
@@ -15383,7 +15388,11 @@ export const App: React.FC = () => {
           onSelectTarget={handleSelectFileEditorTarget}
         />
       )}
-      <div className="chat__panels" ref={panelsRef} style={panelsStyle}>
+      <div
+        className={`chat__panels${changesSidebarExpanded ? ' chat__panels--changes-expanded' : ''}`}
+        ref={panelsRef}
+        style={panelsStyle}
+      >
         <div className="chat__sidebar-panel" data-panel="true" id="sidebar">
           <aside className="chat-sidebar" aria-label="Recent conversations">
             <header
@@ -16202,7 +16211,33 @@ export const App: React.FC = () => {
                   value={changesPaneView}
                   onChange={handleChangesPaneViewChange}
                 />
-                <div className="changes-sidebar__settings-slot">{renderSettingsButton()}</div>
+                <div className="changes-sidebar__titlebar-actions">
+                  <Button
+                    theme="transparent"
+                    size="small"
+                    aria-label={
+                      changesSidebarExpanded
+                        ? 'Collapse workspace sidebar'
+                        : 'Expand workspace sidebar'
+                    }
+                    aria-controls="changes"
+                    aria-expanded={changesSidebarExpanded}
+                    title={
+                      changesSidebarExpanded
+                        ? 'Collapse workspace sidebar'
+                        : 'Expand workspace sidebar'
+                    }
+                    callback={() => setChangesSidebarExpanded((expanded) => !expanded)}
+                    icon={
+                      changesSidebarExpanded ? (
+                        <Minimize2 aria-hidden="true" />
+                      ) : (
+                        <Maximize2 aria-hidden="true" />
+                      )
+                    }
+                  />
+                  <div className="changes-sidebar__settings-slot">{renderSettingsButton()}</div>
+                </div>
               </div>
               {(changesPaneView === 'git' || changesPaneView === 'files') && (
                 <div className="changes-sidebar__controls changes-sidebar__controls--files">
