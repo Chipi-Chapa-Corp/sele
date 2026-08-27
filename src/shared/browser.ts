@@ -1,14 +1,54 @@
+import type { AppContainerTarget } from './app'
+
 export type BrowserOpenRequest = {
   id: string
   url: string
 }
 
+export type BrowserCookieImportBrowser = 'chrome' | 'firefox' | 'zen'
+
+export type BrowserCookieProfile = {
+  description: string
+  id: string
+  name: string
+}
+
+export type BrowserCookieProfileDiscoveryOptions = {
+  browser: BrowserCookieImportBrowser
+  currentEnvironment?: AppContainerTarget | null
+}
+
+export type BrowserCookieImportOptions = {
+  browser: BrowserCookieImportBrowser
+  profileId: string
+}
+
+export type BrowserCookieImportResult = {
+  imported: number
+  skipped: number
+  skipReasons: {
+    contextual: number
+    expired: number
+    invalid: number
+    partitioned: number
+    protected: number
+    rejected: number
+  }
+  total: number
+}
+
 export type BrowserRendererApi = {
+  findCookieProfiles: (
+    options: BrowserCookieProfileDiscoveryOptions
+  ) => Promise<BrowserCookieProfile[]>
+  importCookies: (options: BrowserCookieImportOptions) => Promise<BrowserCookieImportResult>
   onOpenRequested: (listener: (request: BrowserOpenRequest) => void) => () => void
   onCloseActiveTabRequested: (listener: () => void) => () => void
 }
 
 export const browserIpcChannels = {
+  findCookieProfiles: 'browser:find-cookie-profiles',
+  importCookies: 'browser:import-cookies',
   openRequested: 'browser:open-requested',
   closeActiveTabRequested: 'browser:close-active-tab-requested'
 } as const

@@ -202,6 +202,7 @@ import {
 import { ChatListGroup, type ChatListGroupData } from './components/ChatListGroup'
 import { BranchSwitcher } from './components/BranchSwitcher'
 import { BrowserPanel } from './components/BrowserPanel'
+import { BrowserImportSettings } from './components/BrowserImportSettings'
 import { Button, type ButtonDropdownAction } from './components/Button'
 import { ChatPlan, type ChatPlanData, type ChatPlanItem } from './components/ChatPlan'
 import { Dropdown, type DropdownOption } from './components/Dropdown'
@@ -14340,6 +14341,7 @@ export const App: React.FC = () => {
               </div>
             </div>
           </section>
+          <BrowserImportSettings key={changesContainerKey} currentEnvironment={changesContainer} />
         </section>
       )
     }

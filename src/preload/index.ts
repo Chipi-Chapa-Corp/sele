@@ -346,6 +346,9 @@ const terminalApi: TerminalRendererApi = {
 }
 
 const browserApi: BrowserRendererApi = {
+  findCookieProfiles: (options) =>
+    ipcRenderer.invoke(browserIpcChannels.findCookieProfiles, options),
+  importCookies: (options) => ipcRenderer.invoke(browserIpcChannels.importCookies, options),
   onOpenRequested: (listener): (() => void) => {
     const handleOpenRequested = (_: IpcRendererEvent, request: BrowserOpenRequest): void => {
       listener(request)

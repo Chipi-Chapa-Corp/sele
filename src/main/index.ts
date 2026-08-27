@@ -13,6 +13,7 @@ import { disposeProviderAdapters } from './providers/providerService'
 import { beginProviderIpcShutdown, registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
 import { disposeTerminalSessions, registerTerminalIpc } from './registerTerminalIpc'
+import { registerBrowserIpc } from './registerBrowserIpc'
 import {
   browserIpcChannels,
   getBrowserCloseShortcutAction,
@@ -188,6 +189,7 @@ const startApp = (): void => {
     nativeTheme.themeSource = 'system'
     nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
     electronApp.setAppUserModelId('com.sele')
+    registerBrowserIpc()
     registerAppIpc()
     registerProviderIpc()
     registerTerminalIpc()

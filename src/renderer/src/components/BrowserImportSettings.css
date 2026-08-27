@@ -1,0 +1,49 @@
+.browser-import-settings__controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+}
+
+.browser-import-settings__controls > .ui-dropdown {
+  width: min(250px, 32vw);
+}
+
+.browser-import-settings__status {
+  margin: 2px 4px 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.browser-import-settings__status--error {
+  color: var(--danger);
+}
+
+.browser-import-settings__loading-icon {
+  animation: browser-import-settings-spin 900ms linear infinite;
+}
+
+@keyframes browser-import-settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .browser-import-settings__controls {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .browser-import-settings__controls > .ui-dropdown {
+    width: auto;
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-import-settings__loading-icon {
+    animation: none;
+  }
+}
