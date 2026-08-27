@@ -7013,11 +7013,25 @@ export const App: React.FC = () => {
     resetDocumentScroll()
   }, [selectedChat])
 
-  useEffect(() => {
-    if (!searchOpen) return
+  const focusSearchInput = useCallback((searchInput: HTMLInputElement | null): void => {
+    if (!searchInput) return
 
-    searchInputRef.current?.focus()
-  }, [searchOpen])
+    const focusInput = (): void => {
+      if (!searchInput.isConnected) return
+
+      window.focus()
+      searchInput.focus({ preventScroll: true })
+      const caretPosition = searchInput.value.length
+      searchInput.setSelectionRange(caretPosition, caretPosition)
+    }
+
+    focusInput()
+    window.requestAnimationFrame(focusInput)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (searchOpen) focusSearchInput(searchInputRef.current)
+  }, [focusSearchInput, searchOpen])
 
   const closeChatSearch = useCallback((): void => {
     const returnFocusElement = chatSearchReturnFocusRef.current
@@ -7051,12 +7065,10 @@ export const App: React.FC = () => {
       chatSearchReturnFocusRef.current = document.activeElement
     }
 
-    setChatSearchOpen(true)
-    window.requestAnimationFrame(() => {
-      chatSearchInputRef.current?.focus({ preventScroll: true })
-      chatSearchInputRef.current?.select()
-    })
-  }, [chatSearchOpen, selectedChatKey])
+    flushSync(() => setChatSearchOpen(true))
+    focusSearchInput(chatSearchInputRef.current)
+    chatSearchInputRef.current?.select()
+  }, [chatSearchOpen, focusSearchInput, selectedChatKey])
 
   useEffect(() => {
     const handleSearchShortcut = (event: KeyboardEvent): void => {
@@ -7093,11 +7105,9 @@ export const App: React.FC = () => {
     settingsOpen
   ])
 
-  useEffect(() => {
-    if (!chatSearchOpen) return
-
-    chatSearchInputRef.current?.focus({ preventScroll: true })
-  }, [chatSearchOpen])
+  useLayoutEffect(() => {
+    if (chatSearchOpen) focusSearchInput(chatSearchInputRef.current)
+  }, [chatSearchOpen, focusSearchInput])
 
   useEffect(() => {
     if (!chatSearchOpen) return
