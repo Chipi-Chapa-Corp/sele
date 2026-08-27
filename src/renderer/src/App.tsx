@@ -14,7 +14,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { version as appVersion } from '../../../package.json'
-import puppyKeylineOutlineUrl from './assets/puppy-keyline-outline.svg'
+// import puppyKeylineOutlineUrl from './assets/puppy-keyline-outline.svg'
 import { getComposerDraftScopeKey } from './composerDraft'
 import { toCssRem } from './cssUnits'
 import {
@@ -223,6 +223,7 @@ import { SshEnvironmentDialog } from './components/SshEnvironmentDialog'
 import { getSubagentMarkerPlacements, getSubagentMarkerPresentation } from './subagentUi'
 import { TerminalPanel, type TerminalCommandLaunchRequest } from './components/TerminalPanel'
 import { UserInputRequestBox } from './components/UserInputRequestBox'
+import { VegvisirArt } from './components/VegvisirArt'
 import type { AppAction } from './actions'
 import { getAppActionsForProject, getAppActionKeybindingFromEvent } from './actions'
 import { appApi } from './appApi'
@@ -15708,46 +15709,50 @@ export const App: React.FC = () => {
             )}
             {!selectedChat && newChatOpen && (
               <div className="chat-panel__new-chat-empty" aria-hidden="true">
-                <svg
-                  className="chat-panel__new-chat-art"
-                  viewBox="0 0 1296 1213"
-                  preserveAspectRatio="xMidYMid meet"
-                >
-                  <defs>
-                    <filter
-                      id="new-chat-puppy-keyline-thick"
-                      x="-5%"
-                      y="-5%"
-                      width="110%"
-                      height="110%"
-                      colorInterpolationFilters="sRGB"
-                    >
-                      <feMorphology
-                        in="SourceAlpha"
-                        operator="dilate"
-                        radius="3"
-                        result="thickOutline"
-                      />
-                      <feFlood floodColor="currentColor" result="outlineColor" />
-                      <feComposite in="outlineColor" in2="thickOutline" operator="in" />
-                    </filter>
-                  </defs>
-                  <image
-                    href={puppyKeylineOutlineUrl}
-                    width="1296"
-                    height="1213"
+                {/*
+                  Puppy artwork retained while the knotwork direction is evaluated.
+                  <svg
+                    className="chat-panel__new-chat-art"
+                    viewBox="0 0 1296 1213"
                     preserveAspectRatio="xMidYMid meet"
-                    filter="url(#new-chat-puppy-keyline-thick)"
-                  />
-                </svg>
+                  >
+                    <defs>
+                      <filter
+                        id="new-chat-puppy-keyline-thick"
+                        x="-5%"
+                        y="-5%"
+                        width="110%"
+                        height="110%"
+                        colorInterpolationFilters="sRGB"
+                      >
+                        <feMorphology
+                          in="SourceAlpha"
+                          operator="dilate"
+                          radius="3"
+                          result="thickOutline"
+                        />
+                        <feFlood floodColor="currentColor" result="outlineColor" />
+                        <feComposite in="outlineColor" in2="thickOutline" operator="in" />
+                      </filter>
+                    </defs>
+                    <image
+                      href={puppyKeylineOutlineUrl}
+                      width="1296"
+                      height="1213"
+                      preserveAspectRatio="xMidYMid meet"
+                      filter="url(#new-chat-puppy-keyline-thick)"
+                    />
+                  </svg>
+                */}
+                <VegvisirArt />
               </div>
             )}
-            {!effectiveAppSettings.chat.hidePlans && (
+            {!activeSubagentChatView && !effectiveAppSettings.chat.hidePlans && (
               <ChatPlan key={selectedChatKey ?? 'no-chat'} plan={messageBoxPlan} />
             )}
             <div className="chat-panel__composer">
               <div className="chat-panel__composer-inner">
-                {requestErrorVisible && (
+                {!activeSubagentChatView && requestErrorVisible && (
                   <section
                     className="chat-approval chat-request-error"
                     aria-label="Request error"
