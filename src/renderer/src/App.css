@@ -252,7 +252,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 var(--chat-sidebar-x) 0 var(--chat-sidebar-left-x);
+  padding: 0 0 0 var(--chat-sidebar-left-x);
   scrollbar-color: var(--glass-edge) transparent;
   scrollbar-gutter: stable;
 }
@@ -319,7 +319,7 @@
   min-height: var(--window-titlebar-height);
   align-items: center;
   gap: 8px;
-  padding: 8px var(--changes-sidebar-x);
+  padding: 8px var(--changes-sidebar-x) 8px 0;
   user-select: none;
   -webkit-app-region: drag;
 }
@@ -392,7 +392,7 @@
   gap: 12px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 var(--changes-sidebar-x);
+  padding: 0 var(--changes-sidebar-x) 0 0;
   scrollbar-color: var(--glass-edge) transparent;
 }
 
@@ -990,7 +990,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
   min-width: 0;
   flex-direction: column;
   gap: 10px;
-  padding: 12px var(--changes-sidebar-x) 0;
+  padding: 12px var(--changes-sidebar-x) 0 0;
 }
 
 .changes-sidebar__input-row {
@@ -1377,8 +1377,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
   align-items: center;
   justify-content: flex-end;
   min-height: var(--window-titlebar-height);
-  padding: 8px calc(var(--chat-sidebar-x) + var(--chat-sidebar-scrollbar-width)) 8px
-    var(--chat-sidebar-left-x);
+  padding: 8px 0 8px var(--chat-sidebar-left-x);
   gap: 8px;
   user-select: none;
   -webkit-app-region: drag;
