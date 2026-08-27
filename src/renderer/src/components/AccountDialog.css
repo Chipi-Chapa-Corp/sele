@@ -5,18 +5,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px;
+  padding: 0.9rem;
   background: rgb(0 0 0 / 34%);
 }
 
 .account-dialog {
   display: flex;
-  width: min(420px, 100%);
+  width: min(21rem, 100%);
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  border: 0.0625rem solid var(--menu-border);
+  border-radius: 0.6rem;
   color: var(--lead);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
@@ -28,14 +28,14 @@
   min-width: 0;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 0.6rem;
 }
 
 .account-dialog__error {
   margin: 0;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--error) 34%, transparent);
-  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+  border: 0.0625rem solid color-mix(in srgb, var(--error) 34%, transparent);
+  border-radius: 0.4rem;
   color: var(--error);
   background: color-mix(in srgb, var(--error) 7%, transparent);
   line-height: 1.35;
@@ -43,7 +43,7 @@
 
 .account-dialog__authorization {
   display: grid;
-  gap: 10px;
+  gap: 0.5rem;
 }
 
 .account-dialog__authorization p {
@@ -53,5 +53,5 @@
 
 .account-dialog__footer {
   justify-content: flex-end;
-  padding-top: 2px;
+  padding-top: 0.1rem;
 }

@@ -2,8 +2,8 @@
   position: relative;
   display: inline-grid;
   min-width: 0;
-  width: 46px;
-  height: 26px;
+  width: 2.3rem;
+  height: 1.3rem;
   place-items: center;
 }
 
@@ -11,10 +11,10 @@
   display: grid;
   width: 100%;
   height: auto;
-  min-height: 34px;
+  min-height: 1.7rem;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 0.6rem;
   place-items: initial;
 }
 
@@ -28,8 +28,8 @@
 
 :where(.ui-switch input) {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  width: 0.0625rem;
+  height: 0.0625rem;
   margin: 0;
   opacity: 0;
 }
@@ -37,10 +37,10 @@
 :where(.ui-switch__control) {
   position: relative;
   display: block;
-  width: 46px;
-  height: 26px;
-  border: 1px solid var(--control-border);
-  border-radius: 999px;
+  width: 2.3rem;
+  height: 1.3rem;
+  border: 0.0625rem solid var(--control-border);
+  border-radius: 49.95rem;
   background: var(--control-surface);
   transition:
     background 140ms ease,
@@ -51,13 +51,13 @@
 :where(.ui-switch__control)::after {
   content: '';
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 49.95rem;
   background: var(--quiet);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
+  box-shadow: 0 0.0625rem 0.125rem rgb(0 0 0 / 18%);
   transition:
     background 140ms ease,
     transform 140ms ease;
@@ -70,7 +70,7 @@
 
 :where(.ui-switch input:checked + .ui-switch__control)::after {
   background: var(--accent-ink);
-  transform: translateX(20px);
+  transform: translateX(1rem);
 }
 
 :where(.ui-switch input:checked:disabled + .ui-switch__control)::after {
@@ -78,5 +78,5 @@
 }
 
 :where(.ui-switch input:focus-visible + .ui-switch__control) {
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
 }

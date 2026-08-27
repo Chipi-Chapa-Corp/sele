@@ -6,8 +6,8 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
+  border: 0.0625rem solid var(--panel-border);
+  border-radius: 0.9rem;
   background: var(--floating-bg);
   box-shadow: none;
 }
@@ -18,18 +18,18 @@
   min-width: 0;
   flex: none;
   align-items: center;
-  gap: 8px;
-  padding-inline: var(--changes-sidebar-x, 14px);
+  gap: 0.4rem;
+  padding-inline: var(--changes-sidebar-x, 0.7rem);
 }
 
 .browser-panel__tab-toolbar {
-  padding-top: 10px;
-  padding-bottom: 8px;
+  padding-top: 0.5rem;
+  padding-bottom: 0.4rem;
   user-select: none;
 }
 
 .browser-panel__navigation {
-  padding-bottom: 10px;
+  padding-bottom: 0.5rem;
 }
 
 .browser-panel__tabs {
@@ -43,7 +43,7 @@
   display: block;
   width: var(--control-icon-size);
   height: var(--control-icon-size);
-  border-radius: 3px;
+  border-radius: 0.15rem;
   object-fit: contain;
 }
 
@@ -51,7 +51,7 @@
   height: var(--control-height-small);
   min-height: var(--control-height-small);
   flex: 1;
-  padding-inline: 10px;
+  padding-inline: 0.5rem;
 }
 
 .browser-panel__workspace {
@@ -94,8 +94,8 @@
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 10px;
-  padding: 24px;
+  gap: 0.5rem;
+  padding: 1.2rem;
   color: var(--quiet);
   background: var(--floating-bg);
   text-align: center;
@@ -113,8 +113,8 @@
 
 .browser-panel__page-message > svg,
 .browser-panel__empty > svg {
-  width: 28px;
-  height: 28px;
+  width: 1.4rem;
+  height: 1.4rem;
 }
 
 .browser-panel__page-message > p,

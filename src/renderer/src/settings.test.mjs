@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { browserScalePercentDefault, normalizeBrowserScalePercent } from '../../shared/browser.ts'
 import {
   appMaxChatsRenderedDefault,
   appRecentlyOpenedFilesLimitDefault,
@@ -9,6 +10,20 @@ import {
   normalizeAppRecentsMessageLimit
 } from './performanceSettings.ts'
 import { getAppGitCommitModel, setAppGitCommitModel } from './gitCommitModels.ts'
+import { toCssRem } from './cssUnits.ts'
+
+test('converts runtime pixel measurements to rem lengths', () => {
+  assert.equal(toCssRem(1), '0.0625rem')
+  assert.equal(toCssRem(16), '1rem')
+})
+
+test('defaults and normalizes the browser scale percentage', () => {
+  assert.equal(browserScalePercentDefault, 100)
+  assert.equal(normalizeBrowserScalePercent(undefined), 100)
+  assert.equal(normalizeBrowserScalePercent(112.6), 113)
+  assert.equal(normalizeBrowserScalePercent(0), 25)
+  assert.equal(normalizeBrowserScalePercent(10_000), 500)
+})
 
 test('defaults the maximum rendered chats to 100', () => {
   assert.equal(appMaxChatsRenderedDefault, 100)

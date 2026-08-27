@@ -12,9 +12,9 @@
   min-height: var(--control-height);
   align-items: center;
   justify-content: space-between;
-  gap: 9px;
-  padding: 0 13px 0 14px;
-  border: 1px solid var(--secondary-border);
+  gap: 0.45rem;
+  padding: 0 0.65rem 0 0.7rem;
+  border: 0.0625rem solid var(--secondary-border);
   border-radius: var(--control-radius);
   color: var(--lead);
   cursor: pointer;
@@ -41,8 +41,8 @@
 }
 
 :where(.branch-switcher__trigger:focus-visible) {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: 3px;
+  outline: 0.1875rem solid var(--focus-ring);
+  outline-offset: 0.1875rem;
 }
 
 :where(.branch-switcher__trigger:disabled) {
@@ -55,7 +55,7 @@
   min-width: 0;
   flex: 1;
   align-items: center;
-  gap: 7px;
+  gap: 0.35rem;
 }
 
 :where(.branch-switcher__value svg),
@@ -88,13 +88,13 @@
   position: fixed;
   z-index: 1000;
   display: flex;
-  max-height: min(420px, 56vh);
+  max-height: min(21rem, 56vh);
   min-width: 0;
   flex-direction: column;
-  gap: 7px;
-  padding: 7px;
-  border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  gap: 0.35rem;
+  padding: 0.35rem;
+  border: 0.0625rem solid var(--menu-border);
+  border-radius: 0.6rem;
   color: var(--lead);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
@@ -105,7 +105,7 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  gap: 6px;
+  gap: 0.3rem;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -153,13 +153,13 @@
 :where(.branch-switcher__message),
 :where(.branch-switcher__status) {
   margin: 0;
-  padding: 9px 11px;
+  padding: 0.45rem 0.55rem;
   color: var(--quiet);
   line-height: 1.35;
 }
 
 :where(.branch-switcher__status) {
-  border-top: 1px solid var(--menu-border);
+  border-top: 0.0625rem solid var(--menu-border);
 }
 
 :where(.branch-switcher__error) {
@@ -167,7 +167,7 @@
   width: 100%;
   max-width: 100%;
   min-height: 0;
-  max-height: min(180px, 28vh);
+  max-height: min(9rem, 28vh);
   margin: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -185,5 +185,5 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 0.3rem;
 }

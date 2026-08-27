@@ -3,6 +3,7 @@ import { MessageSquare } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderReviewComment } from '../../../shared/provider'
+import { toCssRem } from '../cssUnits'
 import { AttachmentChip } from './AttachmentChip'
 import './ReviewCommentsButton.css'
 
@@ -51,22 +52,22 @@ const getProjectRelativePath = (path: string, projectCwd: string | null | undefi
 }
 
 const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
-  const viewportInset = 12
-  const menuOffset = 6
-  const menuWidth = Math.max(0, Math.min(420, window.innerWidth - viewportInset * 2))
+  const viewportInset = 9.6
+  const menuOffset = 4.8
+  const menuWidth = Math.max(0, Math.min(336, window.innerWidth - viewportInset * 2))
   const bottomSpace = window.innerHeight - buttonRect.bottom
-  const openUp = bottomSpace < 300 && buttonRect.top > bottomSpace
+  const openUp = bottomSpace < 240 && buttonRect.top > bottomSpace
   const preferredLeft = buttonRect.right - menuWidth
   const maxLeft = Math.max(viewportInset, window.innerWidth - menuWidth - viewportInset)
   const style: CSSProperties = {
-    left: Math.min(Math.max(viewportInset, preferredLeft), maxLeft),
-    width: menuWidth
+    left: toCssRem(Math.min(Math.max(viewportInset, preferredLeft), maxLeft)),
+    width: toCssRem(menuWidth)
   }
 
   if (openUp) {
-    style.bottom = window.innerHeight - buttonRect.top + menuOffset
+    style.bottom = toCssRem(window.innerHeight - buttonRect.top + menuOffset)
   } else {
-    style.top = buttonRect.bottom + menuOffset
+    style.top = toCssRem(buttonRect.bottom + menuOffset)
   }
 
   return style

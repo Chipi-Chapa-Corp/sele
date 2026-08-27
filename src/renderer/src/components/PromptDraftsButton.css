@@ -1,7 +1,7 @@
 .prompt-drafts {
   display: inline-flex;
   min-width: 0;
-  max-width: min(280px, 32vw);
+  max-width: min(14rem, 32vw);
   flex: 0 1 auto;
 }
 
@@ -12,11 +12,11 @@
 }
 
 .prompt-drafts .ui-button--split-main {
-  padding-inline: 12px;
+  padding-inline: 0.6rem;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 37.5rem) {
   .prompt-drafts {
-    max-width: 150px;
+    max-width: 7.5rem;
   }
 }

@@ -15,8 +15,8 @@
   min-width: 0;
   flex: none;
   align-items: center;
-  gap: 8px;
-  padding: 0 0 8px;
+  gap: 0.4rem;
+  padding: 0 0 0.4rem;
   user-select: none;
 }
 
@@ -49,8 +49,8 @@
 
 .terminal-panel__restart {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 0.2rem;
+  right: 0.2rem;
   z-index: 2;
 }
 
@@ -60,7 +60,7 @@
   min-height: 0;
   flex: 1;
   overflow: hidden;
-  padding: 4px 2px 0 8px;
+  padding: 0.2rem 0.1rem 0 0.4rem;
   background: transparent;
 }
 
@@ -71,13 +71,13 @@
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 10px;
+  gap: 0.5rem;
   color: var(--quiet);
 }
 
 .terminal-panel__empty > svg {
-  width: 28px;
-  height: 28px;
+  width: 1.4rem;
+  height: 1.4rem;
 }
 
 .terminal-panel__empty > p {
@@ -101,12 +101,12 @@
 }
 
 .terminal-panel__host .xterm-viewport::-webkit-scrollbar {
-  width: 9px;
+  width: 0.45rem;
 }
 
 .terminal-panel__host .xterm-viewport::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
+  border: 0.125rem solid transparent;
+  border-radius: 49.95rem;
   background: var(--glass-edge);
   background-clip: padding-box;
 }

@@ -4,25 +4,25 @@
   z-index: 910;
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding: 0.8rem;
   background: rgb(0 0 0 / 40%);
   -webkit-app-region: no-drag;
 }
 
 .file-editor-dialog {
   display: grid;
-  width: min(1440px, calc(100vw - 32px));
-  height: min(1000px, calc(100vh - 32px));
+  width: min(72rem, calc(100vw - 1.6rem));
+  height: min(50rem, calc(100vh - 1.6rem));
   min-width: 0;
-  min-height: min(580px, calc(100vh - 32px));
+  min-height: min(29rem, calc(100vh - 1.6rem));
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
+  border: 0.0625rem solid var(--panel-border);
+  border-radius: 0.9rem;
   color: var(--ink);
   background: var(--floating-bg);
   box-shadow:
-    0 32px 100px rgb(0 0 0 / 34%),
+    0 2rem 6.25rem rgb(0 0 0 / 34%),
     var(--panel-shadow);
   font: inherit;
 }
@@ -43,20 +43,20 @@
 .file-editor-dialog__header {
   display: grid;
   min-width: 0;
-  min-height: calc(var(--control-height-small) + 15px);
+  min-height: calc(var(--control-height-small) + 0.75rem);
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--glass-line);
+  gap: 0.6rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 0.0625rem solid var(--glass-line);
   background: var(--glass-strong);
 }
 
 .file-editor-dialog__header-leading {
   display: flex;
-  min-width: 30px;
+  min-width: 1.5rem;
   align-items: center;
-  gap: 5px;
+  gap: 0.25rem;
 }
 
 .file-editor-dialog__header-leading > .ui-button {
@@ -65,14 +65,14 @@
 
 .file-editor-dialog__file-icon {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 1.5rem;
+  height: 1.5rem;
   place-items: center;
 }
 
 .file-editor-dialog__file-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 1rem;
+  height: 1rem;
   stroke-width: 1.9;
 }
 
@@ -80,7 +80,7 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 10px;
+  gap: 0.5rem;
 }
 
 .file-editor-dialog__title strong,
@@ -106,7 +106,7 @@
 .file-editor-dialog__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 0.4rem;
 }
 
 .file-editor-dialog__file-view-switch,
@@ -116,8 +116,8 @@
 
 .file-editor-dialog__file-view-switch-slot {
   display: grid;
-  width: calc((var(--control-height-small) * 2) + 11px);
-  height: calc(var(--control-height-small) + 8px);
+  width: calc((var(--control-height-small) * 2) + 0.55rem);
+  height: calc(var(--control-height-small) + 0.4rem);
   flex: none;
   place-items: center;
 }
@@ -129,8 +129,8 @@
 }
 
 .file-editor-dialog__actions .ui-button__icon svg {
-  width: 17px;
-  height: 17px;
+  width: 0.85rem;
+  height: 0.85rem;
 }
 
 .file-editor-dialog__actions .file-editor-dialog__spinner {
@@ -146,7 +146,7 @@
 }
 
 .file-editor-dialog__body--with-diff-tree {
-  grid-template-columns: var(--file-diff-tree-width, 240px) minmax(0, 1fr);
+  grid-template-columns: var(--file-diff-tree-width, 12rem) minmax(0, 1fr);
 }
 
 .file-editor-dialog__content {
@@ -165,7 +165,7 @@
   display: grid;
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid var(--glass-line);
+  border-right: 0.0625rem solid var(--glass-line);
   background: var(--glass-strong);
 }
 
@@ -178,7 +178,7 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 8px;
+  padding: 0.4rem;
   scrollbar-color: var(--glass-edge) transparent;
 }
 
@@ -186,9 +186,9 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: var(--file-diff-tree-width, 240px);
+  left: var(--file-diff-tree-width, 12rem);
   z-index: 2;
-  width: 9px;
+  width: 0.45rem;
   cursor: col-resize;
   outline: 0;
   background: transparent;
@@ -201,7 +201,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1px;
+  gap: 0.0625rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -236,12 +236,12 @@
   display: grid;
   width: 100%;
   min-width: 0;
-  grid-template-columns: 16px 20px minmax(0, 1fr) auto;
+  grid-template-columns: 0.8rem 1rem minmax(0, 1fr) auto;
   align-items: center;
-  gap: 5px;
-  padding: 5px 6px 5px calc(5px + (var(--file-diff-tree-depth) * 12px));
+  gap: 0.25rem;
+  padding: 0.25rem 0.3rem 0.25rem calc(0.25rem + (var(--file-diff-tree-depth) * 0.6rem));
   border: 0;
-  border-radius: 7px;
+  border-radius: 0.35rem;
   color: var(--muted);
   outline: 0;
   background: transparent;
@@ -275,8 +275,8 @@
 }
 
 .file-editor-dialog__tree-row:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.0625rem;
 }
 
 .file-editor-dialog__tree-chevron,
@@ -288,25 +288,25 @@
 
 .file-editor-dialog__tree-chevron,
 .file-editor-dialog__tree-spacer {
-  width: 16px;
-  height: 16px;
+  width: 0.8rem;
+  height: 0.8rem;
   color: var(--quiet);
 }
 
 .file-editor-dialog__tree-chevron svg {
-  width: 13px;
-  height: 13px;
+  width: 0.65rem;
+  height: 0.65rem;
   stroke-width: 2.3;
 }
 
 .file-editor-dialog__tree-icon {
-  width: 20px;
-  height: 20px;
+  width: 1rem;
+  height: 1rem;
 }
 
 .file-editor-dialog__tree-icon svg {
-  width: 18px;
-  height: 18px;
+  width: 0.9rem;
+  height: 0.9rem;
 }
 
 .file-editor-dialog__tree-name {
@@ -320,32 +320,32 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 3px;
+  gap: 0.15rem;
   color: var(--menu-option-selected-color);
   font-size: 0.78em;
   font-weight: 750;
 }
 
 .file-editor-dialog__tree-comment-count > svg {
-  width: 14px;
-  height: 14px;
+  width: 0.7rem;
+  height: 0.7rem;
 }
 
 .file-editor-dialog__tree-state {
   display: grid;
-  min-height: 120px;
+  min-height: 6rem;
   place-content: center;
   justify-items: center;
-  gap: 10px;
-  padding: 16px;
+  gap: 0.5rem;
+  padding: 0.8rem;
   color: var(--quiet);
   font-size: 0.9em;
   text-align: center;
 }
 
 .file-editor-dialog__tree-state > svg {
-  width: 20px;
-  height: 20px;
+  width: 1rem;
+  height: 1rem;
 }
 
 .file-editor-dialog__diff-view {
@@ -409,7 +409,7 @@
   bottom: 0;
   left: var(--markdown-split-percentage, 50%);
   z-index: 3;
-  width: 9px;
+  width: 0.45rem;
   cursor: col-resize;
   outline: 0;
   background: transparent;
@@ -422,7 +422,7 @@
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 1px;
+  width: 0.0625rem;
   background: var(--glass-line);
   content: '';
   transform: translateX(-50%);
@@ -433,7 +433,7 @@
 
 .file-editor-dialog__markdown-resize-handle:hover::after,
 .file-editor-dialog__markdown-resize-handle:focus-visible::after {
-  width: 2px;
+  width: 0.1rem;
   background: var(--accent);
 }
 
@@ -443,7 +443,7 @@
   max-width: 100%;
   min-height: 0;
   margin: 0;
-  padding: 32px max(28px, calc((100% - 880px) / 2));
+  padding: 1.6rem max(1.4rem, calc((100% - 44rem) / 2));
   overflow: auto;
   color: var(--lead);
   background: var(--floating-bg);
@@ -454,7 +454,7 @@
 }
 
 .file-editor-dialog__inline-diff--markdown-split .file-editor-dialog__markdown-preview {
-  border-left: 1px solid var(--glass-line);
+  border-left: 0.0625rem solid var(--glass-line);
 }
 
 .file-editor-dialog__markdown-preview > :first-child {
@@ -479,13 +479,13 @@
 
 .file-editor-dialog__markdown-preview h1 {
   padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.0625rem solid var(--line);
   font-size: 2em;
 }
 
 .file-editor-dialog__markdown-preview h2 {
   padding-bottom: 0.25em;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.0625rem solid var(--line);
   font-size: 1.55em;
 }
 
@@ -517,7 +517,7 @@
 
 .file-editor-dialog__markdown-preview blockquote {
   padding: 0.1em 0 0.1em 1em;
-  border-left: 3px solid var(--glass-edge);
+  border-left: 0.1875rem solid var(--glass-edge);
   color: var(--muted);
 }
 
@@ -527,14 +527,14 @@
 
 .file-editor-dialog__markdown-preview a {
   color: var(--accent);
-  text-decoration-thickness: 1px;
+  text-decoration-thickness: 0.0625rem;
   text-underline-offset: 0.18em;
 }
 
 .file-editor-dialog__markdown-preview code {
   padding: 0.12em 0.32em;
-  border: 1px solid var(--inline-code-border);
-  border-radius: 5px;
+  border: 0.0625rem solid var(--inline-code-border);
+  border-radius: 0.25rem;
   color: var(--inline-code-color);
   background: var(--inline-code-bg);
   font-family: var(--code-font-family);
@@ -543,10 +543,10 @@
 
 .file-editor-dialog__markdown-preview pre {
   max-width: 100%;
-  padding: 14px 16px;
+  padding: 0.7rem 0.8rem;
   overflow: auto;
-  border: 1px solid var(--glass-line);
-  border-radius: 10px;
+  border: 0.0625rem solid var(--glass-line);
+  border-radius: 0.5rem;
   background: var(--activity-bg);
   box-shadow: var(--subtle-shadow);
 }
@@ -563,7 +563,7 @@
 }
 
 .file-editor-dialog__markdown-preview hr {
-  height: 1px;
+  height: 0.0625rem;
   margin: 1.8em 0;
   border: 0;
   background: var(--line);
@@ -574,7 +574,7 @@
   max-width: 100%;
   height: auto;
   margin: 1em 0;
-  border-radius: 8px;
+  border-radius: 0.4rem;
 }
 
 .file-editor-dialog__markdown-preview table {
@@ -588,9 +588,9 @@
 
 .file-editor-dialog__markdown-preview th,
 .file-editor-dialog__markdown-preview td {
-  padding: 7px 10px;
+  padding: 0.35rem 0.5rem;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0.0625rem solid var(--line);
   text-align: center;
 }
 
@@ -632,15 +632,15 @@
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 14px;
-  padding: 28px;
+  gap: 0.7rem;
+  padding: 1.4rem;
   color: var(--muted);
   text-align: center;
 }
 
 .file-editor-dialog__state > svg {
-  width: 38px;
-  height: 38px;
+  width: 1.9rem;
+  height: 1.9rem;
   color: var(--quiet);
   stroke-width: 1.5;
 }
@@ -650,20 +650,20 @@
 }
 
 .file-editor-dialog__state p {
-  max-width: 560px;
+  max-width: 28rem;
   margin: 0;
   line-height: 1.5;
 }
 
 .file-editor-dialog__error {
   position: absolute;
-  top: 12px;
+  top: 0.6rem;
   left: 50%;
   z-index: 2;
-  max-width: min(680px, calc(100% - 24px));
-  padding: 9px 12px;
-  border: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
-  border-radius: 9px;
+  max-width: min(34rem, calc(100% - 1.2rem));
+  padding: 0.45rem 0.6rem;
+  border: 0.0625rem solid color-mix(in srgb, var(--error) 30%, transparent);
+  border-radius: 0.45rem;
   color: var(--error);
   background: color-mix(in srgb, var(--error) 9%, var(--floating-bg));
   box-shadow: var(--subtle-shadow);
@@ -796,16 +796,16 @@
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 47.5rem) {
   .file-editor-overlay {
-    padding: 8px;
+    padding: 0.4rem;
   }
 
   .file-editor-dialog {
-    width: calc(100vw - 16px);
-    height: calc(100vh - 16px);
+    width: calc(100vw - 0.8rem);
+    height: calc(100vh - 0.8rem);
     min-height: 0;
-    border-radius: 14px;
+    border-radius: 0.7rem;
   }
 
   .file-editor-dialog__actions .ui-button__label {
@@ -825,7 +825,7 @@
   }
 
   .file-editor-dialog__inline-diff--markdown-split .file-editor-dialog__markdown-preview {
-    border-top: 1px solid var(--glass-line);
+    border-top: 0.0625rem solid var(--glass-line);
     border-left: 0;
   }
 
@@ -835,7 +835,7 @@
     bottom: auto;
     left: 0;
     width: auto;
-    height: 9px;
+    height: 0.45rem;
     cursor: row-resize;
     transform: translateY(-50%);
   }
@@ -846,7 +846,7 @@
     bottom: auto;
     left: 0;
     width: auto;
-    height: 1px;
+    height: 0.0625rem;
     transform: translateY(-50%);
     transition:
       height 140ms ease,
@@ -856,6 +856,6 @@
   .file-editor-dialog__markdown-resize-handle:hover::after,
   .file-editor-dialog__markdown-resize-handle:focus-visible::after {
     width: auto;
-    height: 2px;
+    height: 0.1rem;
   }
 }

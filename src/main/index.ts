@@ -4,19 +4,28 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import {
   appIpcChannels,
+  appWindowZoomLevelDefault,
   getAppWindowZoomShortcutAction,
   normalizeAppWindowZoomLevel,
   type AppColorScheme
 } from '../shared/app'
 import { disposeDatabase } from './database/sqlite'
+import {
+  deleteBrowserHostnameZoomScale,
+  setBrowserHostnameZoomScale
+} from './database/browserHostnameZoom'
 import { disposeProviderAdapters } from './providers/providerService'
 import { beginProviderIpcShutdown, registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
 import { disposeTerminalSessions, registerTerminalIpc } from './registerTerminalIpc'
-import { registerBrowserIpc } from './registerBrowserIpc'
+import { getBrowserGuestDefaultScale, registerBrowserIpc } from './registerBrowserIpc'
 import {
   browserIpcChannels,
   getBrowserCloseShortcutAction,
+  getBrowserPageScale,
+  getBrowserPageHostname,
+  getBrowserPageZoomFactor,
+  getNextBrowserZoomScale,
   isBrowserPageUrl
 } from '../shared/browser'
 
@@ -64,7 +73,16 @@ const handleCloseShortcut = (
   return true
 }
 
+const getNextZoomLevel = (
+  currentZoomLevel: number,
+  action: NonNullable<ReturnType<typeof getAppWindowZoomShortcutAction>>
+): number =>
+  action === 'reset'
+    ? appWindowZoomLevelDefault
+    : normalizeAppWindowZoomLevel(currentZoomLevel + (action === 'in' ? 1 : -1))
+
 const secureBrowserWebContents = (mainWindow: BrowserWindow, guest: WebContents): void => {
+  guest.setIgnoreMenuShortcuts(true)
   guest.setWindowOpenHandler(({ url }) => {
     routeNewWindowUrl(mainWindow, url)
     return { action: 'deny' }
@@ -81,7 +99,28 @@ const secureBrowserWebContents = (mainWindow: BrowserWindow, guest: WebContents)
   guest.on('will-navigate', (event) => preventUnsupportedNavigation(event, event.url))
   guest.on('will-redirect', (event) => preventUnsupportedNavigation(event, event.url))
   guest.on('before-input-event', (event, input) => {
-    handleCloseShortcut(mainWindow, event, input)
+    if (handleCloseShortcut(mainWindow, event, input)) return
+
+    const zoomAction = getAppWindowZoomShortcutAction(input)
+    if (!zoomAction) return
+
+    event.preventDefault()
+    const applicationZoomFactor = mainWindow.webContents.getZoomFactor()
+    const nextScale = getNextBrowserZoomScale(
+      getBrowserPageScale(guest.getZoomFactor(), applicationZoomFactor),
+      zoomAction,
+      getBrowserGuestDefaultScale(guest)
+    )
+    guest.setZoomFactor(getBrowserPageZoomFactor(nextScale, applicationZoomFactor))
+
+    const hostname = getBrowserPageHostname(guest.getURL())
+    if (hostname) {
+      const persistZoom =
+        zoomAction === 'reset'
+          ? deleteBrowserHostnameZoomScale(hostname)
+          : setBrowserHostnameZoomScale(hostname, nextScale)
+      void persistZoom.catch(() => {})
+    }
   })
 }
 
@@ -158,12 +197,7 @@ const createWindow = (): void => {
 
     event.preventDefault()
 
-    const currentZoomLevel = normalizeAppWindowZoomLevel(mainWindow.webContents.getZoomLevel())
-    const nextZoomLevel =
-      action === 'reset'
-        ? 0
-        : normalizeAppWindowZoomLevel(currentZoomLevel + (action === 'in' ? 1 : -1))
-
+    const nextZoomLevel = getNextZoomLevel(mainWindow.webContents.getZoomLevel(), action)
     mainWindow.webContents.setZoomLevel(nextZoomLevel)
     mainWindow.webContents.send(appIpcChannels.windowZoomLevelUpdated, nextZoomLevel)
   })
@@ -189,8 +223,8 @@ const startApp = (): void => {
     nativeTheme.themeSource = 'system'
     nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
     electronApp.setAppUserModelId('com.sele')
-    registerBrowserIpc()
     registerAppIpc()
+    registerBrowserIpc()
     registerProviderIpc()
     registerTerminalIpc()
 

@@ -42,6 +42,7 @@ import type {
   AppFileTreeFile,
   AppSelectedAttachment
 } from '../../../shared/app'
+import { toCssRem } from '../cssUnits'
 import type {
   ProviderActiveSendMode,
   ProviderApp,
@@ -287,10 +288,10 @@ type ChatConfigMenuStyle = CSSProperties & {
 }
 
 const getChatConfigMenuStyle = (buttonRect: DOMRect): ChatConfigMenuStyle => {
-  const viewportInset = 12
-  const menuOffset = 6
-  const maxMenuHeight = 760
-  const menuWidth = Math.min(360, Math.max(260, window.innerWidth - viewportInset * 2))
+  const viewportInset = 9.6
+  const menuOffset = 4.8
+  const maxMenuHeight = 608
+  const menuWidth = Math.min(288, Math.max(208, window.innerWidth - viewportInset * 2))
   const maxLeft = Math.max(viewportInset, window.innerWidth - menuWidth - viewportInset)
   const spaceAbove = Math.max(0, buttonRect.top - menuOffset - viewportInset)
   const spaceBelow = Math.max(
@@ -301,16 +302,16 @@ const getChatConfigMenuStyle = (buttonRect: DOMRect): ChatConfigMenuStyle => {
   const availableHeight = Math.min(maxMenuHeight, openUp ? spaceAbove : spaceBelow)
 
   const menuStyle: ChatConfigMenuStyle = {
-    '--chat-config-menu-max-height': `${availableHeight}px`,
-    left: Math.min(Math.max(viewportInset, buttonRect.left), maxLeft),
-    minWidth: buttonRect.width,
-    width: menuWidth
+    '--chat-config-menu-max-height': toCssRem(availableHeight),
+    left: toCssRem(Math.min(Math.max(viewportInset, buttonRect.left), maxLeft)),
+    minWidth: toCssRem(buttonRect.width),
+    width: toCssRem(menuWidth)
   }
 
   if (openUp) {
-    menuStyle.bottom = window.innerHeight - buttonRect.top + menuOffset
+    menuStyle.bottom = toCssRem(window.innerHeight - buttonRect.top + menuOffset)
   } else {
-    menuStyle.top = buttonRect.bottom + menuOffset
+    menuStyle.top = toCssRem(buttonRect.bottom + menuOffset)
   }
 
   return menuStyle

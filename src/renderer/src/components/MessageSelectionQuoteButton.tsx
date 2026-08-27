@@ -1,6 +1,7 @@
 import { type CSSProperties, type RefObject, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Quote } from 'lucide-react'
+import { toCssRem } from '../cssUnits'
 import { Button } from './Button'
 import './MessageSelectionQuoteButton.css'
 
@@ -48,9 +49,9 @@ const getSelectedQuote = (container: HTMLElement): SelectedQuote | null => {
   const rect = rects.at(-1) ?? range.getBoundingClientRect()
   if (rect.width === 0 && rect.height === 0) return null
 
-  const buttonHalfWidth = 16
-  const buttonHeight = 32
-  const offset = 8
+  const buttonHalfWidth = 12.8
+  const buttonHeight = 25.6
+  const offset = 6.4
   const hostRect = host.getBoundingClientRect()
   const localRectTop = rect.top - hostRect.top
   const placement = localRectTop >= buttonHeight + offset ? 'above' : 'below'
@@ -188,8 +189,8 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
   }
 
   const style: CSSProperties = {
-    left: selectedQuote.left,
-    top: selectedQuote.top
+    left: toCssRem(selectedQuote.left),
+    top: toCssRem(selectedQuote.top)
   }
 
   return createPortal(

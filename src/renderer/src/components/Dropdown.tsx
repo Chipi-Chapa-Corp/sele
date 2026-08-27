@@ -11,6 +11,7 @@ import {
   useState
 } from 'react'
 import { createPortal } from 'react-dom'
+import { toCssRem } from '../cssUnits'
 import { MenuSurface } from './MenuSurface'
 import './Dropdown.css'
 
@@ -219,7 +220,7 @@ export const Dropdown = <TValue extends string>({
       const activeOption = menu?.querySelector<HTMLElement>(`#${listboxId}-option-${activeIndex}`)
       if (!menu || !activeOption) return
 
-      const scrollPadding = 7
+      const scrollPadding = 5.6
       const scrollIntoView = (container: HTMLElement): void => {
         const containerBounds = container.getBoundingClientRect()
         const optionBounds = activeOption.getBoundingClientRect()
@@ -289,27 +290,27 @@ export const Dropdown = <TValue extends string>({
   }
 
   const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
-    const viewportInset = 12
-    const menuOffset = 6
-    const maxMenuWidth = 280
+    const viewportInset = 9.6
+    const menuOffset = 4.8
+    const maxMenuWidth = 224
     const startLeft = Math.min(
       Math.max(viewportInset, buttonRect.left),
       Math.max(viewportInset, window.innerWidth - maxMenuWidth - viewportInset)
     )
     const nextMenuStyle: CSSProperties = {
-      minWidth: buttonRect.width
+      minWidth: toCssRem(buttonRect.width)
     }
 
     if (placement === 'top') {
-      nextMenuStyle.bottom = window.innerHeight - buttonRect.top + menuOffset
+      nextMenuStyle.bottom = toCssRem(window.innerHeight - buttonRect.top + menuOffset)
     } else {
-      nextMenuStyle.top = buttonRect.bottom + menuOffset
+      nextMenuStyle.top = toCssRem(buttonRect.bottom + menuOffset)
     }
 
     if (menuAlign === 'end') {
-      nextMenuStyle.right = Math.max(viewportInset, window.innerWidth - buttonRect.right)
+      nextMenuStyle.right = toCssRem(Math.max(viewportInset, window.innerWidth - buttonRect.right))
     } else {
-      nextMenuStyle.left = startLeft
+      nextMenuStyle.left = toCssRem(startLeft)
     }
 
     return nextMenuStyle
@@ -493,9 +494,9 @@ export const Dropdown = <TValue extends string>({
     const optionStyle =
       inlineActions.length > 0
         ? ({
-            paddingRight: `${
-              16 + inlineActions.length * 26 + Math.max(0, inlineActions.length - 1) * 2
-            }px`
+            paddingRight: toCssRem(
+              12.8 + inlineActions.length * 20.8 + Math.max(0, inlineActions.length - 1) * 1.6
+            )
           } as CSSProperties)
         : undefined
 

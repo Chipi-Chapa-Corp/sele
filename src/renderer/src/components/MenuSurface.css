@@ -1,9 +1,9 @@
 .ui-menu-surface {
-  max-height: var(--menu-surface-max-height, min(420px, 56vh));
+  max-height: var(--menu-surface-max-height, min(21rem, 56vh));
   overflow: auto;
-  padding: 0 7px;
-  border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  padding: 0 0.35rem;
+  border: 0.0625rem solid var(--menu-border);
+  border-radius: 0.6rem;
   color: var(--lead);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
@@ -12,6 +12,6 @@
 .ui-menu-surface::before,
 .ui-menu-surface::after {
   display: block;
-  height: 7px;
+  height: 0.35rem;
   content: '';
 }

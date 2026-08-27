@@ -14,11 +14,16 @@ import {
   appWindowZoomLevelDefault,
   appWindowZoomLevelMax,
   appWindowZoomLevelMin,
+  appWindowZoomLevelToPercent,
+  appWindowZoomPercentMax,
+  appWindowZoomPercentMin,
+  appWindowZoomPercentToLevel,
   normalizeAppWindowZoomLevel
 } from '../../shared/app'
 import type { AppExternalLinkAction } from '../../shared/app'
 import type { AppAction } from './actions'
 import { normalizeAppActions } from './actions'
+import { appBrowserDefaultScaleDefault, normalizeAppBrowserDefaultScale } from './browserSettings'
 import { appGitLegacyCommitModelKey, type AppGitCommitModels } from './gitCommitModels'
 import {
   appMaxChatsRenderedDefault,
@@ -32,6 +37,12 @@ import {
   defaultGitErrorResolutionPrompt,
   defaultPermanentGitErrorResolutionPrompt
 } from './gitErrorResolution'
+
+export {
+  appBrowserDefaultScaleMax,
+  appBrowserDefaultScaleMin,
+  normalizeAppBrowserDefaultScale
+} from './browserSettings'
 
 export {
   appMaxChatsRenderedMin,
@@ -108,6 +119,7 @@ export type AppExternalLinkSettings = {
 export type AppBrowserView = 'chat' | 'project' | 'global'
 
 export type AppBrowserSettings = {
+  defaultScale: number
   enabled: boolean
   view: AppBrowserView
 }
@@ -116,16 +128,27 @@ export const appAppearanceZoomLevelDefault = appWindowZoomLevelDefault
 export const appAppearanceZoomLevelMin = appWindowZoomLevelMin
 export const appAppearanceZoomLevelMax = appWindowZoomLevelMax
 export const normalizeAppAppearanceZoomLevel = normalizeAppWindowZoomLevel
+export const appAppearanceZoomPercentMin = appWindowZoomPercentMin
+export const appAppearanceZoomPercentMax = appWindowZoomPercentMax
+export const appAppearanceZoomLevelToPercent = appWindowZoomLevelToPercent
+export const appAppearanceZoomPercentToLevel = appWindowZoomPercentToLevel
 export const appFontSystemValue = 'sele:system-font'
 export const appFontInheritValue = 'sele:inherit-application-font'
 export const appFontMonospaceValue = 'sele:system-monospace-font'
 export const appFontSizeMin = 0.5
 export const appFontSizeMax = 2.5
+export const appFontScalePercentMin = appFontSizeMin * 100
+export const appFontScalePercentMax = appFontSizeMax * 100
 
 export const normalizeAppFontSize = (value: unknown, fallback: number): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.round(Math.min(Math.max(value, appFontSizeMin), appFontSizeMax) * 1000) / 1000
 }
+
+export const appFontSizeToScalePercent = (size: number): number => Math.round(size * 1000) / 10
+
+export const appFontScalePercentToSize = (percent: number, fallback: number): number =>
+  normalizeAppFontSize(percent / 100, fallback)
 
 export type AppSettings = {
   actions: AppAction[]
@@ -313,15 +336,15 @@ export const defaultAppAppearanceSettings: AppSettings['appearance'] = {
   controlStyle: 'bordered',
   applicationFont: {
     family: appFontSystemValue,
-    size: 1.25
+    size: 1
   },
   chatFont: {
     family: appFontInheritValue,
-    size: 1.25
+    size: 1
   },
   codeFont: {
     family: appFontMonospaceValue,
-    size: 1.25
+    size: 1
   }
 }
 
@@ -345,6 +368,7 @@ export const defaultAppSettings: AppSettings = {
     behavior: 'manual'
   },
   browser: {
+    defaultScale: appBrowserDefaultScaleDefault,
     enabled: true,
     view: 'project'
   },
@@ -585,6 +609,9 @@ const readProjectBrowserOverrides = (
 
   if (hasOwnProperty(browser, 'enabled') && typeof browser.enabled === 'boolean') {
     overrides.enabled = browser.enabled
+  }
+  if (hasOwnProperty(browser, 'defaultScale') && typeof browser.defaultScale === 'number') {
+    overrides.defaultScale = normalizeAppBrowserDefaultScale(browser.defaultScale)
   }
   if (hasOwnProperty(browser, 'view') && isAppBrowserView(browser.view)) {
     overrides.view = browser.view
@@ -992,6 +1019,7 @@ export const readStoredAppSettings = (): AppSettings => {
               : defaultAppSettings.links.behavior
       },
       browser: {
+        defaultScale: normalizeAppBrowserDefaultScale(browser.defaultScale),
         enabled:
           typeof browser.enabled === 'boolean'
             ? browser.enabled
@@ -1278,6 +1306,10 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (Object.keys(storedChat).length > 0) storedSettings.chat = storedChat
 
     const storedBrowser: Partial<AppBrowserSettings> = {}
+    const defaultScale = normalizeAppBrowserDefaultScale(settings.browser.defaultScale)
+    if (defaultScale !== defaultAppSettings.browser.defaultScale) {
+      storedBrowser.defaultScale = defaultScale
+    }
     if (settings.browser.enabled !== defaultAppSettings.browser.enabled) {
       storedBrowser.enabled = settings.browser.enabled
     }

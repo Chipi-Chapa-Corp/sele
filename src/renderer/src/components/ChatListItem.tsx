@@ -24,6 +24,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
+import { toCssRem } from '../cssUnits'
 import { getDefaultProjectName } from '../projectPresentation'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { Button } from './Button'
@@ -155,8 +156,8 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
 
       const itemBounds = item.getBoundingClientRect()
       const cardBounds = detailCard.getBoundingClientRect()
-      const viewportPadding = 12
-      const gap = 10
+      const viewportPadding = 9.6
+      const gap = 8
       let left = itemBounds.right + gap
 
       if (left + cardBounds.width > window.innerWidth - viewportPadding) {
@@ -458,8 +459,8 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
             id={detailCardId}
             role="tooltip"
             style={{
-              left: detailCardPosition?.left ?? 0,
-              top: detailCardPosition?.top ?? 0,
+              left: toCssRem(detailCardPosition?.left ?? 0),
+              top: toCssRem(detailCardPosition?.top ?? 0),
               visibility: detailCardPosition ? 'visible' : 'hidden'
             }}
           >

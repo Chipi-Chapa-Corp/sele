@@ -7,10 +7,13 @@ import type {
   PageTitleUpdatedEvent,
   WebviewTag
 } from 'electron'
+import { appWindowZoomLevelToFactor } from '../../../shared/app'
 import type { BrowserOpenRequest } from '../../../shared/browser'
 import {
   getBrowserFaviconUrl,
   getBrowserPageLabel,
+  getBrowserPageHostname,
+  getBrowserPageZoomFactor,
   isBrowserPageUrl,
   normalizeBrowserAddress
 } from '../../../shared/browser'
@@ -27,6 +30,8 @@ import './BrowserPanel.css'
 
 type BrowserPanelProps = {
   active: boolean
+  appZoomLevel: number
+  defaultScale: number
   openRequest?: BrowserOpenRequest | null
   workspaceKey: string
 }
@@ -58,6 +63,8 @@ type BrowserPageStateChange = Partial<BrowserTabRuntime> & {
 }
 
 type BrowserPageProps = {
+  applicationZoomFactor: number
+  defaultScale: number
   tab: BrowserTab
   visible: boolean
   onElementChange: (tabId: string, element: WebviewTag | null) => void
@@ -143,6 +150,8 @@ const BrowserTabIcon: React.FC<{ url: string }> = ({ url }) => {
 }
 
 const BrowserPage: React.FC<BrowserPageProps> = ({
+  applicationZoomFactor,
+  defaultScale,
   tab,
   visible,
   onElementChange,
@@ -217,6 +226,63 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
   }, [hasPage, onElementChange, onStateChange, tab.id])
 
   useEffect(() => {
+    const webview = webviewRef.current
+    if (!webview) return
+    let current = true
+
+    const setPageScale = (scale: number): void => {
+      try {
+        webview.setZoomFactor(getBrowserPageZoomFactor(scale, applicationZoomFactor))
+      } catch {
+        // The guest may not be attached yet or may have just been destroyed.
+      }
+    }
+    const applyPageScale = (): void => {
+      let url: string
+      try {
+        url = webview.getURL()
+      } catch {
+        return
+      }
+
+      const hostname = getBrowserPageHostname(url)
+      setPageScale(defaultScale)
+
+      let webContentsId: number
+      try {
+        webContentsId = webview.getWebContentsId()
+      } catch {
+        return
+      }
+
+      void browserApi
+        .resolvePageZoomScale({ defaultScale, url, webContentsId })
+        .then((resolvedScale) => {
+          if (!current) return
+
+          let currentHostname: string | null = null
+          try {
+            currentHostname = getBrowserPageHostname(webview.getURL())
+          } catch {
+            return
+          }
+          if (currentHostname === hostname) setPageScale(resolvedScale)
+        })
+        .catch(() => {})
+    }
+
+    applyPageScale()
+    webview.addEventListener('did-attach', applyPageScale)
+    webview.addEventListener('dom-ready', applyPageScale)
+
+    return () => {
+      current = false
+      webview.removeEventListener('did-attach', applyPageScale)
+      webview.removeEventListener('dom-ready', applyPageScale)
+    }
+  }, [applicationZoomFactor, defaultScale, hasPage])
+
+  useEffect(() => {
     if (!visible) return
 
     const frame = requestAnimationFrame(() => webviewRef.current?.focus())
@@ -256,9 +322,12 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
 
 export const BrowserPanel: React.FC<BrowserPanelProps> = ({
   active,
+  appZoomLevel,
+  defaultScale,
   openRequest = null,
   workspaceKey
 }) => {
+  const applicationZoomFactor = appWindowZoomLevelToFactor(appZoomLevel)
   const handledOpenRequestIdsRef = useRef(
     new Set(openRequest && isBrowserPageUrl(openRequest.url) ? [openRequest.id] : [])
   )
@@ -662,6 +731,8 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
             .filter((tab) => tab.loaded)
             .map((tab) => (
               <BrowserPage
+                applicationZoomFactor={applicationZoomFactor}
+                defaultScale={defaultScale}
                 key={tab.id}
                 tab={tab}
                 visible={

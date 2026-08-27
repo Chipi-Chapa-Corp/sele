@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderCwdNote } from '../../../shared/provider'
+import { toCssRem } from '../cssUnits'
 import { Button, ButtonMenuRow } from './Button'
 import { Input } from './Input'
 import './CwdNotesButton.css'
@@ -28,20 +29,20 @@ const createNoteId = (): string => {
 }
 
 const getNotesMenuStyle = (buttonRect: DOMRect): CSSProperties => {
-  const viewportInset = 12
-  const menuOffset = 6
-  const menuWidth = Math.min(360, window.innerWidth - viewportInset * 2)
+  const viewportInset = 9.6
+  const menuOffset = 4.8
+  const menuWidth = Math.min(288, window.innerWidth - viewportInset * 2)
   const bottomSpace = window.innerHeight - buttonRect.bottom
-  const openUp = bottomSpace < 260 && buttonRect.top > bottomSpace
+  const openUp = bottomSpace < 208 && buttonRect.top > bottomSpace
   const nextMenuStyle: CSSProperties = {
-    width: menuWidth,
-    right: Math.max(viewportInset, window.innerWidth - buttonRect.right)
+    width: toCssRem(menuWidth),
+    right: toCssRem(Math.max(viewportInset, window.innerWidth - buttonRect.right))
   }
 
   if (openUp) {
-    nextMenuStyle.bottom = window.innerHeight - buttonRect.top + menuOffset
+    nextMenuStyle.bottom = toCssRem(window.innerHeight - buttonRect.top + menuOffset)
   } else {
-    nextMenuStyle.top = buttonRect.bottom + menuOffset
+    nextMenuStyle.top = toCssRem(buttonRect.bottom + menuOffset)
   }
 
   return nextMenuStyle

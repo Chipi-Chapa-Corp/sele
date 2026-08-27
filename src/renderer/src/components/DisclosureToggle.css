@@ -3,12 +3,12 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 32px;
+  min-height: 1.6rem;
   align-items: center;
-  gap: 8px;
-  padding: 0 10px;
+  gap: 0.4rem;
+  padding: 0 0.5rem;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0.4rem;
   color: var(--quiet);
   cursor: pointer;
   background: transparent;
@@ -28,13 +28,13 @@
 }
 
 :where(.ui-disclosure-toggle:focus-visible) {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: 3px;
+  outline: 0.1875rem solid var(--focus-ring);
+  outline-offset: 0.1875rem;
 }
 
 :where(.ui-disclosure-toggle__chevron) {
-  width: 17px;
-  height: 17px;
+  width: 0.85rem;
+  height: 0.85rem;
   flex: none;
   color: inherit;
   transition: transform 160ms ease;

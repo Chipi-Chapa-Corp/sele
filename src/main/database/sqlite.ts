@@ -18,6 +18,11 @@ type SqliteNullableChatPurposeColumn = ColumnType<
 >
 
 export type LocalDatabase = {
+  browser_hostname_zoom: {
+    hostname: string
+    scale: number
+    updated_at: number
+  }
   chat: {
     id: string
     container_name: string | null
@@ -97,6 +102,14 @@ const ensureColumn = async (
 
 const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   if (schemaReady) return
+
+  await db.schema
+    .createTable('browser_hostname_zoom')
+    .ifNotExists()
+    .addColumn('hostname', 'text', (column) => column.primaryKey())
+    .addColumn('scale', 'real', (column) => column.notNull())
+    .addColumn('updated_at', 'integer', (column) => column.notNull())
+    .execute()
 
   await db.schema
     .createTable('chat')

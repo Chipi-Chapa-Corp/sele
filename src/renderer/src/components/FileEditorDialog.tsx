@@ -32,6 +32,7 @@ import { marked } from 'marked'
 import type { AppContainerTarget, AppFileTreeResult, AppGitChangeKind } from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { toCssRem } from '../cssUnits'
 import { getFileDisplayParts } from '../fileDisplayPath'
 import { createLocalImageUrl } from '../localImage'
 import { Button } from './Button'
@@ -139,12 +140,12 @@ const markdownSplitPercentageStorageKey = 'sele:markdown-split-percentage:v1'
 const markdownSplitDefaultPercentage = 50
 const markdownSplitMinPercentage = 20
 const markdownSplitMaxPercentage = 80
-const markdownSplitStackedMedia = '(max-width: 760px)'
-const diffTreeWidthStorageKey = 'sele:file-diff-tree-width:v1'
-const diffTreeDefaultWidth = 240
-const diffTreeMinWidth = 180
-const diffTreeMaxWidth = 480
-const diffContentMinWidth = 480
+const markdownSplitStackedMedia = '(max-width: 47.5rem)'
+const diffTreeWidthStorageKey = 'sele:file-diff-tree-width:v2'
+const diffTreeDefaultWidth = 192
+const diffTreeMinWidth = 144
+const diffTreeMaxWidth = 384
+const diffContentMinWidth = 384
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
@@ -1188,7 +1189,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
           ref={bodyRef}
           style={
             showTreeSidebar
-              ? ({ '--file-diff-tree-width': `${diffTreeWidth}px` } as CSSProperties)
+              ? ({ '--file-diff-tree-width': toCssRem(diffTreeWidth) } as CSSProperties)
               : undefined
           }
         >
@@ -1237,7 +1238,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
               onKeyDown={(event) => {
                 if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
                 event.preventDefault()
-                resizeDiffTreeBy(event.key === 'ArrowLeft' ? -16 : 16)
+                resizeDiffTreeBy(event.key === 'ArrowLeft' ? -12.8 : 12.8)
               }}
               onPointerDown={startDiffTreeResize}
             />

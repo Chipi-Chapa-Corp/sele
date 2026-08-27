@@ -17,6 +17,7 @@ import jsx from 'refractor/jsx'
 import tsx from 'refractor/tsx'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { toCssRem } from '../cssUnits'
 import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { Button } from './Button'
 import { Input } from './Input'
@@ -83,11 +84,11 @@ const languageByFileName: Record<string, string> = {
 
 const maxStructuredDiffLength = 200_000
 const maxStructuredDiffLines = 4_000
-const reviewMarkerHeight = 40
-const reviewMarkerInset = 28
-const reviewMarkerWidth = 72
-const reviewBlockGap = 16
-const reviewInputWidth = 320
+const reviewMarkerHeight = 32
+const reviewMarkerInset = 22.4
+const reviewMarkerWidth = 57.6
+const reviewBlockGap = 12.8
+const reviewInputWidth = 256
 
 const hasMoreThanLines = (value: string, maxLines: number): boolean => {
   let lineCount = 1
@@ -583,7 +584,7 @@ const ReviewMarkers = ({
         <div
           className="unified-diff__review-marker"
           key={marker.group.key}
-          style={{ right: reviewMarkerInset, top: marker.top }}
+          style={{ right: toCssRem(reviewMarkerInset), top: toCssRem(marker.top) }}
         >
           <Button
             aria-label={`Open ${marker.group.comments.length} review comment${marker.group.comments.length === 1 ? '' : 's'} near line ${marker.group.line}`}
@@ -610,8 +611,8 @@ const ReviewMarkers = ({
         <div
           className="unified-diff__review-overlay"
           style={{
-            right: reviewMarkerInset + reviewMarkerWidth + reviewBlockGap,
-            top: openMarker.top
+            right: toCssRem(reviewMarkerInset + reviewMarkerWidth + reviewBlockGap),
+            top: toCssRem(openMarker.top)
           }}
           onMouseUp={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
@@ -666,7 +667,7 @@ const ReviewInput = ({
   return (
     <form
       className="unified-diff__review-form"
-      style={position}
+      style={{ left: toCssRem(position.left), top: toCssRem(position.top) }}
       onMouseUp={(event) => event.stopPropagation()}
       onSubmit={(event) => {
         event.preventDefault()
@@ -865,7 +866,7 @@ export const EditableUnifiedDiff = ({
       folding: false,
       glyphMargin: false,
       ignoreTrimWhitespace: false,
-      lineDecorationsWidth: 10,
+      lineDecorationsWidth: 8,
       lineNumbers: 'on',
       lineNumbersMinChars: showOriginalLineNumbersRef.current ? 5 : 3,
       minimap: { enabled: false },
@@ -929,8 +930,11 @@ export const EditableUnifiedDiff = ({
       const endPosition = selection.getEndPosition()
 
       setReviewInputPosition({
-        left: Math.max(8, Math.min(position.left, parent.clientWidth - reviewInputWidth - 8)),
-        top: Math.max(8, Math.min(position.top + position.height + 6, parent.clientHeight - 48)),
+        left: Math.max(6.4, Math.min(position.left, parent.clientWidth - reviewInputWidth - 6.4)),
+        top: Math.max(
+          6.4,
+          Math.min(position.top + position.height + 4.8, parent.clientHeight - 38.4)
+        ),
         location: {
           line: startPosition.lineNumber,
           endLine: endPosition.lineNumber,
@@ -1344,8 +1348,8 @@ export const UnifiedDiff = ({
         const fallback = host.querySelector<HTMLElement>('.unified-diff__fallback')
         const fallbackStyle = fallback ? getComputedStyle(fallback) : null
         const fallbackLineHeight = fallbackStyle
-          ? Number.parseFloat(fallbackStyle.lineHeight) || 21
-          : 21
+          ? Number.parseFloat(fallbackStyle.lineHeight) || 16.8
+          : 16.8
         const fallbackPaddingTop = fallbackStyle
           ? Number.parseFloat(fallbackStyle.paddingTop) || 0
           : 0
@@ -1503,10 +1507,13 @@ export const UnifiedDiff = ({
 
     setReviewInputPosition({
       left: Math.max(
-        8,
-        Math.min(selectionRect.left - hostRect.left, hostRect.width - reviewInputWidth - 8)
+        6.4,
+        Math.min(selectionRect.left - hostRect.left, hostRect.width - reviewInputWidth - 6.4)
       ),
-      top: Math.max(8, Math.min(selectionRect.bottom - hostRect.top + 6, hostRect.height - 48)),
+      top: Math.max(
+        6.4,
+        Math.min(selectionRect.bottom - hostRect.top + 4.8, hostRect.height - 38.4)
+      ),
       location
     })
   }, [changeLocations, fileDiff.kind, onAddComment])

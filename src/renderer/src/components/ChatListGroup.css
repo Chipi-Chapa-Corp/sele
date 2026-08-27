@@ -4,7 +4,7 @@
   width: 100%;
   min-width: 0;
   flex-direction: column;
-  gap: 10px;
+  gap: 0.5rem;
 }
 
 .chat-list-group--project-reorderable > .chat-list-group__header {
@@ -32,40 +32,40 @@
 .chat-list-group--project-drop-after::after {
   position: absolute;
   z-index: 2;
-  right: 4px;
-  left: 4px;
-  height: 2px;
-  border-radius: 999px;
+  right: 0.2rem;
+  left: 0.2rem;
+  height: 0.1rem;
+  border-radius: 49.95rem;
   background: var(--accent);
   content: '';
   pointer-events: none;
 }
 
 .chat-list-group--project-drop-before::after {
-  top: -7px;
+  top: -0.35rem;
 }
 
 .chat-list-group--project-drop-after::after {
-  bottom: -7px;
+  bottom: -0.35rem;
 }
 
 .chat-list-group__header {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 0.3rem;
 }
 
 .chat-list-group__toggle {
   display: flex;
   min-width: 0;
-  min-height: 32px;
+  min-height: 1.6rem;
   flex: 1;
   align-items: center;
-  gap: 8px;
-  padding: 0 10px;
+  gap: 0.4rem;
+  padding: 0 0.5rem;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0.4rem;
   color: var(--quiet);
   cursor: pointer;
   background: transparent;
@@ -90,13 +90,13 @@
 }
 
 .chat-list-group__toggle:focus-visible {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: 3px;
+  outline: 0.1875rem solid var(--focus-ring);
+  outline-offset: 0.1875rem;
 }
 
 .chat-list-group__chevron {
-  width: 17px;
-  height: 17px;
+  width: 0.85rem;
+  height: 0.85rem;
   flex: none;
   transition: transform 160ms ease;
 }
@@ -113,14 +113,14 @@
 }
 
 .chat-list-group__toggle-content--project {
-  padding-left: 28px;
+  padding-left: 1.4rem;
 }
 
 .chat-list-group__project-icon-button {
   appearance: none;
   position: absolute;
   top: 50%;
-  left: 35px;
+  left: 1.75rem;
   z-index: 1;
   display: grid;
   width: var(--control-icon-size);
@@ -144,13 +144,13 @@
   display: block;
   width: var(--control-icon-size);
   height: var(--control-icon-size);
-  border-radius: 5px;
+  border-radius: 0.25rem;
   object-fit: cover;
 }
 
 .chat-list-group__project-icon-button:focus-visible {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline: 0.1875rem solid var(--focus-ring);
+  outline-offset: 0.125rem;
 }
 
 .chat-list-group__title {
@@ -175,7 +175,7 @@
 .chat-list-group__action {
   display: flex;
   flex: none;
-  gap: 4px;
+  gap: 0.2rem;
   align-items: center;
   opacity: 0;
   pointer-events: none;
@@ -198,8 +198,8 @@
 
 .chat-list-group--cwd .chat-list-group__items {
   position: relative;
-  margin-left: 18px;
-  padding-left: 10px;
+  margin-left: 0.9rem;
+  padding-left: 0.5rem;
 }
 
 .chat-list-group--cwd .chat-list-group__items::before {
@@ -207,21 +207,21 @@
   top: 0;
   bottom: 0;
   left: 0;
-  width: 1px;
-  border-radius: 999px;
+  width: 0.0625rem;
+  border-radius: 49.95rem;
   background: color-mix(in srgb, var(--quiet) 28%, transparent);
   content: '';
   pointer-events: none;
 }
 
 .chat-list-group__items .chat-list {
-  gap: 10px;
+  gap: 0.5rem;
 }
 
 .chat-list-group__more {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 2px;
+  gap: 0.3rem;
+  padding-top: 0.1rem;
 }

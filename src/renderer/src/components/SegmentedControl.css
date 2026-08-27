@@ -2,9 +2,9 @@
   display: grid;
   min-width: 0;
   grid-template-columns: repeat(var(--ui-segmented-control-count), minmax(0, 1fr));
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--control-border);
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border: 0.0625rem solid var(--control-border);
   border-radius: var(--control-radius);
   background: var(--control-surface);
   box-shadow: var(--control-shadow);
@@ -14,7 +14,7 @@
   position: relative;
   display: flex;
   min-width: 0;
-  border-radius: calc(var(--control-radius) - 4px);
+  border-radius: calc(var(--control-radius) - 0.2rem);
 }
 
 :where(.ui-segmented-control__option) {
@@ -22,14 +22,14 @@
   display: inline-grid;
   width: 100%;
   min-width: 0;
-  min-height: calc(var(--control-height) - 8px);
+  min-height: calc(var(--control-height) - 0.4rem);
   grid-auto-flow: column;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 10px;
+  gap: 0.35rem;
+  padding: 0 0.5rem;
   border: 0;
-  border-radius: calc(var(--control-radius) - 4px);
+  border-radius: calc(var(--control-radius) - 0.2rem);
   color: var(--lead);
   cursor: pointer;
   background: transparent;
@@ -41,21 +41,21 @@
 }
 
 :where(.ui-segmented-control__option--with-action) {
-  padding-right: 34px;
+  padding-right: 1.7rem;
 }
 
 :where(.ui-segmented-control--small .ui-segmented-control__item) {
-  border-radius: calc(var(--control-radius-small) - 2px);
+  border-radius: calc(var(--control-radius-small) - 0.1rem);
 }
 
 :where(.ui-segmented-control--small .ui-segmented-control__option) {
   min-height: var(--control-height-small);
-  padding: 0 9px;
-  border-radius: calc(var(--control-radius-small) - 2px);
+  padding: 0 0.45rem;
+  border-radius: calc(var(--control-radius-small) - 0.1rem);
 }
 
 :where(.ui-segmented-control--small .ui-segmented-control__option--with-action) {
-  padding-right: 29px;
+  padding-right: 1.45rem;
 }
 
 :where(.ui-segmented-control__option:hover:not(:disabled)),
@@ -65,7 +65,7 @@
 }
 
 :where(.ui-segmented-control__option:focus-visible) {
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
 }
 
 :where(.ui-segmented-control__option--active) {
@@ -82,14 +82,14 @@
   appearance: none;
   position: absolute;
   top: 50%;
-  right: 5px;
+  right: 0.25rem;
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 1.2rem;
+  height: 1.2rem;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: 0.25rem;
   color: var(--quiet);
   cursor: pointer;
   background: transparent;
@@ -103,9 +103,9 @@
 }
 
 :where(.ui-segmented-control--small .ui-segmented-control__action) {
-  right: 4px;
-  width: 21px;
-  height: 21px;
+  right: 0.2rem;
+  width: 1.05rem;
+  height: 1.05rem;
 }
 
 :where(
@@ -122,7 +122,7 @@
 }
 
 :where(.ui-segmented-control__action:focus-visible) {
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow: 0 0 0 0.125rem var(--focus-ring);
 }
 
 :where(.ui-segmented-control__action:disabled) {
@@ -132,14 +132,14 @@
 
 :where(.ui-segmented-control__action > span) {
   display: grid;
-  width: 14px;
-  height: 14px;
+  width: 0.7rem;
+  height: 0.7rem;
   place-items: center;
 }
 
 :where(.ui-segmented-control__action svg) {
-  width: 14px;
-  height: 14px;
+  width: 0.7rem;
+  height: 0.7rem;
 }
 
 :where(.ui-segmented-control__icon) {

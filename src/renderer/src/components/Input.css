@@ -3,8 +3,8 @@
   width: 100%;
   min-width: 0;
   min-height: var(--control-height);
-  padding: 0 12px;
-  border: 1px solid var(--control-border);
+  padding: 0 0.6rem;
+  border: 0.0625rem solid var(--control-border);
   border-radius: var(--control-radius);
   outline: 0;
   color: var(--lead);
@@ -27,7 +27,7 @@
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: var(--control-surface);
   box-shadow:
-    0 0 0 3px var(--focus-ring),
+    0 0 0 0.1875rem var(--focus-ring),
     var(--control-shadow);
 }
 

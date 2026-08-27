@@ -98,15 +98,45 @@ export type AppWindowState = {
   isMaximized: boolean
 }
 
-export const appWindowZoomLevelDefault = 0
+const appWindowZoomFactorBase = 1.2
+const appWindowZoomPercentBase = 100
+export const appWindowZoomPercentDefault = 125
+export const appWindowZoomLevelDefault =
+  Math.log(appWindowZoomPercentDefault / appWindowZoomPercentBase) /
+  Math.log(appWindowZoomFactorBase)
 export const appWindowZoomLevelMin = -4
 export const appWindowZoomLevelMax = 6
 
 export const normalizeAppWindowZoomLevel = (value: unknown): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return appWindowZoomLevelDefault
 
-  return Math.min(Math.max(Math.round(value), appWindowZoomLevelMin), appWindowZoomLevelMax)
+  return Math.min(Math.max(value, appWindowZoomLevelMin), appWindowZoomLevelMax)
 }
+
+export const appWindowZoomPercentMin = Math.round(
+  appWindowZoomPercentBase * appWindowZoomFactorBase ** appWindowZoomLevelMin
+)
+export const appWindowZoomPercentMax = Math.round(
+  appWindowZoomPercentBase * appWindowZoomFactorBase ** appWindowZoomLevelMax
+)
+
+export const normalizeAppWindowZoomPercent = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return appWindowZoomPercentDefault
+
+  return Math.min(Math.max(Math.round(value), appWindowZoomPercentMin), appWindowZoomPercentMax)
+}
+
+export const appWindowZoomLevelToFactor = (level: number): number =>
+  appWindowZoomFactorBase ** normalizeAppWindowZoomLevel(level)
+
+export const appWindowZoomLevelToPercent = (level: number): number =>
+  normalizeAppWindowZoomPercent(appWindowZoomPercentBase * appWindowZoomLevelToFactor(level))
+
+export const appWindowZoomPercentToLevel = (percent: number): number =>
+  normalizeAppWindowZoomLevel(
+    Math.log(normalizeAppWindowZoomPercent(percent) / appWindowZoomPercentBase) /
+      Math.log(appWindowZoomFactorBase)
+  )
 
 export type AppWindowZoomShortcutAction = 'in' | 'out' | 'reset'
 

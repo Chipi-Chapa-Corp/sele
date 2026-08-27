@@ -46,6 +46,6 @@ export const getCodeFontAppearance = (): { family: string; size: number } => {
 
   return {
     family,
-    size: Number.isFinite(size) ? size : 18
+    size: Number.isFinite(size) ? size : 16
   }
 }

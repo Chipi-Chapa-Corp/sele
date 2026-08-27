@@ -16,6 +16,7 @@ import { flushSync } from 'react-dom'
 import { version as appVersion } from '../../../package.json'
 import puppyKeylineOutlineUrl from './assets/puppy-keyline-outline.svg'
 import { getComposerDraftScopeKey } from './composerDraft'
+import { toCssRem } from './cssUnits'
 import {
   Apple,
   AppWindow,
@@ -273,8 +274,12 @@ import {
   type AppProjectSettingsOverrides,
   type AppSettings,
   type AppThemePreference,
-  appAppearanceZoomLevelMax,
-  appAppearanceZoomLevelMin,
+  appAppearanceZoomLevelToPercent,
+  appAppearanceZoomPercentMax,
+  appAppearanceZoomPercentMin,
+  appAppearanceZoomPercentToLevel,
+  appBrowserDefaultScaleMax,
+  appBrowserDefaultScaleMin,
   appMaxChatsRenderedMin,
   appRecentlyOpenedFilesLimitMax,
   appRecentlyOpenedFilesLimitMin,
@@ -282,15 +287,17 @@ import {
   appRecentsMessageLimitMin,
   appFontInheritValue,
   appFontMonospaceValue,
-  appFontSizeMax,
-  appFontSizeMin,
+  appFontScalePercentMax,
+  appFontScalePercentMin,
+  appFontScalePercentToSize,
+  appFontSizeToScalePercent,
   appFontSystemValue,
   appChatManualDropdownValue,
   appChatStandardSpeedValue,
   isAppProjectSettingsOverridesEmpty,
   normalizeAppProjectSettingsCwd,
   normalizeAppAppearanceZoomLevel,
-  normalizeAppFontSize,
+  normalizeAppBrowserDefaultScale,
   normalizeAppMaxChatsRendered,
   normalizeAppRecentlyOpenedFilesLimit,
   normalizeAppRecentsMessageLimit,
@@ -950,12 +957,12 @@ const chatWorkingToolWindowSize = chatWorkingToolPageSize * 2
 const loadedWorkingStepCacheSize = 3
 const chatTurnLoadThresholdPx = 80
 const streamingChatUpdateIntervalMs = 50
-const chatSidebarDefaultWidth = 280
-const changesSidebarDefaultWidth = 240
-const chatSidebarMinWidth = 220
-const changesSidebarMinWidth = 220
-const chatBlockMinWidth = 320
-const chatResizeHandleWidth = 20
+const chatSidebarDefaultWidth = 224
+const changesSidebarDefaultWidth = 192
+const chatSidebarMinWidth = 176
+const changesSidebarMinWidth = 176
+const chatBlockMinWidth = 256
+const chatResizeHandleWidth = 16
 const chatResizeHandleCount = 2
 const chatPaneDefaultReferenceWidth = 1200
 const chatPanePreferenceStorageKey = 'sele:chat-pane-preference:v1'
@@ -3868,6 +3875,10 @@ export const App: React.FC = () => {
     key: string
     value: string
   } | null>(null)
+  const [browserDefaultScaleInputDraft, setBrowserDefaultScaleInputDraft] = useState<{
+    key: string
+    value: string
+  } | null>(null)
   const [appearanceFontSizeInputDraft, setAppearanceFontSizeInputDraft] = useState<{
     key: string
     value: string
@@ -4036,11 +4047,11 @@ export const App: React.FC = () => {
     [installedFontFamilies]
   )
   const updateAppearanceZoomLevel = useCallback(
-    (value: number): void => {
+    (value: number, clearInputDraft = true): void => {
       const zoomLevel = normalizeAppAppearanceZoomLevel(value)
       const zoomPath = { section: 'appearance', key: 'zoomLevel' } satisfies AppProjectSettingPath
 
-      setAppearanceZoomLevelInputDraft(null)
+      if (clearInputDraft) setAppearanceZoomLevelInputDraft(null)
 
       if (
         settingsViewIsProject &&
@@ -4224,6 +4235,7 @@ export const App: React.FC = () => {
   const scrollToLatestTurnAfterRenderRef = useRef(false)
   const pendingPinnedMessageNavigationRef = useRef<PinnedChatTextReference | null>(null)
   const pinnedMessageScrollCleanupRef = useRef<(() => void) | null>(null)
+  const chatResizeCleanupRef = useRef<(() => void) | null>(null)
   const chatInitialLayoutKeyRef = useRef<string | null>(null)
   const chatDetailRef = useRef<ProviderChatDetail | null>(chatDetail)
   const chatDetailResyncRef = useRef<{ chatKey: string; requestId: number } | null>(null)
@@ -5409,6 +5421,8 @@ export const App: React.FC = () => {
     return () => observer.disconnect()
   }, [])
 
+  useEffect(() => () => chatResizeCleanupRef.current?.(), [])
+
   const handleStartChatResize = useCallback(
     (edge: ChatResizeEdge, event: React.PointerEvent<HTMLDivElement>): void => {
       if (event.button !== 0) return
@@ -5418,16 +5432,21 @@ export const App: React.FC = () => {
 
       event.preventDefault()
       event.currentTarget.blur()
+      chatResizeCleanupRef.current?.()
 
       const startX = event.clientX
       const totalWidth = panels.getBoundingClientRect().width
       if (!totalWidth) return
 
+      const resizeHandle = event.currentTarget
+      const pointerId = event.pointerId
       const startWidths = getChatPaneWidthsFromPercents(displayedPanePercents, totalWidth)
       const handleWidth = chatResizeHandleWidth * chatResizeHandleCount
       const previousCursor = document.body.style.cursor
       const previousUserSelect = document.body.style.userSelect
 
+      resizeHandle.setPointerCapture(pointerId)
+      panels.classList.add('chat__panels--resizing')
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
 
@@ -5463,14 +5482,20 @@ export const App: React.FC = () => {
       }
 
       const handlePointerUp = (): void => {
+        panels.classList.remove('chat__panels--resizing')
         document.body.style.cursor = previousCursor
         document.body.style.userSelect = previousUserSelect
+        if (resizeHandle.hasPointerCapture(pointerId)) resizeHandle.releasePointerCapture(pointerId)
         window.removeEventListener('pointermove', handlePointerMove)
         window.removeEventListener('pointerup', handlePointerUp)
+        window.removeEventListener('pointercancel', handlePointerUp)
+        chatResizeCleanupRef.current = null
       }
 
+      chatResizeCleanupRef.current = handlePointerUp
       window.addEventListener('pointermove', handlePointerMove)
       window.addEventListener('pointerup', handlePointerUp)
+      window.addEventListener('pointercancel', handlePointerUp)
     },
     [displayedPanePercents]
   )
@@ -8697,6 +8722,7 @@ export const App: React.FC = () => {
     if (!settingsProjectCwd) return
 
     setAppearanceZoomLevelInputDraft(null)
+    setBrowserDefaultScaleInputDraft(null)
     setAppearanceFontSizeInputDraft(null)
     updateProjectSettings((currentOverrides) =>
       clearAppProjectSettingOverrideValue(currentOverrides, path)
@@ -8787,6 +8813,27 @@ export const App: React.FC = () => {
     }))
   }
 
+  const handleBrowserDefaultScaleChange = (value: string): void => {
+    setBrowserDefaultScaleInputDraft({ key: settingsScopeKey, value })
+
+    const parsedValue = Number(value.trim())
+    if (!value.trim() || !Number.isFinite(parsedValue)) return
+    if (parsedValue < appBrowserDefaultScaleMin || parsedValue > appBrowserDefaultScaleMax) return
+
+    const defaultScale = normalizeAppBrowserDefaultScale(parsedValue)
+    updateScopedSetting(
+      { section: 'browser', key: 'defaultScale' },
+      defaultScale,
+      (currentSettings) => ({
+        ...currentSettings,
+        browser: {
+          ...currentSettings.browser,
+          defaultScale
+        }
+      })
+    )
+  }
+
   const handleBrowserViewChange = (view: AppBrowserView): void => {
     updateScopedSetting({ section: 'browser', key: 'view' }, view, (currentSettings) => ({
       ...currentSettings,
@@ -8803,10 +8850,12 @@ export const App: React.FC = () => {
     const trimmedValue = value.trim()
     if (!trimmedValue || trimmedValue === '-' || trimmedValue === '+') return
 
-    const zoomLevel = Number(trimmedValue)
-    if (!Number.isFinite(zoomLevel)) return
+    const zoomPercent = Number(trimmedValue)
+    if (!Number.isFinite(zoomPercent)) return
+    if (zoomPercent < appAppearanceZoomPercentMin || zoomPercent > appAppearanceZoomPercentMax)
+      return
 
-    updateAppearanceZoomLevel(zoomLevel)
+    updateAppearanceZoomLevel(appAppearanceZoomPercentToLevel(zoomPercent), false)
   }
 
   const handleAppearanceZoomLevelInputBlur = (): void => {
@@ -8877,13 +8926,14 @@ export const App: React.FC = () => {
     const trimmedValue = value.trim()
     if (!trimmedValue) return
 
-    const size = Number(trimmedValue)
-    if (!Number.isFinite(size)) return
+    const scalePercent = Number(trimmedValue)
+    if (!Number.isFinite(scalePercent)) return
+    if (scalePercent < appFontScalePercentMin || scalePercent > appFontScalePercentMax) return
 
     const currentFont = settingsPanelSettings.appearance[key]
     updateAppearanceFont(key, {
       ...currentFont,
-      size: normalizeAppFontSize(size, currentFont.size)
+      size: appFontScalePercentToSize(scalePercent, currentFont.size)
     })
   }
 
@@ -11570,10 +11620,10 @@ export const App: React.FC = () => {
   const panelsStyle = {
     '--chat-sidebar-width': usePercentagePaneTracks
       ? formatChatPanePercent(displayedPanePercents.sidebar)
-      : `${chatSidebarDefaultWidth}px`,
+      : toCssRem(chatSidebarDefaultWidth),
     '--chat-changes-width': usePercentagePaneTracks
       ? formatChatPanePercent(displayedPanePercents.changes)
-      : `${changesSidebarDefaultWidth}px`
+      : toCssRem(changesSidebarDefaultWidth)
   } as CSSProperties
 
   const getChangeTreeRowStyle = (depth: number): CSSProperties =>
@@ -13141,7 +13191,11 @@ export const App: React.FC = () => {
   const appearanceZoomLevelInput =
     appearanceZoomLevelInputDraft?.key === settingsScopeKey
       ? appearanceZoomLevelInputDraft.value
-      : String(settingsPanelSettings.appearance.zoomLevel)
+      : String(appAppearanceZoomLevelToPercent(settingsPanelSettings.appearance.zoomLevel))
+  const browserDefaultScaleInput =
+    browserDefaultScaleInputDraft?.key === settingsScopeKey
+      ? browserDefaultScaleInputDraft.value
+      : String(settingsPanelSettings.browser.defaultScale)
   const windowControlsHidden = settingsPanelSettings.appearance.position === 'hidden'
 
   const renderSettingsPanel = (): React.ReactElement => {
@@ -13198,6 +13252,10 @@ export const App: React.FC = () => {
     const browserEnabledPath = {
       section: 'browser',
       key: 'enabled'
+    } satisfies AppProjectSettingPath
+    const browserDefaultScalePath = {
+      section: 'browser',
+      key: 'defaultScale'
     } satisfies AppProjectSettingPath
     const browserViewPath = {
       section: 'browser',
@@ -14341,6 +14399,44 @@ export const App: React.FC = () => {
               </div>
             </div>
           </section>
+          <section
+            className="settings-dialog__section"
+            aria-labelledby="settings-browser-accessibility"
+          >
+            <h2 className="settings-dialog__section-heading" id="settings-browser-accessibility">
+              Accessibility
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-browser-default-scale"
+                >
+                  <h3>Default Scale</h3>
+                  <p>Set the default zoom for Browser pages.</p>
+                </label>
+                {renderProjectSettingAction(browserDefaultScalePath, 'Default Scale')}
+                <div className="settings-dialog__number-with-unit">
+                  <Input
+                    aria-label="Default browser scale percentage"
+                    className="settings-dialog__number-input"
+                    id="settings-browser-default-scale"
+                    type="number"
+                    min={appBrowserDefaultScaleMin}
+                    max={appBrowserDefaultScaleMax}
+                    step={5}
+                    disabled={isScopedSettingControlDisabled(browserDefaultScalePath)}
+                    value={browserDefaultScaleInput}
+                    onBlur={() => setBrowserDefaultScaleInputDraft(null)}
+                    onChange={(event) => handleBrowserDefaultScaleChange(event.currentTarget.value)}
+                  />
+                  <span aria-hidden="true" className="settings-dialog__number-unit">
+                    %
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
           <BrowserImportSettings key={changesContainerKey} currentEnvironment={changesContainer} />
         </section>
       )
@@ -14380,20 +14476,26 @@ export const App: React.FC = () => {
                 <h3>Zoom</h3>
               </label>
               {renderProjectSettingAction(appearanceZoomPath, 'Zoom')}
-              <Input
-                className="settings-dialog__number-input"
-                id="settings-appearance-zoom-level"
-                type="number"
-                min={appAppearanceZoomLevelMin}
-                max={appAppearanceZoomLevelMax}
-                step={1}
-                disabled={isScopedSettingControlDisabled(appearanceZoomPath)}
-                value={appearanceZoomLevelInput}
-                onBlur={handleAppearanceZoomLevelInputBlur}
-                onChange={(event) =>
-                  handleAppearanceZoomLevelInputChange(event.currentTarget.value)
-                }
-              />
+              <div className="settings-dialog__number-with-unit">
+                <Input
+                  aria-label="Application zoom percentage"
+                  className="settings-dialog__number-input"
+                  id="settings-appearance-zoom-level"
+                  type="number"
+                  min={appAppearanceZoomPercentMin}
+                  max={appAppearanceZoomPercentMax}
+                  step={1}
+                  disabled={isScopedSettingControlDisabled(appearanceZoomPath)}
+                  value={appearanceZoomLevelInput}
+                  onBlur={handleAppearanceZoomLevelInputBlur}
+                  onChange={(event) =>
+                    handleAppearanceZoomLevelInputChange(event.currentTarget.value)
+                  }
+                />
+                <span aria-hidden="true" className="settings-dialog__number-unit">
+                  %
+                </span>
+              </div>
             </div>
           </div>
         </section>
@@ -14482,7 +14584,7 @@ export const App: React.FC = () => {
               const sizeInput =
                 appearanceFontSizeInputDraft?.key === draftKey
                   ? appearanceFontSizeInputDraft.value
-                  : String(font.size)
+                  : String(appFontSizeToScalePercent(font.size))
               const disabled = isScopedSettingControlDisabled(path)
 
               return (
@@ -14505,13 +14607,13 @@ export const App: React.FC = () => {
                       onChange={(family) => handleAppearanceFontFamilyChange(field.key, family)}
                     />
                     <label className="settings-dialog__font-size">
-                      <span className="sr-only">{field.label} size</span>
+                      <span className="sr-only">{field.label} scale</span>
                       <Input
-                        aria-label={`${field.label} size`}
+                        aria-label={`${field.label} scale percentage`}
                         type="number"
-                        min={appFontSizeMin}
-                        max={appFontSizeMax}
-                        step={0.025}
+                        min={appFontScalePercentMin}
+                        max={appFontScalePercentMax}
+                        step={2.5}
                         disabled={disabled}
                         value={sizeInput}
                         onBlur={handleAppearanceFontSizeInputBlur}
@@ -14519,7 +14621,7 @@ export const App: React.FC = () => {
                           handleAppearanceFontSizeInputChange(field.key, event.currentTarget.value)
                         }
                       />
-                      <span aria-hidden="true">rem</span>
+                      <span aria-hidden="true">%</span>
                     </label>
                   </div>
                 </div>
@@ -15802,6 +15904,8 @@ export const App: React.FC = () => {
                 >
                   <BrowserPanel
                     active={changesPaneView === 'browser'}
+                    appZoomLevel={effectiveAppSettings.appearance.zoomLevel}
+                    defaultScale={effectiveAppSettings.browser.defaultScale}
                     openRequest={browserOpenRequest}
                     workspaceKey={browserWorkspaceKey}
                   />

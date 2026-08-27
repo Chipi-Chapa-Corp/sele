@@ -2,14 +2,14 @@
   position: fixed;
   z-index: 1000;
   display: flex;
-  min-width: min(280px, calc(100vw - 24px));
-  max-width: calc(100vw - 24px);
-  max-height: min(520px, 66vh);
+  min-width: min(14rem, calc(100vw - 1.2rem));
+  max-width: calc(100vw - 1.2rem);
+  max-height: min(26rem, 66vh);
   flex-direction: column;
   overflow: hidden;
-  padding: 10px;
-  border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  padding: 0.5rem;
+  border: 0.0625rem solid var(--menu-border);
+  border-radius: 0.6rem;
   outline: none;
   color: var(--lead);
   background: var(--menu-bg);
@@ -20,19 +20,19 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 8px;
+  gap: 0.4rem;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: var(--glass-edge) transparent;
 }
 
 .review-comments-menu__items::-webkit-scrollbar {
-  width: 10px;
+  width: 0.5rem;
 }
 
 .review-comments-menu__items::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
+  border: 0.1875rem solid transparent;
+  border-radius: 49.95rem;
   background: var(--glass-edge);
   background-clip: padding-box;
 }
@@ -40,8 +40,8 @@
 .review-comments-menu__group {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--menu-border);
-  border-radius: 8px;
+  border: 0.0625rem solid var(--menu-border);
+  border-radius: 0.4rem;
   background: var(--glass-subtle);
 }
 
@@ -52,8 +52,8 @@
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
-  padding: 8px 10px;
+  gap: 0.35rem;
+  padding: 0.4rem 0.5rem;
   border: 0;
   color: var(--ink);
   background: color-mix(in srgb, var(--secondary-surface) 76%, transparent);
@@ -74,8 +74,8 @@ button.review-comments-menu__file:hover {
 button.review-comments-menu__file:focus-visible {
   position: relative;
   z-index: 1;
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: -0.125rem;
 }
 
 .review-comments-menu__file-icon {
@@ -101,7 +101,7 @@ button.review-comments-menu__file:focus-visible {
 .review-comments-menu__count {
   min-width: 1.5em;
   padding: 0.08em 0.42em;
-  border-radius: 999px;
+  border-radius: 49.95rem;
   color: var(--quiet);
   background: var(--glass-strong);
   font-size: 0.82em;
@@ -121,9 +121,9 @@ button.review-comments-menu__file:focus-visible {
   display: block;
   width: 100%;
   min-width: 0;
-  padding: 9px 10px;
+  padding: 0.45rem 0.5rem;
   border: 0;
-  border-top: 1px solid var(--menu-border);
+  border-top: 0.0625rem solid var(--menu-border);
   color: var(--ink);
   background: transparent;
   font: inherit;
@@ -142,8 +142,8 @@ button.review-comments-menu__file:focus-visible {
 .review-comments-menu__comment--interactive:focus-visible {
   position: relative;
   z-index: 1;
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: -0.125rem;
 }
 
 .review-comments-menu__location {

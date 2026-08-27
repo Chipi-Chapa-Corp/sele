@@ -1,17 +1,17 @@
 .chat-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0.5rem;
 }
 
 .chat-list-stack {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0.7rem;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 37.5rem) {
   .chat-list {
-    gap: 14px;
+    gap: 0.7rem;
   }
 }

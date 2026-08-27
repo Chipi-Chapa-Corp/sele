@@ -366,7 +366,9 @@ const browserApi: BrowserRendererApi = {
         browserIpcChannels.closeActiveTabRequested,
         handleCloseActiveTabRequested
       )
-  }
+  },
+  resolvePageZoomScale: (options) =>
+    ipcRenderer.invoke(browserIpcChannels.resolvePageZoomScale, options)
 }
 
 contextBridge.exposeInMainWorld('appApi', appApi)

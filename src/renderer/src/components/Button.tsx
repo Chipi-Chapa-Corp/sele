@@ -8,6 +8,7 @@ import type {
 } from 'react'
 import { forwardRef, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { toCssRem } from '../cssUnits'
 import './Button.css'
 
 export type ButtonTheme = 'primary' | 'secondary' | 'transparent'
@@ -158,9 +159,9 @@ export const ButtonMenuRow = ({
   const mainStyle =
     inlineActions.length > 0
       ? ({
-          '--ui-button-menu-row-main-padding-inline-end': `${
-            16 + inlineActions.length * 26 + Math.max(0, inlineActions.length - 1) * 2
-          }px`
+          '--ui-button-menu-row-main-padding-inline-end': toCssRem(
+            12.8 + inlineActions.length * 20.8 + Math.max(0, inlineActions.length - 1) * 1.6
+          )
         } as CSSProperties)
       : undefined
 
@@ -312,27 +313,27 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   }, [open])
 
   const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
-    const viewportInset = 12
-    const menuOffset = 6
-    const maxMenuWidth = 280
+    const viewportInset = 9.6
+    const menuOffset = 4.8
+    const maxMenuWidth = 224
     const startLeft = Math.min(
       Math.max(viewportInset, buttonRect.left),
       Math.max(viewportInset, window.innerWidth - maxMenuWidth - viewportInset)
     )
     const nextMenuStyle: CSSProperties = {
-      minWidth: buttonRect.width
+      minWidth: toCssRem(buttonRect.width)
     }
 
     if (dropdownPlacement === 'top') {
-      nextMenuStyle.bottom = window.innerHeight - buttonRect.top + menuOffset
+      nextMenuStyle.bottom = toCssRem(window.innerHeight - buttonRect.top + menuOffset)
     } else {
-      nextMenuStyle.top = buttonRect.bottom + menuOffset
+      nextMenuStyle.top = toCssRem(buttonRect.bottom + menuOffset)
     }
 
     if (dropdownMenuAlign === 'end') {
-      nextMenuStyle.right = Math.max(viewportInset, window.innerWidth - buttonRect.right)
+      nextMenuStyle.right = toCssRem(Math.max(viewportInset, window.innerWidth - buttonRect.right))
     } else {
-      nextMenuStyle.left = startLeft
+      nextMenuStyle.left = toCssRem(startLeft)
     }
 
     return nextMenuStyle

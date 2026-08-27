@@ -5,7 +5,7 @@
 html,
 body,
 #root {
-  min-width: 320px;
+  min-width: 16rem;
   min-height: 100%;
 }
 
@@ -32,8 +32,8 @@ textarea {
 
 summary:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: 3px;
+  outline: 0.1875rem solid var(--focus-ring);
+  outline-offset: 0.1875rem;
 }
 
 #root {
@@ -42,8 +42,8 @@ textarea:focus-visible {
 
 .sr-only {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  width: 0.0625rem;
+  height: 0.0625rem;
   padding: 0;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
@@ -76,8 +76,8 @@ textarea:focus-visible {
 }
 
 :root[data-disable-shadows='true'] :focus-visible {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: 3px;
+  outline: 0.1875rem solid var(--focus-ring);
+  outline-offset: 0.1875rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -25,7 +25,7 @@
 }
 
 .unified-diff + .unified-diff {
-  border-top: 1px solid var(--line);
+  border-top: 0.0625rem solid var(--line);
 }
 
 .unified-diff__review-host {
@@ -38,11 +38,11 @@
   position: absolute;
   z-index: 6;
   display: grid;
-  width: 320px;
-  max-width: calc(100% - 16px);
+  width: 16rem;
+  max-width: calc(100% - 0.8rem);
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 0.4rem;
 }
 
 .unified-diff__review-marker {
@@ -54,20 +54,20 @@
 .unified-diff__review-overlay {
   position: absolute;
   z-index: 7;
-  width: 400px;
-  max-width: calc(100vw - 32px);
+  width: 20rem;
+  max-width: calc(100vw - 1.6rem);
 }
 
 .unified-diff__review-entries {
   display: grid;
-  gap: 10px;
+  gap: 0.5rem;
 }
 
 .unified-diff__review-entry {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 10px;
+  gap: 0.5rem;
 }
 
 .unified-diff .diff-gutter-col {
@@ -79,13 +79,13 @@
 }
 
 .unified-diff .diff-gutter {
-  padding: 0 9px;
-  border-right: 1px solid var(--line);
+  padding: 0 0.45rem;
+  border-right: 0.0625rem solid var(--line);
   color: var(--quiet);
 }
 
 .unified-diff .diff-code {
-  padding: 0 12px;
+  padding: 0 0.6rem;
   overflow-wrap: normal;
   white-space: pre;
   word-break: normal;
@@ -93,7 +93,7 @@
 
 .unified-diff__fallback {
   margin: 0;
-  padding: 18px 20px;
+  padding: 0.9rem 1rem;
   color: var(--lead);
   font-family: var(--code-font-family);
   font-size: var(--code-font-size);
@@ -120,5 +120,5 @@
 .editable-unified-diff__review-line-highlight,
 .editable-unified-diff__target-line-highlight {
   background: var(--accent-soft);
-  box-shadow: inset 3px 0 var(--accent);
+  box-shadow: inset 0.1875rem 0 var(--accent);
 }

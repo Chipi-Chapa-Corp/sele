@@ -37,6 +37,50 @@ export type BrowserCookieImportResult = {
   total: number
 }
 
+export const browserScalePercentDefault = 100
+export const browserScalePercentMin = 25
+export const browserScalePercentMax = 500
+
+export const normalizeBrowserScalePercent = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return browserScalePercentDefault
+
+  return Math.min(Math.max(Math.round(value), browserScalePercentMin), browserScalePercentMax)
+}
+
+const normalizeApplicationZoomFactor = (value: number): number =>
+  Number.isFinite(value) && value > 0 ? value : 1
+
+export const getBrowserPageZoomFactor = (
+  pageScale: number,
+  applicationZoomFactor: number
+): number =>
+  (normalizeBrowserScalePercent(pageScale) / 100) *
+  normalizeApplicationZoomFactor(applicationZoomFactor)
+
+export const getBrowserPageScale = (zoomFactor: number, applicationZoomFactor: number): number =>
+  normalizeBrowserScalePercent(
+    (zoomFactor / normalizeApplicationZoomFactor(applicationZoomFactor)) * 100
+  )
+
+export type BrowserZoomAction = 'in' | 'out' | 'reset'
+
+export const getNextBrowserZoomScale = (
+  currentScale: number,
+  action: BrowserZoomAction,
+  resetScale = browserScalePercentDefault
+): number => {
+  if (action === 'reset') return normalizeBrowserScalePercent(resetScale)
+
+  const normalizedScale = normalizeBrowserScalePercent(currentScale)
+  return normalizeBrowserScalePercent(normalizedScale * (action === 'in' ? 1.2 : 1 / 1.2))
+}
+
+export type BrowserPageZoomOptions = {
+  defaultScale: number
+  url: string
+  webContentsId: number
+}
+
 export type BrowserRendererApi = {
   findCookieProfiles: (
     options: BrowserCookieProfileDiscoveryOptions
@@ -44,13 +88,15 @@ export type BrowserRendererApi = {
   importCookies: (options: BrowserCookieImportOptions) => Promise<BrowserCookieImportResult>
   onOpenRequested: (listener: (request: BrowserOpenRequest) => void) => () => void
   onCloseActiveTabRequested: (listener: () => void) => () => void
+  resolvePageZoomScale: (options: BrowserPageZoomOptions) => Promise<number>
 }
 
 export const browserIpcChannels = {
   findCookieProfiles: 'browser:find-cookie-profiles',
   importCookies: 'browser:import-cookies',
   openRequested: 'browser:open-requested',
-  closeActiveTabRequested: 'browser:close-active-tab-requested'
+  closeActiveTabRequested: 'browser:close-active-tab-requested',
+  resolvePageZoomScale: 'browser:resolve-page-zoom-scale'
 } as const
 
 export type BrowserCloseShortcutInput = {
@@ -90,6 +136,17 @@ export const getBrowserCloseShortcutAction = (
 }
 
 const browserPageProtocols = new Set(['http:', 'https:'])
+
+export const getBrowserPageHostname = (value: string): string | null => {
+  try {
+    const url = new URL(value)
+    return browserPageProtocols.has(url.protocol) && url.hostname
+      ? url.hostname.toLocaleLowerCase()
+      : null
+  } catch {
+    return null
+  }
+}
 
 export const isBrowserPageUrl = (value: string): boolean => {
   try {

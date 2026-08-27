@@ -6,7 +6,7 @@
   min-width: 0;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--control-border);
+  border: 0.0625rem solid var(--control-border);
   color: var(--lead);
   cursor: pointer;
   background: var(--control-surface);
@@ -31,16 +31,16 @@
   pointer-events: none;
   position: absolute;
   inset: 0;
-  border-radius: calc(var(--control-radius) - 1px);
+  border-radius: calc(var(--control-radius) - 0.0625rem);
 }
 
 :where(.ui-button--small::before) {
-  border-radius: calc(var(--control-radius-small) - 1px);
+  border-radius: calc(var(--control-radius-small) - 0.0625rem);
 }
 
 :where(.ui-button:focus-visible) {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.0625rem;
 }
 
 @media (pointer: coarse) {
@@ -51,23 +51,23 @@
     left: 50%;
     width: 100%;
     height: 100%;
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 2.2rem;
+    min-height: 2.2rem;
     transform: translate(-50%, -50%);
   }
 }
 
 :where(.ui-button--normal) {
   min-height: var(--control-height);
-  gap: 9px;
-  padding: 0 16px;
+  gap: 0.45rem;
+  padding: 0 0.8rem;
   border-radius: var(--control-radius);
 }
 
 :where(.ui-button--small) {
   min-height: var(--control-height-small);
-  gap: 7px;
-  padding: 0 12px;
+  gap: 0.35rem;
+  padding: 0 0.6rem;
   border-radius: var(--control-radius-small);
 }
 
@@ -127,7 +127,7 @@
   flex: none;
   padding: 0;
   border-radius: 0 var(--control-radius) var(--control-radius) 0;
-  margin-left: -1px;
+  margin-left: -0.0625rem;
 }
 
 :where(.ui-button-group--small .ui-button--split-main) {
@@ -225,7 +225,7 @@
 }
 
 :where(.ui-button--primary:not(:disabled):active) {
-  transform: translateY(1px);
+  transform: translateY(0.0625rem);
 }
 
 :where(.ui-button--secondary[data-pressed]:not(:disabled)) {
@@ -285,14 +285,14 @@
 .ui-button-menu {
   display: flex;
   min-width: 100%;
-  max-width: min(360px, calc(100vw - 24px));
-  max-height: min(420px, 56vh);
+  max-width: min(18rem, calc(100vw - 1.2rem));
+  max-height: min(21rem, 56vh);
   flex-direction: column;
-  gap: 6px;
+  gap: 0.3rem;
   overflow: auto;
-  padding: 7px;
-  border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  padding: 0.35rem;
+  border: 0.0625rem solid var(--menu-border);
+  border-radius: 0.6rem;
   color: var(--lead);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
@@ -303,12 +303,12 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 38px;
+  min-height: 1.9rem;
   align-items: center;
-  gap: 10px;
-  padding: 0 11px;
+  gap: 0.5rem;
+  padding: 0 0.55rem;
   border: 0;
-  border-radius: 7px;
+  border-radius: 0.35rem;
   color: var(--lead);
   cursor: pointer;
   background: transparent;
@@ -324,11 +324,11 @@
 .ui-button-menu__row {
   display: grid;
   min-width: 0;
-  min-height: 54px;
+  min-height: 2.7rem;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
-  gap: 8px;
-  border-radius: 7px;
+  gap: 0.4rem;
+  border-radius: 0.35rem;
   transition:
     color 160ms ease,
     background 160ms ease;
@@ -343,10 +343,10 @@
 .ui-button-menu__item--row-main {
   grid-row: 1;
   grid-column: 1 / -1;
-  min-height: 54px;
+  min-height: 2.7rem;
   align-self: stretch;
-  padding: 8px var(--ui-button-menu-row-main-padding-inline-end, 10px) 8px 10px;
-  border-radius: 7px;
+  padding: 0.4rem var(--ui-button-menu-row-main-padding-inline-end, 0.5rem) 0.4rem 0.5rem;
+  border-radius: 0.35rem;
   color: inherit;
   font-weight: inherit;
 }
@@ -389,19 +389,19 @@
   align-self: stretch;
   flex: none;
   align-items: center;
-  gap: 2px;
-  padding: 8px 8px 8px 0;
+  gap: 0.1rem;
+  padding: 0.4rem 0.4rem 0.4rem 0;
 }
 
 .ui-button-menu__inline-action.ui-button--small.ui-button--icon-only {
   pointer-events: auto;
-  width: 26px;
-  height: 26px;
-  min-height: 26px;
+  width: 1.3rem;
+  height: 1.3rem;
+  min-height: 1.3rem;
 }
 
 .ui-button-menu__button-item.ui-button--small {
-  min-height: 38px;
+  min-height: 1.9rem;
 }
 
 .ui-button-menu__item:not(.ui-button-menu__item--row-main):not(

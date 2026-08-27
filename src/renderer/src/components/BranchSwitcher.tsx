@@ -9,6 +9,7 @@ import {
   useState
 } from 'react'
 import { createPortal } from 'react-dom'
+import { toCssRem } from '../cssUnits'
 import { Button, ButtonMenuRow } from './Button'
 import { Input } from './Input'
 import './BranchSwitcher.css'
@@ -73,10 +74,10 @@ const isValidBranchName = (name: string): boolean => {
 }
 
 const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
-  const viewportInset = 12
-  const menuOffset = 6
+  const viewportInset = 9.6
+  const menuOffset = 4.8
   const width = Math.min(
-    Math.max(buttonRect.width, 280),
+    Math.max(buttonRect.width, 224),
     Math.max(0, window.innerWidth - viewportInset * 2)
   )
   const left = Math.min(
@@ -85,9 +86,9 @@ const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
   )
 
   return {
-    left,
-    top: buttonRect.bottom + menuOffset,
-    width
+    left: toCssRem(left),
+    top: toCssRem(buttonRect.bottom + menuOffset),
+    width: toCssRem(width)
   }
 }
 

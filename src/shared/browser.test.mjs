@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  appWindowZoomLevelDefault,
+  appWindowZoomLevelToFactor,
+  appWindowZoomLevelToPercent,
+  appWindowZoomPercentToLevel,
+  getAppWindowZoomShortcutAction
+} from './app.ts'
+import {
   getBrowserCloseShortcutAction,
   getBrowserFaviconUrl,
   getBrowserPageLabel,
+  getBrowserPageHostname,
+  getBrowserPageScale,
+  getBrowserPageZoomFactor,
+  getNextBrowserZoomScale,
   isBrowserPageUrl,
   normalizeBrowserAddress
 } from './browser.ts'
@@ -27,6 +38,13 @@ test('recognizes renderable page URLs and derives tab labels', () => {
   assert.equal(isBrowserPageUrl('file:///tmp/example.html'), false)
   assert.equal(getBrowserPageLabel('https://docs.example.com/path'), 'docs.example.com')
   assert.equal(getBrowserPageLabel('not a url'), 'New tab')
+})
+
+test('derives normalized hostnames only from browser page URLs', () => {
+  assert.equal(getBrowserPageHostname('https://Docs.Example.com/path'), 'docs.example.com')
+  assert.equal(getBrowserPageHostname('http://localhost:4173'), 'localhost')
+  assert.equal(getBrowserPageHostname('file:///tmp/example.html'), null)
+  assert.equal(getBrowserPageHostname('not a url'), null)
 })
 
 test('builds favicon URLs only for renderable pages', () => {
@@ -55,4 +73,57 @@ test('captures close-tab shortcuts without allowing a window-close variant', () 
     null
   )
   assert.equal(getBrowserCloseShortcutAction({ type: 'keyDown', control: true, key: 'q' }), null)
+})
+
+test('recognizes unshifted equals as browser zoom in', () => {
+  assert.equal(
+    getAppWindowZoomShortcutAction({ type: 'keyDown', control: true, key: '=', code: 'Equal' }),
+    'in'
+  )
+  assert.equal(
+    getAppWindowZoomShortcutAction({ type: 'keyDown', meta: true, key: '=', code: 'Equal' }),
+    'in'
+  )
+  assert.equal(
+    getAppWindowZoomShortcutAction({
+      type: 'keyDown',
+      control: true,
+      shift: true,
+      key: '+',
+      code: 'Equal'
+    }),
+    'in'
+  )
+})
+
+test('converts application zoom between Electron levels and percentages', () => {
+  assert.equal(appWindowZoomLevelToPercent(appWindowZoomLevelDefault), 125)
+  assert.equal(appWindowZoomLevelToFactor(appWindowZoomLevelDefault), 1.25)
+  assert.equal(appWindowZoomLevelToFactor(1), 1.2)
+  assert.equal(appWindowZoomLevelToPercent(0), 100)
+  assert.equal(appWindowZoomLevelToPercent(1), 120)
+  assert.equal(appWindowZoomLevelToPercent(appWindowZoomPercentToLevel(125)), 125)
+})
+
+test('composes application zoom with browser page scale', () => {
+  assert.equal(getBrowserPageZoomFactor(100, 1.25), 1.25)
+  assert.equal(getBrowserPageZoomFactor(125, 1.2), 1.5)
+  assert.equal(getBrowserPageScale(1.5, 1.2), 125)
+  assert.ok(
+    Math.abs(
+      getBrowserPageZoomFactor(getNextBrowserZoomScale(getBrowserPageScale(1.5, 1.2), 'in'), 1.2) -
+        1.8
+    ) <
+      Number.EPSILON * 2
+  )
+})
+
+test('steps and bounds browser zoom percentages', () => {
+  assert.equal(getNextBrowserZoomScale(100, 'in'), 120)
+  assert.equal(getNextBrowserZoomScale(120, 'out'), 100)
+  assert.equal(getNextBrowserZoomScale(125, 'in'), 150)
+  assert.equal(getNextBrowserZoomScale(400, 'reset'), 100)
+  assert.equal(getNextBrowserZoomScale(400, 'reset', 135), 135)
+  assert.equal(getNextBrowserZoomScale(25, 'out'), 25)
+  assert.equal(getNextBrowserZoomScale(500, 'in'), 500)
 })
