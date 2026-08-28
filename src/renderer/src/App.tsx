@@ -196,6 +196,7 @@ import {
   type ChatCommitMarkerStatus
 } from './chatCommitMarker'
 import { buildChatConversationModel, markChatItemsChanged } from './chatConversationModel'
+import { getChatCommitLaunchMode, isChatCommitProjectLocked } from './chatCommitPolicy'
 import {
   getRecentChatReferenceKey,
   getRecentChatReferences,
@@ -6658,10 +6659,6 @@ export const App: React.FC = () => {
     providerApi.setViewedChat(selectedProviderId ?? null, selectedChatId ?? null)
   }, [selectedChatId, selectedProviderId])
 
-  const committingSelectedChatKey =
-    selectedProviderId && selectedChatId
-      ? getChatKey({ providerId: selectedProviderId, id: selectedChatId })
-      : null
   const committingChatActions = useMemo(() => {
     const actions = new Map<string, GitCommitPromptAction>()
 
@@ -6688,9 +6685,6 @@ export const App: React.FC = () => {
     () => new Set(committingChatActions.keys()),
     [committingChatActions]
   )
-  const selectedChatAiCommitAction = committingSelectedChatKey
-    ? (committingChatActions.get(committingSelectedChatKey) ?? null)
-    : null
   const selectedChatCommitMarkers = useMemo(
     () =>
       selectedProviderId && selectedChatId
@@ -11371,8 +11365,7 @@ export const App: React.FC = () => {
     sendState === 'sending' ||
     providerUpdateInProgress ||
     chatHasActiveTurn ||
-    Boolean(editingMessage) ||
-    Boolean(selectedChatAiCommitAction)
+    Boolean(editingMessage)
   const workingStepIdsWithNextWorkingStep = chatConversationModel.workingStepIdsWithNextWorkingStep
   const followingWorkingStepsById = chatConversationModel.followingWorkingStepsById
   const continuedStoppedWorkingStepIds = useMemo(
@@ -11756,8 +11749,10 @@ export const App: React.FC = () => {
       .sort((firstActivity, secondActivity) => firstActivity.startedAt - secondActivity.startedAt)
   }, [currentProjectKey, directCommitActivities, scopedCommitActivities])
   const currentProjectAiCommitStarting = Boolean(startingScopedCommitActivities[currentProjectKey])
-  const projectCommitInProgress =
-    currentProjectCommitActivities.length > 0 || currentProjectAiCommitStarting
+  const projectCommitInProgress = isChatCommitProjectLocked(
+    currentProjectCommitActivities.length,
+    currentProjectAiCommitStarting
+  )
   const directProjectCommitInProgress = currentProjectCommitActivities.some(
     (activity) => activity.source === 'git'
   )
@@ -11767,11 +11762,7 @@ export const App: React.FC = () => {
   const aiCommitUnavailable =
     currentProjectSendInProgress ||
     Boolean(editingMessage) ||
-    (selectedChat
-      ? !chatDetail ||
-        chatLoadState !== 'ready' ||
-        (chatIsBusy && !chatDetail.capabilities.activeMessages)
-      : false)
+    (selectedChat ? !chatDetail || chatLoadState !== 'ready' || chatIsBusy : false)
   const commitBaseDisabled =
     providerUpdateInProgress ||
     commitFiles.length === 0 ||
@@ -12459,8 +12450,7 @@ export const App: React.FC = () => {
     }
 
     const turnOptions = getGitTurnOptions()
-    const useForkedChat = chatId != null && turnOptions.model !== model
-    const useHiddenChat = chatId == null || useForkedChat
+    const launchMode = getChatCommitLaunchMode(chatId)
     const markerId = chatId ? createChatCommitMarkerId() : null
     // The operation timestamp is captured only when the user starts the commit.
     const markerStartedAt = Date.now()
@@ -12508,76 +12498,9 @@ export const App: React.FC = () => {
       }))
     }
 
-    const queueInActiveChat = Boolean(
-      chatId && chatHasActiveTurn && chatDetail?.capabilities.activeMessages
-    )
-    if (chatId && !queueInActiveChat && !useForkedChat && chatDetail?.id === chatId) {
-      applyViewedChatDetail(providerId, {
-        ...chatDetail,
-        status: 'active',
-        contextUsage: chatDetail.contextUsage,
-        items: getOptimisticItems(chatDetail.items, prompt)
-      })
-    }
-
     try {
-      if (chatId && queueInActiveChat) {
-        const summary = await providerApi.sendActiveChatMessageSummary(
-          providerId,
-          chatId,
-          prompt,
-          'queue',
-          turnOptions
-        )
-        applyChatSummary(providerId, summary, false)
-        // Reading the clock happens only after the asynchronous send completes.
-        markChatSeenAt(providerId, chatId, Date.now())
-        if (changesCwdRef.current === changesCwd) setCommitInput('')
-        if (markerId) {
-          setChatCommitMarkers((currentMarkers) => {
-            const marker = currentMarkers[markerId]
-            if (!marker) return currentMarkers
-
-            return {
-              ...currentMarkers,
-              [markerId]: {
-                ...marker,
-                commitChatId: chatId,
-                status: isActiveChatStatus(summary.status) ? 'pending' : 'finished',
-                afterItemId: sourceAnchorItemId,
-                finishedAt: isActiveChatStatus(summary.status) ? null : Date.now()
-              }
-            }
-          })
-        }
-        if (isActiveChatStatus(summary.status)) {
-          const activityKey = getProviderChatKey(providerId, chatId)
-          const activity = {
-            source: 'ai',
-            providerId,
-            chatId,
-            sourceChatId: chatId,
-            markerId: markerId ?? `untracked:${providerId}:${chatId}:${markerStartedAt}`,
-            projectCwd,
-            commitAction: action,
-            currentAction: getCommitActivityCurrentActionFromSummary(summary, action),
-            startedAt: markerStartedAt
-          } satisfies ScopedCommitActivity
-
-          setScopedCommitActivities((currentActivities) => {
-            const nextActivities = {
-              ...currentActivities,
-              [activityKey]: activity
-            }
-            scopedCommitActivitiesRef.current = nextActivities
-            return nextActivities
-          })
-        }
-        return true
-      }
-
       const detail =
-        chatId == null
+        launchMode === 'new'
           ? await providerApi.startChat(
               providerId,
               prompt,
@@ -12587,17 +12510,8 @@ export const App: React.FC = () => {
               },
               'commit'
             )
-          : useForkedChat
-            ? await providerApi.continueChatInFork(
-                providerId,
-                chatId,
-                prompt,
-                'commit',
-                turnOptions
-              )
-            : await providerApi.continueChat(providerId, chatId, prompt, turnOptions)
-      if (useHiddenChat) applyChatDetail(providerId, detail)
-      else applyViewedChatDetail(providerId, detail)
+          : await providerApi.continueChatInFork(providerId, chatId!, prompt, 'commit', turnOptions)
+      applyChatDetail(providerId, detail)
 
       if (changesCwdRef.current === changesCwd) setCommitInput('')
       if (markerId) {
@@ -12613,9 +12527,7 @@ export const App: React.FC = () => {
               status: isActiveChatStatus(detail.status)
                 ? 'pending'
                 : getChatCommitMarkerTerminalStatus(detail),
-              afterItemId: useHiddenChat
-                ? sourceAnchorItemId
-                : getLastChatCommitMarkerAnchorId(detail.items, sourceAnchorItemId),
+              afterItemId: sourceAnchorItemId,
               finishedAt: isActiveChatStatus(detail.status) ? null : Date.now()
             }
           }
@@ -12661,12 +12573,6 @@ export const App: React.FC = () => {
             }
           }
         })
-      }
-      if (chatId && !useForkedChat) {
-        void providerApi
-          .getChat(providerId, chatId)
-          .then((detail) => applyViewedChatDetail(providerId, detail))
-          .catch(() => {})
       }
       setCommitErrorsByProjectKey((currentErrors) => ({
         ...currentErrors,
