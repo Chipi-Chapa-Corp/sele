@@ -2023,6 +2023,42 @@ button.changes-sidebar__recent-row:not(:disabled) {
   line-height: 1.35;
 }
 
+.settings-dialog__skill-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.settings-dialog__skill-path-action {
+  --control-height-small: 1.25rem;
+  --control-icon-size: 0.8rem;
+
+  display: inline-flex;
+  flex: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-0.1rem);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.settings-dialog__field:hover .settings-dialog__skill-path-action,
+.settings-dialog__field:focus-within .settings-dialog__skill-path-action {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+@media (hover: none) {
+  .settings-dialog__skill-path-action {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+}
+
 .settings-dialog__appearance-toggle {
   justify-self: end;
   width: auto;

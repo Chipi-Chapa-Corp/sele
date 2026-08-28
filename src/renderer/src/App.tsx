@@ -48,6 +48,7 @@ import {
   Globe2,
   History,
   LayoutList,
+  Link,
   ListChevronsDownUp,
   ListChevronsUpDown,
   Maximize2,
@@ -195,8 +196,8 @@ import {
   getRecoveredChatCommitMarkerTerminalStatus,
   type ChatCommitMarkerStatus
 } from './chatCommitMarker'
-import { buildChatConversationModel, markChatItemsChanged } from './chatConversationModel'
 import { getChatCommitLaunchMode, isChatCommitProjectLocked } from './chatCommitPolicy'
+import { buildChatConversationModel, markChatItemsChanged } from './chatConversationModel'
 import {
   getRecentChatReferenceKey,
   getRecentChatReferences,
@@ -1054,6 +1055,42 @@ const getFirstSentence = (value: string): string => {
 
 const getSettingsSkillDescription = (skill: ProviderSkill): string =>
   skill.shortDescription?.trim() || getFirstSentence(skill.description) || 'No description'
+
+const SettingsSkillPathAction = ({ path }: { path: string }): React.ReactElement => {
+  const [copied, setCopied] = useState(false)
+  const copiedTimerRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    },
+    []
+  )
+
+  const handleCopy = async (): Promise<void> => {
+    await appApi.writeClipboardText(path)
+    setCopied(true)
+
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = window.setTimeout(() => {
+      setCopied(false)
+      copiedTimerRef.current = null
+    }, 1_000)
+  }
+
+  return (
+    <span className="settings-dialog__skill-path-action">
+      <Button
+        aria-label={copied ? `Copied skill path: ${path}` : `Copy skill path: ${path}`}
+        callback={handleCopy}
+        icon={copied ? <Check aria-hidden="true" /> : <Link aria-hidden="true" />}
+        size="small"
+        theme="transparent"
+        title={path}
+      />
+    </span>
+  )
+}
 
 const mergeSettingsProviderSkills = (
   resources: Array<{ providerId: ProviderId; skills: ProviderSkill[] }>
@@ -13932,9 +13969,11 @@ export const App: React.FC = () => {
                         return (
                           <div className="settings-dialog__field" key={childSkill.skill.path}>
                             <div className="settings-dialog__field-header">
-                              <h3 id={skillToggleId}>{childSkill.skill.name}</h3>
+                              <div className="settings-dialog__skill-title">
+                                <h3 id={skillToggleId}>{childSkill.skill.name}</h3>
+                                <SettingsSkillPathAction path={childSkill.skill.path} />
+                              </div>
                               <p>{getSettingsSkillDescription(childSkill.skill)}</p>
-                              <p title={childSkill.skill.path}>{childSkill.skill.path}</p>
                             </div>
                             <Switch
                               className="settings-switch"
@@ -14003,9 +14042,11 @@ export const App: React.FC = () => {
                   return (
                     <div className="settings-dialog__field" key={resource.skill.path}>
                       <div className="settings-dialog__field-header">
-                        <h3 id={toggleId}>{resource.skill.name}</h3>
+                        <div className="settings-dialog__skill-title">
+                          <h3 id={toggleId}>{resource.skill.name}</h3>
+                          <SettingsSkillPathAction path={resource.skill.path} />
+                        </div>
                         <p>{getSettingsSkillDescription(resource.skill)}</p>
-                        <p title={resource.skill.path}>{resource.skill.path}</p>
                       </div>
                       <Switch
                         className="settings-switch"
