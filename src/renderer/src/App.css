@@ -1012,9 +1012,8 @@ button.changes-sidebar__recent-row:not(:disabled) {
 }
 
 .changes-sidebar__input-row {
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.4rem;
   align-items: stretch;
 }
@@ -1022,6 +1021,7 @@ button.changes-sidebar__recent-row:not(:disabled) {
 .changes-sidebar__commit-message {
   display: block;
   min-width: 0;
+  flex: 1;
 }
 
 .changes-sidebar__commit-row {
