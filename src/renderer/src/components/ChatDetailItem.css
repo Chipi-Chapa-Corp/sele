@@ -128,6 +128,10 @@
   cursor: pointer;
 }
 
+.chat-detail__message-attachment-resource {
+  cursor: default;
+}
+
 .chat-detail__message-attachment-file:not(:disabled):hover,
 .chat-detail__message-attachment-review:hover,
 .chat-detail__message-attachment-review[aria-expanded='true'] {

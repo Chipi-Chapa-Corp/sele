@@ -32,6 +32,7 @@ import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ArrowUp,
+  Blocks,
   BookOpenText,
   Bot,
   Check,
@@ -78,6 +79,7 @@ import type {
   ProviderWorkingTool
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { getChatMessagePresentation, type ChatMessageResource } from '../chatMessageResources'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
 import { renderMarkdownCodeBlock } from '../codeHighlighting'
 import { createLocalImageUrl } from '../localImage'
@@ -773,7 +775,8 @@ const MessageAttachments: React.FC<{
   attachments: ProviderMessageAttachment[]
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   projectCwd?: string | null
-}> = ({ attachments, onOpenFileLink, projectCwd }) => {
+  resources?: ChatMessageResource[]
+}> = ({ attachments, onOpenFileLink, projectCwd, resources = [] }) => {
   const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image')
   const otherAttachments = attachments.filter((attachment) => attachment.kind !== 'image')
 
@@ -800,12 +803,31 @@ const MessageAttachments: React.FC<{
           ))}
         </div>
       )}
-      {otherAttachments.length > 0 && (
+      {(resources.length > 0 || otherAttachments.length > 0) && (
         <div
           className="chat-detail__message-attachment-group chat-detail__message-attachment-group--other"
           role="list"
           aria-label="Other message attachments"
         >
+          {resources.map((resource, index) => (
+            <div
+              className="chat-detail__message-attachment"
+              key={`${resource.kind}:${resource.kind === 'app' ? resource.id : resource.name}:${index}`}
+              role="listitem"
+            >
+              <span
+                className="chat-detail__message-attachment-link chat-detail__message-attachment-resource"
+                title={`${resource.kind === 'skill' ? 'Skill' : 'App'}: ${resource.name}`}
+              >
+                <span className="chat-detail__message-attachment-icon" aria-hidden="true">
+                  {resource.kind === 'skill' ? <Package /> : <Blocks />}
+                </span>
+                <span className="chat-detail__message-attachment-label">
+                  {resource.kind === 'app' ? `$${resource.name}` : resource.name}
+                </span>
+              </span>
+            </div>
+          ))}
           {otherAttachments.map((attachment, index) =>
             attachment.kind === 'review' ? (
               <div
@@ -2191,6 +2213,10 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     const timestamp = item.createdAt
     const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById)
     const attachments = item.attachments ?? []
+    const messagePresentation =
+      role === 'user'
+        ? getChatMessagePresentation(item.content)
+        : { content: item.content, resources: [] }
     const handleCopyMessage = async (): Promise<void> => {
       await copyTextToClipboard(item.content)
       setCopied(true)
@@ -2313,17 +2339,18 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     return (
       <div className={messageBlockClassName} data-chat-message-id={!pending ? item.id : undefined}>
         {messageLabel && <span className="chat-detail__pending-message-label">{messageLabel}</span>}
-        {attachments.length > 0 && (
+        {(attachments.length > 0 || messagePresentation.resources.length > 0) && (
           <MessageAttachments
             attachments={attachments}
             onOpenFileLink={onOpenFileLink}
             projectCwd={projectCwd}
+            resources={messagePresentation.resources}
           />
         )}
-        {item.content.trim() && (
+        {messagePresentation.content.trim() && (
           <MarkdownMessage
             className={`chat-detail__message chat-detail__message--${role}`}
-            content={item.content}
+            content={messagePresentation.content}
             localImageContainer={container}
             localImageCwd={cwd}
             onOpenFileLink={onOpenFileLink}
