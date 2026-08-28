@@ -248,7 +248,7 @@
 
 :where(.ui-button--primary:disabled) {
   border-color: #553d2a;
-  color: var(--accent-ink);
+  color: var(--control-disabled-color);
   background: #553d2a;
   box-shadow: none;
   opacity: 1;
