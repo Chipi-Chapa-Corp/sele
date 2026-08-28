@@ -1,0 +1,27 @@
+.chat-panel__new-session {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin: 0 0 0.4rem;
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.chat-worktree-creation {
+  margin-bottom: 0.6rem;
+}
+
+.chat-panel--empty .chat-panel__composer {
+  margin-top: auto;
+  margin-bottom: 0;
+  transform: translateY(0);
+}
+
+.chat-panel--selected .chat-panel__composer {
+  margin-top: 0;
+  margin-bottom: 0;
+  transform: translateY(0);
+}

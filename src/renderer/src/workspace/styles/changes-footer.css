@@ -1,0 +1,132 @@
+.changes-sidebar__footer {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem var(--changes-sidebar-x) 0 0;
+}
+
+.changes-sidebar__input-row {
+  display: flex;
+  min-width: 0;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+
+.changes-sidebar__commit-message {
+  display: block;
+  min-width: 0;
+  flex: 1;
+}
+
+.changes-sidebar__commit-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.changes-sidebar__commit-row > :only-child {
+  grid-column: 1 / -1;
+}
+
+.changes-sidebar__commit-row--manual {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.changes-sidebar__commit-row--with-mode {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+}
+
+.changes-sidebar__commit-mode {
+  width: 4.4rem;
+  align-self: stretch;
+}
+
+.changes-sidebar__sync-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.changes-sidebar__sync-row :where(.ui-button--fill .ui-button__label) {
+  flex: 0 1 auto;
+}
+
+.changes-sidebar__sync-row :where(.ui-button--split-main) {
+  padding-inline: 0.6rem;
+}
+
+.changes-sidebar__sync-label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.changes-sidebar__sync-label-segment {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.changes-sidebar__sync-label-icon {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  flex: none;
+  opacity: 0.82;
+}
+
+.changes-sidebar__sync-label-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-sidebar__sync-label-separator {
+  flex: none;
+  color: var(--quiet);
+}
+
+.changes-sidebar__git-error {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+}
+
+.changes-sidebar__git-error-message {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: min(9rem, 28vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+  color: var(--error);
+  font-weight: 400;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.changes-sidebar__git-error-actions {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.changes-sidebar__commit-error {
+  margin: 0;
+  color: var(--error);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

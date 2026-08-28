@@ -1,0 +1,123 @@
+.changes-sidebar {
+  --changes-sidebar-x: 0.7rem;
+  --changes-modified: var(--menu-option-selected-color);
+  --changes-added: var(--success);
+  --changes-deleted: var(--error);
+  --changes-renamed: var(--info);
+  --changes-untracked: var(--changes-added);
+
+  display: grid;
+  container-name: changes-sidebar;
+  container-type: inline-size;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: transparent;
+}
+
+.changes-sidebar__header {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: var(--window-titlebar-height);
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem var(--changes-sidebar-x) 0.4rem 0;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.changes-sidebar__titlebar {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.changes-sidebar__titlebar-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.changes-sidebar__settings-slot {
+  display: none;
+  align-items: center;
+  justify-self: end;
+  gap: 0.4rem;
+}
+
+:root[data-window-control-position='left'] .changes-sidebar__settings-slot,
+:root:not([data-window-control-position])[data-platform='darwin'] .changes-sidebar__settings-slot {
+  display: flex;
+}
+
+:root[data-window-control-position='left'] .chat-home__settings-action,
+:root:not([data-window-control-position])[data-platform='darwin'] .chat-home__settings-action {
+  display: none;
+}
+
+.changes-sidebar__refresh-icon {
+  display: grid;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  place-items: center;
+}
+
+.app-animated-icon {
+  display: grid;
+  place-items: center;
+}
+
+.app-animated-icon--control {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+}
+
+.app-animated-icon > svg {
+  width: 100%;
+  height: 100%;
+}
+
+.changes-sidebar__view-toggle {
+  width: 100%;
+}
+
+.changes-sidebar__view-toggle .ui-segmented-control__option {
+  padding-inline: 0.2rem;
+}
+
+.changes-sidebar__body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--changes-sidebar-x) 0 0;
+  scrollbar-color: var(--glass-edge) transparent;
+}
+
+.changes-sidebar__body--utility {
+  gap: 0;
+  overflow: hidden;
+}
+
+.changes-sidebar__terminal,
+.changes-sidebar__browser {
+  display: none;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.changes-sidebar__terminal--active,
+.changes-sidebar__browser--active {
+  display: block;
+}

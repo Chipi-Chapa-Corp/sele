@@ -50,6 +50,7 @@ import {
   ImageOff,
   ListChecks,
   LoaderCircle,
+  Maximize2,
   Package,
   Pencil,
   Pin,
@@ -92,6 +93,7 @@ import { BoundedHighlightedCode } from './BoundedHighlightedCode'
 import { HighlightedCode } from './HighlightedCode'
 import { ImageLightbox } from './ImageLightbox'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
+import { TableLightbox } from './TableLightbox'
 import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
 
@@ -333,6 +335,7 @@ const renderHtmlAttributes = (attributes: Record<string, string | number | undef
 const defaultChatMarkdownRenderer = new Renderer()
 const loadingImageIconMarkup = renderToStaticMarkup(<ImageIcon aria-hidden="true" />)
 const brokenImageIconMarkup = renderToStaticMarkup(<ImageOff aria-hidden="true" />)
+const expandTableIconMarkup = renderToStaticMarkup(<Maximize2 aria-hidden="true" />)
 
 const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => {
   const renderer = new Renderer()
@@ -403,10 +406,8 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
   }
   renderer.table = function (token: Tokens.Table): string {
     const tableMarkup = defaultChatMarkdownRenderer.table.call(this, token)
-    return `<div class="chat-detail__table-scroll">${tableMarkup.replace(
-      '<table>',
-      '<table class="chat-detail__table">'
-    )}</div>`
+    const renderedTable = tableMarkup.replace('<table>', '<table class="chat-detail__table">')
+    return `<div class="chat-detail__table-frame"><div class="chat-detail__table-scroll">${renderedTable}</div><button class="chat-detail__table-expand" type="button" aria-label="Expand table" aria-haspopup="dialog" title="Expand table">${expandTableIconMarkup}</button></div>`
   }
 
   return renderer
@@ -1215,6 +1216,7 @@ const MarkdownMessageComponent: React.FC<{
     name: string
     path: string
   } | null>(null)
+  const [expandedTableHtml, setExpandedTableHtml] = useState<string | null>(null)
   const { visibleContent } = useStreamRenderedContent(content, streaming)
   const markdownRenderer = useMemo(
     () => createChatMarkdownRenderer(Boolean(onOpenFileLink)),
@@ -1298,6 +1300,20 @@ const MarkdownMessageComponent: React.FC<{
     (event: React.MouseEvent<HTMLDivElement>): void => {
       if (!(event.target instanceof Element)) return
 
+      const tableExpandButton = event.target.closest<HTMLButtonElement>(
+        '.chat-detail__table-expand'
+      )
+      if (tableExpandButton && containerRef.current?.contains(tableExpandButton)) {
+        const table = tableExpandButton
+          .closest('.chat-detail__table-frame')
+          ?.querySelector<HTMLTableElement>('.chat-detail__table')
+        if (table) {
+          event.preventDefault()
+          setExpandedTableHtml(table.outerHTML)
+        }
+        return
+      }
+
       const imageButton = event.target.closest<HTMLButtonElement>(
         '.chat-detail__markdown-image[data-local-image-path]'
       )
@@ -1358,6 +1374,9 @@ const MarkdownMessageComponent: React.FC<{
           path={localImagePreview.path}
           onClose={() => setLocalImagePreview(null)}
         />
+      )}
+      {expandedTableHtml && (
+        <TableLightbox tableHtml={expandedTableHtml} onClose={() => setExpandedTableHtml(null)} />
       )}
     </>
   )

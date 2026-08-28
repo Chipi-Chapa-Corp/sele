@@ -1,0 +1,143 @@
+.settings-overlay {
+  --settings-dialog-vertical-inset: 2.4rem;
+
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  padding: 1.2rem;
+  background: rgb(0 0 0 / 36%);
+  -webkit-app-region: no-drag;
+}
+
+.settings-dialog {
+  display: grid;
+  width: min(48rem, calc(100vw - 2rem));
+  height: min(36rem, calc(100vh - var(--settings-dialog-vertical-inset)));
+  min-width: min(38rem, calc(100vw - 2rem));
+  min-height: 0;
+  grid-template-columns: 10rem minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  border: 0.0625rem solid var(--panel-border);
+  border-radius: 0.9rem;
+  background: var(--floating-bg);
+  box-shadow:
+    0 2rem 5.625rem rgb(0 0 0 / 28%),
+    var(--panel-shadow);
+  font: inherit;
+}
+
+.settings-dialog__sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+  padding: 0.6rem;
+  border-right: 0.0625rem solid var(--glass-line);
+  background: var(--glass-strong);
+}
+
+.settings-dialog__sidebar-top {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0 0.1rem 0.2rem 0.4rem;
+}
+
+.settings-dialog__sidebar-top h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-dialog__nav {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.settings-dialog__nav-item {
+  appearance: none;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 1.9rem;
+  grid-template-columns: 0.9rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border: 0;
+  border-radius: 0.4rem;
+  color: var(--lead);
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  outline: 0;
+}
+
+.settings-dialog__nav-item:hover,
+.settings-dialog__nav-item:focus-visible {
+  color: var(--ink);
+  background: var(--control-surface-hover);
+}
+
+.settings-dialog__nav-item:focus-visible {
+  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
+}
+
+.settings-dialog__nav-item--active {
+  color: var(--ink);
+  background: var(--glass-subtle);
+}
+
+.settings-dialog__nav-icon {
+  display: grid;
+  width: 0.9rem;
+  height: 0.9rem;
+  place-items: center;
+}
+
+.settings-dialog__nav-icon svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.settings-dialog__scope {
+  min-width: 0;
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+
+.settings-dialog__scope-switcher {
+  width: 100%;
+}
+
+.settings-dialog__version {
+  margin: 0;
+  padding: 0.1rem 0.4rem;
+  color: var(--muted);
+  font: inherit;
+  opacity: 0.62;
+  text-align: center;
+}
+
+.settings-dialog__body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+}

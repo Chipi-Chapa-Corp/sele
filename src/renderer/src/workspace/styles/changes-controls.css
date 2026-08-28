@@ -1,0 +1,25 @@
+.changes-sidebar__controls {
+  display: grid;
+  min-width: 0;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.changes-sidebar__controls--files {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.changes-sidebar__content {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.changes-sidebar__content--centered {
+  align-items: center;
+  justify-content: center;
+}

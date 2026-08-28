@@ -1,0 +1,202 @@
+.chat-detail__messages-inner {
+  display: flex;
+  width: 100%;
+  max-width: calc(var(--chat-content-max-width) + 3.4rem);
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin: 0 auto;
+  padding: 0 1.7rem;
+}
+
+.chat-detail__turn {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.chat-detail__messages-header {
+  height: 0.5rem;
+  flex: none;
+  margin-top: auto;
+}
+
+.chat-detail__messages-footer {
+  display: block;
+  height: 3.5rem;
+  flex: none;
+}
+
+.chat-detail__messages-inner > * {
+  flex: none;
+}
+
+.chat-detail__messages-status {
+  position: absolute;
+  top: 2.4rem;
+  right: 1.2rem;
+  left: 1.2rem;
+  margin: 0;
+  pointer-events: none;
+}
+
+.chat-detail__turn-page-loading {
+  position: absolute;
+  left: 50%;
+  z-index: 3;
+  padding: 0.25rem 0.45rem;
+  border: 0.0625rem solid var(--secondary-border);
+  border-radius: 49.95rem;
+  color: var(--quiet);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
+  font-size: 0.82em;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.chat-detail__turn-page-loading--older {
+  top: 0.5rem;
+}
+
+.chat-detail__turn-page-loading--newer {
+  bottom: 0.5rem;
+}
+
+.chat-detail__down-button {
+  position: absolute;
+  right: 1.1rem;
+  bottom: 0.9rem;
+  z-index: 4;
+  border-radius: 49.95rem;
+}
+
+.chat-detail__down-button .ui-button {
+  border-radius: 49.95rem;
+}
+
+.chat-detail__commit-back-button {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.9rem;
+  z-index: 4;
+  border-radius: 49.95rem;
+}
+
+.chat-detail__commit-back-button .ui-button {
+  border-radius: 49.95rem;
+}
+
+.chat-detail__commit-back-button--original {
+  top: 0;
+}
+
+.chat-detail__commit-marker {
+  --chat-detail-commit-marker-background: color-mix(
+    in srgb,
+    var(--assistant-message) 68%,
+    transparent
+  );
+
+  display: inline-flex;
+  max-width: 82%;
+  align-self: flex-start;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  border: 0.0625rem dashed var(--message-border);
+  border-radius: 0.85rem 0.85rem 0.85rem 0.3rem;
+  color: color-mix(in srgb, var(--lead) 72%, transparent);
+  background: var(--chat-detail-commit-marker-background);
+  line-height: 1.4;
+  overflow: hidden;
+  transition: background 160ms ease;
+}
+
+.chat-detail__commit-marker-open {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+}
+
+button.chat-detail__commit-marker-open {
+  cursor: pointer;
+}
+
+.chat-detail__commit-marker:has(> button.chat-detail__commit-marker-open:not(:disabled)):hover {
+  background: color-mix(in srgb, var(--lead) 6%, var(--chat-detail-commit-marker-background));
+}
+
+button.chat-detail__commit-marker-open:focus-visible {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: -0.1875rem;
+}
+
+button.chat-detail__commit-marker-open:disabled {
+  cursor: wait;
+}
+
+.chat-detail__commit-marker--finished {
+  --chat-detail-commit-marker-background: var(--assistant-message);
+
+  border-style: solid;
+  color: var(--lead);
+}
+
+.chat-detail__commit-marker--stopped,
+.chat-detail__commit-marker--interrupted {
+  border-style: solid;
+}
+
+.chat-detail__commit-marker--failed {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--error) 42%, var(--message-border));
+  color: var(--error);
+}
+
+.chat-detail__commit-marker-icon {
+  display: inline-flex;
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--menu-option-check-color);
+}
+
+.chat-detail__commit-marker--failed .chat-detail__commit-marker-icon {
+  color: var(--error);
+}
+
+.chat-detail__commit-marker--stopped .chat-detail__commit-marker-icon,
+.chat-detail__commit-marker--interrupted .chat-detail__commit-marker-icon {
+  color: var(--muted);
+}
+
+.chat-detail__commit-marker-icon > svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.chat-detail__commit-marker-cancel {
+  --control-height-small: 1.2rem;
+  --control-icon-size: 0.75rem;
+
+  display: inline-flex;
+  position: relative;
+  z-index: 1;
+  flex: none;
+  margin-left: -0.3rem;
+  padding-right: 0.45rem;
+}

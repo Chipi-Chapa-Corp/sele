@@ -1,0 +1,268 @@
+.chat__status {
+  margin: 2.4rem auto 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.chat__status--compact {
+  margin: 0.6rem auto 0.1rem;
+}
+
+.chat-home__header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: var(--window-titlebar-height);
+  padding: 0.4rem 0 0.4rem var(--chat-sidebar-left-x);
+  gap: 0.4rem;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.chat-home__header--searching {
+  justify-content: flex-start;
+}
+
+.chat-home__actions {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  justify-content: space-between;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.chat-home__actions-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chat-home__settings-action {
+  display: flex;
+}
+
+.chat-home__actions-right {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chat-home__search-field {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-detail__header {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: var(--chat-detail-header-height);
+  min-height: var(--chat-detail-header-height);
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  user-select: none;
+  background: transparent;
+  z-index: 20;
+}
+
+.chat-detail__drag-region {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  align-items: center;
+  cursor: default;
+  touch-action: none;
+  z-index: 1;
+  -webkit-app-region: drag;
+}
+
+.chat-detail__header-inner {
+  position: relative;
+  display: none;
+  width: 100%;
+  max-width: var(--chat-content-max-width);
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  margin: 0 auto;
+  z-index: 2;
+}
+
+.chat-detail__back-slot {
+  display: none;
+}
+
+.chat-detail__search {
+  display: grid;
+  width: calc(100% - 2.8rem);
+  max-width: var(--chat-content-max-width);
+  min-width: 0;
+  flex: none;
+  grid-template-columns: minmax(6rem, 1fr) minmax(3.2rem, auto) auto;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.6rem auto 0;
+  padding: 0.4rem 0.6rem;
+  border: 0.0625rem solid var(--glass-line);
+  border-radius: 0.9rem;
+  background: var(--composer-bg);
+}
+
+.chat-detail__search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
+}
+
+.chat-detail__search-input {
+  min-height: var(--control-height-small);
+  padding-inline: 0.4rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-detail__search .chat-detail__search-input:focus {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-detail__search-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-detail__search-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+:root[data-control-style='transparent']
+  :where(
+    .message-box .ui-button--secondary,
+    .message-box .ui-dropdown__trigger,
+    .message-box__chat-config-trigger,
+    .chat-panel__new-session .ui-dropdown__trigger,
+    .chat-home__header .ui-button--secondary,
+    .chat-home__search-field .ui-input
+  ) {
+  border-color: transparent;
+  color: var(--lead);
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-control-style='transparent'] :where(.message-box .ui-button--secondary)::before,
+:root[data-control-style='transparent'] :where(.chat-home__header .ui-button--secondary)::before {
+  box-shadow: none;
+}
+
+:root[data-control-style='transparent']
+  :where(
+    .message-box .ui-button-group--secondary .ui-button--split-toggle,
+    .message-box .ui-dropdown--split-action .ui-dropdown__trigger
+  ) {
+  border-left-color: transparent;
+}
+
+:root[data-control-style='transparent']
+  :where(
+    .message-box .ui-button--secondary:not(:disabled):hover,
+    .message-box .ui-button--secondary[data-pressed]:not(:disabled),
+    .message-box .ui-dropdown__trigger:not(:disabled):hover,
+    .message-box__chat-config-trigger:not(:disabled):hover,
+    .message-box__chat-config-trigger[aria-expanded='true'],
+    .message-box
+      .ui-dropdown--open:not([data-dropdown-menu-root='true']):not(.ui-dropdown--disabled)
+      .ui-dropdown__trigger,
+    .chat-panel__new-session .ui-dropdown__trigger:not(:disabled):hover,
+    .chat-panel__new-session
+      .ui-dropdown--open:not([data-dropdown-menu-root='true']):not(.ui-dropdown--disabled)
+      .ui-dropdown__trigger,
+    .chat-home__header .ui-button--secondary:not(:disabled):hover,
+    .chat-home__header .ui-button--secondary[data-pressed]:not(:disabled)
+  ) {
+  color: var(--ink);
+  background: var(--glass-subtle);
+  box-shadow: none;
+}
+
+:root[data-control-style='transparent']
+  :where(
+    .message-box .ui-button--secondary[data-pressed]:not(:disabled),
+    .chat-home__header .ui-button--secondary[data-pressed]:not(:disabled)
+  ) {
+  background: var(--glass-subtle);
+  box-shadow: var(--control-shadow-active);
+}
+
+:root[data-control-style='transparent']
+  :where(
+    .message-box .ui-button--secondary:disabled,
+    .message-box .ui-button--transparent:disabled,
+    .message-box .ui-dropdown__trigger:disabled,
+    .message-box .ui-dropdown__trigger:disabled:hover,
+    .message-box__chat-config-trigger:disabled,
+    .message-box__chat-config-trigger:disabled:hover,
+    .chat-panel__new-session .ui-dropdown__trigger:disabled,
+    .chat-panel__new-session .ui-dropdown__trigger:disabled:hover,
+    .chat-home__header .ui-button--secondary:disabled,
+    .chat-home__header .ui-button--transparent:disabled,
+    .chat-detail__search .ui-button--transparent:disabled,
+    .chat-home__search-field .ui-input:disabled
+  ) {
+  border-color: transparent;
+  color: var(--control-disabled-color);
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-control-style='transparent'] :where(.chat-home__search-field .ui-input:focus) {
+  background: transparent;
+  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
+}
+
+:root[data-control-style='transparent']
+  .message-box__usage-control
+  > .ui-button
+  .message-box__usage-ring,
+:root[data-control-style='transparent']
+  .message-box__usage-control
+  > .ui-button:not(:disabled):hover
+  .message-box__usage-ring,
+:root[data-control-style='transparent']
+  .message-box__usage-control
+  > .ui-button[data-pressed]
+  .message-box__usage-ring {
+  background: conic-gradient(
+    var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
+    color-mix(in srgb, var(--quiet) 28%, transparent) var(--message-box-usage-degrees) 360deg
+  );
+}
+
+::highlight(sele-chat-search-match) {
+  color: inherit;
+  background-color: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+::highlight(sele-chat-search-active-match) {
+  color: var(--accent-ink);
+  background-color: var(--accent);
+}

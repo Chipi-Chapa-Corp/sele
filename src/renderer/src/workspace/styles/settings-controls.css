@@ -1,0 +1,95 @@
+.settings-dialog__appearance-toggle {
+  justify-self: end;
+  width: auto;
+  max-width: 100%;
+}
+
+.settings-dialog__field > .ui-dropdown {
+  justify-self: end;
+}
+
+.settings-dialog__project-action {
+  display: inline-grid;
+  justify-self: end;
+}
+
+.settings-dialog__number-input {
+  width: 4.4rem;
+  justify-self: end;
+  text-align: right;
+}
+
+.settings-dialog__number-with-unit {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 0.4rem;
+}
+
+.settings-dialog__number-with-unit .settings-dialog__number-input {
+  justify-self: auto;
+}
+
+.settings-dialog__number-unit {
+  color: var(--muted);
+}
+
+.settings-dialog__font-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-self: end;
+  gap: 0.5rem;
+}
+
+.settings-dialog__font-dropdown {
+  width: 11.5rem;
+  min-width: 0;
+}
+
+.settings-dialog__font-size {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+}
+
+.settings-dialog__font-size .ui-input {
+  width: 4.1rem;
+  text-align: right;
+}
+
+.settings-dialog__prompt-textarea {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  min-height: 3.9rem;
+  padding: 0.5rem 0.6rem;
+  border: 0.0625rem solid var(--control-border);
+  border-radius: var(--control-radius);
+  color: var(--lead);
+  background: var(--control-surface);
+  box-shadow: var(--control-shadow);
+  font: inherit;
+  line-height: 1.35;
+  outline: 0;
+  resize: vertical;
+}
+
+.settings-dialog__prompt-textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--control-surface);
+  box-shadow:
+    0 0 0 0.1875rem var(--focus-ring),
+    var(--control-shadow);
+}
+
+.settings-dialog__prompt-textarea:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.settings-switch {
+  justify-self: end;
+}

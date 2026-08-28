@@ -1,0 +1,184 @@
+.settings-dialog__panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  padding: 1.1rem;
+  scrollbar-color: var(--glass-edge) transparent;
+}
+
+.settings-dialog__section {
+  display: flex;
+  width: min(100%, 34rem);
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.settings-dialog__section + .settings-dialog__section {
+  margin-top: 1.2rem;
+}
+
+.settings-dialog__field + .settings-dialog__section,
+.settings-dialog__section + .settings-dialog__field {
+  margin-top: 1.2rem;
+}
+
+.settings-dialog__section-heading {
+  margin: 0;
+  color: var(--lead);
+  font: inherit;
+  font-weight: 400;
+}
+
+.settings-dialog__provider-configuration {
+  display: flex;
+  width: min(100%, 34rem);
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 1.2rem;
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.settings-dialog__provider-configuration--row {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+.settings-dialog__section-cards {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.settings-dialog__account-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.settings-dialog__field {
+  display: grid;
+  width: min(100%, 34rem);
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  justify-items: stretch;
+  gap: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  border: 0.0625rem solid var(--glass-line);
+  border-radius: 0.6rem;
+  background: var(--glass-strong);
+}
+
+.settings-dialog__field--with-project-action {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.7rem;
+}
+
+.settings-dialog__field + .settings-dialog__field {
+  margin-top: -0.0625rem;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.settings-dialog__field:has(+ .settings-dialog__field) {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.settings-dialog__field--inline {
+  align-items: center;
+}
+
+.settings-dialog__field--stack {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.settings-dialog__field--stack.settings-dialog__field--with-project-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.settings-dialog__field--stack.settings-dialog__field--with-project-action
+  > :is(.settings-dialog__prompt-textarea, .ui-input) {
+  grid-column: 1 / -1;
+}
+
+.settings-dialog__field--prompt-groups {
+  gap: 0.9rem;
+}
+
+.settings-dialog__prompt-group {
+  display: grid;
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+.settings-dialog__field-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 0.2rem;
+  justify-self: start;
+  text-align: left;
+}
+
+.settings-dialog__field-header h3 {
+  margin: 0;
+  color: var(--lead);
+  font: inherit;
+  font-weight: 400;
+}
+
+.settings-dialog__field-header p {
+  margin: 0;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1.35;
+}
+
+.settings-dialog__skill-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.settings-dialog__skill-path-action {
+  --control-height-small: 1.25rem;
+  --control-icon-size: 0.8rem;
+
+  display: inline-flex;
+  flex: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-0.1rem);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.settings-dialog__field:hover .settings-dialog__skill-path-action,
+.settings-dialog__field:focus-within .settings-dialog__skill-path-action {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+@media (hover: none) {
+  .settings-dialog__skill-path-action {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+}

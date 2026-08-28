@@ -1,0 +1,104 @@
+.changes-sidebar__status {
+  margin: 1rem 0 0;
+  color: var(--quiet);
+  line-height: 1.4;
+}
+
+.changes-sidebar__performance-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  margin: 0.2rem 0.3rem 0.5rem;
+  padding: 0.4rem 0 0.6rem;
+  border-bottom: 0.0625rem solid var(--glass-line);
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+.changes-sidebar__performance-warning-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-top: calc((1.4em - 0.9rem) / 2);
+  color: var(--ink);
+  stroke-width: 1.8;
+}
+
+.changes-sidebar__performance-warning strong {
+  display: block;
+  grid-area: title;
+  color: var(--lead);
+  font-weight: 650;
+}
+
+.changes-sidebar__performance-warning-content {
+  display: grid;
+  min-width: 0;
+  grid-template-areas:
+    'title actions'
+    'copy copy';
+  grid-template-columns: minmax(11rem, 1fr) auto;
+  align-items: center;
+  gap: 0.15rem 0.6rem;
+}
+
+.changes-sidebar__performance-warning p {
+  grid-area: copy;
+  margin: 0.15rem 0 0;
+  color: var(--ink);
+}
+
+.changes-sidebar__performance-warning-actions {
+  display: flex;
+  grid-area: actions;
+}
+
+@container changes-sidebar (max-width: 26.875rem) {
+  .changes-sidebar__performance-warning-content {
+    grid-template-areas:
+      'title'
+      'copy'
+      'actions';
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .changes-sidebar__performance-warning-actions {
+    margin-top: 0.35rem;
+  }
+}
+
+.changes-sidebar__performance-warning code {
+  padding: 0.0625rem 0.2rem;
+  border: 0.0625rem solid var(--inline-code-border);
+  border-radius: 0.2rem;
+  background: var(--inline-code-bg);
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
+}
+
+.changes-sidebar__git-state {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  place-items: center;
+  padding: 1.4rem;
+  color: color-mix(in srgb, var(--quiet) 52%, transparent);
+}
+
+.changes-sidebar__git-state-icon {
+  width: 3.6rem;
+  height: 3.6rem;
+  stroke-width: 1.35;
+}
+
+.changes-sidebar__git-state-icon > svg {
+  width: 3.6rem;
+  height: 3.6rem;
+  stroke-width: 1.35;
+}
+
+.changes-sidebar__empty-icon {
+  width: 3.4rem;
+  height: 3.4rem;
+  color: color-mix(in srgb, var(--quiet) 50%, transparent);
+  stroke-width: 1.45;
+}

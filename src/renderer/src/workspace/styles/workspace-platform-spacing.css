@@ -1,0 +1,9 @@
+:root[data-window-control-position='left'] .chat-home__header,
+:root:not([data-window-control-position])[data-platform='darwin'] .chat-home__header {
+  padding-left: var(--window-controls-width);
+}
+
+:root[data-window-control-position='right'] .changes-sidebar__titlebar,
+:root:not([data-window-control-position]):not([data-platform='darwin']) .changes-sidebar__titlebar {
+  padding-right: calc(var(--window-controls-width) - var(--changes-sidebar-x));
+}

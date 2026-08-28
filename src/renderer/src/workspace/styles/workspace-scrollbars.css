@@ -1,0 +1,14 @@
+.chat-sidebar__body::-webkit-scrollbar,
+.changes-sidebar__body::-webkit-scrollbar,
+.chat-detail__messages::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.chat-sidebar__body::-webkit-scrollbar-thumb,
+.changes-sidebar__body::-webkit-scrollbar-thumb,
+.chat-detail__messages::-webkit-scrollbar-thumb {
+  border: 0.1875rem solid transparent;
+  border-radius: 49.95rem;
+  background: var(--glass-edge);
+  background-clip: padding-box;
+}

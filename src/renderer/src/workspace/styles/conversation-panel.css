@@ -1,0 +1,153 @@
+.chat-panel {
+  --chat-content-max-width: 60rem;
+  --muted: var(--floating-muted);
+  --quiet: var(--floating-muted);
+  --control-bg: var(--floating-control-bg);
+  --control-hover-bg: var(--floating-control-hover-bg);
+  --control-disabled-color: var(--floating-control-disabled-color);
+  --glass: var(--floating-bg);
+  --dark: var(--floating-control-bg);
+  --dark-hover: var(--floating-control-hover-bg);
+  --dark-ink: var(--lead);
+  --composer-bg: var(--glass-strong);
+
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  container: chat-panel / inline-size;
+  z-index: 1;
+}
+
+.chat-panel--empty {
+  justify-content: flex-start;
+}
+
+.chat-panel--selected {
+  justify-content: flex-start;
+}
+
+.chat-panel__new-chat-empty {
+  display: grid;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  place-items: center;
+  overflow: hidden;
+  padding: 1.6rem;
+  pointer-events: none;
+}
+
+.chat-panel__new-chat-art {
+  --new-chat-puppy-opacity: 0.1;
+
+  display: block;
+  width: min(21rem, 62%);
+  height: min(23rem, 78%);
+  color: var(--quiet);
+  opacity: var(--new-chat-puppy-opacity);
+  animation: new-chat-puppy-fade-in 1s ease-out 5s both;
+}
+
+:root[data-color-scheme='dark'] .chat-panel__new-chat-art {
+  --new-chat-puppy-opacity: 0.05;
+}
+
+@keyframes new-chat-puppy-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: var(--new-chat-puppy-opacity);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-panel__new-chat-art {
+    animation: none;
+  }
+}
+
+.chat-panel__new-chat-vegvisir {
+  --new-chat-vegvisir-color: color-mix(in srgb, var(--quiet) 18%, var(--bg));
+
+  display: block;
+  width: 50%;
+  overflow: visible;
+  color: var(--new-chat-vegvisir-color);
+}
+
+:root[data-color-scheme='dark'] .chat-panel__new-chat-vegvisir {
+  --new-chat-vegvisir-color: color-mix(in srgb, var(--quiet) 12%, var(--bg));
+}
+
+.chat-panel__new-chat-vegvisir-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  visibility: hidden;
+  animation-name: new-chat-vegvisir-draw-stroke;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: forwards;
+}
+
+@keyframes new-chat-vegvisir-draw-stroke {
+  from {
+    stroke-dashoffset: 100;
+    visibility: visible;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+    visibility: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-panel__new-chat-vegvisir-stroke {
+    animation: none;
+    stroke-dashoffset: 0;
+    visibility: visible;
+  }
+}
+
+.chat-panel__composer {
+  position: relative;
+  width: 100%;
+  flex: none;
+  margin: 0;
+  padding: 0.6rem 1.4rem 0;
+  border-top: 0;
+  background: transparent;
+  transition: transform 220ms ease;
+}
+
+.chat-panel__composer-inner {
+  width: 100%;
+  max-width: var(--chat-content-max-width);
+  margin: 0 auto;
+}
+
+.chat-panel__composer::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: 100vh;
+  background: transparent;
+  pointer-events: none;
+}
