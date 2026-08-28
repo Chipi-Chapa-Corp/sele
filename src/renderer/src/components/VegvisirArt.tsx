@@ -49,10 +49,10 @@ const vegvisirStrokes: VegvisirStroke[] = [
   },
   {
     id: 'spoke-south',
-    d: 'M 512 605 C 510 670 514 751 512 843',
+    d: 'M 512 605 C 510 706 514 850 512 958',
     width: 16,
     delayMs: 150,
-    durationMs: 260
+    durationMs: 320
   },
   {
     id: 'spoke-south-west',
@@ -301,11 +301,11 @@ const vegvisirStrokes: VegvisirStroke[] = [
     durationMs: 240
   },
   {
-    id: 'south-east-terminal-cross',
-    d: 'M 750 721 L 829 800',
-    width: 15,
+    id: 'south-east-terminal-hook-outer',
+    d: 'M 823 752 C 858 778 852 821 818 844 C 792 861 760 846 749 821',
+    width: 14,
     delayMs: 820,
-    durationMs: 170
+    durationMs: 190
   },
   {
     id: 'south-terminal-top',
@@ -316,14 +316,14 @@ const vegvisirStrokes: VegvisirStroke[] = [
   },
   {
     id: 'south-terminal-outer-left',
-    d: 'M 370 821 C 369 863 369 909 370 950',
+    d: 'M 370 821 C 369 865 369 916 370 958',
     width: 16,
     delayMs: 820,
     durationMs: 180
   },
   {
     id: 'south-terminal-outer-right',
-    d: 'M 652 821 C 653 863 651 909 651 950',
+    d: 'M 652 821 C 653 865 651 916 651 958',
     width: 16,
     delayMs: 820,
     durationMs: 180
@@ -337,21 +337,21 @@ const vegvisirStrokes: VegvisirStroke[] = [
   },
   {
     id: 'south-terminal-foot-left',
-    d: 'M 360 951 C 367 947 375 955 381 950',
+    d: 'M 357 941 C 365 937 375 945 383 940 M 357 958 C 365 954 375 962 383 957',
     width: 14,
     delayMs: 920,
     durationMs: 120
   },
   {
     id: 'south-terminal-foot-middle',
-    d: 'M 502 951 C 509 946 517 955 524 950',
+    d: 'M 499 941 C 507 937 518 945 526 940 M 499 958 C 507 954 518 962 526 957',
     width: 14,
     delayMs: 920,
     durationMs: 120
   },
   {
     id: 'south-terminal-foot-right',
-    d: 'M 641 951 C 649 946 657 955 664 950',
+    d: 'M 638 941 C 646 937 657 945 666 940 M 638 958 C 646 954 657 962 666 957',
     width: 14,
     delayMs: 920,
     durationMs: 120
