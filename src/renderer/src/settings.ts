@@ -373,7 +373,7 @@ export const defaultAppSettings: AppSettings = {
     hidePlans: false,
     enableActions: true,
     enableNotesButton: true,
-    updateExistingChats: true,
+    updateExistingChats: false,
     updateNewChats: true,
     ...defaultAppChatDropdownSettings,
     ...defaultAppChatThoughtSettings
