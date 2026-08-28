@@ -1031,6 +1031,16 @@ button.changes-sidebar__recent-row:not(:disabled) {
   gap: 0.4rem;
 }
 
+.changes-sidebar__commit-row > :only-child {
+  grid-column: 1 / -1;
+}
+
+@container changes-sidebar (max-width: 22rem) {
+  .changes-sidebar__commit-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .changes-sidebar__sync-row {
   display: grid;
   min-width: 0;

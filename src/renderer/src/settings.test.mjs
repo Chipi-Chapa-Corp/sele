@@ -11,6 +11,11 @@ import {
 } from './performanceSettings.ts'
 import { getAppGitCommitModel, setAppGitCommitModel } from './gitCommitModels.ts'
 import { toCssRem } from './cssUnits.ts'
+import {
+  appGitQuickActions,
+  defaultAppGitQuickActionsSettings,
+  isAppGitQuickAction
+} from './gitQuickActions.ts'
 
 test('converts runtime pixel measurements to rem lengths', () => {
   assert.equal(toCssRem(1), '0.0625rem')
@@ -76,4 +81,24 @@ test('allows one Git configuration to use the selected chat model', () => {
 
   assert.equal(getAppGitCommitModel(commitModels, 'codex', 'host'), null)
   assert.equal(getAppGitCommitModel(commitModels, 'codex', 'docker:dev'), 'legacy-model')
+})
+
+test('defaults and validates Git quick action settings', () => {
+  assert.deepEqual(defaultAppGitQuickActionsSettings, {
+    showManualCommit: true,
+    showAiInstructionsInput: true,
+    defaultAction: 'commit'
+  })
+  assert.deepEqual(appGitQuickActions, [
+    'commit',
+    'commit-push',
+    'chat-commit',
+    'chat-commit-push',
+    'chat-amend',
+    'chat-amend-push'
+  ])
+  assert.equal(isAppGitQuickAction('chat-commit-push'), true)
+  assert.equal(isAppGitQuickAction('chat-amend-push'), true)
+  assert.equal(isAppGitQuickAction('chat-amend'), true)
+  assert.equal(isAppGitQuickAction('unknown'), false)
 })

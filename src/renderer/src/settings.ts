@@ -37,6 +37,18 @@ import {
   defaultGitErrorResolutionPrompt,
   defaultPermanentGitErrorResolutionPrompt
 } from './gitErrorResolution'
+import {
+  defaultAppGitQuickActionsSettings,
+  isAppGitQuickAction,
+  type AppGitQuickActionsSettings
+} from './gitQuickActions'
+
+export {
+  defaultAppGitQuickActionsSettings,
+  isAppGitQuickAction,
+  type AppGitQuickAction,
+  type AppGitQuickActionsSettings
+} from './gitQuickActions'
 
 export {
   appBrowserDefaultScaleMax,
@@ -181,6 +193,7 @@ export type AppSettings = {
     errorResolutionPrompt: string
     permanentErrorResolutionPrompt: string
     untrackedFilesPrompt: string
+    quickActions: AppGitQuickActionsSettings
     commitPrompt: AppGitCommitPromptSettings
     commitMessageGeneration: AppGitCommitMessageGenerationSettings
     worktree: AppGitWorktreeSettings
@@ -198,6 +211,7 @@ export type AppProjectSettingsOverrides = {
     errorResolutionPrompt?: string
     permanentErrorResolutionPrompt?: string
     untrackedFilesPrompt?: string
+    quickActions?: Partial<AppGitQuickActionsSettings>
     commitPrompt?: Partial<AppGitCommitPromptSettings>
     commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
     worktree?: Partial<AppGitWorktreeSettings>
@@ -378,6 +392,7 @@ export const defaultAppSettings: AppSettings = {
     errorResolutionPrompt: defaultGitErrorResolutionPrompt,
     permanentErrorResolutionPrompt: defaultPermanentGitErrorResolutionPrompt,
     untrackedFilesPrompt: defaultAppGitUntrackedFilesPrompt,
+    quickActions: defaultAppGitQuickActionsSettings,
     commitPrompt: defaultAppGitCommitPromptSettings,
     commitMessageGeneration: defaultAppGitCommitMessageGenerationSettings,
     worktree: defaultAppGitWorktreeSettings
@@ -675,6 +690,33 @@ const readProjectGitOverrides = (
     overrides.permanentErrorResolutionPrompt = git.permanentErrorResolutionPrompt
   }
 
+  const quickActions =
+    git.quickActions && typeof git.quickActions === 'object' && !Array.isArray(git.quickActions)
+      ? (git.quickActions as Record<string, unknown>)
+      : {}
+  const storedQuickActions: Partial<AppGitQuickActionsSettings> = {}
+  if (
+    hasOwnProperty(quickActions, 'showManualCommit') &&
+    typeof quickActions.showManualCommit === 'boolean'
+  ) {
+    storedQuickActions.showManualCommit = quickActions.showManualCommit
+  }
+  if (
+    hasOwnProperty(quickActions, 'showAiInstructionsInput') &&
+    typeof quickActions.showAiInstructionsInput === 'boolean'
+  ) {
+    storedQuickActions.showAiInstructionsInput = quickActions.showAiInstructionsInput
+  }
+  if (
+    hasOwnProperty(quickActions, 'defaultAction') &&
+    isAppGitQuickAction(quickActions.defaultAction)
+  ) {
+    storedQuickActions.defaultAction = quickActions.defaultAction
+  }
+  if (Object.keys(storedQuickActions).length > 0) {
+    overrides.quickActions = storedQuickActions
+  }
+
   const commitPrompt =
     git.commitPrompt && typeof git.commitPrompt === 'object' && !Array.isArray(git.commitPrompt)
       ? (git.commitPrompt as Record<string, unknown>)
@@ -799,6 +841,9 @@ const pruneAppProjectSettingsOverrides = (
     if (hasOwnProperty(overrides.git, 'permanentErrorResolutionPrompt')) {
       gitOverrides.permanentErrorResolutionPrompt = overrides.git.permanentErrorResolutionPrompt
     }
+    if (overrides.git.quickActions && Object.keys(overrides.git.quickActions).length > 0) {
+      gitOverrides.quickActions = { ...overrides.git.quickActions }
+    }
     if (overrides.git.commitPrompt && Object.keys(overrides.git.commitPrompt).length > 0) {
       gitOverrides.commitPrompt = { ...overrides.git.commitPrompt }
     }
@@ -885,6 +930,10 @@ export const resolveAppSettings = (
       errorResolutionPrompt,
       permanentErrorResolutionPrompt,
       untrackedFilesPrompt,
+      quickActions: {
+        ...settings.git.quickActions,
+        ...gitOverrides?.quickActions
+      },
       commitPrompt: {
         ...settings.git.commitPrompt,
         ...gitOverrides?.commitPrompt
@@ -952,6 +1001,10 @@ export const readStoredAppSettings = (): AppSettings => {
       typeof git.commitMessageGeneration === 'object' &&
       !Array.isArray(git.commitMessageGeneration)
         ? (git.commitMessageGeneration as Record<string, unknown>)
+        : {}
+    const quickActions =
+      git.quickActions && typeof git.quickActions === 'object' && !Array.isArray(git.quickActions)
+        ? (git.quickActions as Record<string, unknown>)
         : {}
     const worktree =
       git.worktree && typeof git.worktree === 'object' && !Array.isArray(git.worktree)
@@ -1052,6 +1105,19 @@ export const readStoredAppSettings = (): AppSettings => {
           typeof git.untrackedFilesPrompt === 'string'
             ? git.untrackedFilesPrompt
             : defaultAppSettings.git.untrackedFilesPrompt,
+        quickActions: {
+          showManualCommit:
+            typeof quickActions.showManualCommit === 'boolean'
+              ? quickActions.showManualCommit
+              : defaultAppSettings.git.quickActions.showManualCommit,
+          showAiInstructionsInput:
+            typeof quickActions.showAiInstructionsInput === 'boolean'
+              ? quickActions.showAiInstructionsInput
+              : defaultAppSettings.git.quickActions.showAiInstructionsInput,
+          defaultAction: isAppGitQuickAction(quickActions.defaultAction)
+            ? quickActions.defaultAction
+            : defaultAppSettings.git.quickActions.defaultAction
+        },
         commitPrompt: {
           instructions: readPromptField(commitPrompt, 'instructions'),
           workflow: readPromptField(commitPrompt, 'workflow'),
@@ -1198,6 +1264,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
         errorResolutionPrompt?: string
         permanentErrorResolutionPrompt?: string
         untrackedFilesPrompt?: string
+        quickActions?: Partial<AppGitQuickActionsSettings>
         commitPrompt?: Partial<AppGitCommitPromptSettings>
         commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
         worktree?: Partial<AppGitWorktreeSettings>
@@ -1358,6 +1425,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       errorResolutionPrompt?: string
       permanentErrorResolutionPrompt?: string
       untrackedFilesPrompt?: string
+      quickActions?: Partial<AppGitQuickActionsSettings>
       commitPrompt?: Partial<AppGitCommitPromptSettings>
       commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
       worktree?: Partial<AppGitWorktreeSettings>
@@ -1376,6 +1444,18 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
     if (settings.git.untrackedFilesPrompt !== defaultAppSettings.git.untrackedFilesPrompt) {
       storedGit.untrackedFilesPrompt = settings.git.untrackedFilesPrompt
+    }
+
+    const storedQuickActions: Partial<AppGitQuickActionsSettings> = {}
+    for (const key of Object.keys(
+      defaultAppGitQuickActionsSettings
+    ) as (keyof AppGitQuickActionsSettings)[]) {
+      if (settings.git.quickActions[key] !== defaultAppGitQuickActionsSettings[key]) {
+        Object.assign(storedQuickActions, { [key]: settings.git.quickActions[key] })
+      }
+    }
+    if (Object.keys(storedQuickActions).length > 0) {
+      storedGit.quickActions = storedQuickActions
     }
 
     const storedCommitPrompt: Partial<AppGitCommitPromptSettings> = {}
