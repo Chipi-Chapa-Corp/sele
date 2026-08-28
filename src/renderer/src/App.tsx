@@ -3744,15 +3744,6 @@ const getRepositoryFiles = (result: AppFileTreeResult | null): RepositoryFile[] 
     })) ?? []
   )
 
-const getCommitFiles = (files: ChangedFile[]): string[] =>
-  Array.from(
-    new Set(
-      files.flatMap((file) =>
-        [file.previousPath, file.path].filter((path): path is string => Boolean(path))
-      )
-    )
-  )
-
 const getCommitPatches = (files: ChangedFile[]): AppGitPatchChange[] =>
   files.flatMap((file) => file.patches ?? [])
 
@@ -11778,7 +11769,6 @@ export const App: React.FC = () => {
   const showCommitInput = showManualCommit || showAiInstructionsInput
   const aiCommitInstructions = showAiInstructionsInput ? commitInputValue : ''
   const pushAfterCommit = gitCommitMode === 'push'
-  const commitFiles = useMemo(() => getCommitFiles(changedFiles), [changedFiles])
   const currentProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
   useEffect(() => {
     const previousProjectKey = visibleGitErrorProjectKeyRef.current
@@ -11837,9 +11827,10 @@ export const App: React.FC = () => {
     currentProjectSendInProgress ||
     Boolean(editingMessage) ||
     (selectedChat ? !chatDetail || chatLoadState !== 'ready' || chatIsBusy : false)
+  const hasDirectCommitChanges = changedFiles.length > 0 || untrackedFilesHiddenForPerformance
   const commitBaseDisabled =
     providerUpdateInProgress ||
-    commitFiles.length === 0 ||
+    !hasDirectCommitChanges ||
     changesLoadState !== 'ready' ||
     commitMessageGenerationInProgress ||
     projectCommitInProgress ||
@@ -12815,7 +12806,6 @@ export const App: React.FC = () => {
         action,
         container: changesContainer,
         cwd: changesCwd,
-        files: commitFiles,
         message: action === 'amend' ? null : commitMessage,
         patches: patchChangeSourceSelected ? getCommitPatches(changedFiles) : undefined
       })
@@ -12825,7 +12815,7 @@ export const App: React.FC = () => {
     } catch (error) {
       setCommitErrorsByProjectKey((currentErrors) => ({
         ...currentErrors,
-        [commitProjectKey]: getErrorMessage(error, 'Unable to commit these files.')
+        [commitProjectKey]: getErrorMessage(error, 'Unable to commit changes.')
       }))
       return false
     } finally {
@@ -15709,7 +15699,7 @@ export const App: React.FC = () => {
                 ) : (
                   commitChatReturnTarget?.providerId === selectedChat.providerId &&
                   commitChatReturnTarget.commitChatId === selectedChat.id && (
-                    <div className="chat-detail__commit-back-button">
+                    <div className="chat-detail__commit-back-button chat-detail__commit-back-button--original">
                       <Button
                         aria-label="Back to original chat"
                         title="Back to original chat"

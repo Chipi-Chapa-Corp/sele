@@ -2314,6 +2314,10 @@ button.changes-sidebar__recent-row:not(:disabled) {
   border-radius: 49.95rem;
 }
 
+.chat-detail__commit-back-button--original {
+  top: 0;
+}
+
 .chat-detail__commit-marker {
   display: inline-flex;
   max-width: 82%;

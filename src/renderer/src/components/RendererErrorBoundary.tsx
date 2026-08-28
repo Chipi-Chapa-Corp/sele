@@ -6,17 +6,29 @@ type RendererErrorBoundaryProps = {
 }
 
 type RendererErrorBoundaryState = {
-  failed: boolean
+  details: string | null
+}
+
+const getRendererErrorDetails = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.stack?.trim() || error.message || error.name
+  }
+
+  try {
+    return String(error) || 'Unknown renderer error.'
+  } catch {
+    return 'Unknown renderer error.'
+  }
 }
 
 export class RendererErrorBoundary extends Component<
   RendererErrorBoundaryProps,
   RendererErrorBoundaryState
 > {
-  state: RendererErrorBoundaryState = { failed: false }
+  state: RendererErrorBoundaryState = { details: null }
 
-  static getDerivedStateFromError(): RendererErrorBoundaryState {
-    return { failed: true }
+  static getDerivedStateFromError(error: unknown): RendererErrorBoundaryState {
+    return { details: getRendererErrorDetails(error) }
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
@@ -24,14 +36,14 @@ export class RendererErrorBoundary extends Component<
   }
 
   render(): ReactNode {
-    if (!this.state.failed) return this.props.children
+    if (this.state.details === null) return this.props.children
 
     return (
       <main className="renderer-error" role="alert" aria-labelledby="renderer-error-title">
         <section className="renderer-error__panel">
-          <span className="renderer-error__label">Renderer error</span>
           <h1 id="renderer-error-title">Sele hit a problem</h1>
-          <p>The interface could not finish rendering. Reload it to continue.</p>
+          <p>The interface could not finish rendering.</p>
+          <pre className="renderer-error__details">{this.state.details}</pre>
           <button type="button" onClick={() => window.location.reload()}>
             Reload Sele
           </button>

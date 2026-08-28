@@ -6,7 +6,7 @@
 }
 
 .renderer-error__panel {
-  width: min(100%, 30rem);
+  width: min(100%, 48rem);
   padding: 2rem;
   border: 0.0625rem solid var(--panel-border);
   border-radius: 0.75rem;
@@ -14,24 +14,32 @@
   box-shadow: var(--panel-shadow);
 }
 
-.renderer-error__label {
-  color: var(--error);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .renderer-error__panel h1 {
-  margin: 0.5rem 0 0;
+  margin: 0;
   color: var(--lead);
   font-size: 1.5rem;
 }
 
 .renderer-error__panel p {
-  margin: 0.75rem 0 1.5rem;
+  margin: 0.75rem 0;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.renderer-error__details {
+  max-height: min(24rem, 50vh);
+  margin: 0 0 1.5rem;
+  padding: 0.75rem;
+  overflow: auto;
+  border: 0.0625rem solid var(--inline-code-border);
+  border-radius: var(--control-radius);
+  color: var(--inline-code-color);
+  background: var(--inline-code-bg);
+  font-family: var(--code-font-family);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .renderer-error__panel button {

@@ -89,7 +89,7 @@ import {
 import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
-import { commitGitFileChanges } from './gitCommit'
+import { commitAllGitChanges } from './gitCommit'
 import { summarizeGitNumstat } from './gitCommitMessage'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
 import {
@@ -1208,7 +1208,6 @@ const getGitCommitOptions = (value: unknown): AppGitCommitOptions => {
     action?: unknown
     container?: unknown
     cwd?: unknown
-    files?: unknown
     message?: unknown
     patches?: unknown
   }
@@ -1216,13 +1215,6 @@ const getGitCommitOptions = (value: unknown): AppGitCommitOptions => {
   const message = typeof options.message === 'string' ? options.message.trim() : ''
 
   if (action !== 'amend' && !message) throw new Error('Commit message is required')
-  if (!Array.isArray(options.files)) throw new Error('Commit files are required')
-
-  const files = [
-    ...new Set(
-      options.files.filter((file): file is string => typeof file === 'string').map((file) => file)
-    )
-  ]
   const patches =
     options.patches == null
       ? undefined
@@ -1232,7 +1224,6 @@ const getGitCommitOptions = (value: unknown): AppGitCommitOptions => {
     action,
     container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
-    files,
     patches,
     message
   }
@@ -2699,7 +2690,6 @@ const commitGitPatchChanges = async (
 
 const commitGitChanges = async (
   cwd: string,
-  files: string[],
   message: string | null | undefined,
   action: AppGitCommitAction,
   patches?: AppGitPatchChange[]
@@ -2725,7 +2715,7 @@ const commitGitChanges = async (
     return { commitHash, pushed: false }
   }
 
-  await commitGitFileChanges({ action, files, message, repositoryRoot, runGit })
+  await commitAllGitChanges({ action, message, repositoryRoot, runGit })
 
   const commitHash = await runGit(repositoryRoot, ['rev-parse', 'HEAD'], true)
   if (!commitHash) throw new Error('Unable to read commit hash')
@@ -3126,17 +3116,17 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  ipcMain.handle(appIpcChannels.getGitCommitMessageContext, async (_event, value: unknown) => {
-    const options = getGitDiffOptions(value)
-    return runWithGitContainer(options.container, () =>
-      getGitCommitMessageContext(options.cwd ?? process.cwd())
-    )
-  })
-
   ipcMain.handle(appIpcChannels.getUncommittedGitDiff, async (_event, value: unknown) => {
     const options = getGitDiffOptions(value)
     return runWithGitContainer(options.container, () =>
       getUncommittedGitDiff(options.cwd ?? process.cwd())
+    )
+  })
+
+  ipcMain.handle(appIpcChannels.getGitCommitMessageContext, async (_event, value: unknown) => {
+    const options = getGitDiffOptions(value)
+    return runWithGitContainer(options.container, () =>
+      getGitCommitMessageContext(options.cwd ?? process.cwd())
     )
   })
 
@@ -3159,7 +3149,6 @@ export const registerAppIpc = (): void => {
     return runWithGitContainer(options.container, () =>
       commitGitChanges(
         options.cwd ?? process.cwd(),
-        options.files,
         options.message,
         options.action ?? 'commit',
         options.patches

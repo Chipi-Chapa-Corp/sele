@@ -391,7 +391,6 @@ export type AppWriteFileContentsResult = {
 export type AppGitCommitOptions = AppContainerOptions & {
   cwd?: string | null
   action?: AppGitCommitAction
-  files: string[]
   patches?: AppGitPatchChange[]
   message?: string | null
 }
@@ -532,10 +531,10 @@ export type AppApi = {
   getRecentGitCommitMessages: (
     options?: AppGitRecentCommitMessagesOptions
   ) => Promise<AppGitRecentCommitMessagesResult>
+  getUncommittedGitDiff: (options?: AppGitDiffOptions) => Promise<AppGitDiffResult>
   getGitCommitMessageContext: (
     options?: AppGitDiffOptions
   ) => Promise<AppGitCommitMessageContextResult>
-  getUncommittedGitDiff: (options?: AppGitDiffOptions) => Promise<AppGitDiffResult>
   getGitFileDiff: (options: AppGitFileDiffOptions) => Promise<AppGitFileDiffResult>
   getUncommittedGitPatchChanges: (
     options: AppGitUncommittedPatchChangesOptions
@@ -591,8 +590,8 @@ export const appIpcChannels = {
   getFileContents: 'app:get-file-contents',
   writeFileContents: 'app:write-file-contents',
   getRecentGitCommitMessages: 'app:get-recent-git-commit-messages',
-  getGitCommitMessageContext: 'app:get-git-commit-message-context',
   getUncommittedGitDiff: 'app:get-uncommitted-git-diff',
+  getGitCommitMessageContext: 'app:get-git-commit-message-context',
   getGitFileDiff: 'app:get-git-file-diff',
   getUncommittedGitPatchChanges: 'app:get-uncommitted-git-patch-changes',
   commitGitChanges: 'app:commit-git-changes',

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
-import { commitGitFileChanges } from './gitCommit.ts'
+import { commitAllGitChanges } from './gitCommit.ts'
 import { getProcessFailureMessage } from './processFailure.ts'
 
 const execFileAsync = promisify(execFile)
@@ -41,96 +41,93 @@ const createRepository = async () => {
   return repositoryRoot
 }
 
-test('reports a stale file selection without exposing a raw Git command failure', async () => {
-  const repositoryRoot = await createRepository()
-
-  try {
-    await writeFile(join(repositoryRoot, 'tracked.txt'), 'base\n')
-    await runGit(repositoryRoot, ['add', 'tracked.txt'], true)
-    await runGit(repositoryRoot, ['commit', '--quiet', '-m', 'base'], true)
-    const headBefore = await runGit(repositoryRoot, ['rev-parse', 'HEAD'], true)
-
-    await assert.rejects(
-      commitGitFileChanges({
-        action: 'commit',
-        files: ['missing-workflow.yml'],
-        message: 'stale change',
-        repositoryRoot,
-        runGit
-      }),
-      /selected files no longer contain uncommitted changes/i
-    )
-
-    assert.equal(await runGit(repositoryRoot, ['rev-parse', 'HEAD'], true), headBefore)
-  } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
-  }
-})
-
-test('does not touch the real index when a staged new file disappears', async () => {
-  const repositoryRoot = await createRepository()
-
-  try {
-    await writeFile(join(repositoryRoot, 'tracked.txt'), 'base\n')
-    await runGit(repositoryRoot, ['add', 'tracked.txt'], true)
-    await runGit(repositoryRoot, ['commit', '--quiet', '-m', 'base'], true)
-
-    const vanishedPath = join(repositoryRoot, 'vanished.txt')
-    await writeFile(vanishedPath, 'temporary\n')
-    await runGit(repositoryRoot, ['add', 'vanished.txt'], true)
-    await rm(vanishedPath)
-    const statusBefore = await runGit(repositoryRoot, ['status', '--short'], true)
-
-    await assert.rejects(
-      commitGitFileChanges({
-        action: 'commit',
-        files: ['vanished.txt'],
-        message: 'stale staged change',
-        repositoryRoot,
-        runGit
-      }),
-      /selected files no longer contain uncommitted changes/i
-    )
-
-    assert.equal(await runGit(repositoryRoot, ['status', '--short'], true), statusBefore)
-  } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
-  }
-})
-
-test('commits selected files while preserving unrelated staged changes', async () => {
+test('commits all staged, unstaged, and untracked changes', async () => {
   const repositoryRoot = await createRepository()
 
   try {
     await Promise.all([
-      writeFile(join(repositoryRoot, 'selected.txt'), 'base\n'),
-      writeFile(join(repositoryRoot, 'unrelated.txt'), 'base\n')
+      writeFile(join(repositoryRoot, 'staged.txt'), 'base\n'),
+      writeFile(join(repositoryRoot, 'unstaged.txt'), 'base\n')
     ])
     await runGit(repositoryRoot, ['add', '.'], true)
     await runGit(repositoryRoot, ['commit', '--quiet', '-m', 'base'], true)
 
     await Promise.all([
-      writeFile(join(repositoryRoot, 'selected.txt'), 'selected change\n'),
-      writeFile(join(repositoryRoot, 'unrelated.txt'), 'unrelated change\n')
+      writeFile(join(repositoryRoot, 'staged.txt'), 'staged change\n'),
+      writeFile(join(repositoryRoot, 'unstaged.txt'), 'unstaged change\n'),
+      writeFile(join(repositoryRoot, 'untracked.txt'), 'untracked change\n')
     ])
-    await runGit(repositoryRoot, ['add', 'unrelated.txt'], true)
+    await runGit(repositoryRoot, ['add', 'staged.txt'], true)
 
-    await commitGitFileChanges({
+    await commitAllGitChanges({
       action: 'commit',
-      files: ['selected.txt'],
-      message: 'commit selected file',
+      message: 'commit everything',
       repositoryRoot,
       runGit
     })
 
-    assert.equal(
-      await runGit(repositoryRoot, ['show', '--format=', '--name-only', 'HEAD'], true),
-      'selected.txt'
+    assert.deepEqual(
+      (await runGit(repositoryRoot, ['show', '--format=', '--name-only', 'HEAD'], true)).split(
+        '\n'
+      ),
+      ['staged.txt', 'unstaged.txt', 'untracked.txt']
     )
-    assert.equal(
-      await runGit(repositoryRoot, ['diff', '--cached', '--name-only'], true),
-      'unrelated.txt'
+    assert.equal(await runGit(repositoryRoot, ['status', '--short'], true), '')
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true })
+  }
+})
+
+test('validates a new commit message before staging changes', async () => {
+  const repositoryRoot = await createRepository()
+
+  try {
+    await writeFile(join(repositoryRoot, 'untracked.txt'), 'untracked change\n')
+
+    await assert.rejects(
+      commitAllGitChanges({
+        action: 'commit',
+        message: '   ',
+        repositoryRoot,
+        runGit
+      }),
+      /commit message is required/i
     )
+
+    assert.equal(await runGit(repositoryRoot, ['status', '--short'], true), '?? untracked.txt')
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true })
+  }
+})
+
+test('amends HEAD with all current changes and keeps its message', async () => {
+  const repositoryRoot = await createRepository()
+
+  try {
+    await writeFile(join(repositoryRoot, 'tracked.txt'), 'base\n')
+    await runGit(repositoryRoot, ['add', 'tracked.txt'], true)
+    await runGit(repositoryRoot, ['commit', '--quiet', '-m', 'original message'], true)
+
+    await Promise.all([
+      writeFile(join(repositoryRoot, 'tracked.txt'), 'updated\n'),
+      writeFile(join(repositoryRoot, 'untracked.txt'), 'new\n')
+    ])
+
+    await commitAllGitChanges({
+      action: 'amend',
+      message: null,
+      repositoryRoot,
+      runGit
+    })
+
+    assert.equal(await runGit(repositoryRoot, ['rev-list', '--count', 'HEAD'], true), '1')
+    assert.equal(
+      await runGit(repositoryRoot, ['log', '-1', '--format=%s'], true),
+      'original message'
+    )
+    assert.equal(await runGit(repositoryRoot, ['status', '--short'], true), '')
+    assert.equal(await runGit(repositoryRoot, ['show', 'HEAD:tracked.txt'], true), 'updated')
+    assert.equal(await runGit(repositoryRoot, ['show', 'HEAD:untracked.txt'], true), 'new')
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true })
   }
