@@ -14,11 +14,59 @@ import type {
 import { getProviderChatTurns } from '../../shared/chatTurns.ts'
 import type { ChatTurnWindow } from './chatTurnWindow'
 
+export const optimisticChatItemIdPrefix = 'optimistic:'
+
 export const hasProviderUserMessage = (items: ProviderChatItem[]): boolean =>
   items.some((item) => item.type === 'message' && item.role === 'user')
 
 export const shouldPreserveOptimisticTurnUntilUserMessage = (providerId: ProviderId): boolean =>
   providerId === 'copilot' || providerId === 'opencode'
+
+export const hasProviderUserMessageAfterOptimisticTurn = (
+  currentItems: ProviderChatItem[],
+  incomingItems: ProviderChatItem[]
+): boolean => {
+  const optimisticTurnStartIndex = currentItems.findIndex((item) =>
+    item.id.startsWith(optimisticChatItemIdPrefix)
+  )
+  if (optimisticTurnStartIndex < 0) return true
+
+  const existingUserMessageIds = new Set(
+    currentItems
+      .slice(0, optimisticTurnStartIndex)
+      .filter((item) => item.type === 'message' && item.role === 'user')
+      .map((item) => item.id)
+  )
+  return incomingItems.some(
+    (item) =>
+      item.type === 'message' &&
+      item.role === 'user' &&
+      !item.id.startsWith(optimisticChatItemIdPrefix) &&
+      !existingUserMessageIds.has(item.id)
+  )
+}
+
+export const preserveOptimisticChatDetail = (
+  currentDetail: ProviderChatDetail | null | undefined,
+  incomingDetail: ProviderChatDetail
+): ProviderChatDetail => {
+  if (
+    currentDetail?.id !== incomingDetail.id ||
+    hasProviderUserMessageAfterOptimisticTurn(currentDetail?.items ?? [], incomingDetail.items)
+  ) {
+    return incomingDetail
+  }
+
+  return {
+    ...incomingDetail,
+    items: currentDetail.items,
+    itemsStartTurnIndex: getChatDetailItemsStartTurnIndex(currentDetail),
+    turnCount: Math.max(
+      getChatDetailTurnCount(currentDetail),
+      getChatDetailTurnCount(incomingDetail)
+    )
+  }
+}
 
 export const getChatDetailTurnCount = (detail: ProviderChatDetail | null | undefined): number =>
   Math.max(
@@ -34,6 +82,17 @@ export const getLoadedChatDetailTurnEndIndex = (
   detail: ProviderChatDetail | null | undefined
 ): number =>
   getChatDetailItemsStartTurnIndex(detail) + getProviderChatTurns(detail?.items ?? []).length
+
+export const isChatDetailUpdateAfterLoadedTurnWindow = (
+  detail: ProviderChatDetail | null | undefined,
+  incomingItemsStartTurnIndex: number
+): boolean => {
+  const loadedTurns = getProviderChatTurns(detail?.items ?? [])
+  return (
+    loadedTurns.length > 0 &&
+    getChatDetailItemsStartTurnIndex(detail) + loadedTurns.length <= incomingItemsStartTurnIndex
+  )
+}
 
 export const mergeChatDetailTurnPage = (
   detail: ProviderChatDetail,

@@ -334,13 +334,17 @@ import {
 } from './chatTurnWindow'
 import {
   hasProviderUserMessage,
+  hasProviderUserMessageAfterOptimisticTurn,
   getChatDetailItemsStartTurnIndex,
   getChatDetailTurnCount,
   getLoadedChatDetailTurnEndIndex,
+  isChatDetailUpdateAfterLoadedTurnWindow,
   mergeChatDetailTurnPage,
   mergeWorkingStepPage,
   mergeWorkingToolPage,
   mergeWorkingStepUpdate,
+  optimisticChatItemIdPrefix,
+  preserveOptimisticChatDetail,
   retainLoadedChatDetailTurnWindow,
   shouldPreserveOptimisticTurnUntilUserMessage
 } from './chatDetailWindow'
@@ -2547,8 +2551,6 @@ const getChatKey = (chat: Pick<ProviderChat, 'providerId' | 'id'>): string =>
 const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
   getChatKey({ providerId, id: chatId })
 
-const optimisticChatItemIdPrefix = 'optimistic:'
-
 const getTimestamp = (): number => Date.now()
 
 const createChatCommitMarkerId = (): string => {
@@ -2815,8 +2817,10 @@ const getChatDetailFromUpdate = (
   const currentItemsStartTurnIndex = getChatDetailItemsStartTurnIndex(currentDetail)
   const incomingItemsStartTurnIndex = chatDetail.itemsStartTurnIndex ?? 0
   const currentTurns = getProviderChatTurns(currentDetail?.items ?? [])
-  const currentItemsEndTurnIndex = currentItemsStartTurnIndex + currentTurns.length
-  if (currentDetail?.id === update.id && currentItemsEndTurnIndex <= incomingItemsStartTurnIndex) {
+  if (
+    currentDetail?.id === update.id &&
+    isChatDetailUpdateAfterLoadedTurnWindow(currentDetail, incomingItemsStartTurnIndex)
+  ) {
     return {
       ...chatDetail,
       container: stableContainer,
@@ -2902,38 +2906,18 @@ const getChatDetailFromUpdate = (
     mergedItems.push(mergedWorkingStep)
   }
 
-  if (preserveOptimisticTurnUntilUserMessage && currentDetail?.id === update.id) {
+  if (
+    preserveOptimisticTurnUntilUserMessage &&
+    currentDetail?.id === update.id &&
+    !hasProviderUserMessageAfterOptimisticTurn(currentDetail.items, mergedItems)
+  ) {
     // Some asynchronous provider SDKs can report an active turn before they echo the new user
     // message. Keep the optimistic turn during that gap so it does not briefly disappear.
-    const optimisticTurnStartIndex = currentDetail.items.findIndex((item) =>
-      item.id.startsWith(optimisticChatItemIdPrefix)
-    )
-
-    if (optimisticTurnStartIndex >= 0) {
-      const existingUserMessageIds = new Set(
-        currentDetail.items
-          .slice(0, optimisticTurnStartIndex)
-          .filter(
-            (item): item is ProviderMessage => item.type === 'message' && item.role === 'user'
-          )
-          .map((item) => item.id)
-      )
-      const hasNewProviderUserMessage = mergedItems.some(
-        (item) =>
-          item.type === 'message' &&
-          item.role === 'user' &&
-          !item.id.startsWith(optimisticChatItemIdPrefix) &&
-          !existingUserMessageIds.has(item.id)
-      )
-
-      if (!hasNewProviderUserMessage) {
-        return {
-          ...chatDetail,
-          container: stableContainer,
-          items: currentDetail.items,
-          itemsStartTurnIndex: currentItemsStartTurnIndex
-        }
-      }
+    return {
+      ...chatDetail,
+      container: stableContainer,
+      items: currentDetail.items,
+      itemsStartTurnIndex: currentItemsStartTurnIndex
     }
   }
 
@@ -6090,33 +6074,45 @@ export const App: React.FC = () => {
     ): void => {
       const updatedAt = Date.now()
       const detailKey = getProviderChatKey(providerId, detail.id)
+      const currentDetail = chatDetailRef.current
+      const appliedDetail =
+        shouldPreserveOptimisticTurnUntilUserMessage(providerId) &&
+        isActiveChatStatus(detail.status) &&
+        currentDetail?.id === detail.id &&
+        (options.select || selectedChatKeyRef.current === detailKey)
+          ? preserveOptimisticChatDetail(currentDetail, detail)
+          : detail
       if (options.select || selectedChatKeyRef.current === detailKey) {
-        chatDetailRef.current = detail
+        chatDetailRef.current = appliedDetail
         selectedChatUpdatedAtRef.current = options.select
           ? updatedAt
           : Math.max(selectedChatUpdatedAtRef.current ?? 0, updatedAt)
       }
-      cacheRecentChatDetail(providerId, detail, updatedAt, options.select)
+      cacheRecentChatDetail(providerId, appliedDetail, updatedAt, options.select)
 
-      const hiddenCommit = detail.purpose === 'commit'
+      const hiddenCommit = appliedDetail.purpose === 'commit'
       if (hiddenCommit) {
         setChats((currentChats) =>
-          currentChats.filter((chat) => chat.providerId !== providerId || chat.id !== detail.id)
+          currentChats.filter(
+            (chat) => chat.providerId !== providerId || chat.id !== appliedDetail.id
+          )
         )
         if (!options.select && selectedChatKeyRef.current !== detailKey) return
       }
 
       if (options.select) {
         resetChatSearch()
-        setChatDetail(detail)
+        setChatDetail(appliedDetail)
         setChatLoadState('ready')
-        setSelectedChat(getChatFromDetail(providerId, detail, null, updatedAt))
+        setSelectedChat(getChatFromDetail(providerId, appliedDetail, null, updatedAt))
         setNewChatOpen(false)
       } else {
-        setChatDetail((currentDetail) => (currentDetail?.id === detail.id ? detail : currentDetail))
+        setChatDetail((renderedDetail) =>
+          renderedDetail?.id === appliedDetail.id ? appliedDetail : renderedDetail
+        )
         setSelectedChat((currentChat) =>
-          currentChat?.providerId === providerId && currentChat.id === detail.id
-            ? getChatFromDetail(providerId, detail, currentChat, updatedAt)
+          currentChat?.providerId === providerId && currentChat.id === appliedDetail.id
+            ? getChatFromDetail(providerId, appliedDetail, currentChat, updatedAt)
             : currentChat
         )
       }
@@ -6125,9 +6121,10 @@ export const App: React.FC = () => {
 
       setChats((currentChats) => {
         const existingChat =
-          currentChats.find((chat) => chat.providerId === providerId && chat.id === detail.id) ??
-          null
-        const nextChat = getChatFromDetail(providerId, detail, existingChat, updatedAt)
+          currentChats.find(
+            (chat) => chat.providerId === providerId && chat.id === appliedDetail.id
+          ) ?? null
+        const nextChat = getChatFromDetail(providerId, appliedDetail, existingChat, updatedAt)
 
         return mergeChats(currentChats, [nextChat])
       })
@@ -7106,15 +7103,21 @@ export const App: React.FC = () => {
       .getChat(selectedProviderId, selectedChatId)
       .then((detail) => {
         if (!active) return
-        chatDetailRef.current = detail
+        const currentDetail = chatDetailRef.current
+        const loadedDetail =
+          shouldPreserveOptimisticTurnUntilUserMessage(selectedProviderId) &&
+          isActiveChatStatus(detail.status)
+            ? preserveOptimisticChatDetail(currentDetail, detail)
+            : detail
+        chatDetailRef.current = loadedDetail
         cacheRecentChatDetail(
           selectedProviderId,
-          detail,
+          loadedDetail,
           selectedChatUpdatedAtRef.current ?? Date.now(),
           true
         )
         startTransition(() => {
-          setChatDetail(detail)
+          setChatDetail(loadedDetail)
           setChatLoadState('ready')
         })
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
@@ -15604,6 +15607,8 @@ export const App: React.FC = () => {
                 {!activeSubagentChatView &&
                   !editingMessage &&
                   chatLoadState === 'ready' &&
+                  sendState !== 'sending' &&
+                  !chatHasActiveTurn &&
                   visibleChatItems.length === 0 &&
                   selectedChatCommitMarkers.length === 0 &&
                   selectedChatSubagents.length === 0 && (

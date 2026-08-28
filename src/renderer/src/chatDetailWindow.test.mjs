@@ -2,13 +2,16 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   hasProviderUserMessage,
+  hasProviderUserMessageAfterOptimisticTurn,
   getChatDetailItemsStartTurnIndex,
   getChatDetailTurnCount,
   getWorkingStepItemSegments,
+  isChatDetailUpdateAfterLoadedTurnWindow,
   mergeChatDetailTurnPage,
   mergeWorkingStepPage,
   mergeWorkingToolPage,
   mergeWorkingStepUpdate,
+  preserveOptimisticChatDetail,
   retainLoadedChatDetailTurnWindow,
   shouldPreserveOptimisticTurnUntilUserMessage
 } from './chatDetailWindow.ts'
@@ -58,6 +61,65 @@ test('counts loaded turns when an asynchronous snapshot still reports zero turns
   ]
 
   assert.equal(getChatDetailTurnCount({ id: 'new-chat', items, turnCount: 0 }), 1)
+})
+
+test('preserves an optimistic sent turn across an active empty full snapshot', () => {
+  const current = {
+    id: 'new-chat',
+    status: 'active',
+    items: [
+      { type: 'message', id: 'optimistic:1:user', role: 'user', content: 'Hello' },
+      { type: 'working', id: 'optimistic:1:working', status: 'working', items: [] }
+    ]
+  }
+  const incoming = { id: 'new-chat', status: 'waitingOnUserInput', items: [], turnCount: 0 }
+  const result = preserveOptimisticChatDetail(current, incoming)
+
+  assert.equal(result.status, 'waitingOnUserInput')
+  assert.deepEqual(result.items, current.items)
+  assert.equal(result.turnCount, 1)
+})
+
+test('replaces an optimistic sent turn after the provider echoes its user message', () => {
+  const current = {
+    id: 'new-chat',
+    status: 'active',
+    items: [
+      { type: 'message', id: 'previous-user', role: 'user', content: 'Previous' },
+      { type: 'message', id: 'optimistic:1:user', role: 'user', content: 'Hello' }
+    ]
+  }
+  const incoming = {
+    id: 'new-chat',
+    status: 'active',
+    items: [
+      { type: 'message', id: 'previous-user', role: 'user', content: 'Previous' },
+      { type: 'message', id: 'provider-user', role: 'user', content: 'Hello' }
+    ]
+  }
+
+  assert.equal(hasProviderUserMessageAfterOptimisticTurn(current.items, incoming.items), true)
+  assert.equal(preserveOptimisticChatDetail(current, incoming), incoming)
+})
+
+test('accepts the first live turn when the current chat detail has no loaded messages', () => {
+  assert.equal(
+    isChatDetailUpdateAfterLoadedTurnWindow(
+      { id: 'new-chat', items: [], itemsStartTurnIndex: 0, turnCount: 0 },
+      0
+    ),
+    false
+  )
+})
+
+test('keeps a loaded historical window when a live update starts after it', () => {
+  assert.equal(
+    isChatDetailUpdateAfterLoadedTurnWindow(
+      { id: 'chat', items: turnItems(10, 10), itemsStartTurnIndex: 10, turnCount: 40 },
+      20
+    ),
+    true
+  )
 })
 
 test('merges an older page without retaining turns outside the bounded window', () => {
