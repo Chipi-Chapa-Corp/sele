@@ -944,10 +944,13 @@ export const EditableUnifiedDiff = ({
     }
     const scheduleReviewInput = (
       sourceEditor: monaco.editor.IStandaloneCodeEditor,
-      selection: monaco.Selection
+      selection: monaco.Selection,
+      source: string
     ): void => {
       window.clearTimeout(reviewSelectionTimer)
-      if (selection.isEmpty()) {
+      // Monaco's Find controller selects matches through the editor API. Review comments
+      // should only open for selections made directly by the user.
+      if (selection.isEmpty() || source === 'api') {
         setReviewInputPosition(null)
         return
       }
@@ -959,10 +962,10 @@ export const EditableUnifiedDiff = ({
       )
     }
     const originalSelectionSubscription = originalEditor.onDidChangeCursorSelection(
-      ({ selection }) => scheduleReviewInput(originalEditor, selection)
+      ({ selection, source }) => scheduleReviewInput(originalEditor, selection, source)
     )
     const modifiedSelectionSubscription = modifiedEditor.onDidChangeCursorSelection(
-      ({ selection }) => scheduleReviewInput(modifiedEditor, selection)
+      ({ selection, source }) => scheduleReviewInput(modifiedEditor, selection, source)
     )
     const startPointerSelection = (sourceEditor: monaco.editor.IStandaloneCodeEditor): void => {
       cancelScheduledReviewInput()
