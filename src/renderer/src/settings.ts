@@ -39,14 +39,11 @@ import {
 } from './gitErrorResolution'
 import {
   defaultAppGitQuickActionsSettings,
-  isAppGitQuickAction,
   type AppGitQuickActionsSettings
 } from './gitQuickActions'
 
 export {
   defaultAppGitQuickActionsSettings,
-  isAppGitQuickAction,
-  type AppGitQuickAction,
   type AppGitQuickActionsSettings
 } from './gitQuickActions'
 
@@ -88,6 +85,7 @@ export type AppGitCommitPromptSettings = {
 
 export type AppGitCommitMessageGenerationSettings = {
   prompt: string
+  largeChangePrompt: string
   aiInstructionsPrefix: string
 }
 
@@ -293,9 +291,15 @@ export const defaultAppGitCommitPromptSettings: AppGitCommitPromptSettings = {
 
 export const defaultAppGitCommitMessageGenerationSettings: AppGitCommitMessageGenerationSettings = {
   prompt: [
-    'Generate a concise Git commit name for the supplied diff.',
+    'Generate a concise Git commit name for the supplied Git changes.',
     'Match the style and conventions of the recent commit names.',
     'Return only one single-line commit name, with no quotes, Markdown, or explanation.'
+  ].join('\n'),
+  largeChangePrompt: [
+    'The full diff was omitted because this is a large change.',
+    'Use the supplied file paths and change counts to identify the main purpose of the change.',
+    'Do not use tools except to read a few of the most important listed files. Do not create a plan, use subagents, modify files, run tests, or inspect unrelated files.',
+    'Once ready, return only one single-line commit name, with no quotes, Markdown, or explanation.'
   ].join('\n'),
   aiInstructionsPrefix: 'AI instructions:'
 }
@@ -707,12 +711,6 @@ const readProjectGitOverrides = (
   ) {
     storedQuickActions.showAiInstructionsInput = quickActions.showAiInstructionsInput
   }
-  if (
-    hasOwnProperty(quickActions, 'defaultAction') &&
-    isAppGitQuickAction(quickActions.defaultAction)
-  ) {
-    storedQuickActions.defaultAction = quickActions.defaultAction
-  }
   if (Object.keys(storedQuickActions).length > 0) {
     overrides.quickActions = storedQuickActions
   }
@@ -1113,10 +1111,7 @@ export const readStoredAppSettings = (): AppSettings => {
           showAiInstructionsInput:
             typeof quickActions.showAiInstructionsInput === 'boolean'
               ? quickActions.showAiInstructionsInput
-              : defaultAppSettings.git.quickActions.showAiInstructionsInput,
-          defaultAction: isAppGitQuickAction(quickActions.defaultAction)
-            ? quickActions.defaultAction
-            : defaultAppSettings.git.quickActions.defaultAction
+              : defaultAppSettings.git.quickActions.showAiInstructionsInput
         },
         commitPrompt: {
           instructions: readPromptField(commitPrompt, 'instructions'),
@@ -1127,6 +1122,10 @@ export const readStoredAppSettings = (): AppSettings => {
         },
         commitMessageGeneration: {
           prompt: readCommitMessageGenerationField(commitMessageGeneration, 'prompt'),
+          largeChangePrompt: readCommitMessageGenerationField(
+            commitMessageGeneration,
+            'largeChangePrompt'
+          ),
           aiInstructionsPrefix: readCommitMessageGenerationField(
             commitMessageGeneration,
             'aiInstructionsPrefix'

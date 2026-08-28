@@ -54,6 +54,7 @@ import {
   Maximize2,
   Minimize2,
   Minus,
+  MessageSquare,
   Monitor,
   Moon,
   PackagePlus,
@@ -65,7 +66,6 @@ import {
   Search,
   Server,
   Settings,
-  MessageSquare,
   ShieldQuestionMark,
   Sparkles,
   SquarePen,
@@ -248,6 +248,11 @@ import {
   writeStoredCollapsedProjectGroups
 } from './collapsedProjectGroups'
 import { applyFontAppearancePreferences } from './fontAppearance'
+import {
+  getCommitMessageGenerationPrompt,
+  isLargeCommitMessageChange,
+  normalizeGeneratedCommitMessage
+} from './gitCommitMessage'
 import { providerApi } from './providerApi'
 import { getProjectDisplayName, renderProjectGlyph } from './projectPresentation'
 import {
@@ -273,7 +278,6 @@ import {
   type AppFontSetting,
   type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
-  type AppGitQuickAction,
   type AppGitQuickActionsSettings,
   type AppGitWorktreeSettings,
   type AppChatDropdownSettings,
@@ -408,6 +412,7 @@ type PatchChangeSource = Extract<ChangeSource, 'chat' | 'lastTurn'>
 type GitChangeSource = Exclude<ChangeSource, 'chat' | 'lastTurn'>
 type ChangesPaneView = 'recents' | 'git' | 'files' | 'terminal' | 'browser'
 type GitCommitPromptAction = AppGitCommitAction
+type GitCommitMode = 'commit' | 'push'
 type GitSyncAction = 'pull' | 'push' | 'pullAndPush'
 type GitSyncStep = Exclude<GitSyncAction, 'pullAndPush'>
 type GitSyncRecoveryState = {
@@ -1403,23 +1408,28 @@ const commitActionLabels = {
   amend: 'Amend'
 } satisfies Record<GitCommitPromptAction, string>
 
-const gitQuickActionLabels = {
-  commit: 'Commit',
-  'commit-push': 'Commit & Push',
-  'chat-commit': 'Chat Commit',
-  'chat-commit-push': 'Chat Commit & Push',
-  'chat-amend': 'Chat Amend',
-  'chat-amend-push': 'Chat Amend & Push'
-} satisfies Record<AppGitQuickAction, string>
-
-const gitQuickActionOptions = [
-  { value: 'commit', label: gitQuickActionLabels.commit },
-  { value: 'commit-push', label: gitQuickActionLabels['commit-push'] },
-  { value: 'chat-commit', label: gitQuickActionLabels['chat-commit'] },
-  { value: 'chat-commit-push', label: gitQuickActionLabels['chat-commit-push'] },
-  { value: 'chat-amend', label: gitQuickActionLabels['chat-amend'] },
-  { value: 'chat-amend-push', label: gitQuickActionLabels['chat-amend-push'] }
-] satisfies readonly DropdownOption<AppGitQuickAction>[]
+const gitCommitModeOptions = [
+  {
+    value: 'commit',
+    label: null,
+    ariaLabel: 'Commit only',
+    title: 'Commit only',
+    icon: <GitCommitHorizontal aria-hidden="true" />
+  },
+  {
+    value: 'push',
+    label: null,
+    ariaLabel: 'Commit and push',
+    title: 'Commit and push',
+    icon: <Upload aria-hidden="true" />
+  }
+] satisfies readonly {
+  value: GitCommitMode
+  label: null
+  ariaLabel: string
+  title: string
+  icon: React.ReactNode
+}[]
 
 const providerToolActivities = new Set<ProviderToolActivity>([
   'read',
@@ -2527,11 +2537,6 @@ const gitCommitPromptFieldOptions = [
   {
     key: 'commitStep',
     label: 'Commit step',
-    rows: 2
-  },
-  {
-    key: 'amendStep',
-    label: 'Amend step',
     rows: 2
   },
   {
@@ -3891,48 +3896,6 @@ const getScopedChatCommitPrompt = (
     .join('\n')
 }
 
-const getCommitMessageGenerationPrompt = (
-  diff: string,
-  recentCommitMessages: string[],
-  aiInstructions: string,
-  settings: AppGitCommitMessageGenerationSettings
-): string => {
-  const instructions = aiInstructions.trim()
-  const instructionsPrefix = settings.aiInstructionsPrefix.trim()
-  const formattedInstructions = instructions
-    ? instructionsPrefix
-      ? `${instructionsPrefix} ${JSON.stringify(instructions)}`
-      : JSON.stringify(instructions)
-    : null
-  const recentCommitNames =
-    recentCommitMessages.length > 0
-      ? recentCommitMessages.map((message) => `- ${message}`).join('\n')
-      : '(No recent commits)'
-
-  return [
-    settings.prompt.trim(),
-    ['Recent commit names:', recentCommitNames].join('\n'),
-    ['Git diff:', diff.trim()].join('\n'),
-    formattedInstructions
-  ]
-    .filter((section): section is string => Boolean(section))
-    .join('\n\n')
-}
-
-const normalizeGeneratedCommitMessage = (message: string): string => {
-  const firstLine = message
-    .trim()
-    .replace(/^```(?:text)?\s*/i, '')
-    .replace(/\s*```$/, '')
-    .split(/\r?\n/)
-    .find((line) => line.trim())
-    ?.trim()
-
-  if (!firstLine) return ''
-
-  return firstLine.replace(/^(["'`])(.+)\1$/, '$2').trim()
-}
-
 const getErrorMessage = (error: unknown, fallback: string): string => {
   if (!(error instanceof Error)) return fallback
 
@@ -4338,6 +4301,7 @@ export const App: React.FC = () => {
     null
   )
   const [commitInput, setCommitInput] = useState('')
+  const [gitCommitMode, setGitCommitMode] = useState<GitCommitMode>('commit')
   const [commitMessageGenerationProjectKeys, setCommitMessageGenerationProjectKeys] = useState<
     Set<string>
   >(() => new Set())
@@ -11810,13 +11774,10 @@ export const App: React.FC = () => {
     [currentBranchName]
   )
   const commitInputValue = commitInput.trim()
-  const {
-    showManualCommit,
-    showAiInstructionsInput,
-    defaultAction: defaultGitQuickAction
-  } = effectiveAppSettings.git.quickActions
+  const { showManualCommit, showAiInstructionsInput } = effectiveAppSettings.git.quickActions
   const showCommitInput = showManualCommit || showAiInstructionsInput
   const aiCommitInstructions = showAiInstructionsInput ? commitInputValue : ''
+  const pushAfterCommit = gitCommitMode === 'push'
   const commitFiles = useMemo(() => getCommitFiles(changedFiles), [changedFiles])
   const currentProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
   useEffect(() => {
@@ -11918,6 +11879,21 @@ export const App: React.FC = () => {
     syncInProgress ||
     commitMessageGenerationInProgress ||
     projectCommitInProgress
+  const gitCommitModeDisabled =
+    providerUpdateInProgress ||
+    commitMessageGenerationInProgress ||
+    projectCommitInProgress ||
+    currentProjectSyncInProgress
+  const gitCommitModeToggle = (
+    <SegmentedControl<GitCommitMode>
+      aria-label="Commit completion mode"
+      className="changes-sidebar__commit-mode"
+      disabled={gitCommitModeDisabled}
+      options={gitCommitModeOptions}
+      value={gitCommitMode}
+      onChange={setGitCommitMode}
+    />
+  )
   const branchSwitchDisabled =
     providerUpdateInProgress ||
     !changesCwd ||
@@ -12738,26 +12714,35 @@ export const App: React.FC = () => {
     })
 
     try {
-      const [{ diff }, { messages }] = await Promise.all([
-        appApi.getUncommittedGitDiff({ container: changesContainer, cwd: generationCwd }),
+      const [context, { messages }] = await Promise.all([
+        appApi.getGitCommitMessageContext({ container: changesContainer, cwd: generationCwd }),
         appApi.getRecentGitCommitMessages({
           container: changesContainer,
           cwd: generationCwd,
           limit: 5
         })
       ])
-      if (!diff.trim()) throw new Error('There is no uncommitted diff to describe.')
+      if (context.fileCount === 0 && !context.diff?.trim()) {
+        throw new Error('There is no uncommitted diff to describe.')
+      }
 
       const generatedMessage = await providerApi.generateOneShot(
         providerId,
         getCommitMessageGenerationPrompt(
-          diff,
+          context,
           messages,
           aiInstructions,
           effectiveAppSettings.git.commitMessageGeneration
         ),
         {
           ...getGitTurnOptions(),
+          ...(isLargeCommitMessageChange(context)
+            ? {
+                approvalPolicy: 'never' as const,
+                approvalsReviewer: 'user' as const,
+                sandboxMode: 'read-only' as const
+              }
+            : {}),
           cwd: generationCwd
         }
       )
@@ -12855,17 +12840,25 @@ export const App: React.FC = () => {
     }
   }
 
-  const handleAiCommitChangedFiles = async (
-    action: GitCommitPromptAction = 'commit',
-    pushAfterCommit = false
-  ): Promise<boolean> => {
+  const handleManualCommitChangedFiles = async (): Promise<boolean> => {
+    if (!changesCwd) return false
+
+    const commitCwd = changesCwd
+    const committed = await handleCommitChangedFiles('commit')
+    if (!committed) return false
+
+    if (pushAfterCommit) await runSyncChanges('push', commitCwd)
+    return true
+  }
+
+  const handleAiCommitChangedFiles = async (pushAfterCommit = false): Promise<boolean> => {
     if (providerUpdateInProgress) return false
     if (getAiCommitActionDisabled()) return false
 
     return handleScopedChatCommit(
-      action,
+      'commit',
       getScopedChatCommitPrompt(
-        action,
+        'commit',
         aiCommitInstructions,
         effectiveAppSettings.git.commitPrompt,
         pushAfterCommit
@@ -12894,41 +12887,6 @@ export const App: React.FC = () => {
     if (pushAfterCommit) await runSyncChanges('push', quickCommitCwd)
     return true
   }
-
-  const getGitQuickActionDisabled = (action: AppGitQuickAction): boolean =>
-    action === 'commit' || action === 'commit-push'
-      ? commitMessageGenerationDisabled
-      : getAiCommitActionDisabled()
-
-  const handleGitQuickAction = async (action: AppGitQuickAction): Promise<boolean> => {
-    switch (action) {
-      case 'commit':
-        return handleQuickCommitChangedFiles()
-      case 'commit-push':
-        return handleQuickCommitChangedFiles(true)
-      case 'chat-commit':
-        return handleAiCommitChangedFiles('commit')
-      case 'chat-commit-push':
-        return handleAiCommitChangedFiles('commit', true)
-      case 'chat-amend':
-        return handleAiCommitChangedFiles('amend')
-      case 'chat-amend-push':
-        return handleAiCommitChangedFiles('amend', true)
-    }
-  }
-
-  const getGitQuickActionIcon = (action: AppGitQuickAction): React.ReactNode =>
-    action.endsWith('-push') ? <Upload aria-hidden="true" /> : <Sparkles aria-hidden="true" />
-
-  const gitQuickButtonDropdownActions: ButtonDropdownAction[] = gitQuickActionOptions
-    .filter((option) => option.value !== defaultGitQuickAction)
-    .map((option) => ({
-      id: `ai-${option.value}`,
-      label: option.label,
-      disabled: getGitQuickActionDisabled(option.value),
-      icon: getGitQuickActionIcon(option.value),
-      callback: () => void handleGitQuickAction(option.value)
-    }))
 
   const handleCancelAiCommit = async (activity: ScopedCommitActivity): Promise<void> => {
     const activityKey = getProviderChatKey(activity.providerId, activity.chatId)
@@ -13775,13 +13733,13 @@ export const App: React.FC = () => {
       section: 'gitQuickActions',
       key: 'showAiInstructionsInput'
     } satisfies AppProjectSettingPath
-    const gitDefaultQuickActionPath = {
-      section: 'gitQuickActions',
-      key: 'defaultAction'
-    } satisfies AppProjectSettingPath
     const gitCommitGenerationPromptPath = {
       section: 'gitCommitMessageGeneration',
       key: 'prompt'
+    } satisfies AppProjectSettingPath
+    const gitCommitLargeChangePromptPath = {
+      section: 'gitCommitMessageGeneration',
+      key: 'largeChangePrompt'
     } satisfies AppProjectSettingPath
     const gitCommitGenerationPrefixPath = {
       section: 'gitCommitMessageGeneration',
@@ -14583,22 +14541,6 @@ export const App: React.FC = () => {
                   }
                 />
               </div>
-              <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-                <div className="settings-dialog__field-header">
-                  <h3>Default action</h3>
-                  <p>Choose what the main AI commit button does.</p>
-                </div>
-                {renderProjectSettingAction(gitDefaultQuickActionPath, 'Default action')}
-                <Dropdown
-                  id="settings-git-default-quick-action"
-                  aria-label="Default action"
-                  disabled={isScopedSettingControlDisabled(gitDefaultQuickActionPath)}
-                  menuAlign="end"
-                  options={gitQuickActionOptions}
-                  value={settingsPanelSettings.git.quickActions.defaultAction}
-                  onChange={(value) => handleGitQuickActionsChange('defaultAction', value)}
-                />
-              </div>
             </div>
           </section>
           <section className="settings-dialog__section" aria-labelledby="settings-git-model">
@@ -14843,6 +14785,29 @@ export const App: React.FC = () => {
                   value={settingsPanelSettings.git.commitMessageGeneration.prompt}
                   onChange={(event) =>
                     handleGitCommitMessageGenerationChange('prompt', event.currentTarget.value)
+                  }
+                />
+              </div>
+              <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-git-commit-large-change-prompt"
+                >
+                  <h3>Large-change prompt</h3>
+                </label>
+                {renderProjectSettingAction(gitCommitLargeChangePromptPath, 'Large-change prompt')}
+                <textarea
+                  id="settings-git-commit-large-change-prompt"
+                  className="settings-dialog__prompt-textarea"
+                  rows={6}
+                  spellCheck={false}
+                  disabled={isScopedSettingControlDisabled(gitCommitLargeChangePromptPath)}
+                  value={settingsPanelSettings.git.commitMessageGeneration.largeChangePrompt}
+                  onChange={(event) =>
+                    handleGitCommitMessageGenerationChange(
+                      'largeChangePrompt',
+                      event.currentTarget.value
+                    )
                   }
                 />
               </div>
@@ -16626,7 +16591,7 @@ export const App: React.FC = () => {
                         }}
                         onKeyDown={(event) => {
                           if (showManualCommit && event.key === 'Enter' && !commitDisabled) {
-                            void handleCommitChangedFiles()
+                            void handleManualCommitChangedFiles()
                           }
                         }}
                       />
@@ -16652,23 +16617,11 @@ export const App: React.FC = () => {
                     )}
                   </div>
                 )}
-                <div className="changes-sidebar__commit-row">
-                  {showManualCommit && (
+                {showManualCommit && (
+                  <div className="changes-sidebar__commit-row changes-sidebar__commit-row--manual">
                     <Button
                       disabled={commitDisabled}
-                      callback={() => void handleCommitChangedFiles('commit')}
-                      dropdownActions={[
-                        {
-                          id: 'amend',
-                          label: commitActionLabels.amend,
-                          disabled: getCommitActionDisabled('amend'),
-                          icon: <GitCommitHorizontal aria-hidden="true" />,
-                          callback: () => void handleCommitChangedFiles('amend')
-                        }
-                      ]}
-                      dropdownLabel="Commit actions"
-                      dropdownMenuAlign="end"
-                      dropdownPlacement="top"
+                      callback={() => void handleManualCommitChangedFiles()}
                       icon={
                         directProjectCommitInProgress ? (
                           <AnimatedStatusIcon Icon={AnimatedGitCommitHorizontalIcon} active />
@@ -16680,19 +16633,31 @@ export const App: React.FC = () => {
                       theme="primary"
                       fill
                     />
-                  )}
+                    {gitCommitModeToggle}
+                  </div>
+                )}
+                <div
+                  className={`changes-sidebar__commit-row changes-sidebar__commit-row--ai${
+                    showManualCommit ? '' : ' changes-sidebar__commit-row--with-mode'
+                  }`}
+                >
                   <Button
-                    disabled={getGitQuickActionDisabled(defaultGitQuickAction)}
-                    callback={() => void handleGitQuickAction(defaultGitQuickAction)}
-                    dropdownActions={gitQuickButtonDropdownActions}
-                    dropdownLabel="AI Commit actions"
-                    dropdownMenuAlign="end"
-                    dropdownPlacement="top"
-                    icon={getGitQuickActionIcon(defaultGitQuickAction)}
-                    label={<span>{`AI ${gitQuickActionLabels[defaultGitQuickAction]}`}</span>}
+                    disabled={commitMessageGenerationDisabled}
+                    callback={() => void handleQuickCommitChangedFiles(pushAfterCommit)}
+                    icon={<Sparkles aria-hidden="true" />}
+                    label={<span>AI Commit</span>}
                     theme={showManualCommit ? 'secondary' : 'primary'}
                     fill
                   />
+                  <Button
+                    disabled={getAiCommitActionDisabled()}
+                    callback={() => void handleAiCommitChangedFiles(pushAfterCommit)}
+                    icon={<MessageSquare aria-hidden="true" />}
+                    label={<span>AI Chat Commit</span>}
+                    theme="secondary"
+                    fill
+                  />
+                  {!showManualCommit && gitCommitModeToggle}
                 </div>
                 {hasSyncChanges && (
                   <div className="changes-sidebar__sync-row">

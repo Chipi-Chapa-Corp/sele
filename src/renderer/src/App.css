@@ -1035,10 +1035,17 @@ button.changes-sidebar__recent-row:not(:disabled) {
   grid-column: 1 / -1;
 }
 
-@container changes-sidebar (max-width: 22rem) {
-  .changes-sidebar__commit-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.changes-sidebar__commit-row--manual {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.changes-sidebar__commit-row--with-mode {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+}
+
+.changes-sidebar__commit-mode {
+  width: 4.4rem;
+  align-self: stretch;
 }
 
 .changes-sidebar__sync-row {

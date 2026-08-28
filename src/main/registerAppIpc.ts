@@ -40,6 +40,7 @@ import type {
   AppGitChangesResult,
   AppGitChangeKind,
   AppGitChangesOptions,
+  AppGitCommitMessageContextResult,
   AppGitFileChange,
   AppGitChangeSource,
   AppGitPullStrategy,
@@ -61,7 +62,12 @@ import type {
   AppWriteFileContentsOptions,
   AppWindowState
 } from '../shared/app'
-import { appIpcChannels, isAppProjectIconKind, normalizeAppWindowZoomLevel } from '../shared/app'
+import {
+  appGitCommitMessageLargeChangeLineThreshold,
+  appIpcChannels,
+  isAppProjectIconKind,
+  normalizeAppWindowZoomLevel
+} from '../shared/app'
 import type { ProviderId } from '../shared/provider'
 import { requireContainerTarget } from './containerTarget'
 import { getCurrentContainerHostBridge } from './currentContainer'
@@ -84,6 +90,7 @@ import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
 import { commitGitFileChanges } from './gitCommit'
+import { summarizeGitNumstat } from './gitCommitMessage'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
 import {
   getNoUpstreamPushFailure,
@@ -2329,6 +2336,44 @@ const getUncommittedGitDiff = async (cwd: string): Promise<{ diff: string }> => 
   }
 }
 
+const getGitCommitMessageContext = async (
+  cwd: string
+): Promise<AppGitCommitMessageContextResult> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+
+  const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-git-index-'))
+  const indexPath = join(tempDirectory, 'index')
+  const env = getTemporaryIndexEnv(indexPath)
+
+  try {
+    await initializeTemporaryIndex(repositoryRoot, indexPath)
+    await runGit(repositoryRoot, ['add', '-A', '--', '.'], { env, required: true })
+
+    const numstat = await runGit(
+      repositoryRoot,
+      ['diff', '--cached', '--numstat', '-z', '--find-renames'],
+      { env, required: true }
+    )
+    const summary = summarizeGitNumstat(numstat ?? '')
+    const diff =
+      summary.totalChangedLines <= appGitCommitMessageLargeChangeLineThreshold
+        ? await runGit(
+            repositoryRoot,
+            ['diff', '--cached', '--binary', '--full-index', '--find-renames'],
+            { env, required: true }
+          )
+        : null
+
+    return {
+      ...summary,
+      diff: diff ?? null
+    }
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 const getGitFileDiff = async (
   cwd: string,
   path: string,
@@ -3078,6 +3123,13 @@ export const registerAppIpc = (): void => {
     const options = getGitRecentCommitMessagesOptions(value)
     return runWithGitContainer(options.container, () =>
       getRecentGitCommitMessages(options.cwd ?? process.cwd(), options.limit ?? 3)
+    )
+  })
+
+  ipcMain.handle(appIpcChannels.getGitCommitMessageContext, async (_event, value: unknown) => {
+    const options = getGitDiffOptions(value)
+    return runWithGitContainer(options.container, () =>
+      getGitCommitMessageContext(options.cwd ?? process.cwd())
     )
   })
 
