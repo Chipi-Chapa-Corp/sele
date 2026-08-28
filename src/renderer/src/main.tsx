@@ -3,6 +3,7 @@ import './assets/main.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
+import { RendererErrorBoundary } from './components/RendererErrorBoundary'
 import { watchSystemColorScheme } from './systemColorScheme'
 
 const platform = navigator.platform.toLocaleLowerCase()
@@ -16,6 +17,8 @@ watchSystemColorScheme()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <RendererErrorBoundary>
+      <App />
+    </RendererErrorBoundary>
   </StrictMode>
 )

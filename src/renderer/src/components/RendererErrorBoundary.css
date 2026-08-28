@@ -1,0 +1,58 @@
+.renderer-error {
+  display: grid;
+  min-height: 100%;
+  padding: 2rem;
+  place-items: center;
+}
+
+.renderer-error__panel {
+  width: min(100%, 30rem);
+  padding: 2rem;
+  border: 0.0625rem solid var(--panel-border);
+  border-radius: 0.75rem;
+  background: var(--glass-strong);
+  box-shadow: var(--panel-shadow);
+}
+
+.renderer-error__label {
+  color: var(--error);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.renderer-error__panel h1 {
+  margin: 0.5rem 0 0;
+  color: var(--lead);
+  font-size: 1.5rem;
+}
+
+.renderer-error__panel p {
+  margin: 0.75rem 0 1.5rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.renderer-error__panel button {
+  min-height: var(--control-height);
+  padding: 0.4rem 0.75rem;
+  border: 0.0625rem solid var(--primary-border);
+  border-radius: var(--control-radius);
+  color: var(--accent-ink);
+  background: var(--primary-surface);
+  box-shadow: var(--primary-shadow);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.renderer-error__panel button:hover {
+  background: var(--primary-surface-hover);
+  box-shadow: var(--primary-shadow-hover);
+}
+
+.renderer-error__panel button:focus-visible {
+  outline: 0.1875rem solid var(--focus-ring);
+  outline-offset: 0.1875rem;
+}

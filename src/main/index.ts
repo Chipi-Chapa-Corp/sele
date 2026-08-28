@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeTheme, shell, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, nativeTheme, shell, type WebContents } from 'electron'
 import { join } from 'path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -38,6 +38,8 @@ const getColorScheme = (): AppColorScheme => (nativeTheme.shouldUseDarkColors ? 
 
 const getWindowBackgroundColor = (scheme = getColorScheme()): string =>
   scheme === 'dark' ? '#141516' : '#f5f5f3'
+
+const rendererCrashStabilityWindowMs = 30_000
 
 const browserSystemProtocols = new Set(['mailto:', 'tel:'])
 
@@ -193,6 +195,77 @@ const createWindow = (): void => {
   mainWindow.on('unmaximize', () => sendAppWindowState(mainWindow))
   mainWindow.on('enter-full-screen', () => sendAppWindowState(mainWindow))
   mainWindow.on('leave-full-screen', () => sendAppWindowState(mainWindow))
+
+  let rendererCrashCount = 0
+  let rendererCrashResetTimer: ReturnType<typeof setTimeout> | null = null
+  let rendererCrashPromptOpen = false
+
+  const cancelRendererCrashReset = (): void => {
+    if (rendererCrashResetTimer === null) return
+    clearTimeout(rendererCrashResetTimer)
+    rendererCrashResetTimer = null
+  }
+
+  const scheduleRendererCrashReset = (): void => {
+    cancelRendererCrashReset()
+    rendererCrashResetTimer = setTimeout(() => {
+      rendererCrashCount = 0
+      rendererCrashResetTimer = null
+    }, rendererCrashStabilityWindowMs)
+  }
+
+  const reloadRenderer = (): void => {
+    setTimeout(() => {
+      if (!mainWindow.isDestroyed()) mainWindow.webContents.reload()
+    }, 0)
+  }
+
+  mainWindow.on('closed', cancelRendererCrashReset)
+  mainWindow.webContents.on('did-finish-load', scheduleRendererCrashReset)
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit' || mainWindow.isDestroyed()) return
+
+    console.error(
+      `Sele renderer stopped unexpectedly: ${details.reason} (exit code ${details.exitCode}).`
+    )
+    cancelRendererCrashReset()
+    rendererCrashCount += 1
+
+    if (rendererCrashCount === 1) {
+      reloadRenderer()
+      return
+    }
+    if (rendererCrashPromptOpen) return
+
+    rendererCrashPromptOpen = true
+    void dialog
+      .showMessageBox(mainWindow, {
+        type: 'error',
+        buttons: ['Reload', 'Close'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+        title: 'Sele renderer stopped',
+        message: 'Sele could not recover the interface.',
+        detail: `The renderer stopped repeatedly (${details.reason}). Reload it to try again.`
+      })
+      .then(({ response }) => {
+        if (mainWindow.isDestroyed()) return
+        if (response === 0) {
+          rendererCrashCount = 0
+          reloadRenderer()
+        } else {
+          mainWindow.close()
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('Unable to show the renderer recovery prompt.', error)
+        if (!mainWindow.isDestroyed()) mainWindow.close()
+      })
+      .finally(() => {
+        rendererCrashPromptOpen = false
+      })
+  })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     routeNewWindowUrl(mainWindow, url)

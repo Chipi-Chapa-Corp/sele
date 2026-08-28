@@ -15658,7 +15658,7 @@ export const App: React.FC = () => {
               <MessageSelectionQuoteButton
                 containerRef={contentRef}
                 enabled={!editingMessage}
-                key={selectedChatKey}
+                key={`quote:${selectedChatKey}`}
                 onQuote={handleQuoteSelectedMessageText}
               />
             )}
