@@ -328,7 +328,10 @@ const getPendingUserInput = (
   return {
     id: request.id,
     question: question.question,
-    choices: question.options.map((option) => option.label),
+    choices: question.options.map((option) => ({
+      label: option.label,
+      description: option.description.trim() || null
+    })),
     allowFreeform: question.custom ?? true,
     startedAt: Date.now()
   }

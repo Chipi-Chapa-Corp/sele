@@ -23,6 +23,7 @@ export const UserInputRequestBox = ({
   const [freeformAnswer, setFreeformAnswer] = useState('')
 
   const answer = freeformAnswer.trim()
+  const choicesHaveDescriptions = request.choices.some((choice) => choice.description)
 
   const handleSubmit = (): void => {
     if (disabled || !answer) return
@@ -51,16 +52,31 @@ export const UserInputRequestBox = ({
           {request.question}
         </span>
         {request.choices.length > 0 && (
-          <div className="chat-user-input__choices" role="group" aria-label="Answer choices">
+          <div
+            className={`chat-user-input__choices${choicesHaveDescriptions ? ' chat-user-input__choices--described' : ''}`}
+            role="group"
+            aria-label="Answer choices"
+          >
             {request.choices.map((choice, index) => (
               <Button
-                callback={() => onSubmit(choice, false)}
+                callback={() => onSubmit(choice.label, false)}
                 disabled={disabled}
-                key={`${index}:${choice}`}
-                label={<span>{choice}</span>}
+                key={`${index}:${choice.label}`}
+                label={
+                  choice.description ? (
+                    <span className="chat-user-input__choice-content">
+                      <span className="chat-user-input__choice-label">{choice.label}</span>
+                      <span className="chat-user-input__choice-description">
+                        {choice.description}
+                      </span>
+                    </span>
+                  ) : (
+                    <span>{choice.label}</span>
+                  )
+                }
                 size="small"
                 theme="secondary"
-                title={choice}
+                title={choice.description ? `${choice.label}: ${choice.description}` : choice.label}
               />
             ))}
           </div>

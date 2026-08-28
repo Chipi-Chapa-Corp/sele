@@ -468,10 +468,15 @@ export type ProviderPendingApproval = {
   startedAt: number
 }
 
+export type ProviderUserInputChoice = {
+  label: string
+  description: string | null
+}
+
 export type ProviderPendingUserInput = {
   id: string
   question: string
-  choices: string[]
+  choices: ProviderUserInputChoice[]
   allowFreeform: boolean
   startedAt: number
 }

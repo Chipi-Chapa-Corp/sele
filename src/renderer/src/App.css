@@ -1354,6 +1354,46 @@ button.changes-sidebar__recent-row:not(:disabled) {
   max-width: 100%;
 }
 
+.chat-user-input__choices--described {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+}
+
+.chat-user-input__choices--described .ui-button {
+  height: auto;
+  min-height: 3rem;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding-block: 0.45rem;
+  text-align: left;
+  white-space: normal;
+}
+
+.chat-user-input__choices--described .ui-button__label {
+  width: 100%;
+  align-items: stretch;
+  overflow: visible;
+  white-space: normal;
+}
+
+.chat-user-input__choice-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.chat-user-input__choice-label {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.chat-user-input__choice-description {
+  color: var(--quiet);
+  font-weight: 400;
+  line-height: 1.3;
+}
+
 .chat-user-input__answer {
   display: flex;
   min-width: 0;

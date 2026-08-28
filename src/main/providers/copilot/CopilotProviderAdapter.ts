@@ -120,7 +120,7 @@ type CopilotAskUserArguments = {
 }
 
 type CopilotUserInputPresentation = {
-  choices: string[]
+  choices: ProviderPendingUserInput['choices']
   allowFreeform: boolean
 }
 
@@ -164,7 +164,7 @@ const getUserInputPresentation = (
   const allowFreeform = argumentsValue?.allow_freeform ?? argumentsValue?.allowFreeform
 
   return {
-    choices,
+    choices: choices.map((label) => ({ label, description: null })),
     allowFreeform: typeof allowFreeform === 'boolean' ? allowFreeform : true
   }
 }
@@ -1186,7 +1186,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       if (response.wasFreeform && !presentation.allowFreeform) {
         throw new Error('This Copilot question requires one of the available choices.')
       }
-      if (!response.wasFreeform && !presentation.choices.includes(answer)) {
+      if (
+        !response.wasFreeform &&
+        !presentation.choices.some((choice) => choice.label === answer)
+      ) {
         throw new Error('The selected Copilot answer is no longer available.')
       }
 

@@ -83,6 +83,7 @@ import { discoverClaudeSkills } from './ClaudeSkillDiscovery'
 import { applyClaudeStreamEvent, clearClaudeStreamMessages } from './ClaudeStreaming'
 import { createClaudeSubagentSummary } from './ClaudeSubagents'
 import { mapClaudeRateLimits } from './ClaudeUsage'
+import { getClaudeUserQuestions } from './ClaudeUserQuestions'
 import { parseClaudeVersion, supportsClaudeResumeDropsTurn } from './ClaudeVersion'
 
 type ClaudePendingApproval = {
@@ -99,7 +100,7 @@ type ClaudePendingApproval = {
 type ClaudePendingUserInput = {
   id: string
   question: string
-  choices: string[]
+  choices: ProviderPendingUserInput['choices']
   allowFreeform: boolean
   startedAt: number
   resolve: (response: ProviderUserInputResponse) => void
@@ -566,24 +567,6 @@ const createSdkUserMessage = (
   uuid: id as `${string}-${string}-${string}-${string}-${string}`,
   session_id: sessionId
 })
-
-const getAskUserQuestions = (
-  input: Record<string, unknown>
-): Array<{ question: string; choices: string[]; allowFreeform: boolean }> => {
-  if (!Array.isArray(input.questions)) return []
-  return input.questions.flatMap((value) => {
-    if (!isRecord(value)) return []
-    const question = getString(value.question)
-    if (!question) return []
-    const choices = Array.isArray(value.options)
-      ? value.options.flatMap((option): string[] => {
-          const label = isRecord(option) ? getString(option.label) : null
-          return label ? [label] : []
-        })
-      : []
-    return [{ question, choices, allowFreeform: true }]
-  })
-}
 
 const isFileChangeTool = (toolName: string): boolean =>
   ['Edit', 'Write', 'NotebookEdit'].includes(toolName)
@@ -1220,7 +1203,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (response.kind === 'answer') {
       const answer = response.wasFreeform ? response.answer.trim() : response.answer
       if (!answer.trim()) throw new Error('An answer is required.')
-      if (!response.wasFreeform && !pending.choices.includes(answer)) {
+      if (!response.wasFreeform && !pending.choices.some((choice) => choice.label === answer)) {
         throw new Error('The selected Claude answer is no longer available.')
       }
     }
@@ -1582,7 +1565,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     (state: ClaudeSessionState): CanUseTool =>
     async (toolName, input, permissionOptions): Promise<PermissionResult> => {
       if (toolName === 'AskUserQuestion') {
-        const questions = getAskUserQuestions(input)
+        const questions = getClaudeUserQuestions(input)
         const answers: Record<string, string> = {}
         for (const question of questions) {
           const response = await new Promise<ProviderUserInputResponse>((resolve) => {
