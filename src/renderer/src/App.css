@@ -2319,6 +2319,12 @@ button.changes-sidebar__recent-row:not(:disabled) {
 }
 
 .chat-detail__commit-marker {
+  --chat-detail-commit-marker-background: color-mix(
+    in srgb,
+    var(--assistant-message) 68%,
+    transparent
+  );
+
   display: inline-flex;
   max-width: 82%;
   align-self: flex-start;
@@ -2328,9 +2334,10 @@ button.changes-sidebar__recent-row:not(:disabled) {
   border: 0.0625rem dashed var(--message-border);
   border-radius: 0.85rem 0.85rem 0.85rem 0.3rem;
   color: color-mix(in srgb, var(--lead) 72%, transparent);
-  background: color-mix(in srgb, var(--assistant-message) 68%, transparent);
+  background: var(--chat-detail-commit-marker-background);
   line-height: 1.4;
   overflow: hidden;
+  transition: background 160ms ease;
 }
 
 .chat-detail__commit-marker-open {
@@ -2351,8 +2358,8 @@ button.chat-detail__commit-marker-open {
   cursor: pointer;
 }
 
-button.chat-detail__commit-marker-open:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--lead) 6%, transparent);
+.chat-detail__commit-marker:has(> button.chat-detail__commit-marker-open:not(:disabled)):hover {
+  background: color-mix(in srgb, var(--lead) 6%, var(--chat-detail-commit-marker-background));
 }
 
 button.chat-detail__commit-marker-open:focus-visible {
@@ -2365,9 +2372,10 @@ button.chat-detail__commit-marker-open:disabled {
 }
 
 .chat-detail__commit-marker--finished {
+  --chat-detail-commit-marker-background: var(--assistant-message);
+
   border-style: solid;
   color: var(--lead);
-  background: var(--assistant-message);
 }
 
 .chat-detail__commit-marker--stopped,
@@ -2410,6 +2418,8 @@ button.chat-detail__commit-marker-open:disabled {
   --control-icon-size: 0.75rem;
 
   display: inline-flex;
+  position: relative;
+  z-index: 1;
   flex: none;
   margin-left: -0.3rem;
   padding-right: 0.45rem;
