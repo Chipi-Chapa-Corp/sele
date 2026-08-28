@@ -17,6 +17,16 @@ const markdownLanguageAliases: Readonly<Record<string, string>> = {
   zsh: 'bash'
 }
 
+const getMarkdownFenceLanguage = (infoString: string | null | undefined): string | null => {
+  let language = infoString?.trim().split(/\s+/, 1)[0]?.toLowerCase()
+  if (!language) return null
+
+  if (language.startsWith('{.') && language.endsWith('}')) language = language.slice(2, -1)
+  if (language.startsWith('language-')) language = language.slice('language-'.length)
+
+  return markdownLanguageAliases[language] ?? language
+}
+
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>"']/g, (character) => {
     switch (character) {
@@ -51,15 +61,13 @@ const renderHighlightedNodeToHtml = (node: RootContent): string => {
 }
 
 export const getMarkdownCodeLanguage = (infoString: string | null | undefined): string | null => {
-  let language = infoString?.trim().split(/\s+/, 1)[0]?.toLowerCase()
-  if (!language) return null
+  const language = getMarkdownFenceLanguage(infoString)
 
-  if (language.startsWith('{.') && language.endsWith('}')) language = language.slice(2, -1)
-  if (language.startsWith('language-')) language = language.slice('language-'.length)
-  language = markdownLanguageAliases[language] ?? language
-
-  return refractor.registered(language) ? language : null
+  return language && refractor.registered(language) ? language : null
 }
+
+export const isMermaidMarkdownCode = (infoString: string | null | undefined): boolean =>
+  getMarkdownFenceLanguage(infoString) === 'mermaid'
 
 export const highlightCode = (code: string, language: string | null): RootContent[] | null => {
   if (code.length > maxHighlightedCodeLength || !language || !refractor.registered(language)) {
@@ -77,6 +85,10 @@ export const renderMarkdownCodeBlock = (
   code: string,
   infoString: string | null | undefined
 ): string => {
+  if (isMermaidMarkdownCode(infoString)) {
+    return `<div class="markdown-mermaid" data-mermaid-diagram aria-busy="true"><div class="markdown-mermaid__loading" role="status">Rendering diagram…</div><pre class="markdown-mermaid__source" hidden><code>${escapeHtml(code)}\n</code></pre></div>\n`
+  }
+
   const language = getMarkdownCodeLanguage(infoString)
   const highlighted = highlightCode(code, language)
   const contents = highlighted

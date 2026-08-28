@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   getMarkdownCodeLanguage,
+  isMermaidMarkdownCode,
   maxHighlightedCodeLength,
   renderMarkdownCodeBlock
 } from './codeHighlighting.ts'
@@ -12,6 +13,19 @@ test('resolves Markdown fence languages and common aliases', () => {
   assert.equal(getMarkdownCodeLanguage('c++'), 'cpp')
   assert.equal(getMarkdownCodeLanguage('jsonc'), 'json')
   assert.equal(getMarkdownCodeLanguage('not-a-real-language'), null)
+  assert.equal(isMermaidMarkdownCode('mermaid'), true)
+  assert.equal(isMermaidMarkdownCode('language-mermaid'), true)
+  assert.equal(isMermaidMarkdownCode('{.mermaid}'), true)
+  assert.equal(isMermaidMarkdownCode('javascript'), false)
+})
+
+test('renders Mermaid fences as escaped diagram placeholders', () => {
+  const rendered = renderMarkdownCodeBlock('flowchart LR\nA[<script>] --> B', 'mermaid')
+
+  assert.match(rendered, /class="markdown-mermaid"/)
+  assert.match(rendered, /data-mermaid-diagram/)
+  assert.match(rendered, /A\[&lt;script&gt;\] --&gt; B/)
+  assert.doesNotMatch(rendered, /<script>/)
 })
 
 test('renders syntax-highlighted and escaped Markdown code blocks', () => {

@@ -1,0 +1,50 @@
+.markdown-mermaid {
+  width: 100%;
+  max-width: 100%;
+  min-height: 8rem;
+  box-sizing: border-box;
+  margin: 0.8em 0 1em;
+  overflow: auto;
+  border: 0.0625rem solid var(--glass-line);
+  border-radius: 0.5rem;
+  background: var(--activity-bg);
+  box-shadow: var(--subtle-shadow);
+}
+
+.markdown-mermaid__loading {
+  display: grid;
+  min-height: 8rem;
+  place-items: center;
+  color: var(--quiet);
+  font-size: 0.85rem;
+}
+
+.markdown-mermaid--rendered {
+  min-height: 0;
+  padding: 0.8rem;
+}
+
+.markdown-mermaid--rendered > svg {
+  display: block;
+  width: auto;
+  min-width: min(100%, 20rem);
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.markdown-mermaid--error {
+  min-height: 0;
+  padding: 0.7rem;
+}
+
+.markdown-mermaid__error {
+  margin-bottom: 0.55rem;
+  color: var(--error);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.markdown-mermaid__source {
+  margin: 0;
+}

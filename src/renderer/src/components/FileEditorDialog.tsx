@@ -28,13 +28,15 @@ import {
   FolderIcon as SymbolsFolderIcon
 } from '@react-symbols/icons/utils'
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
+import { marked, Renderer, type Tokens } from 'marked'
 import type { AppContainerTarget, AppFileTreeResult, AppGitChangeKind } from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { toCssRem } from '../cssUnits'
+import { isMermaidMarkdownCode, renderMarkdownCodeBlock } from '../codeHighlighting'
 import { getFileDisplayParts } from '../fileDisplayPath'
 import { createLocalImageUrl } from '../localImage'
+import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { Button } from './Button'
 import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
 import { EditableUnifiedDiff, UnifiedDiff, type DiffReviewLocation } from './UnifiedDiff'
@@ -97,6 +99,13 @@ type MutableDiffTreeFolder = {
 
 const imageFilePattern = /\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i
 const markdownFilePattern = /\.(?:markdown|mdown|mkdn|mkd|md)$/i
+const defaultMarkdownRenderer = new Renderer()
+const markdownFileRenderer = new Renderer()
+markdownFileRenderer.code = function (token: Tokens.Code): string {
+  return isMermaidMarkdownCode(token.lang)
+    ? renderMarkdownCodeBlock(token.text, token.lang)
+    : defaultMarkdownRenderer.code.call(this, token)
+}
 const markdownViewOptions: readonly SegmentedControlOption<MarkdownViewMode>[] = [
   {
     value: 'code',
@@ -345,6 +354,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   ])
   const bodyRef = useRef<HTMLDivElement>(null)
   const markdownSplitRef = useRef<HTMLDivElement>(null)
+  const markdownPreviewRef = useRef<HTMLElement>(null)
   const loadRequestRef = useRef(0)
   const diffLoadRequestRef = useRef(0)
   const fileTreeLoadRequestRef = useRef(0)
@@ -476,12 +486,20 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         ? DOMPurify.sanitize(
             marked.parse(contents, {
               async: false,
-              gfm: true
+              gfm: true,
+              renderer: markdownFileRenderer
             })
           )
         : '',
     [contents, isMarkdown]
   )
+
+  useEffect(() => {
+    const markdownPreview = markdownPreviewRef.current
+    if (!markdownPreview || markdownView === 'code') return undefined
+    hydrateMermaidDiagrams(markdownPreview)
+    return undefined
+  })
 
   useEffect(
     () => () => {
@@ -1425,6 +1443,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   {isMarkdown && markdownView !== 'code' && (
                     <article
                       className="file-editor-dialog__markdown-preview"
+                      ref={markdownPreviewRef}
                       aria-label={`Preview of ${target.displayPath}`}
                       dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
                     />

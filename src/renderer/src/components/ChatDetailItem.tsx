@@ -85,6 +85,7 @@ import { getWorkingStepItemSegments } from '../chatDetailWindow'
 import { renderMarkdownCodeBlock } from '../codeHighlighting'
 import { createLocalImageUrl } from '../localImage'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from '../markdownFileLink'
+import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { getBrowserFaviconUrl } from '../../../shared/browser'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { defaultAppChatThoughtSettings, type AppChatThoughtSettings } from '../settings'
@@ -1296,6 +1297,14 @@ const MarkdownMessageComponent: React.FC<{
       objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl))
     }
   }, [localImageContainer, localImageCwd, renderedMarkdown])
+  useEffect(() => {
+    if (streaming) return undefined
+
+    const markdownContainer = containerRef.current
+    if (!markdownContainer) return undefined
+    hydrateMermaidDiagrams(markdownContainer)
+    return undefined
+  })
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>): void => {
       if (!(event.target instanceof Element)) return
