@@ -11,6 +11,7 @@ import type {
   ProviderReview,
   ProviderSubagent,
   ProviderSubagentDetail,
+  ProviderUpdateOptions,
   ProviderUserInputResponse,
   ProviderUsageOptions,
   ProviderWorkingItem,
@@ -48,6 +49,11 @@ import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
 import type { ProviderAdapter, ProviderChatTurnWindow } from './ProviderAdapter'
+import {
+  collectActiveProviderChats,
+  getProviderUpdateImpact,
+  stopActiveProviderChats
+} from './providerUpdate'
 
 const codexAdapter = new CodexProviderAdapter()
 
@@ -408,7 +414,23 @@ export const providerApi: ProviderApi = {
   },
   getUpdateAvailability: (providerId, options) =>
     adapters[providerId].getUpdateAvailability(options),
-  updateProvider: (providerId, options) => adapters[providerId].updateProvider(options),
+  getProviderUpdateImpact: (providerId, options) =>
+    getProviderUpdateImpact(adapters[providerId], options),
+  updateProvider: async (providerId, options: ProviderUpdateOptions = {}) => {
+    const adapter = adapters[providerId]
+    const { stopActiveChats, ...sourceOptions } = options
+    const activeChats = await collectActiveProviderChats(adapter, sourceOptions)
+
+    if (activeChats.length > 0 && !stopActiveChats) {
+      const chatLabel = activeChats.length === 1 ? 'chat is' : 'chats are'
+      throw new Error(
+        `${activeChats.length} active ${chatLabel} still running. Confirm stopping them before updating ${providerLabels[providerId]}.`
+      )
+    }
+
+    if (activeChats.length > 0) await stopActiveProviderChats(adapter, activeChats)
+    return adapter.updateProvider(sourceOptions)
+  },
   getApprovalModes: (providerId) => adapters[providerId].getApprovalModes(),
   getSandboxModes: (providerId) => adapters[providerId].getSandboxModes(),
   getModels: (providerId, options) => adapters[providerId].getModels(options),

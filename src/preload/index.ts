@@ -134,6 +134,8 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.deleteAccount, providerId, accountId, options),
   getUpdateAvailability: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getUpdateAvailability, providerId, options),
+  getProviderUpdateImpact: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getProviderUpdateImpact, providerId, options),
   updateProvider: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.updateProvider, providerId, options),
   getApprovalModes: (providerId) =>

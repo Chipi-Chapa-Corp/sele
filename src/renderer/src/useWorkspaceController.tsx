@@ -722,6 +722,7 @@ export const useWorkspaceController = () => {
   const syncProjectKeysRef = useRef(new Set<string>())
   const gitBranchRequestIdRef = useRef(0)
   const chatAutoScrollEnabledRef = useRef(true)
+  const chatAtConversationBottomRef = useRef(chatAtConversationBottom)
   const chatAutoScrollFrameRef = useRef<number | null>(null)
   const chatAutoScrollTargetRef = useRef<{ element: HTMLElement; top: number } | null>(null)
   const chatUserScrollIntentRef = useRef(false)
@@ -766,6 +767,10 @@ export const useWorkspaceController = () => {
   const lastOpenedFileTreeFolderByCwdRef = useRef(new Map<string, string>())
   const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
 
+  useLayoutEffect(() => {
+    chatAtConversationBottomRef.current = chatAtConversationBottom
+  }, [chatAtConversationBottom])
+
   const flushDeferredProviderResourceRefreshes = useCallback(async (): Promise<void> => {
     if (deferredProviderResourceRefreshRunningRef.current) return
     deferredProviderResourceRefreshRunningRef.current = true
@@ -804,7 +809,10 @@ export const useWorkspaceController = () => {
     if (Math.abs(contentElement.scrollTop - top) >= 0.5) {
       contentElement.scrollTop = top
     }
-    setChatAtConversationBottom(true)
+    if (!chatAtConversationBottomRef.current) {
+      chatAtConversationBottomRef.current = true
+      setChatAtConversationBottom(true)
+    }
     chatAutoScrollTargetRef.current = {
       element: contentElement,
       top: contentElement.scrollTop

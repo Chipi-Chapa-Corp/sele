@@ -5,6 +5,7 @@ import {
   isMatchingCodexPendingTurn,
   mergeCodexStreamedText,
   mergeCodexTurnStatus,
+  reconcileCodexTurnStatusWithThread,
   reconcileCodexTurnSnapshots,
   shouldPreferCodexRolloutItems
 } from './CodexLiveMerge.ts'
@@ -49,6 +50,13 @@ test('accepts forward lifecycle transitions and newer terminal states', () => {
 test('recognizes history turns with a completion timestamp as terminal', () => {
   assert.equal(isCodexTurnTerminal({ status: null, completedAt: 10 }), true)
   assert.equal(isCodexTurnTerminal({ status: null, completedAt: null }), false)
+})
+
+test('reconciles orphaned in-progress turns with an authoritative terminal thread state', () => {
+  assert.equal(reconcileCodexTurnStatusWithThread('inProgress', 'idle'), 'interrupted')
+  assert.equal(reconcileCodexTurnStatusWithThread('inProgress', 'systemError'), 'failed')
+  assert.equal(reconcileCodexTurnStatusWithThread('inProgress', 'active'), 'inProgress')
+  assert.equal(reconcileCodexTurnStatusWithThread('completed', 'idle'), 'completed')
 })
 
 test('applies an already-received real turn after the pending and start snapshots', () => {

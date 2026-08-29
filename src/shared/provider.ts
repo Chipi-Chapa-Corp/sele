@@ -437,6 +437,14 @@ export type ProviderSourceOptions = {
   forceRefresh?: boolean
 }
 
+export type ProviderUpdateOptions = ProviderSourceOptions & {
+  stopActiveChats?: boolean
+}
+
+export type ProviderUpdateImpact = {
+  activeChatCount: number
+}
+
 export type ProviderResourceUpdateOptions = ProviderSourceOptions & {
   deferRefresh?: boolean
   knownApp?: ProviderApp
@@ -904,9 +912,13 @@ export type ProviderApi = {
     providerId: ProviderId,
     options?: ProviderSourceOptions
   ) => Promise<ProviderUpdateAvailability | null>
-  updateProvider: (
+  getProviderUpdateImpact: (
     providerId: ProviderId,
     options?: ProviderSourceOptions
+  ) => Promise<ProviderUpdateImpact>
+  updateProvider: (
+    providerId: ProviderId,
+    options?: ProviderUpdateOptions
   ) => Promise<ProviderUpdateAvailability | null>
   getApprovalModes: (providerId: ProviderId) => Promise<ProviderApprovalModeOption[]>
   getSandboxModes: (providerId: ProviderId) => Promise<ProviderSandboxModeOption[]>
@@ -1119,6 +1131,7 @@ export const providerIpcChannels = {
   useAccount: 'provider:use-account',
   deleteAccount: 'provider:delete-account',
   getUpdateAvailability: 'provider:get-update-availability',
+  getProviderUpdateImpact: 'provider:get-update-impact',
   updateProvider: 'provider:update',
   getApprovalModes: 'provider:get-approval-modes',
   getSandboxModes: 'provider:get-sandbox-modes',

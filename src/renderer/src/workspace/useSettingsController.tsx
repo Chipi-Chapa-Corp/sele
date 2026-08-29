@@ -723,8 +723,26 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     setProviderUpdateError(null)
 
     try {
+      const container = normalizeContainerTarget(newSessionContainer)
+      const impact = await providerApi.getProviderUpdateImpact(suggestion.providerId, {
+        container
+      })
+      const activeChatCount = impact.activeChatCount
+      if (activeChatCount > 0) {
+        const chatLabel = activeChatCount === 1 ? 'chat' : 'chats'
+        const pronoun = activeChatCount === 1 ? 'it' : 'them'
+        if (
+          !window.confirm(
+            `${providerLabels[suggestion.providerId]} has ${activeChatCount} active ${chatLabel}. Updating will stop ${pronoun}. Continue?`
+          )
+        ) {
+          return
+        }
+      }
+
       const availability = await providerApi.updateProvider(suggestion.providerId, {
-        container: normalizeContainerTarget(newSessionContainer)
+        container,
+        stopActiveChats: activeChatCount > 0
       })
       setProviderModelsRevision((revision) => revision + 1)
       setProviderUpdateSuggestion(

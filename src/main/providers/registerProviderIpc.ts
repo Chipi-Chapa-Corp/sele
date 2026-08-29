@@ -27,6 +27,7 @@ import type {
   ProviderSubagentDetail,
   ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
+  ProviderUpdateOptions,
   ProviderUserInputResponse,
   ProviderUsageOptions,
   ProviderWorkingItem,
@@ -634,6 +635,23 @@ const requireSourceOptions = (value: unknown): ProviderSourceOptions | undefined
   }
 }
 
+const requireProviderUpdateOptions = (value: unknown): ProviderUpdateOptions | undefined => {
+  if (value == null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid provider update options')
+  }
+
+  const sourceOptions = requireSourceOptions(value) ?? {}
+  const options = value as { stopActiveChats?: unknown }
+  const stopActiveChats =
+    options.stopActiveChats === undefined ? undefined : requireBoolean(options.stopActiveChats)
+
+  return {
+    ...sourceOptions,
+    ...(stopActiveChats === undefined ? {} : { stopActiveChats })
+  }
+}
+
 const requireProviderResourceUpdateOptions = (
   value: unknown
 ): ProviderResourceUpdateOptions | undefined => {
@@ -1150,8 +1168,17 @@ export const registerProviderIpc = (): void => {
       )
   )
 
+  ipcMain.handle(
+    providerIpcChannels.getProviderUpdateImpact,
+    (_, providerId: unknown, options: unknown) =>
+      providerApi.getProviderUpdateImpact(
+        requireProviderId(providerId),
+        requireSourceOptions(options)
+      )
+  )
+
   ipcMain.handle(providerIpcChannels.updateProvider, (_, providerId: unknown, options: unknown) =>
-    providerApi.updateProvider(requireProviderId(providerId), requireSourceOptions(options))
+    providerApi.updateProvider(requireProviderId(providerId), requireProviderUpdateOptions(options))
   )
 
   ipcMain.handle(providerIpcChannels.getApprovalModes, (_, providerId: unknown) =>

@@ -16,6 +16,16 @@ type CodexTurnLifecycle = {
   completedAt?: number | null
 }
 
+export const reconcileCodexTurnStatusWithThread = (
+  turnStatus: string | null | undefined,
+  threadStatus: string
+): string | null | undefined => {
+  if (turnStatus !== 'inProgress') return turnStatus
+  if (threadStatus === 'idle') return 'interrupted'
+  if (threadStatus === 'systemError') return 'failed'
+  return turnStatus
+}
+
 export const isCodexTurnTerminal = (turn: CodexTurnLifecycle): boolean =>
   turn.status == null
     ? typeof turn.completedAt === 'number'

@@ -75,6 +75,7 @@ import {
   isMatchingCodexPendingTurn,
   mergeCodexStreamedText,
   mergeCodexTurnStatus,
+  reconcileCodexTurnStatusWithThread,
   reconcileCodexTurnSnapshots,
   shouldPreferCodexRolloutItems
 } from './CodexLiveMerge'
@@ -1450,8 +1451,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   updateProvider = async (
     options: ProviderSourceOptions = {}
   ): Promise<ProviderUpdateAvailability | null> => {
-    this.clients.forEach((client) => client.dispose())
-    this.clients.clear()
+    this.resetClientsForContainer(options.container)
     return updateCodexProvider({ container: options.container, env: process.env })
   }
 
@@ -3101,11 +3101,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
     if (options.startQueuedTurn) this.pausedQueuedTurnThreads.delete(chatId)
 
+    if (!this.threads.has(chatId)) await this.getChat(chatId)
     const turnId = this.getActiveTurnId(chatId)
     this.cancelPendingApprovals(chatId)
 
     if (!turnId) {
-      if (!this.threads.has(chatId)) await this.getChat(chatId)
       this.removeSteeringMessageForThread(chatId)
       this.setThreadStatus(chatId, { type: 'idle' })
       this.emitChatUpdated(chatId)
@@ -3119,9 +3119,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.activeTurnIds.delete(chatId)
     this.rememberManuallyStoppedTurn(chatId, stoppedTurnId)
     this.markSteeringMessagesSentForTurn(chatId, stoppedTurnId)
-    if (interruptResult.interrupted) this.markTurnInterrupted(chatId, stoppedTurnId)
-    else this.markTurnCompleted(chatId, stoppedTurnId)
-    if (stoppedTurnId !== turnId) this.markTurnCompleted(chatId, turnId)
+    this.markTurnInterrupted(chatId, stoppedTurnId)
+    if (stoppedTurnId !== turnId) this.markTurnInterrupted(chatId, turnId)
     this.setThreadStatus(chatId, { type: 'idle' })
     this.emitChatUpdated(chatId)
     if (options.startQueuedTurn) this.scheduleQueueDrain(chatId)
@@ -4101,7 +4100,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private getRenderableTurns = (thread: CodexThread): CodexTurn[] =>
-    thread.turns.filter((turn) => turn.status !== 'queued')
+    thread.turns
+      .filter((turn) => turn.status !== 'queued')
+      .map((turn) => ({
+        ...turn,
+        status: reconcileCodexTurnStatusWithThread(turn.status, thread.status.type)
+      }))
 
   private setTurnStatus = (threadId: string, turnId: string, status: string): void => {
     this.updateThread(threadId, (thread) => ({
@@ -4296,15 +4300,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...thread,
       turns: thread.turns.map((turn) =>
         turn.id === turnId ? { ...turn, status: 'interrupted' } : turn
-      )
-    }))
-  }
-
-  private markTurnCompleted = (threadId: string, turnId: string): void => {
-    this.updateThread(threadId, (thread) => ({
-      ...thread,
-      turns: thread.turns.map((turn) =>
-        turn.id === turnId ? { ...turn, status: 'completed' } : turn
       )
     }))
   }
