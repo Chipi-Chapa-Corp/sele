@@ -70,6 +70,7 @@ import { loadRolloutContextUsage, loadRolloutCwd, loadRolloutHistory } from './C
 import { hydrateCodexTurnRange, loadCodexTurnCatalog } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
+import { getCodexEditHistoryMutation, type CodexThreadHistoryMode } from './CodexThreadHistory'
 import {
   isCodexTurnTerminal,
   isMatchingCodexPendingTurn,
@@ -129,6 +130,7 @@ type CodexThreadStatus =
 type CodexThread = {
   id: string
   name?: string | null
+  historyMode?: CodexThreadHistoryMode
   parentThreadId?: string | null
   agentNickname?: string | null
   agentRole?: string | null
@@ -286,7 +288,7 @@ type ThreadNameGenerationResult = {
   title: string
 }
 
-type ThreadRollbackResponse = {
+type ThreadHistoryMutationResponse = {
   thread: CodexThread
 }
 
@@ -2749,17 +2751,25 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (numTurns < 1) throw new Error('Message cannot be edited')
 
     const rolledBackTurnIds = new Set(thread.turns.slice(targetTurnIndex).map((turn) => turn.id))
-    const rollback = await this.client.request<ThreadRollbackResponse>('thread/rollback', {
-      threadId: chatId,
+    const targetTurn = thread.turns[targetTurnIndex]
+    if (!targetTurn) throw new Error('Message cannot be edited')
+    const historyMutation = getCodexEditHistoryMutation(
+      chatId,
+      thread.historyMode,
+      targetTurn.id,
       numTurns
-    })
+    )
+    const historyMutationResponse = await this.client.request<ThreadHistoryMutationResponse>(
+      historyMutation.method,
+      historyMutation.params
+    )
     const [cwd, name] = await Promise.all([
-      this.resolveThreadCwd(rollback.thread, thread.cwd ?? null),
-      this.resolveThreadName(rollback.thread)
+      this.resolveThreadCwd(historyMutationResponse.thread, thread.cwd ?? null),
+      this.resolveThreadName(historyMutationResponse.thread)
     ])
     this.rememberRolledBackTurns(chatId, rolledBackTurnIds)
     this.cacheThread({
-      ...rollback.thread,
+      ...historyMutationResponse.thread,
       name,
       cwd,
       turns: thread.turns.slice(0, targetTurnIndex)

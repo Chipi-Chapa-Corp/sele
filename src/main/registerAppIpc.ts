@@ -93,6 +93,7 @@ import { commitAllGitChanges } from './gitCommit'
 import { summarizeGitNumstat } from './gitCommitMessage'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
 import {
+  getGitCommitCounts,
   getNoUpstreamPushFailure,
   getPushDefaultForTarget,
   getPushToCurrentBranchArgs,
@@ -1717,20 +1718,6 @@ const getBranchBase = async (
   return null
 }
 
-const getUpstreamCommitCounts = async (
-  cwd: string
-): Promise<{ unpulledCount: number; unpushedCount: number }> => {
-  const counts = await runGit(cwd, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])
-  const [unpushedRaw, unpulledRaw] = counts?.trim().split(/\s+/, 2) ?? []
-  const unpulledCount = Number(unpulledRaw)
-  const unpushedCount = Number(unpushedRaw)
-
-  return {
-    unpulledCount: Number.isFinite(unpulledCount) ? unpulledCount : 0,
-    unpushedCount: Number.isFinite(unpushedCount) ? unpushedCount : 0
-  }
-}
-
 const getChangeKind = (status: string): AppGitChangeKind => {
   const code = status[0]
   if (code === '?') return 'untracked'
@@ -1852,7 +1839,11 @@ const getGitChanges = async (
   }
 
   const branchName = await getCurrentBranchName(repositoryRoot)
-  const { unpulledCount, unpushedCount } = await getUpstreamCommitCounts(repositoryRoot)
+  const { unpulledCount, unpushedCount } = await getGitCommitCounts(
+    repositoryRoot,
+    branchName,
+    runGit
+  )
 
   if (source === 'uncommitted') {
     const status = await runGit(

@@ -1,5 +1,46 @@
 import type { AppGitPushTarget, AppGitRecoverableFailure } from '../shared/app'
 
+type GitRunner = (cwd: string, args: string[]) => Promise<string | null>
+
+export type GitCommitCounts = {
+  unpulledCount: number
+  unpushedCount: number
+}
+
+const parseCommitCount = (value: string | undefined): number => {
+  const count = Number(value)
+  return Number.isFinite(count) ? count : 0
+}
+
+export const getGitCommitCounts = async (
+  cwd: string,
+  branchName: string | null,
+  runGit: GitRunner
+): Promise<GitCommitCounts> => {
+  if (!branchName) return { unpulledCount: 0, unpushedCount: 0 }
+
+  const upstreamCounts = await runGit(cwd, [
+    'rev-list',
+    '--left-right',
+    '--count',
+    'HEAD...@{upstream}'
+  ])
+
+  if (upstreamCounts != null) {
+    const [unpushed, unpulled] = upstreamCounts.trim().split(/\s+/, 2)
+    return {
+      unpulledCount: parseCommitCount(unpulled),
+      unpushedCount: parseCommitCount(unpushed)
+    }
+  }
+
+  const unpushed = await runGit(cwd, ['rev-list', '--count', 'HEAD', '--not', '--remotes'])
+  return {
+    unpulledCount: 0,
+    unpushedCount: parseCommitCount(unpushed ?? undefined)
+  }
+}
+
 export const isNoUpstreamPushFailure = (message: string): boolean =>
   message.toLocaleLowerCase().includes('has no upstream branch')
 

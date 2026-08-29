@@ -7,6 +7,7 @@ import test from 'node:test'
 import { promisify } from 'node:util'
 
 import {
+  getGitCommitCounts,
   getNoUpstreamPushFailure,
   getPushDefaultForTarget,
   getPushToCurrentBranchArgs,
@@ -22,6 +23,16 @@ const execFileAsync = promisify(execFile)
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const runGit = (cwd, args) => execFileAsync('git', args, { cwd, encoding: 'utf8' })
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const runOptionalGit = async (cwd, args) => {
+  try {
+    const { stdout } = await runGit(cwd, args)
+    return stdout.trimEnd()
+  } catch {
+    return null
+  }
+}
 
 test('recognizes the standard missing-upstream push error', () => {
   assert.equal(
@@ -117,6 +128,37 @@ test('selects the configured push remote before safe fallbacks', () => {
     () => selectGitPushRemote(['company', 'personal'], [null, null, null]),
     /unable to choose a push remote/i
   )
+})
+
+test('counts commits on a local-only branch even when another local-only branch contains them', async () => {
+  const testRoot = await mkdtemp(join(tmpdir(), 'sele-git-sync-count-test-'))
+  const remoteRoot = join(testRoot, 'remote.git')
+  const repositoryRoot = join(testRoot, 'work')
+
+  try {
+    await runGit(testRoot, ['init', '--quiet', '--bare', remoteRoot])
+    await runGit(testRoot, ['init', '--quiet', '--initial-branch=main', repositoryRoot])
+    await runGit(repositoryRoot, ['config', 'user.name', 'Sele Test'])
+    await runGit(repositoryRoot, ['config', 'user.email', 'sele@example.test'])
+    await runGit(repositoryRoot, ['remote', 'add', 'origin', remoteRoot])
+    await writeFile(join(repositoryRoot, 'tracked.txt'), 'base\n')
+    await runGit(repositoryRoot, ['add', 'tracked.txt'])
+    await runGit(repositoryRoot, ['commit', '--quiet', '-m', 'base'])
+    await runGit(repositoryRoot, ['push', '--quiet', '--set-upstream', 'origin', 'main'])
+    await runGit(repositoryRoot, ['switch', '--quiet', '-c', 'feature/local-only'])
+    await writeFile(join(repositoryRoot, 'tracked.txt'), 'first local commit\n')
+    await runGit(repositoryRoot, ['commit', '--quiet', '-am', 'first local commit'])
+    await runGit(repositoryRoot, ['branch', 'local-backup'])
+    await writeFile(join(repositoryRoot, 'tracked.txt'), 'second local commit\n')
+    await runGit(repositoryRoot, ['commit', '--quiet', '-am', 'second local commit'])
+
+    assert.deepEqual(
+      await getGitCommitCounts(repositoryRoot, 'feature/local-only', runOptionalGit),
+      { unpulledCount: 0, unpushedCount: 2 }
+    )
+  } finally {
+    await rm(testRoot, { recursive: true, force: true })
+  }
 })
 
 test('same-name recovery establishes the expected upstream against a real remote', async () => {
