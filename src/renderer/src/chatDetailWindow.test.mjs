@@ -36,7 +36,7 @@ const workingItems = (startIndex, count) =>
 test('preserves optimistic turns for providers that echo user messages asynchronously', () => {
   assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('copilot'), true)
   assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('opencode'), true)
-  assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('codex'), false)
+  assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('codex'), true)
   assert.equal(shouldPreserveOptimisticTurnUntilUserMessage('claude'), false)
 })
 

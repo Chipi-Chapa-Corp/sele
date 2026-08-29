@@ -905,8 +905,22 @@ const getOutputFromText = (text: string): string | null => {
   return trimmedOutput
 }
 
-const getOutputFromEnvelope = (value: unknown): string | null => {
-  if (!value || typeof value !== 'object') return null
+const maxToolOutputEnvelopeDepth = 16
+
+const getOutputFromEnvelope = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+  depth = 0
+): string | null => {
+  if (
+    depth >= maxToolOutputEnvelopeDepth ||
+    !value ||
+    typeof value !== 'object' ||
+    seen.has(value)
+  ) {
+    return null
+  }
+  seen.add(value)
 
   if (Array.isArray(value)) {
     const text = value
@@ -916,7 +930,7 @@ const getOutputFromEnvelope = (value: unknown): string | null => {
         return typeof candidate.text === 'string' ? candidate.text : ''
       })
       .join('')
-    return text ? getToolStdout(text) : null
+    return text ? getToolStdout(text, seen, depth + 1) : null
   }
 
   const envelope = value as {
@@ -925,25 +939,26 @@ const getOutputFromEnvelope = (value: unknown): string | null => {
     result?: unknown
     content?: unknown
   }
-  if (typeof envelope.output === 'string') return getToolStdout(envelope.output)
-  if (typeof envelope.stdout === 'string') return getToolStdout(envelope.stdout)
+  if (typeof envelope.output === 'string') return getToolStdout(envelope.output, seen, depth + 1)
+  if (typeof envelope.stdout === 'string') return getToolStdout(envelope.stdout, seen, depth + 1)
 
-  const contentOutput = getOutputFromEnvelope(envelope.content)
+  const contentOutput = getOutputFromEnvelope(envelope.content, seen, depth + 1)
   if (contentOutput != null) return contentOutput
 
-  return getOutputFromEnvelope(envelope.result)
+  return getOutputFromEnvelope(envelope.result, seen, depth + 1)
 }
 
-const getToolStdout = (value: unknown): string | null => {
+const getToolStdout = (value: unknown, seen = new WeakSet<object>(), depth = 0): string | null => {
   if (typeof value === 'string') {
     const output = getOutputFromText(value)
     if (!output) return null
+    if (depth >= maxToolOutputEnvelopeDepth) return output
 
     const trimmed = output.trim()
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try {
         const parsed = JSON.parse(trimmed) as unknown
-        return getOutputFromEnvelope(parsed) ?? output
+        return getOutputFromEnvelope(parsed, seen, depth + 1) ?? output
       } catch {
         return output
       }
@@ -952,7 +967,7 @@ const getToolStdout = (value: unknown): string | null => {
     return output
   }
 
-  const envelopeOutput = getOutputFromEnvelope(value)
+  const envelopeOutput = getOutputFromEnvelope(value, seen, depth + 1)
   if (envelopeOutput != null) return envelopeOutput
 
   return null

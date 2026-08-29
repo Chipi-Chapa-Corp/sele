@@ -45,7 +45,11 @@ import {
   providerOneShotGenerationCanceledMessage
 } from '../../../shared/provider'
 import { providerAppOwnsSkill } from '../../../shared/providerOwnership'
-import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import type {
+  ProviderAdapter,
+  ProviderChatTurnWindow,
+  ProviderChatUpdateMetadata
+} from '../ProviderAdapter'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import {
   isRecoverableCodexLoginAccountReadError,
@@ -63,6 +67,7 @@ import {
 } from './CodexItemRenderers'
 import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProviderUpdate'
 import { loadRolloutContextUsage, loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
+import { hydrateCodexTurnRange, loadCodexTurnCatalog } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
 import {
@@ -912,6 +917,7 @@ const titleGenerationPromptLimit = 2_000
 // input and window events even when a long-running chat has a large history.
 const chatUpdateDebounceMs = 250
 const rendererWorkingItemTailLimit = 50
+const rendererChatUpdateTurnLimit = 10
 let localTurnSequence = 0
 
 const titleGenerationOutputSchema = {
@@ -1219,6 +1225,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
   private threads = new Map<string, CodexThread>()
+  private paginatedTurnCatalogs = new Map<string, { threadUpdatedAt: number; turns: CodexTurn[] }>()
   private pendingTurnIds = new Map<string, string>()
   private activeTurnIds = new Map<string, string>()
   private activeOneShotGenerations = new Map<string, OneShotGeneration>()
@@ -1880,6 +1887,92 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.getChatInContext(chatId)
     )
 
+  getChatWindow = (
+    chatId: string,
+    window: ProviderChatTurnWindow,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.getChatWindowInContext(chatId, window)
+    )
+
+  private getChatWindowInContext = async (
+    chatId: string,
+    window: ProviderChatTurnWindow
+  ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
+
+    // Live and mutating chats already have an authoritative in-memory model. Slice its raw turns
+    // before rendering so updates still have the same bounded renderer contract.
+    const cachedThread = this.threads.get(chatId)
+    if (cachedThread) return this.createChatDetail(cachedThread, { turnWindow: window })
+
+    // Metadata and transcript are deliberately separate reads. `includeTurns: false` avoids the
+    // app-server's deprecated full-history hydration path.
+    const response = await this.client.request<ThreadReadResponse>('thread/read', {
+      threadId: chatId,
+      includeTurns: false
+    })
+    const threadMetadata = response.thread
+    const cachedCatalog = this.paginatedTurnCatalogs.get(chatId)
+    const turnCatalog =
+      cachedCatalog?.threadUpdatedAt === threadMetadata.updatedAt
+        ? cachedCatalog.turns
+        : await loadCodexTurnCatalog(
+            (method, params) => this.client.request(method, params),
+            threadMetadata.id
+          )
+    if (turnCatalog !== cachedCatalog?.turns) {
+      this.paginatedTurnCatalogs.set(chatId, {
+        threadUpdatedAt: threadMetadata.updatedAt,
+        turns: turnCatalog
+      })
+    }
+
+    const renderableCatalog = this.filterRolledBackTurns(threadMetadata.id, turnCatalog).filter(
+      (turn) => turn.status !== 'queued'
+    )
+    const pendingMessages = this.getProviderPendingMessages(chatId)
+    const totalCount = renderableCatalog.length + pendingMessages.length
+    const limit = Math.max(1, Math.floor(window.limit))
+    const startIndex =
+      window.startIndex == null
+        ? Math.max(0, totalCount - limit)
+        : Math.max(0, Math.min(Math.floor(window.startIndex), totalCount))
+    const endIndex = Math.min(totalCount, startIndex + limit)
+    const rawTurnEndIndex = Math.min(renderableCatalog.length, endIndex)
+    const selectedTurns =
+      startIndex < rawTurnEndIndex
+        ? await hydrateCodexTurnRange(
+            (method, params) => this.client.request(method, params),
+            threadMetadata.id,
+            renderableCatalog,
+            startIndex,
+            rawTurnEndIndex
+          )
+        : []
+    const pendingStartIndex = Math.max(0, startIndex - renderableCatalog.length)
+    const pendingEndIndex = Math.max(0, endIndex - renderableCatalog.length)
+    const name = await this.resolveThreadName(threadMetadata)
+
+    return this.createChatDetail(
+      {
+        ...threadMetadata,
+        name,
+        // Do not call the rollout fallback here: that API materializes the complete JSONL file.
+        cwd: getThreadApiCwd(threadMetadata),
+        turns: selectedTurns
+      },
+      {
+        selectedTurnWindow: {
+          startIndex,
+          totalCount,
+          pendingMessages: pendingMessages.slice(pendingStartIndex, pendingEndIndex)
+        }
+      }
+    )
+  }
+
   private getChatInContext = async (chatId: string): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
     const cachedDetail = this.getCachedChatDetail(chatId)
@@ -1938,29 +2031,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
       cursor = response.nextCursor ?? null
     } while (cursor)
 
-    if (!this.threads.has(chatId)) await this.getChatInContext(chatId)
     const parentIds = new Set(
       subagentThreads.map((thread) => thread.parentThreadId ?? chatId).filter(Boolean)
     )
     const afterItemIdsByParentId = new Map<string, Map<string, string>>()
 
-    await Promise.all(
-      Array.from(parentIds, async (parentId) => {
-        try {
-          const response = await this.client.request<ThreadReadResponse>('thread/read', {
-            threadId: parentId,
-            includeTurns: true
-          })
-          const turns =
-            parentId === chatId
-              ? getThreadTurns(response.thread)
-              : selectCodexSubagentTurns(getThreadTurns(response.thread), response.thread.createdAt)
-          afterItemIdsByParentId.set(parentId, getCodexSubagentAfterItemIds(turns))
-        } catch {
-          // A missing nested parent should not hide otherwise readable descendants.
-        }
-      })
-    )
+    parentIds.forEach((parentId) => {
+      const parent = this.threads.get(parentId)
+      if (!parent) return
+      const turns =
+        parentId === chatId
+          ? getThreadTurns(parent)
+          : selectCodexSubagentTurns(getThreadTurns(parent), parent.createdAt)
+      afterItemIdsByParentId.set(parentId, getCodexSubagentAfterItemIds(turns))
+    })
 
     return subagentThreads.map((thread) => {
       const parentId = thread.parentThreadId ?? chatId
@@ -2769,6 +2853,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.manuallyStoppedTurnIds.clear()
     this.clients.forEach((client) => client.dispose())
     this.clients.clear()
+    this.paginatedTurnCatalogs.clear()
     this.threadContainers.clear()
   }
 
@@ -3044,9 +3129,44 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private createChatDetail = (
     thread: CodexThread,
-    options: { workingItemTailLimit?: number } = {}
+    options: {
+      workingItemTailLimit?: number
+      turnWindow?: ProviderChatTurnWindow
+      selectedTurnWindow?: {
+        startIndex: number
+        totalCount: number
+        pendingMessages: ProviderPendingMessage[]
+      }
+    } = {}
   ): ProviderChatDetail => {
-    const renderableTurns = this.getRenderableTurns(thread)
+    const allRenderableTurns = this.getRenderableTurns(thread)
+    const allPendingMessages = this.getProviderPendingMessages(thread.id)
+    let renderableTurns = allRenderableTurns
+    let pendingMessages = allPendingMessages
+    let itemsStartTurnIndex: number | undefined
+    let turnCount: number | undefined
+
+    if (options.selectedTurnWindow) {
+      itemsStartTurnIndex = options.selectedTurnWindow.startIndex
+      turnCount = options.selectedTurnWindow.totalCount
+      pendingMessages = options.selectedTurnWindow.pendingMessages
+    } else if (options.turnWindow) {
+      turnCount = allRenderableTurns.length + allPendingMessages.length
+      const limit = Math.max(1, Math.floor(options.turnWindow.limit))
+      itemsStartTurnIndex =
+        options.turnWindow.startIndex == null
+          ? Math.max(0, turnCount - limit)
+          : Math.max(0, Math.min(Math.floor(options.turnWindow.startIndex), turnCount))
+      const endIndex = Math.min(turnCount, itemsStartTurnIndex + limit)
+      renderableTurns = allRenderableTurns.slice(
+        itemsStartTurnIndex,
+        Math.min(allRenderableTurns.length, endIndex)
+      )
+      pendingMessages = allPendingMessages.slice(
+        Math.max(0, itemsStartTurnIndex - allRenderableTurns.length),
+        Math.max(0, endIndex - allRenderableTurns.length)
+      )
+    }
 
     return {
       id: thread.id,
@@ -3068,6 +3188,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       pendingApproval: this.getProviderPendingApproval(thread.id),
       pendingUserInput: null,
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
+      ...(itemsStartTurnIndex == null ? {} : { itemsStartTurnIndex, turnCount }),
       items: [
         ...getChatItems(renderableTurns, thread.createdAt, {
           hiddenPendingMessageIds: this.hiddenPendingMessageIdsByThread.get(thread.id),
@@ -3075,13 +3196,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
           workingItemTailLimit: options.workingItemTailLimit,
           workingItemTailTurnId: renderableTurns.at(-1)?.id
         }),
-        ...this.getProviderPendingMessages(thread.id)
+        ...pendingMessages
       ]
     }
   }
 
   private cacheThread = (thread: CodexThread): void => {
     this.threads.set(thread.id, thread)
+    this.paginatedTurnCatalogs.delete(thread.id)
   }
 
   private getCachedChatDetail = (threadId: string): ProviderChatDetail | null => {
@@ -3361,7 +3483,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const thread = this.threads.get(threadId)
     if (!thread || isCodexSubagentThread(thread)) return
     const detail = this.createChatDetail(thread, {
-      workingItemTailLimit: rendererWorkingItemTailLimit
+      workingItemTailLimit: rendererWorkingItemTailLimit,
+      turnWindow: { startIndex: null, limit: rendererChatUpdateTurnLimit }
     })
 
     this.chatUpdatedListeners.forEach((listener) => listener(detail, metadata))

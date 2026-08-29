@@ -126,6 +126,25 @@ test('keeps only the latest ten turns in renderer chat state', () => {
   assert.equal(result.items.at(-1).id, 'assistant-24')
 })
 
+test('preserves a provider-paginated turn window without recounting or reslicing it', () => {
+  const items = Array.from({ length: 3 }, (_, index) => [
+    { type: 'message', id: `user-${index}`, role: 'user', content: `Question ${index}` },
+    { type: 'message', id: `assistant-${index}`, role: 'assistant', content: `Answer ${index}` }
+  ]).flat()
+
+  const result = prepareChatDetailForRenderer({
+    id: 'chat',
+    items,
+    itemsStartTurnIndex: 120,
+    turnCount: 500
+  })
+
+  assert.equal(result.itemsStartTurnIndex, 120)
+  assert.equal(result.turnCount, 500)
+  assert.equal(result.items.length, 6)
+  assert.equal(result.items[0].id, 'user-0')
+})
+
 test('caps aggregate message payload across the retained turn page', () => {
   const items = Array.from({ length: 10 }, (_, index) => [
     { type: 'message', id: `user-${index}`, role: 'user', content: 'u'.repeat(600_000) },

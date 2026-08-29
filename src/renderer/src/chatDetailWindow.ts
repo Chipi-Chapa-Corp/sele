@@ -20,7 +20,7 @@ export const hasProviderUserMessage = (items: ProviderChatItem[]): boolean =>
   items.some((item) => item.type === 'message' && item.role === 'user')
 
 export const shouldPreserveOptimisticTurnUntilUserMessage = (providerId: ProviderId): boolean =>
-  providerId === 'copilot' || providerId === 'opencode'
+  providerId === 'codex' || providerId === 'copilot' || providerId === 'opencode'
 
 export const hasProviderUserMessageAfterOptimisticTurn = (
   currentItems: ProviderChatItem[],

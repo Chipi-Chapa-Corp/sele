@@ -47,9 +47,13 @@ import {
   providerIpcChannels
 } from '../../shared/provider'
 import { requireContainerTarget } from '../containerTarget'
-import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
-import { getChatUpdateSummary, providerApi } from './providerService'
-import { prepareChatDetailForRenderer, prepareChatItemsForRenderer } from './chatDetailLazy'
+import { getProviderChatTurnCount } from '../../shared/chatTurns'
+import { getChatUpdateSummary, getProviderChatWindow, providerApi } from './providerService'
+import {
+  prepareChatDetailForRenderer,
+  prepareChatItemsForRenderer,
+  rendererChatTurnPageSize
+} from './chatDetailLazy'
 import {
   limitWorkingItemPayload,
   prepareWorkingToolPage,
@@ -1233,11 +1237,16 @@ export const registerProviderIpc = (): void => {
     )
   })
 
-  ipcMain.handle(providerIpcChannels.getChat, (_, providerId: unknown, chatId: unknown) =>
-    getRendererChatDetail(() =>
-      providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+  ipcMain.handle(providerIpcChannels.getChat, (_, providerId: unknown, chatId: unknown) => {
+    const requiredProviderId = requireProviderId(providerId)
+    const requiredChatId = requireChatId(chatId)
+    return getRendererChatDetail(() =>
+      getProviderChatWindow(requiredProviderId, requiredChatId, {
+        startIndex: null,
+        limit: rendererChatTurnPageSize
+      })
     )
-  )
+  })
 
   ipcMain.handle(providerIpcChannels.getSubagents, (_, providerId: unknown, chatId: unknown) =>
     providerApi.getSubagents(requireProviderId(providerId), requireChatId(chatId))
@@ -1361,17 +1370,20 @@ export const registerProviderIpc = (): void => {
       startIndex: unknown,
       limit: unknown
     ): Promise<ProviderChatTurnPage> => {
-      const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
-      const totalCount = getProviderChatTurnCount(detail.items)
-      const requiredStartIndex = Math.min(requireChatTurnStartIndex(startIndex), totalCount)
+      const requiredProviderId = requireProviderId(providerId)
+      const requiredChatId = requireChatId(chatId)
+      const requestedStartIndex = requireChatTurnStartIndex(startIndex)
       const requiredLimit = requireChatTurnLimit(limit)
+      const detail = await getProviderChatWindow(requiredProviderId, requiredChatId, {
+        startIndex: requestedStartIndex,
+        limit: requiredLimit
+      })
+      const totalCount = detail.turnCount ?? getProviderChatTurnCount(detail.items)
+      const requiredStartIndex =
+        detail.itemsStartTurnIndex ?? Math.min(requestedStartIndex, totalCount)
       const pageDetail = unloadHistoricalWorkingSteps({
         ...detail,
-        items: sliceProviderChatTurns(
-          detail.items,
-          requiredStartIndex,
-          requiredStartIndex + requiredLimit
-        )
+        items: detail.items
       })
 
       const items = prepareChatItemsForRenderer(

@@ -113,9 +113,18 @@ export const prepareChatItemsForRenderer = (items: ProviderChatItem[]): Provider
 }
 
 export const prepareChatDetailForRenderer = (detail: ProviderChatDetail): ProviderChatDetail => {
-  const turnCount = getProviderChatTurnCount(detail.items)
-  const itemsStartTurnIndex = Math.max(0, turnCount - rendererChatTurnPageSize)
-  const items = sliceProviderChatTurns(detail.items, itemsStartTurnIndex, turnCount)
+  const detailIsWindowed =
+    Number.isSafeInteger(detail.itemsStartTurnIndex) &&
+    detail.itemsStartTurnIndex! >= 0 &&
+    Number.isSafeInteger(detail.turnCount) &&
+    detail.turnCount! >= detail.itemsStartTurnIndex!
+  const turnCount = detailIsWindowed ? detail.turnCount! : getProviderChatTurnCount(detail.items)
+  const itemsStartTurnIndex = detailIsWindowed
+    ? detail.itemsStartTurnIndex!
+    : Math.max(0, turnCount - rendererChatTurnPageSize)
+  const items = detailIsWindowed
+    ? detail.items
+    : sliceProviderChatTurns(detail.items, itemsStartTurnIndex, turnCount)
 
   const workingStepsUnloaded = unloadHistoricalWorkingSteps({
     ...detail,

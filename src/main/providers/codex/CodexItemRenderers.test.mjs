@@ -307,3 +307,31 @@ test('keeps a bounded logical activity sequence in live renderer snapshots', () 
   assert.equal(sequence.tools.length, 50)
   assert.equal(sequence.toolsStartIndex, 35)
 })
+
+test('bounds recursive tool-output envelopes', () => {
+  const cyclicOutput = {}
+  cyclicOutput.content = cyclicOutput
+
+  const items = getChatItems([
+    {
+      id: 'turn-cyclic-output',
+      status: 'completed',
+      items: [
+        userMessage('user-cyclic-output', 'Run it'),
+        {
+          type: 'customToolCall',
+          id: 'tool-cyclic-output',
+          customToolName: 'exec_command',
+          customToolInput: '{"cmd":"true"}',
+          customToolOutput: cyclicOutput,
+          status: 'finished'
+        },
+        finalAnswer('answer-cyclic-output', 'Done')
+      ]
+    }
+  ])
+
+  const working = items.find((item) => item.type === 'working')
+  assert.equal(working.items[0].type, 'tool')
+  assert.equal(working.items[0].stdout, null)
+})

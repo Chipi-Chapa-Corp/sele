@@ -33,6 +33,7 @@ import {
   getMessageReviews,
   setMessageReview
 } from '../database/messageReviews'
+import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
 import {
   cancelCodexAccountCreation as removePendingCodexAccount,
@@ -46,7 +47,7 @@ import { ClaudeProviderAdapter } from './claude/ClaudeProviderAdapter'
 import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
-import type { ProviderAdapter } from './ProviderAdapter'
+import type { ProviderAdapter, ProviderChatTurnWindow } from './ProviderAdapter'
 
 const codexAdapter = new CodexProviderAdapter()
 
@@ -174,6 +175,44 @@ const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<Provid
       }
     })
   }
+}
+
+const sliceChatDetailToTurnWindow = (
+  detail: ProviderChatDetail,
+  window: ProviderChatTurnWindow
+): ProviderChatDetail => {
+  const turnCount = getProviderChatTurnCount(detail.items)
+  const limit = Math.max(1, Math.floor(window.limit))
+  const startIndex =
+    window.startIndex == null
+      ? Math.max(0, turnCount - limit)
+      : Math.max(0, Math.min(Math.floor(window.startIndex), turnCount))
+  return {
+    ...detail,
+    items: sliceProviderChatTurns(detail.items, startIndex, startIndex + limit),
+    itemsStartTurnIndex: startIndex,
+    turnCount
+  }
+}
+
+/**
+ * Renderer-only transcript read. The adapter owns the pagination boundary so capable providers do
+ * not construct a complete ProviderChatDetail merely to have IPC discard most of it.
+ */
+export const getProviderChatWindow = async (
+  providerId: ProviderId,
+  chatId: string,
+  window: ProviderChatTurnWindow
+): Promise<ProviderChatDetail> => {
+  const metadata = await getChatMetadata(chatId)
+  const adapter = adapters[providerId]
+  const detail = adapter.getChatWindow
+    ? await adapter.getChatWindow(chatId, window, { container: metadata.container })
+    : sliceChatDetailToTurnWindow(
+        await adapter.getChat(chatId, { container: metadata.container }),
+        window
+      )
+  return applyMetadataToDetail(detail)
 }
 
 const runWithStoredReview = async (

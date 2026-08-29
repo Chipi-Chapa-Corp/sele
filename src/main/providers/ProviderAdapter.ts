@@ -29,6 +29,12 @@ export type ProviderChatUpdateMetadata = {
   turnCompleted?: boolean
 }
 
+export type ProviderChatTurnWindow = {
+  /** Null selects the latest `limit` turns. */
+  startIndex: number | null
+  limit: number
+}
+
 export type ProviderAdapter = {
   id: ProviderId
   login: (options?: ProviderSourceOptions) => Promise<ProviderLoginResult>
@@ -65,6 +71,15 @@ export type ProviderAdapter = {
   getChats: (options?: ProviderChatListOptions) => Promise<ProviderChatPage>
   getChat: (
     chatId: string,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<ProviderChatDetail>
+  /**
+   * A bounded, read-only transcript path for renderer navigation. Providers that implement this
+   * must avoid hydrating transcript content outside the requested turn window.
+   */
+  getChatWindow?: (
+    chatId: string,
+    window: ProviderChatTurnWindow,
     options?: { container?: AppContainerTarget | null }
   ) => Promise<ProviderChatDetail>
   getSubagents: (
