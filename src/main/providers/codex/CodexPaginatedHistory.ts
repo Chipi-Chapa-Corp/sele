@@ -7,6 +7,16 @@ type ThreadTurnsListResponse = {
   nextCursor?: string | null
 }
 
+export class CodexTurnWindowMismatchError extends Error {
+  readonly missingTurnIds: readonly string[]
+
+  constructor(missingTurnIds: readonly string[]) {
+    super('Codex omitted a turn from the requested history window')
+    this.name = 'CodexTurnWindowMismatchError'
+    this.missingTurnIds = missingTurnIds
+  }
+}
+
 const turnCatalogPageSize = 1_000
 const turnCursorSeekPageSize = 1_000
 
@@ -114,9 +124,36 @@ export const hydrateCodexTurnRange = async (
   if (!Array.isArray(response.data)) throw new Error('Invalid paginated Codex turn response')
 
   const hydratedById = new Map(response.data.map((turn) => [turn.id, turn]))
+  const missingTurnIds = selectedTurns
+    .map((turn) => turn.id)
+    .filter((turnId) => !hydratedById.has(turnId))
+  if (missingTurnIds.length > 0) throw new CodexTurnWindowMismatchError(missingTurnIds)
+
   return selectedTurns.map((turn) => {
-    const hydrated = hydratedById.get(turn.id)
-    if (!hydrated) throw new Error('Codex omitted a turn from the requested history window')
-    return hydrated
+    // The missing-id check above guarantees every selected turn is present.
+    return hydratedById.get(turn.id)!
   })
+}
+
+/**
+ * Retries a window read once with a freshly enumerated catalog when the catalog and hydrated
+ * transcript came from different snapshots. Codex's thread `updatedAt` value is not a reliable
+ * cache invalidator for externally appended turns, so callers must recover from this race.
+ */
+export const retryCodexTurnWindowWithFreshCatalog = async <Result>(
+  turnCatalog: CodexTurn[],
+  refreshTurnCatalog: () => Promise<CodexTurn[]>,
+  loadWindow: (catalog: CodexTurn[]) => Promise<Result>
+): Promise<{ turnCatalog: CodexTurn[]; result: Result }> => {
+  try {
+    return { turnCatalog, result: await loadWindow(turnCatalog) }
+  } catch (error) {
+    if (!(error instanceof CodexTurnWindowMismatchError)) throw error
+  }
+
+  const refreshedTurnCatalog = await refreshTurnCatalog()
+  return {
+    turnCatalog: refreshedTurnCatalog,
+    result: await loadWindow(refreshedTurnCatalog)
+  }
 }

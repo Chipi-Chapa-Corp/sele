@@ -9,6 +9,7 @@ import { UserInputRequestBox } from '../../components/UserInputRequestBox'
 import { appChatManualDropdownValue } from '../../settings'
 import { getContainerTargetKey } from '../../containerSelection'
 import { providerLabels } from '../../providerSettings'
+import { getRequestErrorPresentation } from '../../requestError'
 
 type ConversationComposerProps = WorkspaceController['conversationComposer']
 
@@ -117,6 +118,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     userInputResolving,
     worktreeCreationState
   } = props
+  const requestErrorPresentation = getRequestErrorPresentation(requestErrorSummary)
 
   return (
     <div className="chat-panel__composer">
@@ -128,9 +130,11 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             role="alert"
           >
             <div className="chat-approval__main">
-              <span className="chat-approval__label">Request failed</span>
-              <span className="chat-approval__summary" title={requestErrorSummary}>
-                {requestErrorSummary}
+              {requestErrorPresentation.label && (
+                <span className="chat-approval__label">{requestErrorPresentation.label}</span>
+              )}
+              <span className="chat-approval__summary" title={requestErrorPresentation.summary}>
+                {requestErrorPresentation.summary}
               </span>
             </div>
             <div className="chat-approval__actions">

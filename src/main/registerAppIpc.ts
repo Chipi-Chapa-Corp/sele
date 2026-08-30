@@ -70,7 +70,11 @@ import {
 } from '../shared/app'
 import type { ProviderId } from '../shared/provider'
 import { requireContainerTarget } from './containerTarget'
-import { getCurrentContainerHostBridge } from './currentContainer'
+import {
+  getCurrentContainerHostBridge,
+  getCurrentContainerTarget,
+  isCurrentContainerTarget
+} from './currentContainer'
 import {
   getProjectIcon as getStoredProjectIcon,
   setProjectIcon as setStoredProjectIcon
@@ -104,7 +108,7 @@ import {
   isUpstreamBranchMismatchPushFailure,
   selectGitPushRemote
 } from './gitSync'
-import { getHostCommand } from './hostProcess'
+import { getHostCommand, isRunningInFlatpak } from './hostProcess'
 import { getProcessFailureMessage } from './processFailure'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
 import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
@@ -537,7 +541,10 @@ const getLocalImage = async (
   path: string,
   relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
 ): Promise<AppLocalImage> => {
-  if (isSshGitTarget()) return getSshLocalImage(cwd, path, relativeTo)
+  const container = gitCommandContext.getStore()?.container
+  if (await shouldReadImageThroughTarget(container)) {
+    return getTargetLocalImage(container, cwd, path, relativeTo)
+  }
 
   const imagePath = await resolveLocalImagePath(cwd, path, relativeTo)
   const image = await getImageFile(imagePath, maxLocalImageBytes)
@@ -1943,15 +1950,12 @@ const isSshGitTarget = (): boolean => {
   return container?.kind === 'container' && container.tool === 'ssh'
 }
 
-const runSshFileCommand = async (
+const runTargetFileCommand = async (
+  container: AppContainerTarget | null | undefined,
   cwd: string,
   args: string[],
   options: { input?: Buffer; maxBuffer?: number } = {}
 ): Promise<Buffer> => {
-  const container = gitCommandContext.getStore()?.container
-  if (container?.kind !== 'container' || container.tool !== 'ssh') {
-    throw new Error('SSH target is required')
-  }
   const hostCommand = await getHostCommand('sh', args, {
     container,
     cwd,
@@ -1982,6 +1986,19 @@ const runSshFileCommand = async (
 
     child.stdin?.end(options.input)
   })
+}
+
+const runSshFileCommand = async (
+  cwd: string,
+  args: string[],
+  options: { input?: Buffer; maxBuffer?: number } = {}
+): Promise<Buffer> => {
+  const container = gitCommandContext.getStore()?.container
+  if (container?.kind !== 'container' || container.tool !== 'ssh') {
+    throw new Error('SSH target is required')
+  }
+
+  return runTargetFileCommand(container, cwd, args, options)
 }
 
 const getRemoteRepositoryFilePath = (repositoryRoot: string, path: string): string => {
@@ -2090,7 +2107,8 @@ const writeSshFileContents = async (
   return { version: getFileVersion(contents) }
 }
 
-const getSshLocalImage = async (
+const getTargetLocalImage = async (
+  container: AppContainerTarget | null | undefined,
   cwd: string | null,
   path: string,
   relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
@@ -2118,7 +2136,8 @@ const getSshLocalImage = async (
     'printf "%s\\0" "$size"',
     'cat -- "$1"'
   ].join('\n')
-  const output = await runSshFileCommand(
+  const output = await runTargetFileCommand(
+    container,
     commandCwd,
     ['-lc', script, 'sele-read-image', imagePath],
     { maxBuffer: maxLocalImageBytes + remoteFileMetadataBufferBytes }
@@ -2136,6 +2155,17 @@ const getSshLocalImage = async (
     mimeType,
     updatedAt: Date.now()
   }
+}
+
+const shouldReadImageThroughTarget = async (
+  container: AppContainerTarget | null | undefined
+): Promise<boolean> => {
+  if (container?.kind === 'container') {
+    return container.tool === 'ssh' || !(await isCurrentContainerTarget(container))
+  }
+
+  if (isRunningInFlatpak()) return true
+  return Boolean(await getCurrentContainerTarget())
 }
 
 const resolveReadableFile = async (
@@ -3307,36 +3337,12 @@ export const registerAppIpc = (): void => {
 
   ipcMain.handle(appIpcChannels.saveLocalImage, async (event, value: unknown) => {
     const options = getLocalImageOptions(value)
-    if (options.container?.kind === 'container' && options.container.tool === 'ssh') {
-      const image = await runWithGitContainer(options.container, () =>
-        getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
-      )
-      const extension = extname(options.path).slice(1)
-      const dialogOptions = {
-        defaultPath: join(app.getPath('downloads'), basename(options.path)),
-        filters: extension ? [{ name: 'Image', extensions: [extension] }] : undefined
-      } satisfies Electron.SaveDialogOptions
-      const browserWindow = BrowserWindow.fromWebContents(event.sender)
-      const result = browserWindow
-        ? await dialog.showSaveDialog(browserWindow, dialogOptions)
-        : await dialog.showSaveDialog(dialogOptions)
-      if (result.canceled || !result.filePath) return null
-
-      await writeFile(result.filePath, Buffer.from(image.data))
-      return result.filePath
-    }
-
-    const sourcePath = await resolveLocalImagePath(
-      options.cwd ?? null,
-      options.path,
-      options.relativeTo
+    const image = await runWithGitContainer(options.container, () =>
+      getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
     )
-    const image = await getImageFile(sourcePath, maxLocalImageBytes)
-    if (!image) throw new Error('Unable to save this image.')
-
-    const extension = extname(sourcePath).slice(1)
+    const extension = extname(options.path).slice(1)
     const dialogOptions = {
-      defaultPath: join(app.getPath('downloads'), basename(sourcePath)),
+      defaultPath: join(app.getPath('downloads'), basename(options.path)),
       filters: extension ? [{ name: 'Image', extensions: [extension] }] : undefined
     } satisfies Electron.SaveDialogOptions
     const browserWindow = BrowserWindow.fromWebContents(event.sender)
@@ -3345,9 +3351,7 @@ export const registerAppIpc = (): void => {
       : await dialog.showSaveDialog(dialogOptions)
 
     if (result.canceled || !result.filePath) return null
-    if (resolve(result.filePath) !== resolve(sourcePath)) {
-      await copyFile(sourcePath, result.filePath)
-    }
+    await writeFile(result.filePath, Buffer.from(image.data))
     return result.filePath
   })
 }

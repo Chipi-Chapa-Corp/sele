@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { hydrateCodexTurnRange, loadCodexTurnCatalog } from './CodexPaginatedHistory.ts'
+import {
+  CodexTurnWindowMismatchError,
+  hydrateCodexTurnRange,
+  loadCodexTurnCatalog,
+  retryCodexTurnWindowWithFreshCatalog
+} from './CodexPaginatedHistory.ts'
 
 // Test fixtures intentionally omit production-only Codex fields.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -75,4 +80,78 @@ test('hydrates items only for turns in the requested range', async () => {
       ['two', 'two:answer']
     ]
   )
+})
+
+test('refreshes a stale catalog and retries the requested window once', async () => {
+  const staleCatalog = [turn('zero', []), turn('one', []), turn('two', [])]
+  const freshCatalog = [...staleCatalog, turn('three', [])]
+  let refreshCount = 0
+  let hydrationCount = 0
+  // Test fixtures intentionally omit production-only Codex fields.
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const loadLatestTwo = async (catalog) => {
+    hydrationCount += 1
+    return hydrateCodexTurnRange(
+      async (method, params) => {
+        assert.equal(method, 'thread/turns/list')
+        assert.equal(params.itemsView, 'full')
+        return { data: [turn('three'), turn('two')], nextCursor: 'older' }
+      },
+      'thread',
+      catalog,
+      Math.max(0, catalog.length - 2),
+      catalog.length
+    )
+  }
+
+  const result = await retryCodexTurnWindowWithFreshCatalog(
+    staleCatalog,
+    async () => {
+      refreshCount += 1
+      return freshCatalog
+    },
+    loadLatestTwo
+  )
+
+  assert.equal(refreshCount, 1)
+  assert.equal(hydrationCount, 2)
+  assert.equal(result.turnCatalog, freshCatalog)
+  assert.deepEqual(
+    result.result.map((entry) => entry.id),
+    ['two', 'three']
+  )
+})
+
+test('surfaces a persistent turn mismatch after one catalog refresh', async () => {
+  const catalog = [turn('zero', []), turn('one', [])]
+  let refreshCount = 0
+  let hydrationCount = 0
+
+  await assert.rejects(
+    retryCodexTurnWindowWithFreshCatalog(
+      catalog,
+      async () => {
+        refreshCount += 1
+        return catalog
+      },
+      async (currentCatalog) => {
+        hydrationCount += 1
+        return hydrateCodexTurnRange(
+          async () => ({ data: [turn('one')], nextCursor: null }),
+          'thread',
+          currentCatalog,
+          0,
+          currentCatalog.length
+        )
+      }
+    ),
+    (error) => {
+      assert.ok(error instanceof CodexTurnWindowMismatchError)
+      assert.deepEqual(error.missingTurnIds, ['zero'])
+      return true
+    }
+  )
+
+  assert.equal(refreshCount, 1)
+  assert.equal(hydrationCount, 2)
 })

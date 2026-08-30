@@ -655,6 +655,15 @@
   line-height: 1.5;
 }
 
+.file-editor-dialog__state-actions {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .file-editor-dialog__error {
   position: absolute;
   top: 0.6rem;

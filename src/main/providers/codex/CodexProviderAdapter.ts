@@ -67,7 +67,11 @@ import {
 } from './CodexItemRenderers'
 import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProviderUpdate'
 import { loadRolloutContextUsage, loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
-import { hydrateCodexTurnRange, loadCodexTurnCatalog } from './CodexPaginatedHistory'
+import {
+  hydrateCodexTurnRange,
+  loadCodexTurnCatalog,
+  retryCodexTurnWindowWithFreshCatalog
+} from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
 import { getCodexEditHistoryMutation, type CodexThreadHistoryMode } from './CodexThreadHistory'
@@ -1931,30 +1935,63 @@ export class CodexProviderAdapter implements ProviderAdapter {
       })
     }
 
-    const renderableCatalog = this.filterRolledBackTurns(threadMetadata.id, turnCatalog).filter(
-      (turn) => turn.status !== 'queued'
-    )
     const pendingMessages = this.getProviderPendingMessages(chatId)
-    const totalCount = renderableCatalog.length + pendingMessages.length
     const limit = Math.max(1, Math.floor(window.limit))
-    const startIndex =
-      window.startIndex == null
-        ? Math.max(0, totalCount - limit)
-        : Math.max(0, Math.min(Math.floor(window.startIndex), totalCount))
-    const endIndex = Math.min(totalCount, startIndex + limit)
-    const rawTurnEndIndex = Math.min(renderableCatalog.length, endIndex)
-    const selectedTurns =
-      startIndex < rawTurnEndIndex
-        ? await hydrateCodexTurnRange(
-            (method, params) => this.client.request(method, params),
-            threadMetadata.id,
-            renderableCatalog,
-            startIndex,
-            rawTurnEndIndex
-          )
-        : []
-    const pendingStartIndex = Math.max(0, startIndex - renderableCatalog.length)
-    const pendingEndIndex = Math.max(0, endIndex - renderableCatalog.length)
+    const loadWindow = async (
+      catalog: CodexTurn[]
+    ): Promise<{
+      selectedTurns: CodexTurn[]
+      startIndex: number
+      totalCount: number
+      pendingStartIndex: number
+      pendingEndIndex: number
+    }> => {
+      const renderableCatalog = this.filterRolledBackTurns(threadMetadata.id, catalog).filter(
+        (turn) => turn.status !== 'queued'
+      )
+      const totalCount = renderableCatalog.length + pendingMessages.length
+      const startIndex =
+        window.startIndex == null
+          ? Math.max(0, totalCount - limit)
+          : Math.max(0, Math.min(Math.floor(window.startIndex), totalCount))
+      const endIndex = Math.min(totalCount, startIndex + limit)
+      const rawTurnEndIndex = Math.min(renderableCatalog.length, endIndex)
+      const selectedTurns =
+        startIndex < rawTurnEndIndex
+          ? await hydrateCodexTurnRange(
+              (method, params) => this.client.request(method, params),
+              threadMetadata.id,
+              renderableCatalog,
+              startIndex,
+              rawTurnEndIndex
+            )
+          : []
+
+      return {
+        selectedTurns,
+        startIndex,
+        totalCount,
+        pendingStartIndex: Math.max(0, startIndex - renderableCatalog.length),
+        pendingEndIndex: Math.max(0, endIndex - renderableCatalog.length)
+      }
+    }
+    const refreshedWindow = await retryCodexTurnWindowWithFreshCatalog(
+      turnCatalog,
+      () =>
+        loadCodexTurnCatalog(
+          (method, params) => this.client.request(method, params),
+          threadMetadata.id
+        ),
+      loadWindow
+    )
+    if (refreshedWindow.turnCatalog !== turnCatalog) {
+      this.paginatedTurnCatalogs.set(chatId, {
+        threadUpdatedAt: threadMetadata.updatedAt,
+        turns: refreshedWindow.turnCatalog
+      })
+    }
+    const { selectedTurns, startIndex, totalCount, pendingStartIndex, pendingEndIndex } =
+      refreshedWindow.result
     const name = await this.resolveThreadName(threadMetadata)
 
     return this.createChatDetail(

@@ -16,6 +16,7 @@ import {
   Maximize2,
   MessageSquare,
   Minimize2,
+  Monitor,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
@@ -29,15 +30,26 @@ import {
 } from '@react-symbols/icons/utils'
 import DOMPurify from 'dompurify'
 import { marked, Renderer, type Tokens } from 'marked'
-import type { AppContainerTarget, AppFileTreeResult, AppGitChangeKind } from '../../../shared/app'
+import type {
+  AppContainerSuggestion,
+  AppContainerTarget,
+  AppFileTreeResult,
+  AppGitChangeKind
+} from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { toCssRem } from '../cssUnits'
 import { isMermaidMarkdownCode, renderMarkdownCodeBlock } from '../codeHighlighting'
 import { getFileDisplayParts } from '../fileDisplayPath'
+import {
+  getAlternateFileEnvironments,
+  getFileEnvironmentKey,
+  isMissingFileError
+} from '../fileEnvironment'
 import { createLocalImageUrl } from '../localImage'
 import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { Button } from './Button'
+import { Dropdown, type DropdownOption } from './Dropdown'
 import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
 import { EditableUnifiedDiff, UnifiedDiff, type DiffReviewLocation } from './UnifiedDiff'
 import './FileEditorDialog.css'
@@ -64,6 +76,7 @@ type FileEditorDialogProps = {
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
+type EnvironmentSuggestionsState = 'idle' | 'loading' | 'ready'
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 type CopyState = 'idle' | 'copying' | 'copied' | 'error'
 type MarkdownViewMode = 'code' | 'split' | 'preview'
@@ -326,6 +339,13 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [editable, setEditable] = useState<boolean | null>(null)
   const [gitRepositoryRoot, setGitRepositoryRoot] = useState<string | null>(null)
   const [editorError, setEditorError] = useState<string | null>(null)
+  const [environmentOverride, setEnvironmentOverride] = useState<{
+    targetKey: string
+    container: AppContainerTarget
+  } | null>(null)
+  const [environmentSuggestions, setEnvironmentSuggestions] = useState<AppContainerSuggestion[]>([])
+  const [environmentSuggestionsState, setEnvironmentSuggestionsState] =
+    useState<EnvironmentSuggestionsState>('idle')
   const [diff, setDiff] = useState('')
   const [diffLoadState, setDiffLoadState] = useState<LoadState>(target.kind ? 'loading' : 'ready')
   const [diffLoadStatePath, setDiffLoadStatePath] = useState(target.path)
@@ -360,11 +380,18 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const fileTreeLoadRequestRef = useRef(0)
   const copyFeedbackTimerRef = useRef<number | null>(null)
   const resizeCleanupRef = useRef<(() => void) | null>(null)
+  const environmentSuggestionsRequestRef = useRef(0)
   const isImage = imageFilePattern.test(target.path)
   const isMarkdown = markdownFilePattern.test(target.path)
   const canShowImage = isImage && target.kind !== 'delete'
   const canShowContents = !isImage && target.kind !== 'delete'
   const canOpenFile = canShowContents || canShowImage
+  const targetEnvironmentKey = `${target.cwd}\0${target.path}\0${getFileEnvironmentKey(target.container)}`
+  const fileContainer =
+    environmentOverride?.targetKey === targetEnvironmentKey
+      ? environmentOverride.container
+      : target.container
+  const fileEnvironmentKey = getFileEnvironmentKey(fileContainer)
   const visibleLoadState = loadStatePath === target.path ? loadState : 'loading'
   const fileTreeCwd = getFileTreeCwd(target, gitRepositoryRoot)
   const fileTreeContainerKey = JSON.stringify(target.container ?? { kind: 'host' })
@@ -387,6 +414,33 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const displayPath = useMemo(() => target.displayPath.replace(/\\/g, '/'), [target.displayPath])
   const { directoryName, fileName } = useMemo(() => getFileDisplayParts(displayPath), [displayPath])
   const dirty = visibleLoadState === 'ready' && contents !== savedContents
+  const showEnvironmentRecovery =
+    canShowImage && visibleLoadState === 'error' && isMissingFileError(editorError)
+  const environmentDiscoveryContainer = useMemo<AppContainerTarget | undefined>(
+    () =>
+      fileContainer?.kind === 'container' && fileContainer.tool === 'ssh'
+        ? {
+            kind: 'container',
+            tool: 'ssh',
+            name: fileContainer.name,
+            runtime: { kind: 'host' }
+          }
+        : undefined,
+    [fileContainer]
+  )
+  const alternateEnvironmentChoices = useMemo(
+    () => getAlternateFileEnvironments(fileContainer, environmentSuggestions),
+    [environmentSuggestions, fileContainer]
+  )
+  const environmentOptions = useMemo<DropdownOption<string>[]>(
+    () =>
+      alternateEnvironmentChoices.map((choice) => ({
+        value: choice.value,
+        label: choice.label,
+        description: choice.description ?? undefined
+      })),
+    [alternateEnvironmentChoices]
+  )
   const repositoryFileTargets = useMemo<FileEditorTarget[]>(
     () =>
       visibleFileTreeResult?.files.map((file) => ({
@@ -553,7 +607,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
     try {
       const result = await appApi.getLocalImage({
-        container: target.container,
+        container: fileContainer,
         cwd: target.cwd,
         path: target.path
       })
@@ -569,7 +623,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setEditable(null)
       setLoadState('error')
     }
-  }, [target.container, target.cwd, target.path])
+  }, [fileContainer, target.cwd, target.path])
 
   const loadDiff = useCallback(
     async (options: LoadDiffOptions = {}): Promise<void> => {
@@ -653,6 +707,36 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   }, [canShowImage, loadImage])
 
   useEffect(() => {
+    if (!showEnvironmentRecovery) return
+
+    const request = environmentSuggestionsRequestRef.current + 1
+    environmentSuggestionsRequestRef.current = request
+    setEnvironmentSuggestions([])
+    setEnvironmentSuggestionsState('loading')
+
+    void appApi
+      .getContainerSuggestions(
+        environmentDiscoveryContainer ? { container: environmentDiscoveryContainer } : undefined
+      )
+      .then((suggestions) => {
+        if (environmentSuggestionsRequestRef.current !== request) return
+        setEnvironmentSuggestions(suggestions)
+        setEnvironmentSuggestionsState('ready')
+      })
+      .catch(() => {
+        if (environmentSuggestionsRequestRef.current !== request) return
+        setEnvironmentSuggestions([])
+        setEnvironmentSuggestionsState('ready')
+      })
+
+    return () => {
+      if (environmentSuggestionsRequestRef.current === request) {
+        environmentSuggestionsRequestRef.current += 1
+      }
+    }
+  }, [environmentDiscoveryContainer, showEnvironmentRecovery])
+
+  useEffect(() => {
     if (!canShowDiff) return
     queueMicrotask(() => void loadDiff())
   }, [canShowDiff, loadDiff])
@@ -734,6 +818,20 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
     onClose()
   }, [dirty, onClose])
+  const tryFileEnvironment = useCallback(
+    (value: string): void => {
+      const choice = alternateEnvironmentChoices.find(
+        (candidateChoice) => candidateChoice.value === value
+      )
+      if (!choice) return
+
+      setEnvironmentOverride({
+        targetKey: targetEnvironmentKey,
+        container: choice.container
+      })
+    },
+    [alternateEnvironmentChoices, targetEnvironmentKey]
+  )
   const continueReview = useCallback((): void => {
     if (!onContinueReview || reviewComments.length === 0) return
     if (dirty && !window.confirm('Discard your unsaved changes?')) return
@@ -1046,7 +1144,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
     try {
       await appApi.copyLocalImage({
-        container: target.container,
+        container: fileContainer,
         cwd: target.cwd,
         path: target.path
       })
@@ -1059,7 +1157,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setEditorError(getErrorMessage(copyError, 'Unable to copy this image.'))
       setCopyState('error')
     }
-  }, [canShowImage, copyState, target.container, target.cwd, target.path, visibleLoadState])
+  }, [canShowImage, copyState, fileContainer, target.cwd, target.path, visibleLoadState])
 
   return (
     <div
@@ -1343,19 +1441,39 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                     <FileCode2 aria-hidden="true" />
                   )}
                   <p>{editorError ?? diffError}</p>
-                  <Button
-                    callback={() => {
-                      if (canShowImage) void loadImage()
-                      else {
-                        void loadFile()
-                        if (showFileDiff) void loadDiff()
-                      }
-                    }}
-                    icon={<RefreshCw />}
-                    label="Try again"
-                    size="small"
-                    theme="secondary"
-                  />
+                  <div className="file-editor-dialog__state-actions">
+                    <Button
+                      callback={() => {
+                        if (canShowImage) void loadImage()
+                        else {
+                          void loadFile()
+                          if (showFileDiff) void loadDiff()
+                        }
+                      }}
+                      icon={<RefreshCw />}
+                      label="Try again"
+                      size="small"
+                      theme="secondary"
+                    />
+                    {showEnvironmentRecovery && (
+                      <Dropdown
+                        aria-label="Try reading from another environment"
+                        appearance="inline"
+                        disabled={environmentSuggestionsState === 'loading'}
+                        emptyContent="No other environments found."
+                        icon={<Monitor aria-hidden="true" />}
+                        options={environmentOptions}
+                        size="small"
+                        value={fileEnvironmentKey}
+                        valueContent={
+                          environmentSuggestionsState === 'loading'
+                            ? 'Checking environments…'
+                            : 'Try another environment'
+                        }
+                        onChange={tryFileEnvironment}
+                      />
+                    )}
+                  </div>
                 </div>
               )}
 
