@@ -1,7 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import type { AppContainerTarget } from '../../../shared/app'
-import { getCurrentContainerHostBridge } from '../../currentContainer'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
 import { getCodexAccountViewCommand } from './CodexAccountView'
@@ -145,11 +144,10 @@ export class CodexAppServerClient {
   }
 
   private initialize = async (): Promise<void> => {
-    const usePathCodex =
-      this.container?.kind === 'container' || Boolean(await getCurrentContainerHostBridge())
-    const appServerCommand = getAppServerCommand(usePathCodex ? 'codex' : getCodexExecutable(), {
-      container: this.container
-    })
+    const appServerCommand = getAppServerCommand(
+      this.container?.kind === 'container' ? 'codex' : getCodexExecutable(),
+      { container: this.container }
+    )
     const hostCommand = await getHostCommand(appServerCommand.command, appServerCommand.args, {
       container: this.container,
       env: process.env

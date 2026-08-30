@@ -930,7 +930,7 @@ const isProviderAvailableInSource = async (
   container: AppContainerTarget | null | undefined
 ): Promise<boolean> => {
   if (providerId === 'codex') {
-    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
+    if (container?.kind === 'container') {
       return isCommandAvailableInSource('codex', container)
     }
 

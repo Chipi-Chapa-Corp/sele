@@ -249,6 +249,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   return (
     <article
       ref={itemRef}
+      data-chat-id={chat.id}
       className={`chat-list-item${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
       draggable={editingName ? false : draggable}
       onDragEnd={onDragEnd}

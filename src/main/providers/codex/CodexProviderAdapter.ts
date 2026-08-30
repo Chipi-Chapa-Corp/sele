@@ -75,11 +75,6 @@ import {
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
 import {
-  findCodexUserMessageTurnIndex,
-  getCodexEditHistoryMutation,
-  type CodexThreadHistoryMode
-} from './CodexThreadHistory'
-import {
   isCodexTurnTerminal,
   isMatchingCodexPendingTurn,
   mergeCodexStreamedText,
@@ -138,7 +133,9 @@ type CodexThreadStatus =
 type CodexThread = {
   id: string
   name?: string | null
-  historyMode?: CodexThreadHistoryMode
+  historyMode?: 'legacy' | 'paginated'
+  /** Global index of the first turn held in this in-memory tail window. */
+  turnWindowStartIndex?: number
   parentThreadId?: string | null
   agentNickname?: string | null
   agentRole?: string | null
@@ -278,6 +275,7 @@ type ThreadStartResponse = {
 
 type ThreadResumeResponse = {
   thread: CodexThread
+  initialTurnsPage?: { data: CodexTurn[] } | null
 }
 
 type ThreadForkResponse = {
@@ -1912,10 +1910,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
 
-    // Live and mutating chats already have an authoritative in-memory model. Slice its raw turns
-    // before rendering so updates still have the same bounded renderer contract.
+    // Live chats keep either the complete thread or a contiguous tail window. The latter can
+    // answer latest/overlapping reads; older pages still come from the paginated history API.
     const cachedThread = this.threads.get(chatId)
-    if (cachedThread) return this.createChatDetail(cachedThread, { turnWindow: window })
+    if (
+      cachedThread &&
+      (cachedThread.turnWindowStartIndex == null ||
+        window.startIndex == null ||
+        window.startIndex >= cachedThread.turnWindowStartIndex)
+    ) {
+      return this.createChatDetail(cachedThread, { turnWindow: window })
+    }
 
     // Metadata and transcript are deliberately separate reads. `includeTurns: false` avoids the
     // app-server's deprecated full-history hydration path.
@@ -2753,17 +2758,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   editMessage = (
     chatId: string,
-    messageId: string,
+    editTargetId: string,
     message: string,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId, options), () =>
-      this.editMessageInContext(chatId, messageId, message, options)
+      this.editMessageInContext(chatId, editTargetId, message, options)
     )
 
   private editMessageInContext = async (
     chatId: string,
-    messageId: string,
+    targetTurnId: string,
     message: string,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
@@ -2773,49 +2778,92 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot edit a message to empty content')
     }
 
-    if (!this.threads.has(chatId)) {
-      await this.getChat(chatId)
-    }
-
-    let thread = this.threads.get(chatId)
-    if (!thread) throw new Error('Unable to load chat for editing')
-
+    let thread = await this.resumeThreadForEdit(
+      chatId,
+      options,
+      this.threads.get(chatId)?.cwd ?? null
+    )
     await this.stopActiveTurn(chatId, { startQueuedTurn: false })
     thread = this.threads.get(chatId) ?? thread
 
-    thread = await this.resumeThreadForMutation(chatId, options, thread.cwd ?? null)
-
-    const targetTurnIndex = findCodexUserMessageTurnIndex(thread.turns, messageId)
-    if (targetTurnIndex < 0) throw new Error('Message cannot be edited')
-
-    const numTurns = thread.turns.length - targetTurnIndex
-    if (numTurns < 1) throw new Error('Message cannot be edited')
-
-    const rolledBackTurnIds = new Set(thread.turns.slice(targetTurnIndex).map((turn) => turn.id))
-    const targetTurn = thread.turns[targetTurnIndex]
-    if (!targetTurn) throw new Error('Message cannot be edited')
-    const historyMutation = getCodexEditHistoryMutation(
-      chatId,
-      thread.historyMode,
-      targetTurn.id,
-      numTurns
+    const cachedCatalog = this.paginatedTurnCatalogs.get(chatId)?.turns
+    const turnCatalog = (cachedCatalog ?? thread.turns).filter(
+      (turn) =>
+        turn.status !== 'queued' &&
+        !turn.id.startsWith('pending:') &&
+        !turn.id.startsWith('queued:')
     )
+    const targetTurnIndex = turnCatalog.findIndex((turn) => turn.id === targetTurnId)
+    const rolledBackTurnIds = new Set(
+      targetTurnIndex < 0
+        ? [targetTurnId]
+        : turnCatalog.slice(targetTurnIndex).map((turn) => turn.id)
+    )
+    if (thread.historyMode === 'paginated') {
+      thread.turns.forEach((turn) => {
+        if (
+          turn.status !== 'queued' &&
+          !turn.id.startsWith('pending:') &&
+          !turn.id.startsWith('queued:')
+        ) {
+          rolledBackTurnIds.add(turn.id)
+        }
+      })
+    }
+    if (thread.historyMode !== 'paginated' && targetTurnIndex < 0) {
+      throw new Error('Message cannot be edited')
+    }
+
+    const historyMutation =
+      thread.historyMode === 'paginated'
+        ? {
+            method: 'thread/revert' as const,
+            params: { threadId: chatId, beforeTurnId: targetTurnId }
+          }
+        : {
+            method: 'thread/rollback' as const,
+            params: { threadId: chatId, numTurns: turnCatalog.length - targetTurnIndex }
+          }
     const historyMutationResponse = await this.client.request<ThreadHistoryMutationResponse>(
       historyMutation.method,
       historyMutation.params
     )
-    const [cwd, name] = await Promise.all([
+
+    const retainedCatalog =
+      targetTurnIndex >= 0
+        ? turnCatalog.slice(0, targetTurnIndex)
+        : await loadCodexTurnCatalog(
+            (method, params) => this.client.request(method, params),
+            chatId
+          )
+    const retainedTurnStartIndex = Math.max(
+      0,
+      retainedCatalog.length - (rendererChatUpdateTurnLimit - 1)
+    )
+    const [cwd, name, retainedTurns] = await Promise.all([
       this.resolveThreadCwd(historyMutationResponse.thread, thread.cwd ?? null),
-      this.resolveThreadName(historyMutationResponse.thread)
+      this.resolveThreadName(historyMutationResponse.thread),
+      hydrateCodexTurnRange(
+        (method, params) => this.client.request(method, params),
+        chatId,
+        retainedCatalog,
+        retainedTurnStartIndex,
+        retainedCatalog.length
+      )
     ])
     this.rememberRolledBackTurns(chatId, rolledBackTurnIds)
     this.cacheThread({
       ...historyMutationResponse.thread,
       name,
       cwd,
-      turns: thread.turns.slice(0, targetTurnIndex)
+      historyMode: historyMutationResponse.thread.historyMode ?? thread.historyMode,
+      turns: retainedTurns,
+      turnWindowStartIndex: retainedTurnStartIndex
     })
-    this.emitChatUpdated(chatId)
+    this.paginatedTurnCatalogs.set(chatId, {
+      threadUpdatedAt: historyMutationResponse.thread.updatedAt,
+      turns: retainedCatalog.map((turn) => ({ ...turn, items: [] }))
+    })
 
     this.pausedQueuedTurnThreads.delete(chatId)
     const pendingTurn = this.addPendingTurn(chatId, text, options)
@@ -2829,7 +2877,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ...getTurnAccessOptions(options)
       })
 
-      this.allowRolledBackTurn(chatId, started.turn.id)
       this.reconcileStartedTurn(chatId, pendingTurn?.id ?? null, started.turn)
     } catch (error) {
       if (pendingTurn) this.removePendingTurn(chatId, pendingTurn.id)
@@ -3191,6 +3238,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): ProviderChatDetail => {
     const allRenderableTurns = this.getRenderableTurns(thread)
     const allPendingMessages = this.getProviderPendingMessages(thread.id)
+    const loadedTurnStartIndex = thread.turnWindowStartIndex ?? 0
     let renderableTurns = allRenderableTurns
     let pendingMessages = allPendingMessages
     let itemsStartTurnIndex: number | undefined
@@ -3201,21 +3249,26 @@ export class CodexProviderAdapter implements ProviderAdapter {
       turnCount = options.selectedTurnWindow.totalCount
       pendingMessages = options.selectedTurnWindow.pendingMessages
     } else if (options.turnWindow) {
-      turnCount = allRenderableTurns.length + allPendingMessages.length
+      const loadedTurnEndIndex = loadedTurnStartIndex + allRenderableTurns.length
+      turnCount = loadedTurnEndIndex + allPendingMessages.length
       const limit = Math.max(1, Math.floor(options.turnWindow.limit))
-      itemsStartTurnIndex =
+      const requestedStartIndex =
         options.turnWindow.startIndex == null
           ? Math.max(0, turnCount - limit)
           : Math.max(0, Math.min(Math.floor(options.turnWindow.startIndex), turnCount))
+      itemsStartTurnIndex = Math.max(loadedTurnStartIndex, requestedStartIndex)
       const endIndex = Math.min(turnCount, itemsStartTurnIndex + limit)
       renderableTurns = allRenderableTurns.slice(
-        itemsStartTurnIndex,
-        Math.min(allRenderableTurns.length, endIndex)
+        Math.max(0, itemsStartTurnIndex - loadedTurnStartIndex),
+        Math.max(0, Math.min(allRenderableTurns.length, endIndex - loadedTurnStartIndex))
       )
       pendingMessages = allPendingMessages.slice(
-        Math.max(0, itemsStartTurnIndex - allRenderableTurns.length),
-        Math.max(0, endIndex - allRenderableTurns.length)
+        Math.max(0, itemsStartTurnIndex - loadedTurnEndIndex),
+        Math.max(0, endIndex - loadedTurnEndIndex)
       )
+    } else if (thread.turnWindowStartIndex != null) {
+      itemsStartTurnIndex = loadedTurnStartIndex
+      turnCount = loadedTurnStartIndex + allRenderableTurns.length + allPendingMessages.length
     }
 
     return {
@@ -3253,7 +3306,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private cacheThread = (thread: CodexThread): void => {
     this.threads.set(thread.id, thread)
-    this.paginatedTurnCatalogs.delete(thread.id)
+    if (thread.turnWindowStartIndex == null) this.paginatedTurnCatalogs.delete(thread.id)
   }
 
   private getCachedChatDetail = (threadId: string): ProviderChatDetail | null => {
@@ -3277,14 +3330,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.removeQueuedTurns(threadId, turnIds)
     this.removeSteeringMessagesForTurnIds(threadId, turnIds)
     this.removeHiddenPendingMessagesForTurnIds(threadId, turnIds)
-  }
-
-  private allowRolledBackTurn = (threadId: string, turnId: string): void => {
-    const rolledBackTurnIds = this.rolledBackTurnIds.get(threadId)
-    if (!rolledBackTurnIds) return
-
-    rolledBackTurnIds.delete(turnId)
-    if (rolledBackTurnIds.size === 0) this.rolledBackTurnIds.delete(threadId)
   }
 
   private isRolledBackTurn = (threadId: string, turnId: string): boolean =>
@@ -3493,6 +3538,49 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.emitChatUpdated(threadId)
   }
 
+  private resumeThreadForEdit = async (
+    threadId: string,
+    options: ProviderTurnOptions | undefined,
+    fallbackCwd: string | null
+  ): Promise<CodexThread> => {
+    const existingThread = this.threads.get(threadId) ?? null
+    const resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
+      threadId,
+      excludeTurns: true,
+      initialTurnsPage: {
+        limit: 1,
+        sortDirection: 'desc',
+        itemsView: 'full'
+      },
+      ...getThreadAccessOptions(options)
+    })
+    const [cwd, name] = await Promise.all([
+      this.resolveThreadCwd(resume.thread, fallbackCwd),
+      this.resolveThreadName(resume.thread)
+    ])
+    const latestTurns = [...(resume.initialTurnsPage?.data ?? [])].reverse()
+    const historyMode = resume.thread.historyMode ?? existingThread?.historyMode
+    const turns = historyMode === 'paginated' ? latestTurns : (existingThread?.turns ?? latestTurns)
+    const catalogTurnCount = this.paginatedTurnCatalogs
+      .get(threadId)
+      ?.turns.filter((turn) => turn.status !== 'queued').length
+    const turnWindowStartIndex =
+      historyMode === 'paginated'
+        ? Math.max(0, (catalogTurnCount ?? turns.length) - turns.length)
+        : existingThread?.turnWindowStartIndex
+    const thread = {
+      ...resume.thread,
+      name,
+      cwd,
+      historyMode,
+      turns,
+      ...(turnWindowStartIndex == null ? {} : { turnWindowStartIndex })
+    }
+
+    this.cacheThread(thread)
+    return thread
+  }
+
   private resumeThreadForMutation = async (
     threadId: string,
     options: ProviderTurnOptions | undefined,
@@ -3512,10 +3600,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...resume.thread,
       name,
       cwd,
+      historyMode: resume.thread.historyMode ?? existingThread?.historyMode,
       status: existingThread?.status ?? resume.thread.status,
       turns: existingThread
         ? existingThread.turns
-        : this.filterRolledBackTurns(threadId, resumedTurns)
+        : this.filterRolledBackTurns(threadId, resumedTurns),
+      ...(existingThread?.turnWindowStartIndex == null
+        ? {}
+        : { turnWindowStartIndex: existingThread.turnWindowStartIndex })
     }
 
     this.cacheThread(thread)
@@ -4714,10 +4806,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
     }
 
-    if (this.isRolledBackTurn(threadId, turn.id)) {
-      if (notification.method !== 'turn/started' || !this.pendingTurnIds.has(threadId)) return
-      this.allowRolledBackTurn(threadId, turn.id)
-    }
+    if (this.isRolledBackTurn(threadId, turn.id)) return
 
     const pendingTurnId = this.getPendingTurnIdForLiveTurn(threadId, turn.id)
 

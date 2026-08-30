@@ -57,7 +57,7 @@ export type CommittedChatUpdate = {
 }
 
 export type EditingMessage =
-  | (Pick<ProviderMessage, 'id' | 'content'> & { type: 'message' })
+  | (Pick<ProviderMessage, 'id' | 'content'> & { type: 'message'; targetId: string })
   | (Pick<ProviderPendingMessage, 'id' | 'content' | 'kind'> & { type: 'pending' })
 
 export type ApprovalResolutionState = {

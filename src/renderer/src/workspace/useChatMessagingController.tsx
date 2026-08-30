@@ -120,6 +120,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     (message: ProviderMessage): void => {
       if (
         message.role !== 'user' ||
+        message.editTargetId === null ||
         !chatDetail?.capabilities.editMessages ||
         sendInFlightRef.current
       ) {
@@ -130,6 +131,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       setEditingMessage({
         type: 'message',
         id: message.id,
+        targetId: message.editTargetId ?? message.id,
         content: message.content
       })
     },
@@ -309,7 +311,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
             : await providerApi.editMessage(
                 selectedChat.providerId,
                 selectedChat.id,
-                editingMessage.id,
+                editingMessage.targetId,
                 serializedMessage,
                 turnOptions
               )
@@ -660,6 +662,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         providerUpdateInProgress ||
         !selectedProviderId ||
         !selectedChatId ||
+        message.editTargetId === null ||
         !chatDetail?.capabilities.editMessages ||
         sendInFlightRef.current
       ) {
@@ -715,7 +718,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         const detail = await providerApi.editMessage(
           selectedProviderId,
           selectedChatId,
-          message.id,
+          message.editTargetId ?? message.id,
           review ? serializeReviewMessage(message.content, review) : message.content,
           turnOptions
         )

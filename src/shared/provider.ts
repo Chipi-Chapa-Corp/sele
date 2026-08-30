@@ -588,6 +588,8 @@ export type ProviderMessageAttachment =
 export type ProviderMessage = {
   type: 'message'
   id: string
+  /** Provider-native mutation target. Null means this rendered user message is not editable. */
+  editTargetId?: string | null
   role: 'user' | 'assistant'
   content: string
   contentLoaded?: boolean

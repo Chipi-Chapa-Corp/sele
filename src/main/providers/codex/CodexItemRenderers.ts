@@ -1837,6 +1837,7 @@ const renderChatItems = (
               chatItems.push({
                 type: 'message',
                 id: itemId,
+                editTargetId: null,
                 role: 'user',
                 content,
                 attachments,
@@ -1849,6 +1850,8 @@ const renderChatItems = (
             chatItems.push({
               type: 'message',
               id: itemId,
+              editTargetId:
+                turn.id.startsWith('pending:') || turn.id.startsWith('queued:') ? null : turn.id,
               role: 'user',
               content,
               attachments,

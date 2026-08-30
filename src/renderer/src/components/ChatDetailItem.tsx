@@ -2226,7 +2226,12 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
           ? getPendingMessageLabel(item)
           : (item.label ?? null)
     const pendingActionLabel = pending ? getPendingMessageActionLabel(item) : 'pending'
-    const canEdit = !pending && role === 'user' && canEditOwnMessages && Boolean(onEditMessage)
+    const canEdit =
+      !pending &&
+      role === 'user' &&
+      item.editTargetId !== null &&
+      canEditOwnMessages &&
+      Boolean(onEditMessage)
     const canEditPending = pending && Boolean(onEditPendingMessage)
     const canDelete = pending && Boolean(onDeletePendingMessage)
     const canSteer = pending && item.kind === 'queued' && Boolean(onSteerPendingMessage)
