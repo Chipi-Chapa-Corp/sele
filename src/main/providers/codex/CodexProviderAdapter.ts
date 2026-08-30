@@ -74,7 +74,11 @@ import {
 } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
-import { getCodexEditHistoryMutation, type CodexThreadHistoryMode } from './CodexThreadHistory'
+import {
+  findCodexUserMessageTurnIndex,
+  getCodexEditHistoryMutation,
+  type CodexThreadHistoryMode
+} from './CodexThreadHistory'
 import {
   isCodexTurnTerminal,
   isMatchingCodexPendingTurn,
@@ -2781,7 +2785,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     thread = await this.resumeThreadForMutation(chatId, options, thread.cwd ?? null)
 
-    const targetTurnIndex = this.findUserMessageTurnIndex(thread, messageId)
+    const targetTurnIndex = findCodexUserMessageTurnIndex(thread.turns, messageId)
     if (targetTurnIndex < 0) throw new Error('Message cannot be edited')
 
     const numTurns = thread.turns.length - targetTurnIndex
@@ -3307,13 +3311,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     return turns.filter((turn) => !rolledBackTurnIds.has(turn.id))
   }
-
-  private findUserMessageTurnIndex = (thread: CodexThread, messageId: string): number =>
-    thread.turns.findIndex((turn) =>
-      turn.items.some(
-        (item) => item.type === 'userMessage' && `${turn.id}:${item.id}` === messageId
-      )
-    )
 
   private withResolvedThreadName = (
     thread: CodexThread,
