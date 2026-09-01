@@ -117,6 +117,7 @@ export type SettingsPanelProps = {
     value: AppChatDropdownSettings[Key]
   ) => void
   handleChatUsageDisplayChange: (displayUsage: AppChatUsageDisplay) => void
+  handleCodexRecommendedPluginsChange: (showRecommendedPlugins: boolean) => void
   handleContinuePromptChange: (continuePrompt: string) => void
   handleDeleteProviderAccount: (accountId: string) => Promise<void>
   handleGitCommitMessageGenerationChange: (
@@ -361,6 +362,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     handleChatDropdownPreferenceChange,
     handleChatForcedDropdownChange,
     handleChatUsageDisplayChange,
+    handleCodexRecommendedPluginsChange,
     handleContinuePromptChange,
     handleDeleteProviderAccount,
     handleGitCommitMessageGenerationChange,
@@ -743,6 +745,31 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
             )}
           </div>
         </section>
+        {newSessionProvider === 'codex' && (
+          <section className="settings-dialog__section" aria-labelledby="settings-providers-ads">
+            <h2 className="settings-dialog__section-heading" id="settings-providers-ads">
+              Ads
+            </h2>
+            <div className="settings-dialog__section-cards">
+              <div className="settings-dialog__field">
+                <div className="settings-dialog__field-header">
+                  <h3 id="settings-provider-codex-recommended-plugins">
+                    Show recommended plugins to agent
+                  </h3>
+                  <p>Include the Codex list of available recommended plugins in new agent turns.</p>
+                </div>
+                <Switch
+                  className="settings-switch"
+                  aria-labelledby="settings-provider-codex-recommended-plugins"
+                  checked={settingsPanelSettings.providers.codex.showRecommendedPlugins}
+                  onChange={(event) =>
+                    handleCodexRecommendedPluginsChange(event.currentTarget.checked)
+                  }
+                />
+              </div>
+            </div>
+          </section>
+        )}
         {providerResourcesError && (
           <section className="settings-dialog__section" aria-labelledby="settings-providers-status">
             <h2 className="settings-dialog__section-heading" id="settings-providers-status">

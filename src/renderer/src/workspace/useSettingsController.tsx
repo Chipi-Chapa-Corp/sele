@@ -278,6 +278,18 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
       }
     }))
   }
+  const handleCodexRecommendedPluginsChange = (showRecommendedPlugins: boolean): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      providers: {
+        ...currentSettings.providers,
+        codex: {
+          ...currentSettings.providers.codex,
+          showRecommendedPlugins
+        }
+      }
+    }))
+  }
   const handleAppearanceZoomLevelInputChange = (value: string): void => {
     setAppearanceZoomLevelInputDraft({ key: settingsScopeKey, value })
 
@@ -783,6 +795,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handleChatDropdownPreferenceChange,
     handleChatForcedDropdownChange,
     handleChatUsageDisplayChange,
+    handleCodexRecommendedPluginsChange,
     handleContinuePromptChange,
     handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange,

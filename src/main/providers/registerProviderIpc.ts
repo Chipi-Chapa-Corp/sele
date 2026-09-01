@@ -923,6 +923,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     serviceTier?: unknown
     review?: unknown
     sandboxMode?: unknown
+    showRecommendedPlugins?: unknown
     skills?: unknown
   }
   const approvalPolicy = options.approvalPolicy
@@ -935,6 +936,11 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
 
   const sandboxMode = options.sandboxMode
   if (!isProviderSandboxMode(sandboxMode)) throw new Error('Invalid sandbox mode')
+
+  const showRecommendedPlugins = options.showRecommendedPlugins
+  if (showRecommendedPlugins != null && typeof showRecommendedPlugins !== 'boolean') {
+    throw new Error('Invalid recommended plugins setting')
+  }
 
   const cwd = options.cwd
   if (cwd != null && (typeof cwd !== 'string' || !isAbsolute(cwd))) {
@@ -992,6 +998,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     serviceTier: serviceTier ?? null,
     review: requireReview(options.review),
     sandboxMode,
+    showRecommendedPlugins: showRecommendedPlugins === true,
     skills: requireSkillInputs(options.skills)
   }
 }

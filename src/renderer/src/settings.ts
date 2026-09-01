@@ -134,6 +134,10 @@ export type AppBrowserSettings = {
   view: AppBrowserView
 }
 
+export type AppCodexProviderSettings = {
+  showRecommendedPlugins: boolean
+}
+
 export const appAppearanceZoomLevelDefault = appWindowZoomLevelDefault
 export const appAppearanceZoomLevelMin = appWindowZoomLevelMin
 export const appAppearanceZoomLevelMax = appWindowZoomLevelMax
@@ -186,6 +190,9 @@ export type AppSettings = {
   browser: AppBrowserSettings
   links: AppExternalLinkSettings
   performance: AppPerformanceSettings
+  providers: {
+    codex: AppCodexProviderSettings
+  }
   git: {
     commitModels: AppGitCommitModels
     errorResolutionPrompt: string
@@ -391,6 +398,11 @@ export const defaultAppSettings: AppSettings = {
     view: 'project'
   },
   performance: defaultAppPerformanceSettings,
+  providers: {
+    codex: {
+      showRecommendedPlugins: false
+    }
+  },
   git: {
     commitModels: {},
     errorResolutionPrompt: defaultGitErrorResolutionPrompt,
@@ -986,6 +998,16 @@ export const readStoredAppSettings = (): AppSettings => {
       !Array.isArray(parsedValue.performance)
         ? (parsedValue.performance as Record<string, unknown>)
         : {}
+    const providers =
+      parsedValue.providers &&
+      typeof parsedValue.providers === 'object' &&
+      !Array.isArray(parsedValue.providers)
+        ? (parsedValue.providers as Record<string, unknown>)
+        : {}
+    const codexProvider =
+      providers.codex && typeof providers.codex === 'object' && !Array.isArray(providers.codex)
+        ? (providers.codex as Record<string, unknown>)
+        : {}
     const git =
       parsedValue.git && typeof parsedValue.git === 'object' && !Array.isArray(parsedValue.git)
         ? (parsedValue.git as Record<string, unknown>)
@@ -1084,6 +1106,14 @@ export const readStoredAppSettings = (): AppSettings => {
           performance.recentlyOpenedFilesLimit
         ),
         recentsMessageLimit: getStoredRecentsMessageLimit(performance.recentsMessageLimit)
+      },
+      providers: {
+        codex: {
+          showRecommendedPlugins:
+            typeof codexProvider.showRecommendedPlugins === 'boolean'
+              ? codexProvider.showRecommendedPlugins
+              : defaultAppSettings.providers.codex.showRecommendedPlugins
+        }
       },
       git: {
         commitModels: hasOwnProperty(git, 'commitModels')
@@ -1258,6 +1288,9 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       browser?: Partial<AppBrowserSettings>
       links?: Partial<AppExternalLinkSettings>
       performance?: Partial<AppPerformanceSettings>
+      providers?: {
+        codex?: Partial<AppCodexProviderSettings>
+      }
       git?: {
         commitModels?: AppGitCommitModels
         errorResolutionPrompt?: string
@@ -1417,6 +1450,17 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
     if (Object.keys(storedPerformance).length > 0) {
       storedSettings.performance = storedPerformance
+    }
+
+    if (
+      settings.providers.codex.showRecommendedPlugins !==
+      defaultAppSettings.providers.codex.showRecommendedPlugins
+    ) {
+      storedSettings.providers = {
+        codex: {
+          showRecommendedPlugins: settings.providers.codex.showRecommendedPlugins
+        }
+      }
     }
 
     const storedGit: {

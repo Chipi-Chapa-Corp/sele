@@ -1188,6 +1188,10 @@ const getTurnModelOptions = (options?: ProviderTurnOptions): CodexTurnModelOptio
   serviceTier: options?.serviceTier ?? null
 })
 
+const getRecommendedPluginsConfig = (options?: ProviderTurnOptions): Record<string, boolean> => ({
+  'features.recommended_plugins': options?.showRecommendedPlugins === true
+})
+
 const getThreadAccessOptions = (options?: ProviderTurnOptions): CodexThreadAccessOptions => {
   const approvalPolicy = getApprovalPolicy(options)
   const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
@@ -2263,6 +2267,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         approvalPolicy: 'never',
         sandbox: 'read-only',
         config: {
+          ...getRecommendedPluginsConfig(options),
           'features.enable_fanout': false,
           'features.hooks': false,
           'features.multi_agent': false,
@@ -2385,6 +2390,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
       cwd: options?.cwd,
+      config: getRecommendedPluginsConfig(options),
       ...getThreadAccessOptions(options),
       ...getThreadModelOptions(options)
     })
@@ -2544,6 +2550,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const fork = await this.client.request<ThreadForkResponse>('thread/fork', {
       threadId: chatId,
+      config: getRecommendedPluginsConfig(options),
       ...getThreadAccessOptions(options),
       ...getThreadModelOptions(options)
     })
@@ -3434,6 +3441,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       approvalPolicy: 'never',
       sandbox: 'read-only',
       config: {
+        'features.recommended_plugins': false,
         'features.enable_fanout': false,
         'features.hooks': false,
         'features.multi_agent': false,
@@ -3577,6 +3585,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const existingThread = this.threads.get(threadId) ?? null
     const resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
       threadId,
+      config: getRecommendedPluginsConfig(options),
       excludeTurns: true,
       initialTurnsPage: {
         limit: 1,
@@ -3685,6 +3694,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const existingThread = this.threads.get(threadId) ?? null
     const resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
       threadId,
+      config: getRecommendedPluginsConfig(options),
       ...getThreadAccessOptions(options)
     })
     const [cwd, name, resumedTurns] = await Promise.all([

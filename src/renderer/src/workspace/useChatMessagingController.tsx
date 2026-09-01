@@ -198,6 +198,11 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         ? { reasoningEffort: effectiveReasoningEffort }
         : {}),
       sandboxMode: effectiveSandboxMode,
+      ...(configProviderId === 'codex'
+        ? {
+            showRecommendedPlugins: effectiveAppSettings.providers.codex.showRecommendedPlugins
+          }
+        : {}),
       serviceTier: effectiveServiceTier
     })
   const getGitTurnOptions = (): ProviderTurnOptions => {

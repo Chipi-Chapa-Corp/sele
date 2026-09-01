@@ -868,6 +868,7 @@ export type ProviderTurnOptions = {
   serviceTier: ProviderServiceTier | null
   review?: ProviderReview
   sandboxMode: ProviderSandboxMode
+  showRecommendedPlugins?: boolean
   skills?: ProviderSkillInput[]
 }
 
