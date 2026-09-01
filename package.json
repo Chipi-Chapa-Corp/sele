@@ -12,6 +12,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test:codex-history": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/codex/CodexEditHistory.test.mjs src/main/providers/codex/CodexRolloutHistoryChain.test.mjs",
     "test:e2e": "npm run build && playwright test --config e2e/playwright.config.cjs",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",

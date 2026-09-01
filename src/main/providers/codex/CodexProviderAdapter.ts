@@ -68,9 +68,12 @@ import {
 import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProviderUpdate'
 import { loadRolloutContextUsage, loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
 import {
+  CodexTurnWindowMismatchError,
   hydrateCodexTurnRange,
   loadCodexTurnCatalog,
-  retryCodexTurnWindowWithFreshCatalog
+  planCodexHistoryEdit,
+  retryCodexTurnWindowWithFreshCatalog,
+  selectCodexTurnRangeFromSnapshots
 } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
@@ -2459,6 +2462,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot continue a chat with an empty message')
     }
 
+    // The renderer may reopen a recent chat from its own cache after the provider cache was
+    // recreated. Load the pre-resume transcript first: thread/resume can rotate to a new rollout
+    // segment whose history projection is briefly incomplete.
+    if (!this.threads.has(chatId)) await this.getChat(chatId)
+
     if (
       respectQueuedTurns &&
       ((this.queuedTurnsByThread.get(chatId)?.length ?? 0) > 0 ||
@@ -2787,32 +2795,69 @@ export class CodexProviderAdapter implements ProviderAdapter {
     thread = this.threads.get(chatId) ?? thread
 
     const cachedCatalog = this.paginatedTurnCatalogs.get(chatId)?.turns
-    const turnCatalog = (cachedCatalog ?? thread.turns).filter(
+    const loadedCatalogFallback = thread.turnWindowStartIndex
+      ? []
+      : this.filterRolledBackTurns(chatId, thread.turns)
+    let turnCatalog = this.filterRolledBackTurns(
+      chatId,
+      cachedCatalog ?? loadedCatalogFallback
+    ).filter(
       (turn) =>
         turn.status !== 'queued' &&
         !turn.id.startsWith('pending:') &&
         !turn.id.startsWith('queued:')
     )
-    const targetTurnIndex = turnCatalog.findIndex((turn) => turn.id === targetTurnId)
-    const rolledBackTurnIds = new Set(
-      targetTurnIndex < 0
-        ? [targetTurnId]
-        : turnCatalog.slice(targetTurnIndex).map((turn) => turn.id)
-    )
     if (thread.historyMode === 'paginated') {
-      thread.turns.forEach((turn) => {
-        if (
-          turn.status !== 'queued' &&
-          !turn.id.startsWith('pending:') &&
-          !turn.id.startsWith('queued:')
-        ) {
-          rolledBackTurnIds.add(turn.id)
-        }
-      })
+      const refreshedCatalog = await loadCodexTurnCatalog(
+        (method, params) => this.client.request(method, params),
+        chatId
+      )
+        .then((turns) => this.filterRolledBackTurns(chatId, turns))
+        .catch(() => null)
+      // A transient projector response must never shrink a history snapshot that Sele has already
+      // shown. Prefer the refresh only when it contains the known catalog as an ordered prefix.
+      if (
+        refreshedCatalog &&
+        refreshedCatalog.length >= turnCatalog.length &&
+        turnCatalog.every((turn, index) => refreshedCatalog[index]?.id === turn.id)
+      ) {
+        turnCatalog = refreshedCatalog
+      }
     }
-    if (thread.historyMode !== 'paginated' && targetTurnIndex < 0) {
-      throw new Error('Message cannot be edited')
-    }
+
+    const editPlan = planCodexHistoryEdit(
+      turnCatalog,
+      thread.turns,
+      thread.turnWindowStartIndex ?? 0,
+      targetTurnId
+    )
+
+    const retainedTurnStartIndex = Math.max(
+      0,
+      editPlan.retainedCatalog.length - (rendererChatUpdateTurnLimit - 1)
+    )
+    // Hydrate the retained tail before thread/revert. The mutation can rotate the rollout and its
+    // paginated projection may temporarily be empty, so post-revert history is not a safe source.
+    const retainedCatalogWindow = editPlan.retainedCatalog.slice(retainedTurnStartIndex)
+    const loadedTurnsById = new Map(
+      thread.turns
+        .filter(
+          (turn) =>
+            turn.status !== 'queued' &&
+            !turn.id.startsWith('pending:') &&
+            !turn.id.startsWith('queued:')
+        )
+        .map((turn) => [turn.id, turn])
+    )
+    const canReuseLoadedTurns = retainedCatalogWindow.every((turn) => loadedTurnsById.has(turn.id))
+    const retainedTurns = canReuseLoadedTurns
+      ? retainedCatalogWindow.map((turn) => loadedTurnsById.get(turn.id)!)
+      : await this.hydrateCodexEditTurnRange(
+          chatId,
+          editPlan.retainedCatalog,
+          retainedTurnStartIndex,
+          editPlan.retainedCatalog.length
+        )
 
     const historyMutation =
       thread.historyMode === 'paginated'
@@ -2822,38 +2867,24 @@ export class CodexProviderAdapter implements ProviderAdapter {
           }
         : {
             method: 'thread/rollback' as const,
-            params: { threadId: chatId, numTurns: turnCatalog.length - targetTurnIndex }
+            params: {
+              threadId: chatId,
+              numTurns: turnCatalog.length - editPlan.targetTurnIndex
+            }
           }
     const historyMutationResponse = await this.client.request<ThreadHistoryMutationResponse>(
       historyMutation.method,
       historyMutation.params
     )
 
-    const retainedCatalog =
-      targetTurnIndex >= 0
-        ? turnCatalog.slice(0, targetTurnIndex)
-        : await loadCodexTurnCatalog(
-            (method, params) => this.client.request(method, params),
-            chatId
-          )
-    const retainedTurnStartIndex = Math.max(
-      0,
-      retainedCatalog.length - (rendererChatUpdateTurnLimit - 1)
-    )
-    const [cwd, name, retainedTurns] = await Promise.all([
+    const [cwd, name] = await Promise.all([
       this.resolveThreadCwd(historyMutationResponse.thread, thread.cwd ?? null),
-      this.resolveThreadName(historyMutationResponse.thread),
-      hydrateCodexTurnRange(
-        (method, params) => this.client.request(method, params),
-        chatId,
-        retainedCatalog,
-        retainedTurnStartIndex,
-        retainedCatalog.length
-      )
+      this.resolveThreadName(historyMutationResponse.thread)
     ])
-    this.rememberRolledBackTurns(chatId, rolledBackTurnIds)
+    this.rememberRolledBackTurns(chatId, editPlan.rolledBackTurnIds)
     this.cacheThread({
       ...historyMutationResponse.thread,
+      createdAt: thread.createdAt,
       name,
       cwd,
       historyMode: historyMutationResponse.thread.historyMode ?? thread.historyMode,
@@ -2862,7 +2893,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
     this.paginatedTurnCatalogs.set(chatId, {
       threadUpdatedAt: historyMutationResponse.thread.updatedAt,
-      turns: retainedCatalog.map((turn) => ({ ...turn, items: [] }))
+      turns: editPlan.retainedCatalog.map((turn) => ({ ...turn, items: [] }))
     })
 
     this.pausedQueuedTurnThreads.delete(chatId)
@@ -3560,16 +3591,34 @@ export class CodexProviderAdapter implements ProviderAdapter {
     ])
     const latestTurns = [...(resume.initialTurnsPage?.data ?? [])].reverse()
     const historyMode = resume.thread.historyMode ?? existingThread?.historyMode
-    const turns = historyMode === 'paginated' ? latestTurns : (existingThread?.turns ?? latestTurns)
+    const turns =
+      historyMode === 'paginated' && existingThread
+        ? latestTurns.reduce((currentTurns, latestTurn) => {
+            const existingTurnIndex = currentTurns.findIndex((turn) => turn.id === latestTurn.id)
+            if (existingTurnIndex < 0) return [...currentTurns, latestTurn]
+
+            const nextTurns = [...currentTurns]
+            nextTurns[existingTurnIndex] = this.mergeTurn(
+              threadId,
+              nextTurns[existingTurnIndex],
+              latestTurn
+            )
+            return nextTurns
+          }, existingThread.turns)
+        : historyMode === 'paginated'
+          ? latestTurns
+          : (existingThread?.turns ?? latestTurns)
     const catalogTurnCount = this.paginatedTurnCatalogs
       .get(threadId)
       ?.turns.filter((turn) => turn.status !== 'queued').length
     const turnWindowStartIndex =
       historyMode === 'paginated'
-        ? Math.max(0, (catalogTurnCount ?? turns.length) - turns.length)
+        ? (existingThread?.turnWindowStartIndex ??
+          Math.max(0, (catalogTurnCount ?? turns.length) - turns.length))
         : existingThread?.turnWindowStartIndex
     const thread = {
       ...resume.thread,
+      createdAt: existingThread?.createdAt ?? resume.thread.createdAt,
       name,
       cwd,
       historyMode,
@@ -3581,11 +3630,58 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return thread
   }
 
+  private hydrateCodexEditTurnRange = async (
+    threadId: string,
+    turnCatalog: readonly CodexTurn[],
+    startIndex: number,
+    endIndex: number
+  ): Promise<CodexTurn[]> => {
+    try {
+      return await hydrateCodexTurnRange(
+        (method, params) => this.client.request(method, params),
+        threadId,
+        turnCatalog,
+        startIndex,
+        endIndex
+      )
+    } catch (error) {
+      if (!(error instanceof CodexTurnWindowMismatchError)) throw error
+    }
+
+    // Codex can briefly enumerate a turn in its metadata catalog while omitting the same turn from
+    // a cursor-based full-items page. A direct read and the bounded rollout chain are independent
+    // sources. Restricting them to catalogued IDs keeps this fallback safe after prior edits.
+    const response = await this.client.request<ThreadReadResponse>('thread/read', {
+      threadId,
+      includeTurns: true
+    })
+    const [rolloutTurns, structuredTurns] = await Promise.all([
+      loadRolloutHistory(response.thread.path),
+      Promise.resolve(getThreadTurns(response.thread))
+    ])
+    const rolloutTurnsById = new Map(rolloutTurns.map((turn) => [turn.id, turn]))
+    const enrichedStructuredTurns = structuredTurns.map((structuredTurn) => {
+      const rolloutTurn = rolloutTurnsById.get(structuredTurn.id)
+      return rolloutTurn
+        ? mergeStructuredAndRolloutTurn(structuredTurn, rolloutTurn)
+        : structuredTurn
+    })
+
+    return selectCodexTurnRangeFromSnapshots(
+      turnCatalog,
+      startIndex,
+      endIndex,
+      rolloutTurns,
+      enrichedStructuredTurns
+    )
+  }
+
   private resumeThreadForMutation = async (
     threadId: string,
     options: ProviderTurnOptions | undefined,
     fallbackCwd: string | null
   ): Promise<CodexThread> => {
+    if (!this.threads.has(threadId)) await this.getChat(threadId)
     const existingThread = this.threads.get(threadId) ?? null
     const resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
       threadId,
@@ -3598,6 +3694,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     ])
     const thread = {
       ...resume.thread,
+      createdAt: existingThread?.createdAt ?? resume.thread.createdAt,
       name,
       cwd,
       historyMode: resume.thread.historyMode ?? existingThread?.historyMode,

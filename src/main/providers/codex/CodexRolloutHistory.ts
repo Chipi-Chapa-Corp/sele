@@ -1,11 +1,12 @@
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
+import { basename, dirname, join, resolve } from 'node:path'
 import type {
   ProviderChatContextUsage,
   ProviderTokenUsageBreakdown
 } from '../../../shared/provider'
-import type { CodexThreadItem, CodexTurn } from './CodexItemRenderers'
+import type { CodexThreadItem, CodexTurn, CodexUserInput } from './CodexItemRenderers'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls.ts'
 
 type RolloutPatchChange = {
@@ -31,6 +32,8 @@ type RolloutPayload = {
   local_images?: unknown
   last_agent_message?: string
   phase?: 'commentary' | 'final_answer' | null
+  role?: string
+  content?: unknown
   changes?: Record<string, RolloutPatchChange>
   [key: string]: unknown
 }
@@ -43,6 +46,12 @@ type RolloutRecord = {
   created_at?: unknown
   createdAt?: unknown
   [key: string]: unknown
+}
+
+type RolloutHistoryBase = {
+  threadId: string
+  endOrdinalExclusive: number
+  endByteOffset: number
 }
 
 type RolloutEntry = {
@@ -470,6 +479,64 @@ const createAgentMessageItem = (entry: RolloutEntry): CodexThreadItem | null => 
   }
 }
 
+const getResponseMessageContent = (value: unknown): CodexUserInput[] => {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((rawContent): CodexUserInput[] => {
+    const content = getRecordValue(rawContent)
+    if (!content) return []
+
+    if (
+      (content.type === 'input_text' || content.type === 'output_text') &&
+      typeof content.text === 'string' &&
+      content.text.length > 0
+    ) {
+      return [{ type: 'text', text: content.text }]
+    }
+
+    const imageUrl = getStringValue(content.image_url ?? content.url)
+    if (content.type === 'input_image' && imageUrl) return [{ type: 'image', url: imageUrl }]
+
+    const localImagePath = getStringValue(content.path)
+    if (content.type === 'local_image' && localImagePath) {
+      return [{ type: 'localImage', path: localImagePath }]
+    }
+
+    return []
+  })
+}
+
+const createResponseMessageItem = (entry: RolloutEntry): CodexThreadItem | null => {
+  if (entry.record.type !== 'response_item' || entry.payload.type !== 'message') return null
+
+  const content = getResponseMessageContent(entry.payload.content)
+  if (entry.payload.role === 'user') {
+    if (content.length === 0) return null
+    return {
+      type: 'userMessage',
+      id: entry.payload.id ?? `user:${entry.index}`,
+      content,
+      rawToolData: [entry.record]
+    }
+  }
+
+  if (entry.payload.role !== 'assistant') return null
+  const text = content
+    .filter((item): item is Extract<CodexUserInput, { type: 'text' }> => item.type === 'text')
+    .map((item) => item.text)
+    .join('\n')
+    .trim()
+  if (!text) return null
+
+  return {
+    type: 'agentMessage',
+    id: entry.payload.id ?? `agent:${entry.index}`,
+    text,
+    phase: entry.payload.phase ?? 'final_answer',
+    rawToolData: [entry.record]
+  }
+}
+
 const createTaskCompleteFallbackItem = (
   entry: RolloutEntry,
   hasFinalAgentMessage: boolean
@@ -512,11 +579,21 @@ const createTurn = (
     if (!lookup.outputsByKey.has(key)) lookup.outputsByKey.set(key, entry)
   }
   const hasFinalAgentMessage = entries.some(
-    (entry) => entry.payload.type === 'agent_message' && entry.payload.phase === 'final_answer'
+    (entry) =>
+      (entry.payload.type === 'agent_message' && entry.payload.phase === 'final_answer') ||
+      (entry.record.type === 'response_item' &&
+        entry.payload.type === 'message' &&
+        entry.payload.role === 'assistant')
   )
 
   entries.forEach((entry, entryIndex) => {
     const { payload } = entry
+
+    if (entry.record.type === 'response_item' && payload.type === 'message') {
+      const item = createResponseMessageItem(entry)
+      if (item) items.push(item)
+      return
+    }
 
     if (payload.type === 'user_message') {
       const item = createUserMessageItem(entry)
@@ -575,6 +652,11 @@ type RolloutSnapshot = {
   turns: CodexTurn[]
 }
 
+type RolloutFileSnapshot = {
+  historyBase: RolloutHistoryBase | null
+  snapshot: RolloutSnapshot
+}
+
 type CachedRolloutSnapshot = {
   fingerprint: string
   snapshot: Promise<RolloutSnapshot>
@@ -588,17 +670,62 @@ const emptyRolloutSnapshot = (): RolloutSnapshot => ({
 
 const rolloutSnapshotCache = new Map<string, CachedRolloutSnapshot>()
 
-const readRolloutSnapshot = async (rolloutPath: string): Promise<RolloutSnapshot> => {
+const getRolloutHistoryBase = (record: RolloutRecord): RolloutHistoryBase | null => {
+  if (record.type !== 'session_meta') return null
+
+  const historyBase = getRecordValue(record.payload?.history_base ?? record.payload?.historyBase)
+  const threadId = getStringValue(historyBase?.thread_id ?? historyBase?.threadId)
+  const endOrdinalExclusive = historyBase?.end_ordinal_exclusive ?? historyBase?.endOrdinalExclusive
+  const endByteOffset = historyBase?.end_byte_offset ?? historyBase?.endByteOffset
+  if (
+    !threadId ||
+    typeof endOrdinalExclusive !== 'number' ||
+    !Number.isSafeInteger(endOrdinalExclusive) ||
+    endOrdinalExclusive < 0 ||
+    typeof endByteOffset !== 'number' ||
+    !Number.isSafeInteger(endByteOffset) ||
+    endByteOffset < 0
+  ) {
+    return null
+  }
+
+  return { threadId, endOrdinalExclusive, endByteOffset }
+}
+
+const readRolloutFileSnapshot = async (
+  rolloutPath: string,
+  options: { endByteOffset?: number; endOrdinalExclusive?: number } = {}
+): Promise<RolloutFileSnapshot> => {
+  if (options.endByteOffset === 0 || options.endOrdinalExclusive === 0) {
+    return { historyBase: null, snapshot: emptyRolloutSnapshot() }
+  }
+
   const parsed: ParsedRollout = { entries: [], turnModels: new Map() }
   let contextUsage: ProviderChatContextUsage | null = null
   let cwd: string | null = null
+  let historyBase: RolloutHistoryBase | null = null
   let lineIndex = 0
+  const endByteOffset = options.endByteOffset
   const lines = createInterface({
-    input: createReadStream(rolloutPath, { encoding: 'utf8' }),
+    input: createReadStream(rolloutPath, {
+      encoding: 'utf8',
+      ...(endByteOffset == null || endByteOffset <= 0 ? {} : { end: endByteOffset - 1 })
+    }),
     crlfDelay: Infinity
   })
 
   for await (const line of lines) {
+    if (options.endOrdinalExclusive != null && lineIndex >= options.endOrdinalExclusive) {
+      break
+    }
+
+    try {
+      const record = JSON.parse(line) as RolloutRecord
+      historyBase ??= getRolloutHistoryBase(record)
+    } catch {
+      // The regular parser below already treats malformed rows as non-fatal.
+    }
+
     const entry = parseRolloutLine(line, lineIndex, parsed)
     lineIndex += 1
     if (!entry) continue
@@ -613,7 +740,104 @@ const readRolloutSnapshot = async (rolloutPath: string): Promise<RolloutSnapshot
   const turns = [...entriesByTurn.entries()].map(([turnId, turnEntries]) =>
     createTurn(turnId, turnEntries, parsed.turnModels.get(turnId) ?? null)
   )
-  return { contextUsage, cwd, turns }
+  return { historyBase, snapshot: { contextUsage, cwd, turns } }
+}
+
+const getRolloutDateDirectory = (date: Date): string =>
+  [
+    date.getUTCFullYear().toString().padStart(4, '0'),
+    (date.getUTCMonth() + 1).toString().padStart(2, '0'),
+    date.getUTCDate().toString().padStart(2, '0')
+  ].join('/')
+
+const getUuidV7Date = (id: string): Date | null => {
+  const timestampHex = id.replaceAll('-', '').slice(0, 12)
+  if (!/^[0-9a-f]{12}$/i.test(timestampHex)) return null
+
+  const timestamp = Number.parseInt(timestampHex, 16)
+  if (!Number.isSafeInteger(timestamp)) return null
+  const date = new Date(timestamp)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+const getNearbyDateDirectories = (date: Date): string[] =>
+  [-2, -1, 0, 1, 2].map((dayOffset) => {
+    const nearbyDate = new Date(date)
+    nearbyDate.setUTCDate(nearbyDate.getUTCDate() + dayOffset)
+    return getRolloutDateDirectory(nearbyDate)
+  })
+
+const findHistoryBaseRolloutPath = async (
+  rolloutPath: string,
+  historyBaseThreadId: string
+): Promise<string | null> => {
+  const currentDayDirectory = dirname(rolloutPath)
+  const sessionsRoot = resolve(currentDayDirectory, '../../..')
+  const candidateDirectories = new Set<string>([currentDayDirectory])
+  const historyBaseDate = getUuidV7Date(historyBaseThreadId)
+  if (historyBaseDate) {
+    getNearbyDateDirectories(historyBaseDate).forEach((relativeDirectory) =>
+      candidateDirectories.add(join(sessionsRoot, relativeDirectory))
+    )
+  }
+
+  const currentName = basename(rolloutPath)
+  const dashSuffix = `-${historyBaseThreadId}.jsonl`
+  const underscoreSuffix = `_${historyBaseThreadId}.jsonl`
+  for (const directory of candidateDirectories) {
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+    const match = entries.find(
+      (entry) =>
+        entry.isFile() &&
+        entry.name !== currentName &&
+        (entry.name.endsWith(dashSuffix) || entry.name.endsWith(underscoreSuffix))
+    )
+    if (match) return join(directory, match.name)
+  }
+
+  return null
+}
+
+const mergeRolloutSnapshots = (
+  historyBase: RolloutSnapshot,
+  current: RolloutSnapshot
+): RolloutSnapshot => {
+  const turnsById = new Map(historyBase.turns.map((turn) => [turn.id, turn]))
+  current.turns.forEach((turn) => turnsById.set(turn.id, turn))
+
+  return {
+    contextUsage: current.contextUsage ?? historyBase.contextUsage,
+    cwd: current.cwd ?? historyBase.cwd,
+    turns: [...turnsById.values()]
+  }
+}
+
+const readRolloutSnapshotChain = async (
+  rolloutPath: string,
+  options: { endByteOffset?: number; endOrdinalExclusive?: number } = {},
+  visitedPaths = new Set<string>()
+): Promise<RolloutSnapshot> => {
+  if (visitedPaths.has(rolloutPath)) return emptyRolloutSnapshot()
+  visitedPaths.add(rolloutPath)
+
+  const current = await readRolloutFileSnapshot(rolloutPath, options)
+  if (!current.historyBase) return current.snapshot
+
+  const historyBasePath = await findHistoryBaseRolloutPath(
+    rolloutPath,
+    current.historyBase.threadId
+  )
+  if (!historyBasePath) return current.snapshot
+
+  const historyBaseSnapshot = await readRolloutSnapshotChain(
+    historyBasePath,
+    {
+      endByteOffset: current.historyBase.endByteOffset,
+      endOrdinalExclusive: current.historyBase.endOrdinalExclusive
+    },
+    visitedPaths
+  )
+  return mergeRolloutSnapshots(historyBaseSnapshot, current.snapshot)
 }
 
 const loadRolloutSnapshot = async (rolloutPath: string | null): Promise<RolloutSnapshot> => {
@@ -625,7 +849,7 @@ const loadRolloutSnapshot = async (rolloutPath: string | null): Promise<RolloutS
     const cached = rolloutSnapshotCache.get(rolloutPath)
     if (cached?.fingerprint === fingerprint) return cached.snapshot
 
-    const snapshot = readRolloutSnapshot(rolloutPath).catch(() => emptyRolloutSnapshot())
+    const snapshot = readRolloutSnapshotChain(rolloutPath).catch(() => emptyRolloutSnapshot())
     rolloutSnapshotCache.set(rolloutPath, { fingerprint, snapshot })
     return snapshot
   } catch {
