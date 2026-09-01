@@ -45,6 +45,8 @@ const appApi: AppApi = {
   createGitWorktree: (options) => ipcRenderer.invoke(appIpcChannels.createGitWorktree, options),
   getFileTree: (options) => ipcRenderer.invoke(appIpcChannels.getFileTree, options),
   getFileContents: (options) => ipcRenderer.invoke(appIpcChannels.getFileContents, options),
+  openFileInSystemApp: (options) => ipcRenderer.invoke(appIpcChannels.openFileInSystemApp, options),
+  downloadFile: (options) => ipcRenderer.invoke(appIpcChannels.downloadFile, options),
   writeFileContents: (options) => ipcRenderer.invoke(appIpcChannels.writeFileContents, options),
   getRecentGitCommitMessages: (options) =>
     ipcRenderer.invoke(appIpcChannels.getRecentGitCommitMessages, options),

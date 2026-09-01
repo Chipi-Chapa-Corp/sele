@@ -527,6 +527,8 @@ export type AppApi = {
   createGitWorktree: (options: AppGitCreateWorktreeOptions) => Promise<AppGitCreateWorktreeResult>
   getFileTree: (options?: AppFileTreeOptions) => Promise<AppFileTreeResult>
   getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
+  openFileInSystemApp: (options: AppFileContentsOptions) => Promise<void>
+  downloadFile: (options: AppFileContentsOptions) => Promise<string | null>
   writeFileContents: (options: AppWriteFileContentsOptions) => Promise<AppWriteFileContentsResult>
   getRecentGitCommitMessages: (
     options?: AppGitRecentCommitMessagesOptions
@@ -588,6 +590,8 @@ export const appIpcChannels = {
   createGitWorktree: 'app:create-git-worktree',
   getFileTree: 'app:get-file-tree',
   getFileContents: 'app:get-file-contents',
+  openFileInSystemApp: 'app:open-file-in-system-app',
+  downloadFile: 'app:download-file',
   writeFileContents: 'app:write-file-contents',
   getRecentGitCommitMessages: 'app:get-recent-git-commit-messages',
   getUncommittedGitDiff: 'app:get-uncommitted-git-diff',

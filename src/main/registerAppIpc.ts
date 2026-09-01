@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { createWriteStream } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import {
   app,
   BrowserWindow,
@@ -2256,6 +2258,117 @@ const writeEditableFile = async (
   return { version: getFileVersion(contents) }
 }
 
+const copyTargetFile = async (
+  container: AppContainerTarget | null | undefined,
+  cwd: string,
+  path: string,
+  destinationPath: string
+): Promise<void> => {
+  const target = await resolveFileTarget(cwd, path)
+  const script = [
+    'set -eu',
+    '[ -f "$1" ] || { echo "Choose a regular file." >&2; exit 1; }',
+    'cat -- "$1"'
+  ].join('\n')
+  const hostCommand = await getHostCommand(
+    'sh',
+    ['-lc', script, 'sele-copy-file', target.absolutePath],
+    {
+      container,
+      cwd: target.commandCwd,
+      env: process.env
+    }
+  )
+  const child = spawn(hostCommand.file, hostCommand.args, {
+    cwd: hostCommand.cwd,
+    env: hostCommand.env,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  const stderrChunks: Buffer[] = []
+  let stderrBytes = 0
+
+  child.stderr.on('data', (chunk: Buffer) => {
+    if (stderrBytes >= remoteFileMetadataBufferBytes) return
+    const remainingBytes = remoteFileMetadataBufferBytes - stderrBytes
+    const capturedChunk = chunk.subarray(0, remainingBytes)
+    stderrChunks.push(capturedChunk)
+    stderrBytes += capturedChunk.byteLength
+  })
+
+  const processCompleted = new Promise<void>((resolveProcess, rejectProcess) => {
+    child.once('error', rejectProcess)
+    child.once('close', (code) => {
+      if (code === 0) {
+        resolveProcess()
+        return
+      }
+
+      const detail = Buffer.concat(stderrChunks).toString('utf8').trim()
+      rejectProcess(new Error(detail || 'Unable to read this file.'))
+    })
+  })
+
+  try {
+    await Promise.all([
+      pipeline(child.stdout, createWriteStream(destinationPath)),
+      processCompleted
+    ])
+  } catch (error) {
+    child.kill()
+    throw error
+  }
+}
+
+const shouldStageFileForSystemApp = async (
+  container: AppContainerTarget | null | undefined
+): Promise<boolean> =>
+  Boolean(
+    container?.kind === 'container' &&
+    (container.tool === 'ssh' || !(await isCurrentContainerTarget(container)))
+  )
+
+const openFileInSystemApp = async (options: AppFileContentsOptions): Promise<void> => {
+  const cwd = options.cwd ?? process.cwd()
+  let openPath: string
+
+  if (await shouldStageFileForSystemApp(options.container)) {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-open-file-'))
+    openPath = join(tempDirectory, basename(options.path) || 'file')
+    try {
+      await copyTargetFile(options.container, cwd, options.path, openPath)
+    } catch (error) {
+      await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
+  } else {
+    openPath = (await resolveFileTarget(cwd, options.path)).absolutePath
+  }
+
+  const openError = await shell.openPath(openPath)
+  if (openError) throw new Error(openError)
+}
+
+const downloadFile = async (
+  event: Electron.IpcMainInvokeEvent,
+  options: AppFileContentsOptions
+): Promise<string | null> => {
+  const dialogOptions = {
+    defaultPath: join(app.getPath('downloads'), basename(options.path) || 'download')
+  } satisfies Electron.SaveDialogOptions
+  const result = await dialog.showSaveDialog(getBrowserWindow(event), dialogOptions)
+  if (result.canceled || !result.filePath) return null
+
+  const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-download-file-'))
+  const tempPath = join(tempDirectory, basename(options.path) || 'download')
+  try {
+    await copyTargetFile(options.container, options.cwd ?? process.cwd(), options.path, tempPath)
+    await copyFile(tempPath, result.filePath)
+    return result.filePath
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 const getRecentGitCommitMessages = async (
   cwd: string,
   limit = 3
@@ -3116,6 +3229,16 @@ export const registerAppIpc = (): void => {
     return runWithGitContainer(options.container, () =>
       readFileContents(options.cwd ?? process.cwd(), options.path)
     )
+  })
+
+  ipcMain.handle(appIpcChannels.openFileInSystemApp, async (_event, value: unknown) => {
+    const options = getFileContentsOptions(value)
+    return runWithGitContainer(options.container, () => openFileInSystemApp(options))
+  })
+
+  ipcMain.handle(appIpcChannels.downloadFile, async (event, value: unknown) => {
+    const options = getFileContentsOptions(value)
+    return runWithGitContainer(options.container, () => downloadFile(event, options))
   })
 
   ipcMain.handle(appIpcChannels.writeFileContents, async (_event, value: unknown) => {

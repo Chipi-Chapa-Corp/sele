@@ -7,7 +7,9 @@ import {
   Code2,
   Columns2,
   Copy,
+  Download,
   Eye,
+  ExternalLink,
   FileCode2,
   FileDiff,
   FileText,
@@ -79,6 +81,7 @@ type LoadState = 'loading' | 'ready' | 'error'
 type EnvironmentSuggestionsState = 'idle' | 'loading' | 'ready'
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 type CopyState = 'idle' | 'copying' | 'copied' | 'error'
+type DownloadState = 'idle' | 'downloading' | 'downloaded' | 'error'
 type MarkdownViewMode = 'code' | 'split' | 'preview'
 type FileViewMode = 'diff' | 'contents'
 type LoadDiffOptions = {
@@ -168,9 +171,54 @@ const diffTreeDefaultWidth = 192
 const diffTreeMinWidth = 144
 const diffTreeMaxWidth = 384
 const diffContentMinWidth = 384
+const expectedFileOpenErrors = [
+  'Files larger than 2 MB cannot be opened.',
+  'Binary files cannot be opened.',
+  'Choose a regular file to open.',
+  'Choose an image smaller than 32 MB.'
+] as const
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
+
+const normalizeLexicalPath = (path: string): string => {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const drive = normalizedPath.match(/^[a-z]:/i)?.[0].toLocaleLowerCase() ?? ''
+  const absolute = Boolean(drive || normalizedPath.startsWith('/'))
+  const parts: string[] = []
+
+  for (const part of normalizedPath.slice(drive.length).split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (parts.length > 0 && parts.at(-1) !== '..') parts.pop()
+      else if (!absolute) parts.push(part)
+      continue
+    }
+    parts.push(part)
+  }
+
+  const root = drive ? `${drive}/` : absolute ? '/' : ''
+  return `${root}${parts.join('/')}`.replace(/\/$/, '') || root
+}
+
+const isFileOutsideProject = (target: FileEditorTarget): boolean => {
+  const normalizedCwd = normalizeLexicalPath(target.cwd)
+  const targetPath = target.path.replace(/\\/g, '/')
+  const absoluteTargetPath =
+    targetPath.startsWith('/') || /^[a-z]:\//i.test(targetPath)
+      ? normalizeLexicalPath(targetPath)
+      : normalizeLexicalPath(`${normalizedCwd}/${targetPath}`)
+  const caseInsensitive = /^[a-z]:\//i.test(normalizedCwd)
+  const projectPath = caseInsensitive ? normalizedCwd.toLocaleLowerCase() : normalizedCwd
+  const filePath = caseInsensitive ? absoluteTargetPath.toLocaleLowerCase() : absoluteTargetPath
+
+  return filePath !== projectPath && !filePath.startsWith(`${projectPath}/`)
+}
+
+const isExpectedFileOpenError = (message: string | null): boolean =>
+  Boolean(
+    message && expectedFileOpenErrors.some((expectedError) => message.includes(expectedError))
+  )
 
 const readStoredMarkdownSplitPercentage = (): number => {
   try {
@@ -332,6 +380,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [loadStatePath, setLoadStatePath] = useState(target.path)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [copyState, setCopyState] = useState<CopyState>('idle')
+  const [downloadState, setDownloadState] = useState<DownloadState>('idle')
   const [contents, setContents] = useState('')
   const [savedContents, setSavedContents] = useState('')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
@@ -481,6 +530,15 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     () => getActiveFileTreePath(target, displayPath, visibleFileTreeResult),
     [displayPath, target, visibleFileTreeResult]
   )
+  const isProjectFile = Boolean(
+    visibleFileTreeResult?.files.some(
+      (file) => file.path.replace(/\\/g, '/') === activeFileTreePath.replace(/\\/g, '/')
+    )
+  )
+  const showDownload =
+    target.kind !== 'delete' &&
+    (isFileOutsideProject(target) || Boolean(visibleFileTreeResult && !isProjectFile))
+  const showOpenRetry = visibleLoadState !== 'error' || !isExpectedFileOpenError(editorError)
   const defaultCollapsedFileFolders = useMemo(() => {
     const expandedFolders = new Set(getFileTreeAncestorPaths(activeFileTreePath))
     return Object.fromEntries(
@@ -561,6 +619,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     },
     [imageDataUrl]
   )
+
+  useEffect(() => {
+    setDownloadState('idle')
+  }, [targetEnvironmentKey])
 
   const loadFile = useCallback(async (): Promise<void> => {
     const request = loadRequestRef.current + 1
@@ -1159,6 +1221,35 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     }
   }, [canShowImage, copyState, fileContainer, target.cwd, target.path, visibleLoadState])
 
+  const handleOpenInApp = useCallback(async (): Promise<void> => {
+    try {
+      await appApi.openFileInSystemApp({
+        container: fileContainer,
+        cwd: target.cwd,
+        path: target.path
+      })
+    } catch (openError) {
+      setEditorError(getErrorMessage(openError, 'Unable to open this file in another app.'))
+    }
+  }, [fileContainer, target.cwd, target.path])
+
+  const handleDownload = useCallback(async (): Promise<void> => {
+    if (downloadState === 'downloading') return
+
+    setDownloadState('downloading')
+    try {
+      const downloadedPath = await appApi.downloadFile({
+        container: fileContainer,
+        cwd: target.cwd,
+        path: target.path
+      })
+      setDownloadState(downloadedPath ? 'downloaded' : 'idle')
+    } catch (downloadError) {
+      setEditorError(getErrorMessage(downloadError, 'Unable to download this file.'))
+      setDownloadState('error')
+    }
+  }, [downloadState, fileContainer, target.cwd, target.path])
+
   return (
     <div
       className={`file-editor-overlay${expanded ? ' file-editor-overlay--expanded' : ''}`}
@@ -1215,6 +1306,17 @@ export const FileEditorDialog = memo(function FileEditorDialog({
             <span title={directoryName}>{directoryName}</span>
           </div>
           <div className="file-editor-dialog__actions">
+            {showDownload && (
+              <Button
+                aria-label={`Download ${displayPath}`}
+                callback={handleDownload}
+                disabled={downloadState === 'downloading'}
+                icon={downloadState === 'downloaded' ? <Check /> : <Download />}
+                size="small"
+                theme="secondary"
+                title={downloadState === 'downloaded' ? 'Downloaded' : 'Download'}
+              />
+            )}
             {isMarkdown && canShowContents && (
               <SegmentedControl
                 aria-label="Markdown view"
@@ -1442,16 +1544,25 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   )}
                   <p>{editorError ?? diffError}</p>
                   <div className="file-editor-dialog__state-actions">
+                    {showOpenRetry && (
+                      <Button
+                        callback={() => {
+                          if (canShowImage) void loadImage()
+                          else {
+                            void loadFile()
+                            if (showFileDiff) void loadDiff()
+                          }
+                        }}
+                        icon={<RefreshCw />}
+                        label="Try again"
+                        size="small"
+                        theme="secondary"
+                      />
+                    )}
                     <Button
-                      callback={() => {
-                        if (canShowImage) void loadImage()
-                        else {
-                          void loadFile()
-                          if (showFileDiff) void loadDiff()
-                        }
-                      }}
-                      icon={<RefreshCw />}
-                      label="Try again"
+                      callback={handleOpenInApp}
+                      icon={<ExternalLink />}
+                      label="Open in app"
                       size="small"
                       theme="secondary"
                     />
