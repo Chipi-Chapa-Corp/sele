@@ -19,7 +19,8 @@ import {
   getChatDetailItemsStartTurnIndex,
   getChatDetailTurnCount,
   getLoadedChatDetailTurnEndIndex,
-  mergeChatDetailTurnPage
+  mergeChatDetailTurnPage,
+  replaceChatDetailWithCursorPage
 } from '../chatDetailWindow'
 import {
   chatTurnLoadThresholdPx,
@@ -128,18 +129,24 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   const loadedChatTurnStartIndex = getChatDetailItemsStartTurnIndex(chatDetail)
   const loadedChatTurnEndIndex = getLoadedChatDetailTurnEndIndex(chatDetail)
   const totalChatTurnCount = getChatDetailTurnCount(chatDetail)
+  const chatTurnPagination = chatDetail?.turnPagination
+  const latestVisibleChatItemId = visibleChatItems.at(-1)?.id ?? null
   const recentsMessageLimit = effectiveAppSettings.performance.recentsMessageLimit
   const recentsStartTurnIndex = Math.max(0, totalChatTurnCount - recentsMessageLimit)
   const loadedChatItemsCoverRecents = Boolean(
     chatDetail?.id === selectedChatId &&
-    loadedChatTurnStartIndex <= recentsStartTurnIndex &&
-    loadedChatTurnEndIndex >= totalChatTurnCount
+    (chatTurnPagination
+      ? !chatTurnPagination.olderCursor || totalChatTurnCount >= recentsMessageLimit
+      : loadedChatTurnStartIndex <= recentsStartTurnIndex &&
+        loadedChatTurnEndIndex >= totalChatTurnCount)
   )
   const recentChatReferencePageMatches = Boolean(
     selectedChatKey &&
     recentChatReferencePage?.chatKey === selectedChatKey &&
     recentChatReferencePage.messageLimit === recentsMessageLimit &&
-    recentChatReferencePage.totalTurnCount === totalChatTurnCount
+    (chatTurnPagination
+      ? recentChatReferencePage.latestItemId === latestVisibleChatItemId
+      : recentChatReferencePage.totalTurnCount === totalChatTurnCount)
   )
   const recentChatReferenceItems = loadedChatItemsCoverRecents
     ? visibleChatItems
@@ -220,18 +227,27 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     }
 
     let active = true
-    void providerApi
-      .getChatTurnPage(
-        selectedProviderId,
-        selectedChatId,
-        recentsStartTurnIndex,
-        totalChatTurnCount - recentsStartTurnIndex
-      )
+    const pageRequest = chatTurnPagination
+      ? providerApi.getChatTurnCursorPage(
+          selectedProviderId,
+          selectedChatId,
+          'older',
+          null,
+          recentsMessageLimit
+        )
+      : providerApi.getChatTurnPage(
+          selectedProviderId,
+          selectedChatId,
+          recentsStartTurnIndex,
+          totalChatTurnCount - recentsStartTurnIndex
+        )
+    void pageRequest
       .then((page) => {
         if (!active) return
         setRecentChatReferencePage({
           chatKey: selectedChatKey,
           items: page.items,
+          latestItemId: page.items.at(-1)?.id ?? null,
           messageLimit: recentsMessageLimit,
           totalTurnCount: page.totalCount
         })
@@ -244,6 +260,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   }, [
     chatDetail?.id,
     changesPaneView,
+    latestVisibleChatItemId,
     loadedChatItemsCoverRecents,
     recentChatReferencePageMatches,
     recentsMessageLimit,
@@ -376,8 +393,22 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
         return
       }
 
-      if (direction === 'older' && currentWindow.startIndex === 0) return
-      if (direction === 'newer' && currentWindow.endIndex >= currentWindow.totalCount) return
+      const currentDetail = chatDetailRef.current
+      const cursorPagination = currentDetail?.id === chat.id ? currentDetail.turnPagination : null
+      if (
+        direction === 'older' &&
+        (cursorPagination ? !cursorPagination.olderCursor : currentWindow.startIndex === 0)
+      ) {
+        return
+      }
+      if (
+        direction === 'newer' &&
+        (cursorPagination
+          ? !cursorPagination.newerCursor
+          : currentWindow.endIndex >= currentWindow.totalCount)
+      ) {
+        return
+      }
 
       const requestId = chatTurnPageLoadRequestRef.current + 1
       chatTurnPageLoadRequestRef.current = requestId
@@ -408,6 +439,55 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           chatTurnWindowRef.current = nextWindow
           setChatTurnWindow(nextWindow)
           applyViewedChatDetail(chat.providerId, detail)
+          return
+        }
+
+        if (cursorPagination) {
+          const cursor =
+            direction === 'older' ? cursorPagination.olderCursor : cursorPagination.newerCursor
+          if (!cursor) return
+          const page = await providerApi.getChatTurnCursorPage(
+            chat.providerId,
+            chat.id,
+            direction,
+            cursor,
+            chatTurnPageSize
+          )
+          if (
+            chatTurnPageLoadRequestRef.current !== requestId ||
+            selectedChatKeyRef.current !== currentWindow.chatKey
+          ) {
+            return
+          }
+
+          const pageTurnCount = page.totalCount
+          const nextWindow: ChatTurnWindow = {
+            chatKey: currentWindow.chatKey,
+            startIndex: 0,
+            endIndex: pageTurnCount,
+            totalCount: pageTurnCount
+          }
+          chatAutoScrollEnabledRef.current = false
+          chatAutoScrollTargetRef.current = null
+          pendingChatScrollAnchorRef.current = null
+          chatViewportAnchorRef.current = null
+          chatTurnWindowRef.current = nextWindow
+
+          flushSync(() => {
+            setChatDetail((detail) => {
+              if (detail?.id !== chat.id) return detail
+              const nextDetail = replaceChatDetailWithCursorPage(detail, page)
+              chatDetailRef.current = nextDetail
+              return nextDetail
+            })
+            setChatTurnWindow(nextWindow)
+          })
+
+          const contentElement = contentRef.current
+          if (contentElement) {
+            if (direction === 'older') contentElement.scrollTop = getScrollBottomTop(contentElement)
+            else contentElement.scrollTop = 0
+          }
           return
         }
 
@@ -478,7 +558,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     if (
       chatTurnScrollDirectionRef.current === 'up' &&
       contentElement.scrollTop <= chatTurnLoadThresholdPx &&
-      currentWindow.startIndex > 0
+      (chatDetailRef.current?.turnPagination?.olderCursor || currentWindow.startIndex > 0)
     ) {
       void loadChatTurnPage('older')
       return
@@ -487,7 +567,8 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     if (
       chatTurnScrollDirectionRef.current === 'down' &&
       getScrollBottomTop(contentElement) - contentElement.scrollTop <= chatTurnLoadThresholdPx &&
-      currentWindow.endIndex < currentWindow.totalCount
+      (chatDetailRef.current?.turnPagination?.newerCursor ||
+        currentWindow.endIndex < currentWindow.totalCount)
     ) {
       void loadChatTurnPage('newer')
     }
@@ -501,13 +582,14 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     if (
       event.deltaY < 0 &&
       contentElement.scrollTop <= chatTurnLoadThresholdPx &&
-      currentWindow.startIndex > 0
+      (chatDetailRef.current?.turnPagination?.olderCursor || currentWindow.startIndex > 0)
     ) {
       void loadChatTurnPage('older')
     } else if (
       event.deltaY > 0 &&
       getScrollBottomTop(contentElement) - contentElement.scrollTop <= chatTurnLoadThresholdPx &&
-      currentWindow.endIndex < currentWindow.totalCount
+      (chatDetailRef.current?.turnPagination?.newerCursor ||
+        currentWindow.endIndex < currentWindow.totalCount)
     ) {
       void loadChatTurnPage('newer')
     }

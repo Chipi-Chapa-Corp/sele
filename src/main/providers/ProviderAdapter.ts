@@ -35,6 +35,12 @@ export type ProviderChatTurnWindow = {
   limit: number
 }
 
+export type ProviderChatTurnCursorWindow = {
+  cursor: string | null
+  direction: 'older' | 'newer'
+  limit: number
+}
+
 export type ProviderAdapter = {
   id: ProviderId
   login: (options?: ProviderSourceOptions) => Promise<ProviderLoginResult>
@@ -80,6 +86,22 @@ export type ProviderAdapter = {
   getChatWindow?: (
     chatId: string,
     window: ProviderChatTurnWindow,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<ProviderChatDetail>
+  /**
+   * Cursor-native transcript navigation for providers whose history API does not expose an exact
+   * total count. The returned items must be chronological even when the provider reads backwards.
+   */
+  getChatCursorWindow?: (
+    chatId: string,
+    window: ProviderChatTurnCursorWindow,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<ProviderChatDetail>
+  /** Resolve an item to a bounded transcript window without hydrating unrelated turn items. */
+  getChatWindowForItem?: (
+    chatId: string,
+    itemId: string,
+    limit: number,
     options?: { container?: AppContainerTarget | null }
   ) => Promise<ProviderChatDetail>
   getSubagents: (

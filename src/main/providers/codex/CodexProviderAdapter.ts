@@ -35,6 +35,7 @@ import type {
   ProviderSourceOptions,
   ProviderSubagent,
   ProviderSubagentDetail,
+  ProviderChatTurnPagination,
   ProviderTurnOptions,
   ProviderOneShotOptions
 } from '../../../shared/provider'
@@ -47,6 +48,7 @@ import {
 import { providerAppOwnsSkill } from '../../../shared/providerOwnership'
 import type {
   ProviderAdapter,
+  ProviderChatTurnCursorWindow,
   ProviderChatTurnWindow,
   ProviderChatUpdateMetadata
 } from '../ProviderAdapter'
@@ -66,13 +68,16 @@ import {
   type CodexUserInput
 } from './CodexItemRenderers'
 import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProviderUpdate'
-import { loadRolloutContextUsage, loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
+import { loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
 import {
   CodexTurnWindowMismatchError,
   hydrateCodexTurnRange,
   loadCodexTurnCatalog,
+  loadCodexTurnCursorWindow,
+  loadCodexLatestTurnBoundary,
   planCodexHistoryEdit,
   retryCodexTurnWindowWithFreshCatalog,
+  retainCodexTurnTail,
   selectCodexTurnRangeFromSnapshots
 } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
@@ -139,6 +144,10 @@ type CodexThread = {
   historyMode?: 'legacy' | 'paginated'
   /** Global index of the first turn held in this in-memory tail window. */
   turnWindowStartIndex?: number
+  /** Opaque history boundaries when the exact global turn offset was intentionally not counted. */
+  turnPagination?: ProviderChatTurnPagination
+  /** The latest tail advanced since `turnPagination.olderCursor` was produced. */
+  turnPaginationBoundaryStale?: boolean
   parentThreadId?: string | null
   agentNickname?: string | null
   agentRole?: string | null
@@ -1899,7 +1908,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId, options), () =>
-      this.getChatInContext(chatId)
+      this.getChatWindowInContext(chatId, {
+        startIndex: null,
+        limit: rendererChatUpdateTurnLimit
+      })
     )
 
   getChatWindow = (
@@ -1911,6 +1923,128 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.getChatWindowInContext(chatId, window)
     )
 
+  getChatCursorWindow = (
+    chatId: string,
+    window: ProviderChatTurnCursorWindow,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.loadChatCursorWindowInContext(chatId, window, false)
+    )
+
+  getChatWindowForItem = (
+    chatId: string,
+    itemId: string,
+    limit: number,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      this.rememberThreadContainer(chatId)
+      const response = await this.client.request<ThreadReadResponse>('thread/read', {
+        threadId: chatId,
+        includeTurns: false
+      })
+      const cachedCatalog = this.paginatedTurnCatalogs.get(chatId)
+      const catalog =
+        cachedCatalog?.threadUpdatedAt === response.thread.updatedAt
+          ? cachedCatalog.turns
+          : await loadCodexTurnCatalog(
+              (method, params) => this.client.request(method, params),
+              response.thread.id
+            )
+      this.paginatedTurnCatalogs.set(chatId, {
+        threadUpdatedAt: response.thread.updatedAt,
+        turns: catalog
+      })
+      const renderableCatalog = this.filterRolledBackTurns(chatId, catalog).filter(
+        (turn) => turn.status !== 'queued'
+      )
+      const targetTurnIndex = renderableCatalog.findIndex(
+        (turn) => itemId === turn.id || itemId.startsWith(`${turn.id}:`)
+      )
+      if (targetTurnIndex < 0) throw new Error('Chat item not found')
+      const boundedLimit = Math.max(1, Math.floor(limit))
+      const startIndex = Math.min(
+        Math.max(0, targetTurnIndex - Math.floor(boundedLimit / 2)),
+        Math.max(0, renderableCatalog.length - boundedLimit)
+      )
+      return this.getChatWindowInContext(chatId, { startIndex, limit: boundedLimit })
+    })
+
+  private loadChatCursorWindowInContext = async (
+    chatId: string,
+    window: ProviderChatTurnCursorWindow,
+    cacheLatest: boolean
+  ): Promise<ProviderChatDetail> => {
+    this.rememberThreadContainer(chatId)
+    const cachedThread = this.threads.get(chatId)
+    const threadMetadata =
+      cachedThread ??
+      (
+        await this.client.request<ThreadReadResponse>('thread/read', {
+          threadId: chatId,
+          includeTurns: false
+        })
+      ).thread
+    let requestedCursor = window.cursor
+    if (
+      cachedThread?.turnPagination &&
+      cachedThread.turnPaginationBoundaryStale &&
+      window.direction === 'older' &&
+      window.cursor === cachedThread.turnPagination.olderCursor
+    ) {
+      requestedCursor = await loadCodexLatestTurnBoundary(
+        (method, params) => this.client.request(method, params),
+        threadMetadata.id,
+        cachedThread.turns.length
+      )
+      this.cacheThread({
+        ...cachedThread,
+        turnPagination: {
+          ...cachedThread.turnPagination,
+          olderCursor: requestedCursor
+        },
+        turnPaginationBoundaryStale: false
+      })
+    }
+    const pendingMessages =
+      window.direction === 'older' && window.cursor == null
+        ? this.getProviderPendingMessages(chatId).slice(-window.limit)
+        : []
+    const rawLimit = Math.max(1, window.limit - pendingMessages.length)
+    const cursorWindow = await loadCodexTurnCursorWindow(
+      (method, params) => this.client.request(method, params),
+      threadMetadata.id,
+      { ...window, cursor: requestedCursor, limit: rawLimit }
+    )
+    const turns = this.filterRolledBackTurns(threadMetadata.id, cursorWindow.turns).filter(
+      (turn) => turn.status !== 'queued'
+    )
+    const turnPagination: ProviderChatTurnPagination = {
+      kind: 'cursor',
+      olderCursor: cursorWindow.olderCursor,
+      newerCursor: cursorWindow.newerCursor
+    }
+    const name = await this.resolveThreadName(threadMetadata)
+    const thread = {
+      ...threadMetadata,
+      name,
+      // A cursor page is already fully hydrated. Avoid the rollout fallback, which reads the
+      // complete JSONL transcript.
+      cwd: getThreadApiCwd(threadMetadata),
+      turns,
+      turnPagination
+    } satisfies CodexThread
+
+    if (cacheLatest && window.direction === 'older' && window.cursor == null) {
+      this.cacheThread(thread)
+    }
+
+    return this.createChatDetail(thread, {
+      cursorPendingMessages: pendingMessages
+    })
+  }
+
   private getChatWindowInContext = async (
     chatId: string,
     window: ProviderChatTurnWindow
@@ -1920,13 +2054,27 @@ export class CodexProviderAdapter implements ProviderAdapter {
     // Live chats keep either the complete thread or a contiguous tail window. The latter can
     // answer latest/overlapping reads; older pages still come from the paginated history API.
     const cachedThread = this.threads.get(chatId)
+    if (cachedThread?.turnPagination && window.startIndex == null) {
+      return this.createChatDetail(cachedThread, { turnWindow: window })
+    }
     if (
       cachedThread &&
+      !cachedThread.turnPagination &&
       (cachedThread.turnWindowStartIndex == null ||
         window.startIndex == null ||
         window.startIndex >= cachedThread.turnWindowStartIndex)
     ) {
       return this.createChatDetail(cachedThread, { turnWindow: window })
+    }
+
+    // Latest reads do not need an exact total. Keep Codex's opaque cursors and hydrate only the
+    // requested tail page; the full metadata catalog is built lazily for index-only operations.
+    if (window.startIndex == null) {
+      return this.loadChatCursorWindowInContext(
+        chatId,
+        { cursor: null, direction: 'older', limit: window.limit },
+        true
+      )
     }
 
     // Metadata and transcript are deliberately separate reads. `includeTurns: false` avoids the
@@ -2028,32 +2176,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
     )
   }
 
-  private getChatInContext = async (chatId: string): Promise<ProviderChatDetail> => {
-    this.rememberThreadContainer(chatId)
-    const cachedDetail = this.getCachedChatDetail(chatId)
-    if (cachedDetail) return cachedDetail
-
-    const response = await this.client.request<ThreadReadResponse>('thread/read', {
-      threadId: chatId,
-      includeTurns: true
-    })
-
-    const [cwd, name, turns, contextUsage] = await Promise.all([
-      this.resolveThreadCwd(response.thread),
-      this.resolveThreadName(response.thread),
-      this.getTurnsForThread(response.thread),
-      loadRolloutContextUsage(response.thread.path)
-    ])
-    const thread = {
-      ...response.thread,
-      name,
-      cwd,
-      turns: this.filterRolledBackTurns(response.thread.id, turns)
+  private ensureChatTailLoaded = async (chatId: string): Promise<CodexThread> => {
+    if (!this.threads.has(chatId)) {
+      await this.getChatWindowInContext(chatId, {
+        startIndex: null,
+        limit: rendererChatUpdateTurnLimit
+      })
     }
-    this.cacheThread(thread)
-    if (contextUsage) this.contextUsageByThread.set(thread.id, contextUsage)
-
-    return this.createChatDetail(thread)
+    const thread = this.threads.get(chatId)
+    if (!thread) throw new Error('Unable to load chat')
+    return thread
   }
 
   getSubagents = (
@@ -2194,7 +2326,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   setChatTitle = (chatId: string, title: string): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId), async () => {
       this.rememberThreadContainer(chatId)
-      if (!this.threads.has(chatId)) await this.getChatInContext(chatId)
+      await this.ensureChatTailLoaded(chatId)
 
       await this.client.request('thread/name/set', {
         threadId: chatId,
@@ -2390,6 +2522,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
       cwd: options?.cwd,
+      historyMode: 'paginated',
       config: getRecommendedPluginsConfig(options),
       ...getThreadAccessOptions(options),
       ...getThreadModelOptions(options)
@@ -2397,17 +2530,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rememberThreadContainer(startedThread.thread.id)
     await onChatCreated?.(startedThread.thread.id)
 
-    const [cwd, name, turns] = await Promise.all([
+    const [cwd, name] = await Promise.all([
       this.resolveThreadCwd(startedThread.thread, options?.cwd ?? null),
-      this.resolveThreadName(startedThread.thread),
-      this.getTurnsForThread(startedThread.thread)
+      this.resolveThreadName(startedThread.thread)
     ])
     const thread = {
       ...startedThread.thread,
       name,
       cwd,
       status: { type: 'active', activeFlags: [] },
-      turns
+      turns: getThreadTurns(startedThread.thread)
     } satisfies CodexThread
     this.cacheThread(thread)
 
@@ -2469,9 +2601,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     // The renderer may reopen a recent chat from its own cache after the provider cache was
-    // recreated. Load the pre-resume transcript first: thread/resume can rotate to a new rollout
-    // segment whose history projection is briefly incomplete.
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    // recreated. Seed only the mutable tail needed for live updates; Codex owns the full context.
+    if (!this.threads.has(chatId)) {
+      await this.getChatWindowInContext(chatId, {
+        startIndex: null,
+        limit: rendererChatUpdateTurnLimit
+      })
+    }
 
     if (
       respectQueuedTurns &&
@@ -2542,14 +2678,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot continue a chat with an empty message')
     }
 
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
-    const sourceThread = this.threads.get(chatId)
+    const sourceThread = await this.ensureChatTailLoaded(chatId)
     if (this.getActiveTurnId(chatId)) {
       throw new Error('Cannot fork a chat with an active turn')
     }
 
     const fork = await this.client.request<ThreadForkResponse>('thread/fork', {
       threadId: chatId,
+      excludeTurns: true,
       config: getRecommendedPluginsConfig(options),
       ...getThreadAccessOptions(options),
       ...getThreadModelOptions(options)
@@ -2557,17 +2693,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rememberThreadContainer(fork.thread.id)
     await onForkCreated?.(fork.thread.id)
 
-    const [cwd, name, turns] = await Promise.all([
-      this.resolveThreadCwd(fork.thread, sourceThread?.cwd ?? null),
-      this.resolveThreadName(fork.thread),
-      this.getTurnsForThread(fork.thread)
-    ])
+    await this.loadChatCursorWindowInContext(
+      fork.thread.id,
+      { cursor: null, direction: 'older', limit: rendererChatUpdateTurnLimit },
+      true
+    )
+    const loadedFork = this.threads.get(fork.thread.id)
+    if (!loadedFork) throw new Error('Unable to load forked chat')
     const forkedThread = {
-      ...fork.thread,
-      name,
-      cwd,
-      status: { type: 'active', activeFlags: [] },
-      turns: this.filterRolledBackTurns(fork.thread.id, turns)
+      ...loadedFork,
+      cwd: loadedFork.cwd ?? sourceThread.cwd,
+      status: { type: 'active', activeFlags: [] }
     } satisfies CodexThread
     this.cacheThread(forkedThread)
 
@@ -2610,39 +2746,25 @@ export class CodexProviderAdapter implements ProviderAdapter {
     onForkCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
-
-    const sourceThread = this.threads.get(chatId)
-    if (!sourceThread) throw new Error('Unable to load chat for forking')
+    const sourceThread = await this.ensureChatTailLoaded(chatId)
     if (this.getActiveTurnId(chatId)) throw new Error('Cannot fork a chat with an active turn')
 
-    const targetTurn = sourceThread.turns.find((turn) => messageId.startsWith(`${turn.id}:`))
-    if (!targetTurn) throw new Error('Message cannot be forked')
+    const loadedTargetTurn = sourceThread.turns.find((turn) => messageId.startsWith(`${turn.id}:`))
+    const targetTurnId = loadedTargetTurn?.id ?? messageId.split(':', 1)[0]
+    if (!targetTurnId) throw new Error('Message cannot be forked')
 
     const fork = await this.client.request<ThreadForkResponse>('thread/fork', {
       threadId: chatId,
-      lastTurnId: targetTurn.id
+      lastTurnId: targetTurnId,
+      excludeTurns: true
     })
     this.rememberThreadContainer(fork.thread.id)
-
-    const [cwd, name, turns] = await Promise.all([
-      this.resolveThreadCwd(fork.thread, sourceThread.cwd ?? null),
-      this.resolveThreadName(fork.thread),
-      this.getTurnsForThread(fork.thread)
-    ])
-
-    const thread = {
-      ...fork.thread,
-      name,
-      cwd,
-      turns
-    } satisfies CodexThread
-    this.cacheThread(thread)
-    await onForkCreated?.(thread.id)
-
-    const detail = this.getCachedChatDetail(thread.id)
-    if (!detail) throw new Error('Unable to load forked chat')
-    return detail
+    await onForkCreated?.(fork.thread.id)
+    return this.loadChatCursorWindowInContext(
+      fork.thread.id,
+      { cursor: null, direction: 'older', limit: rendererChatUpdateTurnLimit },
+      true
+    )
   }
 
   sendActiveChatMessage = (
@@ -2668,7 +2790,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   deletePendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    await this.ensureChatTailLoaded(chatId)
 
     const removedSteering = this.removeSteeringMessage(chatId, messageId)
     const removedQueued = this.removeQueuedTurn(chatId, messageId)
@@ -2704,7 +2826,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (!text && !hasAttachmentInput(options)) {
       throw new Error('Cannot edit a pending message to empty content')
     }
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    await this.ensureChatTailLoaded(chatId)
 
     const editedSteeringMessage = this.editSteeringMessage(chatId, messageId, text, options)
     const editedQueuedTurn = editedSteeringMessage
@@ -2732,7 +2854,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     messageId: string
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    await this.ensureChatTailLoaded(chatId)
     if (this.hasPendingSteeringMessage(chatId)) {
       throw new Error('A steering message is already pending.')
     }
@@ -2754,7 +2876,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     messageId: string
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    await this.ensureChatTailLoaded(chatId)
 
     const steeringMessage = this.takeSteeringMessage(chatId, messageId)
     if (steeringMessage) {
@@ -2802,9 +2924,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     thread = this.threads.get(chatId) ?? thread
 
     const cachedCatalog = this.paginatedTurnCatalogs.get(chatId)?.turns
-    const loadedCatalogFallback = thread.turnWindowStartIndex
-      ? []
-      : this.filterRolledBackTurns(chatId, thread.turns)
+    const loadedCatalogFallback =
+      thread.turnWindowStartIndex != null || thread.turnPagination
+        ? []
+        : this.filterRolledBackTurns(chatId, thread.turns)
     let turnCatalog = this.filterRolledBackTurns(
       chatId,
       cachedCatalog ?? loadedCatalogFallback
@@ -2814,28 +2937,41 @@ export class CodexProviderAdapter implements ProviderAdapter {
         !turn.id.startsWith('pending:') &&
         !turn.id.startsWith('queued:')
     )
-    if (thread.historyMode === 'paginated') {
-      const refreshedCatalog = await loadCodexTurnCatalog(
-        (method, params) => this.client.request(method, params),
-        chatId
-      )
-        .then((turns) => this.filterRolledBackTurns(chatId, turns))
-        .catch(() => null)
-      // A transient projector response must never shrink a history snapshot that Sele has already
-      // shown. Prefer the refresh only when it contains the known catalog as an ordered prefix.
-      if (
-        refreshedCatalog &&
-        refreshedCatalog.length >= turnCatalog.length &&
-        turnCatalog.every((turn, index) => refreshedCatalog[index]?.id === turn.id)
-      ) {
-        turnCatalog = refreshedCatalog
-      }
+    const refreshedCatalog = await loadCodexTurnCatalog(
+      (method, params) => this.client.request(method, params),
+      chatId
+    )
+      .then((turns) => this.filterRolledBackTurns(chatId, turns))
+      .catch(() => null)
+    // A transient projector response must never shrink a history snapshot that Sele has already
+    // shown. Prefer the refresh only when it contains the known catalog as an ordered prefix.
+    if (
+      refreshedCatalog &&
+      refreshedCatalog.length >= turnCatalog.length &&
+      turnCatalog.every((turn, index) => refreshedCatalog[index]?.id === turn.id)
+    ) {
+      turnCatalog = refreshedCatalog
     }
+
+    const firstLoadedPersistedTurn = thread.turns.find(
+      (turn) =>
+        turn.status !== 'queued' &&
+        !turn.id.startsWith('pending:') &&
+        !turn.id.startsWith('queued:')
+    )
+    const catalogLoadedTurnStartIndex = firstLoadedPersistedTurn
+      ? turnCatalog.findIndex((turn) => turn.id === firstLoadedPersistedTurn.id)
+      : turnCatalog.length
+    if (firstLoadedPersistedTurn && catalogLoadedTurnStartIndex < 0) {
+      throw new Error('Message cannot be edited safely because its history is still loading')
+    }
+    const loadedTurnStartIndex =
+      thread.turnWindowStartIndex ?? Math.max(0, catalogLoadedTurnStartIndex)
 
     const editPlan = planCodexHistoryEdit(
       turnCatalog,
       thread.turns,
-      thread.turnWindowStartIndex ?? 0,
+      loadedTurnStartIndex,
       targetTurnId
     )
 
@@ -3016,7 +3152,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot steer a chat with an empty message')
     }
 
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    await this.ensureChatTailLoaded(chatId)
 
     const turnId = this.getActiveTurnId(chatId)
     if (!turnId) return this.continueChat(chatId, text, options)
@@ -3134,7 +3270,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const text = message.trim()
     if (!text && !hasAttachmentInput(options)) throw new Error('Cannot queue an empty message')
 
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    await this.ensureChatTailLoaded(chatId)
     if (!this.getActiveTurnId(chatId)) return this.continueChat(chatId, text, options)
 
     const queuedTurn = this.addQueuedTurn(chatId, text, options)
@@ -3160,7 +3296,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot interrupt with an empty message')
     }
 
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    await this.ensureChatTailLoaded(chatId)
     if (this.getActiveTurnId(chatId)) {
       await this.stopActiveTurn(chatId, { startQueuedTurn: false })
     }
@@ -3237,7 +3373,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
     if (options.startQueuedTurn) this.pausedQueuedTurnThreads.delete(chatId)
 
-    if (!this.threads.has(chatId)) await this.getChat(chatId)
+    await this.ensureChatTailLoaded(chatId)
     const turnId = this.getActiveTurnId(chatId)
     this.cancelPendingApprovals(chatId)
 
@@ -3267,6 +3403,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options: {
       workingItemTailLimit?: number
       turnWindow?: ProviderChatTurnWindow
+      cursorPendingMessages?: ProviderPendingMessage[]
       selectedTurnWindow?: {
         startIndex: number
         totalCount: number
@@ -3275,7 +3412,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     } = {}
   ): ProviderChatDetail => {
     const allRenderableTurns = this.getRenderableTurns(thread)
-    const allPendingMessages = this.getProviderPendingMessages(thread.id)
+    const allPendingMessages =
+      options.cursorPendingMessages ?? this.getProviderPendingMessages(thread.id)
     const loadedTurnStartIndex = thread.turnWindowStartIndex ?? 0
     let renderableTurns = allRenderableTurns
     let pendingMessages = allPendingMessages
@@ -3286,6 +3424,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       itemsStartTurnIndex = options.selectedTurnWindow.startIndex
       turnCount = options.selectedTurnWindow.totalCount
       pendingMessages = options.selectedTurnWindow.pendingMessages
+    } else if (thread.turnPagination) {
+      itemsStartTurnIndex = 0
+      turnCount = allRenderableTurns.length + allPendingMessages.length
     } else if (options.turnWindow) {
       const loadedTurnEndIndex = loadedTurnStartIndex + allRenderableTurns.length
       turnCount = loadedTurnEndIndex + allPendingMessages.length
@@ -3330,6 +3471,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       pendingUserInput: null,
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
       ...(itemsStartTurnIndex == null ? {} : { itemsStartTurnIndex, turnCount }),
+      ...(thread.turnPagination ? { turnPagination: thread.turnPagination } : {}),
       items: [
         ...getChatItems(renderableTurns, thread.createdAt, {
           hiddenPendingMessageIds: this.hiddenPendingMessageIdsByThread.get(thread.id),
@@ -3344,7 +3486,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private cacheThread = (thread: CodexThread): void => {
     this.threads.set(thread.id, thread)
-    if (thread.turnWindowStartIndex == null) this.paginatedTurnCatalogs.delete(thread.id)
+    if (thread.turnWindowStartIndex == null && !thread.turnPagination) {
+      this.paginatedTurnCatalogs.delete(thread.id)
+    }
   }
 
   private getCachedChatDetail = (threadId: string): ProviderChatDetail | null => {
@@ -3690,18 +3834,43 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options: ProviderTurnOptions | undefined,
     fallbackCwd: string | null
   ): Promise<CodexThread> => {
-    if (!this.threads.has(threadId)) await this.getChat(threadId)
+    if (!this.threads.has(threadId)) {
+      await this.getChatWindowInContext(threadId, {
+        startIndex: null,
+        limit: rendererChatUpdateTurnLimit
+      })
+    }
     const existingThread = this.threads.get(threadId) ?? null
     const resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
       threadId,
       config: getRecommendedPluginsConfig(options),
+      excludeTurns: true,
+      initialTurnsPage: {
+        limit: 1,
+        sortDirection: 'desc',
+        itemsView: 'full'
+      },
       ...getThreadAccessOptions(options)
     })
-    const [cwd, name, resumedTurns] = await Promise.all([
+    const [cwd, name] = await Promise.all([
       this.resolveThreadCwd(resume.thread, fallbackCwd),
-      this.resolveThreadName(resume.thread),
-      existingThread ? Promise.resolve<CodexTurn[]>([]) : this.getTurnsForThread(resume.thread)
+      this.resolveThreadName(resume.thread)
     ])
+    const latestTurns = [...(resume.initialTurnsPage?.data ?? [])].reverse()
+    const turns = existingThread
+      ? latestTurns.reduce((currentTurns, latestTurn) => {
+          const existingTurnIndex = currentTurns.findIndex((turn) => turn.id === latestTurn.id)
+          if (existingTurnIndex < 0) return [...currentTurns, latestTurn]
+
+          const nextTurns = [...currentTurns]
+          nextTurns[existingTurnIndex] = this.mergeTurn(
+            threadId,
+            nextTurns[existingTurnIndex],
+            latestTurn
+          )
+          return nextTurns
+        }, existingThread.turns)
+      : latestTurns
     const thread = {
       ...resume.thread,
       createdAt: existingThread?.createdAt ?? resume.thread.createdAt,
@@ -3709,12 +3878,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
       cwd,
       historyMode: resume.thread.historyMode ?? existingThread?.historyMode,
       status: existingThread?.status ?? resume.thread.status,
-      turns: existingThread
-        ? existingThread.turns
-        : this.filterRolledBackTurns(threadId, resumedTurns),
+      turns: this.filterRolledBackTurns(threadId, turns),
       ...(existingThread?.turnWindowStartIndex == null
         ? {}
-        : { turnWindowStartIndex: existingThread.turnWindowStartIndex })
+        : { turnWindowStartIndex: existingThread.turnWindowStartIndex }),
+      ...(existingThread?.turnPagination
+        ? { turnPagination: { ...existingThread.turnPagination, newerCursor: null } }
+        : {}),
+      ...(existingThread?.turnPaginationBoundaryStale ? { turnPaginationBoundaryStale: true } : {})
     }
 
     this.cacheThread(thread)
@@ -3756,6 +3927,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
     this.cacheThread(nextThread)
     return nextThread
+  }
+
+  private retainThreadTurnTail = (threadId: string): void => {
+    const thread = this.threads.get(threadId)
+    if (!thread || thread.turns.length <= rendererChatUpdateTurnLimit) return
+
+    const retainedTail = retainCodexTurnTail(thread.turns, rendererChatUpdateTurnLimit)
+    this.cacheThread({
+      ...thread,
+      turns: retainedTail.turns,
+      ...(thread.turnPagination
+        ? { turnPaginationBoundaryStale: true }
+        : {
+            turnWindowStartIndex:
+              (thread.turnWindowStartIndex ?? 0) + retainedTail.droppedRenderableTurnCount
+          })
+    })
   }
 
   private setThreadStatus = (threadId: string, status: CodexThreadStatus): void => {
@@ -4432,12 +4620,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const activeTurnIdBeforeRead = this.getActiveTurnId(threadId)
     const response = await this.client.request<ThreadReadResponse>('thread/read', {
       threadId,
-      includeTurns: true
+      includeTurns: false
     })
-    const [cwd, name, turns] = await Promise.all([
+    const [cwd, name, cursorWindow] = await Promise.all([
       this.resolveThreadCwd(response.thread, this.threads.get(threadId)?.cwd ?? null),
       this.resolveThreadName(response.thread),
-      this.getTurnsForThread(response.thread)
+      loadCodexTurnCursorWindow((method, params) => this.client.request(method, params), threadId, {
+        cursor: null,
+        direction: 'older',
+        limit: rendererChatUpdateTurnLimit
+      })
     ])
 
     const currentThread = this.threads.get(threadId)
@@ -4449,24 +4641,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
       return
     }
 
-    const refreshedTurns = this.filterRolledBackTurns(threadId, turns)
-    const refreshedTurnIds = new Set(refreshedTurns.map((turn) => turn.id))
+    const refreshedTurns = this.filterRolledBackTurns(threadId, cursorWindow.turns)
     const currentTurnsById = new Map(currentThread.turns.map((turn) => [turn.id, turn]))
-    const reconciledTurns = [
-      ...refreshedTurns.map((turn) => {
-        const currentTurn = currentTurnsById.get(turn.id)
-        return currentTurn ? this.mergeTurn(threadId, turn, currentTurn) : turn
-      }),
-      ...currentThread.turns.filter(
-        (turn) => !refreshedTurnIds.has(turn.id) && isCodexTurnTerminal(turn)
-      )
-    ]
+    const reconciledTurns = refreshedTurns.map((turn) => {
+      const currentTurn = currentTurnsById.get(turn.id)
+      return currentTurn ? this.mergeTurn(threadId, turn, currentTurn) : turn
+    })
     this.cacheThread({
       ...response.thread,
       name,
       cwd,
       status: currentThread.status,
-      turns: reconciledTurns
+      turns: reconciledTurns,
+      turnPagination: {
+        kind: 'cursor',
+        olderCursor: cursorWindow.olderCursor,
+        newerCursor: null
+      }
     })
 
     const activeTurn = reconciledTurns.findLast((turn) => turn.status === 'inProgress')
@@ -4930,6 +5121,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       if (this.activeTurnIds.get(threadId) === turn.id) this.activeTurnIds.delete(threadId)
       this.pendingApprovalsByThread.delete(threadId)
       if (!this.getActiveTurnId(threadId)) this.setThreadStatus(threadId, { type: 'idle' })
+      this.retainThreadTurnTail(threadId)
     }
 
     if (notification.method === 'turn/completed') {

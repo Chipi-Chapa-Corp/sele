@@ -5,6 +5,56 @@ type CodexHistoryRequest = (method: string, params: unknown) => Promise<unknown>
 type ThreadTurnsListResponse = {
   data: CodexTurn[]
   nextCursor?: string | null
+  backwardsCursor?: string | null
+}
+
+export type CodexTurnCursorWindow = {
+  turns: CodexTurn[]
+  olderCursor: string | null
+  newerCursor: string | null
+}
+
+export const retainCodexTurnTail = (
+  turns: readonly CodexTurn[],
+  limit: number
+): { turns: CodexTurn[]; droppedRenderableTurnCount: number } => {
+  const boundedLimit = Math.max(1, Math.floor(limit))
+  if (turns.length <= boundedLimit) {
+    return { turns: [...turns], droppedRenderableTurnCount: 0 }
+  }
+  const droppedTurns = turns.slice(0, -boundedLimit)
+  return {
+    turns: turns.slice(-boundedLimit),
+    droppedRenderableTurnCount: droppedTurns.filter((turn) => turn.status !== 'queued').length
+  }
+}
+
+const codexTurnCursorTokenPrefix = 'sele:codex-turn-cursor:'
+
+const encodeCodexTurnCursor = (cursor: string | null, includesAnchor: boolean): string | null =>
+  cursor == null
+    ? null
+    : `${codexTurnCursorTokenPrefix}${JSON.stringify({ cursor, includesAnchor })}`
+
+const decodeCodexTurnCursor = (
+  token: string | null
+): { cursor: string | null; includesAnchor: boolean } => {
+  if (token == null) return { cursor: null, includesAnchor: false }
+  if (!token.startsWith(codexTurnCursorTokenPrefix)) {
+    throw new Error('Invalid Codex turn cursor')
+  }
+  try {
+    const parsed = JSON.parse(token.slice(codexTurnCursorTokenPrefix.length)) as {
+      cursor?: unknown
+      includesAnchor?: unknown
+    }
+    if (typeof parsed.cursor !== 'string' || typeof parsed.includesAnchor !== 'boolean') {
+      throw new Error('Invalid Codex turn cursor')
+    }
+    return { cursor: parsed.cursor, includesAnchor: parsed.includesAnchor }
+  } catch {
+    throw new Error('Invalid Codex turn cursor')
+  }
 }
 
 export type CodexEditHistoryPlan = {
@@ -81,6 +131,67 @@ const getNextCursor = (
   if (!cursor || seenCursors.has(cursor)) return null
   seenCursors.add(cursor)
   return cursor
+}
+
+/**
+ * Reads one bounded page without first counting the thread. Codex returns a cursor for continuing
+ * in the requested direction and a backwards cursor for reversing direction from this page.
+ */
+export const loadCodexTurnCursorWindow = async (
+  request: CodexHistoryRequest,
+  threadId: string,
+  options: {
+    cursor: string | null
+    direction: 'older' | 'newer'
+    limit: number
+  }
+): Promise<CodexTurnCursorWindow> => {
+  const sortDirection = options.direction === 'older' ? 'desc' : 'asc'
+  const decodedCursor = decodeCodexTurnCursor(options.cursor)
+  const limit = Math.max(1, Math.floor(options.limit))
+  const response = (await request('thread/turns/list', {
+    threadId,
+    cursor: decodedCursor.cursor,
+    // A backwards cursor deliberately includes its anchor. Read and discard that overlap so each
+    // renderer page still contains `limit` new turns.
+    limit: limit + (decodedCursor.includesAnchor ? 1 : 0),
+    sortDirection,
+    itemsView: 'full'
+  })) as ThreadTurnsListResponse
+  if (!Array.isArray(response.data)) throw new Error('Invalid paginated Codex turn response')
+
+  const pageData = decodedCursor.includesAnchor ? response.data.slice(1) : response.data
+  const turns = options.direction === 'older' ? pageData.toReversed() : pageData
+  return {
+    turns,
+    olderCursor:
+      options.direction === 'older'
+        ? encodeCodexTurnCursor(response.nextCursor ?? null, false)
+        : encodeCodexTurnCursor(response.backwardsCursor ?? null, true),
+    newerCursor:
+      options.direction === 'newer'
+        ? encodeCodexTurnCursor(response.nextCursor ?? null, false)
+        : options.cursor == null
+          ? null
+          : encodeCodexTurnCursor(response.backwardsCursor ?? null, true)
+  }
+}
+
+/** Recomputes the cursor immediately before a bounded latest tail without loading turn items. */
+export const loadCodexLatestTurnBoundary = async (
+  request: CodexHistoryRequest,
+  threadId: string,
+  tailSize: number
+): Promise<string | null> => {
+  const response = (await request('thread/turns/list', {
+    threadId,
+    cursor: null,
+    limit: Math.max(1, Math.floor(tailSize)),
+    sortDirection: 'desc',
+    itemsView: 'notLoaded'
+  })) as ThreadTurnsListResponse
+  if (!Array.isArray(response.data)) throw new Error('Invalid paginated Codex turn response')
+  return encodeCodexTurnCursor(response.nextCursor ?? null, false)
 }
 
 /**

@@ -95,6 +95,7 @@ export type ConversationViewModelDependencies = {
   recentChatReferencePage: {
     chatKey: string
     items: ProviderChatItem[]
+    latestItemId: string | null
     messageLimit: number
     totalTurnCount: number
   } | null
@@ -108,6 +109,7 @@ export type ConversationViewModelDependencies = {
     React.SetStateAction<{
       chatKey: string
       items: ProviderChatItem[]
+      latestItemId: string | null
       messageLimit: number
       totalTurnCount: number
     } | null>

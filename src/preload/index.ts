@@ -213,6 +213,23 @@ const providerApi: ProviderRendererApi = {
     ),
   getChatTurnPage: (providerId, chatId, startIndex, limit) =>
     ipcRenderer.invoke(providerIpcChannels.getChatTurnPage, providerId, chatId, startIndex, limit),
+  getChatTurnCursorPage: (providerId, chatId, direction, cursor, limit) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.getChatTurnCursorPage,
+      providerId,
+      chatId,
+      direction,
+      cursor,
+      limit
+    ),
+  getChatTurnPageForItem: (providerId, chatId, itemId, limit) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.getChatTurnPageForItem,
+      providerId,
+      chatId,
+      itemId,
+      limit
+    ),
   setChatTitle: (providerId, chatId, title) =>
     ipcRenderer.invoke(providerIpcChannels.setChatTitle, providerId, chatId, title),
   generateOneShot: (providerId, message, options) =>

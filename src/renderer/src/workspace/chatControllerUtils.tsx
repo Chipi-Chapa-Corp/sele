@@ -361,6 +361,22 @@ export const getChatDetailFromUpdate = (
   const currentTurns = getProviderChatTurns(currentDetail?.items ?? [])
   if (
     currentDetail?.id === update.id &&
+    currentDetail.turnPagination?.kind === 'cursor' &&
+    currentDetail.turnPagination.newerCursor &&
+    chatDetail.turnPagination?.kind === 'cursor' &&
+    !chatDetail.turnPagination.newerCursor
+  ) {
+    return {
+      ...chatDetail,
+      container: stableContainer,
+      items: currentDetail.items,
+      itemsStartTurnIndex: 0,
+      turnCount: currentTurns.length,
+      turnPagination: currentDetail.turnPagination
+    }
+  }
+  if (
+    currentDetail?.id === update.id &&
     isChatDetailUpdateAfterLoadedTurnWindow(currentDetail, incomingItemsStartTurnIndex)
   ) {
     return {

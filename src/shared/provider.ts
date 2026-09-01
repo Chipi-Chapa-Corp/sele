@@ -775,6 +775,13 @@ export type ProviderChatDetail = {
   items: ProviderChatItem[]
   itemsStartTurnIndex?: number
   turnCount?: number
+  turnPagination?: ProviderChatTurnPagination
+}
+
+export type ProviderChatTurnPagination = {
+  kind: 'cursor'
+  olderCursor: string | null
+  newerCursor: string | null
 }
 
 export type ProviderChatActivitySummary = {
@@ -814,6 +821,7 @@ export type ProviderChatTurnPage = {
   items: ProviderChatItem[]
   startIndex: number
   totalCount: number
+  turnPagination?: ProviderChatTurnPagination
 }
 
 export type ProviderWorkingStepPage = {
@@ -1106,6 +1114,19 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
     startIndex: number,
     limit: number
   ) => Promise<ProviderChatTurnPage>
+  getChatTurnCursorPage: (
+    providerId: ProviderId,
+    chatId: string,
+    direction: 'older' | 'newer',
+    cursor: string | null,
+    limit: number
+  ) => Promise<ProviderChatTurnPage>
+  getChatTurnPageForItem: (
+    providerId: ProviderId,
+    chatId: string,
+    itemId: string,
+    limit: number
+  ) => Promise<ProviderChatTurnPage>
   continueChatSummary: (
     providerId: ProviderId,
     chatId: string,
@@ -1155,6 +1176,8 @@ export const providerIpcChannels = {
   getChatWorkingItem: 'provider:get-chat-working-item',
   getChatWorkingToolPage: 'provider:get-chat-working-tool-page',
   getChatTurnPage: 'provider:get-chat-turn-page',
+  getChatTurnCursorPage: 'provider:get-chat-turn-cursor-page',
+  getChatTurnPageForItem: 'provider:get-chat-turn-page-for-item',
   setChatTitle: 'provider:set-chat-title',
   generateOneShot: 'provider:generate-one-shot',
   cancelOneShot: 'provider:cancel-one-shot',

@@ -49,7 +49,13 @@ import {
 } from '../../shared/provider'
 import { requireContainerTarget } from '../containerTarget'
 import { getProviderChatTurnCount } from '../../shared/chatTurns'
-import { getChatUpdateSummary, getProviderChatWindow, providerApi } from './providerService'
+import {
+  getChatUpdateSummary,
+  getProviderChatCursorWindow,
+  getProviderChatItemWindow,
+  getProviderChatWindow,
+  providerApi
+} from './providerService'
 import {
   prepareChatDetailForRenderer,
   prepareChatItemsForRenderer,
@@ -262,6 +268,24 @@ const getRendererChatDetail = async (
   read: () => Promise<ProviderChatDetail>
 ): Promise<ProviderChatDetail> => prepareChatDetailForRenderer(await read())
 
+const findWorkingStep = (
+  detail: ProviderChatDetail,
+  workingStepId: string
+): ProviderWorkingStep | undefined =>
+  detail.items.find(
+    (item): item is ProviderWorkingStep => item.type === 'working' && item.id === workingStepId
+  )
+
+const getChatDetailContainingWorkingStep = async (
+  providerId: ProviderId,
+  chatId: string,
+  workingStepId: string
+): Promise<ProviderChatDetail> => {
+  const latestDetail = await providerApi.getChat(providerId, chatId)
+  if (findWorkingStep(latestDetail, workingStepId)) return latestDetail
+  return getProviderChatItemWindow(providerId, chatId, workingStepId, 1)
+}
+
 const getChatUpdateDeliveryState = (webContents: WebContents): ChatUpdateDeliveryState => {
   const existingState = chatUpdateDeliveryByWebContentsId.get(webContents.id)
   if (existingState) return existingState
@@ -395,6 +419,19 @@ const requireChatTurnLimit = (value: unknown): number => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > 50) {
     throw new Error('Invalid chat turn limit')
   }
+  return value
+}
+
+const requireChatTurnCursorDirection = (value: unknown): 'older' | 'newer' => {
+  if (value !== 'older' && value !== 'newer') {
+    throw new Error('Invalid chat turn cursor direction')
+  }
+  return value
+}
+
+const requireChatTurnCursor = (value: unknown): string | null => {
+  if (value == null) return null
+  if (typeof value !== 'string' || !value) throw new Error('Invalid chat turn cursor')
   return value
 }
 
@@ -1326,12 +1363,15 @@ export const registerProviderIpc = (): void => {
       startIndex: unknown,
       limit: unknown
     ): Promise<ProviderWorkingStepPage> => {
-      const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+      const requiredProviderId = requireProviderId(providerId)
+      const requiredChatId = requireChatId(chatId)
       const requiredWorkingStepId = requireMessageId(workingStepId)
-      const workingStep = detail.items.find(
-        (item): item is ProviderWorkingStep =>
-          item.type === 'working' && item.id === requiredWorkingStepId
+      const detail = await getChatDetailContainingWorkingStep(
+        requiredProviderId,
+        requiredChatId,
+        requiredWorkingStepId
       )
+      const workingStep = findWorkingStep(detail, requiredWorkingStepId)
       if (!workingStep) throw new Error('Working section not found')
       return prepareWorkingStepPage(
         workingStep,
@@ -1350,13 +1390,16 @@ export const registerProviderIpc = (): void => {
       workingStepId: unknown,
       workingItemId: unknown
     ): Promise<ProviderWorkingItem> => {
-      const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+      const requiredProviderId = requireProviderId(providerId)
+      const requiredChatId = requireChatId(chatId)
       const requiredWorkingStepId = requireMessageId(workingStepId)
       const requiredWorkingItemId = requireMessageId(workingItemId)
-      const workingStep = detail.items.find(
-        (item): item is ProviderWorkingStep =>
-          item.type === 'working' && item.id === requiredWorkingStepId
+      const detail = await getChatDetailContainingWorkingStep(
+        requiredProviderId,
+        requiredChatId,
+        requiredWorkingStepId
       )
+      const workingStep = findWorkingStep(detail, requiredWorkingStepId)
       if (!workingStep) throw new Error('Working section not found')
       const workingItem =
         workingStep.items.find((item) => item.id === requiredWorkingItemId) ??
@@ -1379,12 +1422,15 @@ export const registerProviderIpc = (): void => {
       startIndex: unknown,
       limit: unknown
     ): Promise<ProviderWorkingToolPage> => {
-      const detail = await providerApi.getChat(requireProviderId(providerId), requireChatId(chatId))
+      const requiredProviderId = requireProviderId(providerId)
+      const requiredChatId = requireChatId(chatId)
       const requiredWorkingStepId = requireMessageId(workingStepId)
-      const workingStep = detail.items.find(
-        (item): item is ProviderWorkingStep =>
-          item.type === 'working' && item.id === requiredWorkingStepId
+      const detail = await getChatDetailContainingWorkingStep(
+        requiredProviderId,
+        requiredChatId,
+        requiredWorkingStepId
       )
+      const workingStep = findWorkingStep(detail, requiredWorkingStepId)
       if (!workingStep) throw new Error('Working section not found')
       return prepareWorkingToolPage(
         workingStep,
@@ -1431,6 +1477,68 @@ export const registerProviderIpc = (): void => {
       return {
         items,
         startIndex: requiredStartIndex,
+        totalCount
+      }
+    }
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.getChatTurnCursorPage,
+    async (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      direction: unknown,
+      cursor: unknown,
+      limit: unknown
+    ): Promise<ProviderChatTurnPage> => {
+      const detail = await getProviderChatCursorWindow(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        {
+          direction: requireChatTurnCursorDirection(direction),
+          cursor: requireChatTurnCursor(cursor),
+          limit: requireChatTurnLimit(limit)
+        }
+      )
+      const pageDetail = unloadHistoricalWorkingSteps(detail)
+      const items = prepareChatItemsForRenderer(
+        pageDetail.items.map((item) =>
+          item.type === 'message' || item.type === 'pendingMessage'
+            ? { ...item, contentLoaded: true }
+            : item
+        )
+      )
+
+      return {
+        items,
+        startIndex: 0,
+        totalCount: getProviderChatTurnCount(items),
+        turnPagination: detail.turnPagination
+      }
+    }
+  )
+
+  ipcMain.handle(
+    providerIpcChannels.getChatTurnPageForItem,
+    async (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      itemId: unknown,
+      limit: unknown
+    ): Promise<ProviderChatTurnPage> => {
+      const detail = await getProviderChatItemWindow(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireMessageId(itemId),
+        requireChatTurnLimit(limit)
+      )
+      const totalCount = detail.turnCount ?? getProviderChatTurnCount(detail.items)
+      const pageDetail = unloadHistoricalWorkingSteps(detail)
+      return {
+        items: prepareChatItemsForRenderer(pageDetail.items),
+        startIndex: detail.itemsStartTurnIndex ?? 0,
         totalCount
       }
     }

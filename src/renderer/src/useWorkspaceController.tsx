@@ -381,6 +381,7 @@ export const useWorkspaceController = () => {
   const [recentChatReferencePage, setRecentChatReferencePage] = useState<{
     chatKey: string
     items: ProviderChatItem[]
+    latestItemId: string | null
     messageLimit: number
     totalTurnCount: number
   } | null>(null)
@@ -5209,7 +5210,8 @@ export const useWorkspaceController = () => {
     !activeSubagentChatView &&
     effectiveChatTurnWindow &&
     (!chatAtConversationBottom ||
-      effectiveChatTurnWindow.endIndex < effectiveChatTurnWindow.totalCount)
+      effectiveChatTurnWindow.endIndex < effectiveChatTurnWindow.totalCount ||
+      Boolean(chatDetail?.turnPagination?.newerCursor))
   )
 
   return {

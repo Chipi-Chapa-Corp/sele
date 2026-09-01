@@ -34,7 +34,11 @@ import {
   getMessageReviews,
   setMessageReview
 } from '../database/messageReviews'
-import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
+import {
+  getProviderChatTurnCount,
+  getProviderChatTurns,
+  sliceProviderChatTurns
+} from '../../shared/chatTurns'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
 import {
   cancelCodexAccountCreation as removePendingCodexAccount,
@@ -48,7 +52,11 @@ import { ClaudeProviderAdapter } from './claude/ClaudeProviderAdapter'
 import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
-import type { ProviderAdapter, ProviderChatTurnWindow } from './ProviderAdapter'
+import type {
+  ProviderAdapter,
+  ProviderChatTurnCursorWindow,
+  ProviderChatTurnWindow
+} from './ProviderAdapter'
 import {
   collectActiveProviderChats,
   getProviderUpdateImpact,
@@ -219,6 +227,48 @@ export const getProviderChatWindow = async (
         window
       )
   return applyMetadataToDetail(detail)
+}
+
+export const getProviderChatCursorWindow = async (
+  providerId: ProviderId,
+  chatId: string,
+  window: ProviderChatTurnCursorWindow
+): Promise<ProviderChatDetail> => {
+  const metadata = await getChatMetadata(chatId)
+  const adapter = adapters[providerId]
+  if (!adapter.getChatCursorWindow) {
+    throw new Error(`${providerLabels[providerId]} does not support cursor-based chat history`)
+  }
+  return applyMetadataToDetail(
+    await adapter.getChatCursorWindow(chatId, window, { container: metadata.container })
+  )
+}
+
+export const getProviderChatItemWindow = async (
+  providerId: ProviderId,
+  chatId: string,
+  itemId: string,
+  limit: number
+): Promise<ProviderChatDetail> => {
+  const metadata = await getChatMetadata(chatId)
+  const adapter = adapters[providerId]
+  if (adapter.getChatWindowForItem) {
+    return applyMetadataToDetail(
+      await adapter.getChatWindowForItem(chatId, itemId, limit, {
+        container: metadata.container
+      })
+    )
+  }
+
+  const detail = await adapter.getChat(chatId, { container: metadata.container })
+  const turns = getProviderChatTurns(detail.items)
+  const targetIndex = turns.findIndex((turn) => turn.items.some((item) => item.id === itemId))
+  if (targetIndex < 0) throw new Error('Chat item not found')
+  const startIndex = Math.min(
+    Math.max(0, targetIndex - Math.floor(limit / 2)),
+    Math.max(0, turns.length - limit)
+  )
+  return applyMetadataToDetail(sliceChatDetailToTurnWindow(detail, { startIndex, limit }))
 }
 
 const runWithStoredReview = async (

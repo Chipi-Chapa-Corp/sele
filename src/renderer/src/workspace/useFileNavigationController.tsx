@@ -414,12 +414,19 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
       const navigationKey = getRecentChatReferenceKey(reference)
 
       try {
-        const page = await providerApi.getChatTurnPage(
-          reference.providerId,
-          reference.chatId,
-          startIndex,
-          chatTurnWindowSize
-        )
+        const page = currentDetail.turnPagination
+          ? await providerApi.getChatTurnPageForItem(
+              reference.providerId,
+              reference.chatId,
+              reference.messageId,
+              chatTurnWindowSize
+            )
+          : await providerApi.getChatTurnPage(
+              reference.providerId,
+              reference.chatId,
+              startIndex,
+              chatTurnWindowSize
+            )
         const pendingReference = pendingPinnedMessageNavigationRef.current
         if (
           selectedChatKeyRef.current !== targetChatKey ||

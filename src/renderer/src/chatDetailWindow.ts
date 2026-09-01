@@ -130,9 +130,21 @@ export const mergeChatDetailTurnPage = (
     ...detail,
     items,
     itemsStartTurnIndex: itemsStartTurnIndex ?? retainedWindow.startIndex,
-    turnCount: Math.max(detail.turnCount ?? 0, page.totalCount, retainedWindow.totalCount)
+    turnCount: Math.max(detail.turnCount ?? 0, page.totalCount, retainedWindow.totalCount),
+    turnPagination: page.turnPagination
   }
 }
+
+export const replaceChatDetailWithCursorPage = (
+  detail: ProviderChatDetail,
+  page: ProviderChatTurnPage
+): ProviderChatDetail => ({
+  ...detail,
+  items: page.items,
+  itemsStartTurnIndex: 0,
+  turnCount: getProviderChatTurns(page.items).length,
+  turnPagination: page.turnPagination
+})
 
 export const retainLoadedChatDetailTurnWindow = (
   detail: ProviderChatDetail,
