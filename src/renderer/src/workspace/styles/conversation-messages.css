@@ -36,34 +36,34 @@
 
 .chat-detail__messages-status {
   position: absolute;
-  top: 2.4rem;
-  right: 1.2rem;
-  left: 1.2rem;
-  margin: 0;
-  pointer-events: none;
-}
-
-.chat-detail__turn-page-loading {
-  position: absolute;
-  left: 50%;
+  inset: 0;
   z-index: 3;
-  padding: 0.25rem 0.45rem;
-  border: 0.0625rem solid var(--secondary-border);
-  border-radius: 49.95rem;
-  color: var(--quiet);
-  background: var(--secondary-surface);
-  box-shadow: var(--secondary-shadow);
-  font-size: 0.82em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 1.4rem;
+  color: color-mix(in srgb, var(--quiet) 52%, transparent);
+  text-align: center;
   pointer-events: none;
-  transform: translateX(-50%);
 }
 
-.chat-detail__turn-page-loading--older {
-  top: 0.5rem;
+.chat-detail__messages-status-icon {
+  width: 3.6rem;
+  height: 3.6rem;
+  stroke-width: 1.35;
 }
 
-.chat-detail__turn-page-loading--newer {
-  bottom: 0.5rem;
+.chat-detail__messages-status-icon--loading {
+  animation: chat-detail-messages-status-spin 900ms linear infinite;
+}
+
+@keyframes chat-detail-messages-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .chat-detail__down-button {

@@ -41,6 +41,114 @@ const getThreadSpawn = (source: unknown): Record<string, unknown> | null => {
 const getTaskNameFromPath = (path: string): string =>
   (path.split('/').filter(Boolean).at(-1) ?? path).replace(/[-_]+/g, ' ').trim()
 
+const getTurnTime = (turn: CodexTurn, kind: 'created' | 'updated'): number | null => {
+  const timestamp = kind === 'updated' ? (turn.completedAt ?? turn.startedAt) : turn.startedAt
+  return typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp * 1_000 : null
+}
+
+const getActivityStatus = (value: string | undefined): ProviderSubagent['status'] | null => {
+  switch (value?.toLocaleLowerCase()) {
+    case 'pending':
+    case 'starting':
+      return 'pending'
+    case 'active':
+    case 'inprogress':
+    case 'in_progress':
+    case 'running':
+    case 'started':
+      return 'running'
+    case 'completed':
+    case 'idle':
+    case 'finished':
+      return 'completed'
+    case 'failed':
+    case 'error':
+    case 'errored':
+    case 'notfound':
+    case 'not_found':
+    case 'systemerror':
+    case 'system_error':
+      return 'failed'
+    case 'stopped':
+    case 'cancelled':
+    case 'canceled':
+    case 'interrupted':
+    case 'shutdown':
+      return 'stopped'
+    default:
+      return null
+  }
+}
+
+const terminalStatuses = new Set<ProviderSubagent['status']>(['completed', 'failed', 'stopped'])
+
+/**
+ * Build the lightweight subagent markers carried by a bounded parent-turn page. Child-thread
+ * transcripts are deliberately not read here; those remain click-to-load through getSubagent.
+ */
+export const getCodexTurnSubagents = (
+  turns: CodexTurn[],
+  rootChatId: string
+): ProviderSubagent[] => {
+  const subagents = new Map<string, ProviderSubagent>()
+
+  turns.forEach((turn) => {
+    turn.items.forEach((item) => {
+      if (item.type === 'subAgentActivity' && item.agentThreadId) {
+        const current = subagents.get(item.agentThreadId)
+        const taskName = item.agentPath?.trim() ? getTaskNameFromPath(item.agentPath.trim()) : null
+        const prompt = item.prompt?.trim() || null
+        const activityStatus = getActivityStatus(item.kind)
+        const status =
+          activityStatus === 'completed' &&
+          current &&
+          terminalStatuses.has(current.status) &&
+          current.status !== 'completed'
+            ? current.status
+            : (activityStatus ?? current?.status ?? 'unknown')
+        const updatedAt = getTurnTime(turn, 'updated')
+
+        subagents.set(item.agentThreadId, {
+          id: item.agentThreadId,
+          parentId:
+            item.senderThreadId && item.senderThreadId !== rootChatId
+              ? item.senderThreadId
+              : (current?.parentId ?? null),
+          turnId: turn.id,
+          ...(item.kind === 'completed'
+            ? {
+                afterItemId: getCodexSubagentTimelineAnchorId(turn.id, item.agentThreadId)
+              }
+            : current?.afterItemId
+              ? { afterItemId: current.afterItemId }
+              : {}),
+          title: truncate(taskName || current?.title || 'Subagent', 80),
+          description: prompt ?? current?.description ?? taskName,
+          status,
+          createdAt: current?.createdAt ?? getTurnTime(turn, 'created'),
+          updatedAt: updatedAt ?? current?.updatedAt ?? null
+        })
+        return
+      }
+
+      if (item.type !== 'collabAgentToolCall' || !item.agentsStates) return
+      Object.entries(item.agentsStates).forEach(([agentThreadId, state]) => {
+        const current = subagents.get(agentThreadId)
+        const status = getActivityStatus(state.status)
+        if (!current || !status) return
+
+        subagents.set(agentThreadId, {
+          ...current,
+          status,
+          updatedAt: getTurnTime(turn, 'updated') ?? current.updatedAt
+        })
+      })
+    })
+  })
+
+  return [...subagents.values()]
+}
+
 export const getCodexSubagentTaskDescription = (thread: CodexSubagentThread): string | null => {
   const spawn = getThreadSpawn(thread.source)
   const agentPath = getString(spawn?.agentPath ?? spawn?.agent_path)
@@ -84,23 +192,6 @@ export const createCodexSubagentSummary = (
     createdAt: Number.isFinite(thread.createdAt) ? thread.createdAt * 1_000 : null,
     updatedAt: Number.isFinite(thread.updatedAt) ? thread.updatedAt * 1_000 : null
   }
-}
-
-export const getCodexSubagentAfterItemIds = (turns: CodexTurn[]): Map<string, string> => {
-  const afterItemIds = new Map<string, string>()
-
-  turns.forEach((turn) => {
-    turn.items.forEach((item) => {
-      if (item.type === 'subAgentActivity' && item.kind === 'completed' && item.agentThreadId) {
-        afterItemIds.set(
-          item.agentThreadId,
-          getCodexSubagentTimelineAnchorId(turn.id, item.agentThreadId)
-        )
-      }
-    })
-  })
-
-  return afterItemIds
 }
 
 export const selectCodexSubagentTurns = (

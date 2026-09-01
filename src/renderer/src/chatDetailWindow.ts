@@ -126,9 +126,24 @@ export const mergeChatDetailTurnPage = (
     items.push(...turnItems)
   }
 
+  const mergedSubagents =
+    page.subagents === undefined
+      ? detail.subagents
+      : [
+          ...(detail.subagents ?? []).filter(
+            (subagent) => !page.subagents?.some((candidate) => candidate.id === subagent.id)
+          ),
+          ...page.subagents
+        ]
+  const retainedSubagents = mergedSubagents?.filter(
+    (subagent) =>
+      !subagent.turnId || items.some((item) => item.id.startsWith(`${subagent.turnId}:`))
+  )
+
   return {
     ...detail,
     items,
+    ...(retainedSubagents === undefined ? {} : { subagents: retainedSubagents }),
     itemsStartTurnIndex: itemsStartTurnIndex ?? retainedWindow.startIndex,
     turnCount: Math.max(detail.turnCount ?? 0, page.totalCount, retainedWindow.totalCount),
     turnPagination: page.turnPagination
@@ -141,6 +156,7 @@ export const replaceChatDetailWithCursorPage = (
 ): ProviderChatDetail => ({
   ...detail,
   items: page.items,
+  ...(page.subagents === undefined ? {} : { subagents: page.subagents }),
   itemsStartTurnIndex: 0,
   turnCount: getProviderChatTurns(page.items).length,
   turnPagination: page.turnPagination

@@ -68,7 +68,7 @@ import {
   type CodexUserInput
 } from './CodexItemRenderers'
 import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProviderUpdate'
-import { loadRolloutCwd, loadRolloutHistory } from './CodexRolloutHistory'
+import { loadRolloutHistory } from './CodexRolloutHistory'
 import {
   CodexTurnWindowMismatchError,
   hydrateCodexTurnRange,
@@ -96,7 +96,7 @@ import { writeCodexSkillEnabled } from './CodexSkillConfig'
 import {
   createCodexSubagentSummary,
   createCodexSubagentTranscriptItems,
-  getCodexSubagentAfterItemIds,
+  getCodexTurnSubagents,
   isCodexSubagentThread,
   selectCodexSubagentTurns
 } from './CodexSubagents'
@@ -164,6 +164,10 @@ type CodexThread = {
 type ThreadListResponse = {
   data: CodexThread[]
   nextCursor: string | null
+}
+
+type ThreadTurnsListResponse = {
+  data: CodexTurn[]
 }
 
 type CodexReasoningEffortOption = {
@@ -1878,7 +1882,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           providerId: this.id,
           title: getThreadTitle(namedThread),
           preview: namedThread.preview.trim(),
-          cwd: await this.resolveThreadCwd(namedThread),
+          cwd: getThreadApiCwd(namedThread),
           cwdKind: 'directory' as const,
           projectCwd: null,
           branchName: null,
@@ -2025,13 +2029,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
       olderCursor: cursorWindow.olderCursor,
       newerCursor: cursorWindow.newerCursor
     }
-    const name = await this.resolveThreadName(threadMetadata)
+    const [name, cwd] = await Promise.all([
+      this.resolveThreadName(threadMetadata),
+      this.resolveThreadCwd(threadMetadata)
+    ])
     const thread = {
       ...threadMetadata,
       name,
       // A cursor page is already fully hydrated. Avoid the rollout fallback, which reads the
       // complete JSONL transcript.
-      cwd: getThreadApiCwd(threadMetadata),
+      cwd,
       turns,
       turnPagination
     } satisfies CodexThread
@@ -2156,14 +2163,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
     const { selectedTurns, startIndex, totalCount, pendingStartIndex, pendingEndIndex } =
       refreshedWindow.result
-    const name = await this.resolveThreadName(threadMetadata)
+    const [name, cwd] = await Promise.all([
+      this.resolveThreadName(threadMetadata),
+      this.resolveThreadCwd(threadMetadata)
+    ])
 
     return this.createChatDetail(
       {
         ...threadMetadata,
         name,
         // Do not call the rollout fallback here: that API materializes the complete JSONL file.
-        cwd: getThreadApiCwd(threadMetadata),
+        cwd,
         turns: selectedTurns
       },
       {
@@ -2198,49 +2208,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private getSubagentsInContext = async (chatId: string): Promise<ProviderSubagent[]> => {
     this.rememberThreadContainer(chatId)
-    const subagentThreads: CodexThread[] = []
-    let cursor: string | null = null
-
-    do {
-      const response = await this.client.request<ThreadListResponse>('thread/list', {
-        cursor,
-        limit: 100,
-        sortKey: 'created_at',
-        sortDirection: 'asc',
-        archived: false,
-        ancestorThreadId: chatId,
-        sourceKinds: ['subAgentThreadSpawn']
-      })
-      response.data.forEach((thread) => {
-        this.rememberThreadContainer(thread.id)
-        subagentThreads.push(thread)
-      })
-      cursor = response.nextCursor ?? null
-    } while (cursor)
-
-    const parentIds = new Set(
-      subagentThreads.map((thread) => thread.parentThreadId ?? chatId).filter(Boolean)
-    )
-    const afterItemIdsByParentId = new Map<string, Map<string, string>>()
-
-    parentIds.forEach((parentId) => {
-      const parent = this.threads.get(parentId)
-      if (!parent) return
-      const turns =
-        parentId === chatId
-          ? getThreadTurns(parent)
-          : selectCodexSubagentTurns(getThreadTurns(parent), parent.createdAt)
-      afterItemIdsByParentId.set(parentId, getCodexSubagentAfterItemIds(turns))
-    })
-
-    return subagentThreads.map((thread) => {
-      const parentId = thread.parentThreadId ?? chatId
-      return createCodexSubagentSummary(
-        thread,
-        chatId,
-        afterItemIdsByParentId.get(parentId)?.get(thread.id) ?? null
-      )
-    })
+    const thread = this.threads.get(chatId)
+    return thread ? getCodexTurnSubagents(this.getRenderableTurns(thread), chatId) : []
   }
 
   getSubagent = (
@@ -2256,10 +2225,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     chatId: string,
     subagentId: string
   ): Promise<ProviderSubagentDetail> => {
-    const summary = (await this.getSubagentsInContext(chatId)).find(
+    const cachedSummary = (await this.getSubagentsInContext(chatId)).find(
       (candidate) => candidate.id === subagentId
     )
-    if (!summary) throw new Error('Codex subagent was not found.')
 
     const response = await this.client.request<ThreadReadResponse>('thread/read', {
       threadId: subagentId,
@@ -2282,10 +2250,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rememberThreadContainer(thread.id)
     this.cacheThread(thread)
 
-    const refreshedSummary = {
-      ...summary,
-      ...createCodexSubagentSummary(thread, chatId, summary.afterItemId)
-    }
+    const refreshedSummary = createCodexSubagentSummary(thread, chatId, cachedSummary?.afterItemId)
 
     return {
       ...refreshedSummary,
@@ -2305,19 +2270,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.cancelSubagentInContext(chatId, subagentId)
     )
 
-  private cancelSubagentInContext = async (chatId: string, subagentId: string): Promise<void> => {
-    const exists = (await this.getSubagentsInContext(chatId)).some(
-      (subagent) => subagent.id === subagentId
-    )
-    if (!exists) throw new Error('Codex subagent was not found.')
-
-    const response = await this.client.request<ThreadReadResponse>('thread/read', {
+  private cancelSubagentInContext = async (_chatId: string, subagentId: string): Promise<void> => {
+    const response = await this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
       threadId: subagentId,
-      includeTurns: true
+      cursor: null,
+      limit: 1,
+      sortDirection: 'desc',
+      itemsView: 'notLoaded'
     })
-    const activeTurnId = getThreadTurns(response.thread).findLast(
-      (turn) => turn.status === 'inProgress'
-    )?.id
+    const activeTurnId = response.data.find((turn) => turn.status === 'inProgress')?.id
     if (!activeTurnId) return
 
     await this.interruptTurnWithClient(this.client, subagentId, activeTurnId)
@@ -3132,8 +3093,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private resolveThreadCwd = async (
     thread: CodexThread,
     fallbackCwd: string | null = null
-  ): Promise<string | null> =>
-    getThreadApiCwd(thread) ?? fallbackCwd ?? (await loadRolloutCwd(thread.path))
+  ): Promise<string> => {
+    const cwd = getThreadApiCwd(thread) ?? fallbackCwd?.trim() ?? null
+    if (!cwd) throw new Error('Unable to load chat: working directory is missing.')
+    return cwd
+  }
 
   private getTurnsForThread = async (thread: CodexThread): Promise<CodexTurn[]> => {
     const structuredTurns = getThreadTurns(thread)
@@ -3411,6 +3375,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
     } = {}
   ): ProviderChatDetail => {
+    const cwd = getThreadApiCwd(thread)
+    if (!cwd) throw new Error('Unable to load chat: working directory is missing.')
+
     const allRenderableTurns = this.getRenderableTurns(thread)
     const allPendingMessages =
       options.cursorPendingMessages ?? this.getProviderPendingMessages(thread.id)
@@ -3454,7 +3421,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       id: thread.id,
       createdAt: thread.createdAt * 1_000,
       title: getThreadTitle(thread),
-      cwd: getThreadApiCwd(thread),
+      cwd,
       cwdKind: 'directory' as const,
       projectCwd: null,
       branchName: null,
@@ -3470,6 +3437,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       pendingApproval: this.getProviderPendingApproval(thread.id),
       pendingUserInput: null,
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
+      subagents: getCodexTurnSubagents(renderableTurns, thread.id),
       ...(itemsStartTurnIndex == null ? {} : { itemsStartTurnIndex, turnCount }),
       ...(thread.turnPagination ? { turnPagination: thread.turnPagination } : {}),
       items: [

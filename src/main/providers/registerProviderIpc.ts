@@ -1476,6 +1476,7 @@ export const registerProviderIpc = (): void => {
 
       return {
         items,
+        subagents: detail.subagents,
         startIndex: requiredStartIndex,
         totalCount
       }
@@ -1512,6 +1513,7 @@ export const registerProviderIpc = (): void => {
 
       return {
         items,
+        subagents: detail.subagents,
         startIndex: 0,
         totalCount: getProviderChatTurnCount(items),
         turnPagination: detail.turnPagination
@@ -1538,6 +1540,7 @@ export const registerProviderIpc = (): void => {
       const pageDetail = unloadHistoricalWorkingSteps(detail)
       return {
         items: prepareChatItemsForRenderer(pageDetail.items),
+        subagents: detail.subagents,
         startIndex: detail.itemsStartTurnIndex ?? 0,
         totalCount
       }

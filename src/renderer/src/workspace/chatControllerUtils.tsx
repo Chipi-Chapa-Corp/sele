@@ -370,6 +370,7 @@ export const getChatDetailFromUpdate = (
       ...chatDetail,
       container: stableContainer,
       items: currentDetail.items,
+      subagents: currentDetail.subagents,
       itemsStartTurnIndex: 0,
       turnCount: currentTurns.length,
       turnPagination: currentDetail.turnPagination
@@ -383,6 +384,7 @@ export const getChatDetailFromUpdate = (
       ...chatDetail,
       container: stableContainer,
       items: currentDetail.items,
+      subagents: currentDetail.subagents,
       itemsStartTurnIndex: currentItemsStartTurnIndex
     }
   }

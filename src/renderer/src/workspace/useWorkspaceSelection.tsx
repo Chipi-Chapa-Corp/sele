@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import { flushSync } from 'react-dom'
-import type { ProviderUsageOptions } from '../../../shared/provider'
+import type { ProviderSubagent, ProviderUsageOptions } from '../../../shared/provider'
 import { providerIds } from '../../../shared/provider'
 import type { AppAction } from '../actions'
 import { getAppActionsForProject, getAppActionKeybindingFromEvent } from '../actions'
@@ -52,6 +52,22 @@ import {
   mergeAccountUsage
 } from './chatControllerUtils'
 import type { WorkspaceSelectionDependencies } from './selectionDependencies'
+
+const areSubagentSummariesEqual = (first: ProviderSubagent, second: ProviderSubagent): boolean =>
+  first.id === second.id &&
+  first.parentId === second.parentId &&
+  first.turnId === second.turnId &&
+  first.beforeItemId === second.beforeItemId &&
+  first.afterItemId === second.afterItemId &&
+  first.title === second.title &&
+  first.description === second.description &&
+  first.status === second.status &&
+  first.createdAt === second.createdAt &&
+  first.updatedAt === second.updatedAt
+
+const areSubagentListsEqual = (first: ProviderSubagent[], second: ProviderSubagent[]): boolean =>
+  first.length === second.length &&
+  first.every((subagent, index) => areSubagentSummariesEqual(subagent, second[index]))
 
 // Return shape is inferred from the synchronized selection declarations below.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -201,6 +217,31 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       return
     }
 
+    if (chatDetail.subagents !== undefined) {
+      const subagents = chatDetail.subagents
+      setSubagentListState((currentState) =>
+        currentState?.rootChatKey === selectedChatKey &&
+        currentState.loadState === 'ready' &&
+        currentState.error === null &&
+        areSubagentListsEqual(currentState.items, subagents)
+          ? currentState
+          : {
+              rootChatKey: selectedChatKey,
+              items: subagents,
+              loadState: 'ready',
+              error: null
+            }
+      )
+      setSubagentChatView((currentView) => {
+        if (currentView?.rootChatKey !== selectedChatKey) return currentView
+        const updatedSummary = subagents.find((subagent) => subagent.id === currentView.summary.id)
+        return updatedSummary && !areSubagentSummariesEqual(currentView.summary, updatedSummary)
+          ? { ...currentView, summary: updatedSummary }
+          : currentView
+      })
+      return
+    }
+
     let active = true
     setSubagentListState((currentState) =>
       currentState?.rootChatKey === selectedChatKey
@@ -246,8 +287,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     }
   }, [
     chatDetail?.id,
-    chatDetail?.items,
     chatDetail?.purpose,
+    chatDetail?.subagents,
     selectedChatId,
     selectedChatKey,
     selectedProviderId

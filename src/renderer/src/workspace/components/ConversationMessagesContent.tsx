@@ -1,9 +1,31 @@
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import { ArrowLeft, ChevronDown } from 'lucide-react'
+import { ArrowLeft, ChevronDown, CircleAlert, LoaderCircle } from 'lucide-react'
 import { Button } from '../../components/Button'
 
 type ConversationMessagesContentProps = WorkspaceController['conversationMessages']
+
+const ConversationMessagesState: React.FC<{
+  kind: 'loading' | 'error'
+  label: string
+  title?: string
+}> = ({ kind, label, title }) => (
+  <div
+    className="chat-detail__messages-status"
+    role={kind === 'error' ? 'alert' : 'status'}
+    title={title}
+  >
+    {kind === 'loading' ? (
+      <LoaderCircle
+        className="chat-detail__messages-status-icon chat-detail__messages-status-icon--loading"
+        aria-hidden="true"
+      />
+    ) : (
+      <CircleAlert className="chat-detail__messages-status-icon" aria-hidden="true" />
+    )}
+    <span>{label}</span>
+  </div>
+)
 
 export function ConversationMessagesContent(
   props: ConversationMessagesContentProps
@@ -102,10 +124,10 @@ export function ConversationMessagesContent(
         </div>
       </div>
       {!activeSubagentChatView && chatLoadState === 'loading' && (
-        <p className="chat__status chat-detail__messages-status">Loading messages…</p>
+        <ConversationMessagesState kind="loading" label="Loading messages…" />
       )}
       {!activeSubagentChatView && chatLoadState === 'error' && (
-        <p className="chat__status chat-detail__messages-status">Unable to load messages.</p>
+        <ConversationMessagesState kind="error" label="Unable to load messages." />
       )}
       {!activeSubagentChatView &&
         !editingMessage &&
@@ -118,16 +140,14 @@ export function ConversationMessagesContent(
           <p className="chat__status chat-detail__messages-status">No messages found.</p>
         )}
       {activeSubagentChatView?.loadState === 'loading' && !activeSubagentChatView.detail && (
-        <p className="chat__status chat-detail__messages-status">Loading subagent chat…</p>
+        <ConversationMessagesState kind="loading" label="Loading subagent chat…" />
       )}
       {activeSubagentChatView?.loadState === 'error' && (
-        <p
-          className="chat__status chat-detail__messages-status"
-          role="status"
+        <ConversationMessagesState
+          kind="error"
+          label="Unable to load this subagent chat."
           title={activeSubagentChatView.error ?? undefined}
-        >
-          Unable to load this subagent chat.
-        </p>
+        />
       )}
       {activeSubagentChatView?.loadState === 'ready' && subagentVisibleChatItems.length === 0 && (
         <p className="chat__status chat-detail__messages-status">
@@ -137,12 +157,7 @@ export function ConversationMessagesContent(
       {!activeSubagentChatView &&
         chatTurnPageLoadDirection &&
         chatTurnPageLoadDirection !== 'latest' && (
-          <span
-            className={`chat-detail__turn-page-loading chat-detail__turn-page-loading--${chatTurnPageLoadDirection}`}
-            role="status"
-          >
-            Loading…
-          </span>
+          <ConversationMessagesState kind="loading" label="Loading messages…" />
         )}
       {showChatTurnDownButton && (
         <div className="chat-detail__down-button">

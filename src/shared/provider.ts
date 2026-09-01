@@ -739,6 +739,7 @@ export type ProviderSubagentStatus =
 export type ProviderSubagent = {
   id: string
   parentId: string | null
+  turnId?: string | null
   beforeItemId?: string | null
   afterItemId?: string | null
   title: string
@@ -772,6 +773,7 @@ export type ProviderChatDetail = {
   pendingApproval: ProviderPendingApproval | null
   pendingUserInput: ProviderPendingUserInput | null
   contextUsage: ProviderChatContextUsage | null
+  subagents?: ProviderSubagent[]
   items: ProviderChatItem[]
   itemsStartTurnIndex?: number
   turnCount?: number
@@ -819,6 +821,7 @@ export type ProviderChatDetailUpdate = Omit<ProviderChatDetail, 'items'> & {
 
 export type ProviderChatTurnPage = {
   items: ProviderChatItem[]
+  subagents?: ProviderSubagent[]
   startIndex: number
   totalCount: number
   turnPagination?: ProviderChatTurnPagination
