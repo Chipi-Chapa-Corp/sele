@@ -69,6 +69,7 @@ import { marked, Renderer, type Tokens } from 'marked'
 import type { AppContainerTarget, AppLocalImageOptions } from '../../../shared/app'
 import type {
   ProviderChatItem,
+  ProviderAccountRateLimitResetOutcome,
   ProviderMessage,
   ProviderMessageAttachment,
   ProviderModelId,
@@ -87,6 +88,7 @@ import { createLocalImageUrl } from '../localImage'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from '../markdownFileLink'
 import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { getBrowserFaviconUrl } from '../../../shared/browser'
+import { getRateLimitResetMessage } from '../rateLimitReset'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { defaultAppChatThoughtSettings, type AppChatThoughtSettings } from '../settings'
 import { Button } from './Button'
@@ -94,6 +96,7 @@ import { BoundedHighlightedCode } from './BoundedHighlightedCode'
 import { HighlightedCode } from './HighlightedCode'
 import { ImageLightbox } from './ImageLightbox'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
+import { RateLimitResetButton } from './RateLimitResetButton'
 import { TableLightbox } from './TableLightbox'
 import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
@@ -102,6 +105,7 @@ const workingItemPageSize = 50
 const workingToolPageSize = 50
 
 type ChatDetailItemProps = {
+  availableRateLimitResets?: number
   canEditOwnMessages?: boolean
   container?: AppContainerTarget | null
   continuePrompt?: string
@@ -130,7 +134,9 @@ type ChatDetailItemProps = {
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onToggleMessagePinned?: (message: ProviderMessage, turnIndex: number, pinned: boolean) => void
   onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
-  onRetryStoppedTurn?: (message: ProviderMessage) => void
+  onRetryStoppedTurn?: (message: ProviderMessage) => Promise<void> | void
+  onUsageRefresh?: () => Promise<void> | void
+  onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   previousItem?: ProviderChatItem | null
   cwd?: string | null
   projectCwd?: string | null
@@ -170,6 +176,7 @@ const areChatDetailItemPropsEqual = (
   second: ChatDetailItemProps
 ): boolean =>
   first.canEditOwnMessages === second.canEditOwnMessages &&
+  first.availableRateLimitResets === second.availableRateLimitResets &&
   first.container === second.container &&
   first.continuePrompt === second.continuePrompt &&
   first.continueStoppedTurnDisabled === second.continueStoppedTurnDisabled &&
@@ -193,6 +200,8 @@ const areChatDetailItemPropsEqual = (
   first.onToggleMessagePinned === second.onToggleMessagePinned &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
+  first.onUsageRefresh === second.onUsageRefresh &&
+  first.onUsageReset === second.onUsageReset &&
   isQueuedPendingMessage(first.previousItem) === isQueuedPendingMessage(second.previousItem) &&
   first.cwd === second.cwd &&
   first.projectCwd === second.projectCwd &&
@@ -1775,6 +1784,7 @@ const getWorkingStepDefaultOpen = (
 
 const WorkingStep: React.FC<{
   activityContent?: ReactNode
+  availableRateLimitResets?: number
   container?: AppContainerTarget | null
   continueDisabled?: boolean
   continuedStoppedTurn?: boolean
@@ -1789,12 +1799,15 @@ const WorkingStep: React.FC<{
   onLoadToolPage?: (workingItemId: string, startIndex: number) => Promise<void> | void
   onDisclosureToggle?: () => void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
-  onRetry?: () => void
+  onRetry?: () => Promise<void> | void
+  onUsageRefresh?: () => Promise<void> | void
+  onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   projectCwd?: string | null
   retryDisabled?: boolean
   thoughtSettings: AppChatThoughtSettings
 }> = ({
   activityContent,
+  availableRateLimitResets = 0,
   container,
   continueDisabled = false,
   continuedStoppedTurn = false,
@@ -1810,6 +1823,8 @@ const WorkingStep: React.FC<{
   onDisclosureToggle,
   onOpenFileLink,
   onRetry,
+  onUsageRefresh,
+  onUsageReset,
   projectCwd,
   retryDisabled = false,
   thoughtSettings
@@ -1817,6 +1832,7 @@ const WorkingStep: React.FC<{
   const [continueClicked, setContinueClicked] = useState(false)
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [openAfterLoad, setOpenAfterLoad] = useState(false)
+  const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
   const unloaded = item.itemsLoaded === false
   const linkedToFollowingStep = continuedStoppedTurn || continueClicked
   const itemSegments = getWorkingStepItemSegments(item, workingItemPageSize)
@@ -1894,10 +1910,19 @@ const WorkingStep: React.FC<{
       projectCwd={projectCwd}
     />
   ))
-  const stoppedTurnActions =
-    item.status === 'stopped' && !linkedToFollowingStep && (onRetry || onContinue) ? (
+  const rateLimitResetActions =
+    item.status === 'failed' &&
+    item.failureReason === 'rateLimit' &&
+    availableRateLimitResets > 0 &&
+    onUsageReset &&
+    onRetry
+      ? { onReset: onUsageReset, onRetry }
+      : null
+  const turnActions =
+    !linkedToFollowingStep &&
+    ((item.status === 'stopped' && (onRetry || onContinue)) || rateLimitResetActions) ? (
       <div className="chat-detail__working-actions">
-        {onRetry && (
+        {item.status === 'stopped' && onRetry && (
           <Button
             theme="secondary"
             size="small"
@@ -1909,7 +1934,7 @@ const WorkingStep: React.FC<{
             label={<span>Retry</span>}
           />
         )}
-        {onContinue && (
+        {item.status === 'stopped' && onContinue && (
           <Button
             theme="secondary"
             size="small"
@@ -1923,6 +1948,25 @@ const WorkingStep: React.FC<{
             icon={<Play aria-hidden="true" />}
             label={<span>Continue</span>}
           />
+        )}
+        {rateLimitResetActions && (
+          <RateLimitResetButton
+            availableCount={availableRateLimitResets}
+            disabled={retryDisabled}
+            onReset={rateLimitResetActions.onReset}
+            onResetError={setRateLimitResetMessage}
+            onResetResult={async (outcome) => {
+              setRateLimitResetMessage(getRateLimitResetMessage(outcome))
+              await onUsageRefresh?.()
+              if (outcome === 'reset') await rateLimitResetActions.onRetry()
+            }}
+            onResetStart={() => setRateLimitResetMessage(null)}
+          />
+        )}
+        {rateLimitResetMessage && (
+          <span className="chat-detail__working-action-status" role="status">
+            {rateLimitResetMessage}
+          </span>
         )}
       </div>
     ) : null
@@ -1945,7 +1989,7 @@ const WorkingStep: React.FC<{
       >
         <div className="chat-detail__working-heading">{heading}</div>
       </div>
-      {stoppedTurnActions}
+      {turnActions}
       {renderedGeneratedImages}
     </>
   )
@@ -1988,7 +2032,7 @@ const WorkingStep: React.FC<{
             </span>
           )}
         </div>
-        {stoppedTurnActions}
+        {turnActions}
       </>
     )
   }
@@ -1997,7 +2041,7 @@ const WorkingStep: React.FC<{
     if (item.status !== 'stopped' && !showPlaceholder && renderedGeneratedImages.length > 0) {
       return (
         <>
-          {stoppedTurnActions}
+          {turnActions}
           {renderedGeneratedImages}
         </>
       )
@@ -2007,7 +2051,7 @@ const WorkingStep: React.FC<{
       return (
         <>
           <WorkingPlaceholder id={item.id} />
-          {stoppedTurnActions}
+          {turnActions}
           {renderedGeneratedImages}
         </>
       )
@@ -2147,7 +2191,7 @@ const WorkingStep: React.FC<{
           </div>
         )}
       </details>
-      {stoppedTurnActions}
+      {turnActions}
       {renderedGeneratedImages}
     </>
   )
@@ -2160,6 +2204,7 @@ const getPendingMessageActionLabel = (message: ProviderPendingMessage): string =
   message.kind === 'steering' ? 'steering' : 'queued'
 
 const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
+  availableRateLimitResets = 0,
   canEditOwnMessages = false,
   container,
   continuePrompt = '',
@@ -2185,6 +2230,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onToggleMessagePinned,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
+  onUsageRefresh,
+  onUsageReset,
   previousItem,
   cwd,
   projectCwd,
@@ -2409,6 +2456,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   return (
     <WorkingStep
       activityContent={workingStepContent}
+      availableRateLimitResets={availableRateLimitResets}
       container={container}
       continueDisabled={continueStoppedTurnDisabled || !continuePrompt.trim()}
       continuedStoppedTurn={continuedStoppedTurn}
@@ -2438,6 +2486,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       onRetry={
         retryMessage && onRetryStoppedTurn ? () => onRetryStoppedTurn(retryMessage) : undefined
       }
+      onUsageRefresh={onUsageRefresh}
+      onUsageReset={onUsageReset}
       projectCwd={projectCwd}
       retryDisabled={retryStoppedTurnDisabled}
       thoughtSettings={resolvedThoughtSettings}

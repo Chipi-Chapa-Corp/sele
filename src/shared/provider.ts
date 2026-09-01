@@ -693,6 +693,7 @@ export type ProviderWorkingStep = {
   type: 'working'
   id: string
   status: 'working' | 'worked' | 'stopped' | 'failed' | 'queued'
+  failureReason?: 'rateLimit'
   items: ProviderWorkingItem[]
   itemsLoaded?: boolean
   itemCount?: number

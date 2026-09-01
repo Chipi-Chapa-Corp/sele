@@ -5104,6 +5104,11 @@ export const useWorkspaceController = () => {
               {item.id === firstPendingChatItemId &&
                 trailingChatCommitMarkers.map(renderChatCommitMarker)}
               <ChatDetailItem
+                availableRateLimitResets={
+                  item.type === 'working' && item.failureReason === 'rateLimit'
+                    ? (accountUsage?.rateLimitResetCredits?.availableCount ?? 0)
+                    : 0
+                }
                 canEditOwnMessages={canEditOwnMessages}
                 container={changesContainer}
                 continuePrompt={effectiveAppSettings.chat.continuePrompt}
@@ -5140,6 +5145,16 @@ export const useWorkspaceController = () => {
                 onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
                 onToggleMessagePinned={handleToggleChatMessagePinned}
                 onRetryStoppedTurn={handleRetryStoppedTurn}
+                onUsageRefresh={
+                  item.type === 'working' && item.failureReason === 'rateLimit'
+                    ? refreshAccountUsage
+                    : undefined
+                }
+                onUsageReset={
+                  item.type === 'working' && item.failureReason === 'rateLimit'
+                    ? resetAccountRateLimits
+                    : undefined
+                }
                 previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}
                 projectCwd={changesProjectCwd}
                 retryMessage={canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null}

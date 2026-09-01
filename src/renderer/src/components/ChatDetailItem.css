@@ -470,9 +470,15 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 .chat-detail__working-actions {
   display: flex;
   width: 100%;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
   margin-top: -0.35rem;
+}
+
+.chat-detail__working-action-status {
+  color: var(--quiet);
+  font-size: 0.86em;
 }
 
 .chat-detail__working-label {

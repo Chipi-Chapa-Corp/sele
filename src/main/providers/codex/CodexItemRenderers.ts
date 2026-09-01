@@ -1638,6 +1638,10 @@ const getTurnErrorText = (turn: CodexTurn): string | null => {
   return details.length > 0 ? details.join('\n') : null
 }
 
+const isRateLimitFailure = (turn: CodexTurn): boolean =>
+  turn.error?.codexErrorInfo === 'usageLimitExceeded' ||
+  turn.error?.codexErrorInfo === 'rateLimitExceeded'
+
 const getWorkingStepStatus = (
   workingStatus: ProviderWorkingStep['status'],
   finalMessage: ProviderMessage | null
@@ -1728,6 +1732,9 @@ const renderChatItems = (
         type: 'working',
         id: `${turn.id}:working${workingStepCount === 0 ? '' : `:${workingStepCount}`}`,
         status,
+        ...(status === 'failed' && isRateLimitFailure(turn)
+          ? { failureReason: 'rateLimit' as const }
+          : {}),
         items: [...workingItems],
         ...(workingItemTailLimit < Number.MAX_SAFE_INTEGER
           ? {

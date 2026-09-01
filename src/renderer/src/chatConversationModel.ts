@@ -108,7 +108,11 @@ const buildFullChatConversationModel = (
       })
     }
 
-    if (item.status === 'stopped' && currentTurnUserMessage) {
+    if (
+      (item.status === 'stopped' ||
+        (item.status === 'failed' && item.failureReason === 'rateLimit')) &&
+      currentTurnUserMessage
+    ) {
       stoppedTurnRetryMessages.set(item.id, currentTurnUserMessage)
     }
   })
@@ -272,7 +276,12 @@ const buildIncrementalChatConversationModel = (
     itemIndexesById.set(item.id, itemIndex)
     itemIds.add(item.id)
     internals.turnIndexByItemId.set(item.id, turns.length)
-    if (item.type === 'working' && item.status === 'stopped' && currentTurnUserMessage) {
+    if (
+      item.type === 'working' &&
+      (item.status === 'stopped' ||
+        (item.status === 'failed' && item.failureReason === 'rateLimit')) &&
+      currentTurnUserMessage
+    ) {
       stoppedTurnRetryMessages.set(item.id, currentTurnUserMessage)
     }
   })
