@@ -70,7 +70,7 @@ import type {
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import type { AppAction } from '../actions'
-import { groupAccountRateLimits } from '../accountRateLimits'
+import { groupAccountRateLimits, shouldDisableRateLimitReset } from '../accountRateLimits'
 import {
   addPromptDraft,
   appendPromptDraft,
@@ -84,7 +84,11 @@ import {
 } from '../composerDraft'
 import { providerApi } from '../providerApi'
 import { getReasoningEffortPresentation } from '../reasoningEffortPresentation'
-import { getRateLimitResetMessage } from '../rateLimitReset'
+import {
+  formatRateLimitResetExpirationDate,
+  getRateLimitResetMessage,
+  groupRateLimitResetCreditsByExpiration
+} from '../rateLimitReset'
 import { getModifiedActiveSendMode } from '../messageSendMode'
 import type { AppChatUsageDisplay } from '../settings'
 import { AttachmentChip } from './AttachmentChip'
@@ -1102,6 +1106,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageView, setUsageView] = useState<UsagePopoverView>('usage')
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
+  const [resetDetailsOpen, setResetDetailsOpen] = useState(false)
   const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
   const [rateLimitRefreshBaseline, setRateLimitRefreshBaseline] = useState<string | null>(null)
   const rateLimitResetBaselineRef = useRef<string | null>(null)
@@ -2546,6 +2551,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     '--message-box-usage-degrees': `${(displayedUsagePercent ?? 0) * 3.6}deg`
   } as CSSProperties
   const availableRateLimitResets = accountUsage?.rateLimitResetCredits?.availableCount ?? 0
+  const rateLimitResetDisabled = shouldDisableRateLimitReset(rateLimits)
+  const resetExpirationGroups = groupRateLimitResetCreditsByExpiration(
+    accountUsage?.rateLimitResetCredits?.credits ?? null
+  )
 
   const handleUsageToggle = (): void => {
     if (usageDisabled) return
@@ -3064,19 +3073,57 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                           </div>
                         )}
                         {availableRateLimitResets > 0 && onUsageReset && (
-                          <div className="message-box__usage-reset">
-                            <span>
-                              {numberFormatter.format(availableRateLimitResets)}{' '}
-                              {availableRateLimitResets === 1 ? 'reset' : 'resets'} left
-                            </span>
-                            <RateLimitResetButton
-                              availableCount={availableRateLimitResets}
-                              onReset={handleRateLimitReset}
-                              onResetError={setRateLimitResetMessage}
-                              onResetResult={handleRateLimitResetResult}
-                              onResetStart={() => setRateLimitResetMessage(null)}
-                            />
-                          </div>
+                          <>
+                            <div className="message-box__usage-reset">
+                              <span>
+                                {numberFormatter.format(availableRateLimitResets)}{' '}
+                                {availableRateLimitResets === 1 ? 'reset' : 'resets'} left
+                              </span>
+                              <RateLimitResetButton
+                                availableCount={availableRateLimitResets}
+                                disabled={rateLimitResetDisabled}
+                                onReset={handleRateLimitReset}
+                                onResetError={setRateLimitResetMessage}
+                                onResetResult={handleRateLimitResetResult}
+                                onResetStart={() => setRateLimitResetMessage(null)}
+                              />
+                            </div>
+                            {resetExpirationGroups.length > 0 && (
+                              <div className="message-box__limits-details">
+                                <DisclosureToggle
+                                  className="message-box__limits-toggle"
+                                  open={resetDetailsOpen}
+                                  aria-controls={`message-reset-details-${usagePopoverId}`}
+                                  onClick={() => setResetDetailsOpen((currentOpen) => !currentOpen)}
+                                >
+                                  Reset details
+                                </DisclosureToggle>
+                                {resetDetailsOpen && (
+                                  <div
+                                    className="message-box__limits-details-body"
+                                    id={`message-reset-details-${usagePopoverId}`}
+                                  >
+                                    {resetExpirationGroups.map((group) => (
+                                      <div
+                                        className="message-box__usage-row message-box__usage-row--muted"
+                                        key={group.expiresAt ?? 'none'}
+                                      >
+                                        <span>
+                                          {group.expiresAt == null
+                                            ? 'No expiration'
+                                            : `Expires ${formatRateLimitResetExpirationDate(group.expiresAt)}`}
+                                        </span>
+                                        <strong>
+                                          {numberFormatter.format(group.count)}{' '}
+                                          {group.count === 1 ? 'reset' : 'resets'}
+                                        </strong>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
                         )}
                         {rateLimitResetMessage && (
                           <p className="message-box__usage-status" role="status">

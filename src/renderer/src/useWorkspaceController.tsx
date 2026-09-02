@@ -90,6 +90,7 @@ import { reconcileModelSelection, reconcileReasoningSelection } from './modelSel
 import type { MessageBoxQuoteRequest } from './components/MessageBox'
 import type { TerminalCommandLaunchRequest } from './components/TerminalPanel'
 import { appApi } from './appApi'
+import { shouldDisableRateLimitReset } from './accountRateLimits'
 import { browserApi } from './browserApi'
 import {
   getComparableChatPreview,
@@ -5161,6 +5162,8 @@ export const useWorkspaceController = () => {
     )
   }
 
+  const rateLimitResetDisabled = shouldDisableRateLimitReset(accountUsage?.rateLimits ?? [])
+
   const renderChatTurn = (turnIndex: number, turn: ProviderChatTurn): React.ReactElement => {
     const turnIsLatestRendered = turn === renderedChatTurns.at(-1)
 
@@ -5234,6 +5237,7 @@ export const useWorkspaceController = () => {
                 }
                 previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}
                 projectCwd={changesProjectCwd}
+                rateLimitResetDisabled={rateLimitResetDisabled}
                 retryMessage={canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null}
                 retryStoppedTurnDisabled={stoppedTurnActionDisabled}
                 selectedModelId={model}

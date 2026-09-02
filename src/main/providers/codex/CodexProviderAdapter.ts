@@ -18,6 +18,7 @@ import type {
   ProviderPendingApproval,
   ProviderPendingMessage,
   ProviderAccountRateLimit,
+  ProviderAccountRateLimitResetCredit,
   ProviderAccountRateLimitResetCredits,
   ProviderAccountRateLimitResetOutcome,
   ProviderAccountUsage,
@@ -670,7 +671,21 @@ const normalizeRateLimitResetCredits = (
   if (!summary) return null
 
   const availableCount = getOptionalCountValue(summary.availableCount)
-  return availableCount == null ? null : { availableCount }
+  if (availableCount == null) return null
+
+  const credits = Array.isArray(summary.credits)
+    ? summary.credits.flatMap((candidate): ProviderAccountRateLimitResetCredit[] => {
+        const credit = getRecordValue(candidate)
+        const id = getOptionalStringValue(credit?.id)
+        const expiresAt =
+          credit?.expiresAt == null ? null : getOptionalNumberValue(credit.expiresAt)
+
+        if (!id || (credit?.expiresAt != null && expiresAt == null)) return []
+        return [{ id, expiresAt }]
+      })
+    : null
+
+  return { availableCount, credits }
 }
 
 const normalizeRateLimitResetOutcome = (value: unknown): ProviderAccountRateLimitResetOutcome => {

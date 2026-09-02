@@ -425,6 +425,12 @@ export type ProviderAccountRateLimit = {
 
 export type ProviderAccountRateLimitResetCredits = {
   availableCount: number
+  credits: ProviderAccountRateLimitResetCredit[] | null
+}
+
+export type ProviderAccountRateLimitResetCredit = {
+  id: string
+  expiresAt: number | null
 }
 
 export type ProviderAccountRateLimitResetOutcome =

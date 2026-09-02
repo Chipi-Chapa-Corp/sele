@@ -1,5 +1,15 @@
 import type { ProviderAccountRateLimit } from '../../shared/provider'
 
+const minimumUsedPercentForReset = 95
+
+const clampPercent = (value: number): number => Math.min(Math.max(value, 0), 100)
+
+export const shouldDisableRateLimitReset = (
+  rateLimits: readonly ProviderAccountRateLimit[]
+): boolean =>
+  rateLimits.length > 0 &&
+  rateLimits.every((limit) => clampPercent(limit.usedPercent) < minimumUsedPercentForReset)
+
 const isMainRateLimit = (limit: ProviderAccountRateLimit): boolean =>
   limit.id == null ||
   limit.id === 'codex' ||

@@ -140,6 +140,7 @@ type ChatDetailItemProps = {
   previousItem?: ProviderChatItem | null
   cwd?: string | null
   projectCwd?: string | null
+  rateLimitResetDisabled?: boolean
   retryMessage?: ProviderMessage | null
   retryStoppedTurnDisabled?: boolean
   selectedModelId?: ProviderModelId
@@ -205,6 +206,7 @@ const areChatDetailItemPropsEqual = (
   isQueuedPendingMessage(first.previousItem) === isQueuedPendingMessage(second.previousItem) &&
   first.cwd === second.cwd &&
   first.projectCwd === second.projectCwd &&
+  first.rateLimitResetDisabled === second.rateLimitResetDisabled &&
   first.retryMessage === second.retryMessage &&
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
   first.selectedModelId === second.selectedModelId &&
@@ -1821,6 +1823,7 @@ const WorkingStep: React.FC<{
   onUsageRefresh?: () => Promise<void> | void
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   projectCwd?: string | null
+  rateLimitResetDisabled?: boolean
   retryDisabled?: boolean
   thoughtSettings: AppChatThoughtSettings
 }> = ({
@@ -1844,6 +1847,7 @@ const WorkingStep: React.FC<{
   onUsageRefresh,
   onUsageReset,
   projectCwd,
+  rateLimitResetDisabled = false,
   retryDisabled = false,
   thoughtSettings
 }) => {
@@ -1966,7 +1970,7 @@ const WorkingStep: React.FC<{
         {rateLimitResetActions && (
           <RateLimitResetButton
             availableCount={availableRateLimitResets}
-            disabled={retryDisabled}
+            disabled={retryDisabled || rateLimitResetDisabled}
             onReset={rateLimitResetActions.onReset}
             onResetError={setRateLimitResetMessage}
             onResetResult={async (outcome) => {
@@ -2241,6 +2245,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   previousItem,
   cwd,
   projectCwd,
+  rateLimitResetDisabled = false,
   retryMessage,
   retryStoppedTurnDisabled = false,
   selectedModelId,
@@ -2495,6 +2500,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       onUsageRefresh={onUsageRefresh}
       onUsageReset={onUsageReset}
       projectCwd={projectCwd}
+      rateLimitResetDisabled={rateLimitResetDisabled}
       retryDisabled={retryStoppedTurnDisabled}
       thoughtSettings={resolvedThoughtSettings}
     />
