@@ -5162,7 +5162,10 @@ export const useWorkspaceController = () => {
     )
   }
 
-  const rateLimitResetDisabled = shouldDisableRateLimitReset(accountUsage?.rateLimits ?? [])
+  const rateLimitResetDisabled = shouldDisableRateLimitReset(
+    accountUsage?.rateLimits ?? [],
+    accountUsage?.rateLimitResetCredits?.credits ?? null
+  )
 
   const renderChatTurn = (turnIndex: number, turn: ProviderChatTurn): React.ReactElement => {
     const turnIsLatestRendered = turn === renderedChatTurns.at(-1)

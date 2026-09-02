@@ -1,14 +1,29 @@
-import type { ProviderAccountRateLimit } from '../../shared/provider'
+import type {
+  ProviderAccountRateLimit,
+  ProviderAccountRateLimitResetCredit
+} from '../../shared/provider'
 
 const minimumUsedPercentForReset = 95
+const expiringResetCreditWindowMilliseconds = 2 * 24 * 60 * 60 * 1_000
 
 const clampPercent = (value: number): number => Math.min(Math.max(value, 0), 100)
 
+const toTimestampMilliseconds = (timestamp: number): number =>
+  timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1_000
+
 export const shouldDisableRateLimitReset = (
-  rateLimits: readonly ProviderAccountRateLimit[]
+  rateLimits: readonly ProviderAccountRateLimit[],
+  resetCredits: readonly ProviderAccountRateLimitResetCredit[] | null = null,
+  now = Date.now()
 ): boolean =>
   rateLimits.length > 0 &&
-  rateLimits.every((limit) => clampPercent(limit.usedPercent) < minimumUsedPercentForReset)
+  rateLimits.every((limit) => clampPercent(limit.usedPercent) < minimumUsedPercentForReset) &&
+  !resetCredits?.some((credit) => {
+    if (credit.expiresAt == null) return false
+
+    const expiresIn = toTimestampMilliseconds(credit.expiresAt) - now
+    return expiresIn > 0 && expiresIn <= expiringResetCreditWindowMilliseconds
+  })
 
 const isMainRateLimit = (limit: ProviderAccountRateLimit): boolean =>
   limit.id == null ||

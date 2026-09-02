@@ -2551,7 +2551,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     '--message-box-usage-degrees': `${(displayedUsagePercent ?? 0) * 3.6}deg`
   } as CSSProperties
   const availableRateLimitResets = accountUsage?.rateLimitResetCredits?.availableCount ?? 0
-  const rateLimitResetDisabled = shouldDisableRateLimitReset(rateLimits)
+  const rateLimitResetDisabled = shouldDisableRateLimitReset(
+    rateLimits,
+    accountUsage?.rateLimitResetCredits?.credits ?? null
+  )
   const resetExpirationGroups = groupRateLimitResetCreditsByExpiration(
     accountUsage?.rateLimitResetCredits?.credits ?? null
   )
