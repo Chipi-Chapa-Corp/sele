@@ -36,6 +36,17 @@ const modelInternals = new WeakMap<ChatConversationModel, ChatConversationModelI
 const startsChatTurn = (item: ProviderChatItem): boolean =>
   item.type === 'pendingMessage' || (item.type === 'message' && item.role === 'user')
 
+export const getConversationTailWorkingStep = (
+  items: readonly ProviderChatItem[]
+): ProviderWorkingStep | null => {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item.type === 'working' && item.status === 'working') return item
+  }
+
+  return null
+}
+
 export const markChatItemsChanged = (
   items: ProviderChatItem[],
   startIndex: number,

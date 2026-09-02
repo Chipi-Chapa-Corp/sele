@@ -1703,6 +1703,21 @@ const useSilencePlaceholder = (signature: string, active: boolean, immediate: bo
   return active && placeholderState.signature === signature && placeholderState.visible
 }
 
+export const ChatWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
+  const signature = useMemo(
+    () => `${item.status}:${item.items.map(getWorkingItemSignature).join('|')}`,
+    [item.items, item.status]
+  )
+  const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
+  const showPlaceholder = useSilencePlaceholder(
+    signature,
+    item.status === 'working' && activeToolIds.size === 0,
+    item.items.length === 0
+  )
+
+  return showPlaceholder ? <WorkingPlaceholder id={`${item.id}:${item.items.length}`} /> : null
+}
+
 const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] => {
   const blocks: WorkingBlock[] = []
 
@@ -1850,10 +1865,6 @@ const WorkingStep: React.FC<{
   const generatedImages = renderedSegments.flatMap((segment) => segment.generatedImages)
   const blockCount = renderedSegments.reduce((count, segment) => count + segment.blocks.length, 0)
   const lastWorkingItem = item.items.at(-1)
-  const signature = useMemo(
-    () => `${item.status}:${item.items.map(getWorkingItemSignature).join('|')}`,
-    [item.items, item.status]
-  )
   const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
   const active = item.status === 'working'
   const itemCount = Math.max(item.itemCount ?? item.items.length, item.items.length)
@@ -1884,11 +1895,6 @@ const WorkingStep: React.FC<{
   )
   const [manualOpen, setManualOpen] = useState<boolean | null>(null)
   const open = openAfterLoad ? true : (manualOpen ?? defaultOpen)
-  const showPlaceholder = useSilencePlaceholder(
-    signature,
-    active && activeToolIds.size === 0,
-    !lastWorkingItem
-  )
   const label =
     item.status === 'queued'
       ? 'Queued'
@@ -2049,19 +2055,9 @@ const WorkingStep: React.FC<{
   }
 
   if (blockCount === 0 && !hasHiddenItems && activityContent == null) {
-    if (item.status !== 'stopped' && !showPlaceholder && renderedGeneratedImages.length > 0) {
+    if (active || (item.status !== 'stopped' && renderedGeneratedImages.length > 0)) {
       return (
         <>
-          {turnActions}
-          {renderedGeneratedImages}
-        </>
-      )
-    }
-
-    if (showPlaceholder) {
-      return (
-        <>
-          <WorkingPlaceholder id={item.id} />
           {turnActions}
           {renderedGeneratedImages}
         </>
@@ -2198,7 +2194,6 @@ const WorkingStep: React.FC<{
               </span>
             )}
             {activityContent}
-            {showPlaceholder && <WorkingPlaceholder id={`${item.id}:${item.items.length}`} />}
           </div>
         )}
       </details>

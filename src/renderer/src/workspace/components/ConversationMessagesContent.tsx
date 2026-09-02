@@ -2,6 +2,8 @@ import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { ArrowLeft, ChevronDown, CircleAlert, LoaderCircle } from 'lucide-react'
 import { Button } from '../../components/Button'
+import { ChatWorkingPlaceholder } from '../../components/ChatDetailItem'
+import { getConversationTailWorkingStep } from '../../chatConversationModel'
 
 type ConversationMessagesContentProps = WorkspaceController['conversationMessages']
 
@@ -62,6 +64,10 @@ export function ConversationMessagesContent(
 
   if (!selectedChat) return null
 
+  const workingPlaceholderStep = getConversationTailWorkingStep(
+    activeSubagentChatView ? subagentVisibleChatItems : visibleChatItems
+  )
+
   return (
     <div className="chat-detail__messages-shell">
       {activeSubagentChatView ? (
@@ -119,6 +125,13 @@ export function ConversationMessagesContent(
               : renderedChatTurns.map((turn, index) =>
                   renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)
                 )}
+            {/* This is transient conversation chrome, not a historical timeline item. */}
+            {workingPlaceholderStep && (
+              <ChatWorkingPlaceholder
+                item={workingPlaceholderStep}
+                key={workingPlaceholderStep.id}
+              />
+            )}
           </div>
           <div className="chat-detail__messages-footer" />
         </div>

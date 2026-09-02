@@ -19,6 +19,8 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     accountUsageError,
     accountUsageState,
     activeSubagentChatView,
+    agentModes,
+    agentModesLoading,
     appSettings,
     approvalDecisionInFlight,
     approvalError,
@@ -33,6 +35,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     cwdNotesByGroup,
     editingMessage,
     effectiveAppSettings,
+    agentMode,
     effectiveApprovalMode,
     effectiveModel,
     effectiveReasoningEffort,
@@ -104,6 +107,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     selectedReview,
     sendState,
     setEditingSshEnvironment,
+    setAgentMode,
     setNewSessionCwd,
     setNewSessionLocation,
     setNewSessionProvider,
@@ -409,6 +413,9 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           activePrimaryMode="queue"
           activeSteeringEnabled={!chatHasPendingSteeringMessage}
           actions={appSettings.actions}
+          agentMode={agentMode}
+          agentModes={agentModes}
+          agentModesLoading={agentModesLoading}
           approvalMode={effectiveApprovalMode}
           approvalModes={approvalModes}
           autoFocus={!selectedChat && newChatOpen}
@@ -468,6 +475,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             messageBoxProviderAvailable &&
             effectiveAppSettings.chat.forceSpeed === appChatManualDropdownValue
           }
+          onAgentModeChange={setAgentMode}
           onActionsChange={handleActionsChange}
           onLastActionChange={handleLastActionChange}
           onApprovalModeChange={handleApprovalModeChange}

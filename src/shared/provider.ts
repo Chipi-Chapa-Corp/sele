@@ -21,6 +21,7 @@ export type ProviderApprovalsReviewer = 'user' | 'auto_review'
 export type ProviderApprovalMode = 'ask-user' | 'auto-review' | 'never'
 export type ProviderSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 export type ProviderActiveSendMode = 'steer' | 'queue' | 'interrupt'
+export type ProviderAgentMode = 'interactive' | 'autopilot'
 
 export type ProviderApprovalModeOption = {
   id: ProviderApprovalMode
@@ -31,6 +32,13 @@ export type ProviderApprovalModeOption = {
 
 export type ProviderSandboxModeOption = {
   id: ProviderSandboxMode
+  label: string
+  description: string
+  isDefault: boolean
+}
+
+export type ProviderAgentModeOption = {
+  id: ProviderAgentMode
   label: string
   description: string
   isDefault: boolean
@@ -869,6 +877,7 @@ export type ProviderAppInput = {
 
 export type ProviderTurnOptions = {
   additionalDirectories?: string[]
+  agentMode?: ProviderAgentMode
   approvalPolicy: ProviderApprovalPolicy
   approvalsReviewer: ProviderApprovalsReviewer
   container?: AppContainerTarget | null
@@ -937,6 +946,10 @@ export type ProviderApi = {
   ) => Promise<ProviderUpdateAvailability | null>
   getApprovalModes: (providerId: ProviderId) => Promise<ProviderApprovalModeOption[]>
   getSandboxModes: (providerId: ProviderId) => Promise<ProviderSandboxModeOption[]>
+  getAgentModes: (
+    providerId: ProviderId,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderAgentModeOption[]>
   getModels: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderModel[]>
   getSkills: (
     providerId: ProviderId,
@@ -1163,6 +1176,7 @@ export const providerIpcChannels = {
   updateProvider: 'provider:update',
   getApprovalModes: 'provider:get-approval-modes',
   getSandboxModes: 'provider:get-sandbox-modes',
+  getAgentModes: 'provider:get-agent-modes',
   getModels: 'provider:get-models',
   getSkills: 'provider:get-skills',
   getApps: 'provider:get-apps',
@@ -1232,6 +1246,9 @@ export const isProviderSandboxMode = (value: unknown): value is ProviderSandboxM
 
 export const isProviderActiveSendMode = (value: unknown): value is ProviderActiveSendMode =>
   value === 'steer' || value === 'queue' || value === 'interrupt'
+
+export const isProviderAgentMode = (value: unknown): value is ProviderAgentMode =>
+  value === 'interactive' || value === 'autopilot'
 
 export const isProviderModelId = (value: unknown): value is ProviderModelId =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 128

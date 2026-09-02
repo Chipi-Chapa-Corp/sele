@@ -64,6 +64,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     models,
     changesProjectCwd,
     projectRecordsByCwd,
+    agentMode,
     effectiveApprovalMode,
     effectiveSandboxMode,
     changesContainer,
@@ -190,6 +191,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   const getCurrentTurnOptions = (): ProviderTurnOptions =>
     normalizeTurnOptionsForModels({
       additionalDirectories: currentProjectDirectories,
+      agentMode,
       ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
       container: changesContainer,
       cwd: changesCwd ?? undefined,
@@ -695,6 +697,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         additionalDirectories: currentProject
           ? [currentProject.cwd, ...currentProject.additionalCwds]
           : undefined,
+        agentMode,
         ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),
         container: changesContainer,
         cwd: changesCwd ?? undefined,

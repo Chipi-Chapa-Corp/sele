@@ -13,6 +13,9 @@ import type {
 type ToolStartEvent = Extract<SessionEvent, { type: 'tool.execution_start' }>
 type ToolCompleteEvent = Extract<SessionEvent, { type: 'tool.execution_complete' }>
 type UserMessageEvent = Extract<SessionEvent, { type: 'user.message' }>
+type AssistantMessageEvent = Extract<SessionEvent, { type: 'assistant.message' }>
+type TaskCompleteEvent = Extract<SessionEvent, { type: 'session.task_complete' }>
+type FinalMessageEvent = AssistantMessageEvent | TaskCompleteEvent
 
 export type CopilotRenderedPlan = {
   explanation: string | null
@@ -34,7 +37,7 @@ type RenderOptions = {
 type Segment = {
   id: string
   workingItems: ProviderWorkingItem[]
-  assistantMessages: Array<Extract<SessionEvent, { type: 'assistant.message' }>>
+  finalMessage: FinalMessageEvent | null
   failed: boolean
 }
 
@@ -385,6 +388,71 @@ const getAttachments = (
 const isScopedEvent = (event: SessionEvent, agentId: string | null | undefined): boolean =>
   agentId ? event.agentId === agentId : !event.agentId
 
+const hasRenderableWorkingEvent = (event: SessionEvent): boolean => {
+  if (event.type === 'assistant.reasoning') return Boolean(event.data.content.trim())
+  if (event.type === 'assistant.intent') return Boolean(event.data.intent.trim())
+  if (event.type === 'tool.execution_start' || event.type === 'session.error') return true
+  if (event.type !== 'assistant.message') return false
+
+  return Boolean(
+    event.data.reasoningText?.trim() ||
+    event.data.toolRequests?.length ||
+    (event.data.phase === 'commentary' && event.data.content.trim())
+  )
+}
+
+const getFinalMessageIndex = (events: SessionEvent[]): number => {
+  const explicitFinalIndex = events.findLastIndex(
+    (event) =>
+      (event.type === 'assistant.message' &&
+        event.data.phase === 'final_answer' &&
+        Boolean(event.data.content.trim())) ||
+      (event.type === 'session.task_complete' &&
+        event.data.success !== false &&
+        Boolean(event.data.summary?.trim()))
+  )
+  const fallbackFinalIndex = events.findLastIndex(
+    (event) =>
+      event.type === 'assistant.message' &&
+      event.data.phase !== 'commentary' &&
+      !event.data.toolRequests?.length &&
+      Boolean(event.data.content.trim())
+  )
+  const terminalFallbackIndex =
+    fallbackFinalIndex >= 0 && !events.slice(fallbackFinalIndex + 1).some(hasRenderableWorkingEvent)
+      ? fallbackFinalIndex
+      : -1
+
+  return Math.max(explicitFinalIndex, terminalFallbackIndex)
+}
+
+const getFinalMessageEvents = (
+  events: SessionEvent[],
+  agentId: string | null | undefined
+): ReadonlySet<SessionEvent> => {
+  const finalEvents = new Set<SessionEvent>()
+  let segmentEvents: SessionEvent[] = []
+  const flushSegment = (): void => {
+    const finalMessageIndex = getFinalMessageIndex(segmentEvents)
+    if (finalMessageIndex >= 0 && segmentEvents[finalMessageIndex]) {
+      finalEvents.add(segmentEvents[finalMessageIndex])
+    }
+    segmentEvents = []
+  }
+
+  events.forEach((event) => {
+    if (!isScopedEvent(event, agentId)) return
+    if (event.type === 'user.message') {
+      if (isCopilotSystemContextMessage(event)) return
+      flushSegment()
+      return
+    }
+    segmentEvents.push(event)
+  })
+  flushSegment()
+  return finalEvents
+}
+
 export const renderCopilotChatItems = (
   events: SessionEvent[],
   options: RenderOptions
@@ -392,6 +460,7 @@ export const renderCopilotChatItems = (
   const items: ProviderChatItem[] = []
   const askUserToolCallIds = new Set<string>()
   const binaryAssets = new Map<string, CopilotBinaryAsset>()
+  const finalMessageEvents = getFinalMessageEvents(events, options.agentId)
   let segment: Segment | null = null
 
   events.forEach((event) => {
@@ -403,11 +472,15 @@ export const renderCopilotChatItems = (
       segment = {
         id: `${eventId}:working`,
         workingItems: [],
-        assistantMessages: [],
+        finalMessage: null,
         failed: false
       }
     }
     return segment
+  }
+
+  const appendWorkingItem = (currentSegment: Segment, item: ProviderWorkingItem): void => {
+    currentSegment.workingItems.push(item)
   }
 
   const flushSegment = (isLast: boolean): void => {
@@ -415,18 +488,7 @@ export const renderCopilotChatItems = (
 
     const currentSegment = segment
     segment = null
-    const assistantMessages = currentSegment.assistantMessages.filter((event) =>
-      Boolean(event.data.content.trim())
-    )
-    const finalMessage = assistantMessages.at(-1)
-
-    assistantMessages.slice(0, -1).forEach((event) => {
-      currentSegment.workingItems.push({
-        type: 'message',
-        id: event.id,
-        content: event.data.content.trim()
-      })
-    })
+    const finalMessage = currentSegment.finalMessage
     const failed = currentSegment.failed || (isLast && options.failed === true)
 
     if (currentSegment.workingItems.length > 0 || (isLast && options.active) || failed) {
@@ -446,13 +508,25 @@ export const renderCopilotChatItems = (
     }
 
     if (finalMessage) {
+      const assistantMessage =
+        finalMessage.type === 'assistant.message'
+          ? {
+              id: finalMessage.data.messageId || finalMessage.id,
+              content: finalMessage.data.content.trim(),
+              model: finalMessage.data.model ?? null
+            }
+          : {
+              id: finalMessage.id,
+              content: finalMessage.data.summary?.trim() ?? '',
+              model: null
+            }
       items.push({
         type: 'message',
-        id: finalMessage.data.messageId || finalMessage.id,
+        id: assistantMessage.id,
         role: 'assistant',
-        content: finalMessage.data.content.trim(),
+        content: assistantMessage.content,
         createdAt: toTimestamp(finalMessage.timestamp),
-        model: finalMessage.data.model ?? null
+        model: assistantMessage.model
       })
     }
   }
@@ -476,7 +550,7 @@ export const renderCopilotChatItems = (
       segment = {
         id: `${event.id}:working`,
         workingItems: [],
-        assistantMessages: [],
+        finalMessage: null,
         failed: false
       }
       continue
@@ -485,7 +559,7 @@ export const renderCopilotChatItems = (
     if (event.type === 'assistant.reasoning') {
       const content = event.data.content.trim()
       if (content) {
-        ensureSegment(event.id).workingItems.push({
+        appendWorkingItem(ensureSegment(event.id), {
           type: 'message',
           id: event.id,
           content
@@ -497,7 +571,8 @@ export const renderCopilotChatItems = (
     if (event.type === 'assistant.intent') {
       const content = event.data.intent.trim()
       if (content) {
-        const workingItems = ensureSegment(event.id).workingItems
+        const currentSegment = ensureSegment(event.id)
+        const workingItems = currentSegment.workingItems
         const previousIntentIndex = workingItems.findIndex((item) => item.id === 'copilot:intent')
         const intent = { type: 'message' as const, id: 'copilot:intent', content }
         if (previousIntentIndex >= 0) workingItems[previousIntentIndex] = intent
@@ -509,31 +584,30 @@ export const renderCopilotChatItems = (
     if (event.type === 'assistant.message') {
       const currentSegment = ensureSegment(event.id)
       if (event.data.reasoningText?.trim()) {
-        currentSegment.workingItems.push({
+        appendWorkingItem(currentSegment, {
           type: 'message',
           id: `${event.id}:reasoning`,
           content: event.data.reasoningText.trim()
         })
       }
-      const asksQuestion = event.data.toolRequests?.some(
-        (toolRequest) => toolRequest.name === 'ask_user'
-      )
       const content = event.data.content.trim()
-      if (asksQuestion && content) {
-        currentSegment.workingItems.push({
-          type: 'message',
-          id: event.id,
-          content
-        })
-      } else {
-        currentSegment.assistantMessages.push(event)
+      if (content) {
+        if (finalMessageEvents.has(event)) {
+          currentSegment.finalMessage = event
+        } else {
+          appendWorkingItem(currentSegment, {
+            type: 'message',
+            id: event.id,
+            content
+          })
+        }
       }
       continue
     }
 
     if (event.type === 'tool.execution_start') {
       if (event.data.toolName === 'ask_user') askUserToolCallIds.add(event.data.toolCallId)
-      ensureSegment(event.id).workingItems.push(createTool(event))
+      appendWorkingItem(ensureSegment(event.id), createTool(event))
       continue
     }
 
@@ -573,10 +647,15 @@ export const renderCopilotChatItems = (
       continue
     }
 
+    if (event.type === 'session.task_complete') {
+      if (finalMessageEvents.has(event)) ensureSegment(event.id).finalMessage = event
+      continue
+    }
+
     if (event.type === 'session.error') {
       const currentSegment = ensureSegment(event.id)
       currentSegment.failed = true
-      currentSegment.workingItems.push({
+      appendWorkingItem(currentSegment, {
         type: 'message',
         id: event.id,
         content: event.data.message

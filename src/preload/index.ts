@@ -144,6 +144,8 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getApprovalModes, providerId),
   getSandboxModes: (providerId) =>
     ipcRenderer.invoke(providerIpcChannels.getSandboxModes, providerId),
+  getAgentModes: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getAgentModes, providerId, options),
   getModels: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getModels, providerId, options),
   getSkills: (providerId, cwd, options) =>

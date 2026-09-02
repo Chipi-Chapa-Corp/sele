@@ -9,6 +9,7 @@ import {
   Zap
 } from 'lucide-react'
 import type {
+  ProviderAgentMode,
   ProviderApprovalMode,
   ProviderApprovalPolicy,
   ProviderApprovalsReviewer,
@@ -19,6 +20,7 @@ import type {
   ProviderServiceTier
 } from '../../shared/provider'
 import {
+  isProviderAgentMode,
   isProviderApprovalMode,
   isProviderApprovalPolicy,
   isProviderApprovalsReviewer,
@@ -32,6 +34,7 @@ import { providerLabels } from './providerSettings'
 type LegacyProviderAccessMode = 'sandbox' | 'auto' | 'full'
 
 export type MessageBoxSelection = {
+  agentMode: ProviderAgentMode
   approvalMode: ProviderApprovalMode
   model: ProviderModelId
   reasoningEffort: ProviderReasoningEffort
@@ -88,6 +91,7 @@ const parseStoredMessageBoxSelection = (value: unknown): StoredMessageBoxSelecti
 
   const parsedValue = value as Record<string, unknown>
   const selection: StoredMessageBoxSelection = {}
+  if (isProviderAgentMode(parsedValue.agentMode)) selection.agentMode = parsedValue.agentMode
   if (isProviderApprovalMode(parsedValue.approvalMode)) {
     selection.approvalMode = parsedValue.approvalMode
   } else if (isProviderApprovalPolicy(parsedValue.approvalPolicy)) {

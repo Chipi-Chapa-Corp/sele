@@ -6,6 +6,7 @@ import type {
   ProviderLoginResult,
   ProviderApprovalDecision,
   ProviderUpdateAvailability,
+  ProviderAgentModeOption,
   ProviderApprovalModeOption,
   ProviderSandboxModeOption,
   ProviderApp,
@@ -50,6 +51,7 @@ export type ProviderAdapter = {
   updateProvider: (options?: ProviderSourceOptions) => Promise<ProviderUpdateAvailability | null>
   getApprovalModes: () => Promise<ProviderApprovalModeOption[]>
   getSandboxModes: () => Promise<ProviderSandboxModeOption[]>
+  getAgentModes?: (options?: ProviderSourceOptions) => Promise<ProviderAgentModeOption[]>
   getModels: (options?: ProviderSourceOptions) => Promise<ProviderModel[]>
   getSkills: (cwd?: string | null, options?: ProviderSourceOptions) => Promise<ProviderSkill[]>
   getApps: (options?: ProviderSourceOptions) => Promise<ProviderApp[]>

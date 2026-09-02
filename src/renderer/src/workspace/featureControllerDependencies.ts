@@ -13,6 +13,7 @@ import type {
   ProviderChatUpdateSummary,
   ProviderChatMetadata,
   ProviderActiveSendMode,
+  ProviderAgentMode,
   ProviderApprovalMode,
   ProviderApprovalDecision,
   ProviderPendingApproval,
@@ -82,8 +83,8 @@ export type ChatInteractionControllerDependencies = {
   projectDropInsertionIndex: number | null
   selectedChat: ProviderChat | null
   committingChatKeys: Set<string>
-  draggedProjectGroupKey: string | null
   latestCommitFinishedAtByChatKey: ReadonlyMap<string, number>
+  draggedProjectGroupKey: string | null
   projectNamesByCwd: Map<string, string>
   handleLoadMoreChatsInGroup: (group: ChatListGroupData) => void
   handleShowLessChatsInGroup: (group: ChatListGroupData) => void
@@ -140,6 +141,7 @@ export type ChatMessagingControllerDependencies = {
   models: ProviderModel[]
   changesProjectCwd: string | null
   projectRecordsByCwd: Map<string, AppProject>
+  agentMode: ProviderAgentMode
   effectiveApprovalMode: ProviderApprovalMode
   effectiveSandboxMode: ProviderSandboxMode
   changesContainer: AppContainerTarget | null

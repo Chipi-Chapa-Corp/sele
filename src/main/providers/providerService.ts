@@ -483,6 +483,8 @@ export const providerApi: ProviderApi = {
   },
   getApprovalModes: (providerId) => adapters[providerId].getApprovalModes(),
   getSandboxModes: (providerId) => adapters[providerId].getSandboxModes(),
+  getAgentModes: (providerId, options) =>
+    adapters[providerId].getAgentModes?.(options) ?? Promise.resolve([]),
   getModels: (providerId, options) => adapters[providerId].getModels(options),
   getSkills: (providerId, cwd, options) => adapters[providerId].getSkills(cwd, options),
   getApps: (providerId, options) => adapters[providerId].getApps(options),

@@ -37,6 +37,7 @@ import type {
   ProviderWorkingStepUpdate
 } from '../../shared/provider'
 import {
+  isProviderAgentMode,
   isProviderApprovalPolicy,
   isProviderApprovalsReviewer,
   isProviderActiveSendMode,
@@ -949,6 +950,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
 
   const options = value as {
     additionalDirectories?: unknown
+    agentMode?: unknown
     approvalPolicy?: unknown
     approvalsReviewer?: unknown
     container?: unknown
@@ -963,6 +965,11 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     showRecommendedPlugins?: unknown
     skills?: unknown
   }
+  const agentMode = options.agentMode
+  if (agentMode != null && !isProviderAgentMode(agentMode)) {
+    throw new Error('Invalid agent mode')
+  }
+
   const approvalPolicy = options.approvalPolicy
   if (!isProviderApprovalPolicy(approvalPolicy)) throw new Error('Invalid approval policy')
 
@@ -1024,6 +1031,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
 
   return {
     additionalDirectories,
+    ...(agentMode == null ? {} : { agentMode }),
     approvalPolicy,
     approvalsReviewer,
     container: requireContainerTarget(options.container, { optional: true }),
@@ -1231,6 +1239,10 @@ export const registerProviderIpc = (): void => {
 
   ipcMain.handle(providerIpcChannels.getSandboxModes, (_, providerId: unknown) =>
     providerApi.getSandboxModes(requireProviderId(providerId))
+  )
+
+  ipcMain.handle(providerIpcChannels.getAgentModes, (_, providerId: unknown, options: unknown) =>
+    providerApi.getAgentModes(requireProviderId(providerId), requireSourceOptions(options))
   )
 
   ipcMain.handle(providerIpcChannels.getModels, (_, providerId: unknown, options: unknown) =>

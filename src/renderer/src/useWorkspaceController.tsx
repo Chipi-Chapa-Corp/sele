@@ -45,6 +45,8 @@ import type {
   ProviderChatItem,
   ProviderChatMetadata,
   ProviderCwdNote,
+  ProviderAgentMode,
+  ProviderAgentModeOption,
   ProviderApprovalMode,
   ProviderApprovalModeOption,
   ProviderId,
@@ -407,6 +409,11 @@ export const useWorkspaceController = () => {
   const [approvalModes, setApprovalModes] = useState<ProviderApprovalModeOption[]>(
     fallbackProviderApprovalModes
   )
+  const [agentMode, setAgentMode] = useState<ProviderAgentMode>(
+    storedMessageBoxSelection.agentMode ?? 'interactive'
+  )
+  const [agentModes, setAgentModes] = useState<ProviderAgentModeOption[]>([])
+  const [agentModesLoading, setAgentModesLoading] = useState(false)
   const [approvalMode, setApprovalMode] = useState<ProviderApprovalMode>(
     storedMessageBoxSelection.approvalMode ?? fallbackDefaultApprovalMode
   )
@@ -1391,6 +1398,7 @@ export const useWorkspaceController = () => {
 
   useEffect(() => {
     const currentSelection: MessageBoxSelection = {
+      agentMode,
       approvalMode,
       model,
       reasoningEffort,
@@ -1418,6 +1426,7 @@ export const useWorkspaceController = () => {
       sandboxModeManuallySelectedRef.current = Boolean(nextSelection.sandboxMode)
       approvalModeBeforeFullAccessRef.current = null
 
+      setAgentMode(nextSelection.agentMode ?? 'interactive')
       setApprovalMode(nextSelection.approvalMode ?? fallbackDefaultApprovalMode)
       setSandboxMode(nextSelection.sandboxMode ?? fallbackDefaultSandboxMode)
       setModel(nextSelection.model ?? nextModel.id)
@@ -1433,7 +1442,7 @@ export const useWorkspaceController = () => {
     }
     messageBoxSelectionsRef.current = nextSelections
     writeStoredMessageBoxSelections(nextSelections)
-  }, [approvalMode, configProviderId, model, reasoningEffort, sandboxMode, serviceTier])
+  }, [agentMode, approvalMode, configProviderId, model, reasoningEffort, sandboxMode, serviceTier])
 
   useEffect(() => {
     if (sandboxMode !== 'danger-full-access' || approvalMode === 'never') return
@@ -1982,6 +1991,68 @@ export const useWorkspaceController = () => {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    let active = true
+
+    if (configProviderId !== 'copilot' || !configProviderModelsReady) {
+      queueMicrotask(() => {
+        if (!active) return
+        setAgentModes([])
+        setAgentModesLoading(false)
+      })
+
+      return () => {
+        active = false
+      }
+    }
+
+    const container = normalizeContainerTarget(configProviderContainerRef.current)
+    queueMicrotask(() => {
+      if (!active) return
+      setAgentModes([])
+      setAgentModesLoading(true)
+    })
+
+    providerApi
+      .getAgentModes(configProviderId, { container })
+      .then((nextAgentModes) => {
+        if (!active) return
+        setAgentModes(nextAgentModes)
+        setAgentModesLoading(false)
+      })
+      .catch(() => {
+        if (!active) return
+        setAgentModes([])
+        setAgentModesLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [
+    configProviderContainerKey,
+    configProviderId,
+    configProviderModelsReady,
+    providerModelsRevision
+  ])
+
+  useEffect(() => {
+    if (agentModesLoading || agentModes.length === 0) return
+
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+      setAgentMode((currentMode) => {
+        if (agentModes.some((mode) => mode.id === currentMode)) return currentMode
+        return agentModes.find((mode) => mode.isDefault)?.id ?? agentModes[0]!.id
+      })
+    })
+
+    return () => {
+      active = false
+    }
+  }, [agentModes, agentModesLoading])
 
   useEffect(() => {
     let active = true
@@ -2798,13 +2869,13 @@ export const useWorkspaceController = () => {
     changesProjectCwd,
     closeChatSearch,
     committingChatKeys,
+    latestCommitFinishedAtByChatKey,
     gitAvailabilityScopeKey,
     gitAvailableForCurrentSource,
     handleChangesPaneViewChange,
     handleRunAction,
     messageBoxPlan,
     pendingApproval,
-    latestCommitFinishedAtByChatKey,
     pendingUserInput,
     recentlyOpenedFilesWorkspaceKey,
     refreshAccountUsage,
@@ -3729,6 +3800,9 @@ export const useWorkspaceController = () => {
     effectiveAppSettings.chat.forceAccess === appChatManualDropdownValue
       ? sandboxMode
       : effectiveAppSettings.chat.forceAccess
+  const effectiveAgentMode = agentModes.some((mode) => mode.id === agentMode)
+    ? agentMode
+    : 'interactive'
   const configuredApprovalMode =
     effectiveAppSettings.chat.forceReview === appChatManualDropdownValue
       ? approvalMode
@@ -4327,6 +4401,7 @@ export const useWorkspaceController = () => {
     models,
     changesProjectCwd,
     projectRecordsByCwd,
+    agentMode: effectiveAgentMode,
     effectiveApprovalMode,
     effectiveSandboxMode,
     changesContainer,
@@ -4412,6 +4487,7 @@ export const useWorkspaceController = () => {
     projectDropInsertionIndex,
     selectedChat,
     committingChatKeys,
+    latestCommitFinishedAtByChatKey,
     draggedProjectGroupKey,
     projectNamesByCwd,
     handleLoadMoreChatsInGroup,
@@ -4419,7 +4495,6 @@ export const useWorkspaceController = () => {
     handleMarkChatDone,
     restoreExpandedProjectsAfterDrag,
     handleProjectDragStart,
-    latestCommitFinishedAtByChatKey,
     handleMarkCwdChatsDone,
     handleNewChatInCwd,
     handleRenameChat,
@@ -5346,6 +5421,8 @@ export const useWorkspaceController = () => {
       accountUsageError,
       accountUsageState,
       activeSubagentChatView,
+      agentModes,
+      agentModesLoading,
       appSettings,
       approvalDecisionInFlight,
       approvalError,
@@ -5360,6 +5437,7 @@ export const useWorkspaceController = () => {
       cwdNotesByGroup,
       editingMessage,
       effectiveAppSettings,
+      agentMode,
       effectiveApprovalMode,
       effectiveModel,
       effectiveReasoningEffort,
@@ -5431,6 +5509,7 @@ export const useWorkspaceController = () => {
       selectedReview,
       sendState,
       setEditingSshEnvironment,
+      setAgentMode,
       setNewSessionCwd,
       setNewSessionLocation,
       setNewSessionProvider,

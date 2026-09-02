@@ -14,6 +14,8 @@ import {
 import type {
   ProviderAccountUsage,
   ProviderActiveSendMode,
+  ProviderAgentMode,
+  ProviderAgentModeOption,
   ProviderApprovalDecision,
   ProviderApprovalModeOption,
   ProviderApp,
@@ -214,6 +216,14 @@ const copilotSandboxModes: ProviderSandboxModeOption[] = [
     isDefault: false
   }
 ]
+
+const copilotAgentModeByAutopilotChoice = {
+  off: 'interactive',
+  on: 'autopilot'
+} satisfies Record<string, ProviderAgentMode>
+
+const formatAgentModeLabel = (mode: ProviderAgentMode): string =>
+  mode.charAt(0).toLocaleUpperCase() + mode.slice(1)
 
 const emptyUsageSummary = {
   lifetimeTokens: null,
@@ -491,6 +501,7 @@ const getMessageOptions = (
   prompt: string
   displayPrompt: string
   mode?: 'enqueue' | 'immediate'
+  agentMode?: 'interactive' | 'autopilot'
   attachments?: Array<{ type: 'file'; path: string; displayName: string }>
 } => {
   let prompt = message
@@ -510,6 +521,7 @@ const getMessageOptions = (
     prompt,
     displayPrompt: message,
     mode,
+    agentMode: options?.agentMode,
     attachments: attachments.length > 0 ? attachments : undefined
   }
 }
@@ -562,6 +574,33 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   getApprovalModes = async (): Promise<ProviderApprovalModeOption[]> => copilotApprovalModes
 
   getSandboxModes = async (): Promise<ProviderSandboxModeOption[]> => copilotSandboxModes
+
+  getAgentModes = async (
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderAgentModeOption[]> => {
+    const client = await this.ensureClient(options.container)
+    const commandList = await client.rpc.commands.list()
+    const autopilotCommand = commandList.commands.find(
+      (command) => command.name === 'autopilot' || command.aliases?.includes('autopilot')
+    )
+    const choices = autopilotCommand?.input?.choices ?? []
+
+    return choices
+      .flatMap((choice): ProviderAgentModeOption[] => {
+        const mode = copilotAgentModeByAutopilotChoice[choice.name]
+        if (!mode) return []
+
+        return [
+          {
+            id: mode,
+            label: formatAgentModeLabel(mode),
+            description: choice.description,
+            isDefault: mode === 'interactive'
+          }
+        ]
+      })
+      .sort((first, second) => Number(second.isDefault) - Number(first.isDefault))
+  }
 
   getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> => {
     try {
@@ -874,7 +913,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       generation.session = session
       await throwIfCanceled()
 
-      const response = await session.sendAndWait(getMessageOptions(message, options), 10 * 60_000)
+      const response = await session.sendAndWait(
+        { ...getMessageOptions(message, options), agentMode: 'interactive' },
+        10 * 60_000
+      )
       await throwIfCanceled()
       if (response?.data.content.trim()) return response.data.content.trim()
 
@@ -1604,10 +1646,14 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       state.stopped = Boolean(event.data.aborted)
       // Copilot generates and persists a session name during the first turn, but does
       // not reliably send a title_changed event to SDK clients. Refresh it before the
-      // completed-turn update so newly created chats are renamed in the live UI.
-      void Promise.all([this.loadSessionTitle(state), this.refreshPlan(state)]).then(() =>
+      // completed-turn update so newly created chats are renamed in the live UI. Do not
+      // hold completion behind the separate plan RPCs: while that refresh is pending the
+      // final response is already visible, which can make a chat left during that window
+      // look as though its eventual completion was already read.
+      void this.loadSessionTitle(state).then(() => {
         this.emitUpdate(state, true)
-      )
+        void this.refreshPlan(state).then(() => this.emitUpdate(state))
+      })
       return
     }
     if (event.type === 'session.plan_changed' || event.type === 'session.todos_changed') {

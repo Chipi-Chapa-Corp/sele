@@ -28,11 +28,13 @@ import {
   Gauge,
   ListPlus,
   LoaderCircle,
+  MessageCircleQuestion,
   Package,
   Paperclip,
   ShieldQuestionMark,
   Sparkles,
   Square,
+  Rocket,
   UnlockKeyhole,
   X,
   Zap
@@ -45,6 +47,8 @@ import type {
 import { toCssRem } from '../cssUnits'
 import type {
   ProviderActiveSendMode,
+  ProviderAgentMode,
+  ProviderAgentModeOption,
   ProviderApp,
   ProviderAppInput,
   ProviderApprovalMode,
@@ -98,6 +102,9 @@ import { SegmentedControl } from './SegmentedControl'
 import './MessageBox.css'
 
 type MessageBoxProps = {
+  agentMode: ProviderAgentMode
+  agentModes: ProviderAgentModeOption[]
+  agentModesLoading?: boolean
   approvalMode: ProviderApprovalMode
   approvalModes: ProviderApprovalModeOption[]
   active?: boolean
@@ -144,6 +151,7 @@ type MessageBoxProps = {
   showReasoningSelector?: boolean
   showReviewSelector?: boolean
   showSpeedSelector?: boolean
+  onAgentModeChange: (agentMode: ProviderAgentMode) => void
   onApprovalModeChange: (approvalMode: ProviderApprovalMode) => void
   onActionsChange?: (actions: AppAction[]) => void
   onLastActionChange?: (actionId: string | null) => void
@@ -257,7 +265,7 @@ type SelectorIconItem = {
   key: string
   title?: string
 }
-type ChatConfigSectionId = 'model' | 'reasoning' | 'access' | 'speed'
+type ChatConfigSectionId = 'model' | 'reasoning' | 'questions' | 'access' | 'speed'
 
 type ChatConfigOptionGroup = {
   id: string
@@ -974,6 +982,9 @@ const getRateLimitUsageFingerprint = (usage: ProviderAccountUsage | null): strin
   JSON.stringify(usage?.rateLimits ?? null)
 
 export const MessageBox: React.FC<MessageBoxProps> = ({
+  agentMode,
+  agentModes,
+  agentModesLoading = false,
   approvalMode,
   approvalModes,
   active = false,
@@ -1020,6 +1031,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   sandboxMode,
   sandboxModes,
   selectedReview = null,
+  onAgentModeChange,
   onApprovalModeChange,
   onActionsChange,
   onLastActionChange,
@@ -1239,6 +1251,21 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   })
   const selectedReasoningEffortPresentation = getReasoningEffortPresentation(reasoningEffort)
   const displayedReasoningEffortOptions = reasoningEffortOptions
+  const questionsSelectorVisible =
+    providerId === 'copilot' && (agentModesLoading || agentModes.length > 0)
+  const selectedAgentMode = agentModes.find((mode) => mode.id === agentMode)
+  const questionModeOptions: DropdownOption<ProviderAgentMode>[] = agentModes.map((mode) => ({
+    value: mode.id,
+    label: mode.label,
+    menuLabel: mode.isDefault ? `${mode.label} (default)` : mode.label,
+    description: mode.description,
+    icon:
+      mode.id === 'autopilot' ? (
+        <Rocket aria-hidden="true" />
+      ) : (
+        <MessageCircleQuestion aria-hidden="true" />
+      )
+  }))
   const selectedApprovalModeTitle = selectedApprovalMode?.description
     ? `${selectedApprovalMode.label}: ${selectedApprovalMode.description}`
     : (selectedApprovalMode?.label ?? formatOptionLabel(effectiveApprovalMode))
@@ -1293,6 +1320,29 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 selectedValue: reasoningEffort,
                 onChange: (value: string) =>
                   onReasoningEffortChange(value as ProviderReasoningEffort)
+              }
+            ]
+          } satisfies ChatConfigSection
+        ]
+      : []),
+    ...(questionsSelectorVisible
+      ? [
+          {
+            id: 'questions',
+            disabled: agentModesLoading || agentModes.length === 0,
+            icon:
+              agentMode === 'autopilot' ? (
+                <Rocket aria-hidden="true" />
+              ) : (
+                <MessageCircleQuestion aria-hidden="true" />
+              ),
+            label: 'Questions',
+            groups: [
+              {
+                id: 'questions',
+                options: questionModeOptions,
+                selectedValue: agentMode,
+                onChange: (value: string) => onAgentModeChange(value as ProviderAgentMode)
               }
             ]
           } satisfies ChatConfigSection
@@ -1364,6 +1414,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     showReasoningSelector && !modelSelectionUnavailable && reasoningSelectionAvailable
       ? `Reasoning: ${selectedReasoningEffortLabel}`
       : null,
+    questionsSelectorVisible
+      ? `Questions: ${selectedAgentMode?.label ?? formatOptionLabel(agentMode)}`
+      : null,
     showAccessSelector ? `Access: ${selectedSandboxModeLabel}` : null,
     reviewSelectorVisible ? `Review: ${selectedApprovalModeTitle}` : null,
     showSpeedSelector && serviceTierSelectionAvailable ? `Speed: ${selectedServiceTierLabel}` : null
@@ -1402,6 +1455,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 icon: <Zap className={fastServiceTierIconClassName} aria-hidden="true" />
               } satisfies SelectorIconItem
             ]
+          : []),
+        ...(questionsSelectorVisible && agentMode === 'autopilot'
+          ? [
+              {
+                key: 'autopilot',
+                title: 'Autopilot',
+                icon: <Rocket aria-hidden="true" />
+              } satisfies SelectorIconItem
+            ]
           : [])
       ]
   const selectorsVisible =
@@ -1409,7 +1471,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     reviewSelectorVisible ||
     showModelSelector ||
     showReasoningSelector ||
-    showSpeedSelector
+    showSpeedSelector ||
+    questionsSelectorVisible
   const notesButtonVisible = Boolean(showNotesButton && notesLabel && onNotesChange)
   const actionsButtonVisible = Boolean(
     showActions && onActionsChange && onLastActionChange && onRunAction
