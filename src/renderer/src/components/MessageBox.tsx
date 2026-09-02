@@ -2926,7 +2926,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                               : 'No statistics available',
                           disabled: !statisticsReported,
                           icon: statisticsLoading ? (
-                            <LoaderCircle className="message-box__usage-loading-icon" />
+                            <LoaderCircle className="app-loading-spinner message-box__usage-loading-icon" />
                           ) : undefined
                         }
                       ]}

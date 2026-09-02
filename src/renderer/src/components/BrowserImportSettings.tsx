@@ -185,7 +185,11 @@ export const BrowserImportSettings: React.FC<BrowserImportSettingsProps> = ({
               icon={
                 <RefreshCw
                   aria-hidden="true"
-                  className={loading ? 'browser-import-settings__loading-icon' : undefined}
+                  className={
+                    loading
+                      ? 'app-loading-spinner browser-import-settings__loading-icon'
+                      : undefined
+                  }
                 />
               }
               size="small"

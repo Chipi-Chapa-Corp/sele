@@ -1361,7 +1361,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                 disabled={!canEdit || !dirty || saveState === 'saving'}
                 icon={
                   saveState === 'saving' ? (
-                    <LoaderCircle className="file-editor-dialog__spinner" />
+                    <LoaderCircle className="app-loading-spinner file-editor-dialog__spinner" />
                   ) : (
                     <Save />
                   )
@@ -1420,7 +1420,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
             <div className="file-editor-dialog__tree-scroll">
               {!useDiffTree && fileTreeLoadState === 'loading' && (
                 <div className="file-editor-dialog__tree-state" role="status">
-                  <LoaderCircle className="file-editor-dialog__spinner" aria-hidden="true" />
+                  <LoaderCircle
+                    className="app-loading-spinner file-editor-dialog__spinner"
+                    aria-hidden="true"
+                  />
                   <span>Loading files…</span>
                 </div>
               )}
@@ -1472,7 +1475,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
               <div className="file-editor-dialog__diff-view">
                 {visibleDiffLoadState === 'loading' && (
                   <div className="file-editor-dialog__state" role="status">
-                    <LoaderCircle className="file-editor-dialog__spinner" aria-hidden="true" />
+                    <LoaderCircle
+                      className="app-loading-spinner file-editor-dialog__spinner"
+                      aria-hidden="true"
+                    />
                     <span>Loading diff…</span>
                   </div>
                 )}
@@ -1520,7 +1526,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
               (visibleLoadState === 'loading' ||
                 (showFileDiff && visibleDiffLoadState === 'loading')) && (
                 <div className="file-editor-dialog__state" role="status">
-                  <LoaderCircle className="file-editor-dialog__spinner" aria-hidden="true" />
+                  <LoaderCircle
+                    className="app-loading-spinner file-editor-dialog__spinner"
+                    aria-hidden="true"
+                  />
                   <span>
                     {canShowImage
                       ? 'Opening image…'

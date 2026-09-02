@@ -159,9 +159,3 @@
     transform: rotate(360deg);
   }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .browser-panel__loading-icon {
-    animation: none;
-  }
-}

@@ -89,4 +89,10 @@ textarea:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+
+  /* Keep compact progress indicators useful when the OS disables UI animations. */
+  .app-loading-spinner {
+    animation-duration: 900ms !important;
+    animation-iteration-count: infinite !important;
+  }
 }

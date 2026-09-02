@@ -41,9 +41,3 @@
     flex: 1 1 auto;
   }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .browser-import-settings__loading-icon {
-    animation: none;
-  }
-}

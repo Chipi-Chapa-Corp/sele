@@ -1165,7 +1165,10 @@ const ToolItem: React.FC<{
             {loadState === 'error' ? `Retry loading ${label}` : label}
           </span>
           {loadState === 'loading' ? (
-            <LoaderCircle className="chat-detail__working-spinner" aria-hidden="true" />
+            <LoaderCircle
+              className="app-loading-spinner chat-detail__working-spinner"
+              aria-hidden="true"
+            />
           ) : (
             <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
           )}
@@ -1898,7 +1901,12 @@ const WorkingStep: React.FC<{
             : 'Working'
   const heading = (
     <span className="chat-detail__working-label">
-      {active && <LoaderCircle className="chat-detail__working-spinner" aria-hidden="true" />}
+      {active && (
+        <LoaderCircle
+          className="app-loading-spinner chat-detail__working-spinner"
+          aria-hidden="true"
+        />
+      )}
       <span>{label}</span>
     </span>
   )
@@ -2021,7 +2029,10 @@ const WorkingStep: React.FC<{
           >
             {heading}
             {loadState === 'loading' ? (
-              <LoaderCircle className="chat-detail__working-spinner" aria-hidden="true" />
+              <LoaderCircle
+                className="app-loading-spinner chat-detail__working-spinner"
+                aria-hidden="true"
+              />
             ) : (
               <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
             )}

@@ -17,7 +17,7 @@ const ConversationMessagesState: React.FC<{
   >
     {kind === 'loading' ? (
       <LoaderCircle
-        className="chat-detail__messages-status-icon chat-detail__messages-status-icon--loading"
+        className="app-loading-spinner chat-detail__messages-status-icon chat-detail__messages-status-icon--loading"
         aria-hidden="true"
       />
     ) : (

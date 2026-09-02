@@ -304,7 +304,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               title={statusLabels[workingStatus]}
             >
               <LoaderCircle
-                className="chat-list-item__loading"
+                className="app-loading-spinner chat-list-item__loading"
                 aria-label={statusLabels[workingStatus]}
               />
             </span>

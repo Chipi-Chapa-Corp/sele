@@ -837,7 +837,11 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
           icon={
             <RefreshCw
               aria-hidden="true"
-              className={activeRuntime.loading ? 'browser-panel__loading-icon' : undefined}
+              className={
+                activeRuntime.loading
+                  ? 'app-loading-spinner browser-panel__loading-icon'
+                  : undefined
+              }
             />
           }
           size="small"
