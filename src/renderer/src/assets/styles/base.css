@@ -25,6 +25,11 @@ textarea {
   font: inherit;
 }
 
+/* Keep decorative media from becoming a separate hit target inside native buttons. */
+button :where(svg, img) {
+  pointer-events: none;
+}
+
 summary,
 textarea {
   -webkit-tap-highlight-color: transparent;
