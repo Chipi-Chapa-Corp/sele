@@ -12,6 +12,7 @@ import type {
 
 type ToolStartEvent = Extract<SessionEvent, { type: 'tool.execution_start' }>
 type ToolCompleteEvent = Extract<SessionEvent, { type: 'tool.execution_complete' }>
+type UserMessageEvent = Extract<SessionEvent, { type: 'user.message' }>
 
 export type CopilotRenderedPlan = {
   explanation: string | null
@@ -43,6 +44,16 @@ const maxRawToolCollectionEntries = 200
 const maxRawToolDepth = 8
 const truncatedToolValueMarker = '… [truncated to keep the app responsive]'
 const truncatedEarlierToolOutputMarker = `${truncatedToolValueMarker}\n`
+const skillContextMessagePattern = /^<skill-context(?:\s[^>]*)?>[\s\S]*<\/skill-context>$/
+
+export const isCopilotSystemContextMessage = (event: UserMessageEvent): boolean => {
+  const source = event.data.source?.trim().toLocaleLowerCase()
+  return (
+    source === 'skill' ||
+    source?.startsWith('skill-') === true ||
+    skillContextMessagePattern.test(event.data.content.trim())
+  )
+}
 
 export const truncateCopilotToolOutput = (value: string | null): string | null => {
   if (value == null || value.length <= maxToolOutputLength) return value
@@ -450,6 +461,7 @@ export const renderCopilotChatItems = (
     if (!isScopedEvent(event, options.agentId)) continue
 
     if (event.type === 'user.message') {
+      if (isCopilotSystemContextMessage(event)) continue
       flushSegment(false)
       const attachments = getAttachments(event)
       items.push({

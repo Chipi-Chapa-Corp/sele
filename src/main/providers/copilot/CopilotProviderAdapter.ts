@@ -57,7 +57,11 @@ import {
   restoreProviderSkill
 } from '../providerResources'
 import { getCopilotExecutable } from './CopilotExecutable'
-import { renderCopilotChatItems, type CopilotRenderedPlan } from './CopilotItemRenderers'
+import {
+  isCopilotSystemContextMessage,
+  renderCopilotChatItems,
+  type CopilotRenderedPlan
+} from './CopilotItemRenderers'
 import {
   createCopilotSubagentSummaries,
   createCopilotSubagentTranscriptItems
@@ -998,7 +1002,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     const nextUserMessage = source.events
       .slice(targetIndex + 1)
-      .find((event) => event.type === 'user.message' && !event.agentId)
+      .find(
+        (event) =>
+          event.type === 'user.message' && !event.agentId && !isCopilotSystemContextMessage(event)
+      )
     const fork = await source.client!.rpc.sessions.fork({
       sessionId: chatId,
       ...(nextUserMessage ? { toEventId: nextUserMessage.id } : {})
@@ -1744,7 +1751,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (state.metadata?.summary?.trim()) return truncate(state.metadata.summary, 80)
     const firstUserMessage = state.events.find(
       (event): event is Extract<SessionEvent, { type: 'user.message' }> =>
-        event.type === 'user.message' && !event.agentId
+        event.type === 'user.message' && !event.agentId && !isCopilotSystemContextMessage(event)
     )
     return firstUserMessage ? truncate(firstUserMessage.data.content, 80) : 'Copilot session'
   }
