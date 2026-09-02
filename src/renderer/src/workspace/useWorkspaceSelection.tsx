@@ -387,6 +387,21 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     () => new Set(committingChatActions.keys()),
     [committingChatActions]
   )
+  const latestCommitFinishedAtByChatKey = useMemo(() => {
+    const finishedAtByChatKey = new Map<string, number>()
+
+    Object.values(chatCommitMarkers).forEach((marker) => {
+      if (marker.status !== 'finished' || marker.finishedAt === null) return
+
+      const chatKey = getChatKey({ providerId: marker.providerId, id: marker.sourceChatId })
+      const currentFinishedAt = finishedAtByChatKey.get(chatKey) ?? 0
+      if (marker.finishedAt > currentFinishedAt) {
+        finishedAtByChatKey.set(chatKey, marker.finishedAt)
+      }
+    })
+
+    return finishedAtByChatKey
+  }, [chatCommitMarkers])
   const selectedChatCommitMarkers = useMemo(
     () =>
       selectedProviderId && selectedChatId
@@ -1358,6 +1373,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     changesProjectCwd,
     closeChatSearch,
     committingChatKeys,
+    latestCommitFinishedAtByChatKey,
     gitAvailabilityScopeKey,
     gitAvailableForCurrentSource,
     handleChangesPaneViewChange,

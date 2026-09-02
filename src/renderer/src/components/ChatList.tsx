@@ -8,6 +8,7 @@ type ChatListProps = {
   chats: ProviderChat[]
   selectedChatKey: string | null
   committingChatKeys?: ReadonlySet<string>
+  latestCommitFinishedAtByChatKey?: ReadonlyMap<string, number>
   canMarkDone?: boolean
   canMarkUndone?: boolean
   reorderable?: boolean
@@ -29,6 +30,7 @@ export const ChatList: React.FC<ChatListProps> = ({
   chats,
   selectedChatKey,
   committingChatKeys,
+  latestCommitFinishedAtByChatKey,
   canMarkDone = true,
   canMarkUndone = false,
   reorderable = false,
@@ -124,6 +126,7 @@ export const ChatList: React.FC<ChatListProps> = ({
             projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
             selected={chatKey === selectedChatKey}
             committing={committingChatKeys?.has(chatKey)}
+            latestCommitFinishedAt={latestCommitFinishedAtByChatKey?.get(chatKey)}
             canMarkDone={canMarkDone}
             canMarkUndone={canMarkUndone}
             draggable={reorderable}

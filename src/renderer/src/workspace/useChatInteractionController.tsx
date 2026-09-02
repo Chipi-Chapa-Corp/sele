@@ -42,6 +42,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     projectDropInsertionIndex,
     selectedChat,
     committingChatKeys,
+    latestCommitFinishedAtByChatKey,
     draggedProjectGroupKey,
     projectNamesByCwd,
     handleLoadMoreChatsInGroup,
@@ -198,6 +199,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         open={groupOpen}
         selectedChatKey={selectedChat ? getChatKey(selectedChat) : null}
         committingChatKeys={committingChatKeys}
+        latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
         canReorderChats={searchTerms.length === 0}
         projectDraggable={projectDraggable}
         projectDragging={group.key === draggedProjectGroupKey}

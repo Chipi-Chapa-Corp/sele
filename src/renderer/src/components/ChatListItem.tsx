@@ -36,6 +36,7 @@ type ChatListItemProps = {
   projectDisplayName?: string | null
   selected: boolean
   committing?: boolean
+  latestCommitFinishedAt?: number | null
   canMarkDone?: boolean
   canMarkUndone?: boolean
   draggable?: boolean
@@ -102,6 +103,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   projectDisplayName,
   selected,
   committing = false,
+  latestCommitFinishedAt = null,
   canMarkDone = true,
   canMarkUndone = false,
   draggable = false,
@@ -139,7 +141,8 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
   const errorStatus = chat.status === 'error' ? chat.status : null
   const pendingApproval = chat.pendingApproval
-  const unread = !selected && !chat.done && chat.updatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
+  const unreadUpdatedAt = Math.max(chat.updatedAt, latestCommitFinishedAt ?? 0)
+  const unread = !selected && !chat.done && unreadUpdatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()

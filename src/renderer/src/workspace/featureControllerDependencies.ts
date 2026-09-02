@@ -83,6 +83,7 @@ export type ChatInteractionControllerDependencies = {
   selectedChat: ProviderChat | null
   committingChatKeys: Set<string>
   draggedProjectGroupKey: string | null
+  latestCommitFinishedAtByChatKey: ReadonlyMap<string, number>
   projectNamesByCwd: Map<string, string>
   handleLoadMoreChatsInGroup: (group: ChatListGroupData) => void
   handleShowLessChatsInGroup: (group: ChatListGroupData) => void

@@ -31,6 +31,7 @@ type ChatListGroupProps = {
   open: boolean
   selectedChatKey: string | null
   committingChatKeys?: ReadonlySet<string>
+  latestCommitFinishedAtByChatKey?: ReadonlyMap<string, number>
   canReorderChats?: boolean
   projectDraggable?: boolean
   projectDragging?: boolean
@@ -63,6 +64,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   open,
   selectedChatKey,
   committingChatKeys,
+  latestCommitFinishedAtByChatKey,
   canReorderChats = true,
   projectDraggable = false,
   projectDragging = false,
@@ -208,6 +210,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             chats={visibleChats}
             selectedChatKey={selectedChatKey}
             committingChatKeys={committingChatKeys}
+            latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
             canMarkDone={group.kind !== 'done'}
             canMarkUndone={group.kind === 'done'}
             reorderable={canReorderChats}
