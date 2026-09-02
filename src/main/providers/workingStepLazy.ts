@@ -10,6 +10,7 @@ import type {
 
 export const rendererWorkingItemPageSize = 50
 export const rendererWorkingItemWindowSize = rendererWorkingItemPageSize * 2
+export const rendererHistoricalWorkingItemLazyThreshold = 10
 export const rendererWorkingToolPageSize = 50
 export const rendererWorkingToolWindowSize = rendererWorkingToolPageSize * 2
 export const rendererWorkingPagePayloadBudgetCharacters = 2_000_000
@@ -525,8 +526,9 @@ export const unloadHistoricalWorkingSteps = (detail: ProviderChatDetail): Provid
     if (item.type !== 'working') return item
 
     const groupedItem = groupWorkingStepItems(item)
+    const itemCount = Math.max(groupedItem.itemCount ?? 0, groupedItem.items.length)
     const nextItem =
-      index === latestWorkingStepIndex
+      index === latestWorkingStepIndex || itemCount <= rendererHistoricalWorkingItemLazyThreshold
         ? prepareLatestWorkingStep(groupedItem)
         : unloadWorkingStep(groupedItem)
     if (
