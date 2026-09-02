@@ -1311,6 +1311,8 @@ export const registerProviderIpc = (): void => {
     providerApi.resetRateLimits(requireProviderId(providerId), requireSourceOptions(options))
   )
 
+  ipcMain.handle(providerIpcChannels.getChatContainers, () => providerApi.getChatContainers())
+
   ipcMain.handle(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredOptions = requireChatListOptions(options)

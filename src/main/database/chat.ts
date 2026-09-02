@@ -130,6 +130,30 @@ export const getChatMetadataByIds = async (
   return metadataById
 }
 
+export const getChatContainers = async (): Promise<AppContainerTarget[]> => {
+  const db = await getDatabase()
+  const rows = await db
+    .selectFrom('chat')
+    .select([
+      'container_tool',
+      'container_name',
+      'container_runtime_tool',
+      'container_runtime_name'
+    ])
+    .distinct()
+    .execute()
+
+  return rows.flatMap((row) => {
+    const container = mapContainerTarget(
+      row.container_tool,
+      row.container_name,
+      row.container_runtime_tool,
+      row.container_runtime_name
+    )
+    return container ? [container] : []
+  })
+}
+
 export const setChatDone = async (chatId: string, done = true): Promise<ProviderChatMetadata> => {
   const db = await getDatabase()
   const doneValue = done ? 1 : 0

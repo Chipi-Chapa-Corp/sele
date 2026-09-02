@@ -991,6 +991,7 @@ export type ProviderApi = {
     providerId: ProviderId,
     options?: ProviderSourceOptions
   ) => Promise<ProviderAccountRateLimitResetOutcome>
+  getChatContainers: () => Promise<AppContainerTarget[]>
   getChats: (providerId: ProviderId, options?: ProviderChatListOptions) => Promise<ProviderChatPage>
   getChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
   getSubagents: (providerId: ProviderId, chatId: string) => Promise<ProviderSubagent[]>
@@ -1191,6 +1192,7 @@ export const providerIpcChannels = {
   setAppEnabled: 'provider:set-app-enabled',
   getUsage: 'provider:get-usage',
   resetRateLimits: 'provider:reset-rate-limits',
+  getChatContainers: 'provider:get-chat-containers',
   getChats: 'provider:get-chats',
   getChat: 'provider:get-chat',
   getSubagents: 'provider:get-subagents',

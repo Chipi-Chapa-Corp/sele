@@ -18,6 +18,7 @@ import type {
   ProviderWorkingStep
 } from '../../shared/provider'
 import {
+  getChatContainers,
   getChatMetadata,
   getChatMetadataByIds,
   setChatContainer,
@@ -496,6 +497,7 @@ export const providerApi: ProviderApi = {
     adapters[providerId].setAppEnabled(appId, enabled, options),
   getUsage: (providerId, options?: ProviderUsageOptions) => adapters[providerId].getUsage(options),
   resetRateLimits: (providerId, options) => adapters[providerId].resetRateLimits(options),
+  getChatContainers,
   getChats: async (providerId, options) => {
     const page = await adapters[providerId].getChats(options)
     const chats = await applyMetadataToChats(page.chats)

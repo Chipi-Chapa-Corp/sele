@@ -176,6 +176,7 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getUsage, providerId, options),
   resetRateLimits: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.resetRateLimits, providerId, options),
+  getChatContainers: () => ipcRenderer.invoke(providerIpcChannels.getChatContainers),
   getChats: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
   getChat: (providerId, chatId) =>

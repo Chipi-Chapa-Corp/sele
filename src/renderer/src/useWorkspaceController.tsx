@@ -467,6 +467,7 @@ export const useWorkspaceController = () => {
     string | null
   >(null)
   const [sshEnvironments, setSshEnvironments] = useState<AppSshEnvironment[]>([])
+  const [storedChatContainers, setStoredChatContainers] = useState<AppContainerTarget[]>([])
   const [sshEnvironmentDialogOpen, setSshEnvironmentDialogOpen] = useState(false)
   const [editingSshEnvironment, setEditingSshEnvironment] = useState<AppSshEnvironment | null>(null)
   const [deletingSshEnvironmentId, setDeletingSshEnvironmentId] = useState<string | null>(null)
@@ -483,6 +484,10 @@ export const useWorkspaceController = () => {
       ? newSessionContainer.name
       : null
   const newSessionContainerKey = getContainerTargetKey(newSessionContainer)
+  const newSessionContainerKeyRef = useRef(newSessionContainerKey)
+  useEffect(() => {
+    newSessionContainerKeyRef.current = newSessionContainerKey
+  }, [newSessionContainerKey])
   const [newSessionSourceAvailability, setNewSessionSourceAvailability] =
     useState<SourceAvailabilityState | null>(null)
   const [accountUsage, setAccountUsage] = useState<ProviderAccountUsage | null>(null)
@@ -1487,9 +1492,10 @@ export const useWorkspaceController = () => {
 
     Promise.all([
       appApi.getContainerSuggestions().catch(() => [] satisfies AppContainerSuggestion[]),
-      appApi.getSshEnvironments()
+      appApi.getSshEnvironments(),
+      providerApi.getChatContainers().catch(() => [] satisfies AppContainerTarget[])
     ])
-      .then(([suggestions, environments]) => {
+      .then(([suggestions, environments, chatContainers]) => {
         if (!active) return
 
         const currentSuggestion = suggestions.find((suggestion) => suggestion.current)
@@ -1499,6 +1505,7 @@ export const useWorkspaceController = () => {
 
         setContainerSuggestions(suggestions)
         setSshEnvironments(environments)
+        setStoredChatContainers(chatContainers)
         setNewSessionContainer((currentContainer) => {
           if (!containerSelectionReadyRef.current) {
             const initialContainer = storedContainerSelection ?? currentSource
@@ -1519,6 +1526,7 @@ export const useWorkspaceController = () => {
 
         setContainerSuggestions([])
         setSshEnvironments([])
+        setStoredChatContainers([])
         if (!containerSelectionReadyRef.current) {
           setNewSessionContainer(storedContainerSelection ?? { kind: 'host' })
         } else {
@@ -1870,13 +1878,11 @@ export const useWorkspaceController = () => {
 
       const container = normalizeContainerTarget(newSessionContainer)
       if (newSessionAvailableProviderIds.length === 0) {
-        setChats([])
         clearSelectedChatIfUnavailableInSource([], container)
         setLoadState('ready')
         return
       }
 
-      const availableProviderIds = new Set(newSessionAvailableProviderIds)
       const initialChatKeysByProvider = new Map(
         newSessionAvailableProviderIds.map((providerId) => [
           providerId,
@@ -1890,13 +1896,6 @@ export const useWorkspaceController = () => {
               .map(getChatKey)
           )
         ])
-      )
-      setChats((currentChats) =>
-        currentChats.filter(
-          (chat) =>
-            availableProviderIds.has(chat.providerId) &&
-            areContainerTargetsEqual(chat.container, container)
-        )
       )
       clearSelectedChatIfUnavailableInSource(newSessionAvailableProviderIds, container)
       setLoadState('loading')
@@ -1975,6 +1974,103 @@ export const useWorkspaceController = () => {
     newSessionContainer,
     newSessionSourceAvailabilityReady
   ])
+
+  useEffect(() => {
+    if (!containerSelectionReady) return
+
+    let active = true
+    const sourceKeys = new Set<string>()
+    const configuredSshEnvironmentIds = new Set(
+      sshEnvironments.map((environment) => environment.id)
+    )
+    const sources = (
+      [
+        { kind: 'host' },
+        ...sshEnvironments.map((environment): AppContainerTarget => ({
+          kind: 'container',
+          tool: 'ssh',
+          name: environment.id,
+          runtime: { kind: 'host' }
+        })),
+        ...containerSuggestions.map(getContainerTargetFromSuggestion),
+        ...storedChatContainers.filter(
+          (container) =>
+            container.kind === 'container' &&
+            container.tool === 'ssh' &&
+            configuredSshEnvironmentIds.has(container.name)
+        )
+      ] satisfies AppContainerTarget[]
+    ).filter((source) => {
+      const sourceKey = getContainerTargetKey(source)
+      if (sourceKeys.has(sourceKey)) return false
+      sourceKeys.add(sourceKey)
+      return true
+    })
+
+    const loadSourceChats = async (container: AppContainerTarget): Promise<void> => {
+      const availability = await appApi.getSourceAvailability({ container })
+      if (!active) return
+
+      const availableProviderIds = availability.providers.flatMap((provider) =>
+        provider.available ? [provider.providerId] : []
+      )
+
+      await Promise.allSettled(
+        availableProviderIds.map(async (providerId) => {
+          const initialChatKeys = new Set(
+            chatsRef.current
+              .filter(
+                (chat) =>
+                  chat.providerId === providerId &&
+                  areContainerTargetsEqual(chat.container, container)
+              )
+              .map(getChatKey)
+          )
+          const loadedChatKeys = new Set<string>()
+          const seenCursors = new Set<string>()
+          let cursor: string | null = null
+
+          do {
+            const page = await providerApi.getChats(providerId, {
+              container,
+              cursor,
+              limit: chatListFetchPageSize
+            })
+            if (!active) return
+
+            page.chats.forEach((chat) => loadedChatKeys.add(getChatKey(chat)))
+            setChats((currentChats) => mergeChats(currentChats, page.chats))
+
+            cursor = page.nextCursor
+            if (cursor && seenCursors.has(cursor)) break
+            if (cursor) seenCursors.add(cursor)
+          } while (cursor)
+
+          setChats((currentChats) =>
+            mergeChats(
+              currentChats.filter(
+                (chat) =>
+                  chat.providerId !== providerId ||
+                  !initialChatKeys.has(getChatKey(chat)) ||
+                  loadedChatKeys.has(getChatKey(chat))
+              )
+            )
+          )
+        })
+      )
+    }
+
+    sources.forEach((source) => {
+      if (getContainerTargetKey(source) === newSessionContainerKeyRef.current) return
+      void loadSourceChats(source).catch(() => {
+        // Unreachable environments should not hide chats loaded from other sources.
+      })
+    })
+
+    return () => {
+      active = false
+    }
+  }, [containerSelectionReady, containerSuggestions, sshEnvironments, storedChatContainers])
 
   useEffect(() => {
     let active = true
