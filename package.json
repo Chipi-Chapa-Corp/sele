@@ -12,7 +12,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test:chat-state": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatConversationModel.test.mjs",
+    "test:chat-state": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatConversationModel.test.mjs src/renderer/src/workingStepDisclosure.test.mjs",
     "test:codex-history": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/codex/CodexCursorHistory.test.mjs src/main/providers/codex/CodexEditHistory.test.mjs src/main/providers/codex/CodexItemRenderers.test.mjs src/main/providers/codex/CodexLiveMerge.test.mjs src/main/providers/codex/CodexSubagents.test.mjs",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",

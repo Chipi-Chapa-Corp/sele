@@ -91,6 +91,11 @@ import { getBrowserFaviconUrl } from '../../../shared/browser'
 import { getRateLimitResetMessage } from '../rateLimitReset'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { defaultAppChatThoughtSettings, type AppChatThoughtSettings } from '../settings'
+import {
+  getWorkingStepDefaultOpen,
+  getWorkingStepDisclosureKey,
+  resolveWorkingStepOpen
+} from '../workingStepDisclosure'
 import { Button } from './Button'
 import { BoundedHighlightedCode } from './BoundedHighlightedCode'
 import { HighlightedCode } from './HighlightedCode'
@@ -1773,35 +1778,6 @@ const partitionGeneratedImageItems = (
   return { generatedImages, remaining }
 }
 
-const getWorkingStepDefaultOpen = (
-  status: ProviderWorkingStep['status'],
-  thoughtSettings: AppChatThoughtSettings,
-  hasNextWorkingStep: boolean
-): boolean => {
-  if (status === 'working') {
-    return (
-      thoughtSettings.expandThoughtsOnStart &&
-      !(hasNextWorkingStep && thoughtSettings.collapseThoughtsOnNextTurn)
-    )
-  }
-
-  if (status === 'stopped' || status === 'failed') {
-    return (
-      thoughtSettings.expandStoppedTurns &&
-      !(hasNextWorkingStep && thoughtSettings.collapseStoppedOnNextTurn)
-    )
-  }
-
-  if (status === 'worked') {
-    return (
-      !thoughtSettings.collapseThoughtsOnFinish &&
-      !(hasNextWorkingStep && thoughtSettings.collapseThoughtsOnNextTurn)
-    )
-  }
-
-  return false
-}
-
 const WorkingStep: React.FC<{
   activityContent?: ReactNode
   availableRateLimitResets?: number
@@ -1897,8 +1873,14 @@ const WorkingStep: React.FC<{
     thoughtSettings,
     autoCollapseHasNextWorkingStep
   )
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
-  const open = openAfterLoad ? true : (manualOpen ?? defaultOpen)
+  const disclosureKey = getWorkingStepDisclosureKey(
+    autoCollapseStatus,
+    thoughtSettings,
+    autoCollapseHasNextWorkingStep
+  )
+  const [openState, setOpenState] = useState({ key: disclosureKey, open: defaultOpen })
+  const preferredOpen = resolveWorkingStepOpen(openState, disclosureKey, defaultOpen)
+  const open = openAfterLoad ? true : preferredOpen
   const label =
     item.status === 'queued'
       ? 'Queued'
@@ -2080,10 +2062,10 @@ const WorkingStep: React.FC<{
           const nextOpen = event.currentTarget.open
           if (openAfterLoad) {
             setOpenAfterLoad(false)
-            setManualOpen(nextOpen)
+            setOpenState({ key: disclosureKey, open: nextOpen })
             return
           }
-          if (nextOpen !== open) setManualOpen(nextOpen)
+          if (nextOpen !== open) setOpenState({ key: disclosureKey, open: nextOpen })
         }}
       >
         <summary onClick={onDisclosureToggle}>
