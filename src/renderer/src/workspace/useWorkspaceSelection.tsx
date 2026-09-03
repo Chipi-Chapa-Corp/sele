@@ -49,6 +49,7 @@ import {
   getErrorMessage,
   getLatestChatPlan,
   isActiveChatStatus,
+  isChatDetailSnapshotStale,
   mergeAccountUsage
 } from './chatControllerUtils'
 import type { WorkspaceSelectionDependencies } from './selectionDependencies'
@@ -766,7 +767,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   ])
   useEffect(() => {
     if (!selectedProviderId || !selectedChatId) return
-    if (chatDetail?.id === selectedChatId) return
 
     let active = true
 
@@ -775,6 +775,10 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       .then((detail) => {
         if (!active) return
         const currentDetail = chatDetailRef.current
+        if (isChatDetailSnapshotStale(detail, currentDetail)) {
+          setChatLoadState('ready')
+          return
+        }
         const loadedDetail =
           shouldPreserveOptimisticTurnUntilUserMessage(selectedProviderId) &&
           isActiveChatStatus(detail.status)
@@ -800,14 +804,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     return () => {
       active = false
     }
-  }, [
-    cacheRecentChatDetail,
-    chatDetail?.id,
-    chatLoadRequest,
-    markChatSeenAt,
-    selectedProviderId,
-    selectedChatId
-  ])
+  }, [cacheRecentChatDetail, chatLoadRequest, markChatSeenAt, selectedProviderId, selectedChatId])
   useLayoutEffect(() => {
     if (!chatDetail || !selectedChatKey) {
       chatInitialLayoutKeyRef.current = null

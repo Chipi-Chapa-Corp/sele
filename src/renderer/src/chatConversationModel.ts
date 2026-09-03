@@ -206,43 +206,44 @@ const buildIncrementalChatConversationModel = (
   )
   if (!rebuildStart) return null
 
-  const itemIndexesById = previousModel.itemIndexesById as Map<string, number>
-  const itemIds = previousModel.itemIds as Set<string>
-  const stoppedTurnRetryMessages = previousModel.stoppedTurnRetryMessages as Map<
-    string,
-    ProviderMessage
-  >
-  const workingStepIdsWithNextWorkingStep =
-    previousModel.workingStepIdsWithNextWorkingStep as Set<string>
-  const followingWorkingStepsById = previousModel.followingWorkingStepsById as Map<
-    string,
-    FollowingWorkingStep
-  >
-  const turns = previousModel.turns
-  const oldSuffix = internals.sourceItems.slice(rebuildStart.itemIndex)
+  // React may abandon a concurrent render. Mutating the previous memoized model here used to
+  // corrupt the still-visible conversation even though the new render never committed.
+  const itemIndexesById = new Map(previousModel.itemIndexesById)
+  const itemIds = new Set(previousModel.itemIds)
+  const stoppedTurnRetryMessages = new Map(previousModel.stoppedTurnRetryMessages)
+  const workingStepIdsWithNextWorkingStep = new Set(previousModel.workingStepIdsWithNextWorkingStep)
+  const followingWorkingStepsById = new Map(previousModel.followingWorkingStepsById)
+  const turns = [...previousModel.turns]
+  const nextInternals: ChatConversationModelInternals = {
+    sourceItems: internals.sourceItems,
+    turnIndexByItemId: new Map(internals.turnIndexByItemId),
+    workingStepIndexById: new Map(internals.workingStepIndexById),
+    workingSteps: [...internals.workingSteps]
+  }
+  const oldSuffix = nextInternals.sourceItems.slice(rebuildStart.itemIndex)
   const newSuffix = items.slice(rebuildStart.itemIndex)
 
-  let firstAffectedWorkingStepIndex = internals.workingSteps.length
+  let firstAffectedWorkingStepIndex = nextInternals.workingSteps.length
   for (const item of oldSuffix) {
     itemIndexesById.delete(item.id)
     itemIds.delete(item.id)
-    internals.turnIndexByItemId.delete(item.id)
+    nextInternals.turnIndexByItemId.delete(item.id)
     if (item.type === 'working') {
       stoppedTurnRetryMessages.delete(item.id)
       firstAffectedWorkingStepIndex = Math.min(
         firstAffectedWorkingStepIndex,
-        internals.workingStepIndexById.get(item.id) ?? firstAffectedWorkingStepIndex
+        nextInternals.workingStepIndexById.get(item.id) ?? firstAffectedWorkingStepIndex
       )
-      internals.workingStepIndexById.delete(item.id)
+      nextInternals.workingStepIndexById.delete(item.id)
     }
   }
 
-  const oldWorkingSteps = internals.workingSteps.slice(firstAffectedWorkingStepIndex)
-  internals.workingSteps.splice(firstAffectedWorkingStepIndex)
+  const oldWorkingSteps = nextInternals.workingSteps.slice(firstAffectedWorkingStepIndex)
+  nextInternals.workingSteps.splice(firstAffectedWorkingStepIndex)
   for (const item of newSuffix) {
     if (item.type !== 'working') continue
-    internals.workingStepIndexById.set(item.id, internals.workingSteps.length)
-    internals.workingSteps.push(item)
+    nextInternals.workingStepIndexById.set(item.id, nextInternals.workingSteps.length)
+    nextInternals.workingSteps.push(item)
   }
 
   const workingRelationshipStartIndex = Math.max(0, firstAffectedWorkingStepIndex - 2)
@@ -252,17 +253,17 @@ const buildIncrementalChatConversationModel = (
   }
   for (
     let index = workingRelationshipStartIndex;
-    index < internals.workingSteps.length;
+    index < nextInternals.workingSteps.length;
     index += 1
   ) {
-    const step = internals.workingSteps[index]
+    const step = nextInternals.workingSteps[index]
     workingStepIdsWithNextWorkingStep.delete(step.id)
     followingWorkingStepsById.delete(step.id)
-    const nextStep = internals.workingSteps[index + 1]
+    const nextStep = nextInternals.workingSteps[index + 1]
     if (!nextStep) continue
     workingStepIdsWithNextWorkingStep.add(step.id)
     followingWorkingStepsById.set(step.id, {
-      hasNextWorkingStep: index + 2 < internals.workingSteps.length,
+      hasNextWorkingStep: index + 2 < nextInternals.workingSteps.length,
       status: nextStep.status
     })
   }
@@ -286,7 +287,7 @@ const buildIncrementalChatConversationModel = (
     const itemIndex = rebuildStart.itemIndex + suffixIndex
     itemIndexesById.set(item.id, itemIndex)
     itemIds.add(item.id)
-    internals.turnIndexByItemId.set(item.id, turns.length)
+    nextInternals.turnIndexByItemId.set(item.id, turns.length)
     if (
       item.type === 'working' &&
       (item.status === 'stopped' ||
@@ -322,8 +323,8 @@ const buildIncrementalChatConversationModel = (
     turns,
     workingStepIdsWithNextWorkingStep
   }
-  internals.sourceItems = items
-  modelInternals.set(model, internals)
+  nextInternals.sourceItems = items
+  modelInternals.set(model, nextInternals)
   modelsByItems.set(items, model)
   return model
 }

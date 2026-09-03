@@ -853,8 +853,8 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     setSendState('sending')
 
     try {
-      const summary = await providerApi.stopChatSummary(selectedChat.providerId, selectedChat.id)
-      applyChatSummary(selectedChat.providerId, summary, true)
+      const detail = await providerApi.stopChat(selectedChat.providerId, selectedChat.id)
+      applyViewedChatDetail(selectedChat.providerId, detail)
       markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
       setSendState('idle')
     } catch (error) {

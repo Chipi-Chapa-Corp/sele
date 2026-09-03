@@ -48,6 +48,13 @@ export type LocalDatabase = {
     cwd_key: string
     notes_json: string
   }
+  codex_submitted_messages: {
+    client_message_id: string
+    chat_id: string
+    turn_id: string | null
+    input_json: string
+    created_at: number
+  }
   project_icons: {
     cwd_key: string
     image_path: string
@@ -143,6 +150,24 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('provider_id', 'text', (column) => column.notNull())
     .addColumn('cwd_key', 'text', (column) => column.notNull())
     .addColumn('notes_json', 'text', (column) => column.notNull())
+    .execute()
+
+  await db.schema
+    .createTable('codex_submitted_messages')
+    .ifNotExists()
+    .addColumn('client_message_id', 'text', (column) => column.primaryKey())
+    .addColumn('chat_id', 'text', (column) => column.notNull())
+    .addColumn('turn_id', 'text')
+    .addColumn('input_json', 'text', (column) => column.notNull())
+    .addColumn('created_at', 'integer', (column) => column.notNull())
+    .execute()
+
+  await db.schema
+    .createIndex('codex_submitted_messages_chat_turn')
+    .ifNotExists()
+    .unique()
+    .on('codex_submitted_messages')
+    .columns(['chat_id', 'turn_id'])
     .execute()
 
   await db.schema

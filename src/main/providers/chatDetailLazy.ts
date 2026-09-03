@@ -4,7 +4,11 @@ import type {
   ProviderMessage,
   ProviderPendingMessage
 } from '../../shared/provider'
-import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns.ts'
+import {
+  assertUniqueProviderChatItemIds,
+  getProviderChatTurnCount,
+  sliceProviderChatTurns
+} from '../../shared/chatTurns.ts'
 import { unloadHistoricalWorkingSteps } from './workingStepLazy.ts'
 
 export const rendererChatTurnPageSize = 10
@@ -100,6 +104,7 @@ const prepareMessagePayload = <TMessage extends ProviderMessage | ProviderPendin
 }
 
 export const prepareChatItemsForRenderer = (items: ProviderChatItem[]): ProviderChatItem[] => {
+  assertUniqueProviderChatItemIds(items)
   let remainingCharacters = rendererChatPagePayloadBudgetCharacters
   let changed = false
   const preparedItems = items.map((item) => {

@@ -93,6 +93,7 @@ type CopilotSessionMetadata = SessionMetadata & {
 
 type CopilotSessionState = {
   id: string
+  revision: number
   createdAt: number
   client: CopilotClient | null
   container: AppContainerTarget | null
@@ -1403,6 +1404,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
     const state: CopilotSessionState = {
       id: sessionId,
+      revision: 0,
       createdAt: Date.now(),
       client: null,
       container: storedContainer,
@@ -1834,45 +1836,49 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
   }
 
-  private createChatDetail = (state: CopilotSessionState): ProviderChatDetail => ({
-    id: state.id,
-    createdAt: state.metadata ? toMilliseconds(state.metadata.startTime) : state.createdAt,
-    title: this.getTitle(state),
-    cwd: this.getCwd(state),
-    cwdKind: 'directory',
-    projectCwd: null,
-    branchName: null,
-    worktreeBaseBranchName: null,
-    status: state.pendingUserInputs.length
-      ? 'waitingOnUserInput'
-      : state.pendingPermissions.length
-        ? 'waitingOnApproval'
-        : state.failed
-          ? 'error'
-          : state.active
-            ? 'active'
-            : null,
-    pinned: false,
-    sidebarOrder: null,
-    done: false,
-    seenUpdatedAt: null,
-    purpose: null,
-    container: state.container,
-    capabilities: {
-      editMessages: true,
-      activeMessages: true
-    },
-    pendingApproval: this.getPendingApproval(state),
-    pendingUserInput: this.getPendingUserInput(state),
-    contextUsage: getContextUsage(state.events),
-    items: renderCopilotChatItems(state.events, {
-      active: state.active || state.pendingUserInputs.length > 0,
-      stopped: state.stopped,
-      failed: state.failed,
-      pendingItems: state.pendingMessages,
-      plan: state.plan
-    })
-  })
+  private createChatDetail = (state: CopilotSessionState): ProviderChatDetail => {
+    state.revision += 1
+    return {
+      id: state.id,
+      revision: state.revision,
+      createdAt: state.metadata ? toMilliseconds(state.metadata.startTime) : state.createdAt,
+      title: this.getTitle(state),
+      cwd: this.getCwd(state),
+      cwdKind: 'directory',
+      projectCwd: null,
+      branchName: null,
+      worktreeBaseBranchName: null,
+      status: state.pendingUserInputs.length
+        ? 'waitingOnUserInput'
+        : state.pendingPermissions.length
+          ? 'waitingOnApproval'
+          : state.failed
+            ? 'error'
+            : state.active
+              ? 'active'
+              : null,
+      pinned: false,
+      sidebarOrder: null,
+      done: false,
+      seenUpdatedAt: null,
+      purpose: null,
+      container: state.container,
+      capabilities: {
+        editMessages: true,
+        activeMessages: true
+      },
+      pendingApproval: this.getPendingApproval(state),
+      pendingUserInput: this.getPendingUserInput(state),
+      contextUsage: getContextUsage(state.events),
+      items: renderCopilotChatItems(state.events, {
+        active: state.active || state.pendingUserInputs.length > 0,
+        stopped: state.stopped,
+        failed: state.failed,
+        pendingItems: state.pendingMessages,
+        plan: state.plan
+      })
+    }
+  }
 
   private createChatFromMetadata = (
     metadata: CopilotSessionMetadata,

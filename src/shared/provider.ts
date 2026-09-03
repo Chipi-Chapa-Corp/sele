@@ -770,6 +770,8 @@ export type ProviderSubagentDetail = ProviderSubagent & {
 
 export type ProviderChatDetail = {
   id: string
+  /** Monotonic per-chat snapshot revision used to reject out-of-order delivery. */
+  revision: number
   createdAt: number
   title: string
   cwd: string | null
@@ -819,19 +821,16 @@ export type ProviderChatUpdatedEvent = {
   turnCompleted: boolean
 }
 
-export type ProviderWorkingStepUpdate = Omit<ProviderWorkingStep, 'items'> & {
-  items: ProviderWorkingItem[]
-  workingItemsStartIndex: number
-  workingItemsPrefixLastId: string | null
-}
-
-export type ProviderChatItemUpdate =
-  Exclude<ProviderChatItem, ProviderWorkingStep> | ProviderWorkingStepUpdate
-
+/**
+ * An exact transcript projection with keyed payload changes. `itemIds` is the complete ordered
+ * structure for this revision; `changedItems` contains only entities whose payload differs from
+ * the last acknowledged projection.
+ */
 export type ProviderChatDetailUpdate = Omit<ProviderChatDetail, 'items'> & {
-  items: ProviderChatItemUpdate[]
-  chatItemsStartIndex: number
-  chatItemsPrefixLastId: string | null
+  baseRevision: number | null
+  baseItemIds: string[] | null
+  itemIds: string[]
+  changedItems: ProviderChatItem[]
 }
 
 export type ProviderChatTurnPage = {
@@ -1164,7 +1163,6 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
     mode: ProviderActiveSendMode,
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatUpdateSummary>
-  stopChatSummary: (providerId: ProviderId, chatId: string) => Promise<ProviderChatUpdateSummary>
   setViewedChat: (providerId: ProviderId | null, chatId: string | null) => void
   acknowledgeChatUpdate: (sequence: number, detailApplied: boolean) => void
   onChatUpdated: (listener: (event: ProviderWindowChatUpdatedEvent) => void) => () => void
@@ -1229,7 +1227,6 @@ export const providerIpcChannels = {
   setChatOrder: 'provider:set-chat-order',
   continueChatSummary: 'provider:continue-chat-summary',
   sendActiveChatMessageSummary: 'provider:send-active-chat-message-summary',
-  stopChatSummary: 'provider:stop-chat-summary',
   chatUpdated: 'provider:chat-updated',
   chatUpdatesReady: 'provider:chat-updates-ready',
   chatUpdatesStopped: 'provider:chat-updates-stopped',

@@ -51,8 +51,8 @@ export type ApplyChatDetailOptions = {
 export type ChatTurnPageLoadDirection = 'older' | 'newer' | 'latest'
 
 export type CommittedChatUpdate = {
-  sequence: number
   detailApplied: boolean
+  sequence: number
   turnCompleted: boolean
 }
 

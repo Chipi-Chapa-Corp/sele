@@ -50,7 +50,7 @@ test('reverses cursor direction without repeating the anchor turn', async () => 
     }),
     'thread',
     {
-      cursor: 'sele:codex-turn-cursor:{"cursor":"page","includesAnchor":false}',
+      cursor: 'sele:codex-turn-cursor:{"cursor":"page","anchorTurnId":null}',
       direction: 'older',
       limit: 2
     }
@@ -77,6 +77,57 @@ test('reverses cursor direction without repeating the anchor turn', async () => 
   assert.equal(requests[0].params.cursor, 'newer-with-anchor')
   assert.equal(requests[0].params.limit, 3)
   assert.equal(requests[0].params.sortDirection, 'asc')
+
+  const reverseRequests = []
+  const reversedOlderPage = await loadCodexTurnCursorWindow(
+    async (method, params) => {
+      reverseRequests.push({ method, params })
+      return {
+        data: [turn('four'), turn('three')],
+        nextCursor: 'older-boundary',
+        backwardsCursor: 'newer-with-anchor'
+      }
+    },
+    'thread',
+    { cursor: newerPage.olderCursor, direction: 'older', limit: 2 }
+  )
+
+  assert.deepEqual(
+    reversedOlderPage.turns.map(({ id }) => id),
+    ['three', 'four']
+  )
+  assert.equal(reverseRequests[0].params.limit, 2)
+})
+
+test('does not discard a valid row when a reverse-cursor anchor disappeared', async () => {
+  const olderPage = await loadCodexTurnCursorWindow(
+    async () => ({
+      data: [turn('four'), turn('three')],
+      nextCursor: 'older-boundary',
+      backwardsCursor: 'newer-with-anchor'
+    }),
+    'thread',
+    {
+      cursor: 'sele:codex-turn-cursor:{"cursor":"page","anchorTurnId":null}',
+      direction: 'older',
+      limit: 2
+    }
+  )
+
+  const page = await loadCodexTurnCursorWindow(
+    async () => ({
+      data: [turn('five'), turn('six'), turn('seven')],
+      nextCursor: null,
+      backwardsCursor: 'older-boundary'
+    }),
+    'thread',
+    { cursor: olderPage.newerCursor, direction: 'newer', limit: 2 }
+  )
+
+  assert.deepEqual(
+    page.turns.map(({ id }) => id),
+    ['five', 'six']
+  )
 })
 
 test('retains only the bounded raw turn tail for a long live chat', () => {

@@ -136,6 +136,18 @@
   margin-bottom: 0.8rem;
 }
 
+.chat-provider-update__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chat-provider-update__label .provider-icon {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  flex: none;
+}
+
 .chat-request-error {
   margin-bottom: 0.8rem;
 }

@@ -1,13 +1,4 @@
-import {
-  Fragment,
-  startTransition,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Bot,
   FolderKanban,
@@ -75,10 +66,7 @@ import {
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
 import type { AccountAuthorizationSession } from './components/AccountDialog'
-import {
-  getChatCommitMarkerTerminalStatus,
-  getRecoveredChatCommitMarkerTerminalStatus
-} from './chatCommitMarker'
+import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
 import { type ChatListGroupData } from './components/ChatListGroup'
 import { Button } from './components/Button'
@@ -192,10 +180,8 @@ import { type ChatCommitMarker } from './components/AppStatusStates'
 import {
   readStoredChatCommitMarkers,
   readStoredContinuedStoppedWorkingSteps,
-  readStoredScopedCommitActivities,
   writeStoredChatCommitMarkers,
   writeStoredContinuedStoppedWorkingSteps,
-  writeStoredScopedCommitActivities,
   type ContinuedStoppedWorkingStepsByChat,
   type ScopedCommitActivity,
   type StartingScopedCommitActivity
@@ -283,7 +269,6 @@ import {
   getChatCwdGroupKey,
   getChatCwdLabel,
   getChatDetailFromUpdate,
-  getChatDetailFromUpdateSummary,
   getChatFromDetail,
   getChatFromUpdateSummary,
   getChatKey,
@@ -298,6 +283,7 @@ import {
   getProviderChatKey,
   groupChatsForSidebar,
   isActiveChatStatus,
+  isChatDetailSnapshotStale,
   mergeChats,
   mergeProjects,
   modelSupportsReasoningEffort,
@@ -668,7 +654,7 @@ export const useWorkspaceController = () => {
   )
   const [scopedCommitActivities, setScopedCommitActivities] = useState<
     Record<string, ScopedCommitActivity>
-  >(readStoredScopedCommitActivities)
+  >({})
   const [chatCommitMarkers, setChatCommitMarkers] = useState<Record<string, ChatCommitMarker>>(
     readStoredChatCommitMarkers
   )
@@ -764,7 +750,6 @@ export const useWorkspaceController = () => {
     providerId: ProviderId
   } | null>(null)
   const containerSelectionReadyRef = useRef(false)
-  const initialChatCommitMarkersRef = useRef(chatCommitMarkers)
   const scopedCommitActivitiesRef =
     useRef<Record<string, ScopedCommitActivity>>(scopedCommitActivities)
   const startingScopedCommitActivitiesRef = useRef<Record<string, StartingScopedCommitActivity>>({})
@@ -1033,7 +1018,6 @@ export const useWorkspaceController = () => {
 
   useEffect(() => {
     scopedCommitActivitiesRef.current = scopedCommitActivities
-    writeStoredScopedCommitActivities(scopedCommitActivities)
   }, [scopedCommitActivities])
 
   useEffect(() => {
@@ -1043,212 +1027,6 @@ export const useWorkspaceController = () => {
   useEffect(() => {
     writeStoredContinuedStoppedWorkingSteps(continuedStoppedWorkingStepsByChat)
   }, [continuedStoppedWorkingStepsByChat])
-
-  useEffect(() => {
-    let active = true
-    const restoredActivities = Object.values(scopedCommitActivitiesRef.current)
-    const restoredMarkerIds = new Set(restoredActivities.map((activity) => activity.markerId))
-    const recoverablePendingMarkers = Object.values(initialChatCommitMarkersRef.current).filter(
-      (marker) =>
-        marker.status === 'pending' &&
-        Boolean(marker.commitChatId) &&
-        !restoredMarkerIds.has(marker.id)
-    )
-    const ambiguousTerminalMarkers = Object.values(initialChatCommitMarkersRef.current).filter(
-      (marker) =>
-        (marker.status === 'stopped' || marker.status === 'interrupted') &&
-        Boolean(marker.commitChatId)
-    )
-
-    setChatCommitMarkers((currentMarkers) => {
-      let changed = false
-      const nextMarkers = { ...currentMarkers }
-
-      Object.values(nextMarkers).forEach((marker) => {
-        if (
-          marker.status !== 'pending' ||
-          marker.commitChatId ||
-          restoredMarkerIds.has(marker.id)
-        ) {
-          return
-        }
-
-        changed = true
-        nextMarkers[marker.id] = {
-          ...marker,
-          status: 'failed',
-          finishedAt: Date.now()
-        }
-      })
-
-      restoredActivities.forEach((activity) => {
-        if (!activity.sourceChatId || nextMarkers[activity.markerId]) return
-
-        changed = true
-        nextMarkers[activity.markerId] = {
-          id: activity.markerId,
-          providerId: activity.providerId,
-          sourceChatId: activity.sourceChatId,
-          commitChatId: activity.chatId,
-          commitAction: activity.commitAction,
-          status: 'pending',
-          afterItemId: null,
-          startedAt: activity.startedAt,
-          finishedAt: null
-        }
-      })
-
-      return changed ? nextMarkers : currentMarkers
-    })
-
-    void Promise.all(
-      restoredActivities.map(async (activity) => {
-        try {
-          const detail = await providerApi.getChat(activity.providerId, activity.chatId)
-          if (!active) return
-
-          const activityKey = getProviderChatKey(activity.providerId, activity.chatId)
-          if (!isActiveChatStatus(detail.status)) {
-            setChatCommitMarkers((currentMarkers) => {
-              const marker = currentMarkers[activity.markerId]
-              if (!marker || marker.status !== 'pending') return currentMarkers
-
-              return {
-                ...currentMarkers,
-                [marker.id]: {
-                  ...marker,
-                  status: getRecoveredChatCommitMarkerTerminalStatus(detail),
-                  afterItemId:
-                    activity.chatId === activity.sourceChatId
-                      ? getLastChatCommitMarkerAnchorId(detail.items, marker.afterItemId)
-                      : marker.afterItemId,
-                  finishedAt: Date.now()
-                }
-              }
-            })
-          }
-
-          setScopedCommitActivities((currentActivities) => {
-            const currentActivity = currentActivities[activityKey]
-            if (!currentActivity) return currentActivities
-
-            if (!isActiveChatStatus(detail.status)) {
-              const nextActivities = { ...currentActivities }
-              delete nextActivities[activityKey]
-              return nextActivities
-            }
-
-            return {
-              ...currentActivities,
-              [activityKey]: {
-                ...currentActivity,
-                currentAction: getCommitActivityCurrentAction(detail, currentActivity.commitAction)
-              }
-            }
-          })
-        } catch {
-          // Keep the restored activity if the provider cannot be reached yet.
-        }
-      })
-    )
-
-    void Promise.all(
-      recoverablePendingMarkers.map(async (marker) => {
-        const commitChatId = marker.commitChatId
-        if (!commitChatId) return
-
-        try {
-          const detail = await providerApi.getChat(marker.providerId, commitChatId)
-          if (!active) return
-
-          if (!isActiveChatStatus(detail.status)) {
-            setChatCommitMarkers((currentMarkers) => {
-              const currentMarker = currentMarkers[marker.id]
-              if (!currentMarker || currentMarker.status !== 'pending') return currentMarkers
-
-              return {
-                ...currentMarkers,
-                [marker.id]: {
-                  ...currentMarker,
-                  status: getRecoveredChatCommitMarkerTerminalStatus(detail),
-                  afterItemId:
-                    commitChatId === marker.sourceChatId
-                      ? getLastChatCommitMarkerAnchorId(detail.items, currentMarker.afterItemId)
-                      : currentMarker.afterItemId,
-                  finishedAt: Date.now()
-                }
-              }
-            })
-            return
-          }
-
-          const activityKey = getProviderChatKey(marker.providerId, commitChatId)
-          const activity = {
-            source: 'ai',
-            providerId: marker.providerId,
-            chatId: commitChatId,
-            sourceChatId: marker.sourceChatId,
-            markerId: marker.id,
-            projectCwd: detail.projectCwd ?? detail.cwd,
-            commitAction: marker.commitAction,
-            currentAction: getCommitActivityCurrentAction(detail, marker.commitAction),
-            startedAt: marker.startedAt
-          } satisfies ScopedCommitActivity
-
-          setScopedCommitActivities((currentActivities) => {
-            const nextActivities = {
-              ...currentActivities,
-              [activityKey]: activity
-            }
-            scopedCommitActivitiesRef.current = nextActivities
-            return nextActivities
-          })
-        } catch {
-          // Keep the pending marker for a later provider update if recovery is temporarily offline.
-        }
-      })
-    )
-
-    void Promise.all(
-      ambiguousTerminalMarkers.map(async (marker) => {
-        const commitChatId = marker.commitChatId
-        if (!commitChatId) return
-
-        try {
-          const detail = await providerApi.getChat(marker.providerId, commitChatId)
-          if (!active) return
-
-          const recoveredStatus = getChatCommitMarkerTerminalStatus(detail)
-          if (recoveredStatus === 'stopped') return
-
-          setChatCommitMarkers((currentMarkers) => {
-            const currentMarker = currentMarkers[marker.id]
-            if (
-              !currentMarker ||
-              (currentMarker.status !== 'stopped' && currentMarker.status !== 'interrupted')
-            ) {
-              return currentMarkers
-            }
-
-            return {
-              ...currentMarkers,
-              [currentMarker.id]: {
-                ...currentMarker,
-                status: recoveredStatus,
-                finishedAt: Date.now()
-              }
-            }
-          })
-        } catch {
-          // Preserve the stored marker when its backing provider chat is temporarily unavailable.
-        }
-      })
-    )
-
-    return () => {
-      active = false
-    }
-  }, [])
 
   useEffect(() => {
     writeStoredPinnedRecentChatReferences(pinnedRecentChatReferences)
@@ -2447,6 +2225,8 @@ export const useWorkspaceController = () => {
         return
       }
       if (!force && selectedChatKeyRef.current !== cacheKey && !cache.has(cacheKey)) return
+      const cachedDetail = cache.get(cacheKey)?.detail
+      if (cachedDetail && detail.revision <= cachedDetail.revision) return
 
       cache.delete(cacheKey)
       cache.set(cacheKey, { detail, updatedAt })
@@ -2487,6 +2267,10 @@ export const useWorkspaceController = () => {
       const updatedAt = Date.now()
       const detailKey = getProviderChatKey(providerId, detail.id)
       const currentDetail = chatDetailRef.current
+      if (isChatDetailSnapshotStale(detail, currentDetail)) {
+        if (options.select) setChatLoadState('ready')
+        return
+      }
       const appliedDetail =
         shouldPreserveOptimisticTurnUntilUserMessage(providerId) &&
         isActiveChatStatus(detail.status) &&
@@ -2563,15 +2347,6 @@ export const useWorkspaceController = () => {
           summary.updatedAt
         )
       }
-      if (selectedChatKeyRef.current === summaryKey && chatDetailRef.current?.id === summary.id) {
-        chatDetailRef.current = getChatDetailFromUpdateSummary(chatDetailRef.current, summary)
-        setChatDetail((currentDetail) =>
-          currentDetail?.id === summary.id
-            ? getChatDetailFromUpdateSummary(currentDetail, summary)
-            : currentDetail
-        )
-      }
-
       setSelectedChat((currentChat) => {
         if (currentChat?.providerId !== providerId || currentChat.id !== summary.id) {
           return currentChat
@@ -2777,37 +2552,55 @@ export const useWorkspaceController = () => {
         ) {
           recentlyViewedActiveChatPreviewsRef.current.delete(updatedChatKey)
         }
+        const staleSelectedDetail = Boolean(
+          viewingUpdatedChat &&
+          event.detail &&
+          isChatDetailSnapshotStale(event.detail, chatDetailRef.current)
+        )
         const mergedSelectedDetail =
-          viewingUpdatedChat && event.detail
-            ? getChatDetailFromUpdate(
-                event.detail,
-                chatDetailRef.current,
-                shouldPreserveOptimisticTurnUntilUserMessage(event.providerId)
-              )
+          viewingUpdatedChat && event.detail && !staleSelectedDetail
+            ? getChatDetailFromUpdate(event.detail, chatDetailRef.current, {
+                preserveCurrentTranscript: !chatAutoScrollEnabledRef.current,
+                preserveOptimisticTurnUntilUserMessage:
+                  shouldPreserveOptimisticTurnUntilUserMessage(event.providerId)
+              })
             : null
         const selectedDetail = (() => {
           if (!mergedSelectedDetail) return null
           const currentWindow = chatTurnWindowRef.current
           if (!currentWindow || currentWindow.chatKey !== updatedChatKey) {
-            return mergedSelectedDetail
+            return mergedSelectedDetail.detail
           }
 
-          const totalCount = getChatDetailTurnCount(mergedSelectedDetail)
+          const totalCount = getChatDetailTurnCount(mergedSelectedDetail.detail)
           const retainedWindow = getEffectiveChatTurnWindow(
             currentWindow,
             getLatestChatTurnWindow(updatedChatKey, totalCount, chatTurnWindowSize),
             chatAutoScrollEnabledRef.current
           )
-          return retainLoadedChatDetailTurnWindow(mergedSelectedDetail, retainedWindow)
+          return retainLoadedChatDetailTurnWindow(mergedSelectedDetail.detail, retainedWindow)
         })()
+        const selectedDetailMatchesDeliveredTranscript = Boolean(
+          selectedDetail &&
+          mergedSelectedDetail?.detailApplied &&
+          selectedDetail.revision === mergedSelectedDetail.detail.revision &&
+          selectedDetail.items.length === mergedSelectedDetail.detail.items.length &&
+          selectedDetail.items.every(
+            (item, index) => item.id === mergedSelectedDetail.detail.items[index]?.id
+          )
+        )
 
-        if (selectedDetail) {
+        if (staleSelectedDetail) {
+          // A direct history/latest read can complete while an older streamed snapshot is still
+          // in flight. Do not let that packet replace the newer transcript or trigger a resync.
+          providerApi.acknowledgeChatUpdate(event.sequence, false)
+        } else if (selectedDetail) {
           chatDetailResyncRequestIdRef.current += 1
           chatDetailResyncRef.current = null
           applyChatDetail(event.providerId, selectedDetail)
           setCommittedChatUpdate({
+            detailApplied: selectedDetailMatchesDeliveredTranscript,
             sequence: event.sequence,
-            detailApplied: true,
             turnCompleted: event.turnCompleted
           })
         } else {
@@ -4210,6 +4003,15 @@ export const useWorkspaceController = () => {
       seenUpdatedAt:
         chat.seenUpdatedAt == null ? seenUpdatedAt : Math.max(chat.seenUpdatedAt, seenUpdatedAt)
     }
+    const nextCachedDetail = cachedDetail
+      ? {
+          ...cachedDetail,
+          seenUpdatedAt:
+            cachedDetail.seenUpdatedAt == null
+              ? seenUpdatedAt
+              : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
+        }
+      : null
 
     resetChatSearch()
     setCommitChatReturnTarget(null)
@@ -4230,24 +4032,10 @@ export const useWorkspaceController = () => {
     recentlyViewedActiveChatPreviewsRef.current.delete(getChatKey(chat))
     selectedChatKeyRef.current = getChatKey(chat)
     selectedChatUpdatedAtRef.current = chat.updatedAt
-    chatDetailRef.current = null
+    chatDetailRef.current = nextCachedDetail
     setSelectedChat(seenChat)
-    setChatDetail(null)
-    setChatLoadState('loading')
-    if (cachedDetail) {
-      const nextCachedDetail = {
-        ...cachedDetail,
-        seenUpdatedAt:
-          cachedDetail.seenUpdatedAt == null
-            ? seenUpdatedAt
-            : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
-      }
-      chatDetailRef.current = nextCachedDetail
-      startTransition(() => {
-        setChatDetail(nextCachedDetail)
-        setChatLoadState('ready')
-      })
-    }
+    setChatDetail(nextCachedDetail)
+    setChatLoadState(nextCachedDetail ? 'ready' : 'loading')
     markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
 
     if (selectingCurrentChat && !cachedDetail) {

@@ -34,31 +34,8 @@ export type StartingScopedCommitActivity = {
 
 export type ContinuedStoppedWorkingStepsByChat = Record<string, string[]>
 
-const scopedCommitActivitiesStorageKey = 'sele:scoped-commit-activities:v1'
 const chatCommitMarkersStorageKey = 'sele:chat-commit-markers:v1'
 const continuedStoppedWorkingStepsStorageKey = 'sele:continued-stopped-working-steps:v1'
-
-const providerToolActivities = new Set<ProviderToolActivity>([
-  'read',
-  'search',
-  'git',
-  'edit',
-  'create',
-  'delete',
-  'npm',
-  'npx',
-  'script',
-  'command',
-  'other'
-])
-
-const providerToolIcons = new Set<ProviderToolIcon>([
-  'image-view',
-  'image-generation',
-  'openai-docs',
-  'plan',
-  'question'
-])
 
 const chatCommitMarkerStatuses = new Set<ChatCommitMarkerStatus>([
   'pending',
@@ -67,81 +44,6 @@ const chatCommitMarkerStatuses = new Set<ChatCommitMarkerStatus>([
   'interrupted',
   'failed'
 ])
-
-const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
-  `${providerId}:${chatId}`
-
-export const readStoredScopedCommitActivities = (): Record<string, ScopedCommitActivity> => {
-  try {
-    const storedValue = window.localStorage.getItem(scopedCommitActivitiesStorageKey)
-    if (!storedValue) return {}
-
-    const parsedValue = JSON.parse(storedValue) as unknown
-    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
-
-    const activities: Record<string, ScopedCommitActivity> = {}
-    Object.values(parsedValue as Record<string, unknown>).forEach((value) => {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return
-
-      const candidate = value as Partial<ScopedCommitActivity>
-      const currentAction =
-        candidate.currentAction &&
-        typeof candidate.currentAction === 'object' &&
-        !Array.isArray(candidate.currentAction)
-          ? (candidate.currentAction as Partial<CommitActivityAction>)
-          : null
-      const markerId =
-        typeof candidate.markerId === 'string' && candidate.markerId
-          ? candidate.markerId
-          : typeof candidate.providerId === 'string' &&
-              typeof candidate.chatId === 'string' &&
-              typeof candidate.startedAt === 'number'
-            ? `legacy:${candidate.providerId}:${candidate.chatId}:${candidate.startedAt}`
-            : ''
-      if (
-        candidate.source !== 'ai' ||
-        !isProviderId(candidate.providerId) ||
-        typeof candidate.chatId !== 'string' ||
-        !candidate.chatId ||
-        (candidate.sourceChatId !== null && typeof candidate.sourceChatId !== 'string') ||
-        !markerId ||
-        (candidate.projectCwd !== null && typeof candidate.projectCwd !== 'string') ||
-        (candidate.commitAction !== 'commit' && candidate.commitAction !== 'amend') ||
-        !currentAction ||
-        typeof currentAction.label !== 'string' ||
-        !providerToolActivities.has(currentAction.activity as ProviderToolActivity) ||
-        (currentAction.icon != null &&
-          !providerToolIcons.has(currentAction.icon as ProviderToolIcon)) ||
-        typeof candidate.startedAt !== 'number' ||
-        !Number.isFinite(candidate.startedAt)
-      ) {
-        return
-      }
-
-      const activity = {
-        source: 'ai',
-        providerId: candidate.providerId,
-        chatId: candidate.chatId,
-        sourceChatId: candidate.sourceChatId,
-        markerId,
-        projectCwd: candidate.projectCwd,
-        commitAction: candidate.commitAction,
-        currentAction: {
-          label: currentAction.label,
-          activity: currentAction.activity as ProviderToolActivity,
-          icon: (currentAction.icon as ProviderToolIcon | null | undefined) ?? null
-        },
-        startedAt: candidate.startedAt
-      } satisfies ScopedCommitActivity
-
-      activities[getProviderChatKey(activity.providerId, activity.chatId)] = activity
-    })
-
-    return activities
-  } catch {
-    return {}
-  }
-}
 
 export const readStoredChatCommitMarkers = (): Record<string, ChatCommitMarker> => {
   try {
@@ -152,6 +54,7 @@ export const readStoredChatCommitMarkers = (): Record<string, ChatCommitMarker> 
     if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
 
     const markers: Record<string, ChatCommitMarker> = {}
+    const restoredAt = Date.now()
     Object.values(parsedValue as Record<string, unknown>).forEach((value) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return
 
@@ -174,16 +77,25 @@ export const readStoredChatCommitMarkers = (): Record<string, ChatCommitMarker> 
         return
       }
 
+      // A persisted pending marker belongs to a renderer session that no longer exists. Without a
+      // durable operation protocol, claiming it is still running would be invented state. Keep the
+      // transcript annotation, but settle it without reading the backing transcript at startup.
+      const restoredStatus =
+        candidate.status === 'pending'
+          ? candidate.commitChatId
+            ? 'interrupted'
+            : 'failed'
+          : (candidate.status as ChatCommitMarkerStatus)
       markers[candidate.id] = {
         id: candidate.id,
         providerId: candidate.providerId,
         sourceChatId: candidate.sourceChatId,
         commitChatId: candidate.commitChatId,
         commitAction: candidate.commitAction,
-        status: candidate.status as ChatCommitMarkerStatus,
+        status: restoredStatus,
         afterItemId: candidate.afterItemId,
         startedAt: candidate.startedAt,
-        finishedAt: candidate.finishedAt
+        finishedAt: candidate.status === 'pending' ? restoredAt : candidate.finishedAt
       }
     })
 
@@ -203,21 +115,6 @@ export const writeStoredChatCommitMarkers = (markers: Record<string, ChatCommitM
     window.localStorage.setItem(chatCommitMarkersStorageKey, JSON.stringify(markers))
   } catch {
     // Visual commit history remains available for this session if storage is unavailable.
-  }
-}
-
-export const writeStoredScopedCommitActivities = (
-  activities: Record<string, ScopedCommitActivity>
-): void => {
-  try {
-    if (Object.keys(activities).length === 0) {
-      window.localStorage.removeItem(scopedCommitActivitiesStorageKey)
-      return
-    }
-
-    window.localStorage.setItem(scopedCommitActivitiesStorageKey, JSON.stringify(activities))
-  } catch {
-    // Commit activity recovery is best-effort when storage is unavailable.
   }
 }
 

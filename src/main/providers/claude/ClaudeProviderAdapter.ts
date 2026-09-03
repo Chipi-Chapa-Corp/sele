@@ -119,6 +119,7 @@ type StoredClaudeContainer = Extract<AppContainerTarget, { kind: 'container' }>
 
 type ClaudeSessionState = {
   id: string
+  revision: number
   createdAt: number
   updatedAt: number
   container: StoredClaudeContainer | null
@@ -1387,6 +1388,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const createdAt = Date.now()
     return {
       id,
+      revision: 0,
       createdAt,
       updatedAt: createdAt,
       container: normalized.kind === 'container' ? normalized : null,
@@ -1993,8 +1995,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private createChatDetail = (state: ClaudeSessionState): ProviderChatDetail => {
     const foregroundActive =
       state.active || (state.queueDrainInProgress && !state.queuedMessagesPaused)
+    state.revision += 1
     return {
       id: state.id,
+      revision: state.revision,
       createdAt: state.metadata?.createdAt ?? state.createdAt,
       title: this.getTitle(state),
       cwd: state.cwd,

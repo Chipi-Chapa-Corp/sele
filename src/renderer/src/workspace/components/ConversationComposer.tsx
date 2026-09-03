@@ -5,6 +5,7 @@ import { BellOff, Check, Download, FolderPlus, PackagePlus, X } from 'lucide-rea
 import { Button } from '../../components/Button'
 import { Dropdown } from '../../components/Dropdown'
 import { MessageBox } from '../../components/MessageBox'
+import { ProviderIcon } from '../../components/ProviderIcon'
 import { UserInputRequestBox } from '../../components/UserInputRequestBox'
 import { appChatManualDropdownValue } from '../../settings'
 import { getContainerTargetKey } from '../../containerSelection'
@@ -183,8 +184,9 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             aria-label={`${providerLabels[providerUpdateSuggestion.providerId]} update suggestion`}
           >
             <div className="chat-approval__main">
-              <span className="chat-approval__label">
-                {providerLabels[providerUpdateSuggestion.providerId]} update available
+              <span className="chat-approval__label chat-provider-update__label">
+                <ProviderIcon providerId={providerUpdateSuggestion.providerId} aria-hidden="true" />
+                <span>{providerLabels[providerUpdateSuggestion.providerId]} update available</span>
               </span>
               <span
                 className="chat-approval__summary"

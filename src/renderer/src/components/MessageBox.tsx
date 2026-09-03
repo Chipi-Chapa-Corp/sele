@@ -17,7 +17,6 @@ import {
   ArrowUp,
   BadgeCheck,
   Blocks,
-  Bot,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -98,8 +97,10 @@ import { CwdNotesButton } from './CwdNotesButton'
 import { DisclosureToggle } from './DisclosureToggle'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { ImageLightbox } from './ImageLightbox'
+import { Input } from './Input'
 import { MenuSurface } from './MenuSurface'
 import { PromptDraftsButton } from './PromptDraftsButton'
+import { ProviderIcon } from './ProviderIcon'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { RateLimitResetButton } from './RateLimitResetButton'
 import { SegmentedControl } from './SegmentedControl'
@@ -291,6 +292,7 @@ type ChatConfigDropdownProps = {
   disabled: boolean
   id: string
   modelLabel: string
+  providerIcon: ReactNode
   reasoningLabel?: string | null
   sections: readonly ChatConfigSection[]
   statusIcons: readonly SelectorIconItem[]
@@ -367,6 +369,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   disabled,
   id,
   modelLabel,
+  providerIcon,
   reasoningLabel,
   sections,
   statusIcons,
@@ -375,23 +378,46 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   const reactId = useId().replace(/:/g, '')
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const modelSearchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
   const [activeSectionId, setActiveSectionId] = useState<ChatConfigSectionId | null>(null)
+  const [modelSearchQuery, setModelSearchQuery] = useState('')
   const menuId = `${id}-${reactId}-menu`
   const menuOpen = open && sections.length > 0
   const activeSection = sections.find((section) => section.id === activeSectionId) ?? null
+  const normalizedModelSearchQuery = modelSearchQuery.trim().toLocaleLowerCase()
+  const visibleSectionGroups =
+    activeSection?.id === 'model' && normalizedModelSearchQuery
+      ? activeSection.groups
+          .map((group) => ({
+            ...group,
+            options: group.options.filter((option) =>
+              [option.label, option.menuLabel, option.value, option.description]
+                .filter((searchableValue): searchableValue is string => Boolean(searchableValue))
+                .some((searchableValue) =>
+                  searchableValue.toLocaleLowerCase().includes(normalizedModelSearchQuery)
+                )
+            )
+          }))
+          .filter((group) => group.options.length > 0)
+      : (activeSection?.groups ?? [])
 
   const closeMenu = useCallback((): void => {
     setOpen(false)
     setMenuStyle(null)
     setActiveSectionId(null)
+    setModelSearchQuery('')
   }, [])
 
   const focusFirstMenuButton = useCallback((): void => {
     window.requestAnimationFrame(() => {
       menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
     })
+  }, [])
+
+  const focusModelSearchInput = useCallback((): void => {
+    window.requestAnimationFrame(() => modelSearchInputRef.current?.focus())
   }, [])
 
   const updateMenuPosition = useCallback((): void => {
@@ -470,9 +496,14 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       return
     }
 
-    if ((event.key === 'ArrowLeft' || event.key === 'Backspace') && activeSection) {
+    if (
+      (event.key === 'ArrowLeft' || event.key === 'Backspace') &&
+      activeSection &&
+      event.target !== modelSearchInputRef.current
+    ) {
       event.preventDefault()
       setActiveSectionId(null)
+      setModelSearchQuery('')
       focusFirstMenuButton()
     }
   }
@@ -487,7 +518,11 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           type="button"
           onClick={() => {
             setActiveSectionId(section.id)
-            focusFirstMenuButton()
+            if (section.id === 'model') {
+              focusModelSearchInput()
+            } else {
+              focusFirstMenuButton()
+            }
           }}
         >
           <span className="message-box__chat-config-section-icon" aria-hidden="true">
@@ -508,6 +543,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           type="button"
           onClick={() => {
             setActiveSectionId(null)
+            setModelSearchQuery('')
             focusFirstMenuButton()
           }}
         >
@@ -515,8 +551,21 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           <span>Back</span>
         </button>
       </div>
+      {section.id === 'model' && (
+        <div className="message-box__chat-config-search">
+          <Input
+            ref={modelSearchInputRef}
+            type="search"
+            aria-label="Search models"
+            autoComplete="off"
+            placeholder="Search models"
+            value={modelSearchQuery}
+            onChange={(event) => setModelSearchQuery(event.target.value)}
+          />
+        </div>
+      )}
       <div className="message-box__chat-config-option-groups">
-        {section.groups.map((group, groupIndex) => (
+        {visibleSectionGroups.map((group, groupIndex) => (
           <div
             className="message-box__chat-config-option-group"
             key={group.id}
@@ -587,6 +636,11 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
             })}
           </div>
         ))}
+        {section.id === 'model' && visibleSectionGroups.length === 0 && (
+          <div className="message-box__chat-config-empty" role="status">
+            No models found
+          </div>
+        )}
       </div>
     </>
   )
@@ -639,6 +693,9 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
               ))}
             </span>
           )}
+          <span className="message-box__chat-config-provider-icon" aria-hidden="true">
+            {providerIcon}
+          </span>
           <span className="message-box__chat-config-label">
             <span className="message-box__chat-config-label-part">{modelLabel}</span>
             {reasoningLabel && (
@@ -1131,6 +1188,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const skillsBeforeEditRef = useRef<ProviderSkill[] | null>(null)
   const appsBeforeEditRef = useRef<ProviderApp[] | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const focusAfterSendRef = useRef(false)
   const textareaWrapRef = useRef<HTMLDivElement>(null)
   const mentionMenuRef = useRef<HTMLDivElement>(null)
   const attachmentDragDepthRef = useRef(0)
@@ -1193,14 +1251,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           candidateModel.isDefault
         ),
         description: candidateModel.description || undefined,
-        icon: <Bot aria-hidden="true" />
+        icon: <ProviderIcon providerId={providerId} aria-hidden="true" />
       }))
   const displayedModelOptions = modelSelectionUnavailable
     ? [
         {
           value: model,
           label: unavailableModelLabel,
-          icon: <Bot aria-hidden="true" />,
+          icon: <ProviderIcon providerId={providerId} aria-hidden="true" />,
           disabled: true
         }
       ]
@@ -1211,7 +1269,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           {
             value: model,
             label: formatModelLabel(model),
-            icon: <Bot aria-hidden="true" />
+            icon: <ProviderIcon providerId={providerId} aria-hidden="true" />
           }
         ]
   const supportedServiceTiers = selectedModel?.supportedServiceTiers ?? []
@@ -1288,7 +1346,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ? [
           {
             id: 'model',
-            icon: <Bot aria-hidden="true" />,
+            icon: <ProviderIcon providerId={providerId} aria-hidden="true" />,
             label: 'Model',
             groups: [
               {
@@ -1490,7 +1548,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   ]
     .filter(Boolean)
     .join(' ')
-  const textareaDisabled = operationsDisabled || pending || (!active && disabled)
+  const textareaUnavailable = operationsDisabled || (!active && disabled)
+  const textareaDisabled = textareaUnavailable || pending
   const modifiedActiveSendMode = getModifiedActiveSendMode(
     activePrimaryMode,
     activeSteeringEnabled,
@@ -1915,6 +1974,20 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     return () => window.cancelAnimationFrame(frame)
   }, [editing, selectedReview])
 
+  useEffect(() => {
+    if (!focusAfterSendRef.current || textareaDisabled) return
+
+    const frame = window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea || textarea.disabled) return
+
+      focusAfterSendRef.current = false
+      textarea.focus({ preventScroll: true })
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [textareaDisabled])
+
   const submitMessage = (activeMode: ProviderActiveSendMode = activePrimaryMode): void => {
     const nextMessage = message.trim()
     const typedSkillInputs = getSelectedSkillInputs(
@@ -1955,6 +2028,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     ) {
       return
     }
+
+    focusAfterSendRef.current = true
+    textareaRef.current?.focus({ preventScroll: true })
 
     if (editing) {
       void Promise.resolve(
@@ -2848,7 +2924,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           <textarea
             ref={textareaRef}
             id="message-input"
-            disabled={textareaDisabled}
+            disabled={textareaUnavailable}
+            readOnly={pending}
             rows={1}
             value={message}
             placeholder="Use @ for files and $ for skills"
@@ -2911,6 +2988,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   disabled={selectorsDisabled}
                   id="chat-config-mode"
                   modelLabel={selectedModelLabel}
+                  providerIcon={<ProviderIcon providerId={providerId} />}
                   reasoningLabel={
                     modelSelectionUnavailable || !reasoningSelectionAvailable
                       ? null

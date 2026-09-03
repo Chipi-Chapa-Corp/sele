@@ -183,7 +183,16 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   useEffect(() => {
     if (!open) return
 
-    inputRef.current?.focus({ preventScroll: true })
+    const focusInput = (): void => {
+      const input = inputRef.current
+      if (!input || input.disabled) return
+
+      window.focus()
+      input.focus({ preventScroll: true })
+    }
+
+    focusInput()
+    const focusFrame = window.requestAnimationFrame(focusInput)
 
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target as Node
@@ -203,6 +212,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
     window.addEventListener('scroll', handleScroll, true)
 
     return () => {
+      window.cancelAnimationFrame(focusFrame)
       document.removeEventListener('pointerdown', handlePointerDown)
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('scroll', handleScroll, true)

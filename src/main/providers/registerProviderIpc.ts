@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { extname, isAbsolute } from 'node:path'
 import { BrowserWindow, ipcMain, type WebContents } from 'electron'
 import type {
@@ -6,7 +7,6 @@ import type {
   ProviderAccountUsage,
   ProviderChatDetail,
   ProviderChatDetailUpdate,
-  ProviderChatItem,
   ProviderChatListOptions,
   ProviderChatPage,
   ProviderChatPurpose,
@@ -33,8 +33,7 @@ import type {
   ProviderWorkingItem,
   ProviderWorkingStep,
   ProviderWorkingStepPage,
-  ProviderWorkingToolPage,
-  ProviderWorkingStepUpdate
+  ProviderWorkingToolPage
 } from '../../shared/provider'
 import {
   isProviderAgentMode,
@@ -91,7 +90,7 @@ type ChatUpdateDeliveryState = {
   inFlightUpdate: InFlightChatUpdate | null
   acknowledgedDetail: AcknowledgedChatDetail | null
   pendingByChatKey: Map<string, QueuedWindowChatUpdate>
-  latestUpdateAtByChatKey: Map<string, number>
+  latestRevisionByChatKey: Map<string, number>
 }
 
 const chatUpdateDeliveryByWebContentsId = new Map<number, ChatUpdateDeliveryState>()
@@ -155,113 +154,27 @@ const getEmptyProviderChatPage = (): ProviderChatPage => ({
 const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
   `${providerId}:${chatId}`
 
-const getChangedTailStartIndex = <TItem extends { id: string }>(
-  previousItems: TItem[],
-  nextItems: TItem[],
-  isActive: (item: TItem) => boolean
-): number => {
-  if (nextItems.length === 0 || previousItems.length === 0) return 0
-
-  const sharedLength = Math.min(previousItems.length, nextItems.length)
-  const candidates = [nextItems.length - 1]
-  let sharedIdCount = 0
-
-  while (
-    sharedIdCount < sharedLength &&
-    previousItems[sharedIdCount].id === nextItems[sharedIdCount].id
-  ) {
-    sharedIdCount += 1
-  }
-  if (sharedIdCount < sharedLength) candidates.push(sharedIdCount)
-  if (previousItems.length !== nextItems.length) {
-    candidates.push(Math.max(0, sharedLength - 1))
-  }
-
-  const previousActiveIndex = previousItems.findIndex(isActive)
-  const nextActiveIndex = nextItems.findIndex(isActive)
-  if (previousActiveIndex >= 0) candidates.push(previousActiveIndex)
-  if (nextActiveIndex >= 0) candidates.push(nextActiveIndex)
-
-  return Math.max(0, Math.min(...candidates))
-}
-
-const isRunningWorkingItem = (item: ProviderWorkingItem): boolean => {
-  if (item.type === 'message') return false
-  if (item.type === 'tool') return item.status === 'running'
-  return item.tools.some((tool) => tool.status === 'running')
-}
-
-const createWorkingStepUpdate = (
-  item: Extract<ProviderChatItem, { type: 'working' }>,
-  previousItem: ProviderChatItem | undefined
-): ProviderWorkingStepUpdate => {
-  const previousWorkingItem =
-    previousItem?.type === 'working' && previousItem.id === item.id ? previousItem : null
-  const workingItemsStartIndex = previousWorkingItem
-    ? getChangedTailStartIndex(previousWorkingItem.items, item.items, isRunningWorkingItem)
-    : 0
-  const { items, ...workingStep } = item
-
-  return {
-    ...workingStep,
-    items: items.slice(workingItemsStartIndex),
-    workingItemsStartIndex,
-    workingItemsPrefixLastId:
-      workingItemsStartIndex > 0 ? (items[workingItemsStartIndex - 1]?.id ?? null) : null
-  }
-}
-
 const createChatDetailUpdate = (
   detail: ProviderChatDetail,
   previousDetail: ProviderChatDetail | null
 ): ProviderChatDetailUpdate => {
-  const matchingPreviousDetail = previousDetail?.id === detail.id ? previousDetail : null
-  const changedTailStartIndex = matchingPreviousDetail
-    ? getChangedTailStartIndex(
-        matchingPreviousDetail.items,
-        detail.items,
-        (item) => item.type === 'working' && item.status === 'working'
-      )
-    : 0
-  const firstPayloadStateChangeIndex = matchingPreviousDetail
-    ? detail.items.findIndex((item, index) => {
-        const previousItem = matchingPreviousDetail.items[index]
-        if (!previousItem || previousItem.id !== item.id || previousItem.type !== item.type) {
-          return false
-        }
-        if (item.type === 'message' || item.type === 'pendingMessage') {
-          return (
-            previousItem.type === item.type && previousItem.contentLoaded !== item.contentLoaded
-          )
-        }
-        return (
-          item.type === 'working' &&
-          previousItem.type === 'working' &&
-          previousItem.itemsLoaded !== item.itemsLoaded
-        )
-      })
-    : -1
-  const chatItemsStartIndex =
-    firstPayloadStateChangeIndex >= 0
-      ? Math.min(changedTailStartIndex, firstPayloadStateChangeIndex)
-      : changedTailStartIndex
-  const { items, ...chatDetail } = detail
+  const previousItemsById = new Map(
+    previousDetail?.id === detail.id
+      ? previousDetail.items.map((item) => [item.id, item] as const)
+      : []
+  )
+  const { items, ...metadata } = detail
 
   return {
-    ...chatDetail,
-    items: items
-      .slice(chatItemsStartIndex)
-      .map((item, index) =>
-        item.type === 'working'
-          ? createWorkingStepUpdate(
-              item,
-              matchingPreviousDetail?.items[chatItemsStartIndex + index]
-            )
-          : item
-      ),
-    chatItemsStartIndex,
-    chatItemsPrefixLastId:
-      chatItemsStartIndex > 0 ? (items[chatItemsStartIndex - 1]?.id ?? null) : null
+    ...metadata,
+    baseRevision: previousDetail?.id === detail.id ? previousDetail.revision : null,
+    baseItemIds:
+      previousDetail?.id === detail.id ? previousDetail.items.map((item) => item.id) : null,
+    itemIds: items.map((item) => item.id),
+    changedItems: items.filter((item) => {
+      const previousItem = previousItemsById.get(item.id)
+      return !previousItem || !isDeepStrictEqual(previousItem, item)
+    })
   }
 }
 
@@ -297,7 +210,7 @@ const getChatUpdateDeliveryState = (webContents: WebContents): ChatUpdateDeliver
     inFlightUpdate: null,
     acknowledgedDetail: null,
     pendingByChatKey: new Map(),
-    latestUpdateAtByChatKey: new Map()
+    latestRevisionByChatKey: new Map()
   }
   chatUpdateDeliveryByWebContentsId.set(webContents.id, state)
   webContents.once('destroyed', () => {
@@ -323,11 +236,7 @@ const sendChatUpdate = (
   const detailUpdate = rendererDetail
     ? createChatDetailUpdate(rendererDetail, previousDetail)
     : null
-  state.inFlightUpdate = {
-    sequence,
-    chatKey,
-    detail: rendererDetail
-  }
+  state.inFlightUpdate = { sequence, chatKey, detail: rendererDetail }
   webContents.send(providerIpcChannels.chatUpdated, {
     ...update,
     detail: detailUpdate,
@@ -357,9 +266,9 @@ const queueChatUpdateForWindow = (
 
   const state = getChatUpdateDeliveryState(webContents)
   const chatKey = getProviderChatKey(event.providerId, event.chatId)
-  const latestUpdateAt = state.latestUpdateAtByChatKey.get(chatKey)
-  if (latestUpdateAt !== undefined && event.summary.updatedAt < latestUpdateAt) return
-  state.latestUpdateAtByChatKey.set(chatKey, event.summary.updatedAt)
+  const latestRevision = state.latestRevisionByChatKey.get(chatKey)
+  if (latestRevision !== undefined && event.detail.revision <= latestRevision) return
+  state.latestRevisionByChatKey.set(chatKey, event.detail.revision)
 
   const pendingUpdate = state.pendingByChatKey.get(chatKey)
   const update = {
@@ -1130,6 +1039,7 @@ export const registerProviderIpc = (): void => {
       const state = getChatUpdateDeliveryState(event.sender)
       const inFlightUpdate = state.inFlightUpdate
       if (!inFlightUpdate || inFlightUpdate.sequence !== sequenceValue) return
+
       if (
         detailAppliedValue &&
         inFlightUpdate.detail &&
@@ -1139,10 +1049,7 @@ export const registerProviderIpc = (): void => {
           chatKey: inFlightUpdate.chatKey,
           detail: inFlightUpdate.detail
         }
-      } else if (
-        inFlightUpdate.detail &&
-        state.acknowledgedDetail?.chatKey === inFlightUpdate.chatKey
-      ) {
+      } else if (state.acknowledgedDetail?.chatKey === inFlightUpdate.chatKey) {
         state.acknowledgedDetail = null
       }
 
@@ -1778,17 +1685,6 @@ export const registerProviderIpc = (): void => {
     getRendererChatDetail(() =>
       providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))
     )
-  )
-
-  ipcMain.handle(
-    providerIpcChannels.stopChatSummary,
-    async (_, providerId: unknown, chatId: unknown) => {
-      const detail = await providerApi.stopChat(
-        requireProviderId(providerId),
-        requireChatId(chatId)
-      )
-      return getChatUpdateSummary(detail, Date.now())
-    }
   )
 
   ipcMain.handle(

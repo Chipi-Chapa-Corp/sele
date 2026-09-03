@@ -14,6 +14,9 @@ export type CodexTurnCursorWindow = {
   newerCursor: string | null
 }
 
+export const isSupportedCodexHistory = (historyMode: unknown): boolean =>
+  historyMode === 'paginated'
+
 export const retainCodexTurnTail = (
   turns: readonly CodexTurn[],
   limit: number
@@ -31,27 +34,38 @@ export const retainCodexTurnTail = (
 
 const codexTurnCursorTokenPrefix = 'sele:codex-turn-cursor:'
 
-const encodeCodexTurnCursor = (cursor: string | null, includesAnchor: boolean): string | null =>
-  cursor == null
-    ? null
-    : `${codexTurnCursorTokenPrefix}${JSON.stringify({ cursor, includesAnchor })}`
+type CodexTurnCursorToken = {
+  cursor: string
+  /** The returned page already contains this reverse-cursor anchor and must discard it. */
+  anchorTurnId: string | null
+}
 
-const decodeCodexTurnCursor = (
-  token: string | null
-): { cursor: string | null; includesAnchor: boolean } => {
-  if (token == null) return { cursor: null, includesAnchor: false }
+const encodeCodexTurnCursor = (
+  cursor: string | null,
+  anchorTurnId: string | null = null
+): string | null =>
+  cursor == null ? null : `${codexTurnCursorTokenPrefix}${JSON.stringify({ cursor, anchorTurnId })}`
+
+const decodeCodexTurnCursor = (token: string | null): CodexTurnCursorToken | null => {
+  if (token == null) return null
   if (!token.startsWith(codexTurnCursorTokenPrefix)) {
     throw new Error('Invalid Codex turn cursor')
   }
   try {
     const parsed = JSON.parse(token.slice(codexTurnCursorTokenPrefix.length)) as {
       cursor?: unknown
-      includesAnchor?: unknown
+      anchorTurnId?: unknown
     }
-    if (typeof parsed.cursor !== 'string' || typeof parsed.includesAnchor !== 'boolean') {
+    if (
+      typeof parsed.cursor !== 'string' ||
+      (parsed.anchorTurnId != null && typeof parsed.anchorTurnId !== 'string')
+    ) {
       throw new Error('Invalid Codex turn cursor')
     }
-    return { cursor: parsed.cursor, includesAnchor: parsed.includesAnchor }
+    return {
+      cursor: parsed.cursor,
+      anchorTurnId: typeof parsed.anchorTurnId === 'string' ? parsed.anchorTurnId : null
+    }
   } catch {
     throw new Error('Invalid Codex turn cursor')
   }
@@ -77,7 +91,22 @@ const turnCatalogPageSize = 1_000
 const turnCursorSeekPageSize = 1_000
 
 const isPersistedTurn = (turn: CodexTurn): boolean =>
-  turn.status !== 'queued' && !turn.id.startsWith('pending:') && !turn.id.startsWith('queued:')
+  turn.status !== 'queued' && turn.local !== true
+
+/** A mutation must never use a projector snapshot that forgot previously indexed turns. */
+export const assertCodexTurnCatalogDidNotRegress = (
+  previousCatalog: readonly CodexTurn[],
+  nextCatalog: readonly CodexTurn[]
+): void => {
+  const previousIds = previousCatalog.filter(isPersistedTurn).map((turn) => turn.id)
+  const nextIds = nextCatalog.filter(isPersistedTurn).map((turn) => turn.id)
+  if (
+    nextIds.length < previousIds.length ||
+    previousIds.some((turnId, index) => nextIds[index] !== turnId)
+  ) {
+    throw new Error('Codex message history is unavailable. Please retry.')
+  }
+}
 
 /**
  * Resolves the edit boundary against a stable, pre-revert history snapshot. A just-started turn
@@ -149,31 +178,40 @@ export const loadCodexTurnCursorWindow = async (
   const sortDirection = options.direction === 'older' ? 'desc' : 'asc'
   const decodedCursor = decodeCodexTurnCursor(options.cursor)
   const limit = Math.max(1, Math.floor(options.limit))
+  const expectsAnchor = decodedCursor?.anchorTurnId != null
   const response = (await request('thread/turns/list', {
     threadId,
-    cursor: decodedCursor.cursor,
-    // A backwards cursor deliberately includes its anchor. Read and discard that overlap so each
-    // renderer page still contains `limit` new turns.
-    limit: limit + (decodedCursor.includesAnchor ? 1 : 0),
+    cursor: decodedCursor?.cursor ?? null,
+    // A backwards cursor deliberately includes its anchor. Request one extra row only when that
+    // anchor was present in the page the renderer is leaving.
+    limit: limit + (expectsAnchor ? 1 : 0),
     sortDirection,
     itemsView: 'full'
   })) as ThreadTurnsListResponse
   if (!Array.isArray(response.data)) throw new Error('Invalid paginated Codex turn response')
 
-  const pageData = decodedCursor.includesAnchor ? response.data.slice(1) : response.data
+  const responseAnchorTurnId = response.data[0]?.id ?? null
+  const discardedAnchor = expectsAnchor && responseAnchorTurnId === decodedCursor?.anchorTurnId
+  // If the anchor was deleted between page reads, retain the first valid row. Blindly slicing it
+  // is what previously made history lose one turn on every direction reversal.
+  const pageData = (discardedAnchor ? response.data.slice(1) : response.data).slice(0, limit)
   const turns = options.direction === 'older' ? pageData.toReversed() : pageData
+  // `backwardsCursor` anchors the first raw response row. It overlaps the visible page only when
+  // that row was retained; if we just discarded it, the reverse cursor already points at the next
+  // adjacent page and must not discard it again.
+  const reverseAnchorTurnId = discardedAnchor ? null : responseAnchorTurnId
   return {
     turns,
     olderCursor:
       options.direction === 'older'
-        ? encodeCodexTurnCursor(response.nextCursor ?? null, false)
-        : encodeCodexTurnCursor(response.backwardsCursor ?? null, true),
+        ? encodeCodexTurnCursor(response.nextCursor ?? null)
+        : encodeCodexTurnCursor(response.backwardsCursor ?? null, reverseAnchorTurnId),
     newerCursor:
       options.direction === 'newer'
-        ? encodeCodexTurnCursor(response.nextCursor ?? null, false)
+        ? encodeCodexTurnCursor(response.nextCursor ?? null)
         : options.cursor == null
           ? null
-          : encodeCodexTurnCursor(response.backwardsCursor ?? null, true)
+          : encodeCodexTurnCursor(response.backwardsCursor ?? null, reverseAnchorTurnId)
   }
 }
 
@@ -191,7 +229,7 @@ export const loadCodexLatestTurnBoundary = async (
     itemsView: 'notLoaded'
   })) as ThreadTurnsListResponse
   if (!Array.isArray(response.data)) throw new Error('Invalid paginated Codex turn response')
-  return encodeCodexTurnCursor(response.nextCursor ?? null, false)
+  return encodeCodexTurnCursor(response.nextCursor ?? null)
 }
 
 /**
@@ -297,32 +335,6 @@ export const hydrateCodexTurnRange = async (
     // The missing-id check above guarantees every selected turn is present.
     return hydratedById.get(turn.id)!
   })
-}
-
-/**
- * Reconstructs a catalog window from one or more full-turn snapshots. Later snapshots take
- * precedence, allowing callers to use rollout data as a fallback while preferring the structured
- * app-server representation. Only catalogued IDs are returned, so append-only rollout files
- * cannot resurrect turns removed by an edit.
- */
-export const selectCodexTurnRangeFromSnapshots = (
-  turnCatalog: readonly CodexTurn[],
-  startIndex: number,
-  endIndex: number,
-  ...snapshots: readonly (readonly CodexTurn[])[]
-): CodexTurn[] => {
-  const boundedStartIndex = Math.max(0, Math.min(startIndex, turnCatalog.length))
-  const boundedEndIndex = Math.max(boundedStartIndex, Math.min(endIndex, turnCatalog.length))
-  const selectedTurns = turnCatalog.slice(boundedStartIndex, boundedEndIndex)
-  const turnsById = new Map<string, CodexTurn>()
-  snapshots.forEach((turns) => turns.forEach((turn) => turnsById.set(turn.id, turn)))
-
-  const missingTurnIds = selectedTurns
-    .map((turn) => turn.id)
-    .filter((turnId) => !turnsById.has(turnId))
-  if (missingTurnIds.length > 0) throw new CodexTurnWindowMismatchError(missingTurnIds)
-
-  return selectedTurns.map((turn) => turnsById.get(turn.id)!)
 }
 
 /**

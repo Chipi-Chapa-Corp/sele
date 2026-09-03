@@ -15,13 +15,3 @@ export const getChatCommitMarkerTerminalStatus = (
   if (lastWorkingStep?.status === 'failed') return 'failed'
   return lastWorkingStep?.status === 'stopped' ? 'stopped' : 'finished'
 }
-
-export const getRecoveredChatCommitMarkerTerminalStatus = (
-  detail: ChatCommitTerminalDetail
-): Exclude<ChatCommitMarkerStatus, 'pending'> => {
-  const status = getChatCommitMarkerTerminalStatus(detail)
-
-  // A provider process interrupted by app shutdown is indistinguishable from an explicit stop in
-  // restored chat history. Only the live cancel path can reliably assign the stopped marker state.
-  return status === 'stopped' ? 'interrupted' : status
-}

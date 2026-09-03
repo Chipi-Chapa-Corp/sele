@@ -23,8 +23,6 @@ import type {
   ProviderSkillInput
 } from '../../../shared/provider'
 
-import { getProviderChatTurns } from '../../../shared/chatTurns'
-
 import { markChatItemsChanged } from '../chatConversationModel'
 
 import { type ChatListGroupData } from '../components/ChatListGroup'
@@ -45,16 +43,11 @@ import { type CommitActivityAction } from '../chatCommitStorage'
 
 import {
   hasProviderUserMessageAfterOptimisticTurn,
-  getChatDetailItemsStartTurnIndex,
-  isChatDetailUpdateAfterLoadedTurnWindow,
-  mergeWorkingStepUpdate,
   optimisticChatItemIdPrefix
 } from '../chatDetailWindow'
 
 import {
   changeSourceLabels,
-  chatWorkingItemPageSize,
-  chatWorkingItemWindowSize,
   commitActionLabels,
   doneGroupKey,
   pinnedGroupKey,
@@ -345,183 +338,191 @@ export const areContainerTargetsEqual = (
       second.tool !== 'ssh' ||
       getContainerTargetKey(first) === getContainerTargetKey(second)))
 
-export const getChatDetailFromUpdate = (
-  update: ProviderChatDetailUpdate,
-  currentDetail: ProviderChatDetail | null,
-  preserveOptimisticTurnUntilUserMessage = false
-): ProviderChatDetail | null => {
-  const { chatItemsPrefixLastId, chatItemsStartIndex, items, ...chatDetail } = update
-  const stableContainer =
-    currentDetail?.id === update.id &&
-    areContainerTargetsEqual(currentDetail.container, chatDetail.container)
-      ? currentDetail.container
-      : chatDetail.container
-  const currentItemsStartTurnIndex = getChatDetailItemsStartTurnIndex(currentDetail)
-  const incomingItemsStartTurnIndex = chatDetail.itemsStartTurnIndex ?? 0
-  const currentTurns = getProviderChatTurns(currentDetail?.items ?? [])
+export const isChatDetailSnapshotStale = (
+  snapshot: Pick<ProviderChatDetail, 'id' | 'revision'>,
+  currentDetail: ProviderChatDetail | null | undefined
+): boolean => currentDetail?.id === snapshot.id && snapshot.revision <= currentDetail.revision
+
+const retainLoadedChatItemPayload = (
+  item: ProviderChatItem,
+  currentItem: ProviderChatItem | undefined
+): ProviderChatItem => {
   if (
-    currentDetail?.id === update.id &&
-    currentDetail.turnPagination?.kind === 'cursor' &&
-    currentDetail.turnPagination.newerCursor &&
-    chatDetail.turnPagination?.kind === 'cursor' &&
-    !chatDetail.turnPagination.newerCursor
+    (item.type === 'message' || item.type === 'pendingMessage') &&
+    item.contentLoaded === false &&
+    currentItem?.type === item.type &&
+    currentItem.contentLoaded !== false
+  ) {
+    return currentItem
+  }
+
+  if (
+    item.type === 'working' &&
+    item.itemsLoaded === false &&
+    currentItem?.type === 'working' &&
+    currentItem.itemsLoaded !== false
   ) {
     return {
-      ...chatDetail,
+      ...item,
+      items: currentItem.items,
+      itemsLoaded: true,
+      itemCount: Math.max(item.itemCount ?? 0, currentItem.itemCount ?? 0),
+      itemsStartIndex: currentItem.itemsStartIndex ?? 0,
+      itemSegments: currentItem.itemSegments
+    }
+  }
+
+  return item
+}
+
+/**
+ * Applies a complete provider snapshot. The resulting transcript has exactly the snapshot's
+ * order and cardinality; stable IDs are used only to retain lazily-loaded payloads, never to
+ * splice transcript structure.
+ */
+export const getChatDetailFromSnapshot = (
+  snapshot: ProviderChatDetail,
+  currentDetail: ProviderChatDetail | null,
+  options: {
+    preserveCurrentTranscript?: boolean
+    preserveOptimisticTurnUntilUserMessage?: boolean
+  } = {}
+): ProviderChatDetail => {
+  const stableContainer =
+    currentDetail?.id === snapshot.id &&
+    areContainerTargetsEqual(currentDetail.container, snapshot.container)
+      ? currentDetail.container
+      : snapshot.container
+
+  if (currentDetail?.id !== snapshot.id) return { ...snapshot, container: stableContainer }
+
+  const viewingOlderCursorPage = Boolean(
+    currentDetail.turnPagination?.kind === 'cursor' &&
+    currentDetail.turnPagination.newerCursor &&
+    snapshot.turnPagination?.kind === 'cursor' &&
+    !snapshot.turnPagination.newerCursor
+  )
+  if (viewingOlderCursorPage) {
+    return {
+      ...snapshot,
       container: stableContainer,
       items: currentDetail.items,
       subagents: currentDetail.subagents,
-      itemsStartTurnIndex: 0,
-      turnCount: currentTurns.length,
+      itemsStartTurnIndex: currentDetail.itemsStartTurnIndex,
+      turnCount: currentDetail.turnCount,
       turnPagination: currentDetail.turnPagination
     }
   }
-  if (
-    currentDetail?.id === update.id &&
-    isChatDetailUpdateAfterLoadedTurnWindow(currentDetail, incomingItemsStartTurnIndex)
-  ) {
+  if (options.preserveCurrentTranscript && !currentDetail.turnPagination) {
     return {
-      ...chatDetail,
+      ...snapshot,
       container: stableContainer,
       items: currentDetail.items,
       subagents: currentDetail.subagents,
-      itemsStartTurnIndex: currentItemsStartTurnIndex
+      itemsStartTurnIndex: currentDetail.itemsStartTurnIndex,
+      turnCount: Math.max(currentDetail.turnCount ?? 0, snapshot.turnCount ?? 0)
     }
   }
 
-  const currentChatItemsStartIndex = (() => {
-    if (chatItemsStartIndex > 0) {
-      const prefixIndex = currentDetail?.items.findIndex(
-        (item) => item.id === chatItemsPrefixLastId
-      )
-      return prefixIndex === undefined || prefixIndex < 0 ? null : prefixIndex + 1
-    }
-    if (!currentDetail || currentDetail.id !== update.id) return 0
-
-    const turnOffset = incomingItemsStartTurnIndex - currentItemsStartTurnIndex
-    if (turnOffset < 0 || turnOffset > currentTurns.length) return null
-    return currentTurns
-      .slice(0, turnOffset)
-      .reduce((itemCount, turn) => itemCount + turn.items.length, 0)
-  })()
-  if (
-    !Number.isSafeInteger(chatItemsStartIndex) ||
-    chatItemsStartIndex < 0 ||
-    currentChatItemsStartIndex === null
-  ) {
-    return null
-  }
-
-  const preserveOptimisticItems =
-    chatItemsStartIndex === 0 &&
-    items.length === 0 &&
-    currentDetail?.id === update.id &&
-    currentDetail.items.some((item) => item.id.startsWith(optimisticChatItemIdPrefix))
-  const mergedItems: ProviderChatItem[] = preserveOptimisticItems
-    ? currentDetail.items
-    : currentChatItemsStartIndex === 0
-      ? []
-      : currentDetail!.items.slice(0, currentChatItemsStartIndex)
-  for (const [index, item] of items.entries()) {
-    const currentItem = currentDetail?.items[currentChatItemsStartIndex + index]
-    if (item.type !== 'working') {
-      if (
-        (item.type === 'message' || item.type === 'pendingMessage') &&
-        item.contentLoaded === false &&
-        currentItem?.type === item.type &&
-        currentItem.contentLoaded !== false
-      ) {
-        mergedItems.push(currentItem)
-        continue
-      }
-      mergedItems.push(item)
-      continue
-    }
-
-    if (
-      item.itemsLoaded === false &&
-      currentItem?.type === 'working' &&
-      currentItem.itemsLoaded !== false
-    ) {
-      mergedItems.push({
-        type: 'working',
-        id: item.id,
-        status: item.status,
-        items: currentItem.items,
-        itemsLoaded: true,
-        itemCount: Math.max(item.itemCount ?? 0, currentItem.itemCount ?? 0),
-        itemsStartIndex: currentItem.itemsStartIndex ?? 0,
-        itemSegments: currentItem.itemSegments
-      })
-      continue
-    }
-
-    const mergedWorkingStep = mergeWorkingStepUpdate(
-      item,
-      currentItem,
-      chatWorkingItemPageSize,
-      chatWorkingItemWindowSize
-    )
-    if (!mergedWorkingStep) return null
-    mergedItems.push(mergedWorkingStep)
-  }
+  const currentItemsById = new Map(currentDetail.items.map((item) => [item.id, item]))
+  const items = snapshot.items.map((item) =>
+    retainLoadedChatItemPayload(item, currentItemsById.get(item.id))
+  )
 
   if (
-    preserveOptimisticTurnUntilUserMessage &&
-    currentDetail?.id === update.id &&
-    !hasProviderUserMessageAfterOptimisticTurn(currentDetail.items, mergedItems)
+    options.preserveOptimisticTurnUntilUserMessage &&
+    !hasProviderUserMessageAfterOptimisticTurn(currentDetail.items, items)
   ) {
-    // Some asynchronous provider SDKs can report an active turn before they echo the new user
-    // message. Keep the optimistic turn during that gap so it does not briefly disappear.
     return {
-      ...chatDetail,
+      ...snapshot,
       container: stableContainer,
       items: currentDetail.items,
-      itemsStartTurnIndex: currentItemsStartTurnIndex
+      itemsStartTurnIndex: currentDetail.itemsStartTurnIndex,
+      turnCount: Math.max(currentDetail.turnCount ?? 0, snapshot.turnCount ?? 0)
     }
   }
 
-  markChatItemsChanged(mergedItems, currentChatItemsStartIndex, currentDetail?.items ?? null)
-
   return {
-    ...chatDetail,
-    // IPC snapshots clone container targets. Reuse the equivalent target so callbacks and
-    // image-loading effects below the chat item do not restart for every streamed packet.
+    ...snapshot,
     container: stableContainer,
-    items: mergedItems,
-    itemsStartTurnIndex:
-      currentDetail?.id === update.id
-        ? Math.min(currentItemsStartTurnIndex, incomingItemsStartTurnIndex)
-        : incomingItemsStartTurnIndex
+    items
   }
 }
 
-export const getChatDetailFromUpdateSummary = (
-  detail: ProviderChatDetail,
-  summary: ProviderChatUpdateSummary
-): ProviderChatDetail => {
-  const nextContainer = summary.container ?? detail.container
+export type ChatDetailUpdateResult = {
+  detail: ProviderChatDetail
+  detailApplied: boolean
+}
 
-  return {
-    ...detail,
-    createdAt: summary.createdAt,
-    title: summary.title,
-    cwd: summary.cwd,
-    cwdKind: summary.cwdKind,
-    projectCwd: summary.projectCwd,
-    branchName: summary.branchName,
-    worktreeBaseBranchName: summary.worktreeBaseBranchName,
-    status: summary.status,
-    pendingApproval: summary.pendingApproval,
-    pinned: summary.pinned,
-    sidebarOrder: summary.sidebarOrder,
-    done: summary.done,
-    seenUpdatedAt: summary.seenUpdatedAt,
-    purpose: summary.purpose,
-    container: areContainerTargetsEqual(detail.container, nextContainer)
-      ? detail.container
-      : nextContainer
+/**
+ * Projects an exact ordered ID list over keyed entity payloads. There is no positional splice:
+ * every output slot comes from one unique ID in `itemIds`, so duplication and reordering cannot
+ * be introduced by delivery.
+ */
+export const getChatDetailFromUpdate = (
+  update: ProviderChatDetailUpdate,
+  currentDetail: ProviderChatDetail | null,
+  options: {
+    preserveCurrentTranscript?: boolean
+    preserveOptimisticTurnUntilUserMessage?: boolean
+  } = {}
+): ChatDetailUpdateResult | null => {
+  const { baseRevision, baseItemIds, itemIds, changedItems, ...metadata } = update
+  const itemIdSet = new Set(itemIds)
+  if (itemIdSet.size !== itemIds.length) return null
+  if (baseRevision !== null || baseItemIds !== null) {
+    if (
+      baseRevision === null ||
+      baseItemIds === null ||
+      currentDetail?.id !== update.id ||
+      currentDetail.revision !== baseRevision ||
+      currentDetail.items.length !== baseItemIds.length ||
+      currentDetail.items.some((item, index) => item.id !== baseItemIds[index])
+    ) {
+      return null
+    }
   }
+
+  const changedItemsById = new Map<string, ProviderChatItem>()
+  for (const item of changedItems) {
+    if (changedItemsById.has(item.id) || !itemIdSet.has(item.id)) return null
+    changedItemsById.set(item.id, item)
+  }
+
+  const currentItemsById = new Map(
+    currentDetail?.id === update.id
+      ? currentDetail.items.map((item) => [item.id, item] as const)
+      : []
+  )
+  const items: ProviderChatItem[] = []
+  for (const itemId of itemIds) {
+    const changedItem = changedItemsById.get(itemId)
+    const currentItem = currentItemsById.get(itemId)
+    const item = changedItem ? retainLoadedChatItemPayload(changedItem, currentItem) : currentItem
+    if (!item) return null
+    items.push(item)
+  }
+
+  const reconstructed = { ...metadata, items } satisfies ProviderChatDetail
+  const detail = getChatDetailFromSnapshot(reconstructed, currentDetail, options)
+  const detailApplied = detail.items !== currentDetail?.items
+
+  if (detailApplied) {
+    const previousItems = currentDetail?.id === detail.id ? currentDetail.items : null
+    let changedStartIndex = 0
+    if (previousItems) {
+      const sharedLength = Math.min(previousItems.length, detail.items.length)
+      while (
+        changedStartIndex < sharedLength &&
+        previousItems[changedStartIndex] === detail.items[changedStartIndex]
+      ) {
+        changedStartIndex += 1
+      }
+    }
+    markChatItemsChanged(detail.items, changedStartIndex, previousItems)
+  }
+
+  return { detail, detailApplied }
 }
 
 export const arePendingApprovalsEqual = (

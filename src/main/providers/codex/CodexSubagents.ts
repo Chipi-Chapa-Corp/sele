@@ -204,7 +204,7 @@ export const selectCodexSubagentTurns = (
     const hasUserMessage = turn.items.some((item) => item.type === 'userMessage')
     const hasSubagentActivity = turn.items.some((item) => item.type === 'subAgentActivity')
 
-    // Codex copies the spawning parent turn into a child rollout. That inherited turn can share
+    // Codex copies the spawning parent turn into a child transcript. That inherited turn can share
     // the child's creation second, so timestamps alone cannot distinguish it from the first real
     // child turn. The copied turn retains the parent's user message and interruption/activity
     // metadata; the delegated instruction itself is delivered out of band to the child.

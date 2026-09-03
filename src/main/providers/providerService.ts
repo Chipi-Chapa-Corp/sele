@@ -56,7 +56,8 @@ import { getCwdMetadata } from './cwdMetadata'
 import type {
   ProviderAdapter,
   ProviderChatTurnCursorWindow,
-  ProviderChatTurnWindow
+  ProviderChatTurnWindow,
+  ProviderChatUpdateMetadata
 } from './ProviderAdapter'
 import {
   collectActiveProviderChats,
@@ -95,6 +96,16 @@ const truncateChatUpdateText = (value: string, limit: number): string =>
   value.length <= limit ? value : `${value.slice(0, limit - 1)}…`
 
 const chatUpdatedListeners = new Set<(event: ProviderChatUpdatedEvent) => void>()
+
+type PendingProviderChatUpdate = {
+  providerId: ProviderId
+  detail: ProviderChatDetail
+}
+
+const pendingProviderChatUpdates = new Map<string, PendingProviderChatUpdate>()
+const processingProviderChatUpdateKeys = new Set<string>()
+const latestProviderChatUpdateRevision = new Map<string, number>()
+const unreportedTurnCompletions = new Set<string>()
 
 const normalizeCwd = (cwd: string | null | undefined): string | null => {
   const trimmedCwd = cwd?.trim()
@@ -190,6 +201,59 @@ const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<Provid
       }
     })
   }
+}
+
+const drainProviderChatUpdates = async (chatKey: string): Promise<void> => {
+  if (processingProviderChatUpdateKeys.has(chatKey)) return
+  processingProviderChatUpdateKeys.add(chatKey)
+
+  try {
+    for (;;) {
+      const update = pendingProviderChatUpdates.get(chatKey)
+      if (!update) return
+      pendingProviderChatUpdates.delete(chatKey)
+
+      try {
+        const enrichedDetail = await applyMetadataToDetail(update.detail)
+        // Metadata and review reads are asynchronous. If another adapter snapshot arrived while
+        // they were running, discard this one before it can overwrite the newer transcript.
+        if (latestProviderChatUpdateRevision.get(chatKey) !== update.detail.revision) continue
+
+        const turnCompleted = unreportedTurnCompletions.delete(chatKey)
+        const event = {
+          providerId: update.providerId,
+          chatId: enrichedDetail.id,
+          detail: enrichedDetail,
+          summary: getChatUpdateSummary(enrichedDetail, Date.now()),
+          turnCompleted
+        } satisfies ProviderChatUpdatedEvent
+
+        chatUpdatedListeners.forEach((listener) => listener(event))
+      } catch (error) {
+        console.error('Unable to apply chat metadata to update', error)
+      }
+    }
+  } finally {
+    processingProviderChatUpdateKeys.delete(chatKey)
+    if (pendingProviderChatUpdates.has(chatKey)) void drainProviderChatUpdates(chatKey)
+  }
+}
+
+const enqueueProviderChatUpdate = (
+  providerId: ProviderId,
+  detail: ProviderChatDetail,
+  metadata?: ProviderChatUpdateMetadata
+): void => {
+  const chatKey = `${providerId}:${detail.id}`
+  const latestRevision = latestProviderChatUpdateRevision.get(chatKey)
+  if (latestRevision != null && detail.revision <= latestRevision) return
+  latestProviderChatUpdateRevision.set(chatKey, detail.revision)
+  if (metadata?.turnCompleted) unreportedTurnCompletions.add(chatKey)
+  pendingProviderChatUpdates.set(chatKey, {
+    providerId,
+    detail
+  })
+  void drainProviderChatUpdates(chatKey)
 }
 
 const sliceChatDetailToTurnWindow = (
@@ -374,22 +438,7 @@ const collectProviderChatIdsByCwd = async (
 
 for (const adapter of Object.values(adapters)) {
   adapter.onChatUpdated((detail, updateMetadata) => {
-    const updatedAt = Date.now()
-    void applyMetadataToDetail(detail)
-      .then((enrichedDetail) => {
-        const event = {
-          providerId: adapter.id,
-          chatId: enrichedDetail.id,
-          detail: enrichedDetail,
-          summary: getChatUpdateSummary(enrichedDetail, updatedAt),
-          turnCompleted: updateMetadata?.turnCompleted ?? false
-        } satisfies ProviderChatUpdatedEvent
-
-        chatUpdatedListeners.forEach((listener) => listener(event))
-      })
-      .catch((error) => {
-        console.error('Unable to apply chat metadata to update', error)
-      })
+    enqueueProviderChatUpdate(adapter.id, detail, updateMetadata)
   })
 }
 

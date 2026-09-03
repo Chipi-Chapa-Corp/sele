@@ -56,3 +56,37 @@ test('keeps the failed turn user message available for retry after a limit reset
 test('does not mark unrelated Codex failures as rate-limit turns', () => {
   assert.equal(renderFailedWorkingStep('serverOverloaded')?.failureReason, undefined)
 })
+
+test('does not render an orphan stopped marker for an interrupted turn with no items', () => {
+  assert.deepEqual(
+    getChatItems([
+      {
+        id: 'orphan-interrupted-turn',
+        status: 'interrupted',
+        items: []
+      }
+    ]),
+    []
+  )
+})
+
+test('renders a stopped marker after the submitted user message', () => {
+  const items = getChatItems([
+    {
+      id: 'interrupted-turn',
+      status: 'interrupted',
+      items: [
+        {
+          type: 'userMessage',
+          id: 'submitted-message',
+          content: [{ type: 'text', text: 'Keep this message' }]
+        }
+      ]
+    }
+  ])
+
+  assert.deepEqual(
+    items.map((item) => (item.type === 'message' ? `${item.role}:${item.content}` : item.status)),
+    ['user:Keep this message', 'stopped']
+  )
+})

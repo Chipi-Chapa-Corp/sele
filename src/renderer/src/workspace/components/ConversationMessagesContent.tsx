@@ -64,9 +64,36 @@ export function ConversationMessagesContent(
 
   if (!selectedChat) return null
 
-  const workingPlaceholderStep = getConversationTailWorkingStep(
-    activeSubagentChatView ? subagentVisibleChatItems : visibleChatItems
+  const conversationHasActiveTurn = activeSubagentChatView
+    ? activeSubagentChatView.detail?.status === 'pending' ||
+      activeSubagentChatView.detail?.status === 'running'
+    : chatHasActiveTurn
+  const workingPlaceholderStep = conversationHasActiveTurn
+    ? getConversationTailWorkingStep(
+        activeSubagentChatView ? subagentVisibleChatItems : visibleChatItems
+      )
+    : null
+  const displayedTurns = activeSubagentChatView
+    ? subagentChatConversationModel.turns
+    : renderedChatTurns
+  const firstPendingTurnIndex = displayedTurns.findIndex((turn) =>
+    turn.items.some((item) => item.type === 'pendingMessage')
   )
+  const renderedConversation = displayedTurns.map((turn, index) =>
+    activeSubagentChatView
+      ? renderSubagentChatTurn(index, turn)
+      : renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)
+  )
+  if (workingPlaceholderStep) {
+    renderedConversation.splice(
+      firstPendingTurnIndex < 0 ? renderedConversation.length : firstPendingTurnIndex,
+      0,
+      <ChatWorkingPlaceholder
+        item={workingPlaceholderStep}
+        key={`working-placeholder:${workingPlaceholderStep.id}`}
+      />
+    )
+  }
 
   return (
     <div className="chat-detail__messages-shell">
@@ -118,20 +145,8 @@ export function ConversationMessagesContent(
         <div className="chat-detail__messages-layout">
           <div className="chat-detail__messages-header" />
           <div className="chat-detail__messages-inner">
-            {activeSubagentChatView
-              ? subagentChatConversationModel.turns.map((turn, index) =>
-                  renderSubagentChatTurn(index, turn)
-                )
-              : renderedChatTurns.map((turn, index) =>
-                  renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)
-                )}
-            {/* This is transient conversation chrome, not a historical timeline item. */}
-            {workingPlaceholderStep && (
-              <ChatWorkingPlaceholder
-                item={workingPlaceholderStep}
-                key={workingPlaceholderStep.id}
-              />
-            )}
+            {/* Transient activity belongs after history but before queued/steering turns. */}
+            {renderedConversation}
           </div>
           <div className="chat-detail__messages-footer" />
         </div>

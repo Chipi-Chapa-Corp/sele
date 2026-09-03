@@ -29,6 +29,7 @@ import {
   providerIds
 } from '../../shared/provider'
 import type { DropdownOption } from './components/Dropdown'
+import { ProviderIcon } from './components/ProviderIcon'
 import { providerLabels } from './providerSettings'
 
 type LegacyProviderAccessMode = 'sandbox' | 'auto' | 'full'
@@ -171,7 +172,10 @@ const getDropdownOptions = <TValue extends string>(
     label: label as string
   }))
 
-export const providerOptions = getDropdownOptions(providerLabels)
+export const providerOptions = getDropdownOptions(providerLabels).map((option) => ({
+  ...option,
+  icon: <ProviderIcon providerId={option.value} aria-hidden="true" />
+}))
 
 export const formatModelLabel = (label: string): string => label.replace(/-/g, ' ')
 

@@ -16,14 +16,162 @@ type CodexTurnLifecycle = {
   completedAt?: number | null
 }
 
-export const reconcileCodexTurnStatusWithThread = (
-  turnStatus: string | null | undefined,
-  threadStatus: string
-): string | null | undefined => {
-  if (turnStatus !== 'inProgress') return turnStatus
-  if (threadStatus === 'idle') return 'interrupted'
-  if (threadStatus === 'systemError') return 'failed'
-  return turnStatus
+type CodexIdentified = {
+  id: string
+}
+
+type CodexOrderedTurn = CodexIdentified & {
+  local?: boolean
+}
+
+type CodexAgentMessageItem = CodexIdentified & {
+  type: string
+  text?: string
+  phase?: 'commentary' | 'final_answer' | null
+  status?: string
+}
+
+export type CodexAgentResponseOverlay = {
+  text: string
+  phase?: 'commentary' | 'final_answer' | null
+}
+
+const getUniqueCodexSnapshots = <Snapshot extends CodexIdentified>(
+  snapshots: readonly Snapshot[],
+  merge: (previous: Snapshot, next: Snapshot) => Snapshot
+): Snapshot[] => {
+  const uniqueSnapshots: Snapshot[] = []
+  const indexesById = new Map<string, number>()
+
+  for (const snapshot of snapshots) {
+    const existingIndex = indexesById.get(snapshot.id)
+    if (existingIndex == null) {
+      indexesById.set(snapshot.id, uniqueSnapshots.length)
+      uniqueSnapshots.push(snapshot)
+      continue
+    }
+
+    uniqueSnapshots[existingIndex] = merge(uniqueSnapshots[existingIndex], snapshot)
+  }
+
+  return uniqueSnapshots
+}
+
+export const mergeCodexSnapshotsById = <Snapshot extends CodexIdentified>(
+  snapshots: readonly Snapshot[],
+  merge: (previous: Snapshot, next: Snapshot) => Snapshot
+): Snapshot[] => getUniqueCodexSnapshots(snapshots, merge)
+
+export const assertUniqueCodexSnapshotIds = <Snapshot extends CodexIdentified>(
+  snapshots: readonly Snapshot[],
+  label: string
+): void => {
+  const ids = new Set<string>()
+  for (const snapshot of snapshots) {
+    if (ids.has(snapshot.id)) throw new Error(`Invalid Codex ${label}: duplicate ID ${snapshot.id}`)
+    ids.add(snapshot.id)
+  }
+}
+
+const assertAuthoritativeCodexTailSuccessor = <Turn extends CodexOrderedTurn>(
+  currentTurns: readonly Turn[],
+  authoritativeTurns: readonly Turn[],
+  overlayTurnIds: ReadonlySet<string>
+): void => {
+  const currentIds = currentTurns
+    .filter((turn) => turn.local !== true && !overlayTurnIds.has(turn.id))
+    .map((turn) => turn.id)
+  if (currentIds.length === 0) return
+
+  const authoritativeIds = authoritativeTurns.map((turn) => turn.id)
+  if (authoritativeIds.length === 0) {
+    throw new Error('Codex message history is unavailable. Please retry.')
+  }
+
+  const authoritativeIndexes = new Map(
+    authoritativeIds.map((turnId, index) => [turnId, index] as const)
+  )
+  const sharedCurrentIndexes = currentIds
+    .map((turnId, index) => (authoritativeIndexes.has(turnId) ? index : -1))
+    .filter((index) => index >= 0)
+  if (sharedCurrentIndexes.length === 0) {
+    throw new Error('Codex message history changed without a consistent boundary. Please retry.')
+  }
+
+  const firstSharedCurrentIndex = sharedCurrentIndexes[0]
+  const sharedCurrentIds = currentIds.slice(firstSharedCurrentIndex)
+  if (sharedCurrentIds.some((turnId) => !authoritativeIndexes.has(turnId))) {
+    throw new Error('Codex message history is unavailable. Please retry.')
+  }
+  const sharedAuthoritativeIndexes = sharedCurrentIds.map((turnId) =>
+    authoritativeIndexes.get(turnId)!
+  )
+  if (
+    sharedAuthoritativeIndexes.some(
+      (index, offset) => offset > 0 && index !== sharedAuthoritativeIndexes[offset - 1] + 1
+    )
+  ) {
+    throw new Error('Codex message history changed order. Please retry.')
+  }
+}
+
+/**
+ * Projects one backend-owned tail plus explicitly local/live overlays. Persisted order and
+ * cardinality come exclusively from the backend page; no timestamp or ID-order inference exists.
+ */
+export const projectCodexTurnTail = <Turn extends CodexOrderedTurn>(
+  authoritativeTurns: readonly Turn[],
+  currentTurns: readonly Turn[],
+  limit: number,
+  overlayTurnIds: ReadonlySet<string>,
+  merge: (previous: Turn, next: Turn) => Turn
+): Turn[] => {
+  assertUniqueCodexSnapshotIds(authoritativeTurns, 'history page')
+  assertUniqueCodexSnapshotIds(currentTurns, 'cached tail')
+  assertAuthoritativeCodexTailSuccessor(currentTurns, authoritativeTurns, overlayTurnIds)
+
+  const currentById = new Map(currentTurns.map((turn) => [turn.id, turn]))
+  const authoritativeIds = new Set(authoritativeTurns.map((turn) => turn.id))
+  const projectedTurns = authoritativeTurns.map((turn) => {
+    const currentTurn = currentById.get(turn.id)
+    return currentTurn && overlayTurnIds.has(turn.id) ? merge(turn, currentTurn) : turn
+  })
+  projectedTurns.push(
+    ...currentTurns.filter(
+      (turn) =>
+        !authoritativeIds.has(turn.id) && (turn.local === true || overlayTurnIds.has(turn.id))
+    )
+  )
+
+  const boundedLimit = Math.max(1, Math.floor(limit))
+  return projectedTurns.slice(-boundedLimit)
+}
+
+/**
+ * Raw protocol responses have no stable item ID. Project them as an ephemeral view overlay only
+ * until the authoritative agent item arrives; they never enter the stored turn item collection.
+ */
+export const projectCodexAgentResponseOverlay = <
+  Item extends CodexAgentMessageItem,
+  Turn extends { id: string; items: Item[] }
+>(
+  turn: Turn,
+  overlay: CodexAgentResponseOverlay | null | undefined
+): Turn => {
+  if (!overlay || turn.items.some((item) => item.type === 'agentMessage')) return turn
+
+  return {
+    ...turn,
+    items: [
+      ...turn.items,
+      {
+        id: `${turn.id}:assistant-overlay`,
+        type: 'agentMessage',
+        text: overlay.text,
+        phase: overlay.phase ?? 'final_answer'
+      } as Item
+    ]
+  }
 }
 
 export const isCodexTurnTerminal = (turn: CodexTurnLifecycle): boolean =>
@@ -54,17 +202,3 @@ export const isMatchingCodexPendingTurn = (
   currentPendingTurnId: string | undefined,
   expectedPendingTurnId: string | null
 ): boolean => Boolean(expectedPendingTurnId && currentPendingTurnId === expectedPendingTurnId)
-
-export const shouldPreferCodexRolloutItems = (counts: {
-  structuredToolCount: number
-  rolloutToolCount: number
-  structuredTextCount: number
-  rolloutTextCount: number
-}): boolean => {
-  if (counts.rolloutToolCount < counts.structuredToolCount) return false
-  return (
-    (counts.rolloutToolCount > counts.structuredToolCount &&
-      counts.rolloutTextCount >= counts.structuredTextCount) ||
-    counts.rolloutTextCount > counts.structuredTextCount
-  )
-}

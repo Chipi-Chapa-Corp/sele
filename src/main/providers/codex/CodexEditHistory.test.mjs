@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  CodexTurnWindowMismatchError,
-  planCodexHistoryEdit,
-  selectCodexTurnRangeFromSnapshots
+  assertCodexTurnCatalogDidNotRegress,
+  isSupportedCodexHistory,
+  planCodexHistoryEdit
 } from './CodexPaginatedHistory.ts'
 
 // Fixtures intentionally include only the fields used by history planning.
@@ -57,39 +57,24 @@ test('refuses an empty or truncated catalog instead of erasing known history', (
   )
 })
 
-test('reconstructs an omitted pagination window from exact catalogued snapshot IDs', () => {
-  const catalog = [turn('zero'), turn('one'), turn('two'), turn('three')]
-  const rolloutSnapshot = [turn('one'), turn('two')]
-  const structuredSnapshot = [
-    turn('zero'),
-    { ...turn('two'), status: 'interrupted' },
-    turn('three')
-  ]
+test('refuses a projector snapshot that shrank or reordered known history', () => {
+  const knownCatalog = [turn('one'), turn('two'), turn('three')]
 
-  const selected = selectCodexTurnRangeFromSnapshots(
-    catalog,
-    0,
-    catalog.length,
-    rolloutSnapshot,
-    structuredSnapshot
+  assert.doesNotThrow(() =>
+    assertCodexTurnCatalogDidNotRegress(knownCatalog, [...knownCatalog, turn('four')])
   )
-
-  assert.deepEqual(
-    selected.map((entry) => entry.id),
-    ['zero', 'one', 'two', 'three']
+  assert.throws(
+    () => assertCodexTurnCatalogDidNotRegress(knownCatalog, knownCatalog.slice(1)),
+    /history is unavailable/
   )
-  assert.equal(selected[2].status, 'interrupted')
+  assert.throws(
+    () => assertCodexTurnCatalogDidNotRegress(knownCatalog, [turn('one'), turn('three')]),
+    /history is unavailable/
+  )
 })
 
-test('still rejects a turn absent from every fallback snapshot', () => {
-  const catalog = [turn('zero'), turn('missing')]
-
-  assert.throws(
-    () => selectCodexTurnRangeFromSnapshots(catalog, 0, catalog.length, [turn('zero')]),
-    (error) => {
-      assert.ok(error instanceof CodexTurnWindowMismatchError)
-      assert.deepEqual(error.missingTurnIds, ['missing'])
-      return true
-    }
-  )
+test('supports only paginated Codex history', () => {
+  assert.equal(isSupportedCodexHistory('paginated'), true)
+  assert.equal(isSupportedCodexHistory('legacy'), false)
+  assert.equal(isSupportedCodexHistory(undefined), false)
 })

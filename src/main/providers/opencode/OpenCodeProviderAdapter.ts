@@ -75,6 +75,7 @@ type QueuedOpenCodeMessage = ProviderPendingMessage & {
 
 type OpenCodeChatState = {
   id: string
+  revision: number
   directory: string
   container: AppContainerTarget | null
   session: Session | GlobalSession | null
@@ -1197,6 +1198,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (existing) return existing
     const state: OpenCodeChatState = {
       id: sessionId,
+      revision: 0,
       directory,
       container,
       session: null,
@@ -1396,6 +1398,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     await this.refreshState(state, client, preserveActive)
     const session = state.session
     if (!session) throw new Error('Unable to load OpenCode session.')
+    state.revision += 1
     const pendingItems = state.queuedMessages.map((message): ProviderPendingMessage => ({
       type: message.type,
       id: message.id,
@@ -1406,6 +1409,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     }))
     return {
       id: session.id,
+      revision: state.revision,
       createdAt: session.time.created,
       title: getOpenCodeDisplayTitle(session.title, state.messages),
       cwd: state.directory,

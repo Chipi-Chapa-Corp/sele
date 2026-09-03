@@ -316,8 +316,6 @@ const providerApi: ProviderRendererApi = {
     ),
   stopChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.stopChat, providerId, chatId),
-  stopChatSummary: (providerId, chatId) =>
-    ipcRenderer.invoke(providerIpcChannels.stopChatSummary, providerId, chatId),
   markChatDone: (providerId, chatId, done) =>
     ipcRenderer.invoke(providerIpcChannels.markChatDone, providerId, chatId, done),
   markCwdChatsDone: (providerId, cwd) =>

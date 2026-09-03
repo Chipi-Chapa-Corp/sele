@@ -13,6 +13,17 @@ export type ProviderChatTurn = {
 const startsChatTurn = (item: ProviderChatItem): boolean =>
   item.type === 'pendingMessage' || (item.type === 'message' && item.role === 'user')
 
+/** A transcript is an ordered set. Duplicate IDs are a protocol error, never renderable data. */
+export const assertUniqueProviderChatItemIds = (items: readonly ProviderChatItem[]): void => {
+  const itemIds = new Set<string>()
+  for (const item of items) {
+    if (itemIds.has(item.id)) {
+      throw new Error(`Invalid chat transcript: duplicate item ID ${item.id}`)
+    }
+    itemIds.add(item.id)
+  }
+}
+
 export const getProviderChatTurnStartItemIndexes = (items: ProviderChatItem[]): number[] => {
   if (items.length === 0) return []
 

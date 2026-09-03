@@ -1,7 +1,6 @@
 import type {
   ProviderChatDetail,
   ProviderChatItem,
-  ProviderChatItemUpdate,
   ProviderChatTurnPage,
   ProviderId,
   ProviderWorkingItem,
@@ -11,7 +10,7 @@ import type {
   ProviderWorkingToolGroup,
   ProviderWorkingToolPage
 } from '../../shared/provider'
-import { getProviderChatTurns } from '../../shared/chatTurns.ts'
+import { assertUniqueProviderChatItemIds, getProviderChatTurns } from '../../shared/chatTurns.ts'
 import type { ChatTurnWindow } from './chatTurnWindow'
 
 export const optimisticChatItemIdPrefix = 'optimistic:'
@@ -83,17 +82,6 @@ export const getLoadedChatDetailTurnEndIndex = (
 ): number =>
   getChatDetailItemsStartTurnIndex(detail) + getProviderChatTurns(detail?.items ?? []).length
 
-export const isChatDetailUpdateAfterLoadedTurnWindow = (
-  detail: ProviderChatDetail | null | undefined,
-  incomingItemsStartTurnIndex: number
-): boolean => {
-  const loadedTurns = getProviderChatTurns(detail?.items ?? [])
-  return (
-    loadedTurns.length > 0 &&
-    getChatDetailItemsStartTurnIndex(detail) + loadedTurns.length <= incomingItemsStartTurnIndex
-  )
-}
-
 export const mergeChatDetailTurnPage = (
   detail: ProviderChatDetail,
   page: ProviderChatTurnPage,
@@ -101,10 +89,18 @@ export const mergeChatDetailTurnPage = (
 ): ProviderChatDetail => {
   const turnsByIndex = new Map<number, ProviderChatItem[]>()
   const currentStartIndex = getChatDetailItemsStartTurnIndex(detail)
-  getProviderChatTurns(detail.items).forEach((turn, index) => {
+  const currentTurns = getProviderChatTurns(detail.items)
+  const pageTurns = getProviderChatTurns(page.items)
+  const pageTurnIds = new Set(pageTurns.map((turn) => turn.id))
+
+  // A page can be resolved before a concurrent insertion/revert changes the numeric window.
+  // Stable turn identity is authoritative for overlap: never retain an older copy of a turn at
+  // one index while installing the incoming copy at another index.
+  currentTurns.forEach((turn, index) => {
+    if (pageTurnIds.has(turn.id)) return
     turnsByIndex.set(currentStartIndex + index, turn.items)
   })
-  getProviderChatTurns(page.items).forEach((turn, index) => {
+  pageTurns.forEach((turn, index) => {
     turnsByIndex.set(page.startIndex + index, turn.items)
   })
 
@@ -139,6 +135,8 @@ export const mergeChatDetailTurnPage = (
     (subagent) =>
       !subagent.turnId || items.some((item) => item.id.startsWith(`${subagent.turnId}:`))
   )
+
+  assertUniqueProviderChatItemIds(items)
 
   return {
     ...detail,
@@ -345,87 +343,4 @@ export const mergeWorkingToolPage = (
     toolCount: totalCount,
     toolsStartIndex: retainedStartIndex
   }
-}
-
-export const mergeWorkingStepUpdate = (
-  update: Extract<ProviderChatItemUpdate, { type: 'working' }>,
-  currentItem: ProviderChatItem | undefined,
-  tailItemLimit: number,
-  historyItemLimit = tailItemLimit * 2
-): ProviderWorkingStep | null => {
-  const { items, workingItemsPrefixLastId, workingItemsStartIndex, ...workingStep } = update
-  const currentWorkingStep =
-    currentItem?.type === 'working' && currentItem.id === update.id ? currentItem : null
-
-  if (workingStep.itemsLoaded === false) {
-    const itemCount = Math.max(
-      workingStep.itemCount ?? 0,
-      currentWorkingStep?.itemCount ?? currentWorkingStep?.items.length ?? 0
-    )
-    if (currentWorkingStep && currentWorkingStep.itemsLoaded !== false) {
-      return { ...currentWorkingStep, status: workingStep.status, itemCount }
-    }
-
-    const unloadedStep = { ...workingStep }
-    delete unloadedStep.itemSegments
-    return {
-      ...unloadedStep,
-      items: [],
-      itemsLoaded: false,
-      itemCount,
-      itemsStartIndex: 0
-    }
-  }
-
-  const incomingItemsStartIndex = workingStep.itemsStartIndex ?? 0
-  if (!Number.isSafeInteger(workingItemsStartIndex) || workingItemsStartIndex < 0) {
-    return null
-  }
-
-  const boundedTailItemLimit = Math.max(1, tailItemLimit)
-  const totalCount = Math.max(
-    workingStep.itemCount ?? 0,
-    incomingItemsStartIndex + workingItemsStartIndex + items.length
-  )
-  const tailStartIndex = Math.max(0, totalCount - boundedTailItemLimit)
-  const currentSegments = currentWorkingStep
-    ? getWorkingStepItemSegments(currentWorkingStep, boundedTailItemLimit)
-    : []
-  const currentItemsByIndex = getWorkingItemsByIndex(currentSegments)
-  const logicalIncomingStartIndex = incomingItemsStartIndex + workingItemsStartIndex
-  if (
-    workingItemsStartIndex > 0 &&
-    currentItemsByIndex.get(logicalIncomingStartIndex - 1)?.id !== workingItemsPrefixLastId
-  ) {
-    return null
-  }
-
-  const historyItems = new Map(
-    [...getWorkingItemsByIndex(currentSegments, 'history')].filter(
-      ([index]) => index < tailStartIndex
-    )
-  )
-  const boundedHistoryItems = retainBoundedHistoryItems(
-    historyItems,
-    Math.max(1, historyItemLimit),
-    false
-  )
-  const tailItems = new Map(
-    [...currentItemsByIndex].filter(([index]) => index >= tailStartIndex && index < totalCount)
-  )
-  items.forEach((item, index) => {
-    const logicalIndex = logicalIncomingStartIndex + index
-    if (logicalIndex >= tailStartIndex && logicalIndex < totalCount) {
-      tailItems.set(logicalIndex, item)
-    }
-  })
-
-  return createSegmentedWorkingStep(
-    workingStep,
-    [
-      ...getSegmentsFromIndexedItems(boundedHistoryItems, 'history'),
-      ...getSegmentsFromIndexedItems(tailItems, 'tail')
-    ],
-    totalCount
-  )
 }

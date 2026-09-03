@@ -22,6 +22,7 @@ export type CodexUserInput =
 export type CodexThreadItem = {
   type: string
   id: string
+  local?: boolean
   clientId?: string | null
   content?: CodexUserInput[]
   text?: string
@@ -62,6 +63,7 @@ export type CodexThreadItem = {
 
 export type CodexTurn = {
   id: string
+  local?: boolean
   status?: string | null
   error?: {
     message?: string | null
@@ -86,8 +88,6 @@ export const hasCompletedCodexFinalAnswer = (turn: CodexTurn | null | undefined)
   )
 
 type GetChatItemsOptions = {
-  hiddenPendingMessageIds?: ReadonlySet<string>
-  pendingSteeringMessageIds?: ReadonlySet<string>
   workingItemTailLimit?: number
   workingItemTailTurnId?: string
 }
@@ -1718,6 +1718,14 @@ const renderChatItems = (
     let workingStepCount = 0
     const pushWorkingStep = (status: ProviderWorkingStep['status']): void => {
       if (
+        !hasSeenInitialUserMessage &&
+        workingItemCount === 0 &&
+        pendingTimelineAnchors.length === 0 &&
+        (status === 'stopped' || status === 'working' || status === 'queued')
+      ) {
+        return
+      }
+      if (
         workingItemCount === 0 &&
         pendingTimelineAnchors.length === 0 &&
         status !== 'stopped' &&
@@ -1829,36 +1837,22 @@ const renderChatItems = (
           if (hasSeenInitialUserMessage) {
             pushWorkingStep('worked')
 
-            if (options.pendingSteeringMessageIds?.has(itemId)) {
-              if (!options.hiddenPendingMessageIds?.has(itemId)) {
-                chatItems.push({
-                  type: 'pendingMessage',
-                  id: itemId,
-                  kind: 'steering',
-                  content,
-                  attachments,
-                  createdAt: toMilliseconds(startedAt)
-                })
-              }
-            } else {
-              chatItems.push({
-                type: 'message',
-                id: itemId,
-                editTargetId: null,
-                role: 'user',
-                content,
-                attachments,
-                label: 'Steering with',
-                createdAt: toMilliseconds(startedAt),
-                model: turn.model ?? null
-              })
-            }
+            chatItems.push({
+              type: 'message',
+              id: itemId,
+              editTargetId: null,
+              role: 'user',
+              content,
+              attachments,
+              label: 'Steering with',
+              createdAt: toMilliseconds(startedAt),
+              model: turn.model ?? null
+            })
           } else {
             chatItems.push({
               type: 'message',
               id: itemId,
-              editTargetId:
-                turn.id.startsWith('pending:') || turn.id.startsWith('queued:') ? null : turn.id,
+              editTargetId: turn.local === true ? null : turn.id,
               role: 'user',
               content,
               attachments,
@@ -1919,14 +1913,10 @@ export const getChatItems = (
   options: GetChatItemsOptions = {}
 ): ProviderChatItem[] => {
   const chatItems: ProviderChatItem[] = []
-  const hasPendingItemOverrides =
-    Boolean(options.hiddenPendingMessageIds?.size) ||
-    Boolean(options.pendingSteeringMessageIds?.size)
-
   for (const turn of turns) {
     const workingItemTailLimit =
       options.workingItemTailTurnId === turn.id ? options.workingItemTailLimit : undefined
-    if (!isFinishedTurn(turn) || hasPendingItemOverrides) {
+    if (!isFinishedTurn(turn)) {
       chatItems.push(...renderChatItems([turn], fallbackStartedAt, options))
       continue
     }
