@@ -533,7 +533,6 @@ export const renderCopilotChatItems = (
         failed,
         stopped: isLast && options.stopped
       },
-      keepActiveAfterFinal: isLast && options.active,
       showWorking:
         currentSegment.entries.some((entry) => entry.kind === 'working') ||
         (isLast && options.active) ||

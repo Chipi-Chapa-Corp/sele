@@ -116,3 +116,39 @@ test('marks an inline follow-up as a steering message', () => {
 
   assert.equal(steeringMessage?.kind, 'steering')
 })
+
+test('projects the final response both while live and after completion', () => {
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const createTurn = (status) => ({
+    id: 'answer-turn',
+    status,
+    items: [
+      {
+        type: 'userMessage',
+        id: 'question',
+        content: [{ type: 'text', text: 'Answer this' }]
+      },
+      {
+        type: 'reasoning',
+        id: 'reasoning',
+        summary: ['Checking the details']
+      },
+      {
+        type: 'agentMessage',
+        id: 'answer',
+        text: 'Here is the answer.',
+        phase: 'final_answer'
+      }
+    ]
+  })
+
+  for (const status of ['inProgress', 'completed']) {
+    const items = getChatItems([createTurn(status)])
+    const working = items.find((item) => item.type === 'working')
+    const finalMessage = items.find((item) => item.type === 'message' && item.role === 'assistant')
+
+    assert.equal(finalMessage?.id, 'answer-turn:answer')
+    assert.equal(finalMessage?.content, 'Here is the answer.')
+    if (status === 'inProgress') assert.equal(working?.status, 'working')
+  }
+})

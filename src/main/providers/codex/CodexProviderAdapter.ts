@@ -53,6 +53,7 @@ import type {
   ProviderChatTurnWindow,
   ProviderChatUpdateMetadata
 } from '../ProviderAdapter'
+import { ProviderConversationCompletionCoordinator } from '../ProviderConversationEngine.ts'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import {
   bindCodexSubmittedMessageToTurn,
@@ -1231,6 +1232,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private pausedQueuedTurnThreads = new Set<string>()
   private queuedTurnRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private latestThreadRefreshes = new Map<string, Promise<void>>()
+  private completionCoordinator = new ProviderConversationCompletionCoordinator()
   private chatUpdatedTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private rolledBackTurnIds = new Map<string, Set<string>>()
   private manuallyStoppedTurnIds = new Map<string, Set<string>>()
@@ -1312,6 +1314,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.threadContainers.forEach((threadContainer, threadId) => {
       if (getContainerTargetKey(threadContainer) !== key) return
+      this.completionCoordinator.cancel(threadId)
       const activeTurnId = this.activeTurnIds.get(threadId)
       if (activeTurnId) this.markTurnInterrupted(threadId, activeTurnId)
       this.activeTurnIds.delete(threadId)
@@ -3120,6 +3123,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.chatUpdatedTimers.forEach((timer) => clearTimeout(timer))
     this.chatUpdatedTimers.clear()
     this.latestThreadRefreshes.clear()
+    this.completionCoordinator.clear()
     this.activeOneShotGenerations.clear()
     this.canceledOneShotGenerationIds.clear()
     this.canceledOneShotGenerationTimers.forEach((timer) => clearTimeout(timer))
@@ -5203,6 +5207,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'turn/started') {
+      this.completionCoordinator.cancel(threadId)
       this.reconcileStartedTurn(threadId, pendingTurnId, turn)
     } else if (pendingTurnId) {
       this.replacePendingTurn(threadId, pendingTurnId, turn)
@@ -5219,7 +5224,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'turn/completed') {
-      this.emitChatUpdated(threadId, { turnCompleted: true })
+      // item/completed and turn/completed are the authoritative live protocol boundary. Publish
+      // the merged live turn immediately; persisted history remains recovery-only.
+      void this.completionCoordinator.complete(threadId, {
+        publish: () => this.emitChatUpdated(threadId, { turnCompleted: true }),
+        isCurrent: () => this.threads.has(threadId),
+        onError: (error, phase) => {
+          console.error(`Unable to ${phase} completed Codex thread ${threadId}`, error)
+        }
+      })
     } else {
       this.scheduleChatUpdated(threadId)
     }

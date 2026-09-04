@@ -59,7 +59,10 @@ import {
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getHostCommand, getHostExecutableCommand, type HostCommand } from '../../hostProcess'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
-import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
+import {
+  ProviderConversationCompletionCoordinator,
+  reconcileProviderRecords
+} from '../ProviderConversationEngine.ts'
 import { ProviderClientPool } from '../ProviderClientPool'
 import {
   disableProviderSkill,
@@ -601,6 +604,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private completionCoordinator = new ProviderConversationCompletionCoordinator()
   private oneShotGenerations = new Map<string, ClaudeOneShotGeneration>()
   private canceledOneShotGenerationIds = new Set<string>()
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -1240,6 +1244,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   dispose = (): void => {
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
+    this.completionCoordinator.clear()
     this.states.forEach((state) => {
       void this.closeStateQuery(state)
     })
@@ -2116,6 +2121,27 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state: ClaudeSessionState,
     turnCompleted = false,
     conversationChanged = true
+  ): void => {
+    if (turnCompleted) {
+      // The ordered SDK result/error event is the lifecycle boundary. Provisional fragments are
+      // no longer needed once that event has supplied the completed message collection.
+      state.partialMessages.clear()
+      void this.completionCoordinator.complete(state.id, {
+        publish: () => this.publishUpdate(state, true, conversationChanged),
+        isCurrent: () => this.states.get(state.id) === state,
+        onError: (error, phase) => {
+          console.error(`Unable to ${phase} completed Claude session ${state.id}`, error)
+        }
+      })
+      return
+    }
+    this.publishUpdate(state, false, conversationChanged)
+  }
+
+  private publishUpdate = (
+    state: ClaudeSessionState,
+    turnCompleted: boolean,
+    conversationChanged: boolean
   ): void => {
     if (conversationChanged) state.updatedAt = Date.now()
     const timer = this.updateTimers.get(state.id)

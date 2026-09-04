@@ -14,7 +14,6 @@ import { groupWorkingItemsForRenderer, rendererWorkingToolGroupLimit } from '../
 import {
   appendProviderConversationSegment,
   getProviderLifecycleForWorkingStatus,
-  settleProviderWorkingStatus,
   type ProviderConversationEntry
 } from '../ProviderConversationEngine.ts'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls.ts'
@@ -1711,19 +1710,18 @@ const renderChatItems = (
       status: ProviderWorkingStep['status'],
       segmentFinalMessage: ProviderMessage | null = null
     ): void => {
-      const settledStatus = settleProviderWorkingStatus(status, segmentFinalMessage !== null)
       const omitBeforeInitialUser =
         !hasSeenInitialUserMessage &&
         workingItemCount === 0 &&
         pendingTimelineAnchors.length === 0 &&
-        (settledStatus === 'stopped' || settledStatus === 'working' || settledStatus === 'queued')
+        (status === 'stopped' || status === 'working' || status === 'queued')
       const omitEmptyCompletedStep =
         workingItemCount === 0 &&
         pendingTimelineAnchors.length === 0 &&
-        settledStatus !== 'stopped' &&
-        settledStatus !== 'failed' &&
-        settledStatus !== 'working' &&
-        settledStatus !== 'queued'
+        status !== 'stopped' &&
+        status !== 'failed' &&
+        status !== 'working' &&
+        status !== 'queued'
       const showWorking = !omitBeforeInitialUser && !omitEmptyCompletedStep
       const entries: ProviderConversationEntry[] = [
         ...workingItems.map((item) => ({ kind: 'working' as const, item })),
@@ -1735,9 +1733,8 @@ const renderChatItems = (
         id: `${turn.id}:working${workingStepCount === 0 ? '' : `:${workingStepCount}`}`,
         entries,
         finalMessageIndex: segmentFinalMessage ? entries.length - 1 : -1,
-        lifecycle: getProviderLifecycleForWorkingStatus(settledStatus),
-        failureReason:
-          settledStatus === 'failed' && isRateLimitFailure(turn) ? 'rateLimit' : undefined,
+        lifecycle: getProviderLifecycleForWorkingStatus(status),
+        failureReason: status === 'failed' && isRateLimitFailure(turn) ? 'rateLimit' : undefined,
         showWorking,
         betweenWorkingAndFinal: pendingTimelineAnchors,
         ...(workingItemTailLimit < Number.MAX_SAFE_INTEGER

@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   appendProviderConversationSegment,
   assertUniqueProviderSnapshotIds,
+  ProviderConversationCompletionCoordinator,
   reconcileProviderRecords
 } from './ProviderConversationEngine.ts'
 
@@ -49,7 +50,7 @@ test('projects provider-neutral entries into one working step and one final resp
   assert.equal(items[0].status, 'worked')
 })
 
-test('can keep a tail step active while a provisional final response is visible', () => {
+test('keeps a tail step active while a provisional final response is visible', () => {
   const items = []
   appendProviderConversationSegment(items, {
     id: 'turn:working',
@@ -59,8 +60,7 @@ test('can keep a tail step active while a provisional final response is visible'
         message: { type: 'message', id: 'final', role: 'assistant', content: 'Provisional answer' }
       }
     ],
-    lifecycle: { active: true },
-    keepActiveAfterFinal: true
+    lifecycle: { active: true }
   })
 
   assert.equal(items[0].type, 'working')
@@ -94,4 +94,70 @@ test('rejects duplicate snapshot identities at provider boundaries', () => {
     () => assertUniqueProviderSnapshotIds([{ id: 'same' }, { id: 'same' }], 'test snapshot'),
     /duplicate ID same/
   )
+})
+
+test('publishes a provider completion before starting recovery reconciliation', async () => {
+  const coordinator = new ProviderConversationCompletionCoordinator()
+  const operations = []
+
+  const completion = coordinator.complete('chat', {
+    publish: () => operations.push('publish'),
+    reconcile: async () => {
+      operations.push('reconcile:start')
+      await Promise.resolve()
+      operations.push('reconcile:end')
+    },
+    publishReconciled: () => operations.push('publish:reconciled')
+  })
+
+  assert.deepEqual(operations, ['publish'])
+  const published = await completion
+
+  assert.equal(published, true)
+  assert.deepEqual(operations, [
+    'publish',
+    'reconcile:start',
+    'reconcile:end',
+    'publish:reconciled'
+  ])
+})
+
+test('does not publish stale reconciliation after a newer turn starts', async () => {
+  const coordinator = new ProviderConversationCompletionCoordinator()
+  let releaseReconciliation
+  const reconciliation = new Promise((resolve) => {
+    releaseReconciliation = resolve
+  })
+  const publications = []
+
+  const completion = coordinator.complete('chat', {
+    reconcile: () => reconciliation,
+    publish: () => publications.push('terminal'),
+    publishReconciled: () => publications.push('reconciled')
+  })
+  await Promise.resolve()
+  coordinator.cancel('chat')
+  releaseReconciliation()
+
+  assert.equal(await completion, true)
+  assert.deepEqual(publications, ['terminal'])
+})
+
+test('keeps the terminal snapshot visible when recovery reconciliation fails', async () => {
+  const coordinator = new ProviderConversationCompletionCoordinator()
+  const errors = []
+  const publications = []
+
+  const didPublish = await coordinator.complete('chat', {
+    reconcile: async () => {
+      throw new Error('history is temporarily unavailable')
+    },
+    publish: () => publications.push('terminal'),
+    publishReconciled: () => publications.push('reconciled'),
+    onError: (error, phase) => errors.push([phase, error.message])
+  })
+
+  assert.equal(didPublish, true)
+  assert.deepEqual(publications, ['terminal'])
+  assert.deepEqual(errors, [['reconcile', 'history is temporarily unavailable']])
 })

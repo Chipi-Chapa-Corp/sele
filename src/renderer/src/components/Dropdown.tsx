@@ -53,8 +53,13 @@ export type DropdownMenuAction = {
 
 type DropdownAppearance = 'glass' | 'inline' | 'splitAction'
 type DropdownMenuAlign = 'start' | 'end'
+type DropdownMenuPlacement = 'bottom' | 'top'
 type DropdownSize = 'normal' | 'small' | 'large'
 type DropdownValueDisplay = 'label' | 'icon'
+
+type DropdownMenuStyle = CSSProperties & {
+  '--menu-surface-max-height': string
+}
 
 type DropdownProps<TValue extends string = string> = {
   activeIndex?: number
@@ -72,7 +77,7 @@ type DropdownProps<TValue extends string = string> = {
   listboxId?: string
   optionGroups?: readonly DropdownOptionGroup<TValue>[]
   options?: readonly DropdownOption<TValue>[]
-  placement?: 'bottom' | 'top'
+  placement?: DropdownMenuPlacement
   searchable?: boolean
   searchPlaceholder?: string
   selectedValues?: readonly TValue[]
@@ -146,7 +151,8 @@ export const Dropdown = <TValue extends string>({
   const pointerActivatedIndexRef = useRef<number | null>(null)
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
+  const [menuStyle, setMenuStyle] = useState<DropdownMenuStyle | null>(null)
+  const [menuPlacement, setMenuPlacement] = useState<DropdownMenuPlacement>(placement)
   const [inFloatingPane, setInFloatingPane] = useState(false)
   const allGroupedOptions = useMemo<readonly DropdownOptionGroup<TValue>[]>(
     () => optionGroups ?? [{ id: 'options', options }],
@@ -341,19 +347,40 @@ export const Dropdown = <TValue extends string>({
     return enabledIndexes[nextEnabledIndex]
   }
 
-  const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
+  const getMenuPosition = (
+    buttonRect: DOMRect
+  ): { placement: DropdownMenuPlacement; style: DropdownMenuStyle } => {
     const viewportInset = 9.6
     const menuOffset = 4.8
     const maxMenuWidth = 224
+    const maxMenuHeight = Math.min(336, window.innerHeight * 0.56)
+    const spaceAbove = Math.max(0, buttonRect.top - menuOffset - viewportInset)
+    const spaceBelow = Math.max(
+      0,
+      window.innerHeight - buttonRect.bottom - menuOffset - viewportInset
+    )
+    const preferredSpace = placement === 'top' ? spaceAbove : spaceBelow
+    const alternateSpace = placement === 'top' ? spaceBelow : spaceAbove
+    const resolvedPlacement =
+      preferredSpace >= maxMenuHeight || preferredSpace >= alternateSpace
+        ? placement
+        : placement === 'top'
+          ? 'bottom'
+          : 'top'
+    const availableHeight = Math.min(
+      maxMenuHeight,
+      resolvedPlacement === 'top' ? spaceAbove : spaceBelow
+    )
     const startLeft = Math.min(
       Math.max(viewportInset, buttonRect.left),
       Math.max(viewportInset, window.innerWidth - maxMenuWidth - viewportInset)
     )
-    const nextMenuStyle: CSSProperties = {
+    const nextMenuStyle: DropdownMenuStyle = {
+      '--menu-surface-max-height': toCssRem(availableHeight),
       minWidth: toCssRem(buttonRect.width)
     }
 
-    if (placement === 'top') {
+    if (resolvedPlacement === 'top') {
       nextMenuStyle.bottom = toCssRem(window.innerHeight - buttonRect.top + menuOffset)
     } else {
       nextMenuStyle.top = toCssRem(buttonRect.bottom + menuOffset)
@@ -365,7 +392,7 @@ export const Dropdown = <TValue extends string>({
       nextMenuStyle.left = toCssRem(startLeft)
     }
 
-    return nextMenuStyle
+    return { placement: resolvedPlacement, style: nextMenuStyle }
   }
 
   const openMenu = (index = selectedIndex): void => {
@@ -380,7 +407,9 @@ export const Dropdown = <TValue extends string>({
     const buttonRect = buttonRef.current?.getBoundingClientRect()
     if (!buttonRect) return
 
-    setMenuStyle(getMenuStyle(buttonRect))
+    const menuPosition = getMenuPosition(buttonRect)
+    setMenuPlacement(menuPosition.placement)
+    setMenuStyle(menuPosition.style)
     setSearchQuery('')
     updateActiveIndex(getEnabledIndex(index))
     setOpen(true)
@@ -520,7 +549,7 @@ export const Dropdown = <TValue extends string>({
   const rootClassName = [
     'ui-dropdown',
     `ui-dropdown--${appearance === 'splitAction' ? 'split-action' : appearance}`,
-    `ui-dropdown--${placement}`,
+    `ui-dropdown--${menuOpen ? menuPlacement : placement}`,
     `ui-dropdown--${effectiveSize}`,
     `ui-dropdown--menu-${menuAlign}`,
     `ui-dropdown--value-${valueDisplay}`,

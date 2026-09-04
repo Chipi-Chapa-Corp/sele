@@ -21,7 +21,6 @@ export type ProviderConversationSegment = {
   entries: readonly ProviderConversationEntry[]
   finalMessageIndex?: number | null
   lifecycle: ProviderConversationLifecycle
-  keepActiveAfterFinal?: boolean
   failureReason?: ProviderWorkingStep['failureReason']
   showWorking?: boolean
   betweenWorkingAndFinal?: readonly ProviderChatItem[]
@@ -30,12 +29,6 @@ export type ProviderConversationSegment = {
     itemsStartIndex: number
   }
 }
-
-const exceptionalWorkingStatuses = new Set<ProviderWorkingStep['status']>([
-  'failed',
-  'queued',
-  'stopped'
-])
 
 export const getProviderWorkingStatus = (
   lifecycle: ProviderConversationLifecycle
@@ -56,17 +49,6 @@ export const getProviderLifecycleForWorkingStatus = (
   queued: status === 'queued',
   stopped: status === 'stopped'
 })
-
-export const settleProviderWorkingStatus = (
-  status: ProviderWorkingStep['status'],
-  hasFinalMessage: boolean,
-  keepActiveAfterFinal = false
-): ProviderWorkingStep['status'] => {
-  if (!hasFinalMessage || keepActiveAfterFinal || exceptionalWorkingStatuses.has(status)) {
-    return status
-  }
-  return 'worked'
-}
 
 export const getTrailingAssistantEntryIndex = (
   entries: readonly ProviderConversationEntry[]
@@ -95,12 +77,9 @@ export const appendProviderConversationSegment = (
   const workingItems = segment.entries.flatMap((entry, index) =>
     index === finalMessageIndex ? [] : [toWorkingItem(entry)]
   )
-  const baseStatus = getProviderWorkingStatus(segment.lifecycle)
-  const status = settleProviderWorkingStatus(
-    baseStatus,
-    finalMessage !== null,
-    segment.keepActiveAfterFinal
-  )
+  // A renderable assistant message is content, not a lifecycle boundary. Providers may stream
+  // final-answer text before their terminal event, so only the explicit lifecycle controls status.
+  const status = getProviderWorkingStatus(segment.lifecycle)
   const showWorking =
     segment.showWorking ??
     (workingItems.length > 0 ||
@@ -201,4 +180,85 @@ export const reconcileProviderRecords = <RecordType>(
   }
   if (options.compare) reconciled.sort(options.compare)
   return reconciled
+}
+
+type MaybePromise<T> = T | Promise<T>
+
+export type ProviderConversationCompletionPhase = 'reconcile' | 'publish'
+
+export type ProviderConversationCompletionOperations = {
+  /** Publishes the terminal snapshot from the live cache before any asynchronous recovery work. */
+  publish: () => MaybePromise<void>
+  /** Optionally refreshes persisted provider state after the terminal snapshot is visible. */
+  reconcile?: () => MaybePromise<void>
+  /** Optionally publishes the successfully reconciled snapshot as a non-terminal follow-up. */
+  publishReconciled?: () => MaybePromise<void>
+  /** Prevents obsolete recovery work from overwriting a newer turn. */
+  isCurrent?: () => boolean
+  onError?: (error: unknown, phase: ProviderConversationCompletionPhase) => void
+}
+
+/**
+ * Owns the shared terminal-state contract for provider conversations:
+ *
+ *   native completion -> immediate terminal publication -> optional recovery reconciliation
+ *
+ * The live event stream is the foreground source of truth. Persisted history is allowed to repair
+ * that snapshot afterward, but it must never suppress or delay the terminal publication. A newer
+ * completion or an explicit cancellation makes in-flight recovery stale, so it cannot overwrite
+ * a newer live turn.
+ */
+export class ProviderConversationCompletionCoordinator {
+  private completions = new Map<string, symbol>()
+
+  complete = (
+    conversationId: string,
+    operations: ProviderConversationCompletionOperations
+  ): Promise<boolean> => {
+    const completion = Symbol(conversationId)
+    this.completions.set(conversationId, completion)
+
+    const isCurrent = (): boolean =>
+      this.completions.get(conversationId) === completion && (operations.isCurrent?.() ?? true)
+
+    return (async (): Promise<boolean> => {
+      if (!isCurrent()) return false
+
+      // Calling publish before the first await is intentional: adapters invoke complete without
+      // awaiting it, and the terminal live snapshot must reach listeners in the same event turn.
+      try {
+        await operations.publish()
+      } catch (error) {
+        operations.onError?.(error, 'publish')
+        if (this.completions.get(conversationId) === completion) {
+          this.completions.delete(conversationId)
+        }
+        return false
+      }
+
+      if (operations.reconcile && isCurrent()) {
+        try {
+          await operations.reconcile()
+          if (isCurrent() && operations.publishReconciled) {
+            await operations.publishReconciled()
+          }
+        } catch (error) {
+          operations.onError?.(error, 'reconcile')
+        }
+      }
+
+      if (this.completions.get(conversationId) === completion) {
+        this.completions.delete(conversationId)
+      }
+      return true
+    })()
+  }
+
+  cancel = (conversationId: string): void => {
+    this.completions.delete(conversationId)
+  }
+
+  clear = (): void => {
+    this.completions.clear()
+  }
 }

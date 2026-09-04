@@ -268,8 +268,7 @@ export const renderOpenCodeChatItems = (
         completed: current.completed || (!isLast && !failed),
         failed,
         stopped: isLast && options.stopped
-      },
-      keepActiveAfterFinal: isWorking
+      }
     })
   }
 

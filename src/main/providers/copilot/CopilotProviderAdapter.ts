@@ -52,7 +52,10 @@ import {
   providerOneShotGenerationCanceledMessage
 } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
-import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
+import {
+  ProviderConversationCompletionCoordinator,
+  reconcileProviderRecords
+} from '../ProviderConversationEngine.ts'
 import {
   disableProviderSkill,
   listDisabledProviderSkills,
@@ -111,6 +114,7 @@ type CopilotSessionState = {
   pendingUserInputs: PendingUserInput[]
   plan: CopilotRenderedPlan | null
   planRefreshSequence: number
+  turnGeneration: number
 }
 
 const copilotTurnActivityEventTypes: ReadonlySet<SessionEvent['type']> = new Set([
@@ -306,6 +310,7 @@ const chatTitlePromptLimit = 2_000
 const chatTitleMaxLength = 36
 const copilotOneShotClientName = 'Sele one-shot'
 const oneShotCancellationRetentionMs = 120_000
+const copilotUpdateDelayMs = 35
 
 const normalizePlanStatus = (
   value: string | undefined
@@ -573,6 +578,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private completionCoordinator = new ProviderConversationCompletionCoordinator()
   private oneShotGenerations = new Map<string, CopilotOneShotGeneration>()
   private additionalDirectoriesBySession = new WeakMap<CopilotSession, Set<string>>()
   private canceledOneShotGenerationIds = new Set<string>()
@@ -965,6 +971,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       const timer = this.updateTimers.get(sessionId)
       if (timer) clearTimeout(timer)
       this.updateTimers.delete(sessionId)
+      this.completionCoordinator.cancel(sessionId)
       this.states.delete(sessionId)
       this.sessionContainers.delete(sessionId)
       this.hiddenSessionIds.delete(sessionId)
@@ -1026,6 +1033,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, options)
+    this.completionCoordinator.cancel(chatId)
     await this.applyTurnOptions(state, options)
     state.active = true
     state.stopped = false
@@ -1090,6 +1098,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, options)
+    this.completionCoordinator.cancel(chatId)
     await this.applyTurnOptions(state, options)
 
     if (mode === 'interrupt') {
@@ -1201,6 +1210,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
 
     const state = await this.ensureSession(chatId, options)
+    this.completionCoordinator.cancel(chatId)
     await this.loadEvents(state)
 
     const target = state.events.find(
@@ -1307,6 +1317,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   dispose = (): void => {
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
+    this.completionCoordinator.clear()
     this.oneShotGenerations.forEach((generation) => {
       void (generation.session ?? generation.state?.session)?.abort().catch(() => {})
     })
@@ -1452,7 +1463,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       pendingPermissions: [],
       pendingUserInputs: [],
       plan: null,
-      planRefreshSequence: 0
+      planRefreshSequence: 0,
+      turnGeneration: 0
     }
     this.sessionContainers.set(sessionId, storedContainer)
     this.states.set(sessionId, state)
@@ -1576,15 +1588,19 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
   }
 
-  private loadEvents = async (state: CopilotSessionState): Promise<void> => {
+  private loadEvents = async (
+    state: CopilotSessionState,
+    options: { retainLive?: boolean; isCurrent?: () => boolean } = {}
+  ): Promise<void> => {
     if (!state.session) return
     const events = await state.session.getEvents()
+    if (options.isCurrent && !options.isCurrent()) return
     state.events = reconcileProviderRecords(state.events, events, {
       authoritative: true,
       getId: (event) => event.id,
       compare: (first, second) =>
         toMilliseconds(first.timestamp) - toMilliseconds(second.timestamp),
-      retainCurrent: (event) => event.ephemeral === true
+      retainCurrent: (event) => options.retainLive === true || event.ephemeral === true
     })
   }
 
@@ -1665,6 +1681,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       }
     }
     if (isCopilotTurnActivityEvent(event)) {
+      if (event.type === 'user.message' || event.type === 'assistant.turn_start') {
+        state.turnGeneration += 1
+        this.completionCoordinator.cancel(state.id)
+      }
       state.active = true
       state.stopped = false
       state.failed = false
@@ -1678,19 +1698,32 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (event.type === 'session.idle') {
       state.active = false
       state.stopped = Boolean(event.data.aborted)
-      // Completion is the reconciliation boundary. Live Copilot notifications may be partial,
-      // duplicated, or delivered out of timestamp order; persisted events are authoritative.
-      void (async () => {
-        try {
-          await Promise.allSettled([
-            this.loadEvents(state),
+      const completedTurnGeneration = state.turnGeneration
+      const isCurrent = (): boolean =>
+        this.states.get(state.id) === state && state.turnGeneration === completedTurnGeneration
+      void this.completionCoordinator.complete(state.id, {
+        // session.idle terminates the live lifecycle immediately. Persisted events are only a
+        // recovery source for partial, duplicated, or out-of-order SDK notifications.
+        publish: () => this.emitUpdate(state, true),
+        reconcile: async () => {
+          await new Promise((resolve) => setTimeout(resolve, copilotUpdateDelayMs))
+          const results = await Promise.allSettled([
+            this.loadEvents(state, { retainLive: true, isCurrent }),
             this.loadSessionTitle(state),
             this.refreshPlan(state)
           ])
-        } finally {
-          this.emitUpdate(state, true)
+          const rejected = results.find(
+            (result): result is PromiseRejectedResult => result.status === 'rejected'
+          )
+          if (state.turnGeneration === completedTurnGeneration) state.active = false
+          if (rejected) throw rejected.reason
+        },
+        publishReconciled: () => this.emitUpdate(state),
+        isCurrent,
+        onError: (error, phase) => {
+          console.error(`Unable to ${phase} completed Copilot session ${state.id}`, error)
         }
-      })()
+      })
       return
     }
     if (event.type === 'session.plan_changed' || event.type === 'session.todos_changed') {
@@ -1813,7 +1846,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const timer = setTimeout(() => {
       this.updateTimers.delete(state.id)
       this.emitUpdate(state)
-    }, 35)
+    }, copilotUpdateDelayMs)
     this.updateTimers.set(state.id, timer)
   }
 

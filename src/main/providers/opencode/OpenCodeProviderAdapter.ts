@@ -44,7 +44,10 @@ import {
 } from '../../../shared/provider'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
-import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
+import {
+  ProviderConversationCompletionCoordinator,
+  reconcileProviderRecords
+} from '../ProviderConversationEngine.ts'
 import {
   disableProviderSkill,
   listDisabledProviderSkills,
@@ -350,7 +353,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private pendingTurnCompletion = new Set<string>()
+  private completionCoordinator = new ProviderConversationCompletionCoordinator()
   private modelContextLimits = new Map<string, number>()
   private oneShotGenerations = new Map<string, OpenCodeOneShotGeneration>()
   private oneShotSessionIds = new Set<string>()
@@ -1044,7 +1047,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   dispose = (): void => {
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
-    this.pendingTurnCompletion.clear()
+    this.completionCoordinator.clear()
     this.oneShotGenerations.forEach((generation) => {
       if (generation.client && generation.sessionId && generation.directory) {
         void generation.client.session
@@ -1143,6 +1146,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const { type, properties, sessionID } = event
     const sessionInfo = isRecord(properties.info) ? (properties.info as unknown as Session) : null
     if (sessionInfo && isOneShotSession(sessionInfo)) {
+      this.completionCoordinator.cancel(sessionID)
       this.states.delete(sessionID)
       if (type === 'session.deleted') this.oneShotSessionIds.delete(sessionID)
       else this.oneShotSessionIds.add(sessionID)
@@ -1163,6 +1167,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     ) {
       const status = isRecord(properties.status) ? properties.status : null
       if (type !== 'session.status' || status?.type === 'busy' || status?.type === 'retry') {
+        this.completionCoordinator.cancel(sessionID)
         state.active = true
         state.stopped = false
         state.failed = false
@@ -1189,7 +1194,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         void this.finishTurnAndDrainQueue(state)
         return
       }
-      this.scheduleUpdate(sessionID, true)
+      void this.completeTurn(state)
       return
     }
     this.scheduleUpdate(sessionID)
@@ -1405,6 +1410,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const client = (await this.getClientEntry(state.container)).client
     await this.refreshState(state, client, preserveActive)
+    return this.createChatDetailFromState(state)
+  }
+
+  private createChatDetailFromState = (state: OpenCodeChatState): ProviderChatDetail => {
     const session = state.session
     if (!session) throw new Error('Unable to load OpenCode session.')
     state.revision += 1
@@ -1454,6 +1463,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const text = message.trim()
     const parts = await createPromptParts(text, options)
     if (parts.length === 0) throw new Error('Cannot send an empty OpenCode message.')
+    this.completionCoordinator.cancel(state.id)
     const client = (await this.getClientEntry(state.container)).client
     const model = parseOpenCodeModelId(options?.model ?? fallbackOpenCodeModels[0]!.id)
     await client.session.update(
@@ -1536,7 +1546,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private drainQueue = async (state: OpenCodeChatState): Promise<void> => {
     const pending = state.queuedMessages.shift()
     if (!pending) {
-      this.scheduleUpdate(state.id, true)
+      this.scheduleUpdate(state.id)
       return
     }
     try {
@@ -1544,47 +1554,58 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     } catch (error) {
       state.failed = true
       state.queuedMessages.unshift(pending)
-      this.scheduleUpdate(state.id, true)
+      void this.completeTurn(state)
       console.error('Unable to send queued OpenCode message', error)
     }
   }
 
   private finishTurnAndDrainQueue = async (state: OpenCodeChatState): Promise<void> => {
-    try {
-      await this.emitUpdateNow(state, true)
-    } catch (error) {
-      this.scheduleUpdate(state.id, true)
-      console.error('Unable to emit the completed OpenCode turn', error)
-    }
+    // completeTurn publishes synchronously from the live cache; recovery must not hold the queue.
+    void this.completeTurn(state)
     if (!state.stopped && state.queuedMessages.length > 0) await this.drainQueue(state)
   }
 
+  private completeTurn = (state: OpenCodeChatState): Promise<boolean> =>
+    this.completionCoordinator.complete(state.id, {
+      publish: () => this.emitUpdateNow(state, true, state.session === null),
+      reconcile: async () => {
+        await new Promise((resolve) => setTimeout(resolve, updateDelayMs))
+        const client = (await this.getClientEntry(state.container)).client
+        await this.refreshState(state, client)
+      },
+      publishReconciled: () => this.emitUpdateNow(state, false, false),
+      isCurrent: () => this.states.get(state.id) === state,
+      onError: (error, phase) => {
+        console.error(`Unable to ${phase} completed OpenCode session ${state.id}`, error)
+      }
+    })
+
   private emitUpdateNow = async (
     state: OpenCodeChatState,
-    turnCompleted = false
+    turnCompleted = false,
+    refresh = true
   ): Promise<void> => {
     const timer = this.updateTimers.get(state.id)
     if (timer) clearTimeout(timer)
     this.updateTimers.delete(state.id)
-    const completed = this.pendingTurnCompletion.delete(state.id) || turnCompleted
-    const detail = await this.createChatDetail(state)
+    const detail = refresh
+      ? await this.createChatDetail(state)
+      : this.createChatDetailFromState(state)
     if (this.states.get(state.id) !== state) return
-    this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted: completed }))
+    this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
   }
 
-  private scheduleUpdate = (chatId: string, turnCompleted = false): void => {
-    if (turnCompleted) this.pendingTurnCompletion.add(chatId)
+  private scheduleUpdate = (chatId: string): void => {
     const existingTimer = this.updateTimers.get(chatId)
     if (existingTimer) clearTimeout(existingTimer)
     const timer = setTimeout(() => {
       this.updateTimers.delete(chatId)
       const state = this.states.get(chatId)
       if (!state) return
-      const completed = this.pendingTurnCompletion.delete(chatId)
       void this.createChatDetail(state)
         .then((detail) => {
           this.chatUpdatedListeners.forEach((listener) =>
-            listener(detail, { turnCompleted: completed })
+            listener(detail, { turnCompleted: false })
           )
         })
         .catch((error) => console.error('Unable to refresh OpenCode chat update', error))
