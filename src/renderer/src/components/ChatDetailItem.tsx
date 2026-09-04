@@ -1918,15 +1918,16 @@ const WorkingStep: React.FC<{
     onRetry
       ? { onReset: onUsageReset, onRetry }
       : null
+  const hasStoppedOrFailed = item.status === 'stopped' || item.status === 'failed'
   const turnActions =
     !linkedToFollowingStep &&
-    ((item.status === 'stopped' && (onRetry || onContinue)) || rateLimitResetActions) ? (
+    ((hasStoppedOrFailed && (onRetry || onContinue)) || rateLimitResetActions) ? (
       <div className="chat-detail__working-actions">
-        {item.status === 'stopped' && onRetry && (
+        {hasStoppedOrFailed && onRetry && (
           <Button
             theme="secondary"
             size="small"
-            aria-label="Retry stopped turn"
+            aria-label={`Retry ${item.status} turn`}
             title="Retry"
             disabled={retryDisabled}
             callback={onRetry}
@@ -1934,11 +1935,11 @@ const WorkingStep: React.FC<{
             label={<span>Retry</span>}
           />
         )}
-        {item.status === 'stopped' && onContinue && (
+        {hasStoppedOrFailed && onContinue && (
           <Button
             theme="secondary"
             size="small"
-            aria-label="Continue stopped turn"
+            aria-label={`Continue ${item.status} turn`}
             title="Continue"
             disabled={continueDisabled}
             callback={() => {

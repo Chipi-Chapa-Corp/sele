@@ -44,3 +44,24 @@ test('rejects duplicate transcript IDs at the renderer boundary', () => {
     /duplicate item ID same-id/
   )
 })
+
+test('keeps stopped and failed turn messages available for retry', () => {
+  const stoppedMessage = message('user-stopped', 'user', 'Stopped request')
+  const failedMessage = message('user-failed', 'user', 'Failed request')
+  const stoppedStep = {
+    type: 'working',
+    id: 'working-stopped',
+    status: 'stopped',
+    items: []
+  }
+  const failedStep = {
+    type: 'working',
+    id: 'working-failed',
+    status: 'failed',
+    items: []
+  }
+  const model = buildChatConversationModel([stoppedMessage, stoppedStep, failedMessage, failedStep])
+
+  assert.equal(model.stoppedTurnRetryMessages.get(stoppedStep.id), stoppedMessage)
+  assert.equal(model.stoppedTurnRetryMessages.get(failedStep.id), failedMessage)
+})

@@ -5097,7 +5097,7 @@ export const useWorkspaceController = () => {
                 }
                 onInterruptPendingMessage={handleInterruptPendingMessage}
                 onContinueStoppedTurn={
-                  item.type === 'working' && item.status === 'stopped'
+                  item.type === 'working' && (item.status === 'stopped' || item.status === 'failed')
                     ? handleContinueStoppedTurn
                     : undefined
                 }
