@@ -93,15 +93,18 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   } = dependencies
 
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
+  const chatOpenedElsewhere = chatDetail?.writeAccess === 'readOnly'
   const messageBoxDisabled = selectedChat
     ? providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
+      chatOpenedElsewhere ||
       Boolean(activeSubagentChatView) ||
       (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
     : providerUpdateInProgress || !newSessionProviderAvailable
   const canEditOwnMessages = Boolean(
     selectedChat &&
     !activeSubagentChatView &&
+    !chatOpenedElsewhere &&
     chatDetail?.capabilities.editMessages &&
     chatLoadState === 'ready' &&
     sendState !== 'sending' &&

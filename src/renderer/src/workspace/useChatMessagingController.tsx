@@ -477,7 +477,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     } catch (error) {
       void providerApi
         .getChat(providerId, chatId)
-        .then((detail) => applyViewedChatDetail(providerId, detail))
+        .then((detail) => applyViewedChatDetail(providerId, detail, { allowEqualRevision: true }))
         .catch(() => {})
       handleSendFailure(error, 'Unable to send message.')
       return false

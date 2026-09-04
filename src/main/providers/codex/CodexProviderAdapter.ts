@@ -837,6 +837,9 @@ const getFoundActiveTurnId = (error: unknown): string | null => {
   return foundTurnId && foundTurnId.toLocaleLowerCase() !== 'none' ? foundTurnId : null
 }
 
+const isActiveWriterError = (error: unknown): boolean =>
+  error instanceof Error && /\bthread\s+\S+\s+already has an active writer\b/i.test(error.message)
+
 const getSteerResponseTurnId = (response: TurnSteerResponse | string): string | null => {
   if (typeof response === 'string') return response.trim() || null
   return getStringValue(response.turnId)
@@ -1209,6 +1212,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   >()
   private threads = new Map<string, CodexThread>()
   private threadRevisions = new Map<string, number>()
+  private externallyOwnedThreadIds = new Set<string>()
   private agentResponseOverlays = new Map<string, Map<string, CodexAgentResponseOverlay>>()
   private paginatedTurnCatalogs = new Map<string, { threadUpdatedAt: number; turns: CodexTurn[] }>()
   private pendingTurnIds = new Map<string, string>()
@@ -1872,13 +1876,58 @@ export class CodexProviderAdapter implements ProviderAdapter {
     chatId: string,
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> =>
-    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
-      this.loadChatCursorWindowInContext(
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      const detail = await this.loadChatCursorWindowInContext(
         chatId,
         { cursor: null, direction: 'older', limit: rendererChatUpdateTurnLimit },
         true
       )
-    )
+      return this.probeChatWriteAccess(detail)
+    })
+
+  /**
+   * Codex deliberately keeps transcript reads independent from the single-writer lease. There is
+   * no read-only ownership field, so use a short-lived app-server to test resume availability.
+   * Codex retains its writer lease even after thread/unsubscribe, so the probe process must exit
+   * before Sele reports the chat as writable.
+   */
+  private probeChatWriteAccess = async (
+    detail: ProviderChatDetail
+  ): Promise<ProviderChatDetail> => {
+    const hasLocallyOwnedTurn =
+      this.pendingTurnStarts.has(detail.id) ||
+      this.pendingTurnIds.has(detail.id) ||
+      this.activeTurnIds.has(detail.id)
+    if (hasLocallyOwnedTurn) {
+      this.externallyOwnedThreadIds.delete(detail.id)
+      return { ...detail, writeAccess: 'writable', capabilities: codexCapabilities }
+    }
+
+    const probeClient = new CodexAppServerClient(this.getCurrentContainer())
+    try {
+      await probeClient.request<ThreadResumeResponse>('thread/resume', {
+        threadId: detail.id,
+        excludeTurns: true
+      })
+      this.externallyOwnedThreadIds.delete(detail.id)
+      return { ...detail, writeAccess: 'writable', capabilities: codexCapabilities }
+    } catch (error) {
+      if (!isActiveWriterError(error)) {
+        return this.externallyOwnedThreadIds.has(detail.id)
+          ? { ...detail, writeAccess: 'readOnly' }
+          : { ...detail, writeAccess: 'unknown', capabilities: codexCapabilities }
+      }
+
+      this.externallyOwnedThreadIds.add(detail.id)
+      return {
+        ...detail,
+        writeAccess: 'readOnly',
+        capabilities: { ...detail.capabilities, editMessages: false, activeMessages: false }
+      }
+    } finally {
+      await probeClient.disposeAndWait()
+    }
+  }
 
   getChatWindow = (
     chatId: string,
@@ -3083,6 +3132,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.queuedTurnRetryTimers.forEach((timer) => clearTimeout(timer))
     this.queuedTurnRetryTimers.clear()
     this.threads.clear()
+    this.externallyOwnedThreadIds.clear()
     this.pendingTurnIds.clear()
     this.activeTurnIds.clear()
     this.rolledBackTurnIds.clear()
@@ -3470,7 +3520,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       seenUpdatedAt: null,
       purpose: null,
       container: this.threadContainers.get(thread.id) ?? null,
-      capabilities: codexCapabilities,
+      writeAccess: this.externallyOwnedThreadIds.has(thread.id) ? 'readOnly' : 'writable',
+      capabilities: this.externallyOwnedThreadIds.has(thread.id)
+        ? { ...codexCapabilities, editMessages: false, activeMessages: false }
+        : codexCapabilities,
       pendingApproval: this.getProviderPendingApproval(thread.id),
       pendingUserInput: null,
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
@@ -3865,12 +3918,19 @@ export class CodexProviderAdapter implements ProviderAdapter {
       })
     }
     const existingThread = this.threads.get(threadId) ?? null
-    const resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
-      threadId,
-      config: getRecommendedPluginsConfig(options),
-      excludeTurns: true,
-      ...getThreadAccessOptions(options)
-    })
+    let resume: ThreadResumeResponse
+    try {
+      resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
+        threadId,
+        config: getRecommendedPluginsConfig(options),
+        excludeTurns: true,
+        ...getThreadAccessOptions(options)
+      })
+      this.externallyOwnedThreadIds.delete(threadId)
+    } catch (error) {
+      if (isActiveWriterError(error)) this.externallyOwnedThreadIds.add(threadId)
+      throw error
+    }
     const [cwd, name] = await Promise.all([
       this.resolveThreadCwd(resume.thread, fallbackCwd),
       this.resolveThreadName(resume.thread)

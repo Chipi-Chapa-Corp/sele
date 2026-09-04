@@ -550,9 +550,16 @@ export const providerApi: ProviderApi = {
   getChats: async (providerId, options) => {
     const page = await adapters[providerId].getChats(options)
     const chats = await applyMetadataToChats(page.chats)
+    const projectCwd = normalizeCwd(options?.projectCwd)
     return {
       ...page,
-      chats: chats.filter((chat) => chat.purpose !== 'commit')
+      chats: chats.filter(
+        (chat) =>
+          chat.purpose !== 'commit' &&
+          (options?.done === undefined || chat.done === options.done) &&
+          (projectCwd === null ||
+            (normalizeCwd(chat.projectCwd) ?? normalizeCwd(chat.cwd)) === projectCwd)
+      )
     }
   },
   getChat: async (providerId, chatId) => {

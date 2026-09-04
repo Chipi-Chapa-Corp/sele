@@ -93,6 +93,7 @@ import {
 } from './collapsedProjectGroups'
 import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
+import { chatOpenElsewhereMessage } from './requestError'
 import { getProjectDisplayName, renderProjectGlyph } from './projectPresentation'
 import {
   readStoredPinnedRecentChatReferences,
@@ -202,6 +203,7 @@ import {
 } from './chatDetailWindow'
 import {
   activeGroupKey,
+  allDoneProjectsValue,
   chatListFetchPageSize,
   chatTurnWindowSize,
   commitActionLabels,
@@ -592,6 +594,9 @@ export const useWorkspaceController = () => {
   const [visibleChatPageCountsByGroup, setVisibleChatPageCountsByGroup] = useState<
     Record<string, number>
   >({})
+  const [doneProjectFilterValue, setDoneProjectFilterValue] = useState(allDoneProjectsValue)
+  const [doneProjectFilterChats, setDoneProjectFilterChats] = useState<ProviderChat[]>([])
+  const [doneProjectFilterLoadState, setDoneProjectFilterLoadState] = useState<LoadState>('ready')
   const [cwdNotesByGroup, setCwdNotesByGroup] = useState<Record<string, ProviderCwdNote[]>>({})
   const [projectIconsByGroup, setProjectIconsByGroup] = useState<
     Record<string, AppProjectIcon | null>
@@ -740,6 +745,7 @@ export const useWorkspaceController = () => {
   const draggedProjectGroupKeyRef = useRef<string | null>(null)
   const projectDropInsertionIndexRef = useRef<number | null>(null)
   const projectCollapseFrameRef = useRef<number | null>(null)
+  const doneProjectFilterRequestIdRef = useRef(0)
   const changesCwdRef = useRef<string | null>(null)
   const changesContainerRef = useRef<AppContainerTarget | null>(null)
   const changeSourceRef = useRef(changeSource)
@@ -2268,7 +2274,11 @@ export const useWorkspaceController = () => {
       const updatedAt = Date.now()
       const detailKey = getProviderChatKey(providerId, detail.id)
       const currentDetail = chatDetailRef.current
-      if (isChatDetailSnapshotStale(detail, currentDetail)) {
+      const replacesEqualRevision =
+        options.allowEqualRevision === true &&
+        currentDetail?.id === detail.id &&
+        currentDetail.revision === detail.revision
+      if (isChatDetailSnapshotStale(detail, currentDetail) && !replacesEqualRevision) {
         if (options.select) setChatLoadState('ready')
         return
       }
@@ -2294,6 +2304,11 @@ export const useWorkspaceController = () => {
             (chat) => chat.providerId !== providerId || chat.id !== appliedDetail.id
           )
         )
+        setDoneProjectFilterChats((currentChats) =>
+          currentChats.filter(
+            (chat) => chat.providerId !== providerId || chat.id !== appliedDetail.id
+          )
+        )
         if (!options.select && selectedChatKeyRef.current !== detailKey) return
       }
 
@@ -2315,6 +2330,15 @@ export const useWorkspaceController = () => {
       }
 
       if (hiddenCommit) return
+
+      setDoneProjectFilterChats((currentChats) =>
+        currentChats.flatMap((chat) => {
+          if (chat.providerId !== providerId || chat.id !== appliedDetail.id) return [chat]
+
+          const nextChat = getChatFromDetail(providerId, appliedDetail, chat, updatedAt)
+          return nextChat.done ? [nextChat] : []
+        })
+      )
 
       setChats((currentChats) => {
         const existingChat =
@@ -2420,6 +2444,15 @@ export const useWorkspaceController = () => {
       currentChats.map((chat) => {
         const metadata = metadataById.get(chat.id)
         return metadata ? mergeChatMetadata(chat, metadata) : chat
+      })
+    )
+    setDoneProjectFilterChats((currentChats) =>
+      currentChats.flatMap((chat) => {
+        const metadata = metadataById.get(chat.id)
+        if (!metadata) return [chat]
+
+        const nextChat = mergeChatMetadata(chat, metadata)
+        return nextChat.done ? [nextChat] : []
       })
     )
     setSelectedChat((currentChat) => {
@@ -2935,7 +2968,11 @@ export const useWorkspaceController = () => {
             kind: 'active' as const
           }
         ]
-  const doneChatGroup = chatGroups.find((group) => group.kind === 'done') ?? null
+  const unfilteredDoneChatGroup = chatGroups.find((group) => group.kind === 'done') ?? null
+  const doneChatGroup =
+    unfilteredDoneChatGroup && doneProjectFilterValue !== allDoneProjectsValue
+      ? { ...unfilteredDoneChatGroup, chats: doneProjectFilterChats }
+      : unfilteredDoneChatGroup
   const messageBoxNotesCwd = selectedChat ? changesProjectCwd : newSessionCwd
   const messageBoxNotesVisible = Boolean(selectedChat) || newChatOpen
   const messageBoxNotesGroup = useMemo(
@@ -3904,16 +3941,101 @@ export const useWorkspaceController = () => {
     }))
   ]
 
-  const handleToggleCwdGroup = (groupKey: string): void => {
-    if (groupKey === doneGroupKey) {
-      setVisibleChatPageCountsByGroup((currentPageCounts) => {
-        if (!(groupKey in currentPageCounts)) return currentPageCounts
+  const resetDoneChatPagination = (): void => {
+    setVisibleChatPageCountsByGroup((currentPageCounts) => {
+      if (!(doneGroupKey in currentPageCounts)) return currentPageCounts
 
-        const nextPageCounts = { ...currentPageCounts }
-        delete nextPageCounts[groupKey]
-        return nextPageCounts
-      })
+      const nextPageCounts = { ...currentPageCounts }
+      delete nextPageCounts[doneGroupKey]
+      return nextPageCounts
+    })
+  }
+
+  const resetDoneProjectFilter = (): void => {
+    doneProjectFilterRequestIdRef.current += 1
+    setDoneProjectFilterValue(allDoneProjectsValue)
+    setDoneProjectFilterChats([])
+    setDoneProjectFilterLoadState('ready')
+    resetDoneChatPagination()
+  }
+
+  const handleDoneProjectFilterChange = (projectCwd: string): void => {
+    const requestId = ++doneProjectFilterRequestIdRef.current
+    setDoneProjectFilterValue(projectCwd)
+    setDoneProjectFilterChats([])
+    resetDoneChatPagination()
+
+    if (projectCwd === allDoneProjectsValue) {
+      setDoneProjectFilterLoadState('ready')
+      return
     }
+
+    setDoneProjectFilterLoadState('loading')
+    const sourcesByKey = new Map<
+      string,
+      { providerId: ProviderId; container: AppContainerTarget }
+    >()
+    const addSource = (
+      providerId: ProviderId,
+      container: AppContainerTarget | null | undefined
+    ): void => {
+      const normalizedContainer = normalizeContainerTarget(container)
+      const sourceKey = `${providerId}:${getContainerTargetKey(normalizedContainer)}`
+      if (!sourcesByKey.has(sourceKey)) {
+        sourcesByKey.set(sourceKey, { providerId, container: normalizedContainer })
+      }
+    }
+
+    chatsRef.current.forEach((chat) => addSource(chat.providerId, chat.container))
+    newSessionAvailableProviderIds.forEach((providerId) =>
+      addSource(providerId, newSessionContainer)
+    )
+
+    const loadSourceDoneChats = async ({
+      providerId,
+      container
+    }: {
+      providerId: ProviderId
+      container: AppContainerTarget
+    }): Promise<ProviderChat[]> => {
+      const loadedChats: ProviderChat[] = []
+      const seenCursors = new Set<string>()
+      let cursor: string | null = null
+
+      do {
+        const page = await providerApi.getChats(providerId, {
+          container,
+          cursor,
+          done: true,
+          limit: chatListFetchPageSize,
+          projectCwd
+        })
+        loadedChats.push(...page.chats)
+        cursor = page.nextCursor
+        if (cursor && seenCursors.has(cursor)) break
+        if (cursor) seenCursors.add(cursor)
+      } while (cursor)
+
+      return loadedChats
+    }
+
+    void Promise.allSettled(Array.from(sourcesByKey.values()).map(loadSourceDoneChats)).then(
+      (results) => {
+        if (doneProjectFilterRequestIdRef.current !== requestId) return
+
+        const successfulChatGroups = results.flatMap((result) =>
+          result.status === 'fulfilled' ? [result.value] : []
+        )
+        setDoneProjectFilterChats(sortChatsForGroup(mergeChats(...successfulChatGroups)))
+        setDoneProjectFilterLoadState(
+          results.length > 0 && successfulChatGroups.length === 0 ? 'error' : 'ready'
+        )
+      }
+    )
+  }
+
+  const handleToggleCwdGroup = (groupKey: string): void => {
+    if (groupKey === doneGroupKey) resetDoneProjectFilter()
 
     const nextGroups = {
       ...collapsedCwdGroups,
@@ -4208,9 +4330,13 @@ export const useWorkspaceController = () => {
     setProviderModelsRevision,
     providerUpdatePreferences
   })
-  const requestErrorVisible = sendState === 'error'
-  const requestErrorSummary =
-    sendState === 'error' && sendError ? sendError : 'Unable to complete request.'
+  const chatOpenedElsewhere = chatDetail?.writeAccess === 'readOnly'
+  const requestErrorVisible = chatOpenedElsewhere || sendState === 'error'
+  const requestErrorSummary = chatOpenedElsewhere
+    ? chatOpenElsewhereMessage
+    : sendState === 'error' && sendError
+      ? sendError
+      : 'Unable to complete request.'
 
   const handleSendFailure = useCallback((error: unknown, fallback: string): void => {
     setSendError(getErrorMessage(error, fallback))
@@ -4220,6 +4346,12 @@ export const useWorkspaceController = () => {
   const handleDismissSendError = (): void => {
     setSendState('idle')
     setSendError(null)
+  }
+
+  const handleRetryChatWriteAccess = (): void => {
+    if (!selectedChat) return
+    setChatLoadState('loading')
+    setChatLoadRequest((currentRequest) => currentRequest + 1)
   }
 
   const {
@@ -4243,6 +4375,8 @@ export const useWorkspaceController = () => {
     applyChatDetail,
     chatOrderMutationsRef,
     setChats,
+    doneProjectFilterActive: doneProjectFilterValue !== allDoneProjectsValue,
+    setDoneProjectFilterChats,
     projectCollapseFrameRef,
     expandedProjectGroupsBeforeDragRef,
     draggedProjectGroupKeyRef,
@@ -4370,12 +4504,16 @@ export const useWorkspaceController = () => {
     projectIconsByGroup,
     activeChatGroups,
     chatGroupingPreference,
+    doneProjectFilterLoadState,
+    doneProjectFilterValue,
+    projectOptions,
     projectDropInsertionIndex,
     selectedChat,
     committingChatKeys,
     latestCommitFinishedAtByChatKey,
     draggedProjectGroupKey,
     projectNamesByCwd,
+    handleDoneProjectFilterChange,
     handleLoadMoreChatsInGroup,
     handleShowLessChatsInGroup,
     handleMarkChatDone,
@@ -5360,6 +5498,7 @@ export const useWorkspaceController = () => {
       handleOpenAttachment,
       handleOpenFileLink,
       handleReasoningEffortChange,
+      handleRetryChatWriteAccess,
       handleResolveApproval,
       handleRunAction,
       handleSandboxModeChange,
@@ -5401,6 +5540,7 @@ export const useWorkspaceController = () => {
       remoteRuntimeOptions,
       requestErrorSummary,
       requestErrorVisible,
+      chatOpenedElsewhere,
       resetAccountRateLimits,
       resolveSelectedUserInput,
       sandboxModes,

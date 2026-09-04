@@ -1,8 +1,9 @@
 /* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
 import { useCallback, useEffect } from 'react'
-import { FolderKanban } from 'lucide-react'
+import { FolderKanban, FolderTree } from 'lucide-react'
 import type { ProviderMessage } from '../../../shared/provider'
 import { ChatListGroup, type ChatListGroupData } from '../components/ChatListGroup'
+import { Dropdown } from '../components/Dropdown'
 import { providerApi } from '../providerApi'
 import { renderProjectGlyph } from '../projectPresentation'
 import { isScrolledToBottom, readChatScrollAnchor } from '../chatLayout'
@@ -13,6 +14,7 @@ import {
   hasPendingSteeringMessage,
   isActiveChatStatus
 } from './chatControllerUtils'
+import { allDoneProjectsValue } from './controllerTypes'
 import type { ChatInteractionControllerDependencies } from './featureControllerDependencies'
 
 // Return shape is inferred from the controller declarations below.
@@ -39,12 +41,16 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     projectIconsByGroup,
     activeChatGroups,
     chatGroupingPreference,
+    doneProjectFilterLoadState,
+    doneProjectFilterValue,
+    projectOptions,
     projectDropInsertionIndex,
     selectedChat,
     committingChatKeys,
     latestCommitFinishedAtByChatKey,
     draggedProjectGroupKey,
     projectNamesByCwd,
+    handleDoneProjectFilterChange,
     handleLoadMoreChatsInGroup,
     handleShowLessChatsInGroup,
     handleMarkChatDone,
@@ -190,6 +196,49 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
             projectDropInsertionIndex === activeChatGroups.length
           ? 'after'
           : null
+    const doneProjectFilter =
+      group.kind === 'done' && groupOpen ? (
+        <span className="chat-list-group__done-filter">
+          <Dropdown
+            fill
+            emptyContent="No matching projects"
+            icon={
+              doneProjectFilterValue === allDoneProjectsValue ? (
+                <FolderTree aria-hidden="true" />
+              ) : undefined
+            }
+            menuActions={[
+              {
+                id: 'all-projects',
+                label: 'All projects',
+                icon: <FolderTree aria-hidden="true" />,
+                callback: () => handleDoneProjectFilterChange(allDoneProjectsValue)
+              }
+            ]}
+            options={projectOptions}
+            placement="top"
+            searchable
+            searchPlaceholder="Search projects"
+            size="small"
+            value={doneProjectFilterValue}
+            valueLabel={
+              doneProjectFilterValue === allDoneProjectsValue ? 'All projects' : undefined
+            }
+            aria-label="Filter done chats by project"
+            onChange={handleDoneProjectFilterChange}
+          />
+        </span>
+      ) : null
+    const doneProjectFilterEmptyContent =
+      group.kind !== 'done' || group.chats.length > 0 ? null : (
+        <p className="chat-list-group__empty">
+          {doneProjectFilterLoadState === 'loading'
+            ? 'Loading done chats…'
+            : doneProjectFilterLoadState === 'error'
+              ? 'Unable to load done chats.'
+              : 'No done chats in this project.'}
+        </p>
+      )
 
     return (
       <ChatListGroup
@@ -206,6 +255,9 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         projectDropPosition={projectDropPosition}
         visibleChatCount={visibleChatCount}
         chatPageSize={chatPageSize}
+        deferItems={group.kind === 'done'}
+        emptyContent={doneProjectFilterEmptyContent}
+        headerAction={doneProjectFilter}
         projectNamesByCwd={projectNamesByCwd}
         onLoadMoreChats={group.kind === 'pinned' ? undefined : handleLoadMoreChatsInGroup}
         onShowLessChats={group.kind === 'pinned' ? undefined : handleShowLessChatsInGroup}

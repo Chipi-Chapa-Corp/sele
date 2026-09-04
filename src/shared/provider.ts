@@ -553,7 +553,9 @@ export type ProviderChat = {
 
 export type ProviderChatListOptions = ProviderSourceOptions & {
   cursor?: string | null
+  done?: boolean
   limit?: number | null
+  projectCwd?: string
 }
 
 export type ProviderChatPage = {
@@ -565,6 +567,8 @@ export type ProviderCapabilities = {
   editMessages: boolean
   activeMessages: boolean
 }
+
+export type ProviderChatWriteAccess = 'writable' | 'readOnly' | 'unknown'
 
 export type ProviderReviewComment = {
   id: string
@@ -787,6 +791,8 @@ export type ProviderChatDetail = {
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
   container: AppContainerTarget | null
+  /** Whether this provider session can currently mutate the chat. Missing means writable. */
+  writeAccess?: ProviderChatWriteAccess
   capabilities: ProviderCapabilities
   pendingApproval: ProviderPendingApproval | null
   pendingUserInput: ProviderPendingUserInput | null

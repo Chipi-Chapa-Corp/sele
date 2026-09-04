@@ -45,6 +45,7 @@ export type NewSessionLocation = 'folder' | 'worktree'
 export type WorktreeCreationState = 'idle' | 'creating' | 'canceling'
 
 export type ApplyChatDetailOptions = {
+  allowEqualRevision?: boolean
   select?: boolean
 }
 
@@ -222,6 +223,8 @@ export const activeGroupKey = 'active'
 export const unknownCwdGroupKey = 'cwd:unknown'
 
 export const doneGroupKey = 'done'
+
+export const allDoneProjectsValue = '__sele_all_done_projects__'
 
 export const newSessionProjectPlaceholderValue = '__sele_new_session_project_placeholder__'
 

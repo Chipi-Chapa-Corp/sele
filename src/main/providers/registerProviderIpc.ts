@@ -648,11 +648,20 @@ const requireChatListOptions = (value: unknown): ProviderChatListOptions | undef
     throw new Error('Invalid chat list options')
   }
 
-  const options = value as { container?: unknown; cursor?: unknown; limit?: unknown }
+  const options = value as {
+    container?: unknown
+    cursor?: unknown
+    done?: unknown
+    limit?: unknown
+    projectCwd?: unknown
+  }
   const container =
     options.container === undefined ? undefined : requireContainerTarget(options.container)
   const cursor = options.cursor
   if (cursor != null && typeof cursor !== 'string') throw new Error('Invalid chat list cursor')
+
+  const done = options.done
+  if (done != null && typeof done !== 'boolean') throw new Error('Invalid chat done filter')
 
   const limit = options.limit
   if (
@@ -662,10 +671,17 @@ const requireChatListOptions = (value: unknown): ProviderChatListOptions | undef
     throw new Error('Invalid chat list limit')
   }
 
+  const projectCwd = options.projectCwd
+  if (projectCwd != null && (typeof projectCwd !== 'string' || !projectCwd.trim())) {
+    throw new Error('Invalid chat project filter')
+  }
+
   return {
     ...(container !== undefined ? { container } : {}),
     cursor: cursor ?? null,
-    limit: limit ?? null
+    ...(typeof done === 'boolean' ? { done } : {}),
+    limit: limit ?? null,
+    ...(typeof projectCwd === 'string' ? { projectCwd: projectCwd.trim() } : {})
   }
 }
 

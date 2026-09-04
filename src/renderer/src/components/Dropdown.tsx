@@ -13,6 +13,7 @@ import {
 import { createPortal } from 'react-dom'
 import { toCssRem } from '../cssUnits'
 import { getOptionalRenderableText, getRenderableText } from '../renderableText'
+import { Input } from './Input'
 import { MenuSurface } from './MenuSurface'
 import './Dropdown.css'
 
@@ -72,12 +73,15 @@ type DropdownProps<TValue extends string = string> = {
   optionGroups?: readonly DropdownOptionGroup<TValue>[]
   options?: readonly DropdownOption<TValue>[]
   placement?: 'bottom' | 'top'
+  searchable?: boolean
+  searchPlaceholder?: string
   selectedValues?: readonly TValue[]
   size?: DropdownSize
   title?: string
   value: TValue
   valueContent?: ReactNode
   valueDisplay?: DropdownValueDisplay
+  valueLabel?: string
   'aria-label'?: string
   onActiveIndexChange?: (index: number) => void
   onChange: (value: TValue) => void
@@ -118,12 +122,15 @@ export const Dropdown = <TValue extends string>({
   optionGroups,
   options = [],
   placement = 'bottom',
+  searchable = false,
+  searchPlaceholder = 'Search options',
   selectedValues,
   size,
   title,
   value,
   valueContent,
   valueDisplay = 'label',
+  valueLabel,
   'aria-label': ariaLabel,
   onActiveIndexChange,
   onChange
@@ -135,13 +142,38 @@ export const Dropdown = <TValue extends string>({
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const pointerActivatedIndexRef = useRef<number | null>(null)
   const [open, setOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
   const [inFloatingPane, setInFloatingPane] = useState(false)
-  const groupedOptions = useMemo<readonly DropdownOptionGroup<TValue>[]>(
+  const allGroupedOptions = useMemo<readonly DropdownOptionGroup<TValue>[]>(
     () => optionGroups ?? [{ id: 'options', options }],
     [optionGroups, options]
+  )
+  const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase()
+  const groupedOptions = useMemo<readonly DropdownOptionGroup<TValue>[]>(
+    () =>
+      searchable && normalizedSearchQuery
+        ? allGroupedOptions
+            .map((group) => ({
+              ...group,
+              options: group.options.filter((option) =>
+                [option.label, option.menuLabel, option.value, option.description]
+                  .filter((searchableValue): searchableValue is string => Boolean(searchableValue))
+                  .some((searchableValue) =>
+                    searchableValue.toLocaleLowerCase().includes(normalizedSearchQuery)
+                  )
+              )
+            }))
+            .filter((group) => group.options.length > 0)
+        : allGroupedOptions,
+    [allGroupedOptions, normalizedSearchQuery, searchable]
+  )
+  const allOptions = useMemo(
+    () => allGroupedOptions.flatMap((group) => group.options),
+    [allGroupedOptions]
   )
   const flattenedOptions = useMemo(
     () => groupedOptions.flatMap((group) => group.options),
@@ -155,23 +187,25 @@ export const Dropdown = <TValue extends string>({
     selectedValueSet ? selectedValueSet.has(option.value) : option.value === value
   const selectedIndex = flattenedOptions.findIndex((option) => isOptionSelected(option))
   const selectedOption =
-    flattenedOptions.find((option) => option.value === value) ??
+    allOptions.find((option) => option.value === value) ??
     (selectedIndex >= 0 ? flattenedOptions[selectedIndex] : null)
-  const selectedLabel = selectedOption
-    ? getRenderableText(
-        selectedOption.label,
-        getRenderableText(selectedOption.value, ariaLabel ?? 'Select')
-      )
-    : getRenderableText(value, ariaLabel ?? 'Select')
+  const selectedLabel = valueLabel
+    ? getRenderableText(valueLabel, ariaLabel ?? 'Select')
+    : selectedOption
+      ? getRenderableText(
+          selectedOption.label,
+          getRenderableText(selectedOption.value, ariaLabel ?? 'Select')
+        )
+      : getRenderableText(value, ariaLabel ?? 'Select')
   const selectedIcon = icon ?? selectedOption?.icon
   const [internalActiveIndex, setInternalActiveIndex] = useState(selectedIndex)
   const activeIndex = controlledActiveIndex ?? internalActiveIndex
   const menuOpen = (menuOnly || open) && !disabled
-  const optionsHaveIcons = flattenedOptions.some((option) => Boolean(option.icon))
-  const optionsHaveDescriptions = flattenedOptions.some((option) =>
+  const optionsHaveIcons = allOptions.some((option) => Boolean(option.icon))
+  const optionsHaveDescriptions = allOptions.some((option) =>
     Boolean(getOptionalRenderableText(option.description))
   )
-  const optionsHaveInlineActions = flattenedOptions.some((option) =>
+  const optionsHaveInlineActions = allOptions.some((option) =>
     Boolean(option.inlineActions?.length)
   )
   const enabledMenuActionCount = menuActions.filter((action) => !action.disabled).length
@@ -200,6 +234,13 @@ export const Dropdown = <TValue extends string>({
   }, [])
 
   useEffect(() => {
+    if (!menuOpen || !searchable) return
+
+    const frame = window.requestAnimationFrame(() => searchInputRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [menuOpen, searchable])
+
+  useEffect(() => {
     if (!menuOpen || menuOnly) return
 
     const handlePointerDown = (event: PointerEvent): void => {
@@ -207,6 +248,7 @@ export const Dropdown = <TValue extends string>({
 
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setOpen(false)
+        setSearchQuery('')
         setMenuStyle(null)
       }
     }
@@ -254,6 +296,7 @@ export const Dropdown = <TValue extends string>({
 
     const closeMenu = (): void => {
       setOpen(false)
+      setSearchQuery('')
       setMenuStyle(null)
     }
 
@@ -338,6 +381,7 @@ export const Dropdown = <TValue extends string>({
     if (!buttonRect) return
 
     setMenuStyle(getMenuStyle(buttonRect))
+    setSearchQuery('')
     updateActiveIndex(getEnabledIndex(index))
     setOpen(true)
   }
@@ -349,6 +393,7 @@ export const Dropdown = <TValue extends string>({
     if (menuOnly || !closeOnSelect) return
 
     setOpen(false)
+    setSearchQuery('')
     setMenuStyle(null)
     buttonRef.current?.focus({ preventScroll: true })
   }
@@ -357,6 +402,7 @@ export const Dropdown = <TValue extends string>({
     if (action.disabled) return
 
     setOpen(false)
+    setSearchQuery('')
     setMenuStyle(null)
     buttonRef.current?.focus({ preventScroll: true })
     void action.callback()
@@ -366,9 +412,35 @@ export const Dropdown = <TValue extends string>({
     if (action.disabled) return
 
     setOpen(false)
+    setSearchQuery('')
     setMenuStyle(null)
     buttonRef.current?.focus({ preventScroll: true })
     void action.callback()
+  }
+
+  const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const direction = event.key === 'ArrowDown' ? 1 : -1
+      updateActiveIndex((currentIndex) => getAdjacentEnabledIndex(currentIndex, direction))
+      return
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      const activeOption = flattenedOptions[activeIndex]
+      if (activeOption) selectOption(activeOption)
+      return
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+      setSearchQuery('')
+      setMenuStyle(null)
+      buttonRef.current?.focus({ preventScroll: true })
+    }
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
@@ -419,6 +491,7 @@ export const Dropdown = <TValue extends string>({
       event.preventDefault()
       event.stopPropagation()
       setOpen(false)
+      setSearchQuery('')
       setMenuStyle(null)
       return
     }
@@ -430,6 +503,7 @@ export const Dropdown = <TValue extends string>({
         enabledMenuActionCount + enabledOptionInlineActionCount === 0
       ) {
         setOpen(false)
+        setSearchQuery('')
         setMenuStyle(null)
         return
       }
@@ -473,6 +547,7 @@ export const Dropdown = <TValue extends string>({
       (!rootRef.current?.contains(nextTarget) && !menuRef.current?.contains(nextTarget))
     ) {
       setOpen(false)
+      setSearchQuery('')
       setMenuStyle(null)
     }
   }
@@ -482,6 +557,7 @@ export const Dropdown = <TValue extends string>({
     event.preventDefault()
     event.stopPropagation()
     setOpen(false)
+    setSearchQuery('')
     setMenuStyle(null)
     buttonRef.current?.focus({ preventScroll: true })
   }
@@ -589,6 +665,25 @@ export const Dropdown = <TValue extends string>({
   let optionIndex = 0
   const menuSurface = (
     <MenuSurface className="ui-dropdown__menu">
+      {searchable && (
+        <div className="ui-dropdown__search">
+          <Input
+            ref={searchInputRef}
+            type="search"
+            aria-activedescendant={activeOptionId}
+            aria-label={searchPlaceholder}
+            aria-controls={listboxId}
+            autoComplete="off"
+            placeholder={searchPlaceholder}
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value)
+              updateActiveIndex(0)
+            }}
+            onKeyDown={handleSearchKeyDown}
+          />
+        </div>
+      )}
       {menuActions.length > 0 && (
         <div className="ui-dropdown__actions" role="presentation">
           {menuActions.map((action) => (
@@ -692,6 +787,7 @@ export const Dropdown = <TValue extends string>({
         onClick={() => {
           if (menuOpen) {
             setOpen(false)
+            setSearchQuery('')
             setMenuStyle(null)
             return
           }
@@ -705,6 +801,7 @@ export const Dropdown = <TValue extends string>({
           if (nextTarget && menuRef.current?.contains(nextTarget)) return
 
           setOpen(false)
+          setSearchQuery('')
           setMenuStyle(null)
         }}
         onKeyDown={handleKeyDown}

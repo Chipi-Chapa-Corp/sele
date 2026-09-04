@@ -132,6 +132,18 @@ export class CodexAppServerClient {
     this.rejectPending(new Error('Codex app-server stopped'))
   }
 
+  disposeAndWait = async (): Promise<void> => {
+    const child = this.process
+    if (!child || child.exitCode !== null) {
+      this.dispose()
+      return
+    }
+
+    const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+    this.dispose()
+    await closed
+  }
+
   private start = async (): Promise<void> => {
     if (!this.startPromise) {
       this.startPromise = this.initialize().catch((error: unknown) => {

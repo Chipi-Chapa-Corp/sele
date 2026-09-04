@@ -28,6 +28,8 @@ export function useChatListController(dependencies: ChatListControllerDependenci
     applyChatDetail,
     chatOrderMutationsRef,
     setChats,
+    doneProjectFilterActive,
+    setDoneProjectFilterChats,
     projectCollapseFrameRef,
     expandedProjectGroupsBeforeDragRef,
     draggedProjectGroupKeyRef,
@@ -91,6 +93,9 @@ export function useChatListController(dependencies: ChatListControllerDependenci
         return sidebarOrder === undefined ? chat : { ...chat, sidebarOrder }
       })
     )
+    if (group.kind === 'done' && doneProjectFilterActive) {
+      setDoneProjectFilterChats(orderedChats)
+    }
 
     void providerApi
       .setChatOrder(orderedChats.map((chat) => chat.id))
@@ -108,6 +113,9 @@ export function useChatListController(dependencies: ChatListControllerDependenci
             return sidebarOrder === undefined ? chat : { ...chat, sidebarOrder }
           })
         )
+        if (group.kind === 'done' && doneProjectFilterActive) {
+          setDoneProjectFilterChats(group.chats)
+        }
       })
   }
   const restoreExpandedProjectsAfterDrag = (): void => {

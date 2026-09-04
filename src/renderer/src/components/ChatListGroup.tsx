@@ -7,7 +7,7 @@ import {
   PinOff,
   SquarePen
 } from 'lucide-react'
-import type { DragEvent, DragEventHandler, ReactNode } from 'react'
+import { useDeferredValue, type DragEvent, type DragEventHandler, type ReactNode } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { appMaxChatsRenderedDefault } from '../performanceSettings'
 import { formatProjectLabel } from '../projectPresentation'
@@ -38,6 +38,9 @@ type ChatListGroupProps = {
   projectDropPosition?: 'before' | 'after' | null
   visibleChatCount?: number
   chatPageSize?: number
+  deferItems?: boolean
+  emptyContent?: ReactNode
+  headerAction?: ReactNode
   projectIcon?: ReactNode
   projectNamesByCwd?: ReadonlyMap<string, string>
   onLoadMoreChats?: (group: ChatListGroupData) => void
@@ -71,6 +74,9 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   projectDropPosition = null,
   visibleChatCount = group.chats.length,
   chatPageSize = appMaxChatsRenderedDefault,
+  deferItems = false,
+  emptyContent = null,
+  headerAction = null,
   projectIcon = null,
   projectNamesByCwd,
   onLoadMoreChats,
@@ -95,6 +101,8 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
       ? group.projectName?.trim() || formatProjectLabel(group.label)
       : group.label
   const visibleChats = group.chats.slice(0, visibleChatCount)
+  const deferredOpen = useDeferredValue(open)
+  const renderItems = !deferItems || deferredOpen
   const remainingChatCount = Math.max(0, group.chats.length - visibleChats.length)
   const nextChatCount = Math.min(chatPageSize, remainingChatCount)
   const canShowLessChats = visibleChatCount > chatPageSize
@@ -202,59 +210,72 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
             />
           </span>
         )}
+        {headerAction}
       </div>
       {open && (
-        <blockquote className="chat-list-group__items" id={contentId}>
-          <ChatList
-            ariaLabel={`${groupLabel} chats`}
-            chats={visibleChats}
-            selectedChatKey={selectedChatKey}
-            committingChatKeys={committingChatKeys}
-            latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
-            canMarkDone={group.kind !== 'done'}
-            canMarkUndone={group.kind === 'done'}
-            reorderable={canReorderChats}
-            projectNamesByCwd={projectNamesByCwd}
-            onMarkDone={onMarkChatDone}
-            onRename={onRenameChat}
-            onResolveApproval={onResolveApproval}
-            onReorder={(nextVisibleChats) =>
-              onReorderChats(group, [
-                ...nextVisibleChats,
-                ...group.chats.slice(nextVisibleChats.length)
-              ])
-            }
-            onSelect={onSelectChat}
-            onTogglePinned={onToggleChatPinned}
-            resolvingApprovalId={resolvingApprovalId}
-          />
-          {showChatPaginationActions && (
-            <div className="chat-list-group__more">
-              {canShowLessChats && onShowLessChats && (
-                <Button
-                  theme="secondary"
-                  size="small"
-                  fill
-                  aria-label={`Show fewer ${groupLabel} chats`}
-                  title="Show less"
-                  callback={() => onShowLessChats(group)}
-                  icon={<ChevronUp aria-hidden="true" />}
-                  label="Show less"
+        <blockquote
+          className="chat-list-group__items"
+          id={contentId}
+          aria-busy={!renderItems || undefined}
+        >
+          {renderItems && (
+            <>
+              {visibleChats.length === 0 && emptyContent ? (
+                emptyContent
+              ) : (
+                <ChatList
+                  ariaLabel={`${groupLabel} chats`}
+                  chats={visibleChats}
+                  selectedChatKey={selectedChatKey}
+                  committingChatKeys={committingChatKeys}
+                  latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
+                  canMarkDone={group.kind !== 'done'}
+                  canMarkUndone={group.kind === 'done'}
+                  reorderable={canReorderChats}
+                  projectNamesByCwd={projectNamesByCwd}
+                  onMarkDone={onMarkChatDone}
+                  onRename={onRenameChat}
+                  onResolveApproval={onResolveApproval}
+                  onReorder={(nextVisibleChats) =>
+                    onReorderChats(group, [
+                      ...nextVisibleChats,
+                      ...group.chats.slice(nextVisibleChats.length)
+                    ])
+                  }
+                  onSelect={onSelectChat}
+                  onTogglePinned={onToggleChatPinned}
+                  resolvingApprovalId={resolvingApprovalId}
                 />
               )}
-              {remainingChatCount > 0 && onLoadMoreChats && (
-                <Button
-                  theme="secondary"
-                  size="small"
-                  fill
-                  aria-label={`Load next ${nextChatCount} ${groupLabel} chats`}
-                  title={`Load next ${nextChatCount} chats`}
-                  callback={() => onLoadMoreChats(group)}
-                  icon={<ChevronDown aria-hidden="true" />}
-                  label={`Load next ${nextChatCount}`}
-                />
+              {showChatPaginationActions && (
+                <div className="chat-list-group__more">
+                  {canShowLessChats && onShowLessChats && (
+                    <Button
+                      theme="secondary"
+                      size="small"
+                      fill
+                      aria-label={`Show fewer ${groupLabel} chats`}
+                      title="Show less"
+                      callback={() => onShowLessChats(group)}
+                      icon={<ChevronUp aria-hidden="true" />}
+                      label="Show less"
+                    />
+                  )}
+                  {remainingChatCount > 0 && onLoadMoreChats && (
+                    <Button
+                      theme="secondary"
+                      size="small"
+                      fill
+                      aria-label={`Load next ${nextChatCount} ${groupLabel} chats`}
+                      title={`Load next ${nextChatCount} chats`}
+                      callback={() => onLoadMoreChats(group)}
+                      icon={<ChevronDown aria-hidden="true" />}
+                      label={`Load next ${nextChatCount}`}
+                    />
+                  )}
+                </div>
               )}
-            </div>
+            </>
           )}
         </blockquote>
       )}

@@ -182,6 +182,19 @@
   transition: opacity 160ms ease;
 }
 
+.chat-list-group__done-filter {
+  width: 50%;
+  min-width: 0;
+  flex: none;
+}
+
+.chat-list-group__empty {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  color: var(--quiet);
+  font-weight: 500;
+}
+
 .chat-list-group__header:hover .chat-list-group__action,
 .chat-list-group__header:has(:focus-visible) .chat-list-group__action {
   opacity: 1;

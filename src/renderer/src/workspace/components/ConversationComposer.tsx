@@ -32,6 +32,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     changesProjectCwd,
     chatHasActiveTurn,
     chatHasPendingSteeringMessage,
+    chatOpenedElsewhere,
     containerOptions,
     cwdNotesByGroup,
     editingMessage,
@@ -59,6 +60,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     handleOpenAttachment,
     handleOpenFileLink,
     handleReasoningEffortChange,
+    handleRetryChatWriteAccess,
     handleResolveApproval,
     handleRunAction,
     handleSandboxModeChange,
@@ -143,14 +145,23 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
               </span>
             </div>
             <div className="chat-approval__actions">
-              <Button
-                aria-label="Dismiss error"
-                title="Dismiss error"
-                callback={handleDismissSendError}
-                icon={<X aria-hidden="true" />}
-                size="small"
-                theme="transparent"
-              />
+              {chatOpenedElsewhere ? (
+                <Button
+                  callback={handleRetryChatWriteAccess}
+                  label={<span>Retry</span>}
+                  size="small"
+                  theme="transparent"
+                />
+              ) : (
+                <Button
+                  aria-label="Dismiss error"
+                  title="Dismiss error"
+                  callback={handleDismissSendError}
+                  icon={<X aria-hidden="true" />}
+                  size="small"
+                  theme="transparent"
+                />
+              )}
             </div>
           </section>
         )}

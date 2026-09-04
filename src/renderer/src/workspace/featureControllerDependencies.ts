@@ -29,6 +29,8 @@ import type {
 
 import { type ChatListGroupData } from '../components/ChatListGroup'
 
+import type { DropdownOption } from '../components/Dropdown'
+
 import type { MessageBoxQuoteRequest } from '../components/MessageBox'
 
 import {
@@ -80,6 +82,9 @@ export type ChatInteractionControllerDependencies = {
   projectIconsByGroup: Record<string, AppProjectIcon | null>
   activeChatGroups: ChatListGroupData[]
   chatGroupingPreference: ChatGroupingPreference
+  doneProjectFilterLoadState: 'loading' | 'ready' | 'error'
+  doneProjectFilterValue: string
+  projectOptions: DropdownOption<string>[]
   projectDropInsertionIndex: number | null
   selectedChat: ProviderChat | null
   committingChatKeys: Set<string>
@@ -87,6 +92,7 @@ export type ChatInteractionControllerDependencies = {
   draggedProjectGroupKey: string | null
   projectNamesByCwd: Map<string, string>
   handleLoadMoreChatsInGroup: (group: ChatListGroupData) => void
+  handleDoneProjectFilterChange: (projectCwd: string) => void
   handleShowLessChatsInGroup: (group: ChatListGroupData) => void
   handleMarkChatDone: (chat: ProviderChat, done?: boolean) => Promise<void>
   restoreExpandedProjectsAfterDrag: () => void
@@ -225,6 +231,8 @@ export type ChatListControllerDependencies = {
   ) => void
   chatOrderMutationsRef: React.RefObject<Map<string, number>>
   setChats: React.Dispatch<React.SetStateAction<ProviderChat[]>>
+  doneProjectFilterActive: boolean
+  setDoneProjectFilterChats: React.Dispatch<React.SetStateAction<ProviderChat[]>>
   projectCollapseFrameRef: React.RefObject<number | null>
   expandedProjectGroupsBeforeDragRef: React.RefObject<Set<string> | null>
   draggedProjectGroupKeyRef: React.RefObject<string | null>
