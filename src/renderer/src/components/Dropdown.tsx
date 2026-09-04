@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { toCssRem } from '../cssUnits'
+import { getOptionalRenderableText, getRenderableText } from '../renderableText'
 import { MenuSurface } from './MenuSurface'
 import './Dropdown.css'
 
@@ -156,12 +157,20 @@ export const Dropdown = <TValue extends string>({
   const selectedOption =
     flattenedOptions.find((option) => option.value === value) ??
     (selectedIndex >= 0 ? flattenedOptions[selectedIndex] : null)
+  const selectedLabel = selectedOption
+    ? getRenderableText(
+        selectedOption.label,
+        getRenderableText(selectedOption.value, ariaLabel ?? 'Select')
+      )
+    : getRenderableText(value, ariaLabel ?? 'Select')
   const selectedIcon = icon ?? selectedOption?.icon
   const [internalActiveIndex, setInternalActiveIndex] = useState(selectedIndex)
   const activeIndex = controlledActiveIndex ?? internalActiveIndex
   const menuOpen = (menuOnly || open) && !disabled
   const optionsHaveIcons = flattenedOptions.some((option) => Boolean(option.icon))
-  const optionsHaveDescriptions = flattenedOptions.some((option) => Boolean(option.description))
+  const optionsHaveDescriptions = flattenedOptions.some((option) =>
+    Boolean(getOptionalRenderableText(option.description))
+  )
   const optionsHaveInlineActions = flattenedOptions.some((option) =>
     Boolean(option.inlineActions?.length)
   )
@@ -479,14 +488,17 @@ export const Dropdown = <TValue extends string>({
   const renderOption = (option: DropdownOption<TValue>, index: number): React.ReactElement => {
     const selected = isOptionSelected(option)
     const optionId = `${listboxId}-option-${index}`
+    const label = getRenderableText(
+      option.menuLabel,
+      getRenderableText(option.label, getRenderableText(option.value, 'Unknown option'))
+    )
+    const description = getOptionalRenderableText(option.description)
     const optionIcon = optionsHaveIcons ? (
       <span className="ui-dropdown__option-icon" aria-hidden="true">
         {option.icon}
       </span>
     ) : null
-    const optionLabel = (
-      <span className="ui-dropdown__option-label">{option.menuLabel ?? option.label}</span>
-    )
+    const optionLabel = <span className="ui-dropdown__option-label">{label}</span>
     const optionCheck = selected ? (
       <Check className="ui-dropdown__check" aria-hidden="true" />
     ) : null
@@ -508,7 +520,7 @@ export const Dropdown = <TValue extends string>({
           selected,
           Boolean(option.disabled),
           optionsHaveIcons,
-          Boolean(option.description)
+          Boolean(description)
         )}
         role="option"
         aria-disabled={option.disabled || undefined}
@@ -528,14 +540,14 @@ export const Dropdown = <TValue extends string>({
           }
         }}
       >
-        {option.description ? (
+        {description ? (
           <span className="ui-dropdown__option-body">
             <span className="ui-dropdown__option-row">
               {optionIcon}
               {optionLabel}
               {optionCheck}
             </span>
-            <span className="ui-dropdown__option-description">{option.description}</span>
+            <span className="ui-dropdown__option-description">{description}</span>
           </span>
         ) : (
           <>
@@ -676,7 +688,7 @@ export const Dropdown = <TValue extends string>({
         aria-haspopup="listbox"
         aria-label={ariaLabel}
         disabled={disabled}
-        title={title ?? selectedOption?.label}
+        title={getRenderableText(title, selectedLabel)}
         onClick={() => {
           if (menuOpen) {
             setOpen(false)
@@ -705,7 +717,7 @@ export const Dropdown = <TValue extends string>({
                   {selectedIcon}
                 </span>
               )}
-              <span className="ui-dropdown__value-label">{selectedOption?.label ?? value}</span>
+              <span className="ui-dropdown__value-label">{selectedLabel}</span>
             </>
           )}
         </span>

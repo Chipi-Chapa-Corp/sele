@@ -25,6 +25,7 @@ import {
 import { createPortal } from 'react-dom'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { toCssRem } from '../cssUnits'
+import { getRenderableText } from '../renderableText'
 import { getDefaultProjectName } from '../projectPresentation'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { Button } from './Button'
@@ -77,7 +78,7 @@ const monthMs = 30 * dayMs
 const yearMs = 365 * dayMs
 
 const getChatProjectName = (cwd: string | null): string => {
-  const normalizedCwd = cwd?.trim()
+  const normalizedCwd = getRenderableText(cwd, '').trim()
   return normalizedCwd ? getDefaultProjectName(normalizedCwd) : 'Unknown cwd'
 }
 
@@ -119,8 +120,9 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   onTogglePinned,
   approvalDecisionInFlight = null
 }) => {
+  const chatTitle = getRenderableText(chat.title, 'Untitled chat')
   const [editingName, setEditingName] = useState(false)
-  const [nameDraft, setNameDraft] = useState(chat.title)
+  const [nameDraft, setNameDraft] = useState(chatTitle)
   const [savingName, setSavingName] = useState(false)
   const [detailHovered, setDetailHovered] = useState(false)
   const [detailFocused, setDetailFocused] = useState(false)
@@ -131,10 +133,13 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   const now = useSemanticDateNow()
   const updatedAt = formatSemanticLexicalDateDifference(chat.updatedAt, { now })
   const isGitWorktree = chat.cwdKind === 'gitWorktree'
-  const branchName = isGitWorktree
-    ? (chat.worktreeBaseBranchName ?? 'Unknown branch')
-    : (chat.branchName ?? 'Unknown branch')
-  const projectName = projectDisplayName?.trim() || getChatProjectName(chat.projectCwd ?? chat.cwd)
+  const branchName = getRenderableText(
+    isGitWorktree ? chat.worktreeBaseBranchName : chat.branchName,
+    'Unknown branch'
+  )
+  const projectName =
+    getRenderableText(projectDisplayName, '').trim() ||
+    getChatProjectName(chat.projectCwd ?? chat.cwd)
   const LocationIcon = isGitWorktree ? GitFork : Folder
   const workingStatus = chat.status && workingStatuses.has(chat.status) ? chat.status : null
   const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
@@ -196,21 +201,21 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   }, [detailOpen])
 
   const beginEditingName = (): void => {
-    setNameDraft(chat.title)
+    setNameDraft(chatTitle)
     setDetailHovered(false)
     setDetailFocused(false)
     setEditingName(true)
   }
 
   const cancelEditingName = (): void => {
-    setNameDraft(chat.title)
+    setNameDraft(chatTitle)
     setDetailFocused(false)
     setEditingName(false)
   }
 
   const saveName = async (): Promise<void> => {
     if (savingName || !normalizedNameDraft) return
-    if (normalizedNameDraft === chat.title.trim()) {
+    if (normalizedNameDraft === chatTitle.trim()) {
       setDetailFocused(false)
       setEditingName(false)
       return
@@ -389,7 +394,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               />
             </>
           ) : (
-            <span className="chat-list-item__title">{chat.title}</span>
+            <span className="chat-list-item__title">{chatTitle}</span>
           )}
         </span>
       </MainContainer>
@@ -398,7 +403,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
           {pendingApproval && (
             <>
               <Button
-                aria-label={`Reject approval for ${chat.title}`}
+                aria-label={`Reject approval for ${chatTitle}`}
                 callback={() => onResolveApproval('deny')}
                 disabled={Boolean(approvalDecisionInFlight)}
                 icon={<X aria-hidden="true" />}
@@ -407,7 +412,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
                 title="Reject"
               />
               <Button
-                aria-label={`Approve approval for ${chat.title}`}
+                aria-label={`Approve approval for ${chatTitle}`}
                 callback={() => onResolveApproval('allow')}
                 disabled={Boolean(approvalDecisionInFlight)}
                 icon={<Check aria-hidden="true" />}
@@ -469,7 +474,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
             }}
           >
             <div className="chat-list-item__detail-header">
-              <strong>{chat.title}</strong>
+              <strong>{chatTitle}</strong>
               {updatedAt && (
                 <time dateTime={updatedAt.dateTime} title={`Last activity: ${updatedAt.title}`}>
                   {shortUpdatedAge}

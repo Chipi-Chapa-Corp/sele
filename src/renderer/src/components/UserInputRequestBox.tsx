@@ -1,6 +1,7 @@
 import { Check, X } from 'lucide-react'
 import { useId, useState } from 'react'
 import type { ProviderPendingUserInput } from '../../../shared/provider'
+import { getOptionalRenderableText, getRenderableText } from '../renderableText'
 import { Button } from './Button'
 import { Input } from './Input'
 
@@ -23,7 +24,15 @@ export const UserInputRequestBox = ({
   const [freeformAnswer, setFreeformAnswer] = useState('')
 
   const answer = freeformAnswer.trim()
-  const choicesHaveDescriptions = request.choices.some((choice) => choice.description)
+  const question = getRenderableText(request.question, 'The agent requested input.')
+  const choices = (Array.isArray(request.choices) ? request.choices : []).flatMap((choice) => {
+    const label = getOptionalRenderableText(choice?.label)
+    if (!label) return []
+
+    return [{ label, description: getOptionalRenderableText(choice.description) }]
+  })
+  const choicesHaveDescriptions = choices.some((choice) => choice.description)
+  const renderedError = getOptionalRenderableText(error)
 
   const handleSubmit = (): void => {
     if (disabled || !answer) return
@@ -49,15 +58,15 @@ export const UserInputRequestBox = ({
       </span>
       <div className="chat-approval__main">
         <span className="chat-approval__summary chat-user-input__question" id={questionId}>
-          {request.question}
+          {question}
         </span>
-        {request.choices.length > 0 && (
+        {choices.length > 0 && (
           <div
             className={`chat-user-input__choices${choicesHaveDescriptions ? ' chat-user-input__choices--described' : ''}`}
             role="group"
             aria-label="Answer choices"
           >
-            {request.choices.map((choice, index) => (
+            {choices.map((choice, index) => (
               <Button
                 callback={() => onSubmit(choice.label, false)}
                 disabled={disabled}
@@ -88,7 +97,7 @@ export const UserInputRequestBox = ({
               autoFocus
               className="chat-user-input__input"
               disabled={disabled}
-              placeholder={request.choices.length > 0 ? 'Or type an answer…' : 'Type your answer…'}
+              placeholder={choices.length > 0 ? 'Or type an answer…' : 'Type your answer…'}
               value={freeformAnswer}
               onChange={(event) => setFreeformAnswer(event.target.value)}
               onKeyDown={(event) => {
@@ -108,9 +117,9 @@ export const UserInputRequestBox = ({
             )}
           </div>
         )}
-        {error && (
+        {renderedError && (
           <span className="chat-approval__error" role="status">
-            {error}
+            {renderedError}
           </span>
         )}
       </div>

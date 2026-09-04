@@ -6,6 +6,7 @@ type RendererErrorBoundaryProps = {
 }
 
 type RendererErrorBoundaryState = {
+  componentStack: string | null
   details: string | null
 }
 
@@ -25,14 +26,16 @@ export class RendererErrorBoundary extends Component<
   RendererErrorBoundaryProps,
   RendererErrorBoundaryState
 > {
-  state: RendererErrorBoundaryState = { details: null }
+  state: RendererErrorBoundaryState = { componentStack: null, details: null }
 
   static getDerivedStateFromError(error: unknown): RendererErrorBoundaryState {
-    return { details: getRendererErrorDetails(error) }
+    return { componentStack: null, details: getRendererErrorDetails(error) }
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error('Sele renderer failed while rendering.', error, errorInfo)
+    const componentStack = errorInfo.componentStack?.trim() || null
+    if (componentStack) this.setState({ componentStack })
   }
 
   render(): ReactNode {
@@ -43,7 +46,12 @@ export class RendererErrorBoundary extends Component<
         <section className="renderer-error__panel">
           <h1 id="renderer-error-title">Sele hit a problem</h1>
           <p>The interface could not finish rendering.</p>
-          <pre className="renderer-error__details">{this.state.details}</pre>
+          <pre className="renderer-error__details">
+            {this.state.details}
+            {this.state.componentStack
+              ? `\n\nComponent stack:\n${this.state.componentStack}`
+              : null}
+          </pre>
           <button type="button" onClick={() => window.location.reload()}>
             Reload Sele
           </button>
