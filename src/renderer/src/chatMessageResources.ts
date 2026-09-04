@@ -1,5 +1,7 @@
 export type ChatMessageResource =
-  { kind: 'skill'; name: string } | { kind: 'app'; id: string; name: string }
+  | { kind: 'skill'; name: string }
+  | { kind: 'app'; id: string; name: string }
+  | { kind: 'browserContext' }
 
 export type ChatMessagePresentation = {
   content: string
@@ -8,6 +10,8 @@ export type ChatMessagePresentation = {
 
 const skillMentionPattern = /^\$([^\s[\]()]+)/
 const appMentionPattern = /^\[\$((?:\\.|[^\]])+)\]\(app:\/\/([^\s)]+)\)/
+const inAppBrowserContextPattern =
+  /^[ \t]*<in-app-browser-context>[ \t]*[\s\S]*?^[ \t]*<\/in-app-browser-context>[ \t]*(?:\r?\n|$)/gm
 
 const unescapeAppLabel = (value: string): string => value.replace(/\\([\\[\]])/g, '$1')
 
@@ -41,14 +45,24 @@ const parseResourcePrefix = (line: string): ChatMessageResource[] | null => {
 }
 
 export const getChatMessagePresentation = (content: string): ChatMessagePresentation => {
-  const firstLineEnd = content.indexOf('\n')
-  const firstLine = (firstLineEnd < 0 ? content : content.slice(0, firstLineEnd)).replace(/\r$/, '')
+  let hasBrowserContext = false
+  const visibleContent = content.replace(inAppBrowserContextPattern, () => {
+    hasBrowserContext = true
+    return ''
+  })
+  const browserContextResource: ChatMessageResource[] = hasBrowserContext
+    ? [{ kind: 'browserContext' }]
+    : []
+  const firstLineEnd = visibleContent.indexOf('\n')
+  const firstLine = (
+    firstLineEnd < 0 ? visibleContent : visibleContent.slice(0, firstLineEnd)
+  ).replace(/\r$/, '')
   const resources = parseResourcePrefix(firstLine)
 
-  if (!resources) return { content, resources: [] }
+  if (!resources) return { content: visibleContent, resources: browserContextResource }
 
   return {
-    content: firstLineEnd < 0 ? '' : content.slice(firstLineEnd + 1),
-    resources
+    content: firstLineEnd < 0 ? '' : visibleContent.slice(firstLineEnd + 1),
+    resources: [...resources, ...browserContextResource]
   }
 }

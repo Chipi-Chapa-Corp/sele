@@ -1270,6 +1270,10 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   font-weight: 400;
 }
 
+.chat-detail__tool-placeholder .chat-detail__tool-icon {
+  color: #d0a07d;
+}
+
 @media (max-width: 37.5rem) {
   .chat-detail__generated-image-gallery {
     padding-left: 0;

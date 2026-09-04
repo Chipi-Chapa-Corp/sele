@@ -46,6 +46,7 @@ import {
   FileText,
   GitBranch,
   GitFork,
+  Globe2,
   Image as ImageIcon,
   ImageOff,
   ListChecks,
@@ -835,18 +836,38 @@ const MessageAttachments: React.FC<{
           {resources.map((resource, index) => (
             <div
               className="chat-detail__message-attachment"
-              key={`${resource.kind}:${resource.kind === 'app' ? resource.id : resource.name}:${index}`}
+              key={`${resource.kind}:${
+                resource.kind === 'app'
+                  ? resource.id
+                  : resource.kind === 'browserContext'
+                    ? 'browser-context'
+                    : resource.name
+              }:${index}`}
               role="listitem"
             >
               <span
                 className="chat-detail__message-attachment-link chat-detail__message-attachment-resource"
-                title={`${resource.kind === 'skill' ? 'Skill' : 'App'}: ${resource.name}`}
+                title={
+                  resource.kind === 'browserContext'
+                    ? 'Browser context'
+                    : `${resource.kind === 'skill' ? 'Skill' : 'App'}: ${resource.name}`
+                }
               >
                 <span className="chat-detail__message-attachment-icon" aria-hidden="true">
-                  {resource.kind === 'skill' ? <Package /> : <Blocks />}
+                  {resource.kind === 'skill' ? (
+                    <Package />
+                  ) : resource.kind === 'app' ? (
+                    <Blocks />
+                  ) : (
+                    <Globe2 />
+                  )}
                 </span>
                 <span className="chat-detail__message-attachment-label">
-                  {resource.kind === 'app' ? `$${resource.name}` : resource.name}
+                  {resource.kind === 'browserContext'
+                    ? 'Browser context'
+                    : resource.kind === 'app'
+                      ? `$${resource.name}`
+                      : resource.name}
                 </span>
               </span>
             </div>
