@@ -27,7 +27,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.228",
     "@electron-toolkit/utils": "^4.0.0",
-    "@github/copilot-sdk": "^1.0.8",
+    "@github/copilot-sdk": "^1.0.11",
     "@lydell/node-pty": "^1.1.0",
     "@opencode-ai/sdk": "^1.18.21",
     "@react-symbols/icons": "^1.4.1",

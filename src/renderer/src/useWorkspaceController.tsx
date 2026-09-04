@@ -65,6 +65,7 @@ import {
   providerIds
 } from '../../shared/provider'
 import { ChatDetailItem } from './components/ChatDetailItem'
+import { getWorkingStepProgressPolicy } from './workingStepDisclosure'
 import type { AccountAuthorizationSession } from './components/AccountDialog'
 import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
@@ -5124,12 +5125,17 @@ export const useWorkspaceController = () => {
                 }
                 previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}
                 projectCwd={changesProjectCwd}
+                progressPolicy={
+                  item.type === 'working'
+                    ? getWorkingStepProgressPolicy(item, turn.items)
+                    : undefined
+                }
+                progressSettings={effectiveAppSettings.chat}
                 rateLimitResetDisabled={rateLimitResetDisabled}
                 retryMessage={canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null}
                 retryStoppedTurnDisabled={stoppedTurnActionDisabled}
                 selectedModelId={model}
                 streaming={item.id === streamingChatItemId}
-                thoughtSettings={effectiveAppSettings.chat}
                 turnIndex={turnIndex}
                 workingStepContent={
                   item.type === 'working'
@@ -5180,8 +5186,11 @@ export const useWorkspaceController = () => {
             onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
             previousItem={itemIndex > 0 ? subagentVisibleChatItems[itemIndex - 1] : null}
             projectCwd={changesProjectCwd}
+            progressPolicy={
+              item.type === 'working' ? getWorkingStepProgressPolicy(item, turn.items) : undefined
+            }
+            progressSettings={effectiveAppSettings.chat}
             selectedModelId={model}
-            thoughtSettings={effectiveAppSettings.chat}
             turnIndex={turnIndex}
           />
         )

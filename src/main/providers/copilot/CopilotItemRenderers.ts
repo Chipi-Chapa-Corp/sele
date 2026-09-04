@@ -146,12 +146,12 @@ const toTimestamp = (value: string): number | null => {
 const getString = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null
 
-const getArgument = (
-  args: Record<string, unknown | undefined> | undefined,
-  ...keys: string[]
-): string | null => {
+const getArgument = (args: unknown, ...keys: string[]): string | null => {
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) return null
+
+  const values = args as Record<string, unknown>
   for (const key of keys) {
-    const value = getString(args?.[key])
+    const value = getString(values[key])
     if (value) return value
   }
   return null
@@ -545,6 +545,7 @@ export const renderCopilotChatItems = (
         content: event.data.content,
         attachments: attachments.length > 0 ? attachments : undefined,
         createdAt: toTimestamp(event.timestamp),
+        kind: event.data.delivery === 'steering' ? 'steering' : undefined,
         label: event.data.delivery === 'steering' ? 'Steering with' : null
       })
       segment = {

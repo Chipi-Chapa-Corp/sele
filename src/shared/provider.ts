@@ -613,6 +613,7 @@ export type ProviderMessage = {
   payloadTruncated?: boolean
   attachments?: ProviderMessageAttachment[]
   createdAt?: number | null
+  kind?: 'steering'
   label?: string | null
   model?: ProviderModelId | null
 }

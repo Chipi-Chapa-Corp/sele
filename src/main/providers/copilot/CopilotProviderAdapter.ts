@@ -445,6 +445,8 @@ const getPermissionDescription = (request: PermissionRequest): string => {
       return request.toolName
     case 'extension-management':
       return `${request.operation} ${request.extensionName ?? 'extension'}`
+    case 'factory':
+      return request.description || request.name
     case 'extension-permission-access':
       return request.extensionName
   }
@@ -467,6 +469,8 @@ const getPermissionReason = (request: PermissionRequest): string | null => {
       return request.hookMessage ?? null
     case 'extension-management':
       return `Manage Copilot extension ${request.extensionName ?? ''}`.trim()
+    case 'factory':
+      return `Run Copilot factory ${request.name}`
     case 'extension-permission-access':
       return `Access ${request.capabilities.join(', ')}`
   }
@@ -1084,12 +1088,21 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   deletePendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
+    await this.refreshPendingMessages(state)
     const pending = state.pendingMessages.find((message) => message.id === messageId)
-    if (!pending || state.pendingMessages.at(-1)?.id !== messageId) {
-      throw new Error('Copilot can only remove the most recently queued message.')
+    if (!pending) throw new Error('The queued message is no longer pending.')
+
+    if (pending.kind === 'queued') {
+      const result = await state.session!.rpc.queue.removeAt({ id: messageId })
+      if (!result.removed) throw new Error('The queued message is no longer pending.')
+    } else {
+      if (state.pendingMessages.at(-1)?.id !== messageId) {
+        throw new Error('Copilot can only remove the most recent steering message.')
+      }
+      const result = await state.session!.rpc.queue.removeMostRecent()
+      if (!result.removed) throw new Error('The steering message is no longer pending.')
     }
-    const result = await state.session!.rpc.queue.removeMostRecent()
-    if (!result.removed) throw new Error('The queued message is no longer pending.')
+
     await this.refreshPendingMessages(state)
     return this.createChatDetail(state)
   }
@@ -1733,7 +1746,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         .filter((item) => item.kind === 'message')
         .map((item): ProviderPendingMessage => ({
           type: 'pendingMessage',
-          id: takeId('queued', item.displayText),
+          id: item.id,
           kind: 'queued',
           content: item.displayText
         })),

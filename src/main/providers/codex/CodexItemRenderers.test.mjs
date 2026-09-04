@@ -90,3 +90,29 @@ test('renders a stopped marker after the submitted user message', () => {
     ['user:Keep this message', 'stopped']
   )
 })
+
+test('marks an inline follow-up as a steering message', () => {
+  const items = getChatItems([
+    {
+      id: 'steered-turn',
+      status: 'completed',
+      items: [
+        {
+          type: 'userMessage',
+          id: 'initial-message',
+          content: [{ type: 'text', text: 'Start here' }]
+        },
+        {
+          type: 'userMessage',
+          id: 'steering-message',
+          content: [{ type: 'text', text: 'Change direction' }]
+        }
+      ]
+    }
+  ])
+  const steeringMessage = items.find(
+    (item) => item.type === 'message' && item.content === 'Change direction'
+  )
+
+  assert.equal(steeringMessage?.kind, 'steering')
+})

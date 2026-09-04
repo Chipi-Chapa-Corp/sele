@@ -18,6 +18,7 @@ export type ClaudeTranscriptMessage = {
   isSynthetic?: boolean
   timestamp?: string
   tool_use_result?: unknown
+  kind?: 'steering'
   label?: string | null
   attachments?: ProviderMessageAttachment[]
   failed?: boolean
@@ -351,6 +352,7 @@ export const renderClaudeChatItems = (
         content,
         attachments: message.attachments?.length ? message.attachments : undefined,
         createdAt: toTimestamp(message.timestamp),
+        kind: message.kind,
         label: message.label ?? null
       })
       segment = { id: `${message.uuid}:working`, entries: [], failed: false }

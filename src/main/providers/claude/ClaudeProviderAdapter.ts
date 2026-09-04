@@ -1070,7 +1070,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     } else {
       const queued = this.createQueuedMessage(message, options)
       state.waitingForSessionIdle = false
-      this.addUserMessage(state, queued, 'Steering with')
+      this.addUserMessage(state, queued, 'Steering with', 'steering')
       state.input!.push(createSdkUserMessage(state.id, queued.id, queued.prompt, 'now'))
       this.emitUpdate(state)
     }
@@ -1117,7 +1117,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     }
 
     state.waitingForSessionIdle = false
-    this.addUserMessage(state, pending, 'Steering with')
+    this.addUserMessage(state, pending, 'Steering with', 'steering')
     state.input!.push(createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
     this.emitUpdate(state)
     return this.createChatDetail(state)
@@ -1914,7 +1914,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private addUserMessage = (
     state: ClaudeSessionState,
     message: QueuedClaudeMessage,
-    label: string | null = null
+    label: string | null = null,
+    kind?: 'steering'
   ): void => {
     this.addTranscriptMessage(state, {
       type: 'user',
@@ -1924,6 +1925,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       parent_tool_use_id: null,
       timestamp: new Date(message.createdAt).toISOString(),
       attachments: message.attachments,
+      kind,
       label
     })
   }

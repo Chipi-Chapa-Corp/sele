@@ -1844,6 +1844,7 @@ const renderChatItems = (
               role: 'user',
               content,
               attachments,
+              kind: 'steering',
               label: 'Steering with',
               createdAt: toMilliseconds(startedAt),
               model: turn.model ?? null

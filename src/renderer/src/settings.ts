@@ -93,12 +93,12 @@ export type AppGitWorktreeSettings = {
   branchNamePrompt: string
 }
 
-export type AppChatThoughtSettings = {
-  expandThoughtsOnStart: boolean
-  collapseThoughtsOnFinish: boolean
-  collapseThoughtsOnNextTurn: boolean
-  expandStoppedTurns: boolean
-  collapseStoppedOnNextTurn: boolean
+export type AppChatProgressSettings = {
+  expandProgressOnStart: boolean
+  collapseProgressOnFinish: boolean
+  collapseProgressOnNextTurn: boolean
+  collapseStoppedSteeredFailedProgressOnFinish: boolean
+  collapseStoppedSteeredFailedProgressOnNextTurn: boolean
 }
 
 export const appChatManualDropdownValue = 'manual'
@@ -177,7 +177,7 @@ export type AppSettings = {
     chatFont: AppFontSetting
     codeFont: AppFontSetting
   }
-  chat: AppChatThoughtSettings & {
+  chat: AppChatProgressSettings & {
     continuePrompt: string
     recentChatCacheLimit: number
     displayUsage: AppChatUsageDisplay
@@ -230,12 +230,12 @@ export const appProjectSettingsStorageKey = 'sele:app-project-settings:v1'
 
 export const defaultStoppedTurnContinuePrompt = 'Continue from where you left off'
 
-export const defaultAppChatThoughtSettings: AppChatThoughtSettings = {
-  expandThoughtsOnStart: true,
-  collapseThoughtsOnFinish: true,
-  collapseThoughtsOnNextTurn: false,
-  expandStoppedTurns: false,
-  collapseStoppedOnNextTurn: false
+export const defaultAppChatProgressSettings: AppChatProgressSettings = {
+  expandProgressOnStart: true,
+  collapseProgressOnFinish: true,
+  collapseProgressOnNextTurn: false,
+  collapseStoppedSteeredFailedProgressOnFinish: true,
+  collapseStoppedSteeredFailedProgressOnNextTurn: false
 }
 
 export const defaultAppChatDropdownSettings: AppChatDropdownSettings = {
@@ -387,7 +387,7 @@ export const defaultAppSettings: AppSettings = {
     updateExistingChats: false,
     updateNewChats: true,
     ...defaultAppChatDropdownSettings,
-    ...defaultAppChatThoughtSettings
+    ...defaultAppChatProgressSettings
   },
   links: {
     behavior: 'manual'
@@ -509,13 +509,22 @@ const getStoredRecentChatCacheLimit = (value: unknown): number => {
 const getStoredChatBoolean = (
   chat: Record<string, unknown>,
   key:
-    | keyof AppChatThoughtSettings
+    | keyof AppChatProgressSettings
     | 'enableActions'
     | 'enableNotesButton'
     | 'hidePlans'
     | 'updateExistingChats'
     | 'updateNewChats'
 ): boolean => (typeof chat[key] === 'boolean' ? chat[key] : defaultAppSettings.chat[key])
+
+const getStoredChatBooleanWithLegacyKey = (
+  chat: Record<string, unknown>,
+  key: keyof AppChatProgressSettings,
+  legacyKey: string
+): boolean => {
+  if (typeof chat[key] === 'boolean') return chat[key]
+  return typeof chat[legacyKey] === 'boolean' ? chat[legacyKey] : defaultAppSettings.chat[key]
+}
 
 const getStoredPerformanceBoolean = (
   performance: Record<string, unknown>,
@@ -589,11 +598,11 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
     'enableNotesButton',
     'updateExistingChats',
     'updateNewChats',
-    'expandThoughtsOnStart',
-    'collapseThoughtsOnFinish',
-    'collapseThoughtsOnNextTurn',
-    'expandStoppedTurns',
-    'collapseStoppedOnNextTurn'
+    'expandProgressOnStart',
+    'collapseProgressOnFinish',
+    'collapseProgressOnNextTurn',
+    'collapseStoppedSteeredFailedProgressOnFinish',
+    'collapseStoppedSteeredFailedProgressOnNextTurn'
   ] satisfies readonly (keyof AppSettings['chat'])[]
 
   for (const key of booleanKeys) {
@@ -602,6 +611,17 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
     }
   }
 
+  const legacyBooleanKeys = [
+    ['expandProgressOnStart', 'expandThoughtsOnStart'],
+    ['collapseProgressOnFinish', 'collapseThoughtsOnFinish'],
+    ['collapseProgressOnNextTurn', 'collapseThoughtsOnNextTurn'],
+    ['collapseStoppedSteeredFailedProgressOnNextTurn', 'collapseStoppedOnNextTurn']
+  ] as const
+  for (const [key, legacyKey] of legacyBooleanKeys) {
+    if (!hasOwnProperty(overrides, key) && typeof chat[legacyKey] === 'boolean') {
+      overrides[key] = chat[legacyKey]
+    }
+  }
   if (hasOwnProperty(chat, 'forceAccess')) {
     overrides.forceAccess = getStoredForcedDropdown(chat.forceAccess, isProviderSandboxMode)
   }
@@ -1076,11 +1096,30 @@ export const readStoredAppSettings = (): AppSettings => {
         forceModel: getStoredForcedDropdown(chat.forceModel, isStoredModel),
         forceReasoning: getStoredForcedDropdown(chat.forceReasoning, isStoredReasoningEffort),
         forceSpeed: getStoredForcedDropdown(chat.forceSpeed, isProviderServiceTier),
-        expandThoughtsOnStart: getStoredChatBoolean(chat, 'expandThoughtsOnStart'),
-        collapseThoughtsOnFinish: getStoredChatBoolean(chat, 'collapseThoughtsOnFinish'),
-        collapseThoughtsOnNextTurn: getStoredChatBoolean(chat, 'collapseThoughtsOnNextTurn'),
-        expandStoppedTurns: getStoredChatBoolean(chat, 'expandStoppedTurns'),
-        collapseStoppedOnNextTurn: getStoredChatBoolean(chat, 'collapseStoppedOnNextTurn')
+        expandProgressOnStart: getStoredChatBooleanWithLegacyKey(
+          chat,
+          'expandProgressOnStart',
+          'expandThoughtsOnStart'
+        ),
+        collapseProgressOnFinish: getStoredChatBooleanWithLegacyKey(
+          chat,
+          'collapseProgressOnFinish',
+          'collapseThoughtsOnFinish'
+        ),
+        collapseProgressOnNextTurn: getStoredChatBooleanWithLegacyKey(
+          chat,
+          'collapseProgressOnNextTurn',
+          'collapseThoughtsOnNextTurn'
+        ),
+        collapseStoppedSteeredFailedProgressOnFinish: getStoredChatBoolean(
+          chat,
+          'collapseStoppedSteeredFailedProgressOnFinish'
+        ),
+        collapseStoppedSteeredFailedProgressOnNextTurn: getStoredChatBooleanWithLegacyKey(
+          chat,
+          'collapseStoppedSteeredFailedProgressOnNextTurn',
+          'collapseStoppedOnNextTurn'
+        )
       },
       links: {
         behavior: isAppExternalLinkBehavior(links.behavior)
@@ -1380,27 +1419,33 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (settings.chat.forceSpeed !== defaultAppSettings.chat.forceSpeed) {
       storedChat.forceSpeed = settings.chat.forceSpeed
     }
-    if (settings.chat.expandThoughtsOnStart !== defaultAppSettings.chat.expandThoughtsOnStart) {
-      storedChat.expandThoughtsOnStart = settings.chat.expandThoughtsOnStart
+    if (settings.chat.expandProgressOnStart !== defaultAppSettings.chat.expandProgressOnStart) {
+      storedChat.expandProgressOnStart = settings.chat.expandProgressOnStart
     }
     if (
-      settings.chat.collapseThoughtsOnFinish !== defaultAppSettings.chat.collapseThoughtsOnFinish
+      settings.chat.collapseProgressOnFinish !== defaultAppSettings.chat.collapseProgressOnFinish
     ) {
-      storedChat.collapseThoughtsOnFinish = settings.chat.collapseThoughtsOnFinish
+      storedChat.collapseProgressOnFinish = settings.chat.collapseProgressOnFinish
     }
     if (
-      settings.chat.collapseThoughtsOnNextTurn !==
-      defaultAppSettings.chat.collapseThoughtsOnNextTurn
+      settings.chat.collapseProgressOnNextTurn !==
+      defaultAppSettings.chat.collapseProgressOnNextTurn
     ) {
-      storedChat.collapseThoughtsOnNextTurn = settings.chat.collapseThoughtsOnNextTurn
-    }
-    if (settings.chat.expandStoppedTurns !== defaultAppSettings.chat.expandStoppedTurns) {
-      storedChat.expandStoppedTurns = settings.chat.expandStoppedTurns
+      storedChat.collapseProgressOnNextTurn = settings.chat.collapseProgressOnNextTurn
     }
     if (
-      settings.chat.collapseStoppedOnNextTurn !== defaultAppSettings.chat.collapseStoppedOnNextTurn
+      settings.chat.collapseStoppedSteeredFailedProgressOnFinish !==
+      defaultAppSettings.chat.collapseStoppedSteeredFailedProgressOnFinish
     ) {
-      storedChat.collapseStoppedOnNextTurn = settings.chat.collapseStoppedOnNextTurn
+      storedChat.collapseStoppedSteeredFailedProgressOnFinish =
+        settings.chat.collapseStoppedSteeredFailedProgressOnFinish
+    }
+    if (
+      settings.chat.collapseStoppedSteeredFailedProgressOnNextTurn !==
+      defaultAppSettings.chat.collapseStoppedSteeredFailedProgressOnNextTurn
+    ) {
+      storedChat.collapseStoppedSteeredFailedProgressOnNextTurn =
+        settings.chat.collapseStoppedSteeredFailedProgressOnNextTurn
     }
     if (Object.keys(storedChat).length > 0) storedSettings.chat = storedChat
 

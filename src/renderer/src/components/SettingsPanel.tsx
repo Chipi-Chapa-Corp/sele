@@ -64,7 +64,8 @@ import {
 import {
   chatDropdownSettingFields,
   chatPromptBoxSettingFields,
-  chatThoughtSettingFields,
+  chatProgressSettingFields,
+  chatStoppedSteeredFailedProgressSettingFields,
   type AppearanceFontKey,
   type AppProjectSettingPath,
   type ChatBooleanSettingField,
@@ -1100,12 +1101,23 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
             {chatDropdownSettingFields.map(renderChatBooleanSettingField)}
           </div>
         </section>
-        <section className="settings-dialog__section" aria-labelledby="settings-chat-thoughts">
-          <h2 className="settings-dialog__section-heading" id="settings-chat-thoughts">
-            Thoughts
+        <section className="settings-dialog__section" aria-labelledby="settings-chat-progress">
+          <h2 className="settings-dialog__section-heading" id="settings-chat-progress">
+            Progress
           </h2>
           <div className="settings-dialog__section-cards">
-            {chatThoughtSettingFields.map(renderChatBooleanSettingField)}
+            {chatProgressSettingFields.map(renderChatBooleanSettingField)}
+          </div>
+        </section>
+        <section
+          className="settings-dialog__section"
+          aria-labelledby="settings-chat-exceptional-progress"
+        >
+          <h2 className="settings-dialog__section-heading" id="settings-chat-exceptional-progress">
+            Stopped, steered, and failed turns
+          </h2>
+          <div className="settings-dialog__section-cards">
+            {chatStoppedSteeredFailedProgressSettingFields.map(renderChatBooleanSettingField)}
           </div>
         </section>
         <section className="settings-dialog__section" aria-labelledby="settings-chat-stopped-turns">

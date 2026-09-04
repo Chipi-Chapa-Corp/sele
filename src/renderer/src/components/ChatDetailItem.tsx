@@ -90,11 +90,12 @@ import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { getBrowserFaviconUrl } from '../../../shared/browser'
 import { getRateLimitResetMessage } from '../rateLimitReset'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
-import { defaultAppChatThoughtSettings, type AppChatThoughtSettings } from '../settings'
+import { defaultAppChatProgressSettings, type AppChatProgressSettings } from '../settings'
 import {
   getWorkingStepDefaultOpen,
   getWorkingStepDisclosureKey,
-  resolveWorkingStepOpen
+  resolveWorkingStepOpen,
+  type WorkingStepProgressPolicy
 } from '../workingStepDisclosure'
 import { Button } from './Button'
 import { BoundedHighlightedCode } from './BoundedHighlightedCode'
@@ -145,32 +146,35 @@ type ChatDetailItemProps = {
   previousItem?: ProviderChatItem | null
   cwd?: string | null
   projectCwd?: string | null
+  progressPolicy?: WorkingStepProgressPolicy
+  progressSettings?: AppChatProgressSettings
   rateLimitResetDisabled?: boolean
   retryMessage?: ProviderMessage | null
   retryStoppedTurnDisabled?: boolean
   selectedModelId?: ProviderModelId
   streaming?: boolean
-  thoughtSettings?: AppChatThoughtSettings
   turnIndex?: number
   workingStepContent?: ReactNode
 }
 
-const getThoughtSettings = (settings?: AppChatThoughtSettings): AppChatThoughtSettings =>
-  settings ?? defaultAppChatThoughtSettings
+const getProgressSettings = (settings?: AppChatProgressSettings): AppChatProgressSettings =>
+  settings ?? defaultAppChatProgressSettings
 
-const areThoughtSettingsEqual = (
-  first?: AppChatThoughtSettings,
-  second?: AppChatThoughtSettings
+const areProgressSettingsEqual = (
+  first?: AppChatProgressSettings,
+  second?: AppChatProgressSettings
 ): boolean => {
-  const normalizedFirst = getThoughtSettings(first)
-  const normalizedSecond = getThoughtSettings(second)
+  const normalizedFirst = getProgressSettings(first)
+  const normalizedSecond = getProgressSettings(second)
 
   return (
-    normalizedFirst.expandThoughtsOnStart === normalizedSecond.expandThoughtsOnStart &&
-    normalizedFirst.collapseThoughtsOnFinish === normalizedSecond.collapseThoughtsOnFinish &&
-    normalizedFirst.collapseThoughtsOnNextTurn === normalizedSecond.collapseThoughtsOnNextTurn &&
-    normalizedFirst.expandStoppedTurns === normalizedSecond.expandStoppedTurns &&
-    normalizedFirst.collapseStoppedOnNextTurn === normalizedSecond.collapseStoppedOnNextTurn
+    normalizedFirst.expandProgressOnStart === normalizedSecond.expandProgressOnStart &&
+    normalizedFirst.collapseProgressOnFinish === normalizedSecond.collapseProgressOnFinish &&
+    normalizedFirst.collapseProgressOnNextTurn === normalizedSecond.collapseProgressOnNextTurn &&
+    normalizedFirst.collapseStoppedSteeredFailedProgressOnFinish ===
+      normalizedSecond.collapseStoppedSteeredFailedProgressOnFinish &&
+    normalizedFirst.collapseStoppedSteeredFailedProgressOnNextTurn ===
+      normalizedSecond.collapseStoppedSteeredFailedProgressOnNextTurn
   )
 }
 
@@ -211,6 +215,7 @@ const areChatDetailItemPropsEqual = (
   isQueuedPendingMessage(first.previousItem) === isQueuedPendingMessage(second.previousItem) &&
   first.cwd === second.cwd &&
   first.projectCwd === second.projectCwd &&
+  first.progressPolicy === second.progressPolicy &&
   first.rateLimitResetDisabled === second.rateLimitResetDisabled &&
   first.retryMessage === second.retryMessage &&
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
@@ -218,7 +223,7 @@ const areChatDetailItemPropsEqual = (
   first.streaming === second.streaming &&
   first.turnIndex === second.turnIndex &&
   first.workingStepContent === second.workingStepContent &&
-  areThoughtSettingsEqual(first.thoughtSettings, second.thoughtSettings) &&
+  areProgressSettingsEqual(first.progressSettings, second.progressSettings) &&
   first.item === second.item
 
 type ProviderToolItem = Exclude<ProviderWorkingItem, { type: 'message' }>
@@ -1799,9 +1804,10 @@ const WorkingStep: React.FC<{
   onUsageRefresh?: () => Promise<void> | void
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   projectCwd?: string | null
+  progressPolicy?: WorkingStepProgressPolicy
+  progressSettings: AppChatProgressSettings
   rateLimitResetDisabled?: boolean
   retryDisabled?: boolean
-  thoughtSettings: AppChatThoughtSettings
 }> = ({
   activityContent,
   availableRateLimitResets = 0,
@@ -1823,9 +1829,10 @@ const WorkingStep: React.FC<{
   onUsageRefresh,
   onUsageReset,
   projectCwd,
+  progressPolicy = 'regular',
+  progressSettings,
   rateLimitResetDisabled = false,
-  retryDisabled = false,
-  thoughtSettings
+  retryDisabled = false
 }) => {
   const [continueClicked, setContinueClicked] = useState(false)
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -1870,12 +1877,14 @@ const WorkingStep: React.FC<{
       : hasNextWorkingStep
   const defaultOpen = getWorkingStepDefaultOpen(
     autoCollapseStatus,
-    thoughtSettings,
+    progressPolicy,
+    progressSettings,
     autoCollapseHasNextWorkingStep
   )
   const disclosureKey = getWorkingStepDisclosureKey(
     autoCollapseStatus,
-    thoughtSettings,
+    progressPolicy,
+    progressSettings,
     autoCollapseHasNextWorkingStep
   )
   const [openState, setOpenState] = useState({ key: disclosureKey, open: defaultOpen })
@@ -2228,17 +2237,18 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   previousItem,
   cwd,
   projectCwd,
+  progressPolicy = 'regular',
+  progressSettings,
   rateLimitResetDisabled = false,
   retryMessage,
   retryStoppedTurnDisabled = false,
   selectedModelId,
   streaming = false,
-  thoughtSettings,
   turnIndex = -1,
   workingStepContent
 }) => {
   const [copied, setCopied] = useState(false)
-  const resolvedThoughtSettings = getThoughtSettings(thoughtSettings)
+  const resolvedProgressSettings = getProgressSettings(progressSettings)
 
   useEffect(() => {
     if (!copied) return undefined
@@ -2483,9 +2493,10 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       onUsageRefresh={onUsageRefresh}
       onUsageReset={onUsageReset}
       projectCwd={projectCwd}
+      progressPolicy={progressPolicy}
+      progressSettings={resolvedProgressSettings}
       rateLimitResetDisabled={rateLimitResetDisabled}
       retryDisabled={retryStoppedTurnDisabled}
-      thoughtSettings={resolvedThoughtSettings}
     />
   )
 }

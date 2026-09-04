@@ -381,30 +381,33 @@ export const chatDropdownSettingFields = [
   { key: 'updateNewChats', label: 'Update all new chats', id: 'settings-chat-new' }
 ] satisfies ChatBooleanSettingField[]
 
-export const chatThoughtSettingFields = [
+export const chatProgressSettingFields = [
   {
-    key: 'expandThoughtsOnStart',
-    label: 'Expand thoughts on start',
-    id: 'settings-chat-thought-expand-start'
+    key: 'expandProgressOnStart',
+    label: 'Expand progress on start',
+    id: 'settings-chat-progress-expand-start'
   },
   {
-    key: 'collapseThoughtsOnFinish',
-    label: 'Collapse thoughts on finish',
-    id: 'settings-chat-thought-collapse-finish'
+    key: 'collapseProgressOnFinish',
+    label: 'Collapse progress on finish',
+    id: 'settings-chat-progress-collapse-finish'
   },
   {
-    key: 'collapseThoughtsOnNextTurn',
-    label: 'Collapse thoughts on next turn',
-    id: 'settings-chat-thought-collapse-next-turn'
+    key: 'collapseProgressOnNextTurn',
+    label: 'Collapse progress on next turn',
+    id: 'settings-chat-progress-collapse-next-turn'
+  }
+] satisfies ChatBooleanSettingField[]
+
+export const chatStoppedSteeredFailedProgressSettingFields = [
+  {
+    key: 'collapseStoppedSteeredFailedProgressOnFinish',
+    label: 'Collapse progress on finish',
+    id: 'settings-chat-exceptional-progress-collapse-finish'
   },
   {
-    key: 'expandStoppedTurns',
-    label: 'Expand stopped turns',
-    id: 'settings-chat-thought-expand-stopped'
-  },
-  {
-    key: 'collapseStoppedOnNextTurn',
-    label: 'Collapse stopped on next turn',
-    id: 'settings-chat-thought-collapse-stopped-next-turn'
+    key: 'collapseStoppedSteeredFailedProgressOnNextTurn',
+    label: 'Collapse progress on next turn',
+    id: 'settings-chat-exceptional-progress-collapse-next-turn'
   }
 ] satisfies ChatBooleanSettingField[]
