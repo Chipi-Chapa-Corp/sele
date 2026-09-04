@@ -52,6 +52,7 @@ import {
   providerOneShotGenerationCanceledMessage
 } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
 import {
   disableProviderSkill,
   listDisabledProviderSkills,
@@ -100,7 +101,6 @@ type CopilotSessionState = {
   session: CopilotSession | null
   metadata: CopilotSessionMetadata | null
   events: SessionEvent[]
-  eventIds: Set<string>
   title: string | null
   active: boolean
   stopped: boolean
@@ -112,6 +112,26 @@ type CopilotSessionState = {
   plan: CopilotRenderedPlan | null
   planRefreshSequence: number
 }
+
+const copilotTurnActivityEventTypes: ReadonlySet<SessionEvent['type']> = new Set([
+  'user.message',
+  'assistant.turn_start',
+  'assistant.intent',
+  'assistant.reasoning',
+  'assistant.reasoning_delta',
+  'assistant.tool_call_delta',
+  'assistant.streaming_delta',
+  'assistant.message_start',
+  'assistant.message_delta',
+  'assistant.message',
+  'tool.execution_start',
+  'tool.execution_partial_result',
+  'tool.execution_progress',
+  'tool.execution_complete'
+])
+
+const isCopilotTurnActivityEvent = (event: SessionEvent): boolean =>
+  copilotTurnActivityEventTypes.has(event.type)
 
 type CopilotOneShotGeneration = {
   session: CopilotSession | null
@@ -1200,7 +1220,6 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (result.eventsRemoved < 1) throw new Error('Message cannot be edited')
 
     state.events = []
-    state.eventIds.clear()
     state.title = null
     state.plan = null
     state.planRefreshSequence += 1
@@ -1424,7 +1443,6 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       session: null,
       metadata: null,
       events: [],
-      eventIds: new Set(),
       title: null,
       active: false,
       stopped: false,
@@ -1561,10 +1579,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   private loadEvents = async (state: CopilotSessionState): Promise<void> => {
     if (!state.session) return
     const events = await state.session.getEvents()
-    events.forEach((event) => this.storeEvent(state, event))
-    state.events.sort(
-      (first, second) => toMilliseconds(first.timestamp) - toMilliseconds(second.timestamp)
-    )
+    state.events = reconcileProviderRecords(state.events, events, {
+      authoritative: true,
+      getId: (event) => event.id,
+      compare: (first, second) =>
+        toMilliseconds(first.timestamp) - toMilliseconds(second.timestamp),
+      retainCurrent: (event) => event.ephemeral === true
+    })
   }
 
   private startChatTitleGeneration = (
@@ -1623,9 +1644,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   private storeEvent = (state: CopilotSessionState, event: SessionEvent): void => {
-    if (state.eventIds.has(event.id)) return
-    state.eventIds.add(event.id)
-    state.events.push(event)
+    state.events = reconcileProviderRecords(state.events, [event], {
+      authoritative: false,
+      getId: (candidate) => candidate.id,
+      compare: (first, second) => toMilliseconds(first.timestamp) - toMilliseconds(second.timestamp)
+    })
   }
 
   private handleEvent = (sessionId: string, event: SessionEvent): void => {
@@ -1641,11 +1664,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         }
       }
     }
-    if (
-      event.type === 'user.message' ||
-      event.type === 'assistant.turn_start' ||
-      event.type === 'tool.execution_start'
-    ) {
+    if (isCopilotTurnActivityEvent(event)) {
       state.active = true
       state.stopped = false
       state.failed = false
@@ -1659,16 +1678,19 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (event.type === 'session.idle') {
       state.active = false
       state.stopped = Boolean(event.data.aborted)
-      // Copilot generates and persists a session name during the first turn, but does
-      // not reliably send a title_changed event to SDK clients. Refresh it before the
-      // completed-turn update so newly created chats are renamed in the live UI. Do not
-      // hold completion behind the separate plan RPCs: while that refresh is pending the
-      // final response is already visible, which can make a chat left during that window
-      // look as though its eventual completion was already read.
-      void this.loadSessionTitle(state).then(() => {
-        this.emitUpdate(state, true)
-        void this.refreshPlan(state).then(() => this.emitUpdate(state))
-      })
+      // Completion is the reconciliation boundary. Live Copilot notifications may be partial,
+      // duplicated, or delivered out of timestamp order; persisted events are authoritative.
+      void (async () => {
+        try {
+          await Promise.allSettled([
+            this.loadEvents(state),
+            this.loadSessionTitle(state),
+            this.refreshPlan(state)
+          ])
+        } finally {
+          this.emitUpdate(state, true)
+        }
+      })()
       return
     }
     if (event.type === 'session.plan_changed' || event.type === 'session.todos_changed') {

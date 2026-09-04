@@ -5,9 +5,13 @@ import type {
   ProviderMessageAttachment,
   ProviderToolActivity,
   ProviderToolImage,
-  ProviderWorkingItem,
   ProviderWorkingTool
 } from '../../../shared/provider'
+import {
+  appendProviderConversationSegment,
+  getTrailingAssistantEntryIndex,
+  type ProviderConversationEntry
+} from '../ProviderConversationEngine.ts'
 
 export type ClaudeTranscriptMessage = {
   type: 'user' | 'assistant' | 'system'
@@ -44,23 +48,9 @@ type RenderOptions = {
   pendingItems?: ProviderChatItem[]
 }
 
-type AssistantSegmentMessage = {
-  id: string
-  content: string
-  model: string | null
-  timestamp?: string
-}
-
-type SegmentEntry =
-  | { kind: 'working'; item: ProviderWorkingItem }
-  | {
-      kind: 'assistant'
-      message: AssistantSegmentMessage
-    }
-
 type Segment = {
   id: string
-  entries: SegmentEntry[]
+  entries: ProviderConversationEntry[]
   failed: boolean
 }
 
@@ -216,7 +206,7 @@ const getToolDiffs = (tool: ProviderWorkingTool, output: string | null): Provide
 }
 
 const updateTool = (
-  entries: SegmentEntry[],
+  entries: ProviderConversationEntry[],
   toolId: string,
   update: (tool: ProviderWorkingTool) => ProviderWorkingTool
 ): void => {
@@ -292,43 +282,18 @@ export const renderClaudeChatItems = (
     if (!segment) return
     const current = segment
     segment = null
-    const lastEntry = current.entries.at(-1)
-    const finalMessage = lastEntry?.kind === 'assistant' ? lastEntry.message : null
-    const workingEntries = finalMessage ? current.entries.slice(0, -1) : current.entries
-    const workingItems = workingEntries.map((entry): ProviderWorkingItem =>
-      entry.kind === 'working'
-        ? entry.item
-        : { type: 'message', id: entry.message.id, content: entry.message.content }
-    )
     const failed = current.failed || (isLast && options.failed === true)
-
-    if (workingItems.length > 0 || (isLast && options.active) || failed) {
-      items.push({
-        type: 'working',
-        id: current.id,
-        status: failed
-          ? 'failed'
-          : finalMessage != null
-            ? 'worked'
-            : isLast && options.active
-              ? 'working'
-              : options.stopped && isLast
-                ? 'stopped'
-                : 'worked',
-        items: workingItems
-      })
-    }
-
-    if (finalMessage) {
-      items.push({
-        type: 'message',
-        id: finalMessage.id,
-        role: 'assistant',
-        content: finalMessage.content,
-        createdAt: toTimestamp(finalMessage.timestamp),
-        model: finalMessage.model
-      })
-    }
+    appendProviderConversationSegment(items, {
+      id: current.id,
+      entries: current.entries,
+      finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
+      lifecycle: {
+        active: isLast && options.active,
+        completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
+        failed,
+        stopped: isLast && options.stopped
+      }
+    })
   }
 
   for (const message of messages) {
@@ -396,10 +361,12 @@ export const renderClaudeChatItems = (
             current.entries.push({
               kind: 'assistant',
               message: {
+                type: 'message',
                 id: blocks.length === 1 ? message.uuid : `${message.uuid}:text:${blockIndex}`,
+                role: 'assistant',
                 content: block.text.trim(),
-                model: getModel(message.message),
-                timestamp: message.timestamp
+                createdAt: toTimestamp(message.timestamp),
+                model: getModel(message.message)
               }
             })
           }

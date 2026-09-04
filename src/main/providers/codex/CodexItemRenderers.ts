@@ -11,6 +11,12 @@ import type {
   ProviderWorkingToolStatus
 } from '../../../shared/provider'
 import { groupWorkingItemsForRenderer, rendererWorkingToolGroupLimit } from '../workingStepLazy.ts'
+import {
+  appendProviderConversationSegment,
+  getProviderLifecycleForWorkingStatus,
+  settleProviderWorkingStatus,
+  type ProviderConversationEntry
+} from '../ProviderConversationEngine.ts'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls.ts'
 
 export type CodexUserInput =
@@ -1642,21 +1648,6 @@ const isRateLimitFailure = (turn: CodexTurn): boolean =>
   turn.error?.codexErrorInfo === 'usageLimitExceeded' ||
   turn.error?.codexErrorInfo === 'rateLimitExceeded'
 
-const getWorkingStepStatus = (
-  workingStatus: ProviderWorkingStep['status'],
-  finalMessage: ProviderMessage | null
-): ProviderWorkingStep['status'] => {
-  if (
-    !finalMessage ||
-    workingStatus === 'stopped' ||
-    workingStatus === 'failed' ||
-    workingStatus === 'queued'
-  ) {
-    return workingStatus
-  }
-  return 'worked'
-}
-
 const toMilliseconds = (seconds: number | null | undefined): number | null =>
   typeof seconds === 'number' && Number.isFinite(seconds) ? seconds * 1_000 : null
 
@@ -1716,46 +1707,51 @@ const renderChatItems = (
     let hasSeenInitialUserMessage = false
     const renderedContextCompactionItemIds = new Set<string>()
     let workingStepCount = 0
-    const pushWorkingStep = (status: ProviderWorkingStep['status']): void => {
-      if (
+    const pushWorkingStep = (
+      status: ProviderWorkingStep['status'],
+      segmentFinalMessage: ProviderMessage | null = null
+    ): void => {
+      const settledStatus = settleProviderWorkingStatus(status, segmentFinalMessage !== null)
+      const omitBeforeInitialUser =
         !hasSeenInitialUserMessage &&
         workingItemCount === 0 &&
         pendingTimelineAnchors.length === 0 &&
-        (status === 'stopped' || status === 'working' || status === 'queued')
-      ) {
-        return
-      }
-      if (
+        (settledStatus === 'stopped' || settledStatus === 'working' || settledStatus === 'queued')
+      const omitEmptyCompletedStep =
         workingItemCount === 0 &&
         pendingTimelineAnchors.length === 0 &&
-        status !== 'stopped' &&
-        status !== 'failed' &&
-        status !== 'working' &&
-        status !== 'queued'
-      ) {
-        return
-      }
-
-      chatItems.push({
-        type: 'working',
+        settledStatus !== 'stopped' &&
+        settledStatus !== 'failed' &&
+        settledStatus !== 'working' &&
+        settledStatus !== 'queued'
+      const showWorking = !omitBeforeInitialUser && !omitEmptyCompletedStep
+      const entries: ProviderConversationEntry[] = [
+        ...workingItems.map((item) => ({ kind: 'working' as const, item })),
+        ...(segmentFinalMessage
+          ? [{ kind: 'assistant' as const, message: segmentFinalMessage }]
+          : [])
+      ]
+      appendProviderConversationSegment(chatItems, {
         id: `${turn.id}:working${workingStepCount === 0 ? '' : `:${workingStepCount}`}`,
-        status,
-        ...(status === 'failed' && isRateLimitFailure(turn)
-          ? { failureReason: 'rateLimit' as const }
-          : {}),
-        items: [...workingItems],
+        entries,
+        finalMessageIndex: segmentFinalMessage ? entries.length - 1 : -1,
+        lifecycle: getProviderLifecycleForWorkingStatus(settledStatus),
+        failureReason:
+          settledStatus === 'failed' && isRateLimitFailure(turn) ? 'rateLimit' : undefined,
+        showWorking,
+        betweenWorkingAndFinal: pendingTimelineAnchors,
         ...(workingItemTailLimit < Number.MAX_SAFE_INTEGER
           ? {
-              itemsLoaded: true,
-              itemCount: workingItemCount,
-              itemsStartIndex: Math.max(0, workingItemCount - workingItems.length)
+              workingItemWindow: {
+                itemCount: workingItemCount,
+                itemsStartIndex: Math.max(0, workingItemCount - workingItems.length)
+              }
             }
           : {})
       })
       workingItems.length = 0
       workingItemCount = 0
-      workingStepCount += 1
-      chatItems.push(...pendingTimelineAnchors)
+      if (showWorking) workingStepCount += 1
       pendingTimelineAnchors.length = 0
     }
     const appendWorkingItems = (items: ProviderWorkingItem[]): void => {
@@ -1803,9 +1799,7 @@ const renderChatItems = (
     const flushBufferedFinalMessage = (): boolean => {
       if (!finalMessage) return false
 
-      const workingStepStatus = getWorkingStepStatus(workingStatus, finalMessage)
-      pushWorkingStep(workingStepStatus)
-      chatItems.push(finalMessage)
+      pushWorkingStep(workingStatus, finalMessage)
       finalMessage = null
       return true
     }

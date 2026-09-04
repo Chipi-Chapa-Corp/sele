@@ -6,12 +6,12 @@ import { renderCopilotChatItems } from './CopilotItemRenderers.ts'
 
 // Test fixtures intentionally omit production-only Copilot event fields.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-const userMessage = (id, content, source) => ({
+const userMessage = (id, content, source, attachments) => ({
   type: 'user.message',
   id,
   parentId: null,
   timestamp: '2026-01-01T00:00:00.000Z',
-  data: { content, source }
+  data: { content, source, attachments }
 })
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -39,6 +39,24 @@ const taskComplete = (id, summary, success = true) => ({
   parentId: null,
   timestamp: '2026-01-01T00:00:03.000Z',
   data: { summary, success }
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const reasoning = (id, content) => ({
+  type: 'assistant.reasoning',
+  id,
+  parentId: null,
+  timestamp: '2026-01-01T00:00:02.000Z',
+  data: { content, reasoningId: id }
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const turnEnd = (id) => ({
+  type: 'assistant.turn_end',
+  id,
+  parentId: null,
+  timestamp: '2026-01-01T00:00:03.000Z',
+  data: { turnId: id }
 })
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -72,6 +90,22 @@ test('keeps ordinary user messages that mention skill context markup', () => {
   const items = render([userMessage('prompt', content)])
 
   assert.equal(items.find((item) => item.type === 'message')?.content, content)
+})
+
+test('recognizes a path-backed image when Copilot omits its MIME type', () => {
+  const items = render([
+    userMessage('prompt', 'Describe this image', undefined, [
+      {
+        type: 'file',
+        path: '/tmp/pasted-image.png',
+        displayName: 'pasted-image.png'
+      }
+    ])
+  ])
+  const message = items.find((item) => item.type === 'message')
+
+  assert.equal(message?.attachments?.[0]?.kind, 'image')
+  assert.equal(message?.attachments?.[0]?.path, '/tmp/pasted-image.png')
 })
 
 test('keeps assistant commentary between tool runs in event order', () => {
@@ -203,5 +237,24 @@ test('renders the task completion summary as the final Copilot response', () => 
   assert.equal(
     items.find((item) => item.type === 'message' && item.role === 'assistant')?.content,
     'The task is complete.'
+  )
+})
+
+test('keeps a completed final response when a late working event follows it', () => {
+  const items = render([
+    userMessage('prompt', 'Answer after investigating'),
+    assistantMessage('answer', 'This is the final answer.'),
+    reasoning('late-reasoning', 'Finishing some late bookkeeping.'),
+    turnEnd('turn-end')
+  ])
+  const finalMessage = items.find((item) => item.type === 'message' && item.role === 'assistant')
+  const workingStep = items.find((item) => item.type === 'working')
+
+  assert.equal(finalMessage?.content, 'This is the final answer.')
+  assert.equal(
+    workingStep?.items.some(
+      (item) => item.type === 'message' && item.content === 'Finishing some late bookkeeping.'
+    ),
+    true
   )
 })

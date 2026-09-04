@@ -6,9 +6,13 @@ import type {
   ProviderFileDiff,
   ProviderMessageAttachment,
   ProviderToolActivity,
-  ProviderWorkingItem,
   ProviderWorkingTool
 } from '../../../shared/provider'
+import {
+  appendProviderConversationSegment,
+  getTrailingAssistantEntryIndex,
+  type ProviderConversationEntry
+} from '../ProviderConversationEngine.ts'
 
 export type OpenCodeMessageWithParts = {
   info: Message
@@ -22,19 +26,9 @@ type RenderOptions = {
   pendingItems?: ProviderChatItem[]
 }
 
-type AssistantText = {
-  id: string
-  content: string
-  createdAt: number | null
-  model: string | null
-}
-
-type SegmentEntry =
-  { kind: 'working'; item: ProviderWorkingItem } | { kind: 'assistant'; message: AssistantText }
-
 type Segment = {
   id: string
-  entries: SegmentEntry[]
+  entries: ProviderConversationEntry[]
   completed: boolean
   failed: boolean
 }
@@ -263,41 +257,20 @@ export const renderOpenCodeChatItems = (
     if (!segment) return
     const current = segment
     segment = null
-    const finalEntry = current.entries.at(-1)
-    const finalMessage = finalEntry?.kind === 'assistant' ? finalEntry.message : null
-    const workingEntries = finalMessage ? current.entries.slice(0, -1) : current.entries
-    const workingItems = workingEntries.map((entry): ProviderWorkingItem =>
-      entry.kind === 'working'
-        ? entry.item
-        : { type: 'message', id: entry.message.id, content: entry.message.content }
-    )
     const isWorking = isLast && options.active && !current.completed
     const failed = current.failed || (isLast && options.failed === true)
-
-    if (workingItems.length > 0 || isWorking || failed) {
-      items.push({
-        type: 'working',
-        id: current.id,
-        status: isWorking
-          ? 'working'
-          : failed
-            ? 'failed'
-            : options.stopped && isLast
-              ? 'stopped'
-              : 'worked',
-        items: workingItems
-      })
-    }
-    if (finalMessage) {
-      items.push({
-        type: 'message',
-        id: finalMessage.id,
-        role: 'assistant',
-        content: finalMessage.content,
-        createdAt: finalMessage.createdAt,
-        model: finalMessage.model
-      })
-    }
+    appendProviderConversationSegment(items, {
+      id: current.id,
+      entries: current.entries,
+      finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
+      lifecycle: {
+        active: isWorking,
+        completed: current.completed || (!isLast && !failed),
+        failed,
+        stopped: isLast && options.stopped
+      },
+      keepActiveAfterFinal: isWorking
+    })
   }
 
   messages.forEach((message, messageIndex) => {
@@ -338,7 +311,9 @@ export const renderOpenCodeChatItems = (
         current.entries.push({
           kind: 'assistant',
           message: {
+            type: 'message',
             id: part.id,
+            role: 'assistant',
             content: part.text.trim(),
             createdAt: part.time?.start ?? message.info.time.created,
             model: getAssistantModel(message.info)

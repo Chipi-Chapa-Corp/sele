@@ -44,6 +44,7 @@ import {
 } from '../../../shared/provider'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
 import {
   disableProviderSkill,
   listDisabledProviderSkills,
@@ -556,7 +557,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         this.rememberSession(session, entry.container)
         const messages = await this.loadMessages(entry.client, session).catch(() => [])
         const state = this.states.get(session.id)
-        if (state) state.messages = messages
+        if (state) {
+          state.messages = reconcileProviderRecords(state.messages, messages, {
+            authoritative: true,
+            getId: (message) => message.info.id
+          })
+        }
         return this.createChat(session, messages, state)
       })
     )
@@ -1326,7 +1332,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         .catch(() => [])
     ])
     state.session = session
-    state.messages = messages
+    state.messages = reconcileProviderRecords(state.messages, messages, {
+      authoritative: true,
+      getId: (message) => message.info.id
+    })
     const status = statuses[state.id]
     if (status?.type === 'busy' || status?.type === 'retry') state.active = true
     else if (!preserveActive) state.active = false

@@ -3,12 +3,17 @@ import type { SessionEvent } from '@github/copilot-sdk'
 import type {
   ProviderChatItem,
   ProviderFileDiff,
+  ProviderMessage,
   ProviderMessageAttachment,
   ProviderToolActivity,
   ProviderToolImage,
   ProviderWorkingItem,
   ProviderWorkingTool
 } from '../../../shared/provider'
+import {
+  appendProviderConversationSegment,
+  type ProviderConversationEntry
+} from '../ProviderConversationEngine.ts'
 
 type ToolStartEvent = Extract<SessionEvent, { type: 'tool.execution_start' }>
 type ToolCompleteEvent = Extract<SessionEvent, { type: 'tool.execution_complete' }>
@@ -36,8 +41,7 @@ type RenderOptions = {
 
 type Segment = {
   id: string
-  workingItems: ProviderWorkingItem[]
-  finalMessage: FinalMessageEvent | null
+  entries: ProviderConversationEntry[]
   failed: boolean
 }
 
@@ -48,6 +52,7 @@ const maxRawToolDepth = 8
 const truncatedToolValueMarker = '… [truncated to keep the app responsive]'
 const truncatedEarlierToolOutputMarker = `${truncatedToolValueMarker}\n`
 const skillContextMessagePattern = /^<skill-context(?:\s[^>]*)?>[\s\S]*<\/skill-context>$/
+const imageFileExtensionPattern = /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i
 
 export const isCopilotSystemContextMessage = (event: UserMessageEvent): boolean => {
   const source = event.data.source?.trim().toLocaleLowerCase()
@@ -323,14 +328,16 @@ const getToolImages = (
 }
 
 const updateTool = (
-  items: ProviderWorkingItem[],
+  entries: ProviderConversationEntry[],
   toolCallId: string,
   update: (tool: ProviderWorkingTool) => ProviderWorkingTool
 ): void => {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index]
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry?.kind !== 'working') continue
+    const item = entry.item
     if (item?.type === 'tool' && item.toolId === toolCallId) {
-      items[index] = update(item)
+      entries[index] = { kind: 'working', item: update(item) }
       return
     }
     if (item?.type === 'toolGroup') {
@@ -348,7 +355,9 @@ const getAttachments = (
 ): ProviderMessageAttachment[] => {
   return (event.data.attachments ?? []).flatMap((attachment): ProviderMessageAttachment[] => {
     if (attachment.type === 'file') {
-      const image = attachment.mimeType?.startsWith('image/')
+      const image =
+        attachment.mimeType?.startsWith('image/') === true ||
+        imageFileExtensionPattern.test(attachment.path)
       return [
         image
           ? {
@@ -401,7 +410,7 @@ const hasRenderableWorkingEvent = (event: SessionEvent): boolean => {
   )
 }
 
-const getFinalMessageIndex = (events: SessionEvent[]): number => {
+const getFinalMessageIndex = (events: SessionEvent[], completed: boolean): number => {
   const explicitFinalIndex = events.findLastIndex(
     (event) =>
       (event.type === 'assistant.message' &&
@@ -419,7 +428,8 @@ const getFinalMessageIndex = (events: SessionEvent[]): number => {
       Boolean(event.data.content.trim())
   )
   const terminalFallbackIndex =
-    fallbackFinalIndex >= 0 && !events.slice(fallbackFinalIndex + 1).some(hasRenderableWorkingEvent)
+    fallbackFinalIndex >= 0 &&
+    (completed || !events.slice(fallbackFinalIndex + 1).some(hasRenderableWorkingEvent))
       ? fallbackFinalIndex
       : -1
 
@@ -433,7 +443,10 @@ const getFinalMessageEvents = (
   const finalEvents = new Set<SessionEvent>()
   let segmentEvents: SessionEvent[] = []
   const flushSegment = (): void => {
-    const finalMessageIndex = getFinalMessageIndex(segmentEvents)
+    const completed = segmentEvents.some(
+      (event) => event.type === 'assistant.turn_end' || event.type === 'session.task_complete'
+    )
+    const finalMessageIndex = getFinalMessageIndex(segmentEvents, completed)
     if (finalMessageIndex >= 0 && segmentEvents[finalMessageIndex]) {
       finalEvents.add(segmentEvents[finalMessageIndex])
     }
@@ -471,8 +484,7 @@ export const renderCopilotChatItems = (
     if (!segment) {
       segment = {
         id: `${eventId}:working`,
-        workingItems: [],
-        finalMessage: null,
+        entries: [],
         failed: false
       }
     }
@@ -480,55 +492,53 @@ export const renderCopilotChatItems = (
   }
 
   const appendWorkingItem = (currentSegment: Segment, item: ProviderWorkingItem): void => {
-    currentSegment.workingItems.push(item)
+    currentSegment.entries.push({ kind: 'working', item })
   }
+
+  const createAssistantMessage = (event: FinalMessageEvent): ProviderMessage =>
+    event.type === 'assistant.message'
+      ? {
+          type: 'message',
+          id: event.data.messageId || event.id,
+          role: 'assistant',
+          content: event.data.content.trim(),
+          createdAt: toTimestamp(event.timestamp),
+          model: event.data.model ?? null
+        }
+      : {
+          type: 'message',
+          id: event.id,
+          role: 'assistant',
+          content: event.data.summary?.trim() ?? '',
+          createdAt: toTimestamp(event.timestamp),
+          model: null
+        }
 
   const flushSegment = (isLast: boolean): void => {
     if (!segment) return
 
     const currentSegment = segment
     segment = null
-    const finalMessage = currentSegment.finalMessage
     const failed = currentSegment.failed || (isLast && options.failed === true)
-
-    if (currentSegment.workingItems.length > 0 || (isLast && options.active) || failed) {
-      items.push({
-        type: 'working',
-        id: currentSegment.id,
-        status:
-          isLast && options.active
-            ? 'working'
-            : failed
-              ? 'failed'
-              : options.stopped && isLast
-                ? 'stopped'
-                : 'worked',
-        items: currentSegment.workingItems
-      })
-    }
-
-    if (finalMessage) {
-      const assistantMessage =
-        finalMessage.type === 'assistant.message'
-          ? {
-              id: finalMessage.data.messageId || finalMessage.id,
-              content: finalMessage.data.content.trim(),
-              model: finalMessage.data.model ?? null
-            }
-          : {
-              id: finalMessage.id,
-              content: finalMessage.data.summary?.trim() ?? '',
-              model: null
-            }
-      items.push({
-        type: 'message',
-        id: assistantMessage.id,
-        role: 'assistant',
-        content: assistantMessage.content,
-        createdAt: toTimestamp(finalMessage.timestamp),
-        model: assistantMessage.model
-      })
-    }
+    const finalMessageIndex = currentSegment.entries.findLastIndex(
+      (entry) => entry.kind === 'assistant'
+    )
+    appendProviderConversationSegment(items, {
+      id: currentSegment.id,
+      entries: currentSegment.entries,
+      finalMessageIndex,
+      lifecycle: {
+        active: isLast && options.active,
+        completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
+        failed,
+        stopped: isLast && options.stopped
+      },
+      keepActiveAfterFinal: isLast && options.active,
+      showWorking:
+        currentSegment.entries.some((entry) => entry.kind === 'working') ||
+        (isLast && options.active) ||
+        failed
+    })
   }
 
   for (const event of events) {
@@ -550,8 +560,7 @@ export const renderCopilotChatItems = (
       })
       segment = {
         id: `${event.id}:working`,
-        workingItems: [],
-        finalMessage: null,
+        entries: [],
         failed: false
       }
       continue
@@ -573,11 +582,15 @@ export const renderCopilotChatItems = (
       const content = event.data.intent.trim()
       if (content) {
         const currentSegment = ensureSegment(event.id)
-        const workingItems = currentSegment.workingItems
-        const previousIntentIndex = workingItems.findIndex((item) => item.id === 'copilot:intent')
+        const previousIntentIndex = currentSegment.entries.findIndex(
+          (entry) => entry.kind === 'working' && entry.item.id === 'copilot:intent'
+        )
         const intent = { type: 'message' as const, id: 'copilot:intent', content }
-        if (previousIntentIndex >= 0) workingItems[previousIntentIndex] = intent
-        else workingItems.push(intent)
+        if (previousIntentIndex >= 0) {
+          currentSegment.entries[previousIntentIndex] = { kind: 'working', item: intent }
+        } else {
+          appendWorkingItem(currentSegment, intent)
+        }
       }
       continue
     }
@@ -594,7 +607,7 @@ export const renderCopilotChatItems = (
       const content = event.data.content.trim()
       if (content) {
         if (finalMessageEvents.has(event)) {
-          currentSegment.finalMessage = event
+          currentSegment.entries.push({ kind: 'assistant', message: createAssistantMessage(event) })
         } else {
           appendWorkingItem(currentSegment, {
             type: 'message',
@@ -614,7 +627,7 @@ export const renderCopilotChatItems = (
 
     if (event.type === 'tool.execution_partial_result') {
       if (askUserToolCallIds.has(event.data.toolCallId)) continue
-      updateTool(ensureSegment(event.id).workingItems, event.data.toolCallId, (tool) => ({
+      updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         stdout: appendCopilotToolOutput(tool.stdout, event.data.partialOutput)
       }))
@@ -623,7 +636,7 @@ export const renderCopilotChatItems = (
 
     if (event.type === 'tool.execution_progress') {
       if (askUserToolCallIds.has(event.data.toolCallId)) continue
-      updateTool(ensureSegment(event.id).workingItems, event.data.toolCallId, (tool) => ({
+      updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         label: event.data.progressMessage.trim() || tool.label
       }))
@@ -633,7 +646,7 @@ export const renderCopilotChatItems = (
     if (event.type === 'tool.execution_complete') {
       const askedQuestion = askUserToolCallIds.has(event.data.toolCallId)
       const images = askedQuestion ? [] : getToolImages(event, binaryAssets)
-      updateTool(ensureSegment(event.id).workingItems, event.data.toolCallId, (tool) => ({
+      updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         status: 'finished',
         label: askedQuestion ? 'Asked a question' : tool.label,
@@ -649,7 +662,12 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'session.task_complete') {
-      if (finalMessageEvents.has(event)) ensureSegment(event.id).finalMessage = event
+      if (finalMessageEvents.has(event)) {
+        ensureSegment(event.id).entries.push({
+          kind: 'assistant',
+          message: createAssistantMessage(event)
+        })
+      }
       continue
     }
 
@@ -670,7 +688,7 @@ export const renderCopilotChatItems = (
   }
 
   if (options.plan?.items.length) {
-    ensureSegment('copilot:plan').workingItems.push({
+    appendWorkingItem(ensureSegment('copilot:plan'), {
       type: 'tool',
       id: 'copilot:plan',
       toolId: 'update_plan',

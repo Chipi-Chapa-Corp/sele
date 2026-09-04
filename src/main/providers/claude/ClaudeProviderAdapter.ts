@@ -59,6 +59,7 @@ import {
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getHostCommand, getHostExecutableCommand, type HostCommand } from '../../hostProcess'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
 import { ProviderClientPool } from '../ProviderClientPool'
 import {
   disableProviderSkill,
@@ -1934,9 +1935,18 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state: ClaudeSessionState,
     message: ClaudeTranscriptMessage
   ): void => {
-    if (state.messageIds.has(message.uuid)) return
+    state.messages = reconcileProviderRecords(state.messages, [message], {
+      authoritative: false,
+      getId: (candidate) => candidate.uuid,
+      merge: (previous, next) => ({
+        ...previous,
+        ...next,
+        attachments: next.attachments ?? previous.attachments,
+        kind: next.kind ?? previous.kind,
+        label: next.label ?? previous.label
+      })
+    })
     state.messageIds.add(message.uuid)
-    state.messages.push(message)
   }
 
   private rejectPendingRequests = (state: ClaudeSessionState): void => {

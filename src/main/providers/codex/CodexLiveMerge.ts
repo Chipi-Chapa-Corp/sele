@@ -1,3 +1,8 @@
+import {
+  assertUniqueProviderSnapshotIds,
+  mergeProviderSnapshotsById
+} from '../ProviderConversationEngine.ts'
+
 export const mergeCodexStreamedText = (
   previous: string | undefined,
   next: string | undefined
@@ -36,42 +41,15 @@ export type CodexAgentResponseOverlay = {
   phase?: 'commentary' | 'final_answer' | null
 }
 
-const getUniqueCodexSnapshots = <Snapshot extends CodexIdentified>(
-  snapshots: readonly Snapshot[],
-  merge: (previous: Snapshot, next: Snapshot) => Snapshot
-): Snapshot[] => {
-  const uniqueSnapshots: Snapshot[] = []
-  const indexesById = new Map<string, number>()
-
-  for (const snapshot of snapshots) {
-    const existingIndex = indexesById.get(snapshot.id)
-    if (existingIndex == null) {
-      indexesById.set(snapshot.id, uniqueSnapshots.length)
-      uniqueSnapshots.push(snapshot)
-      continue
-    }
-
-    uniqueSnapshots[existingIndex] = merge(uniqueSnapshots[existingIndex], snapshot)
-  }
-
-  return uniqueSnapshots
-}
-
 export const mergeCodexSnapshotsById = <Snapshot extends CodexIdentified>(
   snapshots: readonly Snapshot[],
   merge: (previous: Snapshot, next: Snapshot) => Snapshot
-): Snapshot[] => getUniqueCodexSnapshots(snapshots, merge)
+): Snapshot[] => mergeProviderSnapshotsById(snapshots, merge)
 
 export const assertUniqueCodexSnapshotIds = <Snapshot extends CodexIdentified>(
   snapshots: readonly Snapshot[],
   label: string
-): void => {
-  const ids = new Set<string>()
-  for (const snapshot of snapshots) {
-    if (ids.has(snapshot.id)) throw new Error(`Invalid Codex ${label}: duplicate ID ${snapshot.id}`)
-    ids.add(snapshot.id)
-  }
-}
+): void => assertUniqueProviderSnapshotIds(snapshots, `Codex ${label}`)
 
 const assertAuthoritativeCodexTailSuccessor = <Turn extends CodexOrderedTurn>(
   currentTurns: readonly Turn[],
