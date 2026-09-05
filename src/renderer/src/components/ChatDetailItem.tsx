@@ -1995,8 +1995,8 @@ const WorkingStep: React.FC<{
     item.failureReason === 'rateLimit' &&
     availableRateLimitResets > 0 &&
     onUsageReset &&
-    onRetry
-      ? { onReset: onUsageReset, onRetry }
+    onContinue
+      ? { onContinue, onReset: onUsageReset }
       : null
   const hasStoppedOrFailed = item.status === 'stopped' || item.status === 'failed'
   const turnActions =
@@ -2033,15 +2033,21 @@ const WorkingStep: React.FC<{
         {rateLimitResetActions && (
           <RateLimitResetButton
             availableCount={availableRateLimitResets}
-            disabled={retryDisabled || rateLimitResetDisabled}
+            disabled={continueDisabled || rateLimitResetDisabled}
             onReset={rateLimitResetActions.onReset}
             onResetError={setRateLimitResetMessage}
             onResetResult={async (outcome) => {
-              setRateLimitResetMessage(getRateLimitResetMessage(outcome))
+              if (outcome !== 'reset') {
+                setRateLimitResetMessage(getRateLimitResetMessage(outcome))
+              }
               await onUsageRefresh?.()
-              if (outcome === 'reset') await rateLimitResetActions.onRetry()
+              if (outcome === 'reset') {
+                setContinueClicked(true)
+                await rateLimitResetActions.onContinue()
+              }
             }}
             onResetStart={() => setRateLimitResetMessage(null)}
+            pendingLabel="Continuing.."
           />
         )}
         {rateLimitResetMessage && (

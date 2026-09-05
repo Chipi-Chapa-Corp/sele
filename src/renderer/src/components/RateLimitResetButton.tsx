@@ -12,6 +12,7 @@ type RateLimitResetButtonProps = {
   onResetError?: (message: string) => void
   onResetResult?: (outcome: ProviderAccountRateLimitResetOutcome) => Promise<void> | void
   onResetStart?: () => void
+  pendingLabel?: string
 }
 
 export const RateLimitResetButton: React.FC<RateLimitResetButtonProps> = ({
@@ -20,7 +21,8 @@ export const RateLimitResetButton: React.FC<RateLimitResetButtonProps> = ({
   onReset,
   onResetError,
   onResetResult,
-  onResetStart
+  onResetStart,
+  pendingLabel = 'Resetting...'
 }) => {
   const [pending, setPending] = useState(false)
 
@@ -51,7 +53,7 @@ export const RateLimitResetButton: React.FC<RateLimitResetButtonProps> = ({
       callback={handleReset}
       disabled={disabled || pending}
       icon={<RotateCcw aria-hidden="true" />}
-      label={pending ? 'Resetting...' : 'Reset limits'}
+      label={pending ? pendingLabel : 'Reset limits'}
       size="small"
       theme="secondary"
     />
