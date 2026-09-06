@@ -150,6 +150,12 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getModels, providerId, options),
   getSkills: (providerId, cwd, options) =>
     ipcRenderer.invoke(providerIpcChannels.getSkills, providerId, cwd, options),
+  getConfig: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getConfig, providerId, options),
+  setConfigValue: (providerId, name, path, value, options) =>
+    ipcRenderer.invoke(providerIpcChannels.setConfigValue, providerId, name, path, value, options),
+  setConfigFeature: (providerId, name, enabled, options) =>
+    ipcRenderer.invoke(providerIpcChannels.setConfigFeature, providerId, name, enabled, options),
   getApps: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getApps, providerId, options),
   setSkillEnabled: (providerId, path, enabled, cwd, options) =>

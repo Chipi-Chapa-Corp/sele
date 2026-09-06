@@ -537,6 +537,16 @@ export const providerApi: ProviderApi = {
     adapters[providerId].getAgentModes?.(options) ?? Promise.resolve([]),
   getModels: (providerId, options) => adapters[providerId].getModels(options),
   getSkills: (providerId, cwd, options) => adapters[providerId].getSkills(cwd, options),
+  getConfig: (providerId, options) =>
+    providerId === 'codex' ? codexAdapter.getConfig(options) : Promise.resolve(null),
+  setConfigValue: (providerId, name, path, value, options) => {
+    if (providerId !== 'codex') throw new Error('Configuration is not available for this provider')
+    return codexAdapter.setConfigValue(name, path, value, options)
+  },
+  setConfigFeature: (providerId, name, enabled, options) => {
+    if (providerId !== 'codex') throw new Error('Configuration is not available for this provider')
+    return codexAdapter.setConfigFeature(name, enabled, options)
+  },
   getApps: (providerId, options) => adapters[providerId].getApps(options),
   setSkillEnabled: (providerId, path, enabled, cwd, options) =>
     adapters[providerId].setSkillEnabled(path, enabled, cwd, options),

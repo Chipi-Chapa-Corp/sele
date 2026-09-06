@@ -6,6 +6,7 @@
   flex-direction: column;
   gap: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 1.1rem;
   scrollbar-color: var(--glass-edge) transparent;
 }
@@ -44,6 +45,10 @@
   margin-bottom: 1.2rem;
   color: var(--ink);
   font-weight: 400;
+}
+
+.settings-dialog__provider-configuration > .ui-segmented-control {
+  flex: 1;
 }
 
 .settings-dialog__provider-configuration--row {
@@ -129,7 +134,8 @@
   align-items: flex-start;
   flex-direction: column;
   gap: 0.2rem;
-  justify-self: start;
+  justify-self: stretch;
+  overflow-wrap: anywhere;
   text-align: left;
 }
 
@@ -150,8 +156,13 @@
 .settings-dialog__skill-title {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 0.2rem;
+}
+
+.settings-dialog__skill-title h3 {
+  min-width: 0;
 }
 
 .settings-dialog__skill-path-action {
@@ -181,4 +192,65 @@
     pointer-events: auto;
     transform: none;
   }
+}
+
+.settings-dialog__config-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  color: var(--muted);
+}
+
+.settings-dialog__config-toolbar > .ui-switch {
+  flex: none;
+  width: auto;
+}
+
+.settings-dialog__config-nested {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding-left: 0.8rem;
+  border-left: 1px solid var(--glass-line);
+}
+
+.settings-dialog__config-fields {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.settings-dialog__config-fields
+  > .settings-dialog__config-fields
+  + .settings-dialog__config-fields {
+  margin-top: 0.5rem;
+}
+
+.settings-dialog__config-array-item {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.4rem;
+}
+
+.settings-dialog__config-fields--inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.settings-dialog__config-fields > .ui-button {
+  align-self: flex-start;
+}
+
+.settings-dialog__config-heading {
+  min-height: 0;
+  padding: 0;
+  color: var(--lead);
+  font: inherit;
+  font-weight: 400;
 }

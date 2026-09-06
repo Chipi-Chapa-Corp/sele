@@ -5160,6 +5160,7 @@ export const useWorkspaceController = () => {
     installedFontOptions,
     installedFontsLoaded,
     isScopedSettingControlDisabled,
+    newSessionContainer,
     newSessionContainerValue,
     newSessionProvider,
     newSessionProviderOptions,

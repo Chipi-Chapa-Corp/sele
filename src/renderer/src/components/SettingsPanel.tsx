@@ -1,3 +1,4 @@
+import { ProviderSettingsContent } from './ProviderSettingsContent'
 import type { Dispatch, SetStateAction } from 'react'
 import {
   Apple,
@@ -162,6 +163,7 @@ export type SettingsPanelProps = {
   installedFontOptions: DropdownOption<string>[]
   installedFontsLoaded: boolean
   isScopedSettingControlDisabled: (path: AppProjectSettingPath, disabled?: boolean) => boolean
+  newSessionContainer: AppContainerTarget
   newSessionContainerValue: string
   newSessionProvider: ProviderId
   newSessionProviderOptions: DropdownOption<ProviderId>[]
@@ -657,313 +659,345 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
             onChange={handleNewSessionContainerChange}
           />
         </div>
-        <section className="settings-dialog__section" aria-labelledby="settings-providers-accounts">
-          <h2 className="settings-dialog__section-heading" id="settings-providers-accounts">
-            Accounts
-          </h2>
-          <div className="settings-dialog__section-cards">
-            {providerAccountsLoading ? (
-              <div className="settings-dialog__field">
-                <div className="settings-dialog__field-header">
-                  <h3>Loading accounts…</h3>
-                </div>
-              </div>
-            ) : providerAccountsError ? (
-              <div className="settings-dialog__field settings-dialog__field--inline">
-                <div className="settings-dialog__field-header">
-                  <h3>{providerAccountsError}</h3>
-                </div>
-                <Button
-                  callback={() => setProviderAccountsRefresh((refresh) => refresh + 1)}
-                  disabled={Boolean(providerAccountUpdatingId)}
-                  icon={<RefreshCw aria-hidden="true" />}
-                  label={<span>Retry</span>}
-                  size="small"
-                  theme="secondary"
-                />
-              </div>
-            ) : !settingsProviderAccounts?.available ? (
-              <div className="settings-dialog__field">
-                <div className="settings-dialog__field-header">
-                  <h3>{settingsProviderAccounts?.unavailableMessage}</h3>
-                </div>
-              </div>
-            ) : (
-              <>
-                {settingsProviderAccounts.accounts.length === 0 && (
+        <ProviderSettingsContent
+          providerId={newSessionProvider}
+          container={props.newSessionContainer}
+        >
+          <>
+            <section
+              className="settings-dialog__section"
+              aria-labelledby="settings-providers-accounts"
+            >
+              <h2 className="settings-dialog__section-heading" id="settings-providers-accounts">
+                Accounts
+              </h2>
+              <div className="settings-dialog__section-cards">
+                {providerAccountsLoading ? (
                   <div className="settings-dialog__field">
                     <div className="settings-dialog__field-header">
-                      <h3>No accounts configured</h3>
+                      <h3>Loading accounts…</h3>
                     </div>
                   </div>
-                )}
-                {settingsProviderAccounts.accounts.map((account) => (
-                  <div
-                    className="settings-dialog__field settings-dialog__field--inline"
-                    key={account.id}
-                  >
+                ) : providerAccountsError ? (
+                  <div className="settings-dialog__field settings-dialog__field--inline">
                     <div className="settings-dialog__field-header">
-                      <h3>{account.name}</h3>
-                      {account.active && <p>In use</p>}
+                      <h3>{providerAccountsError}</h3>
                     </div>
-                    <div className="settings-dialog__account-actions">
+                    <Button
+                      callback={() => setProviderAccountsRefresh((refresh) => refresh + 1)}
+                      disabled={Boolean(providerAccountUpdatingId)}
+                      icon={<RefreshCw aria-hidden="true" />}
+                      label={<span>Retry</span>}
+                      size="small"
+                      theme="secondary"
+                    />
+                  </div>
+                ) : !settingsProviderAccounts?.available ? (
+                  <div className="settings-dialog__field">
+                    <div className="settings-dialog__field-header">
+                      <h3>{settingsProviderAccounts?.unavailableMessage}</h3>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {settingsProviderAccounts.accounts.length === 0 && (
+                      <div className="settings-dialog__field">
+                        <div className="settings-dialog__field-header">
+                          <h3>No accounts configured</h3>
+                        </div>
+                      </div>
+                    )}
+                    {settingsProviderAccounts.accounts.map((account) => (
+                      <div
+                        className="settings-dialog__field settings-dialog__field--inline"
+                        key={account.id}
+                      >
+                        <div className="settings-dialog__field-header">
+                          <h3>{account.name}</h3>
+                          {account.active && <p>In use</p>}
+                        </div>
+                        <div className="settings-dialog__account-actions">
+                          <Button
+                            aria-pressed={account.active}
+                            callback={() => handleUseProviderAccount(account.id)}
+                            disabled={account.active || Boolean(providerAccountUpdatingId)}
+                            icon={account.active ? <Check aria-hidden="true" /> : undefined}
+                            label={<span>Use</span>}
+                            size="small"
+                            theme="secondary"
+                          />
+                          {account.id !== providerDefaultAccountId && (
+                            <Button
+                              callback={() => handleDeleteProviderAccount(account.id)}
+                              disabled={Boolean(providerAccountUpdatingId)}
+                              icon={<Trash2 aria-hidden="true" />}
+                              label={<span>Delete</span>}
+                              size="small"
+                              theme="secondary"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    <div className="settings-dialog__field settings-dialog__field--inline">
+                      <div className="settings-dialog__field-header">
+                        <h3>Create another account</h3>
+                      </div>
                       <Button
-                        aria-pressed={account.active}
-                        callback={() => handleUseProviderAccount(account.id)}
-                        disabled={account.active || Boolean(providerAccountUpdatingId)}
-                        icon={account.active ? <Check aria-hidden="true" /> : undefined}
-                        label={<span>Use</span>}
+                        callback={() => setAccountDialogOpen(true)}
+                        disabled={Boolean(providerAccountUpdatingId)}
+                        icon={<Plus aria-hidden="true" />}
+                        label={<span>Create</span>}
                         size="small"
                         theme="secondary"
                       />
-                      {account.id !== providerDefaultAccountId && (
-                        <Button
-                          callback={() => handleDeleteProviderAccount(account.id)}
-                          disabled={Boolean(providerAccountUpdatingId)}
-                          icon={<Trash2 aria-hidden="true" />}
-                          label={<span>Delete</span>}
-                          size="small"
-                          theme="secondary"
-                        />
-                      )}
                     </div>
-                  </div>
-                ))}
-                <div className="settings-dialog__field settings-dialog__field--inline">
-                  <div className="settings-dialog__field-header">
-                    <h3>Create another account</h3>
-                  </div>
-                  <Button
-                    callback={() => setAccountDialogOpen(true)}
-                    disabled={Boolean(providerAccountUpdatingId)}
-                    icon={<Plus aria-hidden="true" />}
-                    label={<span>Create</span>}
-                    size="small"
-                    theme="secondary"
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </section>
-        {newSessionProvider === 'codex' && (
-          <section className="settings-dialog__section" aria-labelledby="settings-providers-ads">
-            <h2 className="settings-dialog__section-heading" id="settings-providers-ads">
-              Ads
-            </h2>
-            <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field">
-                <div className="settings-dialog__field-header">
-                  <h3 id="settings-provider-codex-recommended-plugins">
-                    Show recommended plugins to agent
-                  </h3>
-                  <p>Include the Codex list of available recommended plugins in new agent turns.</p>
-                </div>
-                <Switch
-                  className="settings-switch"
-                  aria-labelledby="settings-provider-codex-recommended-plugins"
-                  checked={settingsPanelSettings.providers.codex.showRecommendedPlugins}
-                  onChange={(event) =>
-                    handleCodexRecommendedPluginsChange(event.currentTarget.checked)
-                  }
-                />
+                  </>
+                )}
               </div>
-            </div>
-          </section>
-        )}
-        {providerResourcesError && (
-          <section className="settings-dialog__section" aria-labelledby="settings-providers-status">
-            <h2 className="settings-dialog__section-heading" id="settings-providers-status">
-              Status
-            </h2>
-            <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field settings-dialog__field--inline">
-                <div className="settings-dialog__field-header">
-                  <h3>{providerResourcesError}</h3>
-                </div>
-                <Button
-                  callback={() => setProviderResourcesRefresh((refresh) => refresh + 1)}
-                  disabled={providerResourcesLoading || Boolean(providerResourceUpdatingKey)}
-                  icon={<RefreshCw aria-hidden="true" />}
-                  label={<span>Retry</span>}
-                  size="small"
-                  theme="secondary"
-                />
-              </div>
-            </div>
-          </section>
-        )}
-        {providerResourcesLoading ? (
-          <section className="settings-dialog__section" aria-labelledby="settings-providers-apps">
-            <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
-              Apps
-            </h2>
-            <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field">
-                <div className="settings-dialog__field-header">
-                  <h3>Loading apps…</h3>
-                </div>
-              </div>
-            </div>
-          </section>
-        ) : appGroups.length === 0 ? (
-          <section className="settings-dialog__section" aria-labelledby="settings-providers-apps">
-            <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
-              Apps
-            </h2>
-            <div className="settings-dialog__section-cards">
-              <div className="settings-dialog__field">
-                <div className="settings-dialog__field-header">
-                  <h3>No connected apps found</h3>
-                  <p>This environment did not report any installed apps.</p>
-                </div>
-              </div>
-            </div>
-          </section>
-        ) : (
-          appGroups.map((group, appIndex) => {
-            const { resource } = group
-            const toggleId = `settings-provider-app-${appIndex}`
-            const updateKey = `app:${resource.providerId}:${resource.app.id}`
-            const appEnabled = isSettingsProviderAppGroupEnabled(group)
-
-            return (
+            </section>
+            {newSessionProvider === 'codex' && (
               <section
                 className="settings-dialog__section"
-                aria-label={resource.app.name}
-                key={updateKey}
+                aria-labelledby="settings-providers-ads"
               >
-                {appIndex === 0 && (
-                  <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
-                    Apps
-                  </h2>
-                )}
+                <h2 className="settings-dialog__section-heading" id="settings-providers-ads">
+                  Ads
+                </h2>
                 <div className="settings-dialog__section-cards">
                   <div className="settings-dialog__field">
                     <div className="settings-dialog__field-header">
-                      <h3 id={toggleId}>{resource.app.name}</h3>
+                      <h3 id="settings-provider-codex-recommended-plugins">
+                        Show recommended plugins to agent
+                      </h3>
                       <p>
-                        {resource.app.description}
-                        {resource.app.enabled && !resource.app.callable
-                          ? ' Not currently callable.'
-                          : ''}
+                        Include the Codex list of available recommended plugins in new agent turns.
                       </p>
                     </div>
                     <Switch
                       className="settings-switch"
-                      aria-labelledby={toggleId}
-                      checked={appEnabled}
-                      disabled={Boolean(providerResourceUpdatingKey)}
+                      aria-labelledby="settings-provider-codex-recommended-plugins"
+                      checked={settingsPanelSettings.providers.codex.showRecommendedPlugins}
                       onChange={(event) =>
-                        void handleProviderAppEnabledChange(
-                          resource,
-                          group.skills,
-                          event.currentTarget.checked
-                        )
+                        handleCodexRecommendedPluginsChange(event.currentTarget.checked)
                       }
                     />
                   </div>
-                  {shouldShowSettingsProviderAppSkills(group) &&
-                    group.skills.map((childSkill, skillIndex) => {
-                      const skillToggleId = `settings-provider-app-${appIndex}-skill-${skillIndex}`
-
-                      return (
-                        <div className="settings-dialog__field" key={childSkill.skill.path}>
-                          <div className="settings-dialog__field-header">
-                            <div className="settings-dialog__skill-title">
-                              <h3 id={skillToggleId}>{childSkill.skill.name}</h3>
-                              <SettingsSkillPathAction path={childSkill.skill.path} />
-                            </div>
-                            <p>{getSettingsSkillDescription(childSkill.skill)}</p>
-                          </div>
-                          <Switch
-                            className="settings-switch"
-                            aria-labelledby={skillToggleId}
-                            checked={childSkill.skill.enabled}
-                            disabled={Boolean(providerResourceUpdatingKey)}
-                            onChange={(event) =>
-                              void handleProviderSkillEnabledChange(
-                                childSkill,
-                                event.currentTarget.checked
-                              )
-                            }
-                          />
-                        </div>
-                      )
-                    })}
                 </div>
               </section>
-            )
-          })
-        )}
-        <section className="settings-dialog__section" aria-labelledby="settings-providers-skills">
-          <h2 className="settings-dialog__section-heading" id="settings-providers-skills">
-            Skills
-          </h2>
-          <div className="settings-dialog__section-cards">
-            <div className="settings-dialog__field">
-              <div className="settings-dialog__field-header">
-                <h3 id="settings-provider-unparented-skills">All standalone skills</h3>
-                <p>Enable or disable skills that are not part of an app.</p>
-              </div>
-              <Switch
-                className="settings-switch"
-                aria-labelledby="settings-provider-unparented-skills"
-                checked={unparentedSkillsEnabled}
-                disabled={
-                  providerResourcesLoading ||
-                  unparentedSkills.length === 0 ||
-                  Boolean(providerResourceUpdatingKey)
-                }
-                onChange={(event) =>
-                  void handleProviderSkillsEnabledChange(
-                    unparentedSkills,
-                    event.currentTarget.checked
-                  )
-                }
-              />
-            </div>
-            {providerResourcesLoading ? (
-              <div className="settings-dialog__field">
-                <div className="settings-dialog__field-header">
-                  <h3>Loading skills…</h3>
-                </div>
-              </div>
-            ) : unparentedSkills.length === 0 ? (
-              <div className="settings-dialog__field">
-                <div className="settings-dialog__field-header">
-                  <h3>No standalone skills found</h3>
-                  <p>All reported skills belong to an app.</p>
-                </div>
-              </div>
-            ) : (
-              unparentedSkills.map((resource, index) => {
-                const toggleId = `settings-provider-skill-${index}`
-
-                return (
-                  <div className="settings-dialog__field" key={resource.skill.path}>
+            )}
+          </>
+          <>
+            {providerResourcesError && (
+              <section
+                className="settings-dialog__section"
+                aria-labelledby="settings-providers-status"
+              >
+                <h2 className="settings-dialog__section-heading" id="settings-providers-status">
+                  Status
+                </h2>
+                <div className="settings-dialog__section-cards">
+                  <div className="settings-dialog__field settings-dialog__field--inline">
                     <div className="settings-dialog__field-header">
-                      <div className="settings-dialog__skill-title">
-                        <h3 id={toggleId}>{resource.skill.name}</h3>
-                        <SettingsSkillPathAction path={resource.skill.path} />
-                      </div>
-                      <p>{getSettingsSkillDescription(resource.skill)}</p>
+                      <h3>{providerResourcesError}</h3>
                     </div>
-                    <Switch
-                      className="settings-switch"
-                      aria-labelledby={toggleId}
-                      checked={resource.skill.enabled}
-                      disabled={Boolean(providerResourceUpdatingKey)}
-                      onChange={(event) =>
-                        void handleProviderSkillEnabledChange(resource, event.currentTarget.checked)
-                      }
+                    <Button
+                      callback={() => setProviderResourcesRefresh((refresh) => refresh + 1)}
+                      disabled={providerResourcesLoading || Boolean(providerResourceUpdatingKey)}
+                      icon={<RefreshCw aria-hidden="true" />}
+                      label={<span>Retry</span>}
+                      size="small"
+                      theme="secondary"
                     />
                   </div>
+                </div>
+              </section>
+            )}
+            {providerResourcesLoading ? (
+              <section
+                className="settings-dialog__section"
+                aria-labelledby="settings-providers-apps"
+              >
+                <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
+                  Apps
+                </h2>
+                <div className="settings-dialog__section-cards">
+                  <div className="settings-dialog__field">
+                    <div className="settings-dialog__field-header">
+                      <h3>Loading apps…</h3>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ) : appGroups.length === 0 ? (
+              <section
+                className="settings-dialog__section"
+                aria-labelledby="settings-providers-apps"
+              >
+                <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
+                  Apps
+                </h2>
+                <div className="settings-dialog__section-cards">
+                  <div className="settings-dialog__field">
+                    <div className="settings-dialog__field-header">
+                      <h3>No connected apps found</h3>
+                      <p>This environment did not report any installed apps.</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ) : (
+              appGroups.map((group, appIndex) => {
+                const { resource } = group
+                const toggleId = `settings-provider-app-${appIndex}`
+                const updateKey = `app:${resource.providerId}:${resource.app.id}`
+                const appEnabled = isSettingsProviderAppGroupEnabled(group)
+
+                return (
+                  <section
+                    className="settings-dialog__section"
+                    aria-label={resource.app.name}
+                    key={updateKey}
+                  >
+                    {appIndex === 0 && (
+                      <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
+                        Apps
+                      </h2>
+                    )}
+                    <div className="settings-dialog__section-cards">
+                      <div className="settings-dialog__field">
+                        <div className="settings-dialog__field-header">
+                          <h3 id={toggleId}>{resource.app.name}</h3>
+                          <p>
+                            {resource.app.description}
+                            {resource.app.enabled && !resource.app.callable
+                              ? ' Not currently callable.'
+                              : ''}
+                          </p>
+                        </div>
+                        <Switch
+                          className="settings-switch"
+                          aria-labelledby={toggleId}
+                          checked={appEnabled}
+                          disabled={Boolean(providerResourceUpdatingKey)}
+                          onChange={(event) =>
+                            void handleProviderAppEnabledChange(
+                              resource,
+                              group.skills,
+                              event.currentTarget.checked
+                            )
+                          }
+                        />
+                      </div>
+                      {shouldShowSettingsProviderAppSkills(group) &&
+                        group.skills.map((childSkill, skillIndex) => {
+                          const skillToggleId = `settings-provider-app-${appIndex}-skill-${skillIndex}`
+
+                          return (
+                            <div className="settings-dialog__field" key={childSkill.skill.path}>
+                              <div className="settings-dialog__field-header">
+                                <div className="settings-dialog__skill-title">
+                                  <h3 id={skillToggleId}>{childSkill.skill.name}</h3>
+                                  <SettingsSkillPathAction path={childSkill.skill.path} />
+                                </div>
+                                <p>{getSettingsSkillDescription(childSkill.skill)}</p>
+                              </div>
+                              <Switch
+                                className="settings-switch"
+                                aria-labelledby={skillToggleId}
+                                checked={childSkill.skill.enabled}
+                                disabled={Boolean(providerResourceUpdatingKey)}
+                                onChange={(event) =>
+                                  void handleProviderSkillEnabledChange(
+                                    childSkill,
+                                    event.currentTarget.checked
+                                  )
+                                }
+                              />
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </section>
                 )
               })
             )}
-          </div>
-        </section>
+            <section
+              className="settings-dialog__section"
+              aria-labelledby="settings-providers-skills"
+            >
+              <h2 className="settings-dialog__section-heading" id="settings-providers-skills">
+                Skills
+              </h2>
+              <div className="settings-dialog__section-cards">
+                <div className="settings-dialog__field">
+                  <div className="settings-dialog__field-header">
+                    <h3 id="settings-provider-unparented-skills">All standalone skills</h3>
+                    <p>Enable or disable skills that are not part of an app.</p>
+                  </div>
+                  <Switch
+                    className="settings-switch"
+                    aria-labelledby="settings-provider-unparented-skills"
+                    checked={unparentedSkillsEnabled}
+                    disabled={
+                      providerResourcesLoading ||
+                      unparentedSkills.length === 0 ||
+                      Boolean(providerResourceUpdatingKey)
+                    }
+                    onChange={(event) =>
+                      void handleProviderSkillsEnabledChange(
+                        unparentedSkills,
+                        event.currentTarget.checked
+                      )
+                    }
+                  />
+                </div>
+                {providerResourcesLoading ? (
+                  <div className="settings-dialog__field">
+                    <div className="settings-dialog__field-header">
+                      <h3>Loading skills…</h3>
+                    </div>
+                  </div>
+                ) : unparentedSkills.length === 0 ? (
+                  <div className="settings-dialog__field">
+                    <div className="settings-dialog__field-header">
+                      <h3>No standalone skills found</h3>
+                      <p>All reported skills belong to an app.</p>
+                    </div>
+                  </div>
+                ) : (
+                  unparentedSkills.map((resource, index) => {
+                    const toggleId = `settings-provider-skill-${index}`
+
+                    return (
+                      <div className="settings-dialog__field" key={resource.skill.path}>
+                        <div className="settings-dialog__field-header">
+                          <div className="settings-dialog__skill-title">
+                            <h3 id={toggleId}>{resource.skill.name}</h3>
+                            <SettingsSkillPathAction path={resource.skill.path} />
+                          </div>
+                          <p>{getSettingsSkillDescription(resource.skill)}</p>
+                        </div>
+                        <Switch
+                          className="settings-switch"
+                          aria-labelledby={toggleId}
+                          checked={resource.skill.enabled}
+                          disabled={Boolean(providerResourceUpdatingKey)}
+                          onChange={(event) =>
+                            void handleProviderSkillEnabledChange(
+                              resource,
+                              event.currentTarget.checked
+                            )
+                          }
+                        />
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </section>
+          </>
+        </ProviderSettingsContent>
       </section>
     )
   }

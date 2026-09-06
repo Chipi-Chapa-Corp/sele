@@ -1,3 +1,10 @@
+import { codexFeatureSchemas } from './CodexFeatureSchemas'
+import { updateConfigFeatureValue } from './CodexConfigValues'
+import type {
+  ProviderConfig,
+  ProviderConfigFeature,
+  ProviderConfigValue
+} from '../../../shared/provider'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { basename } from 'node:path'
@@ -1597,6 +1604,85 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
     return this.getSkillsInContext(cwd)
   }
+
+  getConfig = async (options: ProviderSourceOptions = {}): Promise<ProviderConfig> =>
+    this.runWithContainer(options.container, () => this.getConfigInContext())
+
+  private getConfigInContext = async (): Promise<ProviderConfig> => {
+    const response = await this.client.request<{
+      requirements: { featureRequirements?: Record<string, boolean> | null } | null
+    }>('configRequirements/read', undefined)
+    const current = await this.client.request<{
+      config: { features?: Record<string, ProviderConfigValue> }
+    }>('config/read', { includeLayers: false })
+    const requirements = response.requirements?.featureRequirements ?? {}
+    const features: ProviderConfigFeature[] = []
+    let cursor: string | null = null
+    do {
+      const page: { data: ProviderConfigFeature[]; nextCursor: string | null } =
+        await this.client.request('experimentalFeature/list', { cursor, limit: 100 })
+      features.push(
+        ...page.data.map((feature) => ({
+          ...feature,
+          schema: codexFeatureSchemas[feature.name],
+          value: current.config.features?.[feature.name],
+          locked: Object.hasOwn(requirements, feature.name),
+          structured:
+            current.config.features?.[feature.name] !== null &&
+            typeof current.config.features?.[feature.name] === 'object',
+          enabled: requirements[feature.name] ?? feature.enabled
+        }))
+      )
+      cursor = page.nextCursor
+    } while (cursor)
+    return { features: features.sort((a, b) => a.name.localeCompare(b.name)) }
+  }
+
+  setConfigFeature = (
+    name: string,
+    enabled: boolean,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderConfig> => this.setConfigValue(name, [], enabled, options)
+
+  setConfigValue = (
+    name: string,
+    path: string[],
+    value: ProviderConfigValue,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderConfig> =>
+    this.runWithContainer(options.container, async () => {
+      const config = await this.getConfigInContext()
+      const feature = config.features.find((feature) => feature.name === name)
+      if (
+        !feature ||
+        feature.locked ||
+        feature.stage === 'removed' ||
+        feature.stage === 'deprecated'
+      )
+        throw new Error('This feature cannot be changed')
+      const current = await this.client.request<{
+        config: { features?: Record<string, ProviderConfigValue> }
+        layers:
+          | { name: { type: string; file?: string; profile?: string | null }; version: string }[]
+          | null
+      }>('config/read', { includeLayers: true })
+      const updated = updateConfigFeatureValue(
+        codexFeatureSchemas[name],
+        current.config.features?.[name],
+        path,
+        value,
+        feature.enabled
+      )
+      const userLayer = current.layers?.find(
+        (layer) => layer.name.type === 'user' && !layer.name.profile
+      )
+      await this.client.request('config/batchWrite', {
+        edits: [{ keyPath: `features.${name}`, value: updated, mergeStrategy: 'replace' }],
+        ...(userLayer ? { filePath: userLayer.name.file, expectedVersion: userLayer.version } : {}),
+        reloadUserConfig: true
+      })
+      return this.getConfigInContext()
+    })
 
   getApps = async (options: ProviderSourceOptions = {}): Promise<ProviderApp[]> =>
     this.runWithContainer(options.container, () =>

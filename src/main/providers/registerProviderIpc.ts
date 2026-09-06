@@ -1,3 +1,4 @@
+import type { ProviderConfigValue } from '../../shared/provider'
 import { isDeepStrictEqual } from 'node:util'
 import { extname, isAbsolute } from 'node:path'
 import { BrowserWindow, ipcMain, type WebContents } from 'electron'
@@ -1180,6 +1181,44 @@ export const registerProviderIpc = (): void => {
         requireOptionalCwd(cwd),
         requireSourceOptions(options)
       )
+  )
+
+  ipcMain.handle(providerIpcChannels.getConfig, (_, providerId: unknown, options: unknown) =>
+    providerApi.getConfig(requireProviderId(providerId), requireSourceOptions(options))
+  )
+  ipcMain.handle(
+    providerIpcChannels.setConfigValue,
+    (_, providerId: unknown, name: unknown, path: unknown, value: unknown, options: unknown) => {
+      if (
+        typeof name !== 'string' ||
+        !/^[a-z][a-z0-9_]*$/.test(name) ||
+        !Array.isArray(path) ||
+        path.length > 12 ||
+        path.some((key) => typeof key !== 'string')
+      )
+        throw new Error('Invalid setting path')
+      // The adapter validates values against the schema before writing.
+      return providerApi.setConfigValue(
+        requireProviderId(providerId),
+        name,
+        path,
+        value as ProviderConfigValue,
+        requireSourceOptions(options)
+      )
+    }
+  )
+  ipcMain.handle(
+    providerIpcChannels.setConfigFeature,
+    (_, providerId: unknown, name: unknown, enabled: unknown, options: unknown) => {
+      if (typeof name !== 'string' || !/^[a-z][a-z0-9_]*$/.test(name))
+        throw new Error('Invalid feature name')
+      return providerApi.setConfigFeature(
+        requireProviderId(providerId),
+        name,
+        requireBoolean(enabled),
+        requireSourceOptions(options)
+      )
+    }
   )
 
   ipcMain.handle(providerIpcChannels.getApps, (_, providerId: unknown, options: unknown) =>

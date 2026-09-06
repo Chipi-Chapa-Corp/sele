@@ -82,6 +82,39 @@ export type ProviderSkill = {
   enabled: boolean
 }
 
+export type ProviderConfigValue =
+  string | number | boolean | null | ProviderConfigValue[] | { [key: string]: ProviderConfigValue }
+
+export type ProviderConfigField = {
+  type: 'boolean' | 'string' | 'number' | 'integer' | 'array' | 'object' | 'unsupported'
+  description?: string
+  default?: ProviderConfigValue
+  enum?: ProviderConfigValue[]
+  minimum?: number
+  maximum?: number
+  required?: string[]
+  properties?: Record<string, ProviderConfigField>
+  additionalProperties?: ProviderConfigField
+  items?: ProviderConfigField
+}
+
+export type ProviderConfigFeature = {
+  name: string
+  stage: string
+  displayName: string | null
+  description: string | null
+  enabled: boolean
+  defaultEnabled?: boolean
+  structured: boolean
+  schema?: ProviderConfigField
+  value?: ProviderConfigValue
+  locked: boolean
+}
+
+export type ProviderConfig = {
+  features: ProviderConfigFeature[]
+}
+
 export type ProviderApp = {
   id: string
   name: string
@@ -968,6 +1001,23 @@ export type ProviderApi = {
     cwd?: string | null,
     options?: ProviderSourceOptions
   ) => Promise<ProviderSkill[]>
+  getConfig: (
+    providerId: ProviderId,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderConfig | null>
+  setConfigValue: (
+    providerId: ProviderId,
+    name: string,
+    path: string[],
+    value: ProviderConfigValue,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderConfig>
+  setConfigFeature: (
+    providerId: ProviderId,
+    name: string,
+    enabled: boolean,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderConfig>
   getApps: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderApp[]>
   setSkillEnabled: (
     providerId: ProviderId,
@@ -1191,6 +1241,9 @@ export const providerIpcChannels = {
   getAgentModes: 'provider:get-agent-modes',
   getModels: 'provider:get-models',
   getSkills: 'provider:get-skills',
+  getConfig: 'provider:get-config',
+  setConfigValue: 'provider:set-config-value',
+  setConfigFeature: 'provider:set-config-feature',
   getApps: 'provider:get-apps',
   setSkillEnabled: 'provider:set-skill-enabled',
   setSkillsEnabled: 'provider:set-skills-enabled',
