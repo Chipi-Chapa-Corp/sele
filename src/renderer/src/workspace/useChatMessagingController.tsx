@@ -56,6 +56,8 @@ import type { ChatMessagingControllerDependencies } from './featureControllerDep
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useChatMessagingController(dependencies: ChatMessagingControllerDependencies) {
   const {
+    messageBoxSelection,
+    rememberStartedChatSelection,
     chatDetail,
     sendInFlightRef,
     setSendState,
@@ -388,6 +390,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           ...turnOptions,
           cwd: sessionCwd
         })
+        rememberStartedChatSelection(startingProviderId, detail.id, messageBoxSelection)
         applyViewedChatDetail(
           startingProviderId,
           !hasProviderUserMessage(detail.items)

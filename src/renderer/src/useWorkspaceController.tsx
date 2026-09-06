@@ -1,3 +1,8 @@
+import {
+  selectChatPreferences,
+  updateChatPreferences,
+  selectionsEqual
+} from './chatModelPreferences'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Bot,
@@ -174,6 +179,8 @@ import {
   formatSelectionLabel,
   getChatServiceTierIcon,
   providerOptions,
+  readStoredChatMessageBoxSelections,
+  writeStoredChatMessageBoxSelections,
   readStoredMessageBoxSelections,
   writeStoredMessageBoxSelections,
   type MessageBoxSelection
@@ -311,6 +318,7 @@ import { useWorkspaceSelection } from './workspace/useWorkspaceSelection'
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export const useWorkspaceController = () => {
   const storedMessageBoxSelections = useMemo(() => readStoredMessageBoxSelections(), [])
+  const storedChatMessageBoxSelections = useMemo(() => readStoredChatMessageBoxSelections(), [])
   const storedMessageBoxSelection = storedMessageBoxSelections.codex ?? {}
   const [appSettings, setAppSettings] = useState<AppSettings>(readStoredAppSettings)
   const [projectSettingsByCwd, setProjectSettingsByCwd] = useState<AppProjectSettingsByCwd>(
@@ -763,6 +771,9 @@ export const useWorkspaceController = () => {
   const loadingCwdNotesRef = useRef(new Set<string>())
   const loadingProjectIconsRef = useRef(new Set<string>())
   const messageBoxSelectionsRef = useRef(storedMessageBoxSelections)
+  const chatMessageBoxSelectionsRef = useRef(storedChatMessageBoxSelections)
+  const lastMessageBoxSelectionRef = useRef<MessageBoxSelection | null>(null)
+  const messageBoxSelectionChatKeyRef = useRef<string | null>(null)
   const messageBoxSelectionProviderRef = useRef<ProviderId>('codex')
   const modelManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.model))
   const reasoningManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.reasoningEffort))
@@ -1187,7 +1198,9 @@ export const useWorkspaceController = () => {
     []
   )
 
-  useEffect(() => {
+  const messageBoxChatKey = selectedChat ? getChatKey(selectedChat) : null
+
+  useLayoutEffect(() => {
     const currentSelection: MessageBoxSelection = {
       agentMode,
       approvalMode,
@@ -1198,12 +1211,24 @@ export const useWorkspaceController = () => {
     }
     const previousProviderId = messageBoxSelectionProviderRef.current
 
-    if (previousProviderId !== configProviderId) {
-      const nextSelections = {
-        ...messageBoxSelectionsRef.current,
-        [previousProviderId]: currentSelection
+    const chatKey = messageBoxChatKey
+    const previousChatKey = messageBoxSelectionChatKeyRef.current
+
+    if (previousProviderId !== configProviderId || previousChatKey !== chatKey) {
+      if (previousChatKey) {
+        chatMessageBoxSelectionsRef.current[previousChatKey] = currentSelection
+        writeStoredChatMessageBoxSelections(chatMessageBoxSelectionsRef.current)
       }
-      const nextSelection = nextSelections[configProviderId] ?? {}
+      const nextSelections = messageBoxSelectionsRef.current
+      const nextSelection = selectChatPreferences(
+        chatMessageBoxSelectionsRef.current,
+        nextSelections,
+        configProviderId,
+        chatKey,
+        chatKey && !previousChatKey && previousProviderId === configProviderId
+          ? currentSelection
+          : undefined
+      )
       const fallbackModels = getFallbackModels(configProviderId)
       const nextModel =
         fallbackModels.find((candidateModel) => candidateModel.id === nextSelection.model) ??
@@ -1211,29 +1236,68 @@ export const useWorkspaceController = () => {
 
       messageBoxSelectionsRef.current = nextSelections
       messageBoxSelectionProviderRef.current = configProviderId
+      messageBoxSelectionChatKeyRef.current = chatKey
       modelManuallySelectedRef.current = Boolean(nextSelection.model)
       reasoningManuallySelectedRef.current = Boolean(nextSelection.reasoningEffort)
       approvalModeManuallySelectedRef.current = Boolean(nextSelection.approvalMode)
       sandboxModeManuallySelectedRef.current = Boolean(nextSelection.sandboxMode)
       approvalModeBeforeFullAccessRef.current = null
 
-      setAgentMode(nextSelection.agentMode ?? 'interactive')
-      setApprovalMode(nextSelection.approvalMode ?? fallbackDefaultApprovalMode)
-      setSandboxMode(nextSelection.sandboxMode ?? fallbackDefaultSandboxMode)
-      setModel(nextSelection.model ?? nextModel.id)
-      setReasoningEffort(nextSelection.reasoningEffort ?? getDefaultReasoningEffort(nextModel))
-      setServiceTier(nextSelection.serviceTier ?? null)
-      writeStoredMessageBoxSelections(nextSelections)
+      const restoredSelection: MessageBoxSelection = {
+        agentMode: nextSelection.agentMode ?? 'interactive',
+        approvalMode: nextSelection.approvalMode ?? fallbackDefaultApprovalMode,
+        sandboxMode: nextSelection.sandboxMode ?? fallbackDefaultSandboxMode,
+        model: nextSelection.model ?? nextModel.id,
+        reasoningEffort: nextSelection.reasoningEffort ?? getDefaultReasoningEffort(nextModel),
+        serviceTier: nextSelection.serviceTier ?? null
+      }
+      lastMessageBoxSelectionRef.current = restoredSelection
+      if (chatKey) {
+        chatMessageBoxSelectionsRef.current[chatKey] = restoredSelection
+        writeStoredChatMessageBoxSelections(chatMessageBoxSelectionsRef.current)
+      }
+      setAgentMode(restoredSelection.agentMode)
+      setApprovalMode(restoredSelection.approvalMode)
+      setSandboxMode(restoredSelection.sandboxMode)
+      setModel(restoredSelection.model)
+      setReasoningEffort(restoredSelection.reasoningEffort)
+      setServiceTier(restoredSelection.serviceTier)
       return
     }
 
-    const nextSelections = {
-      ...messageBoxSelectionsRef.current,
-      [configProviderId]: currentSelection
+    // Restoring a chat is navigation, not a dropdown change to propagate.
+    if (selectionsEqual(lastMessageBoxSelectionRef.current, currentSelection)) return
+    lastMessageBoxSelectionRef.current = currentSelection
+    chatMessageBoxSelectionsRef.current = updateChatPreferences(
+      chatMessageBoxSelectionsRef.current,
+      chatKey,
+      currentSelection,
+      effectiveAppSettings.chat.updateExistingChats
+        ? chatsRef.current.filter((chat) => chat.providerId === configProviderId).map(getChatKey)
+        : []
+    )
+    writeStoredChatMessageBoxSelections(chatMessageBoxSelectionsRef.current)
+
+    if (!chatKey || effectiveAppSettings.chat.updateNewChats) {
+      const nextSelections = {
+        ...messageBoxSelectionsRef.current,
+        [configProviderId]: currentSelection
+      }
+      messageBoxSelectionsRef.current = nextSelections
+      writeStoredMessageBoxSelections(nextSelections)
     }
-    messageBoxSelectionsRef.current = nextSelections
-    writeStoredMessageBoxSelections(nextSelections)
-  }, [agentMode, approvalMode, configProviderId, model, reasoningEffort, sandboxMode, serviceTier])
+  }, [
+    agentMode,
+    approvalMode,
+    configProviderId,
+    messageBoxChatKey,
+    model,
+    reasoningEffort,
+    sandboxMode,
+    serviceTier,
+    effectiveAppSettings.chat.updateExistingChats,
+    effectiveAppSettings.chat.updateNewChats
+  ])
 
   useEffect(() => {
     if (sandboxMode !== 'danger-full-access' || approvalMode === 'never') return
@@ -4413,6 +4477,18 @@ export const useWorkspaceController = () => {
     handleStopChat,
     resolveSelectedUserInput
   } = useChatMessagingController({
+    messageBoxSelection: {
+      agentMode,
+      approvalMode,
+      sandboxMode,
+      model,
+      reasoningEffort,
+      serviceTier
+    },
+    rememberStartedChatSelection: (providerId, chatId, selection) => {
+      chatMessageBoxSelectionsRef.current[getProviderChatKey(providerId, chatId)] = selection
+      writeStoredChatMessageBoxSelections(chatMessageBoxSelectionsRef.current)
+    },
     chatDetail,
     sendInFlightRef,
     setSendState,

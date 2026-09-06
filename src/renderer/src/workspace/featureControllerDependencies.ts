@@ -1,3 +1,4 @@
+import type { MessageBoxSelection } from '../messageBoxPreferences'
 import type * as React from 'react'
 
 import type {
@@ -139,6 +140,12 @@ export type ChatInteractionControllerDependencies = {
 }
 
 export type ChatMessagingControllerDependencies = {
+  messageBoxSelection: MessageBoxSelection
+  rememberStartedChatSelection: (
+    providerId: ProviderId,
+    chatId: string,
+    selection: MessageBoxSelection
+  ) => void
   chatDetail: ProviderChatDetail | null
   sendInFlightRef: React.RefObject<boolean>
   setSendState: React.Dispatch<React.SetStateAction<SendState>>

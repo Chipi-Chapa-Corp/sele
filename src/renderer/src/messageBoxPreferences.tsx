@@ -164,6 +164,35 @@ export const writeStoredMessageBoxSelections = (selections: StoredMessageBoxSele
   }
 }
 
+const chatMessageBoxSelectionsStorageKey = 'sele:chat-message-box-selections:v1'
+
+export const readStoredChatMessageBoxSelections = (): Record<string, StoredMessageBoxSelection> => {
+  try {
+    const value = JSON.parse(
+      window.localStorage.getItem(chatMessageBoxSelectionsStorageKey) ?? '{}'
+    )
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    return Object.fromEntries(
+      Object.entries(value).map(([key, selection]) => [
+        key,
+        parseStoredMessageBoxSelection(selection)
+      ])
+    )
+  } catch {
+    return {}
+  }
+}
+
+export const writeStoredChatMessageBoxSelections = (
+  selections: Record<string, StoredMessageBoxSelection>
+): void => {
+  try {
+    window.localStorage.setItem(chatMessageBoxSelectionsStorageKey, JSON.stringify(selections))
+  } catch {
+    // Composer preferences are non-critical; ignore unavailable storage.
+  }
+}
+
 const getDropdownOptions = <TValue extends string>(
   labels: Record<TValue, string>
 ): DropdownOption<TValue>[] =>
