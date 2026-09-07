@@ -3186,6 +3186,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
     throw new Error('Interactive questions are not supported by this provider.')
   }
 
+  compactChat = (chatId: string): Promise<ProviderChatDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId), async () => {
+      this.rememberThreadContainer(chatId)
+      await this.ensureChatTailLoaded(chatId)
+      if (this.hasActiveOrSubmittingTurn(chatId)) {
+        throw new Error('Wait for the current response before compacting context.')
+      }
+      await this.resumeThread(chatId, undefined, this.threads.get(chatId)?.cwd ?? null, 'mutation')
+      await this.client.request('thread/compact/start', { threadId: chatId })
+      return this.getCachedChatDetail(chatId) ?? this.getChat(chatId)
+    })
+
   stopChat = (chatId: string): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId), () => this.stopChatInContext(chatId))
 

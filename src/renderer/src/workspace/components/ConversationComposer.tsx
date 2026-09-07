@@ -67,6 +67,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     handleSelectedReviewChange,
     handleSendMessage,
     handleSkipProviderUpdate,
+    handleCompactChat,
     handleStopChat,
     handleUpdateProvider,
     hasForcedChatDropdown,
@@ -506,6 +507,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           onServiceTierChange={setServiceTier}
           onSelectedReviewChange={handleSelectedReviewChange}
           onSandboxModeChange={handleSandboxModeChange}
+          onCompact={selectedChat && !activeSubagentChatView ? handleCompactChat : undefined}
           onStop={handleStopChat}
           onUsageRefresh={refreshAccountUsage}
           onUsageReset={resetAccountRateLimits}

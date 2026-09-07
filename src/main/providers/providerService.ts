@@ -695,6 +695,8 @@ export const providerApi: ProviderApi = {
     adapters[providerId]
       .resolveUserInput(chatId, requestId, response)
       .then((detail) => applyMetadataToDetail(detail)),
+  compactChat: (providerId, chatId) =>
+    adapters[providerId].compactChat(chatId).then((detail) => applyMetadataToDetail(detail)),
   stopChat: (providerId, chatId) =>
     adapters[providerId].stopChat(chatId).then((detail) => applyMetadataToDetail(detail)),
   markChatDone: (_providerId, chatId, done = true) => setChatDone(chatId, done),

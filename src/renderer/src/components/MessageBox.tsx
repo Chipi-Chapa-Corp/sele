@@ -31,6 +31,7 @@ import {
   Package,
   Paperclip,
   ShieldQuestionMark,
+  Shrink,
   Sparkles,
   Square,
   Rocket,
@@ -170,6 +171,7 @@ type MessageBoxProps = {
   onRunAction?: (action: AppAction) => Promise<void> | void
   onSelectedReviewChange?: (review: Omit<ProviderReview, 'prompt'> | null) => void
   onSandboxModeChange: (sandboxMode: ProviderSandboxMode) => void
+  onCompact?: () => Promise<void> | void
   onStop?: () => Promise<void> | void
   onUsageRefresh?: (options?: ProviderUsageOptions) => Promise<void> | void
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
@@ -1106,6 +1108,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   onRunAction,
   onSelectedReviewChange,
   onSandboxModeChange,
+  onCompact,
   onStop,
   onUsageRefresh,
   onUsageReset,
@@ -3094,17 +3097,30 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                       <section className="message-box__usage-section">
                         <div className="message-box__usage-row">
                           <span>Context</span>
-                          <strong>
-                            {contextUsage.usedTokens == null || contextUsage.usedTokens === 0
-                              ? '0'
-                              : contextUsage.maxTokens
-                                ? `${formatTokenCount(
-                                    contextUsage.usedTokens
-                                  )} / ${formatTokenCount(contextUsage.maxTokens)}`
-                                : `${formatTokenCount(contextUsage.usedTokens)} ${
-                                    contextUsage.source === 'estimated' ? 'estimated' : 'used'
-                                  }`}
-                          </strong>
+                          <div className="message-box__context-actions">
+                            <strong>
+                              {contextUsage.usedTokens == null || contextUsage.usedTokens === 0
+                                ? '0'
+                                : contextUsage.maxTokens
+                                  ? `${formatTokenCount(
+                                      contextUsage.usedTokens
+                                    )} / ${formatTokenCount(contextUsage.maxTokens)}`
+                                  : `${formatTokenCount(contextUsage.usedTokens)} ${
+                                      contextUsage.source === 'estimated' ? 'estimated' : 'used'
+                                    }`}
+                            </strong>
+                            {onCompact && (
+                              <Button
+                                callback={onCompact}
+                                disabled={disabled || operationsDisabled || active || pending}
+                                icon={<Shrink />}
+                                aria-label="Compact chat context"
+                                title="Compact chat context"
+                                size="small"
+                                theme="transparent"
+                              />
+                            )}
+                          </div>
                         </div>
                         {contextPercentLabel && (
                           <div className="message-box__usage-meter" aria-hidden="true">

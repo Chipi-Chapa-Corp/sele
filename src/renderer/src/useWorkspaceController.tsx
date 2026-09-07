@@ -4507,6 +4507,7 @@ export const useWorkspaceController = () => {
     handleRetryStoppedTurn,
     handleSendMessage,
     handleSteerPendingMessage,
+    handleCompactChat,
     handleStopChat,
     resolveSelectedUserInput
   } = useChatMessagingController({
@@ -5615,6 +5616,7 @@ export const useWorkspaceController = () => {
       handleSelectedReviewChange,
       handleSendMessage,
       handleSkipProviderUpdate,
+      handleCompactChat,
       handleStopChat,
       handleUpdateProvider,
       hasForcedChatDropdown,

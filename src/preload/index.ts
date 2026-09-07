@@ -320,6 +320,8 @@ const providerApi: ProviderRendererApi = {
       requestId,
       response
     ),
+  compactChat: (providerId, chatId) =>
+    ipcRenderer.invoke(providerIpcChannels.compactChat, providerId, chatId),
   stopChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.stopChat, providerId, chatId),
   markChatDone: (providerId, chatId, done) =>

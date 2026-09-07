@@ -174,6 +174,7 @@ export type ProviderAdapter = {
     requestId: string,
     response: ProviderUserInputResponse
   ) => Promise<ProviderChatDetail>
+  compactChat: (chatId: string) => Promise<ProviderChatDetail>
   stopChat: (chatId: string) => Promise<ProviderChatDetail>
   onChatUpdated: (
     listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void

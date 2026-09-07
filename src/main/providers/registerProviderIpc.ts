@@ -1736,6 +1736,12 @@ export const registerProviderIpc = (): void => {
       )
   )
 
+  ipcMain.handle(providerIpcChannels.compactChat, (_, providerId: unknown, chatId: unknown) =>
+    getRendererChatDetail(() =>
+      providerApi.compactChat(requireProviderId(providerId), requireChatId(chatId))
+    )
+  )
+
   ipcMain.handle(providerIpcChannels.stopChat, (_, providerId: unknown, chatId: unknown) =>
     getRendererChatDetail(() =>
       providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))

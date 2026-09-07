@@ -769,6 +769,12 @@
   line-height: 1.35;
 }
 
+.message-box__context-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .message-box__usage-row span {
   min-width: 0;
   overflow: hidden;

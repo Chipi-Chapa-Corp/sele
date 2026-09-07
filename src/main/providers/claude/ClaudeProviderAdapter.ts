@@ -1222,6 +1222,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  compactChat = async (chatId: string): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId)
+    if (state.active || state.queueDrainInProgress || state.queuedMessages.length > 0) {
+      throw new Error('Wait for the current response before compacting context.')
+    }
+    await this.sendMessageRespectingQueue(state, '/compact')
+    return this.createChatDetail(state)
+  }
+
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
     state.stopped = true

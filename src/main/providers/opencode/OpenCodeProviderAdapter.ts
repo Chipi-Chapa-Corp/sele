@@ -1012,6 +1012,21 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state, true)
   }
 
+  compactChat = async (chatId: string): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId)
+    if (state.active) {
+      throw new Error('Wait for the current response before compacting context.')
+    }
+    const client = (await this.getClientEntry(state.container)).client
+    await client.session.summarize(
+      { sessionID: chatId, directory: state.directory, auto: false },
+      { throwOnError: true }
+    )
+    await this.refreshState(state, client)
+    this.scheduleUpdate(chatId)
+    return this.createChatDetail(state, true)
+  }
+
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
     const client = (await this.getClientEntry(state.container)).client

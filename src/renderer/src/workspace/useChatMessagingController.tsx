@@ -847,6 +847,32 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         : currentResolution
     )
   }
+  const handleCompactChat = async (): Promise<void> => {
+    if (providerUpdateInProgress || !selectedChat || chatHasActiveTurn || sendInFlightRef.current)
+      return
+    const compactProjectKey = getChatCwdGroupKey(getChatProjectCwd(selectedChat))
+    sendInFlightRef.current = true
+    sendInFlightProjectKeyRef.current = compactProjectKey
+    setSendInFlightProjectKey(compactProjectKey)
+    setSendState('sending')
+
+    try {
+      const detail = await providerApi.compactChat(selectedChat.providerId, selectedChat.id)
+      applyViewedChatDetail(selectedChat.providerId, detail)
+      markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
+      setSendState('idle')
+    } catch (error) {
+      handleSendFailure(error, 'Unable to compact chat context.')
+    } finally {
+      sendInFlightRef.current = false
+      if (sendInFlightProjectKeyRef.current === compactProjectKey) {
+        sendInFlightProjectKeyRef.current = null
+      }
+      setSendInFlightProjectKey((currentKey) =>
+        currentKey === compactProjectKey ? null : currentKey
+      )
+    }
+  }
   const handleStopChat = async (): Promise<void> => {
     if (providerUpdateInProgress || !selectedChat || sendInFlightRef.current) return
     const stopProjectKey = getChatCwdGroupKey(getChatProjectCwd(selectedChat))
@@ -1005,6 +1031,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     handleRetryStoppedTurn,
     handleSendMessage,
     handleSteerPendingMessage,
+    handleCompactChat,
     handleStopChat,
     resolveSelectedUserInput
   }

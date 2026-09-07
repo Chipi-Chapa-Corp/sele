@@ -1139,6 +1139,7 @@ export type ProviderApi = {
     requestId: string,
     response: ProviderUserInputResponse
   ) => Promise<ProviderChatDetail>
+  compactChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
   stopChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
   markChatDone: (
     providerId: ProviderId,
@@ -1277,6 +1278,7 @@ export const providerIpcChannels = {
   editMessage: 'provider:edit-message',
   resolveApproval: 'provider:resolve-approval',
   resolveUserInput: 'provider:resolve-user-input',
+  compactChat: 'provider:compact-chat',
   stopChat: 'provider:stop-chat',
   markChatDone: 'provider:mark-chat-done',
   markCwdChatsDone: 'provider:mark-cwd-chats-done',

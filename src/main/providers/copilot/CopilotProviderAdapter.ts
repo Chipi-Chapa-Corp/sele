@@ -1296,6 +1296,17 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  compactChat = async (chatId: string): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId)
+    if (state.active) {
+      throw new Error('Wait for the current response before compacting context.')
+    }
+    const result = await state.session!.rpc.history.compact()
+    if (!result.success) throw new Error('Copilot could not compact the chat context.')
+    this.emitUpdate(state)
+    return this.createChatDetail(state)
+  }
+
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
     state.stopped = true
