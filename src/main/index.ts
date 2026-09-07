@@ -1,4 +1,5 @@
-import { startBrowserUseBridge } from './browserUseBridge'
+import { startBrowserUseBridge } from './providers/codex/CodexBrowserBridge'
+import { startBrowserAutomationService } from './browser/BrowserAutomation'
 import { registerVisualizationProtocol } from './visualizationProtocol'
 import {
   app,
@@ -343,7 +344,7 @@ const startApp = (): void => {
     electronApp.setAppUserModelId('com.sele')
     registerAppIpc()
     registerBrowserIpc()
-    void startBrowserUseBridge().catch((error: unknown) =>
+    void startBrowserUseBridge(startBrowserAutomationService()).catch((error: unknown) =>
       console.error('Unable to start browser-use bridge:', error)
     )
     registerProviderIpc()

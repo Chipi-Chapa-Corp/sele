@@ -437,6 +437,7 @@ const browserApi: BrowserRendererApi = {
     return () => ipcRenderer.removeListener(browserIpcChannels.automationRequest, handle)
   },
   automationReady: (ready) => ipcRenderer.send(browserIpcChannels.automationReady, ready),
+  automationAccept: (id) => ipcRenderer.send(browserIpcChannels.automationAccept, id),
   automationRespond: (response) =>
     ipcRenderer.send(browserIpcChannels.automationResponse, response),
   setAutomationVisible: (visible) =>

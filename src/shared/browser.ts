@@ -1,4 +1,5 @@
 import type { AppContainerTarget } from './app'
+import type { ProviderId } from './provider'
 
 export type BrowserOpenRequest = {
   id: string
@@ -89,6 +90,7 @@ export type BrowserPageZoomOptions = {
 }
 
 export type BrowserAutomationScope = {
+  providerId: ProviderId
   sessionId: string
   cwd: string
   containerKey: string
@@ -107,6 +109,7 @@ export type BrowserAutomationRequest = {
   method: 'list' | 'create' | 'activate' | 'close' | 'visibility'
   tabId?: number
   visible?: boolean
+  foreground?: boolean
 }
 
 export type BrowserAutomationResponse = {
@@ -128,6 +131,7 @@ export type BrowserRendererApi = {
   onAutomationOpen: (listener: (requestId: string) => void) => () => void
   onAutomationRequest: (listener: (request: BrowserAutomationRequest) => void) => () => void
   automationReady: (ready: boolean) => void
+  automationAccept: (requestId: string) => void
   automationRespond: (response: BrowserAutomationResponse) => void
   setAutomationVisible: (visible: boolean) => void
   onAutomationVisibility: (listener: (visible: boolean) => void) => () => void
@@ -145,6 +149,7 @@ export const browserIpcChannels = {
   automationRequest: 'browser:automation-request',
   automationResponse: 'browser:automation-response',
   automationReady: 'browser:automation-ready',
+  automationAccept: 'browser:automation-accept',
   automationVisibility: 'browser:automation-visibility'
 } as const
 

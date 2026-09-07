@@ -7,11 +7,16 @@ if (!process.versions.electron) {
   ;(async () => {
     const directory = await fs.mkdtemp('/tmp/sele-browser-use-test-')
     try {
+      await fs.symlink(
+        path.join(process.cwd(), 'node_modules'),
+        path.join(directory, 'node_modules'),
+        'dir'
+      )
       // Use one bundle so the bridge and session registration share the same registry.
       await build({
         stdin: {
           contents:
-            "export {startBrowserUseBridge} from './src/main/browserUseBridge';export {registerBrowserUseSession} from './src/main/browserUseSessions'",
+            "export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {startBrowserAutomationService} from './src/main/browser/BrowserAutomation';export {startBrowserUseBridge} from './src/main/providers/codex/CodexBrowserBridge';export {registerBrowserUseSession, removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
           resolveDir: process.cwd(),
           loader: 'ts'
         },
@@ -19,7 +24,7 @@ if (!process.versions.electron) {
         bundle: true,
         platform: 'node',
         format: 'cjs',
-        external: ['electron']
+        external: ['electron', '@anthropic-ai/claude-agent-sdk']
       })
       await build({
         entryPoints: ['src/preload/index.ts'],
@@ -43,14 +48,22 @@ if (!process.versions.electron) {
       )
       const environment = { ...process.env }
       delete environment.ELECTRON_RUN_AS_NODE
-      const result = spawnSync(require('electron'), [__filename, directory, '--no-sandbox'], {
-        env: environment,
-        encoding: 'utf8',
-        timeout: 60000
-      })
+      // Electron offscreen input on Wayland is unreliable; use XWayland for this fixture.
+      const displayArgs =
+        process.platform === 'linux' && environment.DISPLAY ? ['--ozone-platform=x11'] : []
+      const result = spawnSync(
+        require('electron'),
+        [__filename, directory, '--no-sandbox', ...displayArgs],
+        {
+          env: environment,
+          stdio: 'inherit',
+          timeout: 60000,
+          killSignal: 'SIGKILL'
+        }
+      )
       process.stdout.write(result.stdout || '')
       if (result.status !== 0) {
-        process.stderr.write(result.stderr || String(result.error))
+        if (result.error) process.stderr.write(String(result.error))
         process.exitCode = 1
       }
     } finally {
@@ -65,16 +78,22 @@ if (!process.versions.electron) {
   const net = require('node:net')
   const http = require('node:http')
   const assert = require('node:assert/strict')
-  const { startBrowserUseBridge, registerBrowserUseSession } = require(
-    path.join(process.argv[2], 'bridge.cjs')
-  )
+  const {
+    createClaudeBrowserIntegration,
+    startBrowserAutomationService,
+    startBrowserUseBridge,
+    registerBrowserUseSession,
+    removeBrowserUseSessions
+  } = require(path.join(process.argv[2], 'bridge.cjs'))
   app.setPath('userData', path.join(process.argv[2], 'user-data'))
   app.whenReady().then(async () => {
     let closeBridge, server, socket
     try {
       const before = new Set(await fs.readdir('/tmp/codex-browser-use').catch(() => []))
-      closeBridge = await startBrowserUseBridge()
-      registerBrowserUseSession({}, 'browser-test-session', '/work', null)
+      const browserService = startBrowserAutomationService()
+      closeBridge = await startBrowserUseBridge(browserService)
+      const codexOwner = {}
+      registerBrowserUseSession(codexOwner, 'browser-test-session', '/work', null)
       ipcMain.handle('browser:resolve-page-zoom-scale', () => 100)
       const window = new BrowserWindow({
         show: false,
@@ -180,20 +199,22 @@ if (!process.versions.electron) {
           'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
         awaitPromise: true
       })
-      await cdp('Runtime.evaluate', { expression: 'document.querySelector("#name").focus()' })
-      await cdp('Input.insertText', { text: 'From browser use' })
-      const box = await cdp('Runtime.evaluate', {
-        expression:
-          '(()=>{const b=document.querySelector("#go").getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2}})()',
-        returnByValue: true
-      })
-      for (const type of ['mousePressed', 'mouseReleased'])
-        await cdp('Input.dispatchMouseEvent', {
-          type,
-          ...box.result.value,
-          button: 'left',
-          clickCount: 1
+      const click = async (selector) => {
+        const box = await cdp('Runtime.evaluate', {
+          expression: `(()=>{const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2}})()`,
+          returnByValue: true
         })
+        for (const type of ['mousePressed', 'mouseReleased'])
+          await cdp('Input.dispatchMouseEvent', {
+            type,
+            ...box.result.value,
+            button: 'left',
+            clickCount: 1
+          })
+      }
+      await click('#name')
+      await cdp('Input.insertText', { text: 'From browser use' })
+      await click('#go')
       assert.equal(
         (
           await cdp('Runtime.evaluate', {
@@ -219,6 +240,23 @@ if (!process.versions.electron) {
       const target = (await cdp('Target.getTargets')).targetInfos[0]
       await cdp('Target.closeTarget', { targetId: target.targetId })
       assert.equal((await rpc('getTabs')).length, 1)
+      const { checkClaudeBrowserTools, checkInstalledClaudeBrowserSdk } =
+        await import('./fixtures/claude-browser-check.mjs')
+      await checkClaudeBrowserTools({
+        createClaudeBrowserIntegration,
+        browserService,
+        window,
+        url,
+        codexTabId: (await rpc('getTabs'))[0].id
+      })
+      if (process.env.SELE_CLAUDE_RUNTIME) {
+        await checkInstalledClaudeBrowserSdk({
+          createClaudeBrowserIntegration,
+          browserService,
+          runtimePath: process.env.SELE_CLAUDE_RUNTIME,
+          directory: process.argv[2]
+        })
+      }
       if (process.env.SELE_BROWSER_RUNTIME) {
         const { checkInstalledBrowserRuntime } =
           await import('./fixtures/browser-runtime-check.mjs')
@@ -229,6 +267,18 @@ if (!process.versions.electron) {
           directory: process.argv[2]
         })
       }
+      const remainingTab = (await rpc('getTabs'))[0]
+      await rpc('attach', { tabId: remainingTab.id })
+      removeBrowserUseSessions(codexOwner)
+      await assert.rejects(rpc('getInfo'), /not owned/)
+      const replacement = browserService.createClient({
+        providerId: 'codex',
+        sessionId: 'browser-test-session',
+        cwd: '/work',
+        containerKey: 'host'
+      })
+      await replacement.attach(remainingTab.id)
+      replacement.close()
       console.log(
         'PASS: native Browser Use discovery, real BrowserPanel tabs, CDP events, navigation, typing, clicking, screenshots, closing and session/tab isolation'
       )

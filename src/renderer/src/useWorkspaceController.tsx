@@ -1114,6 +1114,7 @@ export const useWorkspaceController = () => {
           })
           return
         }
+        browserApi.automationAccept(id)
         setBrowserOpened(true)
       }),
     [effectiveAppSettings.browser.enabled]

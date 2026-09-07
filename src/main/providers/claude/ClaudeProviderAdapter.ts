@@ -1,3 +1,5 @@
+import { getBrowserAutomationService } from '../../browser/BrowserAutomation'
+import { claudeBrowserServerName, createClaudeBrowserIntegration } from './ClaudeBrowserTools'
 import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
@@ -133,6 +135,7 @@ type ClaudeSessionState = {
   messageIds: Set<string>
   partialMessages: Map<string, ClaudeTranscriptMessage>
   query: Query | null
+  browser: ReturnType<typeof createClaudeBrowserIntegration> | null
   input: AsyncMessageQueue<SDKUserMessage> | null
   options: ProviderTurnOptions | undefined
   active: boolean
@@ -1404,6 +1407,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       messageIds: new Set(),
       partialMessages: new Map(),
       query: null,
+      browser: null,
       input: null,
       options,
       active: false,
@@ -1503,17 +1507,36 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const runtime = await this.getQueryRuntime(state.container, state.cwd ?? state.options?.cwd)
     const queryReadOnly = state.options?.sandboxMode === 'read-only'
     const isNew = state.messages.length === 0 && !startOptions.forkFrom && !startOptions.resumeAt
-    const control = query({
-      prompt: input,
-      options: {
-        ...this.getBaseQueryOptions(state.options, runtime),
-        canUseTool: this.createPermissionHandler(state),
-        ...(isNew ? { sessionId: state.id } : { resume: startOptions.forkFrom ?? state.id }),
-        ...(startOptions.forkFrom ? { forkSession: true, sessionId: state.id } : {}),
-        ...(startOptions.resumeAt ? { resumeSessionAt: startOptions.resumeAt } : {}),
-        ...(startOptions.resumeDropsTurn ? { resumeDropsTurn: startOptions.resumeDropsTurn } : {})
-      }
-    })
+    const browserService = getBrowserAutomationService()
+    // Do not connect remote/container or restricted queries to an unrelated host browser.
+    const browser =
+      browserService && !state.container && !queryReadOnly
+        ? createClaudeBrowserIntegration(browserService, {
+            providerId: 'claude',
+            sessionId: state.id,
+            cwd: state.cwd ?? state.options?.cwd ?? '',
+            containerKey: getContainerTargetKey(state.container)
+          })
+        : null
+    let control: Query
+    try {
+      control = query({
+        prompt: input,
+        options: {
+          ...this.getBaseQueryOptions(state.options, runtime),
+          ...(browser ? { mcpServers: { [claudeBrowserServerName]: browser.server } } : {}),
+          canUseTool: this.createPermissionHandler(state),
+          ...(isNew ? { sessionId: state.id } : { resume: startOptions.forkFrom ?? state.id }),
+          ...(startOptions.forkFrom ? { forkSession: true, sessionId: state.id } : {}),
+          ...(startOptions.resumeAt ? { resumeSessionAt: startOptions.resumeAt } : {}),
+          ...(startOptions.resumeDropsTurn ? { resumeDropsTurn: startOptions.resumeDropsTurn } : {})
+        }
+      })
+    } catch (error) {
+      browser?.close()
+      throw error
+    }
+    state.browser = browser
     state.input = input
     state.query = control
     state.queryReadOnly = queryReadOnly
@@ -1523,6 +1546,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private closeStateQuery = async (state: ClaudeSessionState): Promise<void> => {
     const control = state.query
+    state.browser?.close()
+    state.browser = null
     if (!control) return
     this.rejectPendingRequests(state)
     state.input?.close()

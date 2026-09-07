@@ -41,7 +41,7 @@ export function useBrowserAutomation(options: Options): void {
         case 'global':
           return 'global'
         case 'chat':
-          return `chat:codex:${scope.sessionId}`
+          return `chat:${scope.providerId}:${scope.sessionId}`
         case 'project':
           return `project:${scope.containerKey}\0${scope.cwd}`
       }
@@ -121,10 +121,13 @@ export function useBrowserAutomation(options: Options): void {
           if (tab) tabs.push(tab)
           return new Map(workspaces).set(key, {
             tabs,
-            activeTabId: tab?.id ?? workspace.activeTabId
+            activeTabId:
+              tab && (request.foreground !== false || !workspace.activeTabId)
+                ? tab.id
+                : workspace.activeTabId
           })
         })
-        if (tab) state.showWorkspace(key)
+        if (tab && request.foreground !== false) state.showWorkspace(key)
         const live = await waitForTabs(key, tab?.id)
         if (!tab) return live
         const element = current.current.webviews.current.get(tab.id)
