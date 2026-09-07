@@ -501,6 +501,7 @@ export type AppGitPullResult = {
 }
 
 export type AppApi = {
+  exportDiagnosticLog: () => Promise<string | null>
   getColorScheme: () => Promise<AppColorScheme>
   getInstalledFontFamilies: () => Promise<string[]>
   getWindowState: () => Promise<AppWindowState>
@@ -561,6 +562,7 @@ export type AppApi = {
 }
 
 export const appIpcChannels = {
+  exportDiagnosticLog: 'app:export-diagnostic-log',
   getColorScheme: 'app:get-color-scheme',
   getInstalledFontFamilies: 'app:get-installed-font-families',
   colorSchemeUpdated: 'app:color-scheme-updated',

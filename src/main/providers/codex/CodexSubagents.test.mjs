@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getCodexTurnSubagents } from './CodexSubagents.ts'
+import {
+  createCodexSubagentTranscriptItems,
+  getCodexSubagentInstruction,
+  getCodexTurnSubagents
+} from './CodexSubagents.ts'
 
 test('derives subagent summaries only from the bounded parent turns', () => {
   const subagents = getCodexTurnSubagents(
@@ -78,4 +82,56 @@ test('uses parent activity state to surface a failed subagent without reading it
 
   assert.equal(subagent.status, 'failed')
   assert.equal(subagent.title, 'check build')
+})
+
+const summary = {
+  id: 'child-chat',
+  title: 'repo map',
+  description: 'repo map',
+  createdAt: 10_000
+}
+
+test('displays the delegated prompt instead of the refreshed name or path', () => {
+  const turns = [
+    {
+      id: 'parent-turn',
+      items: [
+        { type: 'subAgentActivity', agentThreadId: 'other-child', prompt: 'Other task' },
+        {
+          type: 'subAgentActivity',
+          agentThreadId: 'child-chat',
+          prompt: 'Map the repository and report entry points.'
+        },
+        { type: 'subAgentActivity', agentThreadId: 'child-chat', kind: 'completed' }
+      ]
+    }
+  ]
+  const instruction = getCodexSubagentInstruction(turns, summary.id)
+  const reply = {
+    type: 'message',
+    id: 'reply',
+    role: 'assistant',
+    content: 'Found the entry points.'
+  }
+  const items = createCodexSubagentTranscriptItems(summary, [reply], instruction)
+  assert.equal(items[0].role, 'user')
+  assert.equal(items[0].content, 'Map the repository and report entry points.')
+  assert.equal(items[1], reply)
+})
+
+test('does not fabricate an instruction from the name when the prompt is unavailable', () => {
+  const instruction = getCodexSubagentInstruction(
+    [
+      {
+        id: 'parent-turn',
+        items: [
+          { type: 'subAgentActivity', agentThreadId: 'child-chat', agentPath: '/root/repo_map' }
+        ]
+      }
+    ],
+    summary.id
+  )
+  assert.equal(instruction, null)
+  const items = []
+  assert.equal(createCodexSubagentTranscriptItems(summary, items, instruction), items)
 })

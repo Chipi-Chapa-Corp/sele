@@ -108,3 +108,17 @@ npm run build
 ## License
 
 [GNU General Public License v3.0 only](LICENSE)
+
+### Diagnostic logs
+
+To report a technical issue, open Settings and select **Logs**. Attach the saved
+`.log` file to your issue. It includes timestamps, app/runtime versions, main-process and app-interface
+warnings and errors, failed IPC requests, and unexpected process exits. Logs stay on your device;
+exporting saves a local copy and does not upload it. Review the file before sharing, since error
+messages can include file paths and other details from your environment.
+
+Sele keeps `sele.log` and one rotated `sele.log.1`, up to 5 MiB each, across restarts. The export
+combines both files, oldest first. Oversized individual messages are truncated. The log directory is
+`~/Library/Logs/sele` on macOS and `logs` within Electron's app user-data directory on Windows/Linux
+(normally `%APPDATA%/sele/logs` or `~/.config/sele/logs`; sandboxed packages can use a different root).
+Third-party pages in browser tabs are excluded from app console logging.

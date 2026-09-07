@@ -1,3 +1,4 @@
+import { diagnosticLog, handleLoggedIpc } from './logging'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -6,16 +7,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import {
-  app,
-  BrowserWindow,
-  clipboard,
-  dialog,
-  ipcMain,
-  nativeImage,
-  nativeTheme,
-  shell
-} from 'electron'
+import { app, BrowserWindow, clipboard, dialog, nativeImage, nativeTheme, shell } from 'electron'
 import type {
   AppColorScheme,
   AppAddProjectOptions,
@@ -3009,15 +3001,42 @@ const pullGitChanges = async (
 }
 
 export const registerAppIpc = (): void => {
-  ipcMain.handle(appIpcChannels.getColorScheme, getColorScheme)
+  handleLoggedIpc(appIpcChannels.exportDiagnosticLog, async (event) => {
+    const window = getBrowserWindow(event)
+    const result = await dialog.showSaveDialog(window, {
+      title: 'Save diagnostic log',
+      defaultPath: `sele-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.log`,
+      filters: [{ name: 'Log files', extensions: ['log'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    try {
+      if (
+        [diagnosticLog.path, `${diagnosticLog.path}.1`].some(
+          (path) => resolve(path) === resolve(result.filePath!)
+        )
+      ) {
+        throw new Error('Choose a different location from the active diagnostic log')
+      }
+      await writeFile(result.filePath, diagnosticLog.snapshot(), { mode: 0o600 })
+      return result.filePath
+    } catch (error) {
+      await dialog.showMessageBox(window, {
+        type: 'error',
+        title: 'Unable to save diagnostic log',
+        message: 'The diagnostic log could not be saved. Try another location.'
+      })
+      throw error
+    }
+  })
+  handleLoggedIpc(appIpcChannels.getColorScheme, getColorScheme)
 
-  ipcMain.handle(appIpcChannels.getInstalledFontFamilies, getInstalledFontFamilies)
+  handleLoggedIpc(appIpcChannels.getInstalledFontFamilies, getInstalledFontFamilies)
 
-  ipcMain.handle(appIpcChannels.getDefaultCwd, () => process.cwd())
+  handleLoggedIpc(appIpcChannels.getDefaultCwd, () => process.cwd())
 
-  ipcMain.handle(appIpcChannels.getProjects, () => getStoredProjects())
+  handleLoggedIpc(appIpcChannels.getProjects, () => getStoredProjects())
 
-  ipcMain.handle(appIpcChannels.addProject, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.addProject, async (_event, value: unknown) => {
     const options = getAddProjectOptions(value)
     const cwds = [options.cwd, ...(options.additionalCwds ?? [])]
     const cwdStats = await Promise.all(cwds.map((cwd) => stat(cwd).catch(() => null)))
@@ -3042,32 +3061,32 @@ export const registerAppIpc = (): void => {
     return project
   })
 
-  ipcMain.handle(appIpcChannels.setProjectOrder, (_event, value: unknown) =>
+  handleLoggedIpc(appIpcChannels.setProjectOrder, (_event, value: unknown) =>
     setStoredProjectOrder(getProjectOrderCwds(value))
   )
 
-  ipcMain.handle(appIpcChannels.getSshEnvironments, () => getStoredSshEnvironments())
+  handleLoggedIpc(appIpcChannels.getSshEnvironments, () => getStoredSshEnvironments())
 
-  ipcMain.handle(appIpcChannels.createSshEnvironment, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.createSshEnvironment, async (_event, value: unknown) => {
     const options = getCreateSshEnvironmentOptions(value)
     await validateSshIdentityFile(options.identityFile)
 
     return createStoredSshEnvironment(options)
   })
 
-  ipcMain.handle(appIpcChannels.updateSshEnvironment, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.updateSshEnvironment, async (_event, value: unknown) => {
     const options = getUpdateSshEnvironmentOptions(value)
     await validateSshIdentityFile(options.identityFile)
 
     return updateStoredSshEnvironment(options)
   })
 
-  ipcMain.handle(appIpcChannels.deleteSshEnvironment, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.deleteSshEnvironment, async (_event, value: unknown) => {
     const options = getDeleteSshEnvironmentOptions(value)
     await deleteStoredSshEnvironment(options.id)
   })
 
-  ipcMain.handle(appIpcChannels.selectSshIdentityFile, async (event) => {
+  handleLoggedIpc(appIpcChannels.selectSshIdentityFile, async (event) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender)
     const dialogOptions = {
       title: 'Choose SSH identity file',
@@ -3080,23 +3099,23 @@ export const registerAppIpc = (): void => {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
-  ipcMain.handle(appIpcChannels.getContainerSuggestions, (_event, value: unknown) =>
+  handleLoggedIpc(appIpcChannels.getContainerSuggestions, (_event, value: unknown) =>
     getContainerSuggestions(getSourceAvailabilityOptions(value))
   )
 
-  ipcMain.handle(appIpcChannels.getSourceAvailability, (_event, value: unknown) =>
+  handleLoggedIpc(appIpcChannels.getSourceAvailability, (_event, value: unknown) =>
     getSourceAvailability(getSourceAvailabilityOptions(value))
   )
 
-  ipcMain.handle(appIpcChannels.getWindowState, (event) =>
+  handleLoggedIpc(appIpcChannels.getWindowState, (event) =>
     getAppWindowState(getBrowserWindow(event))
   )
 
-  ipcMain.handle(appIpcChannels.minimizeWindow, (event) => {
+  handleLoggedIpc(appIpcChannels.minimizeWindow, (event) => {
     getBrowserWindow(event).minimize()
   })
 
-  ipcMain.handle(appIpcChannels.toggleWindowMaximized, (event) => {
+  handleLoggedIpc(appIpcChannels.toggleWindowMaximized, (event) => {
     const window = getBrowserWindow(event)
     if (window.isMaximized()) window.unmaximize()
     else window.maximize()
@@ -3106,15 +3125,15 @@ export const registerAppIpc = (): void => {
     return state
   })
 
-  ipcMain.handle(appIpcChannels.closeWindow, (event) => {
+  handleLoggedIpc(appIpcChannels.closeWindow, (event) => {
     getBrowserWindow(event).close()
   })
 
-  ipcMain.handle(appIpcChannels.setWindowZoomLevel, (event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.setWindowZoomLevel, (event, value: unknown) => {
     getBrowserWindow(event).webContents.setZoomLevel(normalizeAppWindowZoomLevel(value))
   })
 
-  ipcMain.handle(appIpcChannels.handleExternalLink, async (event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.handleExternalLink, async (event, value: unknown) => {
     const options = getExternalLinkOptions(value)
     let action = options.action
     let always = false
@@ -3143,28 +3162,28 @@ export const registerAppIpc = (): void => {
     return { action, always } satisfies AppExternalLinkResult
   })
 
-  ipcMain.handle(appIpcChannels.getGitChanges, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getGitChanges, async (_event, value: unknown) => {
     const options = getGitChangesOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitChanges(options.cwd ?? process.cwd(), options.source)
     )
   })
 
-  ipcMain.handle(appIpcChannels.getGitBranches, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getGitBranches, async (_event, value: unknown) => {
     const options = getGitBranchesOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitBranches(options.cwd ?? process.cwd())
     )
   })
 
-  ipcMain.handle(appIpcChannels.switchGitBranch, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.switchGitBranch, async (_event, value: unknown) => {
     const options = getGitSwitchBranchOptions(value)
     return runWithGitContainer(options.container, () =>
       switchGitBranch(options.cwd ?? process.cwd(), options.branchName, Boolean(options.create))
     )
   })
 
-  ipcMain.handle(appIpcChannels.deleteGitBranch, async (event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.deleteGitBranch, async (event, value: unknown) => {
     const options = getGitDeleteBranchOptions(value)
     let scope = options.scope ?? null
     let force = Boolean(options.force)
@@ -3212,36 +3231,36 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  ipcMain.handle(appIpcChannels.createGitWorktree, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.createGitWorktree, async (_event, value: unknown) => {
     const options = getGitCreateWorktreeOptions(value)
     return runWithGitContainer(options.container, () =>
       createGitWorktree(options.cwd ?? process.cwd(), options.name)
     )
   })
 
-  ipcMain.handle(appIpcChannels.getFileTree, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getFileTree, async (_event, value: unknown) => {
     const options = getFileTreeOptions(value)
     return runWithGitContainer(options.container, () => getFileTree(options.cwd ?? process.cwd()))
   })
 
-  ipcMain.handle(appIpcChannels.getFileContents, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getFileContents, async (_event, value: unknown) => {
     const options = getFileContentsOptions(value)
     return runWithGitContainer(options.container, () =>
       readFileContents(options.cwd ?? process.cwd(), options.path)
     )
   })
 
-  ipcMain.handle(appIpcChannels.openFileInSystemApp, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.openFileInSystemApp, async (_event, value: unknown) => {
     const options = getFileContentsOptions(value)
     return runWithGitContainer(options.container, () => openFileInSystemApp(options))
   })
 
-  ipcMain.handle(appIpcChannels.downloadFile, async (event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.downloadFile, async (event, value: unknown) => {
     const options = getFileContentsOptions(value)
     return runWithGitContainer(options.container, () => downloadFile(event, options))
   })
 
-  ipcMain.handle(appIpcChannels.writeFileContents, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.writeFileContents, async (_event, value: unknown) => {
     const options = getWriteFileContentsOptions(value)
     return runWithGitContainer(options.container, () =>
       writeEditableFile(
@@ -3253,42 +3272,42 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  ipcMain.handle(appIpcChannels.getRecentGitCommitMessages, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getRecentGitCommitMessages, async (_event, value: unknown) => {
     const options = getGitRecentCommitMessagesOptions(value)
     return runWithGitContainer(options.container, () =>
       getRecentGitCommitMessages(options.cwd ?? process.cwd(), options.limit ?? 3)
     )
   })
 
-  ipcMain.handle(appIpcChannels.getUncommittedGitDiff, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getUncommittedGitDiff, async (_event, value: unknown) => {
     const options = getGitDiffOptions(value)
     return runWithGitContainer(options.container, () =>
       getUncommittedGitDiff(options.cwd ?? process.cwd())
     )
   })
 
-  ipcMain.handle(appIpcChannels.getGitCommitMessageContext, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getGitCommitMessageContext, async (_event, value: unknown) => {
     const options = getGitDiffOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitCommitMessageContext(options.cwd ?? process.cwd())
     )
   })
 
-  ipcMain.handle(appIpcChannels.getGitFileDiff, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getGitFileDiff, async (_event, value: unknown) => {
     const options = getGitFileDiffOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitFileDiff(options.cwd ?? process.cwd(), options.path, options.previousPath)
     )
   })
 
-  ipcMain.handle(appIpcChannels.getUncommittedGitPatchChanges, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getUncommittedGitPatchChanges, async (_event, value: unknown) => {
     const options = getGitUncommittedPatchChangesOptions(value)
     return runWithGitContainer(options.container, () =>
       getUncommittedGitPatchChanges(options.cwd ?? process.cwd(), options.patches)
     )
   })
 
-  ipcMain.handle(appIpcChannels.commitGitChanges, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.commitGitChanges, async (_event, value: unknown) => {
     const options = getGitCommitOptions(value)
     return runWithGitContainer(options.container, () =>
       commitGitChanges(
@@ -3300,14 +3319,14 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  ipcMain.handle(appIpcChannels.pullGitChanges, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.pullGitChanges, async (_event, value: unknown) => {
     const options = getGitSyncOptions(value)
     return runWithGitContainer(options.container, () =>
       pullGitChanges(options.cwd ?? process.cwd(), options.strategy, options.rememberStrategy)
     )
   })
 
-  ipcMain.handle(appIpcChannels.pushGitChanges, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.pushGitChanges, async (_event, value: unknown) => {
     const options = getGitSyncOptions(value)
     return runWithGitContainer(options.container, () =>
       pushGitChanges(
@@ -3319,7 +3338,7 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  ipcMain.handle(appIpcChannels.selectFolder, async (event, options: unknown) => {
+  handleLoggedIpc(appIpcChannels.selectFolder, async (event, options: unknown) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender)
     const folderOptions =
       options && typeof options === 'object' && !Array.isArray(options)
@@ -3339,12 +3358,12 @@ export const registerAppIpc = (): void => {
     return result.filePaths[0] ?? null
   })
 
-  ipcMain.handle(appIpcChannels.getProjectIcon, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getProjectIcon, async (_event, value: unknown) => {
     const options = getProjectIconOptions(value)
     return getAppProjectIcon(options.cwd ?? null)
   })
 
-  ipcMain.handle(appIpcChannels.selectProjectIcon, async (event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.selectProjectIcon, async (event, value: unknown) => {
     const options = getProjectIconOptions(value)
     const browserWindow = BrowserWindow.fromWebContents(event.sender)
     const dialogOptions = {
@@ -3381,7 +3400,7 @@ export const registerAppIpc = (): void => {
     }
   })
 
-  ipcMain.handle(appIpcChannels.selectMessageAttachments, async (event) => {
+  handleLoggedIpc(appIpcChannels.selectMessageAttachments, async (event) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender)
     const dialogOptions = {
       properties: ['openFile', 'multiSelections']
@@ -3398,7 +3417,7 @@ export const registerAppIpc = (): void => {
     return getMessageAttachments(result.filePaths)
   })
 
-  ipcMain.handle(appIpcChannels.getDroppedMessageAttachments, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getDroppedMessageAttachments, async (_event, value: unknown) => {
     if (
       !Array.isArray(value) ||
       value.length === 0 ||
@@ -3411,14 +3430,14 @@ export const registerAppIpc = (): void => {
     return getMessageAttachments([...new Set(value)])
   })
 
-  ipcMain.handle(appIpcChannels.readClipboardText, () => clipboard.readText())
+  handleLoggedIpc(appIpcChannels.readClipboardText, () => clipboard.readText())
 
-  ipcMain.handle(appIpcChannels.writeClipboardText, (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.writeClipboardText, (_event, value: unknown) => {
     if (typeof value !== 'string') throw new Error('Invalid clipboard text')
     clipboard.writeText(value)
   })
 
-  ipcMain.handle(appIpcChannels.getClipboardImage, async () => {
+  handleLoggedIpc(appIpcChannels.getClipboardImage, async () => {
     const clipboardImage = clipboard.readImage()
     if (clipboardImage.isEmpty()) return null
 
@@ -3441,14 +3460,14 @@ export const registerAppIpc = (): void => {
     } satisfies AppSelectedImage
   })
 
-  ipcMain.handle(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
     const options = getLocalImageOptions(value)
     return runWithGitContainer(options.container, () =>
       getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
     )
   })
 
-  ipcMain.handle(appIpcChannels.copyLocalImage, async (_event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.copyLocalImage, async (_event, value: unknown) => {
     const options = getLocalImageOptions(value)
     const image = await runWithGitContainer(options.container, () =>
       getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
@@ -3458,7 +3477,7 @@ export const registerAppIpc = (): void => {
     clipboard.writeImage(clipboardImage)
   })
 
-  ipcMain.handle(appIpcChannels.saveLocalImage, async (event, value: unknown) => {
+  handleLoggedIpc(appIpcChannels.saveLocalImage, async (event, value: unknown) => {
     const options = getLocalImageOptions(value)
     const image = await runWithGitContainer(options.container, () =>
       getLocalImage(options.cwd ?? null, options.path, options.relativeTo)

@@ -1,3 +1,4 @@
+import './logging'
 import { startBrowserUseBridge } from './providers/codex/CodexBrowserBridge'
 import { startBrowserAutomationService } from './browser/BrowserAutomation'
 import { registerVisualizationProtocol } from './visualizationProtocol'

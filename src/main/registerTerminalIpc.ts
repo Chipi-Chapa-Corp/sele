@@ -1,3 +1,4 @@
+import { handleLoggedIpc } from './logging'
 import { spawn as spawnChildProcess } from 'node:child_process'
 import { userInfo } from 'node:os'
 import { basename, isAbsolute } from 'node:path'
@@ -438,8 +439,8 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
 }
 
 export const registerTerminalIpc = (): void => {
-  ipcMain.handle(terminalIpcChannels.createSession, createSession)
-  ipcMain.handle(terminalIpcChannels.runCommand, (_event, value: unknown) => runCommand(value))
+  handleLoggedIpc(terminalIpcChannels.createSession, createSession)
+  handleLoggedIpc(terminalIpcChannels.runCommand, (_event, value: unknown) => runCommand(value))
 
   ipcMain.on(terminalIpcChannels.write, (event, sessionId: unknown, data: unknown) => {
     const session = getOwnedSession(event, sessionId)
@@ -473,12 +474,12 @@ export const registerTerminalIpc = (): void => {
     else session.pty.resume()
   })
 
-  ipcMain.handle(terminalIpcChannels.getProcessStatus, (event, sessionId: unknown) => {
+  handleLoggedIpc(terminalIpcChannels.getProcessStatus, (event, sessionId: unknown) => {
     const session = getOwnedSession(event, sessionId)
     return session ? getProcessStatus(session) : { hasActiveProcess: false, processName: null }
   })
 
-  ipcMain.handle(terminalIpcChannels.closeSession, (event, sessionId: unknown) => {
+  handleLoggedIpc(terminalIpcChannels.closeSession, (event, sessionId: unknown) => {
     const session = getOwnedSession(event, sessionId)
     if (session) disposeSession(session, true)
   })

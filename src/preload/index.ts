@@ -14,6 +14,7 @@ import type {
 import { browserIpcChannels } from '../shared/browser'
 
 const appApi: AppApi = {
+  exportDiagnosticLog: () => ipcRenderer.invoke(appIpcChannels.exportDiagnosticLog),
   getColorScheme: () => ipcRenderer.invoke(appIpcChannels.getColorScheme),
   getInstalledFontFamilies: () => ipcRenderer.invoke(appIpcChannels.getInstalledFontFamilies),
   getWindowState: () => ipcRenderer.invoke(appIpcChannels.getWindowState),

@@ -1,5 +1,6 @@
 import type { RefObject } from 'react'
-import { Blocks, Gauge, GitBranch, Globe2, MessageSquare, Sun, X } from 'lucide-react'
+import { appApi } from '../appApi'
+import { Blocks, Download, Gauge, GitBranch, Globe2, MessageSquare, Sun, X } from 'lucide-react'
 import { version as appVersion } from '../../../../package.json'
 import { Button } from './Button'
 import { SegmentedControl } from './SegmentedControl'
@@ -168,6 +169,17 @@ export const SettingsDialog = ({
               />
             </div>
           )}
+          <Button
+            label="Logs"
+            style={{ fontWeight: 400 }}
+            icon={<Download aria-hidden="true" />}
+            size="small"
+            theme="transparent"
+            title="Save warnings and errors to share when reporting a technical issue"
+            callback={async () => {
+              await appApi.exportDiagnosticLog()
+            }}
+          />
           <p className="settings-dialog__version">Sele v{appVersion}</p>
         </aside>
         <div className="settings-dialog__body">{renderSettingsPanel(panelProps)}</div>

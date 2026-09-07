@@ -214,11 +214,27 @@ export const selectCodexSubagentTurns = (
   return childTurnStartIndex >= 0 ? turns.slice(childTurnStartIndex) : []
 }
 
+export const getCodexSubagentInstruction = (
+  turns: CodexTurn[],
+  subagentId: string
+): string | null => {
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      if (item.type === 'subAgentActivity' && item.agentThreadId === subagentId) {
+        const prompt = item.prompt?.trim()
+        if (prompt) return prompt
+      }
+    }
+  }
+  return null
+}
+
 export const createCodexSubagentTranscriptItems = (
   summary: ProviderSubagent,
-  items: ProviderChatItem[]
+  items: ProviderChatItem[],
+  prompt: string | null
 ): ProviderChatItem[] => {
-  const instruction = summary.description?.trim() || summary.title.trim()
+  const instruction = prompt?.trim()
   if (!instruction) return items
 
   return [

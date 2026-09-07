@@ -1,3 +1,4 @@
+import { handleLoggedIpc } from './logging'
 import { ipcMain, webContents, type WebContents } from 'electron'
 import type {
   BrowserCookieImportBrowser,
@@ -96,13 +97,13 @@ export const registerBrowserIpc = (): void => {
     activeBrowserRendererIds.add(rendererId)
     event.sender.once('destroyed', () => activeBrowserRendererIds.delete(rendererId))
   })
-  ipcMain.handle(browserIpcChannels.findCookieProfiles, (_event, value: unknown) =>
+  handleLoggedIpc(browserIpcChannels.findCookieProfiles, (_event, value: unknown) =>
     discoverBrowserCookieProfiles(getCookieProfileDiscoveryOptions(value))
   )
-  ipcMain.handle(browserIpcChannels.importCookies, (_event, value: unknown) =>
+  handleLoggedIpc(browserIpcChannels.importCookies, (_event, value: unknown) =>
     importBrowserCookies(getCookieImportOptions(value))
   )
-  ipcMain.handle(browserIpcChannels.resolvePageZoomScale, async (event, value: unknown) => {
+  handleLoggedIpc(browserIpcChannels.resolvePageZoomScale, async (event, value: unknown) => {
     const options = getPageZoomOptions(value)
     const guest = webContents.fromId(options.webContentsId)
     if (!guest || guest.getType() !== 'webview' || guest.hostWebContents !== event.sender) {

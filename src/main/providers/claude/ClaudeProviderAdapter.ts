@@ -263,6 +263,7 @@ const contextUsageCloseGraceMs = 1_000
 const interruptCloseGraceMs = 500
 const oneShotCancellationRetentionMs = 60_000
 const maxFallbackTitleLength = 80
+const sessionTitleRefreshDelayMs = 5_000
 const maxPreviewLength = 500
 const allowedEffortLevels = new Set<EffortLevel>(['low', 'medium', 'high', 'xhigh', 'max'])
 const readOnlyAllowedTools = [
@@ -883,8 +884,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     return {
       ...summary,
       items: renderClaudeChatItems(transcript, {
-        active: false,
-        stopped: false
+        active: summary.status === 'running' || summary.status === 'pending',
+        stopped: summary.status === 'stopped',
+        failed: summary.status === 'failed'
       })
     }
   }
@@ -1001,6 +1003,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     await this.startStateQuery(state, options)
     await onChatCreated?.(id)
     this.sendMessageNow(state, message, options)
+    this.scheduleSessionMetadataRefresh(state)
     return this.createChatDetail(state)
   }
 
@@ -1818,6 +1821,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         this.queueUpdate(state, false)
       })
       .catch(() => undefined)
+    // Claude Code writes the auto-generated session title to the transcript during the turn; it
+    // is not surfaced as a stream event, so re-read session metadata once the turn has ended.
+    const refreshMetadata = this.refreshSessionMetadata(state).catch(() => undefined)
 
     state.active = false
     state.stopped = wasStopped
@@ -1827,6 +1833,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       this.emitUpdate(state, true)
       state.waitingForSessionIdle = false
       void refreshContextUsage
+      void refreshMetadata
       await this.drainNextQueuedMessage(state)
       return false
     } else {
@@ -1836,7 +1843,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         state.failed || wasStopped
       )
       state.waitingForSessionIdle = lifecycle.waitForSessionIdle
-      await settleWithin(refreshContextUsage, contextUsageCloseGraceMs)
+      await settleWithin(
+        Promise.all([refreshContextUsage, refreshMetadata]),
+        contextUsageCloseGraceMs
+      )
       if (state.query === control) {
         this.emitUpdate(state, true)
       }
@@ -2116,7 +2126,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private createChatFromMetadata = (metadata: SDKSessionInfo): ProviderChat => {
     const state = this.states.get(metadata.sessionId)
-    if (state) return this.createChatFromState(state)
+    if (state) {
+      this.applySessionMetadata(state, metadata)
+      return this.createChatFromState(state)
+    }
     const metadataTitle = metadata.customTitle || metadata.summary
     const title = metadataTitle?.trim()
       ? metadataTitle.trim()
@@ -2142,6 +2155,32 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       purpose: null,
       container: this.sessionContainers.get(metadata.sessionId) ?? null
     }
+  }
+
+  private applySessionMetadata = (state: ClaudeSessionState, metadata: SDKSessionInfo): boolean => {
+    const previousTitle = this.getTitle(state)
+    // A rename issued while the metadata read was in flight must not be reverted by stale data.
+    const customTitle = metadata.customTitle ?? state.metadata?.customTitle
+    state.metadata =
+      customTitle && !metadata.customTitle
+        ? { ...metadata, customTitle, summary: customTitle }
+        : metadata
+    state.createdAt = metadata.createdAt ?? state.createdAt
+    return this.getTitle(state) !== previousTitle
+  }
+
+  private refreshSessionMetadata = async (state: ClaudeSessionState): Promise<void> => {
+    const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
+    const metadata = await getSessionInfo(state.id, { sessionStore })
+    if (!metadata || this.states.get(state.id) !== state) return
+    if (this.applySessionMetadata(state, metadata)) this.queueUpdate(state, false)
+  }
+
+  private scheduleSessionMetadataRefresh = (state: ClaudeSessionState): void => {
+    setTimeout(() => {
+      if (this.states.get(state.id) !== state) return
+      void this.refreshSessionMetadata(state).catch(() => undefined)
+    }, sessionTitleRefreshDelayMs).unref?.()
   }
 
   private queueUpdate = (state: ClaudeSessionState, conversationChanged = true): void => {

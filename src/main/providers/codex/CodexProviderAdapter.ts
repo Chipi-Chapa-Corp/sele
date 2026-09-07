@@ -115,6 +115,7 @@ import {
   createCodexSubagentSummary,
   createCodexSubagentTranscriptItems,
   getCodexTurnSubagents,
+  getCodexSubagentInstruction,
   isCodexSubagentThread,
   selectCodexSubagentTurns
 } from './CodexSubagents'
@@ -2421,13 +2422,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rememberThreadContainer(thread.id)
     this.cacheThread(thread)
 
+    // The instruction is delivered out of band. Look for its recorded activity in the
+    // parent page or the child's inherited history before that history is filtered out.
+    const parentThread = this.threads.get(chatId)
+    const instruction = getCodexSubagentInstruction(
+      [...(parentThread ? this.getRenderableTurns(parentThread) : []), ...turns],
+      subagentId
+    )
     const refreshedSummary = createCodexSubagentSummary(thread, chatId, cachedSummary?.afterItemId)
+    if (instruction) refreshedSummary.description = instruction
 
     return {
       ...refreshedSummary,
       items: createCodexSubagentTranscriptItems(
         refreshedSummary,
-        this.createChatDetail(thread).items
+        this.createChatDetail(thread).items,
+        instruction
       )
     }
   }
