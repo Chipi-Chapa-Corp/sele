@@ -20,6 +20,7 @@ export type ClaudeTranscriptMessage = {
   message: unknown
   parent_tool_use_id: string | null
   isSynthetic?: boolean
+  isMeta?: boolean
   timestamp?: string
   tool_use_result?: unknown
   kind?: 'steering'
@@ -150,24 +151,38 @@ const getToolLabel = (nameValue: unknown, input: unknown): string => {
   return name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ')
 }
 
+const skillToolName = 'Skill'
+
+const isSkillToolBlock = (block: ClaudeContentBlock): boolean =>
+  getString(block.name) === skillToolName
+
+const getSkillToolLabel = (input: unknown): string => {
+  const skillName = getArgument(input, 'skill')
+  return skillName ? `Use ${skillName} skill` : 'Use skill'
+}
+
 const createTool = (messageId: string, block: ClaudeContentBlock): ProviderWorkingTool => {
   const toolId = getString(block.id) ?? `${messageId}:tool`
   const name = getString(block.name) ?? 'Tool'
+  const isSkill = isSkillToolBlock(block)
+  // Skill invocations only inject instructions into the conversation. Their payload is
+  // the skill body, which is not useful to inspect, so they render without details.
+  const hidePayload = name === 'AskUserQuestion' || isSkill
   return {
     type: 'tool',
     id: `${messageId}:${toolId}`,
     toolId,
     status: 'running',
-    activity: classifyTool(name, block.input),
+    activity: isSkill ? 'read' : classifyTool(name, block.input),
     icon: name === 'AskUserQuestion' ? 'question' : name === 'TodoWrite' ? 'plan' : null,
-    label: getToolLabel(name, block.input),
-    command: getToolCommand(block.input),
+    label: isSkill ? getSkillToolLabel(block.input) : getToolLabel(name, block.input),
+    command: isSkill ? null : getToolCommand(block.input),
     cwd: getToolCwd(block.input),
     stdout: null,
     diffs: [],
     backgroundSessionId: null,
     finishedBackgroundSessionId: null,
-    rawInput: name === 'AskUserQuestion' ? null : getBoundedRawValue(block.input ?? null),
+    rawInput: hidePayload ? null : getBoundedRawValue(block.input ?? null),
     rawOutput: null,
     images: []
   }
@@ -243,6 +258,7 @@ const hasToolResults = (blocks: ClaudeContentBlock[]): boolean =>
 const interruptedRequestMarker = '[Request interrupted by user]'
 const localCommandOutputPattern =
   /^<local-command-(?:stdout|stderr)>[\s\S]*<\/local-command-(?:stdout|stderr)>$/
+const skillContextPrefix = 'Base directory for this skill:'
 
 const getStandaloneUserText = (message: ClaudeTranscriptMessage): string | null => {
   if (message.type !== 'user' || message.attachments?.length) return null
@@ -257,9 +273,22 @@ export const isClaudeInterruptedRequestMarker = (message: ClaudeTranscriptMessag
   return getStandaloneUserText(message) === interruptedRequestMarker
 }
 
+// After a Skill tool call Claude appends the skill body as a user-role message so the
+// model can follow it. The person never typed it, so it must not render as their message.
+export const isClaudeSkillContextMessage = (message: ClaudeTranscriptMessage): boolean => {
+  if (message.type !== 'user' || message.attachments?.length) return false
+  const blocks = getContentBlocks(message.message)
+  if (hasToolResults(blocks)) return false
+  return message.isMeta === true || getHumanText(blocks).startsWith(skillContextPrefix)
+}
+
 export const isClaudeInternalUserMessage = (message: ClaudeTranscriptMessage): boolean => {
   const text = getStandaloneUserText(message)
-  return text === interruptedRequestMarker || (text != null && localCommandOutputPattern.test(text))
+  return (
+    text === interruptedRequestMarker ||
+    (text != null && localCommandOutputPattern.test(text)) ||
+    isClaudeSkillContextMessage(message)
+  )
 }
 
 const getModel = (message: unknown): string | null => getString(getMessageRecord(message)?.model)
@@ -269,6 +298,7 @@ export const renderClaudeChatItems = (
   options: RenderOptions
 ): ProviderChatItem[] => {
   const items: ProviderChatItem[] = []
+  const skillToolIds = new Set<string>()
   let segment: Segment | null = null
 
   const ensureSegment = (messageId: string): Segment => {
@@ -345,7 +375,9 @@ export const renderClaudeChatItems = (
             !message.uuid.endsWith(':partial') ||
             (isRecord(block.input) && Object.keys(block.input).length > 0)
           if (inputReady) {
-            current.entries.push({ kind: 'working', item: createTool(message.uuid, block) })
+            const tool = createTool(message.uuid, block)
+            if (isSkillToolBlock(block)) skillToolIds.add(tool.toolId)
+            current.entries.push({ kind: 'working', item: tool })
           }
         } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
           if (isSubagentMessage) {
@@ -383,15 +415,16 @@ export const renderClaudeChatItems = (
         if (!toolId) return
         const output = truncateToolOutput(getTextContent(block.content))
         const images = getToolImages(block.content)
+        const hidePayload = skillToolIds.has(toolId)
         updateTool(current.entries, toolId, (tool) => ({
           ...tool,
           status: 'finished',
           label: tool.icon === 'question' ? 'Asked a question' : tool.label,
           icon: images.length > 0 ? 'image-generation' : tool.icon,
-          stdout: tool.icon === 'question' ? null : output,
-          diffs: tool.icon === 'question' ? [] : getToolDiffs(tool, output),
+          stdout: tool.icon === 'question' || hidePayload ? null : output,
+          diffs: tool.icon === 'question' || hidePayload ? [] : getToolDiffs(tool, output),
           rawOutput:
-            tool.icon === 'question'
+            tool.icon === 'question' || hidePayload
               ? null
               : getBoundedRawValue(message.tool_use_result ?? block.content),
           images

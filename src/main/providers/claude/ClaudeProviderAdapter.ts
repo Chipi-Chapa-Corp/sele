@@ -516,6 +516,9 @@ const toTranscriptMessage = (
   message: message.message,
   parent_tool_use_id: message.parent_tool_use_id,
   ...('isSynthetic' in message && message.isSynthetic === true ? { isSynthetic: true } : {}),
+  // The SDK types omit isMeta, but live stream events still carry it for injected context
+  // such as skill bodies. Keep it so the renderer can hide those from the person.
+  ...('isMeta' in message && message.isMeta === true ? { isMeta: true } : {}),
   ...('timestamp' in message && typeof message.timestamp === 'string'
     ? { timestamp: message.timestamp }
     : {}),
