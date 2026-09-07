@@ -28,13 +28,13 @@
     "test:visualization": "node scripts/test-visualization.cjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.228",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.263",
     "@electron-toolkit/utils": "^4.0.0",
     "@floating-ui/core": "^1.7.3",
     "@floating-ui/dom": "^1.7.4",
-    "@github/copilot-sdk": "^1.0.11",
+    "@github/copilot-sdk": "^1.0.13",
     "@lydell/node-pty": "^1.1.0",
-    "@opencode-ai/sdk": "^1.18.21",
+    "@opencode-ai/sdk": "^1.18.29",
     "@react-symbols/icons": "^1.4.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-webgl": "^0.19.0",
