@@ -24,6 +24,7 @@
     "build:linux": "npm run build && electron-builder --linux flatpak",
     "package:flatpak-repo": "bash scripts/package-flatpak-repository.sh",
     "test:browser-use": "node scripts/test-browser-use.cjs",
+    "test:input-focus": "node scripts/test-input-focus.cjs",
     "test:visualization": "node scripts/test-visualization.cjs"
   },
   "dependencies": {
