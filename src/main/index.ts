@@ -1,3 +1,4 @@
+import { startBrowserUseBridge } from './browserUseBridge'
 import { registerVisualizationProtocol } from './visualizationProtocol'
 import {
   app,
@@ -290,6 +291,7 @@ const createWindow = (): void => {
     webPreferences.nodeIntegrationInSubFrames = false
     webPreferences.contextIsolation = true
     webPreferences.sandbox = true
+    webPreferences.backgroundThrottling = false
     webPreferences.webSecurity = true
     webPreferences.allowRunningInsecureContent = false
 
@@ -341,6 +343,9 @@ const startApp = (): void => {
     electronApp.setAppUserModelId('com.sele')
     registerAppIpc()
     registerBrowserIpc()
+    void startBrowserUseBridge().catch((error: unknown) =>
+      console.error('Unable to start browser-use bridge:', error)
+    )
     registerProviderIpc()
     registerTerminalIpc()
 

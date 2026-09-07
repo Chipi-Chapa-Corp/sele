@@ -422,7 +422,30 @@ const browserApi: BrowserRendererApi = {
   },
   resolvePageZoomScale: (options) =>
     ipcRenderer.invoke(browserIpcChannels.resolvePageZoomScale, options),
-  setActive: (active) => ipcRenderer.send(browserIpcChannels.setActive, active)
+  setActive: (active) => ipcRenderer.send(browserIpcChannels.setActive, active),
+  onAutomationOpen: (listener) => {
+    const handle = (_: IpcRendererEvent, id: string): void => listener(id)
+    ipcRenderer.on(browserIpcChannels.automationOpen, handle)
+    return () => ipcRenderer.removeListener(browserIpcChannels.automationOpen, handle)
+  },
+  onAutomationRequest: (listener) => {
+    const handle = (
+      _: IpcRendererEvent,
+      request: import('../shared/browser').BrowserAutomationRequest
+    ): void => listener(request)
+    ipcRenderer.on(browserIpcChannels.automationRequest, handle)
+    return () => ipcRenderer.removeListener(browserIpcChannels.automationRequest, handle)
+  },
+  automationReady: (ready) => ipcRenderer.send(browserIpcChannels.automationReady, ready),
+  automationRespond: (response) =>
+    ipcRenderer.send(browserIpcChannels.automationResponse, response),
+  setAutomationVisible: (visible) =>
+    ipcRenderer.send(browserIpcChannels.automationVisibility, visible),
+  onAutomationVisibility: (listener) => {
+    const handle = (_: IpcRendererEvent, visible: boolean): void => listener(visible)
+    ipcRenderer.on(browserIpcChannels.automationVisibility, handle)
+    return () => ipcRenderer.removeListener(browserIpcChannels.automationVisibility, handle)
+  }
 }
 
 contextBridge.exposeInMainWorld('appApi', appApi)

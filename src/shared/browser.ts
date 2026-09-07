@@ -88,6 +88,33 @@ export type BrowserPageZoomOptions = {
   webContentsId: number
 }
 
+export type BrowserAutomationScope = {
+  sessionId: string
+  cwd: string
+  containerKey: string
+}
+
+export type BrowserAutomationTab = {
+  id: number
+  title: string
+  url: string
+  active: boolean
+}
+
+export type BrowserAutomationRequest = {
+  id: string
+  scope: BrowserAutomationScope
+  method: 'list' | 'create' | 'activate' | 'close' | 'visibility'
+  tabId?: number
+  visible?: boolean
+}
+
+export type BrowserAutomationResponse = {
+  id: string
+  result?: BrowserAutomationTab[] | BrowserAutomationTab | { visible: boolean } | null
+  error?: string
+}
+
 export type BrowserRendererApi = {
   findCookieProfiles: (
     options: BrowserCookieProfileDiscoveryOptions
@@ -98,6 +125,12 @@ export type BrowserRendererApi = {
   onPageShortcutRequested: (listener: (request: BrowserPageShortcutRequest) => void) => () => void
   resolvePageZoomScale: (options: BrowserPageZoomOptions) => Promise<number>
   setActive: (active: boolean) => void
+  onAutomationOpen: (listener: (requestId: string) => void) => () => void
+  onAutomationRequest: (listener: (request: BrowserAutomationRequest) => void) => () => void
+  automationReady: (ready: boolean) => void
+  automationRespond: (response: BrowserAutomationResponse) => void
+  setAutomationVisible: (visible: boolean) => void
+  onAutomationVisibility: (listener: (visible: boolean) => void) => () => void
 }
 
 export const browserIpcChannels = {
@@ -107,7 +140,12 @@ export const browserIpcChannels = {
   closeActiveTabRequested: 'browser:close-active-tab-requested',
   pageShortcutRequested: 'browser:page-shortcut-requested',
   resolvePageZoomScale: 'browser:resolve-page-zoom-scale',
-  setActive: 'browser:set-active'
+  setActive: 'browser:set-active',
+  automationOpen: 'browser:automation-open',
+  automationRequest: 'browser:automation-request',
+  automationResponse: 'browser:automation-response',
+  automationReady: 'browser:automation-ready',
+  automationVisibility: 'browser:automation-visibility'
 } as const
 
 export type BrowserCloseShortcutInput = {

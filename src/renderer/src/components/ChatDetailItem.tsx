@@ -1,3 +1,4 @@
+import { activityLabels, activeActivityLabels, getToolDisplayLabel } from '../toolDisplayLabel'
 import { createPortal } from 'react-dom'
 import { Marked } from 'marked'
 import { Visualization } from './Visualization'
@@ -21,6 +22,7 @@ import {
   CircleHelpIcon as AnimatedCircleHelpIcon,
   DeleteIcon as AnimatedDeleteIcon,
   EyeIcon as AnimatedEyeIcon,
+  EarthIcon as AnimatedEarthIcon,
   FilePenLineIcon as AnimatedFilePenLineIcon,
   FileStackIcon as AnimatedFileStackIcon,
   FileTextIcon as AnimatedFileTextIcon,
@@ -255,34 +257,6 @@ type AnimatedIconComponent = ForwardRefExoticComponent<
   } & RefAttributes<AnimatedIconHandle>
 >
 
-const activityLabels: Record<ProviderToolActivity, string> = {
-  read: 'read files',
-  search: 'searched',
-  git: 'used Git',
-  edit: 'changed files',
-  create: 'created files',
-  delete: 'deleted files',
-  npm: 'ran npm scripts',
-  npx: 'ran npx tools',
-  script: 'ran scripts',
-  command: 'ran commands',
-  other: 'used tools'
-}
-
-const activeActivityLabels: Record<ProviderToolActivity, string> = {
-  read: 'Reading files',
-  search: 'Searching',
-  git: 'Using Git',
-  edit: 'Changing files',
-  create: 'Creating files',
-  delete: 'Deleting files',
-  npm: 'Running npm scripts',
-  npx: 'Running npx tools',
-  script: 'Running scripts',
-  command: 'Running commands',
-  other: 'Using tools'
-}
-
 const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent> = {
   read: AnimatedFileTextIcon,
   search: AnimatedSearchIcon,
@@ -303,7 +277,8 @@ const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
   'openai-docs': AnimatedBookTextIcon,
   plan: AnimatedListIcon,
   question: AnimatedCircleHelpIcon,
-  subagent: AnimatedBotIcon
+  subagent: AnimatedBotIcon,
+  browser: AnimatedEarthIcon
 }
 
 const placeholderOptions = [
@@ -493,50 +468,6 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
 const getRandomPlaceholderOption = (): (typeof placeholderOptions)[number] =>
   placeholderOptions[Math.floor(Math.random() * placeholderOptions.length)]
 
-const activeLabelReplacements: Array<[RegExp, string]> = [
-  [/^Read\b/, 'Reading'],
-  [/^Searched\b/, 'Searching'],
-  [/^Checked\b/, 'Checking'],
-  [/^Viewed\b/, 'Viewing'],
-  [/^Ran\b/, 'Running'],
-  [/^Used\b/, 'Using'],
-  [/^Changed\b/, 'Changing'],
-  [/^Created\b/, 'Creating'],
-  [/^Deleted\b/, 'Deleting'],
-  [/^Applied\b/, 'Applying'],
-  [/^Updated\b/, 'Updating'],
-  [/^Generated\b/, 'Generating'],
-  [/^Waited\b/, 'Waiting']
-]
-
-const finishedLabelPrefixes =
-  /^(Read|Searched|Checked|Viewed|Ran|Used|Changed|Created|Deleted|Applied|Updated|Generated|Waited)\b/
-
-const getActiveToolLabel = (label: string, activity: ProviderToolActivity): string => {
-  for (const [pattern, replacement] of activeLabelReplacements) {
-    if (pattern.test(label)) return label.replace(pattern, replacement)
-  }
-
-  return activeActivityLabels[activity]
-}
-
-const getFinishedToolLabel = (label: string, activity: ProviderToolActivity): string => {
-  if (finishedLabelPrefixes.test(label)) return label
-  if (label && label !== 'Tool use') return activity === 'other' ? `Used ${label}` : label
-
-  const fallback = activityLabels[activity] || activityLabels.other
-  return fallback.charAt(0).toLocaleUpperCase() + fallback.slice(1)
-}
-
-const getToolDisplayLabel = (
-  label: string,
-  activity: ProviderToolActivity,
-  active: boolean
-): string => {
-  if (label === 'Asking question' || label === 'Asked a question') return label
-  return active ? getActiveToolLabel(label, activity) : getFinishedToolLabel(label, activity)
-}
-
 const DiffContent: React.FC<{
   tools: ProviderWorkingTool[]
   projectCwd?: string | null
@@ -644,6 +575,7 @@ const ToolTypeIcon: React.FC<{
   activity: ProviderToolActivity
   icon?: ProviderToolIcon | null
 }> = ({ activity, icon }) => {
+  if (icon === 'browser') return <Globe2 aria-hidden="true" />
   if (icon === 'image-view') return <Eye aria-hidden="true" />
   if (icon === 'image-generation') return <Sparkles aria-hidden="true" />
   if (icon === 'openai-docs') return <BookOpenText aria-hidden="true" />
@@ -1224,6 +1156,18 @@ const ToolItem: React.FC<{
       ? `${baseLabel} · showing ${item.tools.length} of ${item.toolCount}`
       : baseLabel
   const label = getToolDisplayLabel(rawLabel, activity, active)
+
+  // Browser actions are already human-readable and need no raw protocol disclosure.
+  if (tools.every((tool) => tool.icon === 'browser')) {
+    return (
+      <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>
+        <span className="chat-detail__tool-icon">
+          <ToolStatusIcon activity={activity} active={active} icon="browser" />
+        </span>
+        <span className="chat-detail__tool-label">{label}</span>
+      </div>
+    )
+  }
 
   if (!isWorkingItemPayloadLoaded(item)) {
     const handleLoad = async (): Promise<void> => {

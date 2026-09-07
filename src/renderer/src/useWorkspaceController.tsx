@@ -1104,6 +1104,34 @@ export const useWorkspaceController = () => {
 
   useEffect(() => browserApi.onOpenRequested(handleOpenBrowserRequest), [handleOpenBrowserRequest])
 
+  useEffect(
+    () =>
+      browserApi.onAutomationOpen((id) => {
+        if (!effectiveAppSettings.browser.enabled) {
+          browserApi.automationRespond({
+            id,
+            error: 'The in-app browser is disabled in Sele settings.'
+          })
+          return
+        }
+        setBrowserOpened(true)
+      }),
+    [effectiveAppSettings.browser.enabled]
+  )
+
+  useEffect(
+    () =>
+      browserApi.onAutomationVisibility((visible) => {
+        if (visible) {
+          setBrowserOpened(true)
+          setChangesPaneView('browser')
+        } else {
+          setChangesPaneView((current) => (current === 'browser' ? 'git' : current))
+        }
+      }),
+    []
+  )
+
   useEffect(() => {
     if (effectiveAppSettings.browser.enabled) return
 

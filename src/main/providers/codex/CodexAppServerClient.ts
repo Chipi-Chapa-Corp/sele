@@ -1,3 +1,4 @@
+import { registerBrowserUseSession, removeBrowserUseSessions } from '../../browserUseSessions'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import type { AppContainerTarget } from '../../../shared/app'
@@ -96,10 +97,29 @@ export class CodexAppServerClient {
   private stoppedListeners = new Set<(error: Error) => void>()
   private nextRequestId = 1
   private stderr = ''
+  private browserSessionCwds = new Map<string, string>()
 
   request = async <Result>(method: string, params: unknown): Promise<Result> => {
     await this.start()
-    return this.sendRequest<Result>(method, params)
+    const input = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
+    if (method === 'turn/start' && typeof input.threadId === 'string') {
+      registerBrowserUseSession(
+        this,
+        input.threadId,
+        this.browserSessionCwds.get(input.threadId) ?? null,
+        this.container
+      )
+    }
+    const result = await this.sendRequest<Result>(method, params)
+    if (method === 'thread/start' || method === 'thread/resume' || method === 'thread/fork') {
+      const thread = (result as { thread?: { id?: string; cwd?: string } })?.thread
+      if (typeof thread?.id === 'string') {
+        const cwd = thread.cwd ?? (typeof input.cwd === 'string' ? input.cwd : '')
+        this.browserSessionCwds.set(thread.id, cwd)
+        registerBrowserUseSession(this, thread.id, cwd, this.container)
+      }
+    }
+    return result
   }
 
   onNotification = (listener: (notification: RpcNotification) => void): (() => void) => {
@@ -126,6 +146,7 @@ export class CodexAppServerClient {
   }
 
   dispose = (): void => {
+    removeBrowserUseSessions(this)
     this.process?.kill()
     this.process = null
     this.startPromise = null
@@ -299,6 +320,7 @@ export class CodexAppServerClient {
   }
 
   private handleProcessEnd = (error: Error): void => {
+    removeBrowserUseSessions(this)
     const hadProcess = Boolean(this.process)
     this.process = null
     this.startPromise = null

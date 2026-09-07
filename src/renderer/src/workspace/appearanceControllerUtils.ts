@@ -16,7 +16,8 @@ import {
 
 export const approvalTypeLabels = {
   command: 'Command approval',
-  fileChange: 'File change approval'
+  fileChange: 'File change approval',
+  browser: 'Browser permission'
 } as const
 
 export const getDefaultModel = (models: ProviderModel[]): ProviderModel =>

@@ -27,6 +27,7 @@ import {
   isBrowserPageUrl,
   normalizeBrowserAddress
 } from '../../../shared/browser'
+import { useBrowserAutomation } from '../useBrowserAutomation'
 import { browserApi } from '../browserApi'
 import {
   readStoredBrowserWorkspaces,
@@ -44,6 +45,7 @@ type BrowserPanelProps = {
   defaultScale: number
   openRequest?: BrowserOpenRequest | null
   workspaceKey: string
+  view: 'global' | 'project' | 'chat'
 }
 
 type BrowserTab = {
@@ -318,7 +320,8 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
     <div
       className={`browser-panel__page${visible ? ' browser-panel__page--active' : ''}`}
       aria-label={tab.title}
-      hidden={!visible}
+      aria-hidden={!visible}
+      inert={!visible}
       role="region"
     >
       {hasPage && (
@@ -345,8 +348,17 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
   appZoomLevel,
   defaultScale,
   openRequest = null,
-  workspaceKey
+  workspaceKey: selectedWorkspaceKey,
+  view
 }) => {
+  const [automationWorkspace, setAutomationWorkspace] = useState<{
+    selected: string
+    key: string
+  } | null>(null)
+  const workspaceKey =
+    automationWorkspace?.selected === selectedWorkspaceKey
+      ? automationWorkspace.key
+      : selectedWorkspaceKey
   const applicationZoomFactor = appWindowZoomLevelToFactor(appZoomLevel)
   const handledOpenRequestIdsRef = useRef(
     new Set(openRequest && isBrowserPageUrl(openRequest.url) ? [openRequest.id] : [])
@@ -366,6 +378,15 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState('')
   const [findResult, setFindResult] = useState(emptyBrowserFindResult)
+
+  useBrowserAutomation({
+    active,
+    view,
+    workspaces,
+    setWorkspaces,
+    webviews: webviewsRef,
+    showWorkspace: (key) => setAutomationWorkspace({ selected: selectedWorkspaceKey, key })
+  })
 
   const workspace = workspaces.get(workspaceKey) ?? null
   const tabs = workspace?.tabs ?? []

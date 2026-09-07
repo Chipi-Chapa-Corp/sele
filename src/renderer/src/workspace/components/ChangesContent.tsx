@@ -196,6 +196,7 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
             defaultScale={effectiveAppSettings.browser.defaultScale}
             openRequest={browserOpenRequest}
             workspaceKey={browserWorkspaceKey}
+            view={effectiveAppSettings.browser.view}
           />
         </div>
       )}

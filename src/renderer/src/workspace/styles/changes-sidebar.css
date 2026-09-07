@@ -93,6 +93,7 @@
 }
 
 .changes-sidebar__body {
+  position: relative;
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -120,4 +121,13 @@
 .changes-sidebar__terminal--active,
 .changes-sidebar__browser--active {
   display: block;
+}
+
+/* Retain a viewport for browser automation while another sidebar view is selected. */
+.changes-sidebar__browser:not(.changes-sidebar__browser--active) {
+  position: absolute;
+  inset: 0;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
 }

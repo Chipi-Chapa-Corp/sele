@@ -516,7 +516,7 @@ export type ProviderApprovalDecision = 'allow' | 'deny'
 
 export type ProviderPendingApproval = {
   id: string
-  type: 'command' | 'fileChange'
+  type: 'command' | 'fileChange' | 'browser'
   command: string | null
   cwd: string | null
   reason: string | null
@@ -686,7 +686,7 @@ export type ProviderToolActivity =
 export type ProviderWorkingToolStatus = 'running' | 'finished'
 
 export type ProviderToolIcon =
-  'image-view' | 'image-generation' | 'openai-docs' | 'plan' | 'question' | 'subagent'
+  'image-view' | 'image-generation' | 'openai-docs' | 'plan' | 'question' | 'subagent' | 'browser'
 
 export type ProviderToolImage = {
   path?: string | null

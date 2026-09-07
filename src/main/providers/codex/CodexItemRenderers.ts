@@ -1,3 +1,4 @@
+import { getBrowserToolLabel } from './CodexBrowserToolPresentation.ts'
 import type {
   ProviderChatItem,
   ProviderFileDiff,
@@ -1257,6 +1258,13 @@ const getToolNameCandidates = (item: CodexThreadItem): string[] => {
 
 const getMappedToolPresentation = (item: CodexThreadItem): ToolPresentation | null => {
   const names = getToolNameCandidates(item)
+  const browserLabel = getBrowserToolLabel(
+    names,
+    (item.customToolName && item.customToolInput
+      ? getJsonToolArgument(item.customToolInput, item.customToolName)
+      : null) ?? getRawToolInput(item)
+  )
+  if (browserLabel) return { activity: 'other', icon: 'browser', label: browserLabel }
 
   if (
     item.server === 'openaiDeveloperDocs' ||
@@ -1301,7 +1309,8 @@ const renderMappedTool = (
     toolId,
     images.length > 0 ? null : defaultRawToolOutput,
     images,
-    presentation.icon ?? null
+    presentation.icon ?? null,
+    presentation.icon === 'browser'
   )
 }
 

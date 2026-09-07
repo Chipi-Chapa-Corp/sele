@@ -1,3 +1,4 @@
+import { isBrowserPermissionRequest } from './CodexBrowserPermissions'
 import { codexFeatureSchemas } from './CodexFeatureSchemas'
 import { updateConfigFeatureValue } from './CodexConfigValues'
 import type {
@@ -405,7 +406,7 @@ type ServerRequestResolvedParams = {
   requestId?: unknown
 }
 
-type CodexPendingApprovalProtocol = 'commandExecution' | 'fileChange'
+type CodexPendingApprovalProtocol = 'commandExecution' | 'fileChange' | 'browserUse'
 
 type CodexPendingApproval = {
   requestId: number
@@ -4216,11 +4217,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private createApprovalResponse = (
-    _approval: CodexPendingApproval,
+    approval: CodexPendingApproval,
     decision: ProviderApprovalDecision | 'cancel'
-  ): unknown => ({
-    decision: decision === 'allow' ? 'accept' : decision === 'cancel' ? 'cancel' : 'decline'
-  })
+  ): unknown => {
+    const action = decision === 'allow' ? 'accept' : decision === 'cancel' ? 'cancel' : 'decline'
+    return approval.protocol === 'browserUse'
+      ? { action, content: decision === 'allow' ? {} : null, _meta: null }
+      : { decision: action }
+  }
 
   private cancelPendingApprovals = (threadId: string): void => {
     const pendingApprovals = this.pendingApprovalsByThread.get(threadId)
@@ -5541,6 +5545,25 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private handleServerRequest = (request: RpcRequest): boolean => {
+    if (request.method === 'mcpServer/elicitation/request') {
+      const params = getRecordValue(request.params)
+      if (!params || !isBrowserPermissionRequest(params)) return false
+      this.addPendingApproval({
+        requestId: request.id,
+        container: this.getCurrentContainer(),
+        protocol: 'browserUse',
+        type: 'browser',
+        threadId: requireStringValue(params.threadId, 'threadId'),
+        turnId: getOptionalStringValue(params.turnId),
+        itemId: null,
+        command: null,
+        cwd: null,
+        reason: requireStringValue(params.message, 'message'),
+        startedAt: Date.now()
+      })
+      return true
+    }
+
     if (request.method === 'item/commandExecution/requestApproval') {
       this.handleCommandExecutionApprovalRequest(request)
       return true

@@ -1,3 +1,4 @@
+import { getToolDisplayLabel } from '../../../renderer/src/toolDisplayLabel.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildChatConversationModel } from '../../../renderer/src/chatConversationModel.ts'
@@ -150,5 +151,95 @@ test('projects the final response both while live and after completion', () => {
     assert.equal(finalMessage?.id, 'answer-turn:answer')
     assert.equal(finalMessage?.content, 'Here is the answer.')
     if (status === 'inProgress') assert.equal(working?.status, 'working')
+  }
+})
+
+test('renders CUA browser actions with readable compact labels without protocol payloads', () => {
+  const cases = [
+    ['cua.getBrowser({ url: "https://www.wikipedia.org" })', 'Opened browser'],
+    [
+      'cua.createBrowserTab(browser.browserId, "https://www.wikipedia.org", { visible: true }); await tab.markDeliverable()',
+      'Opened a new tab'
+    ],
+    ['tab.goto("https://www.wikipedia.org")', 'Navigated to webpage'],
+    ['tab.click(12); await tab.getAXState()', 'Clicked on webpage'],
+    ['tab.getScreenshot()', 'Took browser screenshot'],
+    ['tab.typeText("example")', 'Typed on webpage'],
+    ['tab.scroll(1, "down")', 'Scrolled webpage'],
+    ['tab.markHandoff()', 'Handed over browser'],
+    ['nodeRepl.write("tab.close()"); /* tab.goto() */ await tab.getAXState()', 'Read webpage']
+  ]
+  for (const [code, label] of cases) {
+    for (const type of ['mcpToolCall', 'dynamicToolCall', 'customToolCall']) {
+      const args = { code, title: 'User supplied title' }
+      const items = getChatItems([
+        {
+          id: 'browser-turn',
+          status: 'inProgress',
+          items: [
+            {
+              id: 'browser-call',
+              type,
+              status: 'inProgress',
+              server: type === 'mcpToolCall' ? 'cua_repl' : undefined,
+              namespace: type === 'dynamicToolCall' ? 'mcp__cua_repl' : undefined,
+              tool: type === 'customToolCall' ? undefined : 'js',
+              customToolName: type === 'customToolCall' ? 'mcp__cua_repl__js' : undefined,
+              customToolInput: type === 'customToolCall' ? JSON.stringify(args) : undefined,
+              arguments: args
+            }
+          ]
+        }
+      ])
+      const tool = items.find((item) => item.type === 'working')?.items[0]
+      assert.equal(tool?.label, label)
+      assert.equal(tool?.icon, 'browser')
+      assert.equal(tool?.compact, true)
+      assert.equal(tool?.rawInput, null)
+      assert.equal(tool?.rawOutput, null)
+    }
+  }
+})
+
+test('stores canonical browser labels independently of provider status', () => {
+  for (const [status, error, label] of [
+    ['completed', null, 'Opened a new tab'],
+    ['failed', 'Browser unavailable', 'Opened a new tab'],
+    ['completed', 'Browser unavailable', 'Opened a new tab']
+  ]) {
+    const items = getChatItems([
+      {
+        id: 'turn',
+        status: 'completed',
+        items: [
+          {
+            id: 'call',
+            type: 'mcpToolCall',
+            server: 'cua_repl',
+            tool: 'js',
+            status,
+            error,
+            arguments: { code: 'await cua.createBrowserTab("iab")' }
+          }
+        ]
+      }
+    ])
+    assert.equal(items.find((item) => item.type === 'working')?.items[0]?.label, label)
+  }
+})
+
+test('browser labels use the same active-to-finished display flow as other tools', () => {
+  for (const [finished, active, activity] of [
+    ['Opened a new tab', 'Opening a new tab', 'other'],
+    ['Opened browser', 'Opening browser', 'other'],
+    ['Navigated to webpage', 'Navigating to webpage', 'other'],
+    ['Took browser screenshot', 'Taking browser screenshot', 'other'],
+    ['Read webpage', 'Reading webpage', 'other'],
+    ['Read file', 'Reading file', 'read'],
+    ['Ran a command', 'Running a command', 'command'],
+    ['Applied patch', 'Applying patch', 'edit']
+  ]) {
+    assert.equal(getToolDisplayLabel(finished, activity, true), active)
+    assert.equal(getToolDisplayLabel(finished, activity, false), finished)
   }
 })
