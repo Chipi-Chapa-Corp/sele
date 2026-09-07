@@ -1,0 +1,49 @@
+.visualization {
+  width: 100%;
+  min-width: 0;
+  margin-block: 12px;
+}
+.visualization__viewport {
+  position: relative;
+  width: 100%;
+}
+.visualization__frame {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+.visualization__frame--pending {
+  opacity: 0;
+  pointer-events: none;
+}
+.visualization__actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.visualization__title {
+  margin-right: auto;
+}
+.visualization__confirmation {
+  padding: 12px;
+}
+.visualization__confirmation p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}
+.visualization__confirmation-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.visualization__actions[hidden] {
+  display: none;
+}

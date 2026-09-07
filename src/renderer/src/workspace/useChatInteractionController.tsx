@@ -236,7 +236,9 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
             ? 'Loading done chats…'
             : doneProjectFilterLoadState === 'error'
               ? 'Unable to load done chats.'
-              : 'No done chats in this project.'}
+              : searchTerms.length > 0
+                ? 'No matching done chats in this project.'
+                : 'No done chats in this project.'}
         </p>
       )
 
@@ -321,6 +323,21 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       selectedChat
     ]
   )
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content || !selectedChat) return
+    const followUp = (event: Event): void => {
+      if (!(event instanceof CustomEvent)) return
+      const { prompt, reply } = event.detail
+      if (typeof prompt !== 'string' || typeof reply !== 'function') return
+      event.preventDefault()
+      void handleSendMessage(prompt)
+        .then((sent) => reply(sent ? undefined : 'Unable to send follow-up in this view.'))
+        .catch(() => reply('Unable to send follow-up.'))
+    }
+    content.addEventListener('sele:visualization-follow-up', followUp)
+    return () => content.removeEventListener('sele:visualization-follow-up', followUp)
+  }, [contentRef, selectedChat, handleSendMessage])
   const handleQuoteSelectedMessageText = useCallback((content: string): void => {
     setMessageBoxQuoteRequest((currentRequest) => ({
       id: (currentRequest?.id ?? 0) + 1,

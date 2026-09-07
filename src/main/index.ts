@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, nativeTheme, shell, type WebContents } from 'electron'
+import { registerVisualizationProtocol } from './visualizationProtocol'
+import {
+  app,
+  protocol,
+  BrowserWindow,
+  dialog,
+  nativeTheme,
+  shell,
+  type WebContents
+} from 'electron'
 import { join } from 'path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -33,6 +42,10 @@ import {
   getNextBrowserZoomScale,
   isBrowserPageUrl
 } from '../shared/browser'
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'sele-visualize', privileges: { standard: true, secure: true } }
+])
 
 const getColorScheme = (): AppColorScheme => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
 
@@ -322,6 +335,7 @@ const focusExistingWindow = (): void => {
 
 const startApp = (): void => {
   app.whenReady().then(() => {
+    registerVisualizationProtocol()
     nativeTheme.themeSource = 'system'
     nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
     electronApp.setAppUserModelId('com.sele')

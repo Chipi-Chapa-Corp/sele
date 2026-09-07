@@ -2997,17 +2997,15 @@ export const useWorkspaceController = () => {
   })
 
   const searchTerms = searchQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  const filteredChats =
-    searchTerms.length === 0
-      ? chats
-      : chats.filter((chat) => {
-          const title = chat.title.toLocaleLowerCase()
-          const cwd = chat.cwd?.toLocaleLowerCase() ?? ''
-          const cwdLabel = getChatCwdLabel(chat.cwd).toLocaleLowerCase()
-          return searchTerms.every(
-            (term) => title.includes(term) || cwd.includes(term) || cwdLabel.includes(term)
-          )
-        })
+  const matchesChatSearch = (chat: ProviderChat): boolean => {
+    const title = chat.title.toLocaleLowerCase()
+    const cwd = chat.cwd?.toLocaleLowerCase() ?? ''
+    const cwdLabel = getChatCwdLabel(chat.cwd).toLocaleLowerCase()
+    return searchTerms.every(
+      (term) => title.includes(term) || cwd.includes(term) || cwdLabel.includes(term)
+    )
+  }
+  const filteredChats = searchTerms.length === 0 ? chats : chats.filter(matchesChatSearch)
   const projectRecordsByCwd = new Map(projects.map((project) => [project.cwd, project]))
   const projectNamesByCwd = new Map(
     projects.map((project) => [project.cwd, getProjectDisplayName(project)])
@@ -3034,8 +3032,14 @@ export const useWorkspaceController = () => {
         ]
   const unfilteredDoneChatGroup = chatGroups.find((group) => group.kind === 'done') ?? null
   const doneChatGroup =
-    unfilteredDoneChatGroup && doneProjectFilterValue !== allDoneProjectsValue
-      ? { ...unfilteredDoneChatGroup, chats: doneProjectFilterChats }
+    doneProjectFilterValue !== allDoneProjectsValue
+      ? {
+          key: doneGroupKey,
+          cwd: null,
+          label: 'Done',
+          kind: 'done' as const,
+          chats: doneProjectFilterChats.filter(matchesChatSearch)
+        }
       : unfilteredDoneChatGroup
   const messageBoxNotesCwd = selectedChat ? changesProjectCwd : newSessionCwd
   const messageBoxNotesVisible = Boolean(selectedChat) || newChatOpen

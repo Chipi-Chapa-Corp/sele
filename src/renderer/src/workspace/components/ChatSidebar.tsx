@@ -13,7 +13,6 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     chromeControlTheme,
     displayedActiveChatGroups,
     doneChatGroup,
-    filteredChats,
     handleCloseSearch,
     handleNewChat,
     handleProjectDrop,
@@ -30,6 +29,9 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     setSearchOpen,
     setSearchQuery
   } = props
+  const hasVisibleGroups = Boolean(
+    pinnedChatGroup || displayedActiveChatGroups.length > 0 || doneChatGroup
+  )
 
   return (
     <aside className="chat-sidebar" aria-label="Recent conversations">
@@ -96,10 +98,10 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
         {loadState === 'ready' && chats.length === 0 && (
           <p className="chat__status">No chats found.</p>
         )}
-        {loadState === 'ready' && chats.length > 0 && filteredChats.length === 0 && (
+        {loadState === 'ready' && chats.length > 0 && !hasVisibleGroups && (
           <p className="chat__status">No matching chats.</p>
         )}
-        {filteredChats.length > 0 && (
+        {hasVisibleGroups && (
           <div
             className="chat-list-stack"
             onDragOver={handleProjectStackDragOver}
