@@ -2687,7 +2687,7 @@ export const useWorkspaceController = () => {
         const mergedSelectedDetail =
           viewingUpdatedChat && event.detail && !staleSelectedDetail
             ? getChatDetailFromUpdate(event.detail, chatDetailRef.current, {
-                preserveCurrentTranscript: !chatAutoScrollEnabledRef.current,
+                preserveCurrentTurnWindow: !chatAutoScrollEnabledRef.current,
                 preserveOptimisticTurnUntilUserMessage:
                   shouldPreserveOptimisticTurnUntilUserMessage(event.providerId)
               })

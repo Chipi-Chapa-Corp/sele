@@ -148,6 +148,37 @@ export const mergeChatDetailTurnPage = (
   }
 }
 
+/** Keep the loaded turn range while applying live payloads and completed responses within it. */
+export const refreshRetainedChatDetailTurnWindow = (
+  currentDetail: ProviderChatDetail,
+  snapshot: ProviderChatDetail
+): ProviderChatDetail => {
+  const startIndex = getChatDetailItemsStartTurnIndex(currentDetail)
+  const endIndex = getLoadedChatDetailTurnEndIndex(currentDetail)
+  // An empty initial viewport has no reading position to preserve.
+  if (startIndex === endIndex) return snapshot
+
+  return mergeChatDetailTurnPage(
+    {
+      ...snapshot,
+      items: currentDetail.items,
+      subagents: currentDetail.subagents,
+      itemsStartTurnIndex: startIndex
+    },
+    {
+      items: snapshot.items,
+      subagents: snapshot.subagents,
+      startIndex: getChatDetailItemsStartTurnIndex(snapshot),
+      totalCount: getChatDetailTurnCount(snapshot)
+    },
+    {
+      startIndex,
+      endIndex,
+      totalCount: getChatDetailTurnCount(snapshot)
+    }
+  )
+}
+
 export const replaceChatDetailWithCursorPage = (
   detail: ProviderChatDetail,
   page: ProviderChatTurnPage

@@ -1212,7 +1212,12 @@ const ToolItem: React.FC<{
     return <GeneratedImageTool active={active} label={label} tools={tools} />
   }
 
-  if (tools.every((tool) => tool.compact) || activity === 'read' || !tools.some(hasToolDetails)) {
+  if (
+    tools.every((tool) => tool.compact) ||
+    activity === 'read' ||
+    tools.every((tool) => tool.icon === 'plan') ||
+    !tools.some(hasToolDetails)
+  ) {
     return (
       <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>
         <span className="chat-detail__tool-icon">

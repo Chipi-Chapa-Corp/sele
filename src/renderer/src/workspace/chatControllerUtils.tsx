@@ -43,7 +43,8 @@ import { type CommitActivityAction } from '../chatCommitStorage'
 
 import {
   hasProviderUserMessageAfterOptimisticTurn,
-  optimisticChatItemIdPrefix
+  optimisticChatItemIdPrefix,
+  refreshRetainedChatDetailTurnWindow
 } from '../chatDetailWindow'
 
 import {
@@ -384,7 +385,7 @@ export const getChatDetailFromSnapshot = (
   snapshot: ProviderChatDetail,
   currentDetail: ProviderChatDetail | null,
   options: {
-    preserveCurrentTranscript?: boolean
+    preserveCurrentTurnWindow?: boolean
     preserveOptimisticTurnUntilUserMessage?: boolean
   } = {}
 ): ProviderChatDetail => {
@@ -413,16 +414,6 @@ export const getChatDetailFromSnapshot = (
       turnPagination: currentDetail.turnPagination
     }
   }
-  if (options.preserveCurrentTranscript && !currentDetail.turnPagination) {
-    return {
-      ...snapshot,
-      container: stableContainer,
-      items: currentDetail.items,
-      subagents: currentDetail.subagents,
-      itemsStartTurnIndex: currentDetail.itemsStartTurnIndex,
-      turnCount: Math.max(currentDetail.turnCount ?? 0, snapshot.turnCount ?? 0)
-    }
-  }
 
   const currentItemsById = new Map(currentDetail.items.map((item) => [item.id, item]))
   const items = snapshot.items.map((item) =>
@@ -442,11 +433,10 @@ export const getChatDetailFromSnapshot = (
     }
   }
 
-  return {
-    ...snapshot,
-    container: stableContainer,
-    items
-  }
+  const nextDetail = { ...snapshot, container: stableContainer, items }
+  return options.preserveCurrentTurnWindow && !currentDetail.turnPagination
+    ? refreshRetainedChatDetailTurnWindow(currentDetail, nextDetail)
+    : nextDetail
 }
 
 export type ChatDetailUpdateResult = {
@@ -463,7 +453,7 @@ export const getChatDetailFromUpdate = (
   update: ProviderChatDetailUpdate,
   currentDetail: ProviderChatDetail | null,
   options: {
-    preserveCurrentTranscript?: boolean
+    preserveCurrentTurnWindow?: boolean
     preserveOptimisticTurnUntilUserMessage?: boolean
   } = {}
 ): ChatDetailUpdateResult | null => {
@@ -505,9 +495,14 @@ export const getChatDetailFromUpdate = (
 
   const reconstructed = { ...metadata, items } satisfies ProviderChatDetail
   const detail = getChatDetailFromSnapshot(reconstructed, currentDetail, options)
-  const detailApplied = detail.items !== currentDetail?.items
+  // A retained history window may merge live items without matching the delivered snapshot.
+  // Only acknowledge that snapshot as a delta base when its entire ordered transcript is present.
+  const detailApplied =
+    detail.items !== currentDetail?.items &&
+    detail.items.length === itemIds.length &&
+    detail.items.every((item, index) => item.id === itemIds[index])
 
-  if (detailApplied) {
+  if (detail.items !== currentDetail?.items) {
     const previousItems = currentDetail?.id === detail.id ? currentDetail.items : null
     let changedStartIndex = 0
     if (previousItems) {

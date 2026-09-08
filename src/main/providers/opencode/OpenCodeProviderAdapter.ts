@@ -59,6 +59,11 @@ import {
   renderOpenCodeChatItems,
   type OpenCodeMessageWithParts
 } from './OpenCodeItemRenderers'
+import {
+  getOpenCodeGoRateLimits,
+  OpenCodeGoApiKeyMissingError,
+  OpenCodeGoNoSubscriptionError
+} from './OpenCodeUsage'
 import { mapOpenCodeModels, parseOpenCodeModelId } from './OpenCodeModels'
 import { getOpenCodePermissionRules } from './OpenCodePermissions'
 import { OpenCodeServerClient } from './OpenCodeServerClient'
@@ -495,50 +500,61 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   }
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
-    if (!options.includeStatistics) {
-      return {
-        updatedAt: Date.now(),
-        statisticsLoaded: false,
-        summary: emptyUsageSummary,
-        dailyUsageBuckets: null,
-        rateLimits: [],
-        rateLimitResetCredits: null,
-        errors: []
-      }
+    const includeStatistics = Boolean(options.includeStatistics)
+    const [rateLimitsResult, statisticsResult] = await Promise.allSettled([
+      getOpenCodeGoRateLimits(options.container),
+      includeStatistics
+        ? (async (): Promise<{ lifetimeTokens: string }> => {
+            const client = (await this.getClientEntry(options.container)).client
+            const sessions = requireData(
+              await client.experimental.session.list({ limit: 1_000 }, { throwOnError: true })
+            )
+            const lifetimeTokens = sessions.reduce(
+              (sum, session) =>
+                sum +
+                (session.tokens?.input ?? 0) +
+                (session.tokens?.output ?? 0) +
+                (session.tokens?.reasoning ?? 0) +
+                (session.tokens?.cache.read ?? 0),
+              0
+            )
+            return { lifetimeTokens: lifetimeTokens.toLocaleString() }
+          })()
+        : Promise.resolve<{ lifetimeTokens: string } | null>(null)
+    ])
+
+    const errors: string[] = []
+    if (
+      rateLimitsResult.status === 'rejected' &&
+      !(rateLimitsResult.reason instanceof OpenCodeGoNoSubscriptionError) &&
+      !(rateLimitsResult.reason instanceof OpenCodeGoApiKeyMissingError)
+    ) {
+      errors.push(
+        rateLimitsResult.reason instanceof Error
+          ? rateLimitsResult.reason.message
+          : 'OpenCode Go usage is unavailable.'
+      )
     }
-    try {
-      const client = (await this.getClientEntry(options.container)).client
-      const sessions = requireData(
-        await client.experimental.session.list({ limit: 1_000 }, { throwOnError: true })
+    if (statisticsResult.status === 'rejected') {
+      errors.push(
+        statisticsResult.reason instanceof Error
+          ? statisticsResult.reason.message
+          : 'OpenCode usage is unavailable.'
       )
-      const lifetimeTokens = sessions.reduce(
-        (sum, session) =>
-          sum +
-          (session.tokens?.input ?? 0) +
-          (session.tokens?.output ?? 0) +
-          (session.tokens?.reasoning ?? 0) +
-          (session.tokens?.cache.read ?? 0),
-        0
-      )
-      return {
-        updatedAt: Date.now(),
-        statisticsLoaded: true,
-        summary: { ...emptyUsageSummary, lifetimeTokens: lifetimeTokens.toLocaleString() },
-        dailyUsageBuckets: null,
-        rateLimits: [],
-        rateLimitResetCredits: null,
-        errors: []
-      }
-    } catch (error) {
-      return {
-        updatedAt: Date.now(),
-        statisticsLoaded: false,
-        summary: emptyUsageSummary,
-        dailyUsageBuckets: null,
-        rateLimits: [],
-        rateLimitResetCredits: null,
-        errors: [error instanceof Error ? error.message : 'OpenCode usage is unavailable.']
-      }
+    }
+
+    const statistics = statisticsResult.status === 'fulfilled' ? statisticsResult.value : null
+    return {
+      updatedAt: Date.now(),
+      statisticsLoaded: includeStatistics && statisticsResult.status === 'fulfilled',
+      summary: {
+        ...emptyUsageSummary,
+        lifetimeTokens: statistics?.lifetimeTokens ?? null
+      },
+      dailyUsageBuckets: null,
+      rateLimits: rateLimitsResult.status === 'fulfilled' ? rateLimitsResult.value : [],
+      rateLimitResetCredits: null,
+      errors
     }
   }
 

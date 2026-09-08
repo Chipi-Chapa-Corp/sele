@@ -29,8 +29,8 @@ type RenderOptions = {
 type Segment = {
   id: string
   entries: ProviderConversationEntry[]
-  completed: boolean
   failed: boolean
+  rateLimited: boolean
 }
 
 const maxToolOutputLength = 160_000
@@ -61,6 +61,34 @@ export const getOpenCodeErrorMessage = (error: unknown): string => {
   }
 
   return message
+}
+
+const openCodeRateLimitMarkers = [
+  'gousagelimiterror',
+  'freeusagelimiterror',
+  'usage limit',
+  'rate limit',
+  'rate_limit',
+  'free usage exceeded',
+  'insufficient balance',
+  'subscription required'
+]
+
+export const isOpenCodeRateLimitError = (error: unknown): boolean => {
+  const candidates: unknown[] = [error]
+  if (isRecord(error)) {
+    if (error.statusCode === 429 || (isRecord(error.data) && error.data.statusCode === 429)) {
+      return true
+    }
+    candidates.push(error.data, error.message, error.name)
+    if (isRecord(error.data)) candidates.push(error.data.message)
+  }
+  return candidates.some((candidate) => {
+    if (typeof candidate !== 'string' || !candidate.trim()) return false
+    const normalized = candidate.toLocaleLowerCase()
+    if (/\b429\b/.test(normalized)) return true
+    return openCodeRateLimitMarkers.some((marker) => normalized.includes(marker))
+  })
 }
 
 const getArgument = (input: unknown, ...keys: string[]): string | null => {
@@ -249,7 +277,13 @@ export const renderOpenCodeChatItems = (
   let segment: Segment | null = null
 
   const ensureSegment = (id: string): Segment => {
-    if (!segment) segment = { id: `${id}:working`, entries: [], completed: false, failed: false }
+    if (!segment)
+      segment = {
+        id: `${id}:working`,
+        entries: [],
+        failed: false,
+        rateLimited: false
+      }
     return segment
   }
 
@@ -257,18 +291,18 @@ export const renderOpenCodeChatItems = (
     if (!segment) return
     const current = segment
     segment = null
-    const isWorking = isLast && options.active && !current.completed
     const failed = current.failed || (isLast && options.failed === true)
     appendProviderConversationSegment(items, {
       id: current.id,
       entries: current.entries,
       finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
       lifecycle: {
-        active: isWorking,
-        completed: current.completed || (!isLast && !failed),
+        active: isLast && options.active,
+        completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
         failed,
         stopped: isLast && options.stopped
-      }
+      },
+      ...(failed && current.rateLimited ? { failureReason: 'rateLimit' as const } : {})
     })
   }
 
@@ -290,14 +324,13 @@ export const renderOpenCodeChatItems = (
       segment = {
         id: `${message.info.id}:working`,
         entries: [],
-        completed: false,
-        failed: false
+        failed: false,
+        rateLimited: false
       }
       return
     }
 
     const current = ensureSegment(message.info.id)
-    current.completed = Boolean(message.info.time.completed || message.info.finish)
     message.parts.forEach((part) => {
       if (part.type === 'reasoning' && part.text.trim()) {
         current.entries.push({
@@ -356,6 +389,7 @@ export const renderOpenCodeChatItems = (
     })
     if (message.info.error) {
       current.failed = true
+      if (isOpenCodeRateLimitError(message.info.error)) current.rateLimited = true
       current.entries.push({
         kind: 'working',
         item: {

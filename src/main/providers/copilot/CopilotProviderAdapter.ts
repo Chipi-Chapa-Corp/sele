@@ -472,6 +472,8 @@ const getPermissionDescription = (request: PermissionRequest): string => {
       return `${request.operation} ${request.extensionName ?? 'extension'}`
     case 'factory':
       return request.description || request.name
+    case 'extension-env-access':
+      return request.extensionName
     case 'extension-permission-access':
       return request.extensionName
   }
@@ -496,6 +498,8 @@ const getPermissionReason = (request: PermissionRequest): string | null => {
       return `Manage Copilot extension ${request.extensionName ?? ''}`.trim()
     case 'factory':
       return `Run Copilot factory ${request.name}`
+    case 'extension-env-access':
+      return `Access environment variables ${request.environmentVariables.join(', ')}`
     case 'extension-permission-access':
       return `Access ${request.capabilities.join(', ')}`
   }
