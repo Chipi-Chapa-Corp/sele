@@ -12,6 +12,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test:chat-delivery": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/registerProviderIpc.test.mjs",
     "test:logging": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/diagnosticLog.test.mjs",
     "test:chat-state": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatModelPreferences.test.mjs src/renderer/src/chatConversationModel.test.mjs src/renderer/src/chatDetailWindow.test.mjs src/renderer/src/chatMessageResources.test.mjs src/renderer/src/renderableText.test.mjs src/renderer/src/workingStepDisclosure.test.mjs src/renderer/src/visualizationReference.test.mjs",
     "test:opencode": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/opencode/*.test.mjs",

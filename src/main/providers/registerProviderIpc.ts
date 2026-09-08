@@ -1,4 +1,4 @@
-import { handleLoggedIpc } from '../logging'
+import { handleLoggedIpc, logDiagnostic } from '../logging'
 import type { ProviderConfigValue } from '../../shared/provider'
 import { isDeepStrictEqual } from 'node:util'
 import { extname, isAbsolute } from 'node:path'
@@ -91,6 +91,7 @@ type ChatUpdateDeliveryState = {
   viewedChatKey: string | null
   inFlightUpdate: InFlightChatUpdate | null
   acknowledgedDetail: AcknowledgedChatDetail | null
+  acknowledgmentTimer: ReturnType<typeof setTimeout> | null
   pendingByChatKey: Map<string, QueuedWindowChatUpdate>
   latestRevisionByChatKey: Map<string, number>
 }
@@ -101,6 +102,7 @@ let providerIpcShuttingDown = false
 
 export const beginProviderIpcShutdown = (): void => {
   providerIpcShuttingDown = true
+  chatUpdateDeliveryByWebContentsId.forEach(clearChatAcknowledgmentTimer)
   chatUpdateDeliveryByWebContentsId.clear()
 }
 
@@ -211,14 +213,52 @@ const getChatUpdateDeliveryState = (webContents: WebContents): ChatUpdateDeliver
     viewedChatKey: null,
     inFlightUpdate: null,
     acknowledgedDetail: null,
+    acknowledgmentTimer: null,
     pendingByChatKey: new Map(),
     latestRevisionByChatKey: new Map()
   }
   chatUpdateDeliveryByWebContentsId.set(webContents.id, state)
   webContents.once('destroyed', () => {
+    clearChatAcknowledgmentTimer(state)
     chatUpdateDeliveryByWebContentsId.delete(webContents.id)
   })
   return state
+}
+
+const clearChatAcknowledgmentTimer = (state: ChatUpdateDeliveryState): void => {
+  if (state.acknowledgmentTimer !== null) clearTimeout(state.acknowledgmentTimer)
+  state.acknowledgmentTimer = null
+}
+
+const watchChatAcknowledgment = (
+  webContents: WebContents,
+  state: ChatUpdateDeliveryState
+): void => {
+  if (state.acknowledgmentTimer !== null || !state.inFlightUpdate) return
+  const sequence = state.inFlightUpdate.sequence
+  state.acknowledgmentTimer = setTimeout(() => {
+    state.acknowledgmentTimer = null
+    if (webContents.isDestroyed() || state.inFlightUpdate?.sequence !== sequence) return
+    if (state.pendingByChatKey.size === 0) return
+    // Record delivery state only, never message/tool content. This distinguishes a renderer
+    // acknowledgment stall from a provider that has stopped producing updates.
+    logDiagnostic('warn', 'chat-update-delivery', {
+      reason: 'renderer-acknowledgment-overdue',
+      windowId: webContents.id,
+      sequence,
+      inFlightChatKey: state.inFlightUpdate.chatKey,
+      inFlightRevision: state.inFlightUpdate.detail?.revision ?? null,
+      viewedChatKey: state.viewedChatKey,
+      pendingChatCount: state.pendingByChatKey.size,
+      pending: [...state.pendingByChatKey.values()].slice(0, 10).map((update) => ({
+        providerId: update.providerId,
+        chatId: update.chatId,
+        revision: update.detail?.revision ?? null,
+        turnCompleted: update.turnCompleted
+      }))
+    })
+  }, 2_000)
+  state.acknowledgmentTimer.unref?.()
 }
 
 const sendChatUpdate = (
@@ -244,6 +284,7 @@ const sendChatUpdate = (
     detail: detailUpdate,
     sequence
   } satisfies ProviderWindowChatUpdatedEvent)
+  watchChatAcknowledgment(webContents, state)
 }
 
 const sendNextChatUpdate = (webContents: WebContents, state: ChatUpdateDeliveryState): void => {
@@ -283,6 +324,7 @@ const queueChatUpdateForWindow = (
 
   if (!state.ready || state.inFlightUpdate !== null) {
     state.pendingByChatKey.set(chatKey, update)
+    watchChatAcknowledgment(webContents, state)
     return
   }
 
@@ -1007,6 +1049,7 @@ export const registerProviderIpc = (): void => {
   ipcMain.on(providerIpcChannels.chatUpdatesStopped, (event) => {
     const state = getChatUpdateDeliveryState(event.sender)
     state.ready = false
+    clearChatAcknowledgmentTimer(state)
     state.inFlightUpdate = null
     state.acknowledgedDetail = null
     state.pendingByChatKey.clear()
@@ -1071,6 +1114,7 @@ export const registerProviderIpc = (): void => {
         state.acknowledgedDetail = null
       }
 
+      clearChatAcknowledgmentTimer(state)
       state.inFlightUpdate = null
       sendNextChatUpdate(event.sender, state)
     }
