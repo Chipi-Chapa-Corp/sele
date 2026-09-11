@@ -243,3 +243,55 @@ test('browser labels use the same active-to-finished display flow as other tools
     assert.equal(getToolDisplayLabel(finished, activity, false), finished)
   }
 })
+
+test('bounded live rendering retains compact actions between tool sequences', () => {
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const command = (id) => ({
+    id,
+    type: 'commandExecution',
+    command: 'rg needle src',
+    status: 'completed',
+    aggregatedOutput: 'match'
+  })
+  const turn = {
+    id: 'bounded-tools',
+    status: 'inProgress',
+    items: [
+      command('search-1'),
+      command('search-2'),
+      {
+        id: 'browser',
+        type: 'mcpToolCall',
+        server: 'cua_repl',
+        tool: 'js',
+        arguments: { code: 'tab.click(12)' },
+        status: 'inProgress'
+      },
+      command('search-3')
+    ]
+  }
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const flatten = (items) =>
+    items.flatMap((item) => (item.type === 'toolGroup' ? item.tools : [item]))
+  const full = getChatItems([turn]).find((item) => item.type === 'working')
+  const bounded = getChatItems([turn], null, {
+    workingItemTailTurnId: turn.id,
+    workingItemTailLimit: 50
+  }).find((item) => item.type === 'working')
+  assert.deepEqual(flatten(bounded.items), flatten(full.items))
+  assert.deepEqual(
+    bounded.items.map((item) => item.type),
+    ['toolGroup', 'tool', 'tool']
+  )
+  assert.equal(bounded.items[1].icon, 'browser')
+  assert.equal(bounded.itemCount, 3)
+})
+
+test('mixed tool headings name both reading and searching while active', async () => {
+  const { getToolSequenceDisplayLabel } = await import('../../../renderer/src/toolDisplayLabel.ts')
+  assert.equal(
+    getToolSequenceDisplayLabel(['read', 'search', 'read'], true),
+    'Reading files, Searching'
+  )
+  assert.equal(getToolSequenceDisplayLabel(['read', 'search'], false), 'Read files, searched')
+})

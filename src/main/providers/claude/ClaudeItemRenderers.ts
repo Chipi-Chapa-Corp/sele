@@ -161,6 +161,37 @@ const getSkillToolLabel = (input: unknown): string => {
   return skillName ? `Use ${skillName} skill` : 'Use skill'
 }
 
+/**
+ * Claude streams one API response as a single partial record but persists it as one transcript
+ * record per content block, each with a fresh uuid. Item ids therefore derive from the API message
+ * id (shared by the partial and every split record) so the renderer keeps the same React keys, and
+ * with them disclosure state, when a streamed block is replaced by its transcript record.
+ */
+const getClaudeBlockBaseId = (message: ClaudeTranscriptMessage): string => {
+  const apiMessageId = getString(getMessageRecord(message.message)?.id)
+  return apiMessageId?.startsWith('msg_') ? apiMessageId : message.uuid
+}
+
+type ClaudeBlockKind = 'text' | 'thinking' | 'subagent'
+
+/**
+ * Allocates block ids that are identical whether the blocks arrive in one streamed record or in
+ * several transcript records: the nth rendered block of a kind for an API message always gets
+ * `${base}:${kind}:${n}`.
+ */
+const createClaudeBlockIds = (): ((
+  message: ClaudeTranscriptMessage,
+  kind: ClaudeBlockKind
+) => string) => {
+  const counters = new Map<string, number>()
+  return (message, kind) => {
+    const key = `${getClaudeBlockBaseId(message)}:${kind}`
+    const index = counters.get(key) ?? 0
+    counters.set(key, index + 1)
+    return `${key}:${index}`
+  }
+}
+
 const createTool = (messageId: string, block: ClaudeContentBlock): ProviderWorkingTool => {
   const toolId = getString(block.id) ?? `${messageId}:tool`
   const name = getString(block.name) ?? 'Tool'
@@ -293,12 +324,39 @@ export const isClaudeInternalUserMessage = (message: ClaudeTranscriptMessage): b
 
 const getModel = (message: unknown): string | null => getString(getMessageRecord(message)?.model)
 
+/**
+ * Maps a rendered assistant message id back to the transcript record that produced it, replaying
+ * the same id allocation as renderClaudeChatItems. Returns null when no rendered block matches.
+ */
+export const resolveClaudeAssistantMessageUuid = (
+  messages: ClaudeTranscriptMessage[],
+  itemId: string
+): string | null => {
+  const nextBlockId = createClaudeBlockIds()
+  for (const message of messages) {
+    if (message.type !== 'assistant' || message.parent_tool_use_id) continue
+    for (const block of getContentBlocks(message.message)) {
+      if (
+        block.type === 'thinking' &&
+        typeof block.thinking === 'string' &&
+        block.thinking.trim()
+      ) {
+        nextBlockId(message, 'thinking')
+      } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        if (nextBlockId(message, 'text') === itemId) return message.uuid
+      }
+    }
+  }
+  return null
+}
+
 export const renderClaudeChatItems = (
   messages: ClaudeTranscriptMessage[],
   options: RenderOptions
 ): ProviderChatItem[] => {
   const items: ProviderChatItem[] = []
   const skillToolIds = new Set<string>()
+  const nextBlockId = createClaudeBlockIds()
   let segment: Segment | null = null
 
   const ensureSegment = (messageId: string): Segment => {
@@ -356,7 +414,8 @@ export const renderClaudeChatItems = (
 
     if (message.type === 'assistant') {
       const current = ensureSegment(message.uuid)
-      blocks.forEach((block, blockIndex) => {
+      const blockBaseId = getClaudeBlockBaseId(message)
+      blocks.forEach((block) => {
         if (
           block.type === 'thinking' &&
           typeof block.thinking === 'string' &&
@@ -366,26 +425,23 @@ export const renderClaudeChatItems = (
             kind: 'working',
             item: {
               type: 'message',
-              id: `${message.uuid}:thinking:${blockIndex}`,
+              id: nextBlockId(message, 'thinking'),
               content: block.thinking.trim()
             }
           })
         } else if (block.type === 'tool_use') {
-          const inputReady =
-            !message.uuid.endsWith(':partial') ||
-            (isRecord(block.input) && Object.keys(block.input).length > 0)
-          if (inputReady) {
-            const tool = createTool(message.uuid, block)
-            if (isSkillToolBlock(block)) skillToolIds.add(tool.toolId)
-            current.entries.push({ kind: 'working', item: tool })
-          }
+          // Streamed tool blocks render from their first event, before any input has arrived,
+          // so narration preceding them is not mistaken for the turn's final message.
+          const tool = createTool(blockBaseId, block)
+          if (isSkillToolBlock(block)) skillToolIds.add(tool.toolId)
+          current.entries.push({ kind: 'working', item: tool })
         } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
           if (isSubagentMessage) {
             current.entries.push({
               kind: 'working',
               item: {
                 type: 'message',
-                id: `${message.uuid}:subagent:${blockIndex}`,
+                id: nextBlockId(message, 'subagent'),
                 content: block.text.trim()
               }
             })
@@ -394,7 +450,7 @@ export const renderClaudeChatItems = (
               kind: 'assistant',
               message: {
                 type: 'message',
-                id: blocks.length === 1 ? message.uuid : `${message.uuid}:text:${blockIndex}`,
+                id: nextBlockId(message, 'text'),
                 role: 'assistant',
                 content: block.text.trim(),
                 createdAt: toTimestamp(message.timestamp),

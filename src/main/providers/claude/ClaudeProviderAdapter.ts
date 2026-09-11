@@ -76,6 +76,7 @@ import { getClaudeExecutable } from './ClaudeExecutable'
 import {
   isClaudeInternalUserMessage,
   renderClaudeChatItems,
+  resolveClaudeAssistantMessageUuid,
   type ClaudeTranscriptMessage
 } from './ClaudeItemRenderers'
 import { mapClaudeModels } from './ClaudeModels'
@@ -1045,8 +1046,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const source = await this.ensureState(chatId)
     if (source.active) throw new Error('Cannot fork a chat with an active response.')
 
+    // Rendered assistant ids derive from the API message id, not the transcript uuid.
+    const targetUuid = resolveClaudeAssistantMessageUuid(source.messages, messageId) ?? messageId
     const targetIndex = source.messages.findIndex(
-      (entry) => entry.type === 'assistant' && entry.uuid === messageId
+      (entry) => entry.type === 'assistant' && entry.uuid === targetUuid
     )
     if (targetIndex < 0) throw new Error('Message cannot be forked.')
 
@@ -1059,7 +1062,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.messageIds = new Set(state.messages.map((entry) => entry.uuid))
     this.states.set(id, state)
     this.sessionContainers.set(id, state.container)
-    await this.startStateQuery(state, source.options, { forkFrom: chatId, resumeAt: messageId })
+    await this.startStateQuery(state, source.options, { forkFrom: chatId, resumeAt: targetUuid })
     await onForkCreated?.(id)
     return this.createChatDetail(state)
   }
@@ -1921,6 +1924,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       throw error
     } finally {
       state.queueDrainInProgress = false
+      this.emitUpdate(state)
     }
   }
 
@@ -1964,23 +1968,30 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.sendQueuedMessageNow(state, message)
   }
 
+  private createUserTranscriptMessage = (
+    state: ClaudeSessionState,
+    message: QueuedClaudeMessage,
+    label: string | null = null,
+    kind?: 'steering'
+  ): ClaudeTranscriptMessage => ({
+    type: 'user',
+    uuid: message.id,
+    session_id: state.id,
+    message: { role: 'user', content: message.content },
+    parent_tool_use_id: null,
+    timestamp: new Date(message.createdAt).toISOString(),
+    attachments: message.attachments,
+    kind,
+    label
+  })
+
   private addUserMessage = (
     state: ClaudeSessionState,
     message: QueuedClaudeMessage,
     label: string | null = null,
     kind?: 'steering'
   ): void => {
-    this.addTranscriptMessage(state, {
-      type: 'user',
-      uuid: message.id,
-      session_id: state.id,
-      message: { role: 'user', content: message.content },
-      parent_tool_use_id: null,
-      timestamp: new Date(message.createdAt).toISOString(),
-      attachments: message.attachments,
-      kind,
-      label
-    })
+    this.addTranscriptMessage(state, this.createUserTranscriptMessage(state, message, label, kind))
   }
 
   private addTranscriptMessage = (
@@ -2046,19 +2057,35 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       : null
   }
 
-  private getPendingMessages = (state: ClaudeSessionState): ProviderPendingMessage[] =>
-    state.queuedMessages.map((message) => ({
-      type: 'pendingMessage',
-      id: message.id,
-      kind: 'queued',
-      content: message.content,
-      attachments: message.attachments,
-      createdAt: message.createdAt
-    }))
+  private getPendingMessages = (
+    state: ClaudeSessionState,
+    excludedMessageId: string | null = null
+  ): ProviderPendingMessage[] =>
+    state.queuedMessages
+      .filter((message) => message.id !== excludedMessageId)
+      .map((message) => ({
+        type: 'pendingMessage',
+        id: message.id,
+        kind: 'queued',
+        content: message.content,
+        attachments: message.attachments,
+        createdAt: message.createdAt
+      }))
+
+  /**
+   * The head queued message is already committed to the next turn while the query is being
+   * started for it. Presenting it as a sent user message (with the same ids the transcript will
+   * use) avoids flashing a "queued" item between the composer submit and the SDK accepting it.
+   */
+  private getDrainingMessage = (state: ClaudeSessionState): QueuedClaudeMessage | null =>
+    state.queueDrainInProgress && !state.active && !state.queuedMessagesPaused
+      ? (state.queuedMessages[0] ?? null)
+      : null
 
   private createChatDetail = (state: ClaudeSessionState): ProviderChatDetail => {
     const foregroundActive =
       state.active || (state.queueDrainInProgress && !state.queuedMessagesPaused)
+    const drainingMessage = this.getDrainingMessage(state)
     state.revision += 1
     return {
       id: state.id,
@@ -2089,12 +2116,19 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       pendingApproval: this.getPendingApproval(state),
       pendingUserInput: this.getPendingUserInput(state),
       contextUsage: state.contextUsage,
-      items: renderClaudeChatItems([...state.messages, ...state.partialMessages.values()], {
-        active: foregroundActive || state.pendingUserInputs.length > 0,
-        stopped: state.stopped,
-        failed: state.failed,
-        pendingItems: this.getPendingMessages(state)
-      })
+      items: renderClaudeChatItems(
+        [
+          ...state.messages,
+          ...state.partialMessages.values(),
+          ...(drainingMessage ? [this.createUserTranscriptMessage(state, drainingMessage)] : [])
+        ],
+        {
+          active: foregroundActive || state.pendingUserInputs.length > 0,
+          stopped: state.stopped,
+          failed: state.failed,
+          pendingItems: this.getPendingMessages(state, drainingMessage?.id ?? null)
+        }
+      )
     }
   }
 

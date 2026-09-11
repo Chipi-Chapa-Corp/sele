@@ -1561,7 +1561,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const activePrimaryLabel =
     modifiedActiveSendMode === 'queue' ? 'Queue message' : 'Steer current turn'
   const editingPendingMessage = editSession?.type === 'pending'
-  const usageDisabled = operationsDisabled || pending || (!active && disabled)
+  // Usage is read-only information: keep the ring painted while a send is in flight instead of
+  // flashing the disabled (empty) ring until the provider acknowledges the message.
+  const usageDisabled = operationsDisabled || (!active && disabled)
   const usageMenuOpen = usageOpen && !usageDisabled
   const fileMentionMenuOpen = Boolean(
     fileMention &&

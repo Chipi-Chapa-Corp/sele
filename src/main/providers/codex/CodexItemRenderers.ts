@@ -1770,8 +1770,9 @@ const renderChatItems = (
       items.forEach((item) => {
         const previousItem = workingItems.at(-1)
         if (item.type !== 'message' && previousItem && previousItem.type !== 'message') {
-          const groupedItem = groupWorkingItemsForRenderer([previousItem, item])[0]
-          if (groupedItem?.type === 'toolGroup') {
+          const groupedItems = groupWorkingItemsForRenderer([previousItem, item])
+          const groupedItem = groupedItems[0]
+          if (groupedItems.length === 1 && groupedItem?.type === 'toolGroup') {
             const toolCount = Math.max(groupedItem.toolCount ?? 0, groupedItem.tools.length)
             const tools = groupedItem.tools.slice(-rendererWorkingToolGroupLimit)
             workingItems[workingItems.length - 1] = {
@@ -1780,8 +1781,8 @@ const renderChatItems = (
               toolCount,
               toolsStartIndex: Math.max(0, toolCount - tools.length)
             }
+            return
           }
-          return
         }
 
         workingItemCount += 1

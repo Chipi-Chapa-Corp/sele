@@ -300,8 +300,8 @@ const fallbackClaudeReasoningEfforts: ProviderReasoningEffortOption[] = [
 export const fallbackClaudeModels: ProviderModel[] = [
   {
     id: 'default',
-    label: 'Default (recommended)',
-    description: 'Use the model selected by Claude Code.',
+    label: 'Auto',
+    description: "Use the model configured in Claude Code, or Claude's account default.",
     isDefault: true,
     supportedReasoningEfforts: fallbackClaudeReasoningEfforts,
     defaultReasoningEffort: 'high'

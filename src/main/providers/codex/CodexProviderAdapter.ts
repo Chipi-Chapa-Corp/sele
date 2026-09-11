@@ -96,6 +96,7 @@ import {
   retainCodexTurnTail
 } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
+import { selectCodexTitleModel } from './CodexTitleModel'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
 import {
   assertUniqueCodexSnapshotIds,
@@ -902,7 +903,6 @@ const reduceCodexThread = (thread: CodexThread, action: CodexThreadAction): Code
   }
 }
 
-const titleGenerationModel = 'gpt-5.4-mini'
 const titleGenerationTimeoutMs = 30_000
 const oneShotGenerationTimeoutMs = 120_000
 const oneShotCancellationRetentionMs = 120_000
@@ -1464,29 +1464,31 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.runWithContainer(options.container, () => this.getModelsInContext())
 
   private getModelsInContext = async (): Promise<ProviderModel[]> => {
-    const models: ProviderModel[] = []
-    let cursor: string | null = null
-
     try {
-      do {
-        const response = await this.client.request<ModelListResponse>('model/list', {
-          cursor,
-          limit: 100,
-          includeHidden: false
-        })
-
-        response.data
-          .map(mapCodexModel)
-          .filter((model): model is ProviderModel => Boolean(model))
-          .forEach((model) => models.push(model))
-
-        cursor = response.nextCursor
-      } while (cursor)
+      const models = (await this.listModelsInContext())
+        .map(mapCodexModel)
+        .filter((model): model is ProviderModel => Boolean(model))
+      return models.length > 0 ? models : fallbackProviderModels
     } catch {
       return fallbackProviderModels
     }
+  }
 
-    return models.length > 0 ? models : fallbackProviderModels
+  private listModelsInContext = async (): Promise<CodexModel[]> => {
+    const models: CodexModel[] = []
+    let cursor: string | null = null
+
+    do {
+      const response = await this.client.request<ModelListResponse>('model/list', {
+        cursor,
+        limit: 100,
+        includeHidden: false
+      })
+      models.push(...response.data)
+      cursor = response.nextCursor
+    } while (cursor)
+
+    return models
   }
 
   getSkills = async (
@@ -3877,10 +3879,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
     prompt: string,
     cwd: string | null
   ): Promise<string | null> => {
+    const selection = await this.listModelsInContext()
+      .then(selectCodexTitleModel)
+      .catch(() => null)
+    const modelOptions = selection ? { model: selection.model } : {}
     const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
       cwd,
       historyMode: 'paginated',
-      model: titleGenerationModel,
+      ...modelOptions,
       approvalPolicy: 'never',
       sandbox: 'read-only',
       config: {
@@ -3903,8 +3909,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
         input: createUserTextInput(createThreadTitlePrompt(prompt)),
         approvalPolicy: 'never',
         sandboxPolicy: { type: 'readOnly', networkAccess: false },
-        model: titleGenerationModel,
-        effort: 'low',
+        ...modelOptions,
+        ...(selection?.effort ? { effort: selection.effort } : {}),
         summary: null,
         outputSchema: titleGenerationOutputSchema
       })

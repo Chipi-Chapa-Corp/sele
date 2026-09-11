@@ -72,6 +72,7 @@ import {
   createCopilotSubagentSummaries,
   createCopilotSubagentTranscriptItems
 } from './CopilotSubagents'
+import { selectCopilotTitleModel } from './CopilotTitleModel'
 
 type PendingPermission = {
   id: string
@@ -1642,20 +1643,25 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: ProviderTurnOptions | undefined,
     container: AppContainerTarget | null
   ): Promise<string | null> => {
-    const titleOptions: ProviderOneShotOptions | undefined = options
-      ? {
-          ...options,
-          approvalPolicy: 'never',
-          container,
-          files: undefined,
-          images: undefined,
-          reasoningEffort: undefined,
-          review: undefined,
-          sandboxMode: 'read-only',
-          skills: undefined,
-          generationId: randomUUID()
-        }
-      : undefined
+    const selection = await this.ensureClient(container)
+      .then((client) => client.listModels())
+      .then(selectCopilotTitleModel)
+      .catch(() => null)
+    const titleOptions: ProviderOneShotOptions = {
+      ...options,
+      approvalPolicy: 'never',
+      approvalsReviewer: options?.approvalsReviewer ?? 'user',
+      container,
+      files: undefined,
+      images: undefined,
+      model: selection?.model ?? 'auto',
+      reasoningEffort: selection?.reasoningEffort ?? undefined,
+      review: undefined,
+      sandboxMode: 'read-only',
+      serviceTier: null,
+      skills: undefined,
+      generationId: randomUUID()
+    }
     const generatedTitle = await this.generateOneShot(createChatTitlePrompt(prompt), titleOptions)
     return normalizeGeneratedChatTitle(generatedTitle)
   }

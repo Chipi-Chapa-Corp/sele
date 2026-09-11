@@ -1,4 +1,4 @@
-import { activityLabels, activeActivityLabels, getToolDisplayLabel } from '../toolDisplayLabel'
+import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplayLabel'
 import { createPortal } from 'react-dom'
 import { Marked } from 'marked'
 import { Visualization } from './Visualization'
@@ -15,7 +15,6 @@ import {
 } from 'react'
 import type { ForwardRefExoticComponent, HTMLAttributes, ReactNode, RefAttributes } from 'react'
 import {
-  AudioLinesIcon as AnimatedAudioLinesIcon,
   BotIcon as AnimatedBotIcon,
   BoxIcon as AnimatedBoxIcon,
   BookTextIcon as AnimatedBookTextIcon,
@@ -656,12 +655,14 @@ const Activity: React.FC<{
     <details
       className={`chat-detail__tool-group${active ? ' chat-detail__tool-group--active' : ''}`}
       open={open}
-      onToggle={(event) => {
-        const nextOpen = event.currentTarget.open
-        if (nextOpen !== open) setManualOpen(nextOpen)
-      }}
     >
-      <summary onClick={onDisclosureToggle}>
+      <summary
+        onClick={(event) => {
+          event.preventDefault()
+          setManualOpen(!open)
+          onDisclosureToggle?.()
+        }}
+      >
         <span className="chat-detail__tool-icon">
           <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
         </span>
@@ -1540,13 +1541,6 @@ const MessageDate: React.FC<{
   )
 }
 
-const getSequenceLabel = (activities: ProviderToolActivity[]): string => {
-  const labels = [...new Set(activities.map((activity) => activityLabels[activity]))]
-  const label = labels.join(', ') || activityLabels.other
-
-  return label.charAt(0).toLocaleUpperCase() + label.slice(1)
-}
-
 const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolActivity => {
   if (tools.length === 0) return 'other'
 
@@ -1564,12 +1558,22 @@ const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolActivity
 const ToolSequence: React.FC<{
   items: ProviderToolItem[]
   activeToolIds: Set<string>
+  expanded: boolean
   onLoadItem?: (itemId: string) => Promise<void> | void
   onLoadPage?: (workingItemId: string, startIndex: number) => Promise<void> | void
   onDisclosureToggle?: () => void
   projectCwd?: string | null
-}> = ({ items, activeToolIds, onLoadItem, onLoadPage, onDisclosureToggle, projectCwd }) => {
-  const [open, setOpen] = useState(false)
+}> = ({
+  items,
+  activeToolIds,
+  expanded,
+  onLoadItem,
+  onLoadPage,
+  onDisclosureToggle,
+  projectCwd
+}) => {
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
+  const open = manualOpen ?? expanded
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const sequenceItem = items.length === 1 && items[0]?.type === 'toolGroup' ? items[0] : null
   const tools = items.flatMap(getToolsFromToolItem)
@@ -1581,9 +1585,7 @@ const ToolSequence: React.FC<{
   const sequenceActivities = sequenceItem?.toolActivities?.length
     ? sequenceItem.toolActivities
     : tools.map((tool) => tool.activity)
-  const baseLabel = active
-    ? activeActivityLabels[dominantActivity]
-    : getSequenceLabel(sequenceActivities)
+  const baseLabel = getToolSequenceDisplayLabel(sequenceActivities, active)
   const totalCount = Math.max(sequenceItem?.toolCount ?? 0, tools.length)
   const startIndex = sequenceItem?.toolsStartIndex ?? Math.max(0, totalCount - tools.length)
   const endIndex = Math.min(totalCount, startIndex + tools.length)
@@ -1606,9 +1608,14 @@ const ToolSequence: React.FC<{
     <details
       className={`chat-detail__tool-sequence${active ? ' chat-detail__tool-sequence--active' : ''}`}
       open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary onClick={onDisclosureToggle}>
+      <summary
+        onClick={(event) => {
+          event.preventDefault()
+          setManualOpen(!open)
+          onDisclosureToggle?.()
+        }}
+      >
         <span className="chat-detail__tool-icon">
           <ToolStatusIcon activity={dominantActivity} active={active} />
         </span>
@@ -1631,6 +1638,7 @@ const ToolSequence: React.FC<{
             <ToolItem
               item={item}
               activeToolIds={activeToolIds}
+              expanded={expanded && item === tools.at(-1) && hiddenAfter === 0}
               key={item.id}
               onLoad={onLoadItem ? () => onLoadItem(item.id) : undefined}
               onDisclosureToggle={onDisclosureToggle}
@@ -1664,7 +1672,7 @@ const RandomWorkingPlaceholder: React.FC = () => {
   return (
     <div className="chat-detail__tool-read chat-detail__tool-read--active chat-detail__tool-placeholder">
       <span className="chat-detail__tool-icon">
-        <ActiveAnimatedIcon Icon={AnimatedAudioLinesIcon} active />
+        <ActiveAnimatedIcon Icon={AnimatedSparklesIcon} active />
       </span>
       <span className="chat-detail__tool-label">{placeholder}</span>
     </div>
@@ -1793,7 +1801,10 @@ const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] => {
     }
 
     const lastBlock = blocks[blocks.length - 1]
-    if (lastBlock?.type === 'tools') {
+    if (
+      lastBlock?.type === 'tools' &&
+      !lastBlock.items.some((tool) => tool.type === 'tool' && tool.compact)
+    ) {
       lastBlock.items.push(item)
     } else {
       blocks.push({ type: 'tools', items: [item] })
@@ -2104,8 +2115,8 @@ const WorkingStep: React.FC<{
     )
   }
 
-  if (blockCount === 0 && !hasHiddenItems && activityContent == null) {
-    if (active || (item.status !== 'stopped' && renderedGeneratedImages.length > 0)) {
+  if (!active && blockCount === 0 && !hasHiddenItems && activityContent == null) {
+    if (item.status !== 'stopped' && renderedGeneratedImages.length > 0) {
       return (
         <>
           {turnActions}
@@ -2172,6 +2183,7 @@ const WorkingStep: React.FC<{
                         <ToolSequence
                           items={block.items}
                           activeToolIds={activeToolIds}
+                          expanded={active && block.items.at(-1) === lastWorkingItem}
                           key={block.items[0]?.id}
                           onLoadItem={onLoadItem}
                           onLoadPage={onLoadToolPage}
@@ -2503,9 +2515,10 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
           </span>
         )}
         <div className="chat-detail__message-footer">
+          {/* Streamed text may still be demoted into the working step, so it gets no finished-message chrome. */}
           {role === 'user' && messageDate}
-          {messageActions}
-          {role === 'assistant' && messageDate}
+          {!streaming && messageActions}
+          {!streaming && role === 'assistant' && messageDate}
         </div>
       </div>
     )

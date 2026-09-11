@@ -88,3 +88,14 @@ export const getToolDisplayLabel = (
   if (label === 'Asking question' || label === 'Asked a question') return label
   return active ? getActiveToolLabel(label, activity) : getFinishedToolLabel(label, activity)
 }
+
+/** A sequence heading describes every activity it contains, including completed children. */
+export const getToolSequenceDisplayLabel = (
+  activities: ProviderToolActivity[],
+  active: boolean
+): string => {
+  const labels = active ? activeActivityLabels : activityLabels
+  const label =
+    [...new Set(activities)].map((activity) => labels[activity]).join(', ') || labels.other
+  return label.charAt(0).toLocaleUpperCase() + label.slice(1)
+}

@@ -391,6 +391,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           cwd: sessionCwd
         })
         rememberStartedChatSelection(startingProviderId, detail.id, messageBoxSelection)
+        const startedChatKey = getChatKey({ providerId: startingProviderId, id: detail.id })
         applyViewedChatDetail(
           startingProviderId,
           !hasProviderUserMessage(detail.items)
@@ -401,6 +402,21 @@ export function useChatMessagingController(dependencies: ChatMessagingController
             : detail,
           { select: true }
         )
+        // The provider starts producing events before startChat resolves. Until this chat is
+        // selected, the main process intentionally delivers those events as sidebar-only
+        // summaries, so a quick response can finish without ever sending its transcript to the
+        // renderer. Select it immediately (rather than waiting for the React selection effect),
+        // then read the current snapshot once to recover any events from that startup window.
+        providerApi.setViewedChat(startingProviderId, detail.id)
+        void providerApi
+          .getChat(startingProviderId, detail.id)
+          .then((latestDetail) => {
+            if (selectedChatKeyRef.current !== startedChatKey) return
+            applyViewedChatDetail(startingProviderId, latestDetail, { allowEqualRevision: true })
+          })
+          .catch(() => {
+            // Live updates continue normally; reopening the chat remains a manual recovery path.
+          })
         if (startingCwd?.trim() && startingCwd.trim() === defaultCwd?.trim()) {
           void rememberProject(startingCwd)
         }

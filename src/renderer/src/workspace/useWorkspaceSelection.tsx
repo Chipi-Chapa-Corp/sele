@@ -797,8 +797,16 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         })
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
       })
-      .catch(() => {
-        if (active) setChatLoadState('error')
+      .catch((error) => {
+        if (!active) return
+
+        console.error(
+          `Unable to load messages for ${selectedProviderId} chat ${selectedChatId}.`,
+          error
+        )
+        chatDetailRef.current = null
+        setChatDetail(null)
+        setChatLoadState('error')
       })
 
     return () => {

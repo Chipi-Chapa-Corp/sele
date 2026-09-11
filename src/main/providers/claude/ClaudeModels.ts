@@ -55,16 +55,16 @@ export const mapClaudeModel = (model: ModelInfo, index: number): ProviderModel =
   const defaultEffort = efforts.includes('high') ? 'high' : (efforts[0] ?? 'medium')
   const canonicalName = getCanonicalModelName(model)
   const description = splitDescription(model.description).detail
-  const isDefault = model.value === 'default' || index === 0
+  const isAuto = model.value === 'default'
+  const isDefault = isAuto || index === 0
 
   return {
     id: model.value,
-    label: canonicalName,
-    usageScope: getClaudeModelUsageScope(model),
-    description:
-      model.value === 'default'
-        ? [`Uses Claude Code's recommended model`, description].filter(Boolean).join(' · ')
-        : description,
+    label: isAuto ? 'Auto' : canonicalName,
+    usageScope: isAuto ? undefined : getClaudeModelUsageScope(model),
+    description: isAuto
+      ? "Use the model configured in Claude Code, or Claude's account default."
+      : description,
     isDefault,
     supportedReasoningEfforts: efforts.map((effort) => ({
       id: effort,
@@ -88,15 +88,5 @@ export const mapClaudeModel = (model: ModelInfo, index: number): ProviderModel =
 }
 
 export const mapClaudeModels = (models: ModelInfo[]): ProviderModel[] => {
-  const defaultModel = models.find((model) => model.value === 'default')
-  const defaultResolvedModel = defaultModel?.resolvedModel?.trim()
-
-  return models
-    .filter(
-      (model) =>
-        model.value === 'default' ||
-        !defaultResolvedModel ||
-        model.resolvedModel?.trim() !== defaultResolvedModel
-    )
-    .map(mapClaudeModel)
+  return models.map(mapClaudeModel)
 }

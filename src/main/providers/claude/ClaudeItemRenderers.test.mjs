@@ -3,7 +3,8 @@ import test from 'node:test'
 import {
   isClaudeInternalUserMessage,
   isClaudeSkillContextMessage,
-  renderClaudeChatItems
+  renderClaudeChatItems,
+  resolveClaudeAssistantMessageUuid
 } from './ClaudeItemRenderers.ts'
 
 const skillToolId = 'toolu_skill'
@@ -108,4 +109,66 @@ test('skill context is detected by content marker or live isMeta flag', () => {
   assert.equal(isClaudeSkillContextMessage(metaMessage), true)
   assert.equal(isClaudeSkillContextMessage(userPrompt), false)
   assert.equal(isClaudeSkillContextMessage(skillToolResult), false)
+})
+
+const streamedResponse = {
+  type: 'assistant',
+  uuid: 'msg_stream:partial',
+  session_id: 'session',
+  message: {
+    id: 'msg_stream',
+    role: 'assistant',
+    content: [
+      { type: 'thinking', thinking: 'Plan the change' },
+      { type: 'text', text: 'Checking the tree.' },
+      { type: 'tool_use', id: 'toolu_git', name: 'Bash', input: { command: 'git status' } },
+      { type: 'tool_use', id: 'toolu_grep', name: 'Bash', input: { command: 'grep -r x' } }
+    ]
+  },
+  parent_tool_use_id: null
+}
+
+// Claude Code persists one API response as one transcript record per block, each with its own uuid.
+const persistedResponse = streamedResponse.message.content.map((block, index) => ({
+  type: 'assistant',
+  uuid: `persisted-${index}`,
+  session_id: 'session',
+  message: { id: 'msg_stream', role: 'assistant', content: [block] },
+  parent_tool_use_id: null
+}))
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const collectIds = (items) =>
+  items.flatMap((item) =>
+    item.type === 'working' ? item.items.map((workingItem) => workingItem.id) : [item.id]
+  )
+
+test('streamed blocks keep their ids once their transcript records arrive', () => {
+  const options = { active: true, stopped: false }
+  const streamedIds = collectIds(renderClaudeChatItems([userPrompt, streamedResponse], options))
+  const persistedIds = collectIds(
+    renderClaudeChatItems([userPrompt, ...persistedResponse], options)
+  )
+
+  assert.deepEqual(persistedIds, streamedIds)
+  assert.deepEqual(streamedIds, [
+    'user-1',
+    'msg_stream:thinking:0',
+    'msg_stream:text:0',
+    'msg_stream:toolu_git',
+    'msg_stream:toolu_grep'
+  ])
+  assert.equal(new Set(streamedIds).size, streamedIds.length)
+})
+
+test('records without an API message id fall back to their transcript uuid', () => {
+  const items = renderClaudeChatItems([userPrompt, skillToolUse], { active: false, stopped: false })
+  assert.equal(getSkillTool(items).id, `assistant-1:${skillToolId}`)
+})
+
+test('fork targets resolve a rendered assistant id back to its transcript uuid', () => {
+  const messages = [userPrompt, ...persistedResponse]
+  assert.equal(resolveClaudeAssistantMessageUuid(messages, 'msg_stream:text:0'), 'persisted-1')
+  assert.equal(resolveClaudeAssistantMessageUuid(messages, 'msg_stream:text:1'), null)
+  assert.equal(resolveClaudeAssistantMessageUuid(messages, 'persisted-1'), null)
 })

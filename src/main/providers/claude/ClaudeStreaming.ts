@@ -1,5 +1,6 @@
 import type { SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeTranscriptMessage } from './ClaudeItemRenderers'
+import { parsePartialJson } from './partialJson.ts'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -81,11 +82,9 @@ export const applyClaudeStreamEvent = (
   if (delta.type === 'input_json_delta') {
     const partialJson = `${typeof block.partial_json === 'string' ? block.partial_json : ''}${delta.partial_json}`
     block.partial_json = partialJson
-    try {
-      block.input = JSON.parse(partialJson)
-    } catch {
-      // Keep the last complete tool input while the JSON fragment is incomplete.
-    }
+    // Surface whatever has streamed so far so the tool label and command fill in live.
+    const input = parsePartialJson(partialJson)
+    if (input !== undefined) block.input = input
     return true
   }
   return false

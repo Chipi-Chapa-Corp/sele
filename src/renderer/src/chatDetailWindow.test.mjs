@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { refreshRetainedChatDetailTurnWindow } from './chatDetailWindow.ts'
+import {
+  preserveOptimisticChatDetail,
+  refreshRetainedChatDetailTurnWindow,
+  shouldPreserveOptimisticTurnUntilUserMessage
+} from './chatDetailWindow.ts'
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const user = (id) => ({ type: 'message', id, role: 'user', content: id })
@@ -13,6 +17,37 @@ const detail = (items, extra = {}) => ({
   itemsStartTurnIndex: 0,
   turnCount: 1,
   ...extra
+})
+
+test('preserves optimistic turns for every provider until its user message arrives', () => {
+  for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
+    assert.equal(shouldPreserveOptimisticTurnUntilUserMessage(providerId), true)
+  }
+
+  const optimistic = detail([
+    user('previous'),
+    user('optimistic:submitted:user'),
+    { type: 'working', id: 'optimistic:submitted:working', status: 'working', items: [] }
+  ])
+  const preparing = detail(
+    [
+      user('previous'),
+      {
+        type: 'pendingMessage',
+        id: 'submitted',
+        kind: 'queued',
+        content: 'submitted'
+      }
+    ],
+    { revision: 2 }
+  )
+
+  const preserved = preserveOptimisticChatDetail(optimistic, preparing)
+  assert.deepEqual(preserved.items, optimistic.items)
+  assert.equal(preserved.revision, 2)
+
+  const accepted = detail([user('previous'), user('submitted')], { revision: 3 })
+  assert.equal(preserveOptimisticChatDetail(preserved, accepted), accepted)
 })
 
 test('a paused viewport replaces the placeholder with live activity and the completed answer', () => {
