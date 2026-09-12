@@ -154,7 +154,7 @@ export function ConversationMessagesContent(
       {!activeSubagentChatView && chatLoadState === 'loading' && (
         <ConversationMessagesState kind="loading" label="Loading messages…" />
       )}
-      {!activeSubagentChatView && chatLoadState === 'error' && (
+      {!activeSubagentChatView && chatLoadState === 'error' && visibleChatItems.length === 0 && (
         <ConversationMessagesState kind="error" label="Unable to load messages." />
       )}
       {!activeSubagentChatView &&

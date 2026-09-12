@@ -804,6 +804,12 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           `Unable to load messages for ${selectedProviderId} chat ${selectedChatId}.`,
           error
         )
+        // Cached history or a live update may already have supplied this chat. A failed
+        // background read must not discard it or leave an error over usable messages.
+        if (chatDetailRef.current?.id === selectedChatId) {
+          setChatLoadState('ready')
+          return
+        }
         chatDetailRef.current = null
         setChatDetail(null)
         setChatLoadState('error')

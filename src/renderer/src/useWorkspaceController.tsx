@@ -2372,7 +2372,7 @@ export const useWorkspaceController = () => {
         currentDetail?.id === detail.id &&
         currentDetail.revision === detail.revision
       if (isChatDetailSnapshotStale(detail, currentDetail) && !replacesEqualRevision) {
-        if (options.select) setChatLoadState('ready')
+        if (options.select || selectedChatKeyRef.current === detailKey) setChatLoadState('ready')
         return
       }
       const appliedDetail =
@@ -2412,9 +2412,10 @@ export const useWorkspaceController = () => {
         setSelectedChat(getChatFromDetail(providerId, appliedDetail, null, updatedAt))
         setNewChatOpen(false)
       } else {
-        setChatDetail((renderedDetail) =>
-          renderedDetail?.id === appliedDetail.id ? appliedDetail : renderedDetail
-        )
+        if (selectedChatKeyRef.current === detailKey) {
+          setChatDetail(appliedDetail)
+          setChatLoadState('ready')
+        }
         setSelectedChat((currentChat) =>
           currentChat?.providerId === providerId && currentChat.id === appliedDetail.id
             ? getChatFromDetail(providerId, appliedDetail, currentChat, updatedAt)
