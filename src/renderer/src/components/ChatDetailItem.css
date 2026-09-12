@@ -1271,7 +1271,14 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 }
 
 .chat-detail__tool-placeholder .chat-detail__tool-icon {
+  width: 1.15rem;
+  height: 1.15rem;
   color: #d0a07d;
+}
+
+.chat-detail__tool-placeholder .chat-detail__tool-icon svg {
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 @media (max-width: 37.5rem) {

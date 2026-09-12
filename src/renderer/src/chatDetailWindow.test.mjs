@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  getLoadedChatTurnWindow,
+  mergeChatDetailTurnPage,
   preserveOptimisticChatDetail,
   refreshRetainedChatDetailTurnWindow,
   shouldPreserveOptimisticTurnUntilUserMessage
 } from './chatDetailWindow.ts'
+import { shiftChatTurnWindow } from './chatTurnWindow.ts'
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const user = (id) => ({ type: 'message', id, role: 'user', content: id })
@@ -100,4 +103,67 @@ test('an empty viewport accepts the first turn even when auto-scroll is paused',
   const current = detail([], { turnCount: 0 })
   const snapshot = detail([user('prompt')])
   assert.equal(refreshRetainedChatDetailTurnWindow(current, snapshot), snapshot)
+})
+
+test('a partial retained page can page backward to the real first turn', () => {
+  const allItems = Array.from({ length: 15 }, (_, index) => user(`turn-${index}`))
+  const requestedWindow = { chatKey: 'session', startIndex: 0, endIndex: 15, totalCount: 15 }
+  const partial = detail(allItems.slice(5), { itemsStartTurnIndex: 5, turnCount: 15 })
+  const retained = mergeChatDetailTurnPage(
+    partial,
+    { items: [], startIndex: 0, totalCount: 15 },
+    requestedWindow
+  )
+  const actualWindow = getLoadedChatTurnWindow(retained, requestedWindow)
+  assert.equal(actualWindow.startIndex, 5)
+
+  const startIndex = Math.max(0, actualWindow.startIndex - 10)
+  const page = {
+    items: allItems.slice(startIndex, actualWindow.startIndex),
+    startIndex,
+    totalCount: 15
+  }
+  const nextWindow = shiftChatTurnWindow(actualWindow, 'older', startIndex, 5, 15, 20)
+  const recovered = mergeChatDetailTurnPage(retained, page, nextWindow)
+  assert.deepEqual(recovered.items, allItems)
+  assert.equal(getLoadedChatTurnWindow(recovered, nextWindow).startIndex, 0)
+})
+
+test('paging boundaries also expose unloaded newer turns', () => {
+  const partial = detail([user('five'), user('six')], { itemsStartTurnIndex: 5, turnCount: 15 })
+  assert.deepEqual(
+    getLoadedChatTurnWindow(partial, {
+      chatKey: 'session',
+      startIndex: 0,
+      endIndex: 15,
+      totalCount: 15
+    }),
+    { chatKey: 'session', startIndex: 5, endIndex: 7, totalCount: 15 }
+  )
+})
+
+test('keeps a narrower viewport within loaded history and recovers a disjoint viewport', () => {
+  const loaded = detail(
+    Array.from({ length: 10 }, (_, i) => user(String(i))),
+    {
+      itemsStartTurnIndex: 10,
+      turnCount: 30
+    }
+  )
+  const window = { chatKey: 'session', startIndex: 12, endIndex: 17, totalCount: 30 }
+  assert.deepEqual(getLoadedChatTurnWindow(loaded, window), window)
+  assert.deepEqual(getLoadedChatTurnWindow(loaded, { ...window, startIndex: 0, endIndex: 5 }), {
+    ...window,
+    startIndex: 10,
+    endIndex: 20
+  })
+})
+
+test('cursor pages retain their local coordinates and cursor metadata', () => {
+  const loaded = detail([user('page')], {
+    turnPagination: { kind: 'cursor', olderCursor: 'older', newerCursor: null }
+  })
+  const window = { chatKey: 'session', startIndex: 0, endIndex: 1, totalCount: 1 }
+  assert.deepEqual(getLoadedChatTurnWindow(loaded, window), window)
+  assert.equal(loaded.turnPagination.olderCursor, 'older')
 })

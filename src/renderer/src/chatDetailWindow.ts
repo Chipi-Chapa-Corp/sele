@@ -85,6 +85,24 @@ export const getLoadedChatDetailTurnEndIndex = (
 ): number =>
   getChatDetailItemsStartTurnIndex(detail) + getProviderChatTurns(detail?.items ?? []).length
 
+/** Window coordinates must describe materialized turns, including after partial live updates. */
+export const getLoadedChatTurnWindow = (
+  detail: ProviderChatDetail | null | undefined,
+  window: ChatTurnWindow
+): ChatTurnWindow => {
+  const loadedStart = getChatDetailItemsStartTurnIndex(detail)
+  const loadedEnd = getLoadedChatDetailTurnEndIndex(detail)
+  const startIndex = Math.max(window.startIndex, loadedStart)
+  const endIndex = Math.min(window.endIndex, loadedEnd)
+  return {
+    ...window,
+    // If a refresh replaced the entire range, show the available page rather than an empty gap.
+    startIndex: startIndex < endIndex ? startIndex : loadedStart,
+    endIndex: startIndex < endIndex ? endIndex : loadedEnd,
+    totalCount: getChatDetailTurnCount(detail)
+  }
+}
+
 export const mergeChatDetailTurnPage = (
   detail: ProviderChatDetail,
   page: ProviderChatTurnPage,

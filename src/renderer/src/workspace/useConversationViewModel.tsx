@@ -19,6 +19,7 @@ import {
   getChatDetailItemsStartTurnIndex,
   getChatDetailTurnCount,
   getLoadedChatDetailTurnEndIndex,
+  getLoadedChatTurnWindow,
   mergeChatDetailTurnPage,
   replaceChatDetailWithCursorPage
 } from '../chatDetailWindow'
@@ -296,7 +297,10 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     return getLatestChatTurnWindow(selectedChatKey, totalChatTurnCount, chatTurnPageSize)
   }, [selectedChatKey, totalChatTurnCount])
   const effectiveChatTurnWindow = defaultChatTurnWindow
-    ? getEffectiveChatTurnWindow(chatTurnWindow, defaultChatTurnWindow, chatAtConversationBottom)
+    ? getLoadedChatTurnWindow(
+        chatDetail,
+        getEffectiveChatTurnWindow(chatTurnWindow, defaultChatTurnWindow, chatAtConversationBottom)
+      )
     : null
   const renderedChatTurns = useMemo(
     () =>
@@ -344,7 +348,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
         const totalCount = totalChatTurnCount
         const viewingLatest =
           currentWindow?.chatKey !== selectedChatKey || chatAutoScrollEnabledRef.current
-        const nextWindow: ChatTurnWindow = viewingLatest
+        const requestedWindow: ChatTurnWindow = viewingLatest
           ? getLatestChatTurnWindow(selectedChatKey, totalCount, chatTurnPageSize)
           : {
               chatKey: selectedChatKey,
@@ -352,6 +356,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
               endIndex: Math.min(currentWindow.endIndex, totalCount),
               totalCount
             }
+        const nextWindow = getLoadedChatTurnWindow(chatDetailRef.current, requestedWindow)
         chatTurnWindowRef.current = nextWindow
         if (viewingLatest) scrollToLatestTurnAfterRenderRef.current = true
         return nextWindow
@@ -386,7 +391,11 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   const loadChatTurnPage = useCallback(
     async (direction: ChatTurnPageLoadDirection): Promise<void> => {
       const chat = selectedChatRef.current
-      const currentWindow = chatTurnWindowRef.current
+      const requestedWindow = chatTurnWindowRef.current
+      const currentDetail = chatDetailRef.current
+      const currentWindow = requestedWindow
+        ? getLoadedChatTurnWindow(currentDetail, requestedWindow)
+        : null
       if (
         !chat ||
         !currentWindow ||
@@ -396,7 +405,6 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
         return
       }
 
-      const currentDetail = chatDetailRef.current
       const cursorPagination = currentDetail?.id === chat.id ? currentDetail.turnPagination : null
       if (
         direction === 'older' &&
@@ -508,8 +516,10 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           return
         }
 
-        const latestWindow = chatTurnWindowRef.current
-        if (!latestWindow || latestWindow.chatKey !== currentWindow.chatKey) return
+        const latestRequestedWindow = chatTurnWindowRef.current
+        if (!latestRequestedWindow || latestRequestedWindow.chatKey !== currentWindow.chatKey)
+          return
+        const latestWindow = getLoadedChatTurnWindow(chatDetailRef.current, latestRequestedWindow)
 
         const totalCount = Math.max(latestWindow.totalCount, page.totalCount)
         const loadedEndIndex = Math.min(totalCount, page.startIndex + limit)
@@ -560,8 +570,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
 
     if (
       chatTurnScrollDirectionRef.current === 'up' &&
-      contentElement.scrollTop <= chatTurnLoadThresholdPx &&
-      (chatDetailRef.current?.turnPagination?.olderCursor || currentWindow.startIndex > 0)
+      contentElement.scrollTop <= chatTurnLoadThresholdPx
     ) {
       void loadChatTurnPage('older')
       return
@@ -569,9 +578,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
 
     if (
       chatTurnScrollDirectionRef.current === 'down' &&
-      getScrollBottomTop(contentElement) - contentElement.scrollTop <= chatTurnLoadThresholdPx &&
-      (chatDetailRef.current?.turnPagination?.newerCursor ||
-        currentWindow.endIndex < currentWindow.totalCount)
+      getScrollBottomTop(contentElement) - contentElement.scrollTop <= chatTurnLoadThresholdPx
     ) {
       void loadChatTurnPage('newer')
     }
@@ -582,17 +589,11 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     const currentWindow = chatTurnWindowRef.current
     if (!contentElement || !currentWindow || chatTurnPageLoadInFlightRef.current) return
 
-    if (
-      event.deltaY < 0 &&
-      contentElement.scrollTop <= chatTurnLoadThresholdPx &&
-      (chatDetailRef.current?.turnPagination?.olderCursor || currentWindow.startIndex > 0)
-    ) {
+    if (event.deltaY < 0 && contentElement.scrollTop <= chatTurnLoadThresholdPx) {
       void loadChatTurnPage('older')
     } else if (
       event.deltaY > 0 &&
-      getScrollBottomTop(contentElement) - contentElement.scrollTop <= chatTurnLoadThresholdPx &&
-      (chatDetailRef.current?.turnPagination?.newerCursor ||
-        currentWindow.endIndex < currentWindow.totalCount)
+      getScrollBottomTop(contentElement) - contentElement.scrollTop <= chatTurnLoadThresholdPx
     ) {
       void loadChatTurnPage('newer')
     }

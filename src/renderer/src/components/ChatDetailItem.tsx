@@ -2,6 +2,7 @@ import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplay
 import { createPortal } from 'react-dom'
 import { Marked } from 'marked'
 import { Visualization } from './Visualization'
+import { WorkingMark } from './WorkingMark'
 import { visualizationExtension, decodeVisualizationReference } from '../visualizationReference'
 import {
   Fragment,
@@ -1672,7 +1673,7 @@ const RandomWorkingPlaceholder: React.FC = () => {
   return (
     <div className="chat-detail__tool-read chat-detail__tool-read--active chat-detail__tool-placeholder">
       <span className="chat-detail__tool-icon">
-        <ActiveAnimatedIcon Icon={AnimatedSparklesIcon} active />
+        <WorkingMark />
       </span>
       <span className="chat-detail__tool-label">{placeholder}</span>
     </div>
