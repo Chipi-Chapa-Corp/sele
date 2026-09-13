@@ -1,5 +1,4 @@
 /* Test fixtures are JavaScript and intentionally omit provider-only fields. */
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ClaudeTranscriptProjection, renderClaudeChatItems } from './ClaudeItemRenderers.ts'

@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
+// biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useCallback } from 'react'
 import { flushSync } from 'react-dom'
 import { ChevronDown, ChevronRight } from 'lucide-react'
@@ -36,7 +36,6 @@ import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
 import type { FileNavigationDependencies } from './controllerDependencies'
 
 // Return shape is inferred from the controller declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useFileNavigationController(dependencies: FileNavigationDependencies) {
   const {
     setCollapsedChangeTreeFolders,

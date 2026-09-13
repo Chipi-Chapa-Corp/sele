@@ -1,3 +1,4 @@
+import { registerAppUpdate } from './appUpdate'
 import './logging'
 import { startBrowserUseBridge } from './providers/codex/CodexBrowserBridge'
 import { startBrowserAutomationService } from './browser/BrowserAutomation'
@@ -344,6 +345,7 @@ const startApp = (): void => {
     nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
     electronApp.setAppUserModelId('com.sele')
     registerAppIpc()
+    registerAppUpdate()
     registerBrowserIpc()
     void startBrowserUseBridge(startBrowserAutomationService()).catch((error: unknown) =>
       console.error('Unable to start browser-use bridge:', error)

@@ -315,7 +315,6 @@ import { useChangesData } from './workspace/useChangesData'
 import { useWorkspaceSelection } from './workspace/useWorkspaceSelection'
 
 // The return type intentionally stays inferred so every view slice remains exact.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export const useWorkspaceController = () => {
   const storedMessageBoxSelections = useMemo(() => readStoredMessageBoxSelections(), [])
   const storedChatMessageBoxSelections = useMemo(() => readStoredChatMessageBoxSelections(), [])
@@ -3426,6 +3425,7 @@ export const useWorkspaceController = () => {
     setProviderAccountsError(null)
     try {
       applyProviderAccountConfiguration(
+        // biome-ignore lint/correctness/useHookAtTopLevel: Provider IPC method, not a React hook.
         await providerApi.useAccount(newSessionProvider, accountId, { container })
       )
       setProviderAccountRevision((revision) => revision + 1)

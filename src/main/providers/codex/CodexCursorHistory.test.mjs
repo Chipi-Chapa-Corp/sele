@@ -3,7 +3,6 @@ import test from 'node:test'
 import { loadCodexTurnCursorWindow, retainCodexTurnTail } from './CodexPaginatedHistory.ts'
 
 // Test fixtures intentionally omit production-only Codex fields.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const turn = (id) => ({ id, status: 'completed', items: [] })
 
 test('loads the latest cursor page without counting earlier turns', async () => {

@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
+// biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useCallback } from 'react'
 import { SquarePen, Undo2 } from 'lucide-react'
 import type { AppProject, AppProjectIcon } from '../../../shared/app'
@@ -75,7 +75,6 @@ import {
 import type { SettingsControllerDependencies } from './featureControllerDependencies'
 
 // Return shape is inferred from the controller declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useSettingsController(dependencies: SettingsControllerDependencies) {
   const {
     setAppSettings,

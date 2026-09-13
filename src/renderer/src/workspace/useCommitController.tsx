@@ -27,7 +27,6 @@ import {
 import type { CommitControllerDependencies } from './controllerDependencies'
 
 // Return shape is inferred from the controller declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useCommitController(dependencies: CommitControllerDependencies) {
   const {
     startingScopedCommitActivitiesRef,

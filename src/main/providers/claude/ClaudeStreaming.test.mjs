@@ -11,7 +11,6 @@ const userPrompt = {
   parent_tool_use_id: null
 }
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const streamEvent = (event) => ({
   type: 'stream_event',
   session_id: 'session',
@@ -19,14 +18,12 @@ const streamEvent = (event) => ({
   event
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const render = (partialMessages) =>
   renderClaudeChatItems([userPrompt, ...partialMessages.values()], {
     active: true,
     stopped: false
   })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const describe = (items) =>
   items.map((item) =>
     item.type === 'working'

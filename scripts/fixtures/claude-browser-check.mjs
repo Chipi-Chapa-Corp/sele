@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type -- JavaScript integration fixture. */
 import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'

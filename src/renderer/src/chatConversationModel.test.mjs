@@ -4,7 +4,6 @@ import { buildChatConversationModel, markChatItemsChanged } from './chatConversa
 import { assertUniqueProviderChatItemIds } from '../../shared/chatTurns.ts'
 
 // Test fixtures intentionally omit optional presentation fields.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const message = (id, role, content) => ({ type: 'message', id, role, content })
 
 test('incremental conversation builds do not mutate the previously rendered model', () => {

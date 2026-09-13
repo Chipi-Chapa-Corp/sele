@@ -9,9 +9,7 @@ import {
 } from './chatDetailWindow.ts'
 import { shiftChatTurnWindow } from './chatTurnWindow.ts'
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const user = (id) => ({ type: 'message', id, role: 'user', content: id })
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const detail = (items, extra = {}) => ({
   id: 'claude-session',
   revision: 1,

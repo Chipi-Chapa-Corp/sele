@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type -- JavaScript test harness. */
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'

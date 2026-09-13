@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type -- Isolated send lifecycle harness. */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'

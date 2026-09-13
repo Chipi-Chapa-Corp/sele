@@ -1,3 +1,4 @@
+import type { AppUpdateState } from '../shared/appUpdate'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { AppApi, AppColorScheme, AppWindowState } from '../shared/app'
@@ -14,6 +15,14 @@ import type {
 import { browserIpcChannels } from '../shared/browser'
 
 const appApi: AppApi = {
+  getAppUpdate: () => ipcRenderer.invoke(appIpcChannels.getAppUpdate),
+  dismissAppUpdate: (mode) => ipcRenderer.invoke(appIpcChannels.dismissAppUpdate, mode),
+  installAppUpdate: () => ipcRenderer.invoke(appIpcChannels.installAppUpdate),
+  onAppUpdateChanged: (listener) => {
+    const handler = (_: IpcRendererEvent, state: AppUpdateState): void => listener(state)
+    ipcRenderer.on(appIpcChannels.appUpdateChanged, handler)
+    return () => ipcRenderer.removeListener(appIpcChannels.appUpdateChanged, handler)
+  },
   exportDiagnosticLog: () => ipcRenderer.invoke(appIpcChannels.exportDiagnosticLog),
   getColorScheme: () => ipcRenderer.invoke(appIpcChannels.getColorScheme),
   getInstalledFontFamilies: () => ipcRenderer.invoke(appIpcChannels.getInstalledFontFamilies),

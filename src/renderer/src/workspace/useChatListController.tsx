@@ -16,7 +16,6 @@ import {
 import type { ChatListControllerDependencies } from './featureControllerDependencies'
 
 // Return shape is inferred from the controller declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useChatListController(dependencies: ChatListControllerDependencies) {
   const {
     applyChatMetadata,

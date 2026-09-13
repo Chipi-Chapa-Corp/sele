@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
+// biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import { flushSync } from 'react-dom'
 import { buildChatConversationModel } from '../chatConversationModel'
@@ -39,7 +39,6 @@ import {
 import type { ConversationViewModelDependencies } from './viewModelDependencies'
 
 // Return shape is inferred from the view-model declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useConversationViewModel(dependencies: ConversationViewModelDependencies) {
   const {
     selectedChat,

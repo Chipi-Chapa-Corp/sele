@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-empty-function -- Isolated JavaScript runtime host stubs. */
 // Exercise the installed Browser Use implementation against our private test browser.
 // The runtime dependencies below are an isolated test host, not application configuration.
 import assert from 'node:assert/strict'

@@ -1,3 +1,4 @@
+import { AppUpdatePrompt } from './AppUpdatePrompt'
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { Search, SquarePen, X } from 'lucide-react'
@@ -115,6 +116,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           </div>
         )}
       </div>
+      <AppUpdatePrompt />
     </aside>
   )
 }

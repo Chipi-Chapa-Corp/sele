@@ -3,7 +3,6 @@ import test from 'node:test'
 import { shouldDisableRateLimitReset } from './accountRateLimits.ts'
 
 // Test fixtures intentionally omit fields that are irrelevant to reset eligibility.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const rateLimit = (usedPercent) => ({
   id: 'codex',
   label: 'Codex',
@@ -13,7 +12,6 @@ const rateLimit = (usedPercent) => ({
   resetsAt: null
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const resetCredit = (expiresAt) => ({ id: 'reset-credit', expiresAt })
 
 test('disables rate-limit resets when every limit has more than 5% left', () => {

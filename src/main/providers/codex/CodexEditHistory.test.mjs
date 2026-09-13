@@ -7,7 +7,6 @@ import {
 } from './CodexPaginatedHistory.ts'
 
 // Fixtures intentionally include only the fields used by history planning.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const turn = (id, status = 'completed') => ({ id, status, items: [] })
 
 test('retains all completed history when editing an unprojected newest turn', () => {

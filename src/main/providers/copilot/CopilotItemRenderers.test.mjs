@@ -5,7 +5,6 @@ import { getConversationTailWorkingStep } from '../../../renderer/src/chatConver
 import { renderCopilotChatItems } from './CopilotItemRenderers.ts'
 
 // Test fixtures intentionally omit production-only Copilot event fields.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const userMessage = (id, content, source, attachments) => ({
   type: 'user.message',
   id,
@@ -14,7 +13,6 @@ const userMessage = (id, content, source, attachments) => ({
   data: { content, source, attachments }
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const assistantMessage = (id, content, toolRequests = [], phase) => ({
   type: 'assistant.message',
   id,
@@ -23,7 +21,6 @@ const assistantMessage = (id, content, toolRequests = [], phase) => ({
   data: { content, messageId: id, toolRequests, phase }
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const toolStart = (id, toolCallId, toolName, args = {}) => ({
   type: 'tool.execution_start',
   id,
@@ -32,7 +29,6 @@ const toolStart = (id, toolCallId, toolName, args = {}) => ({
   data: { toolCallId, toolName, arguments: args }
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const taskComplete = (id, summary, success = true) => ({
   type: 'session.task_complete',
   id,
@@ -41,7 +37,6 @@ const taskComplete = (id, summary, success = true) => ({
   data: { summary, success }
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const reasoning = (id, content) => ({
   type: 'assistant.reasoning',
   id,
@@ -50,7 +45,6 @@ const reasoning = (id, content) => ({
   data: { content, reasoningId: id }
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const turnEnd = (id) => ({
   type: 'assistant.turn_end',
   id,
@@ -59,7 +53,6 @@ const turnEnd = (id) => ({
   data: { turnId: id }
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const render = (events) =>
   renderCopilotChatItems(events, {
     active: false,

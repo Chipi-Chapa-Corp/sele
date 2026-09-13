@@ -8,7 +8,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   background: transparent;
 }
 
@@ -40,4 +40,27 @@
   width: 3.6rem;
   height: 3.6rem;
   stroke-width: 1.35;
+}
+
+.chat-sidebar .app-update-prompt {
+  margin: 0.6rem var(--chat-sidebar-scrollbar-width) 0 var(--chat-sidebar-left-x);
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.app-update-prompt .chat-approval__actions {
+  justify-content: flex-end;
+}
+
+.app-update-prompt .chat-approval__error {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+.app-update-prompt .chat-approval__summary {
+  font-family: inherit;
+  white-space: normal;
 }

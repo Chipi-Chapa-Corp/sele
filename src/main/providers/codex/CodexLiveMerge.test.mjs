@@ -7,7 +7,6 @@ import {
 } from './CodexLiveMerge.ts'
 
 // Test fixtures intentionally omit production-only Codex fields.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const turn = (id, startedAt, text = id) => ({
   id,
   startedAt,
@@ -15,7 +14,6 @@ const turn = (id, startedAt, text = id) => ({
   items: [{ id: `${id}:message`, type: 'agentMessage', text }]
 })
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const mergeTurn = (previous, next) => ({
   ...previous,
   ...next,

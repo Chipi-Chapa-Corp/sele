@@ -16,7 +16,6 @@ const defaultSettings = {
 }
 
 // Test fixtures intentionally omit optional presentation fields.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const workingStep = (status = 'worked') => ({
   type: 'working',
   id: `working-${status}`,

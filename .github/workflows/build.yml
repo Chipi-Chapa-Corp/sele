@@ -53,6 +53,9 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Test app updates
+        run: npm run test:app-update
+
   windows:
     name: Windows x64
     needs: validate
@@ -94,7 +97,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sele-windows-x64
-          path: dist/sele-windows-x64-setup.exe
+          path: |
+            dist/sele-windows-x64-setup.exe
+            dist/sele-windows-x64-setup.exe.blockmap
+            dist/*.yml
+            !dist/builder-*.yml
           if-no-files-found: error
           compression-level: 0
 
@@ -143,7 +150,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sele-macos-arm64
-          path: dist/sele-macos-arm64.dmg
+          path: |
+            dist/sele-macos-arm64.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/*.yml
+            !dist/builder-*.yml
           if-no-files-found: error
           compression-level: 0
 
@@ -241,6 +253,7 @@ jobs:
       - windows
       - macos
       - linux
+      - flatpak-pages
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -261,6 +274,9 @@ jobs:
           test -f release-artifacts/sele-macos-arm64.dmg
           test -f release-artifacts/sele-linux-x64.flatpak
           test -f release-artifacts/sele.flatpakrepo
+          test -n "$(find release-artifacts -name '*-mac.yml' -print -quit)"
+          test -n "$(find release-artifacts -name '*.yml' ! -name '*-mac.yml' -print -quit)"
+          test -n "$(find release-artifacts -name '*.zip' -print -quit)"
 
       - name: Create or update release
         shell: bash

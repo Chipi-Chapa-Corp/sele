@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
+// biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useCallback, useEffect } from 'react'
 import { FolderKanban, FolderTree } from 'lucide-react'
 import type { ProviderMessage } from '../../../shared/provider'
@@ -18,7 +18,6 @@ import { allDoneProjectsValue } from './controllerTypes'
 import type { ChatInteractionControllerDependencies } from './featureControllerDependencies'
 
 // Return shape is inferred from the controller declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useChatInteractionController(dependencies: ChatInteractionControllerDependencies) {
   const {
     contentRef,

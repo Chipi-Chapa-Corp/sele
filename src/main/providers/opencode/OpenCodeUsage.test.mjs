@@ -69,7 +69,6 @@ test('skips windows without a numeric percent', () => {
 
 test('fetches go usage with bearer auth', async () => {
   const requests = []
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
   const fetchFn = async (url, options) => {
     requests.push({ url, options })
     return {
@@ -91,7 +90,6 @@ test('fetches go usage with bearer auth', async () => {
 })
 
 test('treats missing subscription as no-subscription', async () => {
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
   const fetchFn = async () => ({
     ok: false,
     status: 403,

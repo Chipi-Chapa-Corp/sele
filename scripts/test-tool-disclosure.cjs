@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports -- Runs in Node and Electron. */
 const assert = require('node:assert/strict')
 const path = require('node:path')
 const fs = require('node:fs/promises')

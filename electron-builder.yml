@@ -1,12 +1,16 @@
 appId: com.chipichapa.sele
 productName: Sele
+publish:
+  provider: github
+  owner: Chipi-Chapa-Corp
+  repo: sele
 directories:
   buildResources: build
 files:
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{biome.json,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   # Sele intentionally uses the user's Claude CLI. Do not package the SDK's 295 MB optional CLI.
@@ -29,6 +33,7 @@ mac:
   icon: build/icon.icns
   target:
     - dmg
+    - zip
   category: public.app-category.developer-tools
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist

@@ -6,7 +6,6 @@ import {
 } from './workingStepLazy.ts'
 
 // Test fixtures intentionally omit production-only provider fields.
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 const createWorkingItems = (count) =>
   Array.from({ length: count }, (_, index) => ({
     type: 'message',

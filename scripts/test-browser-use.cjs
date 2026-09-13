@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/explicit-function-return-type -- Node/Electron test harness. */
 const fs = require('node:fs/promises')
 const path = require('node:path')
 if (!process.versions.electron) {

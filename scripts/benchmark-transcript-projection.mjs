@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { performance } from 'node:perf_hooks'
 import {
   ClaudeTranscriptProjection,

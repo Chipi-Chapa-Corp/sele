@@ -58,7 +58,6 @@ const skillContextMessage = {
   parent_tool_use_id: null
 }
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const getSkillTool = (items) => {
   const workingStep = items.find((item) => item.type === 'working')
   assert.ok(workingStep, 'expected a working step')
@@ -137,7 +136,6 @@ const persistedResponse = streamedResponse.message.content.map((block, index) =>
   parent_tool_use_id: null
 }))
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const collectIds = (items) =>
   items.flatMap((item) =>
     item.type === 'working' ? item.items.map((workingItem) => workingItem.id) : [item.id]

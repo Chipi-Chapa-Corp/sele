@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports -- This harness runs in both Node and Electron CommonJS. */
 // Run with Node; the child process verifies the real Electron sandbox and CSP.
 if (!process.versions.electron) {
   const { build } = require('esbuild')
@@ -254,7 +253,6 @@ if (!process.versions.electron) {
         `document.querySelector('#range').value='73';document.querySelector('#range').dispatchEvent(new Event('input'));`
       )
       // Expansion must use the shared resizable dialog without recreating the iframe.
-      // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- CommonJS test helper.
       const assertSeparatedButtons = async (selector) => {
         assert.equal(
           await window.webContents.executeJavaScript(`(() => {
@@ -400,7 +398,6 @@ if (!process.versions.electron) {
       await window.webContents.executeJavaScript(
         `window.reloadGaps=[];window.reloadPaintChecks=0;window.oldHeight=document.querySelector('.visualization__viewport').offsetHeight;window.monitorReload=true;function inspectReload(){if(!monitorReload)return;reloadPaintChecks++;const visible=document.querySelector('.visualization__frame:not(.visualization__frame--pending)');if(!visible || document.querySelector('.visualization__viewport').offsetHeight!==oldHeight)reloadGaps.push('missing frame or changed height');requestAnimationFrame(inspectReload)}requestAnimationFrame(inspectReload);document.querySelector('.visualization__actions button').click();`
       )
-      // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- Plain JavaScript test helper.
       const waitForReload = async () => {
         for (let i = 0; i < 100; i++) {
           if (

@@ -5,7 +5,6 @@ import { buildChatConversationModel } from '../../../renderer/src/chatConversati
 import { getChatItems } from './CodexItemRenderers.ts'
 
 // Test fixtures intentionally omit production-only Codex fields.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const renderFailedWorkingStep = (codexErrorInfo) => {
   const items = getChatItems([
     {
@@ -119,7 +118,6 @@ test('marks an inline follow-up as a steering message', () => {
 })
 
 test('projects the final response both while live and after completion', () => {
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
   const createTurn = (status) => ({
     id: 'answer-turn',
     status,
@@ -245,7 +243,6 @@ test('browser labels use the same active-to-finished display flow as other tools
 })
 
 test('bounded live rendering retains compact actions between tool sequences', () => {
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
   const command = (id) => ({
     id,
     type: 'commandExecution',
@@ -270,7 +267,6 @@ test('bounded live rendering retains compact actions between tool sequences', ()
       command('search-3')
     ]
   }
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
   const flatten = (items) =>
     items.flatMap((item) => (item.type === 'toolGroup' ? item.tools : [item]))
   const full = getChatItems([turn]).find((item) => item.type === 'working')

@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
+// biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import { flushSync } from 'react-dom'
 import type { ProviderSubagent, ProviderUsageOptions } from '../../../shared/provider'
@@ -71,7 +71,6 @@ const areSubagentListsEqual = (first: ProviderSubagent[], second: ProviderSubage
   first.every((subagent, index) => areSubagentSummariesEqual(subagent, second[index]))
 
 // Return shape is inferred from the synchronized selection declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependencies) {
   const {
     selectedChat,

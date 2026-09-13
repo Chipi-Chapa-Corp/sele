@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type -- This script is shipped as plain JavaScript to the sandbox. */
 /* Sele visualization host. Runs only in an opaque-origin, sandboxed frame. */
 ;(() => {
   const send = (type, value = {}) => parent.postMessage({ type, ...value }, '*')

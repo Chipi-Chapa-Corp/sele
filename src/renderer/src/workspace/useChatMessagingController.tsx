@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
+// biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useCallback } from 'react'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
@@ -53,7 +53,6 @@ import {
 import type { ChatMessagingControllerDependencies } from './featureControllerDependencies'
 
 // Return shape is inferred from the controller declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useChatMessagingController(dependencies: ChatMessagingControllerDependencies) {
   const {
     messageBoxSelection,

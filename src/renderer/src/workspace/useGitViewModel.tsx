@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
+// biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { type CSSProperties, useEffect, useMemo } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { isChatCommitProjectLocked } from '../chatCommitPolicy'
@@ -15,7 +15,6 @@ import { getChangesEmptyMessage, getChatCwdGroupKey } from './chatControllerUtil
 import type { GitViewModelDependencies } from './controllerDependencies'
 
 // Return shape is inferred from the view-model declarations below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useGitViewModel(dependencies: GitViewModelDependencies) {
   const {
     commitInput,

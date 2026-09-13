@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps -- controller refs and state setters are stable inputs */
+// biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useEffect, useMemo } from 'react'
 import type { FileEditorTarget } from '../components/FileEditorDialog'
 import {
@@ -20,7 +20,6 @@ import { isFileTreeScope, isGitChangesScope } from './chatControllerUtils'
 import type { ChangesDataDependencies } from './viewModelDependencies'
 
 // Return shape is inferred from the derived change data below.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function useChangesData(dependencies: ChangesDataDependencies) {
   const {
     changeSource,

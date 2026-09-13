@@ -46,7 +46,7 @@ const containerToolPriority = {
 } satisfies Record<AppContainerTool, number>
 
 // ANSI output uses ESC control sequences; strip them before parsing CLI tables.
-// eslint-disable-next-line no-control-regex
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Strip terminal control sequences.
 const ansiEscapePattern = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
 
 const stripAnsi = (value: string): string => value.replace(ansiEscapePattern, '')

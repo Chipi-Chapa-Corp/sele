@@ -105,6 +105,21 @@ npm run typecheck
 npm run build
 ```
 
+Linting uses [Biome](https://biomejs.dev/guides/migrate-eslint-prettier/) with rules migrated
+from the previous ESLint configuration. `npm run lint:fix` applies safe lint fixes;
+`npm run format` formats supported source files using two spaces, single quotes,
+optional semicolons, and a 100-column line width. Formatting is separate from linting.
+Markdown and YAML are no longer formatted by this command. Install the recommended
+Biome VS Code extension for editor diagnostics and formatting.
+
+The migration preserves the named-export rule and existing hook-dependency exemptions.
+Biome does not cover every previous rule (including React Compiler/Refresh checks and
+explicit function return types). Three migrated rules are disabled because their behavior
+differs: empty blocks also flags intentional no-op functions and catches; prototype-builtins
+flags existing `Object.prototype.hasOwnProperty.call` checks; restricted-name shadowing
+also flags local `escape` and `hasOwnProperty` helpers. TypeScript checks remain separate
+and required. Existing hook-dependency warnings are reported without failing lint.
+
 ## License
 
 [GNU General Public License v3.0 only](LICENSE)

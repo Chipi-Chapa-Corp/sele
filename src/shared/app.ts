@@ -1,3 +1,4 @@
+import type { AppUpdateState, AppUpdateDismissal } from './appUpdate'
 import type { ProviderId } from './provider'
 
 export type FolderSelectionOptions = {
@@ -501,6 +502,10 @@ export type AppGitPullResult = {
 }
 
 export type AppApi = {
+  getAppUpdate: () => Promise<AppUpdateState>
+  dismissAppUpdate: (mode: AppUpdateDismissal) => Promise<void>
+  installAppUpdate: () => Promise<void>
+  onAppUpdateChanged: (listener: (state: AppUpdateState) => void) => () => void
   exportDiagnosticLog: () => Promise<string | null>
   getColorScheme: () => Promise<AppColorScheme>
   getInstalledFontFamilies: () => Promise<string[]>
@@ -562,6 +567,10 @@ export type AppApi = {
 }
 
 export const appIpcChannels = {
+  getAppUpdate: 'app:get-update',
+  dismissAppUpdate: 'app:dismiss-update',
+  installAppUpdate: 'app:install-update',
+  appUpdateChanged: 'app:update-changed',
   exportDiagnosticLog: 'app:export-diagnostic-log',
   getColorScheme: 'app:get-color-scheme',
   getInstalledFontFamilies: 'app:get-installed-font-families',

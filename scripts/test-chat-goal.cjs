@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/explicit-function-return-type -- Node/Electron UI harness. */
 const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
