@@ -774,17 +774,27 @@ export type ProviderContextCompaction = {
   id: string
 }
 
+export type ProviderGoalContinuation = {
+  type: 'goalContinuation'
+  id: string
+}
+
 export type ProviderTimelineAnchor = {
   type: 'timelineAnchor'
   id: string
 }
 
-export type ProviderChatItem =
+export type ProviderChatItem = (
   | ProviderMessage
   | ProviderWorkingStep
   | ProviderPendingMessage
   | ProviderContextCompaction
+  | ProviderGoalContinuation
   | ProviderTimelineAnchor
+) & {
+  /** Marks a provider turn that starts without a user message, such as a goal continuation. */
+  startsTurn?: boolean
+}
 
 export type ProviderSubagentStatus =
   'pending' | 'running' | 'idle' | 'completed' | 'failed' | 'stopped' | 'unknown'

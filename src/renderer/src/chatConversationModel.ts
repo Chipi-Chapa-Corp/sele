@@ -1,5 +1,5 @@
 import type { ProviderChatItem, ProviderMessage, ProviderWorkingStep } from '../../shared/provider'
-import type { ProviderChatTurn } from '../../shared/chatTurns'
+import { startsProviderChatTurn, type ProviderChatTurn } from '../../shared/chatTurns.ts'
 
 export type FollowingWorkingStep = {
   hasNextWorkingStep: boolean
@@ -32,9 +32,6 @@ type ChatItemsChange = {
 const chatItemsChanges = new WeakMap<readonly ProviderChatItem[], ChatItemsChange>()
 const modelsByItems = new WeakMap<readonly ProviderChatItem[], ChatConversationModel>()
 const modelInternals = new WeakMap<ChatConversationModel, ChatConversationModelInternals>()
-
-const startsChatTurn = (item: ProviderChatItem): boolean =>
-  item.type === 'pendingMessage' || (item.type === 'message' && item.role === 'user')
 
 export const getConversationTailWorkingStep = (
   items: readonly ProviderChatItem[]
@@ -82,9 +79,9 @@ const buildFullChatConversationModel = (
   }
 
   items.forEach((item, itemIndex) => {
-    if (startsChatTurn(item)) {
+    if (startsProviderChatTurn(item)) {
       if (currentTurnItems.length > 0) finishTurn()
-      currentTurnUserMessage = item.type === 'message' ? item : null
+      currentTurnUserMessage = item.type === 'message' && item.role === 'user' ? item : null
     }
     currentTurnItems.push(item)
     itemIndexesById.set(item.id, itemIndex)
@@ -176,7 +173,7 @@ const getIncrementalRebuildStart = (
   }
 
   const firstNewItem = items[changedStartIndex]
-  if (firstNewItem && !startsChatTurn(firstNewItem) && previousModel.turns.length > 0) {
+  if (firstNewItem && !startsProviderChatTurn(firstNewItem) && previousModel.turns.length > 0) {
     const turnIndex = previousModel.turns.length - 1
     const firstTurnItem = previousModel.turns[turnIndex].items[0]
     const itemIndex = firstTurnItem
@@ -275,9 +272,9 @@ const buildIncrementalChatConversationModel = (
   }
 
   newSuffix.forEach((item, suffixIndex) => {
-    if (startsChatTurn(item)) {
+    if (startsProviderChatTurn(item)) {
       if (currentTurnItems.length > 0) finishTurn()
-      currentTurnUserMessage = item.type === 'message' ? item : null
+      currentTurnUserMessage = item.type === 'message' && item.role === 'user' ? item : null
     }
     currentTurnItems.push(item)
     const itemIndex = rebuildStart.itemIndex + suffixIndex

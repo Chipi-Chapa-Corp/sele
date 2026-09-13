@@ -10,8 +10,10 @@ export type ProviderChatTurn = {
   items: ProviderChatItem[]
 }
 
-const startsChatTurn = (item: ProviderChatItem): boolean =>
-  item.type === 'pendingMessage' || (item.type === 'message' && item.role === 'user')
+export const startsProviderChatTurn = (item: ProviderChatItem): boolean =>
+  item.startsTurn === true ||
+  item.type === 'pendingMessage' ||
+  (item.type === 'message' && item.role === 'user')
 
 /** A transcript is an ordered set. Duplicate IDs are a protocol error, never renderable data. */
 export const assertUniqueProviderChatItemIds = (items: readonly ProviderChatItem[]): void => {
@@ -29,7 +31,7 @@ export const getProviderChatTurnStartItemIndexes = (items: ProviderChatItem[]): 
 
   const indexes = [0]
   for (let index = 1; index < items.length; index += 1) {
-    if (startsChatTurn(items[index])) indexes.push(index)
+    if (startsProviderChatTurn(items[index])) indexes.push(index)
   }
   return indexes
 }
@@ -65,7 +67,7 @@ export const getProviderChatTurns = (items: ProviderChatItem[]): ProviderChatTur
   }
 
   for (const item of items) {
-    if (startsChatTurn(item) && turnItems.length > 0) finishTurn()
+    if (startsProviderChatTurn(item) && turnItems.length > 0) finishTurn()
     turnItems.push(item)
   }
   finishTurn()

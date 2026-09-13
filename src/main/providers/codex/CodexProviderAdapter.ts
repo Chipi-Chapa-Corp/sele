@@ -1,3 +1,4 @@
+import { CodexGoalPrompts, getCodexGoalPrompt } from './CodexGoalPrompts.ts'
 import {
   markTranscriptRecordsChanged,
   getUnchangedTranscriptPrefix,
@@ -166,6 +167,7 @@ type CodexThreadStatus =
     }
 
 type CodexThread = {
+  path?: string | null
   id: string
   name?: string | null
   historyMode?: string
@@ -1231,6 +1233,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private threads = new Map<string, CodexThread>()
   private threadRevisions = new Map<string, number>()
   private externallyOwnedThreadIds = new Set<string>()
+  private goalPrompts = new CodexGoalPrompts()
   private agentResponseOverlays = new Map<string, Map<string, CodexAgentResponseOverlay>>()
   private paginatedTurnCatalogs = new Map<string, { threadUpdatedAt: number; turns: CodexTurn[] }>()
   private pendingTurnIds = new Map<string, string>()
@@ -2210,6 +2213,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.cacheThread(thread)
     }
 
+    await this.loadGoalPrompts(thread)
     return this.createChatDetail(cacheLatest ? (this.threads.get(chatId) ?? thread) : thread, {
       cursorPendingMessages: pendingMessages
     })
@@ -2334,6 +2338,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       pendingEndIndex
     } = refreshedWindow.result
     const selectedTurns = await this.attachSubmittedUserMessages(chatId, rawSelectedTurns)
+    await this.loadGoalPrompts({ ...threadMetadata, turns: selectedTurns })
     const [name, cwd] = await Promise.all([
       this.resolveThreadName(threadMetadata),
       this.resolveThreadCwd(threadMetadata)
@@ -2420,6 +2425,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         turnCatalog.length
       )
     ])
+    await this.loadGoalPrompts({ ...response.thread, turns })
     const thread: CodexThread = {
       ...response.thread,
       name,
@@ -3242,6 +3248,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.chatUpdatedTimers.forEach((timer) => clearTimeout(timer))
     this.chatUpdatedTimers.clear()
     this.transcriptProjection.clear()
+    this.goalPrompts.clear()
     this.latestThreadRefreshes.clear()
     this.completionCoordinator.clear()
     this.activeOneShotGenerations.clear()
@@ -4116,6 +4123,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return thread
   }
 
+  private loadGoalPrompts = (thread: CodexThread): Promise<boolean> =>
+    this.goalPrompts.load(thread, async (path) => {
+      const response = await this.client.request<{ dataBase64: string }>('fs/readFile', { path })
+      return Buffer.from(response.dataBase64, 'base64').toString('utf8')
+    })
+
   private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
     const thread = this.threads.get(threadId)
     if (!thread || isCodexSubagentThread(thread)) return
@@ -4126,6 +4139,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
 
     this.chatUpdatedListeners.forEach((listener) => listener(detail, metadata))
+    // Enrichment cannot delay live transcript delivery. Publish once more if a goal prompt arrives.
+    void this.loadGoalPrompts(thread).then((changed) => {
+      if (changed && this.threads.has(threadId)) this.scheduleChatUpdated(threadId)
+    })
   }
 
   private scheduleChatUpdated = (threadId: string): void => {
@@ -4727,9 +4744,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     thread.turns
       .filter((turn) => turn.status !== 'queued')
       .map((turn) =>
-        projectCodexAgentResponseOverlay(
-          turn,
-          this.agentResponseOverlays.get(thread.id)?.get(turn.id)
+        this.goalPrompts.project(
+          thread.id,
+          projectCodexAgentResponseOverlay(
+            turn,
+            this.agentResponseOverlays.get(thread.id)?.get(turn.id)
+          )
         )
       )
 
@@ -5507,8 +5527,19 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private handleRawResponseItemCompleted = (params: RawResponseItemParams): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
+    if (!threadId || !turnId) return
+    const goalPrompt = getCodexGoalPrompt(params.item)
+    if (goalPrompt) {
+      if (
+        !this.isRolledBackTurn(threadId, turnId) &&
+        this.goalPrompts.set(threadId, turnId, goalPrompt)
+      ) {
+        this.scheduleChatUpdated(threadId)
+      }
+      return
+    }
     const message = getRawResponseMessage(params.item)
-    if (!threadId || !turnId || !message) return
+    if (!message) return
 
     const turn = this.threads.get(threadId)?.turns.find((candidate) => candidate.id === turnId)
     if (!turn || turn.items.some((item) => item.type === 'agentMessage')) return

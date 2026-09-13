@@ -2326,10 +2326,14 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
 
   if (item.type === 'timelineAnchor') return null
 
-  if (item.type === 'contextCompaction') {
+  if (item.type === 'contextCompaction' || item.type === 'goalContinuation') {
     return (
       <div className="chat-detail__context-compaction">
-        <span>Context Compacted Automatically</span>
+        <span>
+          {item.type === 'goalContinuation'
+            ? 'Goal continuation'
+            : 'Context Compacted Automatically'}
+        </span>
       </div>
     )
   }

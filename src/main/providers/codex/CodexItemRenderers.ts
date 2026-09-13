@@ -1,3 +1,4 @@
+import type { CodexGoalPrompt } from './CodexGoalPrompts.ts'
 import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
 import { getBrowserToolLabel } from './CodexBrowserToolPresentation.ts'
 import type {
@@ -69,6 +70,7 @@ export type CodexThreadItem = {
 }
 
 export type CodexTurn = {
+  goalPrompt?: CodexGoalPrompt
   id: string
   local?: boolean
   status?: string | null
@@ -1787,6 +1789,7 @@ const renderChatItems = (
       cached.turn.status === turn.status &&
       cached.turn.error === turn.error &&
       cached.turn.local === turn.local &&
+      cached.turn.goalPrompt === turn.goalPrompt &&
       prefix >= cached.checkpoint.index
         ? cached.checkpoint
         : null
@@ -1825,6 +1828,12 @@ const renderChatItems = (
         : null
     const workingStatus = getWorkingStatus(turn, projection ? scan.aborted : undefined)
     if (resume) chatItems = resume.chatItems.slice()
+    else if (turn.goalPrompt) {
+      chatItems.push({
+        type: 'goalContinuation',
+        id: `${turn.id}:${turn.goalPrompt.id}`
+      })
+    }
     let finalMessage: ProviderMessage | null = resume?.finalMessage ?? null
     const workingItems: ProviderWorkingItem[] = resume?.workingItems.slice() ?? []
     const pendingTimelineAnchors: ProviderChatItem[] = resume?.pendingTimelineAnchors.slice() ?? []
@@ -2044,6 +2053,12 @@ const renderChatItems = (
       })
   }
 
+  // Automatic goal turns have no user message to establish their paging boundary. Mark the
+  // first rendered item on every snapshot, including when an empty live turn gains content.
+  const firstItem = chatItems[0]
+  if (firstItem && !(firstItem.type === 'message' && firstItem.role === 'user')) {
+    chatItems[0] = { ...firstItem, startsTurn: true }
+  }
   return chatItems
 }
 

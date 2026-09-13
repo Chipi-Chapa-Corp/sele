@@ -3,6 +3,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CodexTranscriptProjection, getChatItems } from './CodexItemRenderers.ts'
+import { getProviderChatTurns } from '../../../shared/chatTurns.ts'
+import { mergeChatDetailTurnPage } from '../../../renderer/src/chatDetailWindow.ts'
 import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
 
 const user = (id) => ({ type: 'userMessage', id, content: [{ type: 'text', text: id }] })
@@ -118,4 +120,36 @@ test('Codex batched updates and late replacements match the reference through a 
       compare(projection, turn)
     }
   }
+})
+
+test('goal continuations retain turn boundaries when history pages overlap', () => {
+  const turns = [
+    { id: 'prompt', status: 'completed', items: [user('u'), tool('t')] },
+    { id: 'goal-1', status: 'completed', items: [tool('t1'), answer('a1', 'Continuing')] },
+    { id: 'goal-2', status: 'completed', items: [tool('t2'), answer('a2', 'Done')] }
+  ]
+  const items = getChatItems(turns)
+  const merged = mergeChatDetailTurnPage(
+    { id: 'goal-chat', items, itemsStartTurnIndex: 0, turnCount: 3 },
+    { items: getChatItems(turns.slice(1)), startIndex: 1, totalCount: 3 },
+    { startIndex: 0, endIndex: 3, totalCount: 3 }
+  )
+  assert.deepEqual(merged.items, items)
+  assert.equal(getProviderChatTurns(items).length, 3)
+})
+
+test('goal boundaries survive live checkpoints and final-only continuation turns', () => {
+  const projection = new CodexTranscriptProjection()
+  let turn = { id: 'turn', status: 'inProgress', items: [] }
+  compare(projection, turn)
+  for (const item of [tool('t'), answer('a', 'Continuing', 'commentary'), tool('t2')]) {
+    turn = update(turn, turn.items.length, item)
+    compare(projection, turn)
+    assert.equal(getChatItems([turn], null, options, projection)[0].startsTurn, true)
+  }
+  const finalOnly = getChatItems([
+    { id: 'final-only', status: 'completed', items: [answer('a', 'Done', 'final_answer')] }
+  ])
+  assert.equal(finalOnly[0].type, 'message')
+  assert.equal(finalOnly[0].startsTurn, true)
 })

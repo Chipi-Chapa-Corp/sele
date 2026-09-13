@@ -65,3 +65,25 @@ test('keeps stopped and failed turn messages available for retry', () => {
   assert.equal(model.stoppedTurnRetryMessages.get(stoppedStep.id), stoppedMessage)
   assert.equal(model.stoppedTurnRetryMessages.get(failedStep.id), failedMessage)
 })
+
+test('incremental goal continuations start turns without inheriting the previous retry prompt', () => {
+  const initialItems = [message('user', 'user', 'Start a goal')]
+  const initialModel = buildChatConversationModel(initialItems)
+  const goalStep = {
+    type: 'working',
+    id: 'goal:working',
+    status: 'stopped',
+    items: [],
+    startsTurn: true
+  }
+  const nextItems = [...initialItems, goalStep]
+  markChatItemsChanged(nextItems, initialItems.length, initialItems)
+  const incremental = buildChatConversationModel(nextItems, initialModel)
+  const full = buildChatConversationModel([...nextItems])
+  assert.deepEqual(incremental, full)
+  assert.deepEqual(
+    incremental.turns.map((turn) => turn.id),
+    ['user', 'goal:working']
+  )
+  assert.equal(incremental.stoppedTurnRetryMessages.has(goalStep.id), false)
+})
