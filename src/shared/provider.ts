@@ -816,6 +816,17 @@ export type ProviderSubagentDetail = ProviderSubagent & {
   items: ProviderChatItem[]
 }
 
+export type ProviderChatGoal = {
+  threadId: string
+  objective: string
+  status: 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete'
+  tokenBudget: number | null
+  tokensUsed: number
+  timeUsedSeconds: number
+  createdAt: number
+  updatedAt: number
+}
+
 export type ProviderChatDetail = {
   id: string
   /** Monotonic per-chat snapshot revision used to reject out-of-order delivery. */
@@ -841,6 +852,7 @@ export type ProviderChatDetail = {
   pendingUserInput: ProviderPendingUserInput | null
   contextUsage: ProviderChatContextUsage | null
   subagents?: ProviderSubagent[]
+  goal?: ProviderChatGoal | null
   items: ProviderChatItem[]
   itemsStartTurnIndex?: number
   turnCount?: number
@@ -1067,6 +1079,11 @@ export type ProviderApi = {
     subagentId: string
   ) => Promise<ProviderSubagentDetail>
   cancelSubagent: (providerId: ProviderId, chatId: string, subagentId: string) => Promise<void>
+  setChatGoal: (
+    providerId: ProviderId,
+    chatId: string,
+    objective: string | null
+  ) => Promise<ProviderChatGoal | null>
   setChatTitle: (
     providerId: ProviderId,
     chatId: string,
@@ -1273,6 +1290,7 @@ export const providerIpcChannels = {
   getChatTurnPage: 'provider:get-chat-turn-page',
   getChatTurnCursorPage: 'provider:get-chat-turn-cursor-page',
   getChatTurnPageForItem: 'provider:get-chat-turn-page-for-item',
+  setChatGoal: 'provider:set-chat-goal',
   setChatTitle: 'provider:set-chat-title',
   generateOneShot: 'provider:generate-one-shot',
   cancelOneShot: 'provider:cancel-one-shot',

@@ -594,6 +594,12 @@ export const providerApi: ProviderApi = {
       container: metadata.container
     })
   },
+  setChatGoal: async (providerId, chatId, objective) => {
+    const adapter = adapters[providerId]
+    if (!adapter.setChatGoal) throw new Error('Goals are not supported by this provider')
+    const metadata = await getChatMetadata(chatId)
+    return adapter.setChatGoal(chatId, objective, { container: metadata.container })
+  },
   setChatTitle: (providerId, chatId, title) =>
     adapters[providerId]
       .setChatTitle(chatId, title)

@@ -1569,6 +1569,19 @@ export const registerProviderIpc = (): void => {
   )
 
   handleLoggedIpc(
+    providerIpcChannels.setChatGoal,
+    (_, providerId: unknown, chatId: unknown, objective: unknown) => {
+      if (objective !== null && typeof objective !== 'string')
+        throw new Error('Invalid goal objective')
+      return providerApi.setChatGoal(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        objective
+      )
+    }
+  )
+
+  handleLoggedIpc(
     providerIpcChannels.setChatTitle,
     (_, providerId: unknown, chatId: unknown, title: unknown) =>
       getRendererChatDetail(() =>

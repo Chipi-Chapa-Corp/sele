@@ -240,6 +240,8 @@ const providerApi: ProviderRendererApi = {
       itemId,
       limit
     ),
+  setChatGoal: (providerId, chatId, objective) =>
+    ipcRenderer.invoke(providerIpcChannels.setChatGoal, providerId, chatId, objective),
   setChatTitle: (providerId, chatId, title) =>
     ipcRenderer.invoke(providerIpcChannels.setChatTitle, providerId, chatId, title),
   generateOneShot: (providerId, message, options) =>

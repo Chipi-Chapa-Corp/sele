@@ -1,3 +1,4 @@
+import { CodexGoals } from './CodexGoals.ts'
 import { CodexGoalPrompts, getCodexGoalPrompt } from './CodexGoalPrompts.ts'
 import {
   markTranscriptRecordsChanged,
@@ -25,6 +26,7 @@ import type {
   ProviderChatListOptions,
   ProviderChatPage,
   ProviderChatDetail,
+  ProviderChatGoal,
   ProviderChatStatus,
   ProviderCapabilities,
   ProviderLoginResult,
@@ -1233,6 +1235,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private threads = new Map<string, CodexThread>()
   private threadRevisions = new Map<string, number>()
   private externallyOwnedThreadIds = new Set<string>()
+  private goals = new CodexGoals()
   private goalPrompts = new CodexGoalPrompts()
   private agentResponseOverlays = new Map<string, Map<string, CodexAgentResponseOverlay>>()
   private paginatedTurnCatalogs = new Map<string, { threadUpdatedAt: number; turns: CodexTurn[] }>()
@@ -2213,7 +2216,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.cacheThread(thread)
     }
 
-    await this.loadGoalPrompts(thread)
+    await Promise.all([
+      this.loadGoalPrompts(thread),
+      this.goals.read(thread.id, (method, params) => this.client.request(method, params))
+    ])
     return this.createChatDetail(cacheLatest ? (this.threads.get(chatId) ?? thread) : thread, {
       cursorPendingMessages: pendingMessages
     })
@@ -2338,7 +2344,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       pendingEndIndex
     } = refreshedWindow.result
     const selectedTurns = await this.attachSubmittedUserMessages(chatId, rawSelectedTurns)
-    await this.loadGoalPrompts({ ...threadMetadata, turns: selectedTurns })
+    await Promise.all([
+      this.loadGoalPrompts({ ...threadMetadata, turns: selectedTurns }),
+      this.goals.read(chatId, (method, params) => this.client.request(method, params))
+    ])
     const [name, cwd] = await Promise.all([
       this.resolveThreadName(threadMetadata),
       this.resolveThreadCwd(threadMetadata)
@@ -2480,6 +2489,19 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     await this.interruptTurnWithClient(this.client, subagentId, activeTurnId)
   }
+
+  setChatGoal = (
+    chatId: string,
+    objective: string | null,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatGoal | null> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      const goal = await this.goals.save(chatId, objective, (method, params) =>
+        this.client.request(method, params)
+      )
+      this.emitChatUpdated(chatId)
+      return goal
+    })
 
   setChatTitle = (chatId: string, title: string): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId), async () => {
@@ -3249,6 +3271,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.chatUpdatedTimers.clear()
     this.transcriptProjection.clear()
     this.goalPrompts.clear()
+    this.goals.clear()
     this.latestThreadRefreshes.clear()
     this.completionCoordinator.clear()
     this.activeOneShotGenerations.clear()
@@ -3659,6 +3682,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       pendingUserInput: null,
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
       subagents: getCodexTurnSubagents(renderableTurns, thread.id),
+      goal: this.goals.get(thread.id),
       ...(itemsStartTurnIndex == null ? {} : { itemsStartTurnIndex, turnCount }),
       ...(thread.turnPagination ? { turnPagination: thread.turnPagination } : {}),
       items: [
@@ -5658,6 +5682,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private handleNotification = (notification: RpcNotification): void => {
     const params = notification.params
     if (!params || typeof params !== 'object') return
+
+    if (
+      notification.method === 'thread/goal/updated' ||
+      notification.method === 'thread/goal/cleared'
+    ) {
+      const payload = params as { threadId?: string; goal?: ProviderChatGoal }
+      if (!payload.threadId) return
+      if (notification.method === 'thread/goal/updated' && !payload.goal) return
+      this.goals.update(payload.threadId, payload.goal ?? null)
+      this.scheduleChatUpdated(payload.threadId)
+      return
+    }
 
     if (notification.method === 'account/login/completed') {
       const loginId = getStringValue((params as Record<string, unknown>).loginId)

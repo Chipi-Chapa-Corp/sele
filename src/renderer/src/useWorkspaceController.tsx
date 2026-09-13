@@ -5813,9 +5813,17 @@ export const useWorkspaceController = () => {
       visible: Boolean(!selectedChat && newChatOpen)
     },
     conversationPlan: {
-      visible: Boolean(!activeSubagentChatView && !effectiveAppSettings.chat.hidePlans),
+      visible: !activeSubagentChatView,
       selectedChatKey,
-      messageBoxPlan
+      messageBoxPlan: effectiveAppSettings.chat.hidePlans ? null : messageBoxPlan,
+      goal:
+        selectedChat?.providerId === 'codex' && chatDetail?.id === selectedChat.id
+          ? (chatDetail.goal ?? null)
+          : null,
+      onSaveGoalObjective: async (objective: string | null): Promise<void> => {
+        if (!selectedChat) return
+        await providerApi.setChatGoal(selectedChat.providerId, selectedChat.id, objective)
+      }
     }
   }
 }

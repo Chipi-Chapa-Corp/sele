@@ -2,6 +2,7 @@ import type {
   ProviderChatListOptions,
   ProviderChatPage,
   ProviderChatDetail,
+  ProviderChatGoal,
   ProviderId,
   ProviderLoginResult,
   ProviderApprovalDecision,
@@ -120,6 +121,11 @@ export type ProviderAdapter = {
     subagentId: string,
     options?: { container?: AppContainerTarget | null }
   ) => Promise<void>
+  setChatGoal?: (
+    chatId: string,
+    objective: string | null,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<ProviderChatGoal | null>
   setChatTitle: (chatId: string, title: string) => Promise<ProviderChatDetail>
   generateOneShot: (message: string, options?: ProviderOneShotOptions) => Promise<string>
   cancelOneShot: (generationId: string) => Promise<void>

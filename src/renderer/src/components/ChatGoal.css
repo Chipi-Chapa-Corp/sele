@@ -1,0 +1,67 @@
+.chat-goal {
+  margin-bottom: 0.4rem;
+}
+
+.chat-goal__header {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-right: 0.45rem;
+}
+
+.chat-goal__toggle {
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.chat-goal__icon {
+  width: 1rem;
+  height: 1rem;
+  color: var(--quiet);
+}
+
+.chat-goal__drawer {
+  border-top: 0.0625rem solid var(--panel-border);
+  padding-top: 0.75rem;
+}
+
+.chat-goal__objective {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 6rem;
+  resize: vertical;
+  padding: 0.6rem;
+  border: 0.0625rem solid var(--panel-border);
+  border-radius: 0.5rem;
+  background: var(--composer-bg);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.chat-goal__objective:focus-visible {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.125rem;
+}
+
+.chat-goal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.chat-goal__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-goal__error {
+  margin: 0;
+  padding: 0.5rem 0.8rem;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
