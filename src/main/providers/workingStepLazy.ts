@@ -78,7 +78,19 @@ const getToolPayloadCharacterCount = (tool: ProviderWorkingTool): number => {
   )
 }
 
+// A projection can retain only a group's tail while preserving the full source budget decision.
+// Keep this metadata local to the main process; serialized renderer payloads count retained data.
+const sourcePayloadCharacterCounts = new WeakMap<ProviderWorkingItem, number>()
+export const setWorkingItemSourcePayloadCharacterCount = (
+  item: ProviderWorkingItem,
+  count: number
+): void => {
+  sourcePayloadCharacterCounts.set(item, count)
+}
+
 export const getWorkingItemPayloadCharacterCount = (item: ProviderWorkingItem): number => {
+  const sourceCount = sourcePayloadCharacterCounts.get(item)
+  if (sourceCount != null) return sourceCount
   if (item.type === 'message') return item.content.length
   if (item.type === 'toolGroup') {
     return item.tools.reduce(
@@ -347,7 +359,8 @@ export const groupWorkingItemsForRenderer = (
   const flushTools = (): void => {
     if (pendingTools.length === 0) return
     groupedItems.push(
-      pendingTools.length === 1 && pendingTools[0]?.type === 'tool'
+      pendingTools.length === 1 &&
+        (pendingTools[0]?.type === 'tool' || sourcePayloadCharacterCounts.has(pendingTools[0]))
         ? pendingTools[0]
         : createToolSequence(pendingTools)
     )

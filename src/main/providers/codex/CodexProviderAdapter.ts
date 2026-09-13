@@ -1,3 +1,9 @@
+import {
+  markTranscriptRecordsChanged,
+  getUnchangedTranscriptPrefix,
+  indexTranscriptRecords,
+  updateIndexedTranscriptRecord
+} from '../transcriptProjection/recordChanges.ts'
 import { isBrowserPermissionRequest } from './CodexBrowserPermissions'
 import { codexFeatureSchemas } from './CodexFeatureSchemas'
 import { updateConfigFeatureValue } from './CodexConfigValues'
@@ -77,6 +83,7 @@ import {
 import { CodexAppServerClient, type RpcNotification, type RpcRequest } from './CodexAppServerClient'
 import {
   createCodexFileAttachmentInput,
+  CodexTranscriptProjection,
   getChatItems,
   hasCompletedCodexFinalAnswer,
   type CodexThreadItem,
@@ -1217,6 +1224,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private clients = new Map<string, CodexAppServerClient>()
   private clientContainerContext = new AsyncLocalStorage<AppContainerTarget | null>()
   private threadContainers = new Map<string, AppContainerTarget | null>()
+  private transcriptProjection = new CodexTranscriptProjection()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
@@ -3233,6 +3241,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   dispose = (): void => {
     this.chatUpdatedTimers.forEach((timer) => clearTimeout(timer))
     this.chatUpdatedTimers.clear()
+    this.transcriptProjection.clear()
     this.latestThreadRefreshes.clear()
     this.completionCoordinator.clear()
     this.activeOneShotGenerations.clear()
@@ -3646,10 +3655,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...(itemsStartTurnIndex == null ? {} : { itemsStartTurnIndex, turnCount }),
       ...(thread.turnPagination ? { turnPagination: thread.turnPagination } : {}),
       items: [
-        ...getChatItems(renderableTurns, thread.createdAt, {
-          workingItemTailLimit: options.workingItemTailLimit,
-          workingItemTailTurnId: renderableTurns.at(-1)?.id
-        }),
+        ...getChatItems(
+          renderableTurns,
+          thread.createdAt,
+          {
+            workingItemTailLimit: options.workingItemTailLimit,
+            workingItemTailTurnId: renderableTurns.at(-1)?.id
+          },
+          options.workingItemTailLimit == null ? undefined : this.transcriptProjection
+        ),
         ...pendingMessages
       ]
     }
@@ -3657,9 +3671,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private cacheThread = (thread: CodexThread): void => {
     assertUniqueCodexSnapshotIds(thread.turns, 'thread turns')
-    thread.turns.forEach((turn) =>
-      assertUniqueCodexSnapshotIds(turn.items, `turn ${turn.id} items`)
-    )
+    // Indexed live updates preserve uniqueness; validate unknown snapshots once on ingestion.
+    thread.turns.forEach((turn) => indexTranscriptRecords(turn.items))
     this.threads.set(thread.id, thread)
     this.bumpThreadRevision(thread.id)
     const overlays = this.agentResponseOverlays.get(thread.id)
@@ -5230,23 +5243,19 @@ export class CodexProviderAdapter implements ProviderAdapter {
     itemId: string,
     update: (item: CodexThreadItem | null) => CodexThreadItem | null
   ): void => {
-    this.updateTurnItems(threadId, turnId, (items) => {
-      const itemIndex = items.findIndex((candidate) => candidate.id === itemId)
-      const nextItem = update(itemIndex >= 0 ? items[itemIndex] : null)
-      if (!nextItem) return items
-
-      if (itemIndex < 0) return [...items, nextItem]
-
-      const nextItems = [...items]
-      nextItems[itemIndex] = nextItem
-      return nextItems
-    })
+    this.updateTurnItems(
+      threadId,
+      turnId,
+      (items) => updateIndexedTranscriptRecord(items, itemId, update),
+      true
+    )
   }
 
   private updateTurnItems = (
     threadId: string,
     turnId: string,
-    update: (items: CodexThreadItem[]) => CodexThreadItem[]
+    update: (items: CodexThreadItem[]) => CodexThreadItem[],
+    indexedUpdate = false
   ): CodexThread | null => {
     if (this.isRolledBackTurn(threadId, turnId)) return null
 
@@ -5271,10 +5280,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
             items: []
           }
 
-    turns[turnIndex >= 0 ? turnIndex : turns.length] = {
-      ...turn,
-      items: this.reconcileTurnItems(update(turn.items))
+    const updatedItems = update(turn.items)
+    if (updatedItems === turn.items) return currentThread
+    const nextItems = indexedUpdate ? updatedItems : this.reconcileTurnItems(updatedItems)
+    let unchangedPrefix = indexedUpdate ? getUnchangedTranscriptPrefix(turn.items, nextItems) : 0
+    if (!indexedUpdate) {
+      while (
+        unchangedPrefix < turn.items.length &&
+        turn.items[unchangedPrefix] === nextItems[unchangedPrefix]
+      ) {
+        unchangedPrefix += 1
+      }
     }
+    markTranscriptRecordsChanged(turn.items, nextItems, unchangedPrefix)
+    turns[turnIndex >= 0 ? turnIndex : turns.length] = { ...turn, items: nextItems }
 
     return this.commitThreadAction(threadId, { type: 'turnsReplaced', turns })
   }

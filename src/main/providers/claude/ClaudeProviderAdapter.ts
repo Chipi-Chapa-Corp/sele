@@ -74,6 +74,7 @@ import {
 } from '../providerResources'
 import { getClaudeExecutable } from './ClaudeExecutable'
 import {
+  ClaudeTranscriptProjection,
   isClaudeInternalUserMessage,
   renderClaudeChatItems,
   resolveClaudeAssistantMessageUuid,
@@ -608,6 +609,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private states = new Map<string, ClaudeSessionState>()
   private sessionContainers = new Map<string, StoredClaudeContainer | null>()
+  private transcriptProjections = new Map<ClaudeSessionState, ClaudeTranscriptProjection>()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
@@ -1270,6 +1272,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       void this.closeStateQuery(state)
     })
     this.states.clear()
+    this.transcriptProjections.clear()
     this.oneShotGenerations.forEach((generation) => {
       generation.input?.close()
       generation.query?.close()
@@ -1998,17 +2001,27 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state: ClaudeSessionState,
     message: ClaudeTranscriptMessage
   ): void => {
-    state.messages = reconcileProviderRecords(state.messages, [message], {
-      authoritative: false,
-      getId: (candidate) => candidate.uuid,
-      merge: (previous, next) => ({
-        ...previous,
-        ...next,
-        attachments: next.attachments ?? previous.attachments,
-        kind: next.kind ?? previous.kind,
-        label: next.label ?? previous.label
-      })
-    })
+    const previousMessages = state.messages
+    const changedIndex = state.messageIds.has(message.uuid)
+      ? state.messages.findIndex((entry) => entry.uuid === message.uuid)
+      : state.messages.length
+    state.messages =
+      changedIndex === state.messages.length
+        ? [...state.messages, message]
+        : reconcileProviderRecords(state.messages, [message], {
+            authoritative: false,
+            getId: (candidate) => candidate.uuid,
+            merge: (previous, next) => ({
+              ...previous,
+              ...next,
+              attachments: next.attachments ?? previous.attachments,
+              kind: next.kind ?? previous.kind,
+              label: next.label ?? previous.label
+            })
+          })
+    this.transcriptProjections
+      .get(state)
+      ?.acceptSource(previousMessages, state.messages, changedIndex)
     state.messageIds.add(message.uuid)
   }
 
@@ -2082,10 +2095,33 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       ? (state.queuedMessages[0] ?? null)
       : null
 
-  private createChatDetail = (state: ClaudeSessionState): ProviderChatDetail => {
+  private createChatDetail = (state: ClaudeSessionState, windowed = false): ProviderChatDetail => {
     const foregroundActive =
       state.active || (state.queueDrainInProgress && !state.queuedMessagesPaused)
     const drainingMessage = this.getDrainingMessage(state)
+    const renderOptions = {
+      active: foregroundActive || state.pendingUserInputs.length > 0,
+      stopped: state.stopped,
+      failed: state.failed,
+      pendingItems: this.getPendingMessages(state, drainingMessage?.id ?? null)
+    }
+    const overlays = [
+      ...state.partialMessages.values(),
+      ...(drainingMessage ? [this.createUserTranscriptMessage(state, drainingMessage)] : [])
+    ]
+    let projected: ReturnType<ClaudeTranscriptProjection['read']> | null = null
+    if (windowed) {
+      let projection = this.transcriptProjections.get(state)
+      if (!projection) {
+        projection = new ClaudeTranscriptProjection()
+      }
+      this.transcriptProjections.delete(state)
+      this.transcriptProjections.set(state, projection)
+      while (this.transcriptProjections.size > 8) {
+        this.transcriptProjections.delete(this.transcriptProjections.keys().next().value!)
+      }
+      projected = projection.read(state.messages, overlays, renderOptions)
+    }
     state.revision += 1
     return {
       id: state.id,
@@ -2116,19 +2152,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       pendingApproval: this.getPendingApproval(state),
       pendingUserInput: this.getPendingUserInput(state),
       contextUsage: state.contextUsage,
-      items: renderClaudeChatItems(
-        [
-          ...state.messages,
-          ...state.partialMessages.values(),
-          ...(drainingMessage ? [this.createUserTranscriptMessage(state, drainingMessage)] : [])
-        ],
-        {
-          active: foregroundActive || state.pendingUserInputs.length > 0,
-          stopped: state.stopped,
-          failed: state.failed,
-          pendingItems: this.getPendingMessages(state, drainingMessage?.id ?? null)
-        }
-      )
+      ...(projected ?? {
+        items: renderClaudeChatItems([...state.messages, ...overlays], renderOptions)
+      })
     }
   }
 
@@ -2258,7 +2284,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (timer) clearTimeout(timer)
     this.updateTimers.delete(state.id)
     if (this.hiddenSessionIds.has(state.id) || this.states.get(state.id) !== state) return
-    const detail = this.createChatDetail(state)
+    const detail = this.createChatDetail(state, true)
     this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
   }
 

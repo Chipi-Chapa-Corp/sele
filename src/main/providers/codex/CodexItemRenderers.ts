@@ -1,3 +1,4 @@
+import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
 import { getBrowserToolLabel } from './CodexBrowserToolPresentation.ts'
 import type {
   ProviderChatItem,
@@ -1626,11 +1627,14 @@ const getFinalMessageIndex = (items: CodexThreadItem[], turnStatus: string | nul
   return items[lastAgentMessageIndex].phase === 'commentary' ? -1 : lastAgentMessageIndex
 }
 
-const getWorkingStatus = (turn: CodexTurn): ProviderWorkingStep['status'] => {
+const getWorkingStatus = (
+  turn: CodexTurn,
+  aborted = turn.items.some((item) => item.type === 'turnAborted')
+): ProviderWorkingStep['status'] => {
   if (turn.status === 'queued') return 'queued'
   if (turn.status === 'failed') return 'failed'
 
-  if (turn.status === 'interrupted' || turn.items.some((item) => item.type === 'turnAborted')) {
+  if (turn.status === 'interrupted' || aborted) {
     return 'stopped'
   }
 
@@ -1692,29 +1696,144 @@ const createAssistantMessage = (
   model: turn.model ?? null
 })
 
+type CodexProjectionScan = {
+  explicitFinal: number
+  lastAgent: number
+  liveCandidate: number
+  lastWorking: number
+  aborted: boolean
+}
+type CodexProjectionCheckpoint = {
+  index: number
+  chatItems: ProviderChatItem[]
+  finalMessage: ProviderMessage | null
+  workingItems: ProviderWorkingItem[]
+  pendingTimelineAnchors: ProviderChatItem[]
+  workingItemCount: number
+  hasSeenInitialUserMessage: boolean
+  renderedContextCompactionItemIds: Set<string>
+  workingStepCount: number
+  scan: CodexProjectionScan
+}
+type CodexProjectionCache = {
+  turn: CodexTurn
+  fallbackStartedAt: number | null
+  tailLimit: number | undefined
+  finalMessageIndex: number
+  checkpoint: CodexProjectionCheckpoint
+}
+
+/** Bounded hot-turn checkpoints. The adapter owns one instance; eviction only loses speed. */
+export class CodexTranscriptProjection {
+  private turns = new Map<string, CodexProjectionCache>()
+  processedRecordCount = 0
+
+  get(turnId: string): CodexProjectionCache | undefined {
+    return this.turns.get(turnId)
+  }
+  set(turnId: string, cache: CodexProjectionCache): void {
+    this.turns.delete(turnId)
+    this.turns.set(turnId, cache)
+    while (this.turns.size > 16) this.turns.delete(this.turns.keys().next().value!)
+  }
+  clear(): void {
+    this.turns.clear()
+  }
+}
+
+const emptyProjectionScan = (): CodexProjectionScan => ({
+  explicitFinal: -1,
+  lastAgent: -1,
+  liveCandidate: -1,
+  lastWorking: -1,
+  aborted: false
+})
+const scanProjectionItem = (
+  scan: CodexProjectionScan,
+  item: CodexThreadItem,
+  index: number
+): void => {
+  if (item.type === 'agentMessage') {
+    scan.lastAgent = index
+    if (item.phase === 'final_answer') scan.explicitFinal = index
+    if (item.phase !== 'commentary' && item.text?.trim()) scan.liveCandidate = index
+  }
+  if (hasRenderableWorkingItems(item)) scan.lastWorking = index
+  if (item.type === 'turnAborted') scan.aborted = true
+}
+
 const renderChatItems = (
   turns: CodexTurn[],
   fallbackStartedAt: number | null = null,
-  options: GetChatItemsOptions = {}
+  options: GetChatItemsOptions = {},
+  projection?: CodexTranscriptProjection
 ): ProviderChatItem[] => {
-  const chatItems: ProviderChatItem[] = []
+  let chatItems: ProviderChatItem[] = []
 
   for (const turn of turns) {
     const startedAt = turn.startedAt ?? fallbackStartedAt
     const completedAt = turn.completedAt ?? startedAt
-    const workingStatus = getWorkingStatus(turn)
-    const finalMessageIndex = getFinalMessageIndex(turn.items, turn.status ?? null)
-    let finalMessage: ProviderMessage | null = null
-    const workingItems: ProviderWorkingItem[] = []
-    const pendingTimelineAnchors: ProviderChatItem[] = []
-    let workingItemCount = 0
-    const workingItemTailLimit =
-      options.workingItemTailTurnId === turn.id
-        ? Math.max(1, options.workingItemTailLimit ?? Number.MAX_SAFE_INTEGER)
-        : Number.MAX_SAFE_INTEGER
-    let hasSeenInitialUserMessage = false
-    const renderedContextCompactionItemIds = new Set<string>()
-    let workingStepCount = 0
+    const cached = projection?.get(turn.id)
+    const prefix = cached ? getUnchangedTranscriptPrefix(cached.turn.items, turn.items) : 0
+    const tailLimit =
+      options.workingItemTailTurnId === turn.id ? options.workingItemTailLimit : undefined
+    const reusable =
+      cached &&
+      cached.fallbackStartedAt === fallbackStartedAt &&
+      cached.tailLimit === tailLimit &&
+      cached.turn.startedAt === turn.startedAt &&
+      cached.turn.completedAt === turn.completedAt &&
+      cached.turn.model === turn.model &&
+      cached.turn.status === turn.status &&
+      cached.turn.error === turn.error &&
+      cached.turn.local === turn.local &&
+      prefix >= cached.checkpoint.index
+        ? cached.checkpoint
+        : null
+    const scan = reusable ? { ...reusable.scan } : emptyProjectionScan()
+    let checkpointScan = { ...scan }
+    for (let index = reusable?.index ?? 0; projection && index < turn.items.length; index += 1) {
+      if (index === turn.items.length - 1) checkpointScan = { ...scan }
+      scanProjectionItem(scan, turn.items[index], index)
+      if (projection) projection.processedRecordCount += 1
+    }
+    const finalMessageIndex = projection
+      ? scan.explicitFinal >= 0
+        ? scan.explicitFinal
+        : turn.status === 'inProgress'
+          ? scan.lastWorking > scan.liveCandidate
+            ? -1
+            : scan.liveCandidate
+          : scan.lastAgent >= 0 && turn.items[scan.lastAgent].phase !== 'commentary'
+            ? scan.lastAgent
+            : -1
+      : getFinalMessageIndex(turn.items, turn.status ?? null)
+    // A suffix can change how an older final answer is classified. Rebuild rather than reuse a
+    // checkpoint that has already consumed that answer (including steering after final_answer).
+    const resume =
+      reusable &&
+      cached &&
+      (cached.finalMessageIndex === finalMessageIndex ||
+        Math.min(...[cached.finalMessageIndex, finalMessageIndex].filter((index) => index >= 0)) >=
+          reusable.index) &&
+      !(
+        reusable.scan.explicitFinal >= 0 &&
+        (turn.items.slice(prefix).some(hasUserMessageContent) ||
+          cached.turn.items.slice(prefix).some(hasUserMessageContent))
+      )
+        ? reusable
+        : null
+    const workingStatus = getWorkingStatus(turn, projection ? scan.aborted : undefined)
+    if (resume) chatItems = resume.chatItems.slice()
+    let finalMessage: ProviderMessage | null = resume?.finalMessage ?? null
+    const workingItems: ProviderWorkingItem[] = resume?.workingItems.slice() ?? []
+    const pendingTimelineAnchors: ProviderChatItem[] = resume?.pendingTimelineAnchors.slice() ?? []
+    let workingItemCount = resume?.workingItemCount ?? 0
+    const workingItemTailLimit = Math.max(1, tailLimit ?? Number.MAX_SAFE_INTEGER)
+    let hasSeenInitialUserMessage = resume?.hasSeenInitialUserMessage ?? false
+    const renderedContextCompactionItemIds = new Set(resume?.renderedContextCompactionItemIds)
+    let workingStepCount = resume?.workingStepCount ?? 0
+    let checkpoint: CodexProjectionCheckpoint | null = null
     const pushWorkingStep = (
       status: ProviderWorkingStep['status'],
       segmentFinalMessage: ProviderMessage | null = null
@@ -1811,7 +1930,23 @@ const renderChatItems = (
       return true
     }
 
-    for (const [itemIndex, item] of turn.items.entries()) {
+    for (let itemIndex = resume?.index ?? 0; itemIndex < turn.items.length; itemIndex += 1) {
+      const item = turn.items[itemIndex]
+      if (projection) projection.processedRecordCount += 1
+      if (projection && itemIndex === turn.items.length - 1) {
+        checkpoint = {
+          index: itemIndex,
+          chatItems: chatItems.slice(),
+          finalMessage,
+          workingItems: workingItems.slice(),
+          pendingTimelineAnchors: pendingTimelineAnchors.slice(),
+          workingItemCount,
+          hasSeenInitialUserMessage,
+          renderedContextCompactionItemIds: new Set(renderedContextCompactionItemIds),
+          workingStepCount,
+          scan: checkpointScan
+        }
+      }
       if (isContextCompactionItem(item)) {
         const itemId = `${turn.id}:${item.id}`
         if (
@@ -1899,6 +2034,14 @@ const renderChatItems = (
       }
     }
     if (!flushBufferedFinalMessage()) pushWorkingStep(workingStatus)
+    if (projection && checkpoint)
+      projection.set(turn.id, {
+        turn,
+        fallbackStartedAt,
+        tailLimit,
+        finalMessageIndex,
+        checkpoint
+      })
   }
 
   return chatItems
@@ -1912,14 +2055,15 @@ const finishedTurnChatItemsCache = new WeakMap<
 export const getChatItems = (
   turns: CodexTurn[],
   fallbackStartedAt: number | null = null,
-  options: GetChatItemsOptions = {}
+  options: GetChatItemsOptions = {},
+  projection?: CodexTranscriptProjection
 ): ProviderChatItem[] => {
   const chatItems: ProviderChatItem[] = []
   for (const turn of turns) {
     const workingItemTailLimit =
       options.workingItemTailTurnId === turn.id ? options.workingItemTailLimit : undefined
     if (!isFinishedTurn(turn)) {
-      chatItems.push(...renderChatItems([turn], fallbackStartedAt, options))
+      chatItems.push(...renderChatItems([turn], fallbackStartedAt, options, projection))
       continue
     }
 

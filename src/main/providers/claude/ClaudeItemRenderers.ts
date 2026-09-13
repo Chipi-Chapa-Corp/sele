@@ -1,6 +1,16 @@
+import { ProjectionJournal } from '../transcriptProjection/ProjectionJournal.ts'
+import {
+  getWorkingItemPayloadCharacterCount,
+  setWorkingItemSourcePayloadCharacterCount,
+  groupWorkingItemsForRenderer,
+  rendererWorkingItemPageSize,
+  rendererWorkingToolGroupLimit
+} from '../workingStepLazy.ts'
 import { basename } from 'node:path'
 import type {
   ProviderChatItem,
+  ProviderMessage,
+  ProviderWorkingItem,
   ProviderFileDiff,
   ProviderMessageAttachment,
   ProviderToolActivity,
@@ -514,4 +524,339 @@ export const renderClaudeChatItems = (
   flushSegment(true)
   items.push(...(options.pendingItems ?? []))
   return items
+}
+
+// This cache owns derived state only. Replacing/reverting committed history resets it; partial
+// SDK records are replayed in a rollback journal because the SDK mutates them in place.
+type ProjectedClaudeSegment = {
+  id: string
+  failed: boolean
+  groups: ProviderWorkingItem[]
+  groupCount: number
+  payloadCounts: Map<number, number>
+  activities: Map<ProviderToolActivity, number>
+  finalMessage: ProviderMessage | null
+}
+type ClaudeProjectionNode = ProviderChatItem | ProjectedClaudeSegment
+
+export class ClaudeTranscriptProjection {
+  private source: ClaudeTranscriptMessage[] | null = null
+  private processed = 0
+  private nodes: ClaudeProjectionNode[] = []
+  private turnStarts: number[] = []
+  private state: {
+    current: ProjectedClaudeSegment | null
+    tools: Map<
+      string,
+      {
+        segment: ProjectedClaudeSegment
+        tool: ProviderWorkingTool
+        skill: boolean
+        groupIndex: number
+        payloadCount: number
+      }
+    >
+  } = { current: null, tools: new Map() }
+  private counters = new Map<string, number>()
+  private journal = new ProjectionJournal()
+  /** Deterministic work counter for scaling tests; counts native records, including overlays. */
+  processedRecordCount = 0
+
+  acceptSource(
+    previous: ClaudeTranscriptMessage[],
+    next: ClaudeTranscriptMessage[],
+    changedIndex: number
+  ): void {
+    if (this.source !== previous) return
+    if (changedIndex < this.processed) this.source = null
+    else this.source = next
+  }
+
+  private reset(messages: ClaudeTranscriptMessage[]): void {
+    this.source = messages
+    this.processed = 0
+    this.nodes = []
+    this.turnStarts = []
+    this.state.current = null
+    this.counters.clear()
+    this.state.tools.clear()
+  }
+
+  private ensureSegment(id: string): ProjectedClaudeSegment {
+    if (this.state.current) return this.state.current
+    const segment: ProjectedClaudeSegment = {
+      id: `${id}:working`,
+      failed: false,
+      groups: [],
+      groupCount: 0,
+      payloadCounts: new Map(),
+      activities: new Map(),
+      finalMessage: null
+    }
+    this.journal.set(this.state, 'current', segment)
+    this.journal.set(this.state, 'tools', new Map())
+    this.journal.push(this.nodes, segment)
+    return segment
+  }
+
+  private blockId(message: ClaudeTranscriptMessage, kind: ClaudeBlockKind): string {
+    const key = `${getClaudeBlockBaseId(message)}:${kind}`
+    const index = this.counters.get(key) ?? 0
+    this.journal.mapSet(this.counters, key, index + 1)
+    return `${key}:${index}`
+  }
+
+  private appendWorking(segment: ProjectedClaudeSegment, item: ProviderWorkingItem): void {
+    const groups = segment.groups.slice()
+    const previous = groups.at(-1)
+    const canGroup =
+      item.type !== 'message' &&
+      !(item.type === 'tool' && item.compact) &&
+      previous &&
+      previous.type !== 'message' &&
+      !(previous.type === 'tool' && previous.compact)
+    const groupIndex = canGroup ? segment.groupCount - 1 : segment.groupCount
+    this.journal.mapSet(
+      segment.payloadCounts,
+      groupIndex,
+      (segment.payloadCounts.get(groupIndex) ?? 0) + getWorkingItemPayloadCharacterCount(item)
+    )
+    const activities = canGroup
+      ? new Map(segment.activities)
+      : new Map<ProviderToolActivity, number>()
+    if (item.type === 'tool')
+      activities.set(item.activity, (activities.get(item.activity) ?? 0) + 1)
+    if (canGroup) {
+      const grouped = groupWorkingItemsForRenderer([previous, item])[0]
+      if (grouped.type !== 'toolGroup') throw new Error('Invalid projected tool group')
+      let dominantActivity: ProviderToolActivity = 'other'
+      let highest = 0
+      for (const [activity, count] of activities) {
+        if (count > highest) {
+          dominantActivity = activity
+          highest = count
+        }
+      }
+      const tools = grouped.tools.slice(-rendererWorkingToolGroupLimit)
+      groups[groups.length - 1] = {
+        ...grouped,
+        tools,
+        toolsStartIndex: (grouped.toolCount ?? tools.length) - tools.length,
+        dominantActivity
+      }
+    } else {
+      groups.push(item)
+      this.journal.set(segment, 'groupCount', segment.groupCount + 1)
+    }
+    this.journal.set(segment, 'activities', activities)
+    this.journal.set(segment, 'groups', groups.slice(-rendererWorkingItemPageSize))
+  }
+
+  private demoteFinal(segment: ProjectedClaudeSegment): void {
+    if (!segment.finalMessage) return
+    const message = segment.finalMessage
+    this.appendWorking(segment, { type: 'message', id: message.id, content: message.content })
+    this.journal.set(segment, 'finalMessage', null)
+  }
+
+  private consume(message: ClaudeTranscriptMessage): void {
+    this.processedRecordCount += 1
+    if (isClaudeInternalUserMessage(message)) return
+    const blocks = getContentBlocks(message.message)
+    const subagent = Boolean(message.parent_tool_use_id)
+    if (subagent && message.type === 'user' && !hasToolResults(blocks)) return
+    if (message.type === 'user' && !hasToolResults(blocks)) {
+      const content = getHumanText(blocks)
+      if (!content && !message.attachments?.length) return
+      this.journal.set(this.state, 'current', null)
+      this.journal.push(this.turnStarts, this.nodes.length)
+      this.journal.push(this.nodes, {
+        type: 'message',
+        id: message.uuid,
+        role: 'user',
+        content,
+        attachments: message.attachments?.length ? message.attachments : undefined,
+        createdAt: toTimestamp(message.timestamp),
+        kind: message.kind,
+        label: message.label ?? null
+      })
+      this.ensureSegment(message.uuid)
+      return
+    }
+    if (message.type === 'assistant') {
+      const segment = this.ensureSegment(message.uuid)
+      for (const block of blocks) {
+        if (
+          block.type === 'thinking' &&
+          typeof block.thinking === 'string' &&
+          block.thinking.trim()
+        ) {
+          this.demoteFinal(segment)
+          this.appendWorking(segment, {
+            type: 'message',
+            id: this.blockId(message, 'thinking'),
+            content: block.thinking.trim()
+          })
+        } else if (block.type === 'tool_use') {
+          this.demoteFinal(segment)
+          const tool = createTool(getClaudeBlockBaseId(message), block)
+          this.appendWorking(segment, tool)
+          this.journal.mapSet(this.state.tools, tool.toolId, {
+            segment,
+            tool,
+            skill: isSkillToolBlock(block),
+            groupIndex: segment.groupCount - 1,
+            payloadCount: getWorkingItemPayloadCharacterCount(tool)
+          })
+        } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+          this.demoteFinal(segment)
+          if (subagent)
+            this.appendWorking(segment, {
+              type: 'message',
+              id: this.blockId(message, 'subagent'),
+              content: block.text.trim()
+            })
+          else
+            this.journal.set(segment, 'finalMessage', {
+              type: 'message',
+              id: this.blockId(message, 'text'),
+              role: 'assistant',
+              content: block.text.trim(),
+              createdAt: toTimestamp(message.timestamp),
+              model: getModel(message.message)
+            })
+        }
+      }
+      return
+    }
+    if (message.type === 'user' && hasToolResults(blocks)) {
+      const segment = this.ensureSegment(message.uuid)
+      for (const block of blocks) {
+        if (block.type !== 'tool_result') continue
+        const toolId = getString(block.tool_use_id)
+        const location = toolId ? this.state.tools.get(toolId) : undefined
+        // The full converter matches results only within the current segment.
+        if (!location || location.segment !== segment) continue
+        const output = truncateToolOutput(getTextContent(block.content))
+        const images = getToolImages(block.content)
+        const old = location.tool
+        const hide = old.icon === 'question' || location.skill
+        const tool: ProviderWorkingTool = {
+          ...old,
+          status: 'finished',
+          label: old.icon === 'question' ? 'Asked a question' : old.label,
+          icon: images.length > 0 ? 'image-generation' : old.icon,
+          stdout: hide ? null : output,
+          diffs: hide ? [] : getToolDiffs(old, output),
+          rawOutput: hide ? null : getBoundedRawValue(message.tool_use_result ?? block.content),
+          images
+        }
+        const payloadCount = getWorkingItemPayloadCharacterCount(tool)
+        this.journal.mapSet(
+          segment.payloadCounts,
+          location.groupIndex,
+          (segment.payloadCounts.get(location.groupIndex) ?? 0) +
+            payloadCount -
+            location.payloadCount
+        )
+        this.journal.mapSet(this.state.tools, toolId!, {
+          ...location,
+          payloadCount,
+          tool: { ...tool, stdout: null, rawOutput: null, diffs: [], images: [] }
+        })
+        this.journal.set(
+          segment,
+          'groups',
+          segment.groups.map((group) => {
+            if (group.type === 'tool') return group.id === old.id ? tool : group
+            if (group.type === 'toolGroup')
+              return {
+                ...group,
+                tools: group.tools.map((child) => (child.id === old.id ? tool : child))
+              }
+            return group
+          })
+        )
+      }
+      return
+    }
+    if (message.type === 'system') {
+      const record = getMessageRecord(message.message)
+      if (record?.subtype === 'compact_boundary') {
+        this.journal.set(this.state, 'current', null)
+        this.journal.push(this.nodes, { type: 'contextCompaction', id: message.uuid })
+      } else {
+        const content = getString(record?.content) ?? getString(message.message)
+        if (message.failed) this.journal.set(this.ensureSegment(message.uuid), 'failed', true)
+        if (content) {
+          const segment = this.ensureSegment(message.uuid)
+          this.demoteFinal(segment)
+          this.appendWorking(segment, { type: 'message', id: message.uuid, content })
+        }
+      }
+    }
+  }
+
+  read(
+    messages: ClaudeTranscriptMessage[],
+    overlays: ClaudeTranscriptMessage[],
+    options: RenderOptions,
+    turnLimit = 10
+  ): { items: ProviderChatItem[]; itemsStartTurnIndex: number; turnCount: number } {
+    if (this.source !== messages) this.reset(messages)
+    for (; this.processed < messages.length; this.processed += 1)
+      this.consume(messages[this.processed])
+    return this.journal.overlay(() => {
+      overlays.forEach((message) => this.consume(message))
+      const leadingOrphanTurn = this.turnStarts[0] === 0 ? 0 : 1
+      const sourceTurnCount = this.nodes.length ? this.turnStarts.length + leadingOrphanTurn : 0
+      const pending = options.pendingItems ?? []
+      const turnCount = sourceTurnCount + pending.length
+      const itemsStartTurnIndex = Math.max(0, turnCount - Math.max(1, turnLimit))
+      const items: ProviderChatItem[] = []
+      if (itemsStartTurnIndex < sourceTurnCount) {
+        const nodeStart =
+          leadingOrphanTurn && itemsStartTurnIndex === 0
+            ? 0
+            : this.turnStarts[itemsStartTurnIndex - leadingOrphanTurn]
+        for (let index = nodeStart; index < this.nodes.length; index += 1) {
+          const node = this.nodes[index]
+          if ('type' in node) {
+            items.push(node)
+            continue
+          }
+          const last = node === this.state.current
+          const failed = node.failed || (last && options.failed === true)
+          appendProviderConversationSegment(items, {
+            id: node.id,
+            entries: [
+              ...node.groups.map((item, groupOffset) => {
+                const projectedItem = { ...item }
+                setWorkingItemSourcePayloadCharacterCount(
+                  projectedItem,
+                  node.payloadCounts.get(node.groupCount - node.groups.length + groupOffset) ?? 0
+                )
+                return { kind: 'working' as const, item: projectedItem }
+              }),
+              ...(node.finalMessage
+                ? [{ kind: 'assistant' as const, message: node.finalMessage }]
+                : [])
+            ],
+            lifecycle: {
+              active: last && options.active,
+              completed: !last || (!options.active && !failed && !(last && options.stopped)),
+              failed,
+              stopped: last && options.stopped
+            },
+            workingItemWindow: {
+              itemCount: node.groupCount,
+              itemsStartIndex: node.groupCount - node.groups.length
+            }
+          })
+        }
+      }
+      items.push(...pending.slice(Math.max(0, itemsStartTurnIndex - sourceTurnCount)))
+      return { items, itemsStartTurnIndex, turnCount }
+    })
+  }
 }
