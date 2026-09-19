@@ -207,8 +207,6 @@ const getChatDetailContainingWorkingStep = async (
   rootChatId?: string
 ): Promise<Pick<ProviderChatDetail, 'items'>> => {
   if (rootChatId) return providerApi.getSubagent(providerId, rootChatId, chatId)
-  const latestDetail = await providerApi.getChat(providerId, chatId)
-  if (findWorkingStep(latestDetail, workingStepId)) return latestDetail
   return getProviderChatItemWindow(providerId, chatId, workingStepId, 1)
 }
 

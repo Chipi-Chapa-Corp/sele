@@ -1,3 +1,4 @@
+import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -43,7 +44,11 @@ import {
   type ProviderUserInputResponse
 } from '../../../shared/provider'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
-import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import type {
+  ProviderAdapter,
+  ProviderChatUpdateMetadata,
+  ProviderChatTurnWindow
+} from '../ProviderAdapter'
 import {
   ProviderConversationCompletionCoordinator,
   reconcileProviderRecords
@@ -58,6 +63,8 @@ import {
   getOpenCodeErrorMessage,
   getOpenCodeDisplayTitle,
   renderOpenCodeChatItems,
+  renderOpenCodeChatWindow,
+  findOpenCodeItemTurnWindow,
   type OpenCodeMessageWithParts
 } from './OpenCodeItemRenderers'
 import {
@@ -623,6 +630,38 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options.container)
     return this.createChatDetail(state)
+  }
+
+  getChatWindow = async (
+    chatId: string,
+    window: ProviderChatTurnWindow,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId, options.container)
+    return this.createChatDetailFromState(state, window)
+  }
+
+  getChatWindowForItem = async (
+    chatId: string,
+    itemId: string,
+    limit: number,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId, options.container)
+    const window = findOpenCodeItemTurnWindow(state.messages, itemId, limit)
+    if (window) return this.createChatDetailFromState(state, window)
+    // Some synthetic message IDs have no native record ID. Preserve that uncommon lookup.
+    const detail = this.createChatDetailFromState(state)
+    const turns = getProviderChatTurns(detail.items)
+    const target = turns.findIndex((turn) => turn.items.some((item) => item.id === itemId))
+    if (target < 0) throw new Error('Chat item not found')
+    const startIndex = Math.max(0, target - Math.floor(limit / 2))
+    return {
+      ...detail,
+      items: sliceProviderChatTurns(detail.items, startIndex, startIndex + limit),
+      itemsStartTurnIndex: startIndex,
+      turnCount: turns.length
+    }
   }
 
   getSubagents = async (
@@ -1506,14 +1545,18 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   private createChatDetail = async (
     state: OpenCodeChatState,
-    preserveActive = false
+    preserveActive = false,
+    window?: ProviderChatTurnWindow
   ): Promise<ProviderChatDetail> => {
     const client = (await this.getClientEntry(state.container)).client
     await this.refreshState(state, client, preserveActive)
-    return this.createChatDetailFromState(state)
+    return this.createChatDetailFromState(state, window)
   }
 
-  private createChatDetailFromState = (state: OpenCodeChatState): ProviderChatDetail => {
+  private createChatDetailFromState = (
+    state: OpenCodeChatState,
+    window?: ProviderChatTurnWindow
+  ): ProviderChatDetail => {
     const session = state.session
     if (!session) throw new Error('Unable to load OpenCode session.')
     state.revision += 1
@@ -1548,12 +1591,17 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       pendingApproval: getPendingApproval(state.pendingApprovals[0], state.directory),
       pendingUserInput: getPendingUserInput(state.pendingQuestions[0]),
       contextUsage: this.getContextUsage(state),
-      items: renderOpenCodeChatItems(state.messages, {
-        active: state.active,
-        stopped: state.stopped,
-        failed: state.failed,
-        pendingItems
-      })
+      ...(() => {
+        const settings = {
+          active: state.active,
+          stopped: state.stopped,
+          failed: state.failed,
+          pendingItems
+        }
+        return window
+          ? renderOpenCodeChatWindow(state.messages, settings, window)
+          : { items: renderOpenCodeChatItems(state.messages, settings) }
+      })()
     }
   }
 
@@ -1691,8 +1739,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (timer) clearTimeout(timer)
     this.updateTimers.delete(state.id)
     const detail = refresh
-      ? await this.createChatDetail(state)
-      : this.createChatDetailFromState(state)
+      ? await this.createChatDetail(state, false, { startIndex: null, limit: 10 })
+      : this.createChatDetailFromState(state, { startIndex: null, limit: 10 })
     if (this.states.get(state.id) !== state) return
     this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
   }
@@ -1704,7 +1752,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       this.updateTimers.delete(chatId)
       const state = this.states.get(chatId)
       if (!state) return
-      void this.createChatDetail(state)
+      void this.createChatDetail(state, false, { startIndex: null, limit: 10 })
         .then((detail) => {
           this.chatUpdatedListeners.forEach((listener) =>
             listener(detail, { turnCompleted: false })

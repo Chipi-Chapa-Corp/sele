@@ -1,3 +1,4 @@
+import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import {
@@ -48,7 +49,11 @@ import { getContainerTargetKey, normalizeContainerTarget } from '../../container
 import { getCurrentContainerHostBridge } from '../../currentContainer'
 import { getHostExecutableCommand, isRunningInFlatpak } from '../../hostProcess'
 import { providerOneShotGenerationCanceledMessage } from '../../../shared/provider'
-import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import type {
+  ProviderAdapter,
+  ProviderChatUpdateMetadata,
+  ProviderChatTurnWindow
+} from '../ProviderAdapter'
 import {
   ProviderConversationCompletionCoordinator,
   reconcileProviderRecords
@@ -63,6 +68,8 @@ import { getCopilotExecutable } from './CopilotExecutable'
 import {
   isCopilotSystemContextMessage,
   renderCopilotChatItems,
+  renderCopilotChatWindow,
+  findCopilotItemTurnWindow,
   type CopilotRenderedPlan
 } from './CopilotItemRenderers'
 import {
@@ -863,6 +870,40 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const state = await this.ensureSession(chatId, undefined, options.container)
     await this.loadEvents(state)
     return this.createChatDetail(state)
+  }
+
+  getChatWindow = async (
+    chatId: string,
+    window: ProviderChatTurnWindow,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId, undefined, options.container)
+    await this.loadEvents(state)
+    return this.createChatDetail(state, window)
+  }
+
+  getChatWindowForItem = async (
+    chatId: string,
+    itemId: string,
+    limit: number,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId, undefined, options.container)
+    await this.loadEvents(state)
+    const window = findCopilotItemTurnWindow(state.events, itemId, limit)
+    if (window) return this.createChatDetail(state, window)
+    // Some synthetic message IDs have no native record ID. Preserve that uncommon lookup.
+    const detail = this.createChatDetail(state)
+    const turns = getProviderChatTurns(detail.items)
+    const target = turns.findIndex((turn) => turn.items.some((item) => item.id === itemId))
+    if (target < 0) throw new Error('Chat item not found')
+    const startIndex = Math.max(0, target - Math.floor(limit / 2))
+    return {
+      ...detail,
+      items: sliceProviderChatTurns(detail.items, startIndex, startIndex + limit),
+      itemsStartTurnIndex: startIndex,
+      turnCount: turns.length
+    }
   }
 
   getSubagents = async (
@@ -1954,7 +1995,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       this.updateTimers.delete(state.id)
     }
     if (this.hiddenSessionIds.has(state.id) || this.states.get(state.id) !== state) return
-    const detail = this.createChatDetail(state)
+    const detail = this.createChatDetail(state, { startIndex: null, limit: 10 })
     this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
   }
 
@@ -2001,7 +2042,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
   }
 
-  private createChatDetail = (state: CopilotSessionState): ProviderChatDetail => {
+  private createChatDetail = (
+    state: CopilotSessionState,
+    window?: ProviderChatTurnWindow
+  ): ProviderChatDetail => {
     state.revision += 1
     return {
       id: state.id,
@@ -2035,13 +2079,18 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       pendingApproval: this.getPendingApproval(state),
       pendingUserInput: this.getPendingUserInput(state),
       contextUsage: getContextUsage(state.events),
-      items: renderCopilotChatItems(state.events, {
-        active: state.active || state.pendingUserInputs.length > 0,
-        stopped: state.stopped,
-        failed: state.failed,
-        pendingItems: state.pendingMessages,
-        plan: state.plan
-      })
+      ...(() => {
+        const settings = {
+          active: state.active || state.pendingUserInputs.length > 0,
+          stopped: state.stopped,
+          failed: state.failed,
+          pendingItems: state.pendingMessages,
+          plan: state.plan
+        }
+        return window
+          ? renderCopilotChatWindow(state.events, settings, window)
+          : { items: renderCopilotChatItems(state.events, settings) }
+      })()
     }
   }
 
@@ -2050,7 +2099,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     container?: AppContainerTarget | null
   ): ProviderChat => {
     const state = this.states.get(metadata.sessionId)
-    const detail = state ? this.createChatDetail(state) : null
+    const detail = state ? this.createChatDetail(state, { startIndex: null, limit: 10 }) : null
     if (!state && container !== undefined) this.sessionContainers.set(metadata.sessionId, container)
     const preview =
       detail?.items.findLast((item) => item.type === 'message')?.content ?? metadata.summary ?? ''

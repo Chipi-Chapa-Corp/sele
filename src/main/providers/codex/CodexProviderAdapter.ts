@@ -141,7 +141,9 @@ import {
 } from '../providerResources'
 
 type CodexAccount =
-  { type: 'apiKey' } | { type: 'chatgpt'; email: string } | { type: 'amazonBedrock' }
+  | { type: 'apiKey' }
+  | { type: 'chatgpt'; email: string }
+  | { type: 'amazonBedrock' }
 
 type AccountReadResponse = {
   account: CodexAccount | null
@@ -2144,6 +2146,27 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
       this.rememberThreadContainer(chatId)
+      const cached = this.threads.get(chatId)
+      const cachedTurns = cached ? this.getRenderableTurns(cached) : []
+      const cachedTurnIndex = cachedTurns.findIndex(
+        (turn) => itemId === turn.id || itemId.startsWith(`${turn.id}:`)
+      )
+      const cachedTurn = cachedTurns[cachedTurnIndex]
+      if (cached && cachedTurn && limit === 1) {
+        // Working/tool paging needs this turn's complete row index, not a latest-chat read
+        // followed by a catalog lookup. Do not replace the cached latest window.
+        const loadedStart = cached.turnWindowStartIndex ?? 0
+        return this.createChatDetail(
+          { ...cached, turns: [cachedTurn], turnPagination: undefined },
+          {
+            selectedTurnWindow: {
+              startIndex: loadedStart + cachedTurnIndex,
+              totalCount: loadedStart + cachedTurns.length,
+              pendingMessages: []
+            }
+          }
+        )
+      }
       const response = await this.readThread(chatId, false)
       if (isLegacyCodexHistory(response.thread.historyMode)) {
         const thread = await this.loadLegacyThread(chatId, response.thread.cwd ?? null)
@@ -5273,9 +5296,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const serverUserMessages = nextItems.filter(isCompleteCodexUserMessage)
     const shouldDropLocalTurnStartMessage = Boolean(
       localTurnStartMessage &&
-      serverUserMessages.some(
-        (item) => getCodexUserMessageClientId(item) === localTurnStartMessage.clientId
-      )
+        serverUserMessages.some(
+          (item) => getCodexUserMessageClientId(item) === localTurnStartMessage.clientId
+        )
     )
     if (
       localTurnStartMessage &&
@@ -5591,7 +5614,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (notification.method === 'turn/completed') {
       if (turn.status === 'failed' || turn.error) {
-        console.error(`Codex turn ${turn.id} failed in thread ${threadId}`, turn.error ?? turn.status)
+        console.error(
+          `Codex turn ${turn.id} failed in thread ${threadId}`,
+          turn.error ?? turn.status
+        )
       }
       if (this.activeTurnIds.get(threadId) === turn.id) this.activeTurnIds.delete(threadId)
       this.pendingApprovalsByThread.delete(threadId)

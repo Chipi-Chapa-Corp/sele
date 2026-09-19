@@ -1,3 +1,9 @@
+import {
+  findNativeItemTurnWindow,
+  renderNativeTurnWindow,
+  type TranscriptRenderWindow
+} from '../transcriptProjection/turnWindow.ts'
+import type { ProviderChatTurnWindow } from '../ProviderAdapter'
 import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Message, Part } from '@opencode-ai/sdk/v2'
@@ -19,7 +25,7 @@ export type OpenCodeMessageWithParts = {
   parts: Part[]
 }
 
-type RenderOptions = {
+type RenderOptions = TranscriptRenderWindow & {
   active: boolean
   stopped: boolean
   failed?: boolean
@@ -275,6 +281,8 @@ export const renderOpenCodeChatItems = (
   messages: OpenCodeMessageWithParts[],
   options: RenderOptions
 ): ProviderChatItem[] => {
+  if (options.turnWindow)
+    return renderOpenCodeChatWindow(messages, options, options.turnWindow).items
   const items: ProviderChatItem[] = []
   let segment: Segment | null = null
 
@@ -408,3 +416,38 @@ export const renderOpenCodeChatItems = (
   if (options.pendingItems?.length) items.push(...options.pendingItems)
   return items
 }
+
+const classifyOpenCodeTurnRecord = (
+  message: OpenCodeMessageWithParts
+): 'start' | 'content' | 'ignore' => {
+  if (message.info.role === 'user')
+    return getUserText(message.parts) || getAttachments(message.parts).length ? 'start' : 'ignore'
+  return 'content'
+}
+
+export const renderOpenCodeChatWindow = (
+  records: OpenCodeMessageWithParts[],
+  options: RenderOptions,
+  window: ProviderChatTurnWindow
+): { items: ProviderChatItem[]; itemsStartTurnIndex: number; turnCount: number } =>
+  renderNativeTurnWindow(
+    records,
+    options,
+    window,
+    classifyOpenCodeTurnRecord,
+    (selected, settings) =>
+      renderOpenCodeChatItems(selected, { ...settings, turnWindow: undefined })
+  )
+
+export const findOpenCodeItemTurnWindow = (
+  records: OpenCodeMessageWithParts[],
+  itemId: string,
+  limit: number
+): ProviderChatTurnWindow | null =>
+  findNativeItemTurnWindow(
+    records,
+    itemId,
+    limit,
+    classifyOpenCodeTurnRecord,
+    (message) => message.info.id
+  )

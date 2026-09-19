@@ -1,3 +1,10 @@
+import { getTranscriptRecordChange } from '../transcriptProjection/recordChanges.ts'
+import {
+  findNativeItemTurnWindow,
+  renderNativeTurnWindow,
+  type TranscriptRenderWindow
+} from '../transcriptProjection/turnWindow.ts'
+import type { ProviderChatTurnWindow } from '../ProviderAdapter'
 import { basename } from 'node:path'
 import type { SessionEvent } from '@github/copilot-sdk'
 import type {
@@ -30,7 +37,8 @@ export type CopilotRenderedPlan = {
   }>
 }
 
-type RenderOptions = {
+type RenderOptions = TranscriptRenderWindow & {
+  binaryAssets?: ReadonlyMap<string, CopilotBinaryAsset>
   agentId?: string | null
   active: boolean
   stopped: boolean
@@ -405,8 +413,8 @@ const hasRenderableWorkingEvent = (event: SessionEvent): boolean => {
 
   return Boolean(
     event.data.reasoningText?.trim() ||
-    event.data.toolRequests?.length ||
-    (event.data.phase === 'commentary' && event.data.content.trim())
+      event.data.toolRequests?.length ||
+      (event.data.phase === 'commentary' && event.data.content.trim())
   )
 }
 
@@ -470,9 +478,10 @@ export const renderCopilotChatItems = (
   events: SessionEvent[],
   options: RenderOptions
 ): ProviderChatItem[] => {
+  if (options.turnWindow) return renderCopilotChatWindow(events, options, options.turnWindow).items
   const items: ProviderChatItem[] = []
   const askUserToolCallIds = new Set<string>()
-  const binaryAssets = new Map<string, CopilotBinaryAsset>()
+  const binaryAssets = new Map<string, CopilotBinaryAsset>(options.binaryAssets)
   const finalMessageEvents = getFinalMessageEvents(events, options.agentId)
   let segment: Segment | null = null
 
@@ -524,6 +533,7 @@ export const renderCopilotChatItems = (
       (entry) => entry.kind === 'assistant'
     )
     appendProviderConversationSegment(items, {
+      preserveRawWorkingItems: true,
       id: currentSegment.id,
       entries: currentSegment.entries,
       finalMessageIndex,
@@ -714,3 +724,74 @@ export const renderCopilotChatItems = (
   items.push(...(options.pendingItems ?? []))
   return items
 }
+
+const classifyCopilotTurnRecord = (message: SessionEvent): 'start' | 'content' | 'ignore' => {
+  if (!isScopedEvent(message, null)) return 'ignore'
+  if (message.type === 'user.message')
+    return isCopilotSystemContextMessage(message) ? 'ignore' : 'start'
+  return message.type === 'assistant.message' ||
+    message.type === 'assistant.reasoning' ||
+    message.type === 'assistant.intent' ||
+    message.type.startsWith('tool.execution_') ||
+    message.type === 'session.error' ||
+    message.type === 'session.compaction_complete' ||
+    message.type === 'session.task_complete'
+    ? 'content'
+    : 'ignore'
+}
+
+const binaryAssetIndexes = new WeakMap<
+  SessionEvent[],
+  { length: number; assets: Map<string, CopilotBinaryAsset> }
+>()
+const getBinaryAssetIndex = (records: SessionEvent[]): Map<string, CopilotBinaryAsset> => {
+  const cached = binaryAssetIndexes.get(records)
+  if (cached?.length === records.length) return cached.assets
+  const change = getTranscriptRecordChange(records)
+  const previous = change ? binaryAssetIndexes.get(change.previous as SessionEvent[]) : undefined
+  // An append can inherit the asset map. Replacements rebuild because an asset may disappear.
+  const append = previous && change && change.startIndex === previous.length
+  const assets = new Map<string, CopilotBinaryAsset>(append ? previous.assets : undefined)
+  for (let index = append ? change.startIndex : 0; index < records.length; index += 1) {
+    const event = records[index]
+    if (event.type === 'session.binary_asset') assets.set(event.data.assetId, event.data)
+  }
+  binaryAssetIndexes.set(records, { length: records.length, assets })
+  return assets
+}
+
+export const renderCopilotChatWindow = (
+  records: SessionEvent[],
+  options: RenderOptions,
+  window: ProviderChatTurnWindow
+): { items: ProviderChatItem[]; itemsStartTurnIndex: number; turnCount: number } => {
+  const scoped = options.agentId
+    ? records.filter((event) => isScopedEvent(event, options.agentId))
+    : records
+  const classifier = options.agentId
+    ? (event: SessionEvent) =>
+        classifyCopilotTurnRecord({ ...event, agentId: undefined } as SessionEvent)
+    : classifyCopilotTurnRecord
+  return renderNativeTurnWindow(scoped, options, window, classifier, (selected, settings) =>
+    renderCopilotChatItems(selected, {
+      ...settings,
+      binaryAssets: getBinaryAssetIndex(records),
+      // The current plan belongs only to the current native turn, never a historical/pending-only page.
+      plan: selected.length && selected.at(-1) === scoped.at(-1) ? settings.plan : null,
+      turnWindow: undefined
+    })
+  )
+}
+
+export const findCopilotItemTurnWindow = (
+  records: SessionEvent[],
+  itemId: string,
+  limit: number
+): ProviderChatTurnWindow | null =>
+  findNativeItemTurnWindow(
+    records,
+    itemId,
+    limit,
+    classifyCopilotTurnRecord,
+    (message) => message.id
+  )

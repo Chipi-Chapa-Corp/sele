@@ -2,6 +2,17 @@
 type Change = { previous: WeakRef<readonly unknown[]>; startIndex: number }
 const changes = new WeakMap<readonly unknown[], Change>()
 
+export const getTranscriptRecordChange = (
+  records: readonly unknown[]
+): {
+  previous: readonly unknown[]
+  startIndex: number
+} | null => {
+  const change = changes.get(records)
+  const previous = change?.previous.deref()
+  return change && previous ? { previous, startIndex: change.startIndex } : null
+}
+
 export const markTranscriptRecordsChanged = (
   previous: readonly unknown[],
   next: readonly unknown[],

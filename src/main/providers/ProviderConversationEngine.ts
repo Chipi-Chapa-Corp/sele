@@ -1,3 +1,5 @@
+import { markTranscriptRecordsChanged } from './transcriptProjection/recordChanges.ts'
+import { groupWorkingItemsForRenderer } from './workingStepLazy.ts'
 import type {
   ProviderChatItem,
   ProviderMessage,
@@ -25,6 +27,8 @@ export type ProviderConversationSegment = {
   failureReason?: ProviderWorkingStep['failureReason']
   showWorking?: boolean
   betweenWorkingAndFinal?: readonly ProviderChatItem[]
+  /** Full native-tool consumers can request ungrouped content; never attach row coordinates. */
+  preserveRawWorkingItems?: boolean
   workingItemWindow?: {
     itemCount: number
     itemsStartIndex: number
@@ -75,9 +79,13 @@ export const appendProviderConversationSegment = (
     selectedFinalMessageIndex >= 0 ? segment.entries[selectedFinalMessageIndex] : undefined
   const finalMessage = finalEntry?.kind === 'assistant' ? finalEntry.message : null
   const finalMessageIndex = finalMessage ? selectedFinalMessageIndex : -1
-  const workingItems = segment.entries.flatMap((entry, index) =>
+  const ungroupedWorkingItems = segment.entries.flatMap((entry, index) =>
     index === finalMessageIndex ? [] : [toWorkingItem(entry)]
   )
+  const workingItems =
+    segment.workingItemWindow || segment.preserveRawWorkingItems
+      ? ungroupedWorkingItems
+      : groupWorkingItemsForRenderer(ungroupedWorkingItems)
   // A renderable assistant message is content, not a lifecycle boundary. Providers may stream
   // final-answer text before their terminal event, so only the explicit lifecycle controls status.
   const status = getProviderWorkingStatus(segment.lifecycle)
@@ -102,7 +110,9 @@ export const appendProviderConversationSegment = (
             itemCount: segment.workingItemWindow.itemCount,
             itemsStartIndex: segment.workingItemWindow.itemsStartIndex
           }
-        : {})
+        : segment.preserveRawWorkingItems
+          ? {}
+          : { itemCount: workingItems.length, itemsStartIndex: 0 })
     })
   }
 
@@ -180,6 +190,14 @@ export const reconcileProviderRecords = <RecordType>(
     }
   }
   if (options.compare) reconciled.sort(options.compare)
+  let unchanged = 0
+  while (
+    unchanged < current.length &&
+    unchanged < reconciled.length &&
+    current[unchanged] === reconciled[unchanged]
+  )
+    unchanged += 1
+  markTranscriptRecordsChanged(current, reconciled, unchanged)
   return reconciled
 }
 

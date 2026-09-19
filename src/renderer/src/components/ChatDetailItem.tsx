@@ -1795,33 +1795,12 @@ export const ChatWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = (
   return showPlaceholder ? <WorkingPlaceholder id={`${item.id}:${item.items.length}`} /> : null
 }
 
-const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] => {
-  const blocks: WorkingBlock[] = []
-
-  for (const item of items) {
-    if (item.type === 'message') {
-      blocks.push({ type: 'message', item })
-      continue
-    }
-
-    if (item.type === 'tool' && item.compact) {
-      blocks.push({ type: 'tools', items: [item] })
-      continue
-    }
-
-    const lastBlock = blocks[blocks.length - 1]
-    if (
-      lastBlock?.type === 'tools' &&
-      !lastBlock.items.some((tool) => tool.type === 'tool' && tool.compact)
-    ) {
-      lastBlock.items.push(item)
-    } else {
-      blocks.push({ type: 'tools', items: [item] })
-    }
-  }
-
-  return blocks
-}
+// Page offsets are canonical display-row offsets. Never merge rows after slicing a page:
+// that makes the hidden counts disagree and can merge across extracted image rows.
+const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] =>
+  items.map((item) =>
+    item.type === 'message' ? { type: 'message', item } : { type: 'tools', items: [item] }
+  )
 
 const partitionGeneratedImageItems = (
   items: ProviderWorkingItem[]

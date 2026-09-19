@@ -88,17 +88,25 @@ export const setWorkingItemSourcePayloadCharacterCount = (
   sourcePayloadCharacterCounts.set(item, count)
 }
 
+// Rendered working items are immutable snapshots. Page reads must not traverse every
+// hidden child of the same collapsed sequence merely to repeat its payload budget decision.
+const payloadCharacterCounts = new WeakMap<ProviderWorkingItem, number>()
 export const getWorkingItemPayloadCharacterCount = (item: ProviderWorkingItem): number => {
   const sourceCount = sourcePayloadCharacterCounts.get(item)
   if (sourceCount != null) return sourceCount
-  if (item.type === 'message') return item.content.length
-  if (item.type === 'toolGroup') {
-    return item.tools.reduce(
-      (total, tool) => addCount(total, getToolPayloadCharacterCount(tool)),
-      0
-    )
-  }
-  return getToolPayloadCharacterCount(item)
+  const cached = payloadCharacterCounts.get(item)
+  if (cached != null) return cached
+  const count =
+    item.type === 'message'
+      ? item.content.length
+      : item.type === 'toolGroup'
+        ? item.tools.reduce(
+            (total, tool) => addCount(total, getWorkingItemPayloadCharacterCount(tool)),
+            0
+          )
+        : getToolPayloadCharacterCount(item)
+  payloadCharacterCounts.set(item, count)
+  return count
 }
 
 const unloadToolPayload = (tool: ProviderWorkingTool): ProviderWorkingTool => {
@@ -360,7 +368,11 @@ export const groupWorkingItemsForRenderer = (
     if (pendingTools.length === 0) return
     groupedItems.push(
       pendingTools.length === 1 &&
-        (pendingTools[0]?.type === 'tool' || sourcePayloadCharacterCounts.has(pendingTools[0]))
+        (pendingTools[0]?.type === 'tool' ||
+          sourcePayloadCharacterCounts.has(pendingTools[0]) ||
+          (pendingTools[0]?.type === 'toolGroup' &&
+            pendingTools[0].toolActivities != null &&
+            pendingTools[0].dominantActivity != null))
         ? pendingTools[0]
         : createToolSequence(pendingTools)
     )

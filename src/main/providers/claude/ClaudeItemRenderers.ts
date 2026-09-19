@@ -1,3 +1,9 @@
+import {
+  findNativeItemTurnWindow,
+  renderNativeTurnWindow,
+  type TranscriptRenderWindow
+} from '../transcriptProjection/turnWindow.ts'
+import type { ProviderChatTurnWindow } from '../ProviderAdapter'
 import { ProjectionJournal } from '../transcriptProjection/ProjectionJournal.ts'
 import {
   getWorkingItemPayloadCharacterCount,
@@ -52,7 +58,7 @@ type ClaudeContentBlock = {
   source?: unknown
 }
 
-type RenderOptions = {
+type RenderOptions = TranscriptRenderWindow & {
   active: boolean
   stopped: boolean
   failed?: boolean
@@ -365,6 +371,7 @@ export const renderClaudeChatItems = (
   messages: ClaudeTranscriptMessage[],
   options: RenderOptions
 ): ProviderChatItem[] => {
+  if (options.turnWindow) return renderClaudeChatWindow(messages, options, options.turnWindow).items
   const items: ProviderChatItem[] = []
   const skillToolIds = new Set<string>()
   const nextBlockId = createClaudeBlockIds()
@@ -383,6 +390,7 @@ export const renderClaudeChatItems = (
     segment = null
     const failed = current.failed || (isLast && options.failed === true)
     appendProviderConversationSegment(items, {
+      preserveRawWorkingItems: true,
       id: current.id,
       entries: current.entries,
       finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
@@ -861,3 +869,47 @@ export class ClaudeTranscriptProjection {
     })
   }
 }
+
+const classifyClaudeTurnRecord = (
+  message: ClaudeTranscriptMessage
+): 'start' | 'content' | 'ignore' => {
+  if (message.type === 'user') {
+    if (isClaudeInternalUserMessage(message)) return 'ignore'
+    const blocks = getContentBlocks(message.message)
+    if (hasToolResults(blocks)) return 'content'
+    if (message.parent_tool_use_id) return 'ignore'
+    return getHumanText(blocks) || message.attachments?.length ? 'start' : 'ignore'
+  }
+  if (message.type === 'system') {
+    const record = getMessageRecord(message.message)
+    return record?.subtype === 'compact_boundary' ||
+      message.failed ||
+      getString(record?.content) ||
+      getString(message.message)
+      ? 'content'
+      : 'ignore'
+  }
+  return 'content'
+}
+
+export const renderClaudeChatWindow = (
+  records: ClaudeTranscriptMessage[],
+  options: RenderOptions,
+  window: ProviderChatTurnWindow
+): { items: ProviderChatItem[]; itemsStartTurnIndex: number; turnCount: number } =>
+  renderNativeTurnWindow(records, options, window, classifyClaudeTurnRecord, (selected, settings) =>
+    renderClaudeChatItems(selected, { ...settings, turnWindow: undefined })
+  )
+
+export const findClaudeItemTurnWindow = (
+  records: ClaudeTranscriptMessage[],
+  itemId: string,
+  limit: number
+): ProviderChatTurnWindow | null =>
+  findNativeItemTurnWindow(
+    records,
+    itemId,
+    limit,
+    classifyClaudeTurnRecord,
+    (message) => message.uuid
+  )

@@ -1,3 +1,5 @@
+import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
+import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { getBrowserAutomationService } from '../../browser/BrowserAutomation'
 import { claudeBrowserServerName, createClaudeBrowserIntegration } from './ClaudeBrowserTools'
 import { execFile, spawn } from 'node:child_process'
@@ -62,7 +64,11 @@ import {
 } from '../../../shared/provider'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getHostCommand, getHostExecutableCommand, type HostCommand } from '../../hostProcess'
-import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
+import type {
+  ProviderAdapter,
+  ProviderChatUpdateMetadata,
+  ProviderChatTurnWindow
+} from '../ProviderAdapter'
 import {
   ProviderConversationCompletionCoordinator,
   reconcileProviderRecords
@@ -79,6 +85,8 @@ import {
   ClaudeTranscriptProjection,
   isClaudeInternalUserMessage,
   renderClaudeChatItems,
+  renderClaudeChatWindow,
+  findClaudeItemTurnWindow,
   resolveClaudeAssistantMessageUuid,
   type ClaudeTranscriptMessage
 } from './ClaudeItemRenderers'
@@ -846,6 +854,38 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, undefined, options.container)
     return this.createChatDetail(state)
+  }
+
+  getChatWindow = async (
+    chatId: string,
+    window: ProviderChatTurnWindow,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId, undefined, options.container)
+    return this.createChatDetail(state, window)
+  }
+
+  getChatWindowForItem = async (
+    chatId: string,
+    itemId: string,
+    limit: number,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId, undefined, options.container)
+    const window = findClaudeItemTurnWindow(state.messages, itemId, limit)
+    if (window) return this.createChatDetail(state, window)
+    // Some synthetic message IDs have no native record ID. Preserve that uncommon lookup.
+    const detail = this.createChatDetail(state)
+    const turns = getProviderChatTurns(detail.items)
+    const target = turns.findIndex((turn) => turn.items.some((item) => item.id === itemId))
+    if (target < 0) throw new Error('Chat item not found')
+    const startIndex = Math.max(0, target - Math.floor(limit / 2))
+    return {
+      ...detail,
+      items: sliceProviderChatTurns(detail.items, startIndex, startIndex + limit),
+      itemsStartTurnIndex: startIndex,
+      turnCount: turns.length
+    }
   }
 
   getSubagents = async (
@@ -2066,6 +2106,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
               label: next.label ?? previous.label
             })
           })
+    markTranscriptRecordsChanged(previousMessages, state.messages, changedIndex)
     this.transcriptProjections
       .get(state)
       ?.acceptSource(previousMessages, state.messages, changedIndex)
@@ -2142,7 +2183,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       ? (state.queuedMessages[0] ?? null)
       : null
 
-  private createChatDetail = (state: ClaudeSessionState, windowed = false): ProviderChatDetail => {
+  private createChatDetail = (
+    state: ClaudeSessionState,
+    windowed: boolean | ProviderChatTurnWindow = false
+  ): ProviderChatDetail => {
     const foregroundActive =
       state.active || (state.queueDrainInProgress && !state.queuedMessagesPaused)
     const drainingMessage = this.getDrainingMessage(state)
@@ -2157,7 +2201,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       ...(drainingMessage ? [this.createUserTranscriptMessage(state, drainingMessage)] : [])
     ]
     let projected: ReturnType<ClaudeTranscriptProjection['read']> | null = null
-    if (windowed) {
+    if (windowed === true) {
       let projection = this.transcriptProjections.get(state)
       if (!projection) {
         projection = new ClaudeTranscriptProjection()
@@ -2168,6 +2212,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         this.transcriptProjections.delete(this.transcriptProjections.keys().next().value!)
       }
       projected = projection.read(state.messages, overlays, renderOptions)
+    }
+    if (typeof windowed === 'object') {
+      const records = overlays.length ? [...state.messages, ...overlays] : state.messages
+      if (records !== state.messages)
+        markTranscriptRecordsChanged(state.messages, records, state.messages.length)
+      projected = renderClaudeChatWindow(records, renderOptions, windowed)
     }
     state.revision += 1
     return {
@@ -2206,7 +2256,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   private createChatFromState = (state: ClaudeSessionState): ProviderChat => {
-    const detail = this.createChatDetail(state)
+    const detail = this.createChatDetail(state, true)
     const preview = detail.items.findLast((item) => item.type === 'message')?.content ?? ''
     return {
       id: state.id,

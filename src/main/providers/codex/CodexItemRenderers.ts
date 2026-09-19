@@ -1,3 +1,4 @@
+import type { ProviderChatTurnWindow } from '../ProviderAdapter'
 import type { CodexGoalPrompt } from './CodexGoalPrompts.ts'
 import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
 import { getBrowserToolLabel } from './CodexBrowserToolPresentation.ts'
@@ -97,6 +98,7 @@ export const hasCompletedCodexFinalAnswer = (turn: CodexTurn | null | undefined)
   )
 
 type GetChatItemsOptions = {
+  turnWindow?: ProviderChatTurnWindow
   workingItemTailLimit?: number
   workingItemTailTurnId?: string
 }
@@ -1123,9 +1125,9 @@ const openAiDeveloperDocsToolNames = new Set(['search_openai_docs', 'fetch_opena
 const isOpenAiDeveloperDocsToolName = (name: string | null | undefined): boolean =>
   Boolean(
     name &&
-    (openAiDeveloperDocsToolNames.has(name) ||
-      name.startsWith('openaiDeveloperDocs/') ||
-      name.startsWith('mcp__openaiDeveloperDocs__'))
+      (openAiDeveloperDocsToolNames.has(name) ||
+        name.startsWith('openaiDeveloperDocs/') ||
+        name.startsWith('mcp__openaiDeveloperDocs__'))
   )
 
 const exactToolPresentations = new Map<string, ToolPresentation>([
@@ -1675,7 +1677,7 @@ const hasUserMessageContent = (item: CodexThreadItem): boolean =>
   item.type === 'userMessage' &&
   Boolean(
     item.content &&
-    (getUserInputContent(item.content) || collectUserInputAttachments(item.content).length > 0)
+      (getUserInputContent(item.content) || collectUserInputAttachments(item.content).length > 0)
   )
 
 const isContextCompactionItem = (item: CodexThreadItem): boolean =>
@@ -2075,7 +2077,7 @@ const renderChatItems = (
   return chatItems
 }
 
-const finishedTurnChatItemsCache = new WeakMap<
+const turnChatItemsCache = new WeakMap<
   CodexTurn,
   { fallbackStartedAt: number | null; items: ProviderChatItem[]; workingItemTailLimit?: number }
 >()
@@ -2086,16 +2088,27 @@ export const getChatItems = (
   options: GetChatItemsOptions = {},
   projection?: CodexTranscriptProjection
 ): ProviderChatItem[] => {
+  if (options.turnWindow) {
+    const { startIndex, limit } = options.turnWindow
+    const count = Math.max(1, Math.floor(limit))
+    const start = Math.max(0, startIndex ?? turns.length - count)
+    return getChatItems(
+      turns.slice(start, start + count),
+      fallbackStartedAt,
+      { ...options, turnWindow: undefined },
+      projection
+    )
+  }
   const chatItems: ProviderChatItem[] = []
   for (const turn of turns) {
     const workingItemTailLimit =
       options.workingItemTailTurnId === turn.id ? options.workingItemTailLimit : undefined
-    if (!isFinishedTurn(turn)) {
+    // Keep the explicit incremental projection independent from the full-read cache.
+    if (!isFinishedTurn(turn) && projection) {
       chatItems.push(...renderChatItems([turn], fallbackStartedAt, options, projection))
       continue
     }
-
-    const cachedTurn = finishedTurnChatItemsCache.get(turn)
+    const cachedTurn = turnChatItemsCache.get(turn)
     if (
       cachedTurn &&
       cachedTurn.fallbackStartedAt === fallbackStartedAt &&
@@ -2105,8 +2118,13 @@ export const getChatItems = (
       continue
     }
 
-    const items = renderChatItems([turn], fallbackStartedAt, options)
-    finishedTurnChatItemsCache.set(turn, { fallbackStartedAt, items, workingItemTailLimit })
+    const items = renderChatItems(
+      [turn],
+      fallbackStartedAt,
+      options,
+      isFinishedTurn(turn) ? undefined : projection
+    )
+    turnChatItemsCache.set(turn, { fallbackStartedAt, items, workingItemTailLimit })
     chatItems.push(...items)
   }
 
