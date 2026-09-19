@@ -4,6 +4,41 @@ import test from 'node:test'
 import { buildChatConversationModel } from '../../../renderer/src/chatConversationModel.ts'
 import { getChatItems } from './CodexItemRenderers.ts'
 
+test('tool output preserves non-JSON text without warning and unwraps JSON envelopes', (t) => {
+  const warn = t.mock.method(console, 'warn', () => {})
+  const mixedOutput = '{\n  "value": true\n}\nCommand completed'
+  for (const [output, expected] of [
+    [mixedOutput, mixedOutput],
+    ['[info] Command completed', '[info] Command completed'],
+    ['{"incomplete":', '{"incomplete":'],
+    ['{"value":true}\n{"value":false}', '{"value":true}\n{"value":false}'],
+    ['{"value":true}', '{"value":true}'],
+    [JSON.stringify({ output: mixedOutput }), mixedOutput],
+    [
+      JSON.stringify({ result: { content: [{ text: JSON.stringify({ stdout: 'done' }) }] } }),
+      'done'
+    ]
+  ]) {
+    const items = getChatItems([
+      {
+        id: 'turn',
+        status: 'completed',
+        items: [
+          {
+            id: 'tool',
+            type: 'customToolCall',
+            customToolName: 'apply_patch',
+            customToolOutput: output,
+            status: 'completed'
+          }
+        ]
+      }
+    ])
+    assert.equal(items.find((item) => item.type === 'working')?.items[0]?.stdout, expected)
+  }
+  assert.equal(warn.mock.callCount(), 0)
+})
+
 // Test fixtures intentionally omit production-only Codex fields.
 const renderFailedWorkingStep = (codexErrorInfo) => {
   const items = getChatItems([

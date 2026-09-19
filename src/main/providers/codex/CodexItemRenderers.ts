@@ -963,6 +963,9 @@ const getOutputFromEnvelope = (
   return getOutputFromEnvelope(envelope.result, seen, depth + 1)
 }
 
+// Tool stdout is arbitrary text; a leading brace does not guarantee a JSON envelope.
+const isExpectedToolOutputParseError = (error: unknown): boolean => error instanceof SyntaxError
+
 const getToolStdout = (value: unknown, seen = new WeakSet<object>(), depth = 0): string | null => {
   if (typeof value === 'string') {
     const output = getOutputFromText(value)
@@ -975,6 +978,7 @@ const getToolStdout = (value: unknown, seen = new WeakSet<object>(), depth = 0):
         const parsed = JSON.parse(trimmed) as unknown
         return getOutputFromEnvelope(parsed, seen, depth + 1) ?? output
       } catch (error) {
+        if (isExpectedToolOutputParseError(error)) return output
         console.warn('Unable to parse a nested Codex tool output envelope', error)
         return output
       }
