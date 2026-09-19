@@ -229,7 +229,8 @@ const readStoredMarkdownSplitPercentage = (): number => {
     return Number.isFinite(storedPercentage)
       ? clamp(storedPercentage, markdownSplitMinPercentage, markdownSplitMaxPercentage)
       : markdownSplitDefaultPercentage
-  } catch {
+  } catch (error) {
+    console.error('[caught:FileEditorDialog:readStoredMarkdownSplitPercentage]', error)
     return markdownSplitDefaultPercentage
   }
 }
@@ -243,7 +244,8 @@ const readStoredDiffTreeWidth = (): number => {
     return Number.isFinite(storedWidth)
       ? clamp(storedWidth, diffTreeMinWidth, diffTreeMaxWidth)
       : diffTreeDefaultWidth
-  } catch {
+  } catch (error) {
+    console.error('[caught:FileEditorDialog:readStoredDiffTreeWidth]', error)
     return diffTreeDefaultWidth
   }
 }
@@ -446,8 +448,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const fileTreeContainerKey = JSON.stringify(target.container ?? { kind: 'host' })
   const fileTreeMatchesTarget = Boolean(
     fileTreeResult &&
-    fileTreeScope?.containerKey === fileTreeContainerKey &&
-    isFileTreeCwdInRepository(fileTreeCwd, fileTreeScope.repositoryRoot)
+      fileTreeScope?.containerKey === fileTreeContainerKey &&
+      isFileTreeCwdInRepository(fileTreeCwd, fileTreeScope.repositoryRoot)
   )
   const visibleFileTreeResult = fileTreeMatchesTarget ? fileTreeResult : null
   const hasGitDiff = Boolean(target.kind || gitRepositoryRoot || visibleFileTreeResult)
@@ -649,6 +651,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       if (result.gitRepositoryRoot && !target.kind) setDiffLoadState('loading')
       setLoadState('ready')
     } catch (loadError) {
+      console.error('[caught:FileEditorDialog:FileEditorDialog]', loadError)
       if (loadRequestRef.current !== request) return
 
       setEditorError(getErrorMessage(loadError, 'Unable to open this file.'))
@@ -679,6 +682,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setEditable(false)
       setLoadState('ready')
     } catch (loadError) {
+      console.error('[caught:FileEditorDialog:FileEditorDialog]', loadError)
       if (loadRequestRef.current !== request) return
 
       setEditorError(getErrorMessage(loadError, 'Unable to open this image.'))
@@ -710,6 +714,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         setDiff(result.diff)
         setDiffLoadState('ready')
       } catch (loadError) {
+        console.error('[caught:FileEditorDialog:FileEditorDialog]', loadError)
         if (diffLoadRequestRef.current !== request) return
 
         const message = getErrorMessage(loadError, 'Unable to load this diff.')
@@ -748,6 +753,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         })
         setFileTreeLoadState('ready')
       } catch (loadError) {
+        console.error('[caught:FileEditorDialog:FileEditorDialog]', loadError)
         if (fileTreeLoadRequestRef.current !== request) return
 
         const message = getErrorMessage(loadError, 'Unable to load the file tree.')
@@ -785,7 +791,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         setEnvironmentSuggestions(suggestions)
         setEnvironmentSuggestionsState('ready')
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('[caught:FileEditorDialog:FileEditorDialog]', error)
+
         if (environmentSuggestionsRequestRef.current !== request) return
         setEnvironmentSuggestions([])
         setEnvironmentSuggestionsState('ready')
@@ -829,7 +837,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   useEffect(() => {
     try {
       window.localStorage.setItem(diffTreeWidthStorageKey, String(diffTreeWidth))
-    } catch {
+    } catch (error) {
+      console.error('[caught:FileEditorDialog:FileEditorDialog]', error)
       // The sidebar remains resizable when persistent storage is unavailable.
     }
   }, [diffTreeWidth])
@@ -840,7 +849,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         markdownSplitPercentageStorageKey,
         String(markdownSplitPercentage)
       )
-    } catch {
+    } catch (error) {
+      console.error('[caught:FileEditorDialog:FileEditorDialog]', error)
       // The Markdown split remains resizable when persistent storage is unavailable.
     }
   }, [markdownSplitPercentage])
@@ -1177,6 +1187,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       if (canShowDiff) void loadDiff({ background: true })
       void loadFileTree({ background: true })
     } catch (saveError) {
+      console.error('[caught:FileEditorDialog:FileEditorDialog]', saveError)
       setEditorError(getErrorMessage(saveError, 'Unable to save this file.'))
       setSaveState('error')
     }
@@ -1216,6 +1227,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         setCopyState('idle')
       }, 1000)
     } catch (copyError) {
+      console.error('[caught:FileEditorDialog:FileEditorDialog]', copyError)
       setEditorError(getErrorMessage(copyError, 'Unable to copy this image.'))
       setCopyState('error')
     }
@@ -1229,6 +1241,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         path: target.path
       })
     } catch (openError) {
+      console.error('[caught:FileEditorDialog:FileEditorDialog]', openError)
       setEditorError(getErrorMessage(openError, 'Unable to open this file in another app.'))
     }
   }, [fileContainer, target.cwd, target.path])
@@ -1245,6 +1258,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       })
       setDownloadState(downloadedPath ? 'downloaded' : 'idle')
     } catch (downloadError) {
+      console.error('[caught:FileEditorDialog:FileEditorDialog]', downloadError)
       setEditorError(getErrorMessage(downloadError, 'Unable to download this file.'))
       setDownloadState('error')
     }

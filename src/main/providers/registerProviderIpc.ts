@@ -135,7 +135,13 @@ const runShutdownTolerantProviderRead = async <TValue>(
   try {
     return await read()
   } catch (error) {
-    if (isExpectedProviderBackgroundReadError(error)) return fallback(error)
+    if (isExpectedProviderBackgroundReadError(error)) {
+      console.error(
+        '[registerProviderIpc:runShutdownTolerantProviderRead] Provider read failed',
+        error
+      )
+      return fallback(error)
+    }
     throw error
   }
 }
@@ -187,7 +193,7 @@ const getRendererChatDetail = async (
 ): Promise<ProviderChatDetail> => prepareChatDetailForRenderer(await read())
 
 const findWorkingStep = (
-  detail: ProviderChatDetail,
+  detail: Pick<ProviderChatDetail, 'items'>,
   workingStepId: string
 ): ProviderWorkingStep | undefined =>
   detail.items.find(
@@ -197,8 +203,10 @@ const findWorkingStep = (
 const getChatDetailContainingWorkingStep = async (
   providerId: ProviderId,
   chatId: string,
-  workingStepId: string
-): Promise<ProviderChatDetail> => {
+  workingStepId: string,
+  rootChatId?: string
+): Promise<Pick<ProviderChatDetail, 'items'>> => {
+  if (rootChatId) return providerApi.getSubagent(providerId, rootChatId, chatId)
   const latestDetail = await providerApi.getChat(providerId, chatId)
   if (findWorkingStep(latestDetail, workingStepId)) return latestDetail
   return getProviderChatItemWindow(providerId, chatId, workingStepId, 1)
@@ -1070,7 +1078,8 @@ export const registerProviderIpc = (): void => {
           : getProviderChatKey(requireProviderId(providerIdValue), requireChatId(chatIdValue))
         if (state.viewedChatKey !== nextViewedChatKey) state.acknowledgedDetail = null
         state.viewedChatKey = nextViewedChatKey
-      } catch {
+      } catch (error) {
+        console.error('[caught:registerProviderIpc:registerProviderIpc]', error)
         return
       }
 
@@ -1382,7 +1391,8 @@ export const registerProviderIpc = (): void => {
       chatId: unknown,
       workingStepId: unknown,
       startIndex: unknown,
-      limit: unknown
+      limit: unknown,
+      rootChatId?: unknown
     ): Promise<ProviderWorkingStepPage> => {
       const requiredProviderId = requireProviderId(providerId)
       const requiredChatId = requireChatId(chatId)
@@ -1390,7 +1400,8 @@ export const registerProviderIpc = (): void => {
       const detail = await getChatDetailContainingWorkingStep(
         requiredProviderId,
         requiredChatId,
-        requiredWorkingStepId
+        requiredWorkingStepId,
+        rootChatId === undefined ? undefined : requireChatId(rootChatId)
       )
       const workingStep = findWorkingStep(detail, requiredWorkingStepId)
       if (!workingStep) throw new Error('Working section not found')
@@ -1409,7 +1420,8 @@ export const registerProviderIpc = (): void => {
       providerId: unknown,
       chatId: unknown,
       workingStepId: unknown,
-      workingItemId: unknown
+      workingItemId: unknown,
+      rootChatId?: unknown
     ): Promise<ProviderWorkingItem> => {
       const requiredProviderId = requireProviderId(providerId)
       const requiredChatId = requireChatId(chatId)
@@ -1418,7 +1430,8 @@ export const registerProviderIpc = (): void => {
       const detail = await getChatDetailContainingWorkingStep(
         requiredProviderId,
         requiredChatId,
-        requiredWorkingStepId
+        requiredWorkingStepId,
+        rootChatId === undefined ? undefined : requireChatId(rootChatId)
       )
       const workingStep = findWorkingStep(detail, requiredWorkingStepId)
       if (!workingStep) throw new Error('Working section not found')
@@ -1441,7 +1454,8 @@ export const registerProviderIpc = (): void => {
       workingStepId: unknown,
       workingItemId: unknown,
       startIndex: unknown,
-      limit: unknown
+      limit: unknown,
+      rootChatId?: unknown
     ): Promise<ProviderWorkingToolPage> => {
       const requiredProviderId = requireProviderId(providerId)
       const requiredChatId = requireChatId(chatId)
@@ -1449,7 +1463,8 @@ export const registerProviderIpc = (): void => {
       const detail = await getChatDetailContainingWorkingStep(
         requiredProviderId,
         requiredChatId,
-        requiredWorkingStepId
+        requiredWorkingStepId,
+        rootChatId === undefined ? undefined : requireChatId(rootChatId)
       )
       const workingStep = findWorkingStep(detail, requiredWorkingStepId)
       if (!workingStep) throw new Error('Working section not found')

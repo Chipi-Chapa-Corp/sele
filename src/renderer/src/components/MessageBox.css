@@ -58,7 +58,7 @@
 }
 
 .message-box__chat-config-trigger:not(:disabled):hover,
-.message-box__chat-config-trigger[aria-expanded='true'] {
+.message-box__chat-config-trigger[aria-expanded="true"] {
   border-color: var(--secondary-border-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
@@ -98,7 +98,7 @@
 }
 
 .message-box__chat-config-trigger:not(:disabled):hover .message-box__chat-config-provider-icon,
-.message-box__chat-config-trigger[aria-expanded='true'] .message-box__chat-config-provider-icon {
+.message-box__chat-config-trigger[aria-expanded="true"] .message-box__chat-config-provider-icon {
   color: currentColor;
 }
 
@@ -160,7 +160,7 @@
   transition: transform 160ms ease;
 }
 
-.message-box__chat-config-trigger[aria-expanded='true'] .message-box__chat-config-trigger-chevron {
+.message-box__chat-config-trigger[aria-expanded="true"] .message-box__chat-config-trigger-chevron {
   transform: rotate(180deg);
 }
 
@@ -276,6 +276,17 @@
 
 .message-box__chat-config-search {
   padding: 0 0.35rem 0.4rem;
+}
+
+.message-box__chat-config-error {
+  margin: 0 0.35rem 0.4rem;
+  border-radius: 0.35rem;
+  padding: 0.45rem 0.55rem;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+  font-size: var(--font-size-small);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .message-box__chat-config-search .ui-input {
@@ -571,7 +582,7 @@
   outline-offset: 0;
 }
 
-:root[data-disable-shadows='true'] .message-box textarea:focus-visible {
+:root[data-disable-shadows="true"] .message-box textarea:focus-visible {
   outline: none !important;
   outline-offset: 0 !important;
 }
@@ -641,7 +652,7 @@
   flex: none;
 }
 
-:root[data-color-scheme='dark'] .message-box__usage-control {
+:root[data-color-scheme="dark"] .message-box__usage-control {
   --message-box-usage-accent: #d0a07d;
 }
 
@@ -926,7 +937,7 @@
 
 @media (max-width: 56.25rem) {
   .message-box__controls {
-    grid-template-areas: 'attachments selectors send';
+    grid-template-areas: "attachments selectors send";
     grid-template-columns: auto minmax(0, 1fr) auto;
     justify-content: stretch;
   }
@@ -944,7 +955,7 @@
   }
 
   .message-box__controls--no-selectors {
-    grid-template-areas: 'attachments send';
+    grid-template-areas: "attachments send";
     grid-template-columns: auto auto;
   }
 }

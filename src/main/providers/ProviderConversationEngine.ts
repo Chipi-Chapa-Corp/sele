@@ -6,7 +6,8 @@ import type {
 } from '../../shared/provider'
 
 export type ProviderConversationEntry =
-  { kind: 'working'; item: ProviderWorkingItem } | { kind: 'assistant'; message: ProviderMessage }
+  | { kind: 'working'; item: ProviderWorkingItem }
+  | { kind: 'assistant'; message: ProviderMessage }
 
 export type ProviderConversationLifecycle = {
   active?: boolean
@@ -229,6 +230,7 @@ export class ProviderConversationCompletionCoordinator {
       try {
         await operations.publish()
       } catch (error) {
+        console.error('[caught:ProviderConversationEngine:complete]', error)
         operations.onError?.(error, 'publish')
         if (this.completions.get(conversationId) === completion) {
           this.completions.delete(conversationId)
@@ -243,6 +245,7 @@ export class ProviderConversationCompletionCoordinator {
             await operations.publishReconciled()
           }
         } catch (error) {
+          console.error('[caught:ProviderConversationEngine:complete]', error)
           operations.onError?.(error, 'reconcile')
         }
       }

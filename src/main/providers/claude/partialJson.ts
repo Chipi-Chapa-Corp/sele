@@ -1,5 +1,8 @@
 type Container = { kind: 'object' | 'array'; expecting: 'key' | 'colon' | 'value' | 'separator' }
 
+const isExpectedIncompleteJsonError = (error: unknown): error is SyntaxError =>
+  error instanceof SyntaxError
+
 /**
  * Parses a JSON document that may be cut off at any character, as happens while a tool input
  * streams through `input_json_delta` events. Incomplete trailing tokens are dropped or closed so
@@ -10,7 +13,10 @@ type Container = { kind: 'object' | 'array'; expecting: 'key' | 'colon' | 'value
 export const parsePartialJson = (source: string): unknown => {
   try {
     return JSON.parse(source)
-  } catch {
+  } catch (error) {
+    if (!isExpectedIncompleteJsonError(error)) {
+      console.warn('Unable to parse Claude streamed JSON before recovery.', error)
+    }
     // Fall through to best-effort completion of the fragment.
   }
 
@@ -18,6 +24,7 @@ export const parsePartialJson = (source: string): unknown => {
   let inString = false
   let stringStart = -1
   let scalarStart = -1
+  let malformed = false
   let index = 0
 
   const top = (): Container | undefined => stack[stack.length - 1]
@@ -70,7 +77,16 @@ export const parsePartialJson = (source: string): unknown => {
         expecting: char === '{' ? 'key' : 'value'
       })
     } else if (char === '}' || char === ']') {
-      stack.pop()
+      const container = top()
+      if (
+        !container ||
+        (char === '}' && container.kind !== 'object') ||
+        (char === ']' && container.kind !== 'array')
+      ) {
+        malformed = true
+      } else {
+        stack.pop()
+      }
       finishValue()
     } else if (char === ':') {
       const container = top()
@@ -115,7 +131,10 @@ export const parsePartialJson = (source: string): unknown => {
 
   try {
     return JSON.parse(completed)
-  } catch {
+  } catch (error) {
+    if (malformed || !isExpectedIncompleteJsonError(error)) {
+      console.warn('Claude streamed malformed JSON that recovery could not parse.', error)
+    }
     return undefined
   }
 }

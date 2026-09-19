@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { handleLoggedIpc } from './logging'
 import { appIpcChannels } from '../shared/app'
 import { isNewerStableVersion, type AppUpdateState } from '../shared/appUpdate'
+import { isExpectedFileAbsenceError } from '../shared/expectedAbsence.ts'
 
 const exec = promisify(execFile)
 const appId = 'com.chipichapa.sele'
@@ -109,6 +110,7 @@ export function registerAppUpdate(): void {
       if (version && !ignored.includes(version) && !skipped.has(version))
         publish({ version, status: 'available', progress: null, error: null })
     } catch (error) {
+      console.error('[caught:appUpdate:check]', error)
       // Background network failures do not interrupt chat or remove an existing suggestion.
       console.error('Unable to check for application updates:', error)
     } finally {
@@ -203,7 +205,10 @@ export function registerAppUpdate(): void {
       ignored = Array.isArray(preferences.ignored)
         ? preferences.ignored.filter((value: unknown) => typeof value === 'string')
         : []
-    } catch {
+    } catch (error) {
+      if (!isExpectedFileAbsenceError(error)) {
+        console.error('[caught:appUpdate:registerAppUpdate]', error)
+      }
       /* Missing preferences use the defaults. */
     }
     await check()

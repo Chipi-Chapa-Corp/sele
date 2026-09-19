@@ -42,6 +42,7 @@ export const RateLimitResetButton: React.FC<RateLimitResetButtonProps> = ({
       const outcome = await onReset()
       await onResetResult?.(outcome)
     } catch (error) {
+      console.error('[caught:RateLimitResetButton:handleReset]', error)
       onResetError?.(error instanceof Error ? error.message : 'Unable to reset rate limits.')
     } finally {
       setPending(false)

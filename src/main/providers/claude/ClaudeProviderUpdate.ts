@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import type { AppContainerTarget } from '../../../shared/app'
+import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
 import type { ProviderUpdateAvailability } from '../../../shared/provider'
 import { getHostCommand } from '../../hostProcess'
 import { getClaudeExecutable, getClaudeExecutableError } from './ClaudeExecutable'
@@ -75,7 +76,13 @@ const getCurrentClaudeVersion = async (
 const getClaudeReleaseChannel = async (
   options: ClaudeProviderUpdateOptions = {}
 ): Promise<ClaudeReleaseChannel> => {
-  const result = await runCommand(['doctor'], versionCheckTimeoutMs, options).catch(() => null)
+  const result = await runCommand(['doctor'], versionCheckTimeoutMs, options).catch(
+    (error: unknown) => {
+      if (isExpectedCommandAbsenceError(error)) return null
+      console.error('Unable to read the Claude release channel.', error)
+      return null
+    }
+  )
   const output = `${result?.stdout ?? ''}\n${result?.stderr ?? ''}`
   const match = /Auto-update channel:\s*(latest|stable|rc)/i.exec(output)
   return match?.[1]?.toLowerCase() === 'stable' ? 'stable' : 'latest'

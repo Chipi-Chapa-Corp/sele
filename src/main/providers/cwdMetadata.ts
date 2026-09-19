@@ -1,13 +1,23 @@
 import { execFile } from 'node:child_process'
 import { dirname, basename } from 'node:path'
 import type { ProviderChatCwdMetadata } from '../../shared/provider'
+import { isExpectedCommandAbsenceError } from '../../shared/expectedAbsence.ts'
 import { getStoredCwdMetadata, setStoredCwdMetadata } from '../database/cwd'
 import { getHostCommand } from '../hostProcess'
+import { isExpectedOptionalGitProbeFailure } from '../optionalProbe'
 
 const cwdMetadataCache = new Map<string, Promise<ProviderChatCwdMetadata>>()
 
 const runGit = async (cwd: string, args: string[]): Promise<string | null> => {
-  const hostCommand = await getHostCommand('git', args, { cwd })
+  let hostCommand
+  try {
+    hostCommand = await getHostCommand('git', args, { cwd })
+  } catch (error) {
+    if (!isExpectedCommandAbsenceError(error)) {
+      console.error('[cwdMetadata:runGit] Unable to resolve Git executable', error)
+    }
+    return null
+  }
 
   return new Promise((resolve) => {
     execFile(
@@ -20,7 +30,14 @@ const runGit = async (cwd: string, args: string[]): Promise<string | null> => {
         maxBuffer: 1024 * 1024,
         timeout: 3_000
       },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
+        if (
+          error &&
+          !isExpectedCommandAbsenceError(error) &&
+          !isExpectedOptionalGitProbeFailure(args, error, stderr)
+        ) {
+          console.error('[cwdMetadata:runGit] Git metadata lookup failed', error)
+        }
         resolve(error ? null : stdout.trimEnd())
       }
     )
@@ -68,13 +85,21 @@ const readCwdMetadata = async (cwd: string): Promise<ProviderChatCwdMetadata> =>
 }
 
 const resolveCwdMetadata = async (cwd: string): Promise<ProviderChatCwdMetadata> => {
-  const storedMetadata = await getStoredCwdMetadata(cwd).catch(() => null)
+  const storedMetadata = await getStoredCwdMetadata(cwd).catch((error) => {
+    console.error('[caught:cwdMetadata:resolveCwdMetadata]', error)
+    return null
+  })
   if (storedMetadata && (storedMetadata.kind !== 'gitWorktree' || storedMetadata.projectCwd)) {
     return storedMetadata
   }
 
-  const metadata = await readCwdMetadata(cwd).catch(() => getDefaultCwdMetadata(cwd))
-  await setStoredCwdMetadata(cwd, metadata).catch(() => {})
+  const metadata = await readCwdMetadata(cwd).catch((error) => {
+    console.error('[caught:cwdMetadata:resolveCwdMetadata]', error)
+    return getDefaultCwdMetadata(cwd)
+  })
+  await setStoredCwdMetadata(cwd, metadata).catch((error) => {
+    console.error('[caught:cwdMetadata:resolveCwdMetadata]', error)
+  })
   return metadata
 }
 

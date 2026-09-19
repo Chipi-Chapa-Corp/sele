@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { isAbsolute } from 'node:path'
 import type { AppContainerTarget } from '../../../shared/app'
+import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
 import type { ProviderSkill } from '../../../shared/provider'
 import { getHostCommand } from '../../hostProcess'
 
@@ -97,7 +98,9 @@ export const discoverClaudeSkills = async (
   let output: string
   try {
     output = await runCommand('sh', ['-lc', script], container)
-  } catch {
+  } catch (error) {
+    if (isExpectedCommandAbsenceError(error)) return []
+    console.error('Unable to discover Claude skills.', error)
     return []
   }
 

@@ -5,6 +5,7 @@ import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { AppContainerTarget } from '../../shared/app'
+import { isExpectedFileAbsenceError } from '../../shared/expectedAbsence.ts'
 import type { ProviderId, ProviderSkill, ProviderSkillScope } from '../../shared/provider'
 
 type DisabledSkillMetadata = {
@@ -161,7 +162,8 @@ const parseDisabledSkillLines = (output: string): DisabledSkillRecord[] =>
     try {
       const skill = parseDisabledSkillMetadata(JSON.parse(normalizedLine))
       return skill ? [skill] : []
-    } catch {
+    } catch (error) {
+      console.error('[caught:providerResources:parseDisabledSkillLines]', error)
       return []
     }
   })
@@ -171,7 +173,10 @@ const readLocalDisabledSkills = async (): Promise<DisabledSkillRecord[]> => {
   let entries: Dirent<string>[]
   try {
     entries = await readdir(root, { encoding: 'utf8', withFileTypes: true })
-  } catch {
+  } catch (error) {
+    if (!isExpectedFileAbsenceError(error)) {
+      console.error('[caught:providerResources:readLocalDisabledSkills]', error)
+    }
     return []
   }
 
@@ -184,7 +189,10 @@ const readLocalDisabledSkills = async (): Promise<DisabledSkillRecord[]> => {
             await readFile(join(root, entry.name, 'metadata.json'), 'utf8')
           )
           return parseDisabledSkillMetadata(metadata)
-        } catch {
+        } catch (error) {
+          if (!isExpectedFileAbsenceError(error)) {
+            console.error('[caught:providerResources:readLocalDisabledSkills]', error)
+          }
           return null
         }
       })
@@ -227,6 +235,10 @@ const moveLocalPath = async (source: string, destination: string): Promise<void>
     await rename(source, destination)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+    console.warn(
+      '[providerResources:moveLocalPath] Rename crossed file systems; copying instead',
+      error
+    )
 
     await cp(source, destination, {
       errorOnExist: true,
@@ -239,7 +251,12 @@ const moveLocalPath = async (source: string, destination: string): Promise<void>
 }
 
 const getLocalSkillDirectory = async (reportedPath: string): Promise<string> => {
-  const reportedStats = await stat(reportedPath).catch(() => null)
+  const reportedStats = await stat(reportedPath).catch((error) => {
+    if (!isExpectedFileAbsenceError(error)) {
+      console.error('[caught:providerResources:getLocalSkillDirectory]', error)
+    }
+    return null
+  })
   if (reportedStats?.isDirectory()) {
     if (isProviderSkillManifestPath(reportedPath)) {
       throw new Error('Invalid skill folder path')
@@ -275,7 +292,9 @@ const disableLocalProviderSkill = async (
     })
     await moveLocalPath(skillDirectory, join(entry, 'skill'))
   } catch (error) {
-    await rm(entry, { force: true, recursive: true }).catch(() => {})
+    await rm(entry, { force: true, recursive: true }).catch((error) => {
+      console.error('[caught:providerResources:disableLocalProviderSkill]', error)
+    })
     throw error
   }
 }
@@ -330,11 +349,23 @@ export const disableProviderSkill = async (
 const restoreLocalProviderSkill = async (path: string): Promise<boolean> => {
   const entry = getLocalDisabledSkillEntry(path)
   const storedSkillPath = join(entry, 'skill')
-  const storedStats = await stat(storedSkillPath).catch(() => null)
+  const storedStats = await stat(storedSkillPath).catch((error) => {
+    if (!isExpectedFileAbsenceError(error)) {
+      console.error('[caught:providerResources:restoreLocalProviderSkill]', error)
+    }
+    return null
+  })
   if (!storedStats?.isDirectory()) return false
 
   const skillDirectory = requireSafeSkillDirectory(getRestoredSkillDirectory(path))
-  if (await stat(skillDirectory).catch(() => null)) {
+  if (
+    await stat(skillDirectory).catch((error) => {
+      if (!isExpectedFileAbsenceError(error)) {
+        console.error('[caught:providerResources:restoreLocalProviderSkill]', error)
+      }
+      return null
+    })
+  ) {
     throw new Error('The original skill path is already occupied')
   }
 
@@ -351,7 +382,15 @@ export const restoreProviderSkill = async (
 ): Promise<boolean> => {
   const normalizedContainer = normalizeProviderResourceContainer(container)
   if (shouldUseLocalFileSystem(normalizedContainer)) {
-    if (options.skipIfOccupied && (await stat(getRestoredSkillDirectory(path)).catch(() => null))) {
+    if (
+      options.skipIfOccupied &&
+      (await stat(getRestoredSkillDirectory(path)).catch((error) => {
+        if (!isExpectedFileAbsenceError(error)) {
+          console.error('[caught:providerResources:restoreProviderSkill]', error)
+        }
+        return null
+      }))
+    ) {
       return false
     }
     return restoreLocalProviderSkill(path)

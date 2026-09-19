@@ -218,6 +218,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
       }
       return true
     } catch (error) {
+      console.error('[caught:useCommitController:handleScopedChatCommit]', error)
       if (markerId) {
         setChatCommitMarkers((currentMarkers) => {
           const marker = currentMarkers[markerId]
@@ -318,6 +319,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
       if (changesCwdRef.current === generationCwd) setCommitInput(commitMessage)
       return commitMessage
     } catch (error) {
+      console.error('[caught:useCommitController:generateCommitMessage]', error)
       setCommitErrorsByProjectKey((currentErrors) => ({
         ...currentErrors,
         [generationProjectKey]: getErrorMessage(error, 'Unable to generate a commit name.')
@@ -386,6 +388,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
       setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
       return true
     } catch (error) {
+      console.error('[caught:useCommitController:handleCommitChangedFiles]', error)
       setCommitErrorsByProjectKey((currentErrors) => ({
         ...currentErrors,
         [commitProjectKey]: getErrorMessage(error, 'Unable to commit changes.')
@@ -490,6 +493,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
       })
       setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
     } catch (error) {
+      console.error('[caught:useCommitController:handleCancelAiCommit]', error)
       setCommitErrorsByProjectKey((currentErrors) => ({
         ...currentErrors,
         [activityProjectKey]: getErrorMessage(error, 'Unable to cancel the AI commit.')
@@ -546,6 +550,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
       )
       applyViewedChatDetail(marker.providerId, detail, { select: true })
     } catch (error) {
+      console.error('[caught:useCommitController:handleOpenAiCommitChat]', error)
       setCommitErrorsByProjectKey((currentErrors) => ({
         ...currentErrors,
         [markerProjectKey]: getErrorMessage(error, 'Unable to open the AI commit chat.')

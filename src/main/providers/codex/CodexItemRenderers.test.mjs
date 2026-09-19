@@ -33,6 +33,65 @@ test('marks Codex usage and rate-limit failures as resettable rate-limit turns',
   assert.equal(renderFailedWorkingStep('rateLimitExceeded')?.failureReason, 'rateLimit')
 })
 
+test('renders one timeline anchor when Codex repeats a subagent completion event', () => {
+  const items = getChatItems([
+    {
+      id: 'parent-turn',
+      status: 'completed',
+      items: [
+        { type: 'userMessage', id: 'question', content: [{ type: 'text', text: 'Delegate' }] },
+        {
+          type: 'subAgentActivity',
+          id: 'completed-one',
+          kind: 'completed',
+          agentThreadId: 'child-thread'
+        },
+        {
+          type: 'subAgentActivity',
+          id: 'completed-two',
+          kind: 'completed',
+          agentThreadId: 'child-thread'
+        }
+      ]
+    }
+  ])
+  const anchors = items.filter((item) => item.type === 'timelineAnchor')
+
+  assert.deepEqual(anchors, [
+    { type: 'timelineAnchor', id: 'parent-turn:subagent-completed:child-thread' }
+  ])
+})
+
+test('incremental projection does not reinsert a repeated subagent completion anchor', async () => {
+  const { CodexTranscriptProjection } = await import('./CodexItemRenderers.ts')
+  const projection = new CodexTranscriptProjection()
+  const turn = {
+    id: 'parent-turn',
+    status: 'inProgress',
+    items: [
+      { type: 'userMessage', id: 'question', content: [{ type: 'text', text: 'Delegate' }] },
+      {
+        type: 'subAgentActivity',
+        id: 'completed-one',
+        kind: 'completed',
+        agentThreadId: 'child-thread'
+      },
+      { type: 'reasoning', id: 'working', summary: ['Continuing'] }
+    ]
+  }
+
+  getChatItems([turn], null, {}, projection)
+  turn.items.push({
+    type: 'subAgentActivity',
+    id: 'completed-two',
+    kind: 'completed',
+    agentThreadId: 'child-thread'
+  })
+  const items = getChatItems([turn], null, {}, projection)
+
+  assert.equal(items.filter((item) => item.type === 'timelineAnchor').length, 1)
+})
+
 test('keeps the failed turn user message available for retry after a limit reset', () => {
   const userMessage = {
     type: 'message',

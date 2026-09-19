@@ -5,6 +5,7 @@ import type {
   AppContainerTarget,
   AppContainerTool
 } from '../shared/app'
+import { isExpectedCommandAbsenceError } from '../shared/expectedAbsence.ts'
 import { getCurrentContainerTarget } from './currentContainer'
 import { getHostCommand } from './hostProcess'
 import {
@@ -71,6 +72,12 @@ const runHostTextCommand = async (
         })
       )
     }
+    if (!isExpectedCommandAbsenceError(error)) {
+      console.error(
+        '[containerSuggestions:runHostTextCommand] Unable to resolve host command',
+        error
+      )
+    }
     return null
   }
 
@@ -103,12 +110,23 @@ const runHostTextCommand = async (
           timeout
         },
         (error, stdout, stderr) => {
-          if (error) handleFailure(error, stdout, stderr)
-          else resolve(stdout.trimEnd())
+          if (error) {
+            if (required || !isExpectedCommandAbsenceError(error)) {
+              console.error(
+                '[containerSuggestions:runHostTextCommand] Container command failed',
+                error,
+                stderr.trim()
+              )
+            }
+            handleFailure(error, stdout, stderr)
+          } else resolve(stdout.trimEnd())
         }
       )
       child.stdin?.end()
     } catch (error) {
+      if (required || !isExpectedCommandAbsenceError(error)) {
+        console.error('[containerSuggestions:runHostTextCommand] Container command failed', error)
+      }
       handleFailure(error)
     }
   })

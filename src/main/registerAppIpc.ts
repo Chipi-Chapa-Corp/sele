@@ -63,6 +63,7 @@ import {
   normalizeAppWindowZoomLevel
 } from '../shared/app'
 import type { ProviderId } from '../shared/provider'
+import { isExpectedCommandAbsenceError } from '../shared/expectedAbsence.ts'
 import { requireContainerTarget } from './containerTarget'
 import {
   getCurrentContainerHostBridge,
@@ -90,6 +91,7 @@ import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
 import { commitAllGitChanges } from './gitCommit'
 import { summarizeGitNumstat } from './gitCommitMessage'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
+import { stageGitFileDiffPaths } from './gitFileDiff'
 import {
   getGitCommitCounts,
   getNoUpstreamPushFailure,
@@ -103,6 +105,12 @@ import {
   selectGitPushRemote
 } from './gitSync'
 import { getHostCommand, isRunningInFlatpak } from './hostProcess'
+import {
+  availabilityFoundMarker,
+  getContainerCommandAvailabilityScript,
+  loadOptionalFile,
+  logUnexpectedOptionalGitProbeFailure
+} from './optionalProbe'
 import { getProcessFailureMessage } from './processFailure'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
 import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
@@ -412,7 +420,10 @@ const getDeleteSshEnvironmentOptions = (value: unknown): AppDeleteSshEnvironment
 const validateSshIdentityFile = async (identityFile?: string | null): Promise<void> => {
   if (!identityFile) return
 
-  const identityStat = await stat(identityFile).catch(() => null)
+  const identityStat = await stat(identityFile).catch((error: unknown) => {
+    console.warn('Unable to inspect the configured SSH identity file', error)
+    return null
+  })
   if (!identityStat?.isFile()) throw new Error('SSH identity file does not exist')
 }
 
@@ -478,7 +489,10 @@ const getImageDataUrl = (image: AppLocalImage): string =>
 const getMessageAttachments = async (paths: string[]): Promise<AppSelectedAttachment[]> =>
   Promise.all(
     paths.map(async (path): Promise<AppSelectedAttachment> => {
-      const fileStat = await stat(path).catch(() => null)
+      const fileStat = await stat(path).catch((error: unknown) => {
+        console.warn('Unable to inspect a selected attachment', error)
+        return null
+      })
       if (!fileStat) throw new Error('Unable to read one of the selected files.')
       if (!fileStat.isFile()) throw new Error('Only files can be attached to a message.')
 
@@ -553,7 +567,10 @@ const getLocalImage = async (
 const getAppProjectIcon = async (cwd: string | null): Promise<AppProjectIcon | null> => {
   const customIcon = await getStoredProjectIcon(cwd)
   if (customIcon) {
-    const image = await getProjectIconFile(customIcon.imagePath).catch(() => null)
+    const image = await loadOptionalFile(
+      () => getProjectIconFile(customIcon.imagePath),
+      'Unable to load the configured project icon'
+    )
     if (image) {
       return {
         cwd,
@@ -566,7 +583,10 @@ const getAppProjectIcon = async (cwd: string | null): Promise<AppProjectIcon | n
   if (!cwd) return null
 
   for (const relativeIconPath of automaticProjectIconPaths) {
-    const image = await getProjectIconFile(join(cwd, relativeIconPath)).catch(() => null)
+    const image = await loadOptionalFile(
+      () => getProjectIconFile(join(cwd, relativeIconPath)),
+      `Unable to load automatic project icon ${relativeIconPath}`
+    )
     if (!image) continue
 
     return {
@@ -701,7 +721,12 @@ const readInstalledFontFamilies = async (): Promise<string[]> => {
 let installedFontFamiliesPromise: Promise<string[]> | null = null
 
 const getInstalledFontFamilies = (): Promise<string[]> => {
-  installedFontFamiliesPromise ??= readInstalledFontFamilies().catch(() => [])
+  installedFontFamiliesPromise ??= readInstalledFontFamilies().catch((error: unknown) => {
+    if (!isExpectedCommandAbsenceError(error)) {
+      console.warn('Unable to read installed font families', error)
+    }
+    return []
+  })
   return installedFontFamiliesPromise
 }
 
@@ -728,8 +753,27 @@ const runWithGitContainer = <T>(
 const getRunGitOptions = (options: boolean | RunGitOptions): RunGitOptions =>
   typeof options === 'boolean' ? { required: options } : options
 
-const getGitCommandLabel = (args: string[]): string =>
-  args[0]?.trim() ? `Git ${args[0].trim()}` : 'Git command'
+const getGitCommandLabel = (args: string[]): string => {
+  const optionsWithValues = new Set([
+    '-c',
+    '--config-env',
+    '--exec-path',
+    '--git-dir',
+    '--namespace',
+    '--super-prefix',
+    '--work-tree'
+  ])
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]?.trim() ?? ''
+    if (!argument) continue
+    if (optionsWithValues.has(argument)) {
+      index += 1
+      continue
+    }
+    if (!argument.startsWith('-')) return `Git ${argument}`
+  }
+  return 'Git command'
+}
 
 const runGit = async (
   cwd: string,
@@ -764,7 +808,18 @@ const runGit = async (
                 })
               )
             )
-          } else resolve(null)
+          } else {
+            logUnexpectedOptionalGitProbeFailure(
+              args,
+              error,
+              stderr,
+              getProcessFailureMessage(error, stdout, stderr, {
+                label: `${getGitCommandLabel(args)} failed during an optional check`,
+                timeoutMs
+              })
+            )
+            resolve(null)
+          }
           return
         }
 
@@ -880,7 +935,12 @@ const runAvailabilityCommand = async (
   const hostCommand = await getHostCommand(file, args, {
     container,
     env: process.env
-  }).catch(() => null)
+  }).catch((error: unknown) => {
+    if (container || !isExpectedCommandAbsenceError(error)) {
+      console.warn('Unable to resolve the provider availability command', error)
+    }
+    return null
+  })
   if (!hostCommand) return { success: false, stdout: '' }
 
   return new Promise((resolve) => {
@@ -895,10 +955,20 @@ const runAvailabilityCommand = async (
           maxBuffer: sourceAvailabilityMaxBuffer,
           timeout: sourceAvailabilityTimeoutMs
         },
-        (error, stdout) => resolve({ success: !error, stdout })
+        (error, stdout) => {
+          if (error) {
+            if (container || !isExpectedCommandAbsenceError(error)) {
+              console.warn('Provider availability command failed', error)
+            }
+          }
+          resolve({ success: !error, stdout })
+        }
       )
       child.stdin?.end()
-    } catch {
+    } catch (error) {
+      if (container || !isExpectedCommandAbsenceError(error)) {
+        console.warn('Unable to start the provider availability command', error)
+      }
       resolve({ success: false, stdout: '' })
     }
   })
@@ -911,9 +981,9 @@ const isCommandAvailableInSource = (
   if (container?.kind === 'container') {
     return runAvailabilityCommand(
       'sh',
-      ['-lc', `command -v ${command} >/dev/null 2>&1`],
+      ['-lc', getContainerCommandAvailabilityScript(command)],
       container
-    ).then(({ success }) => success)
+    ).then(({ success, stdout }) => success && stdout.includes(availabilityFoundMarker))
   }
 
   return runAvailabilityCommand(command, ['--version'], null).then(({ success }) => success)
@@ -997,7 +1067,12 @@ const getSourceAvailability = async (
     Promise.all(
       sourceAvailabilityProviderIds.map(async (providerId) => ({
         providerId,
-        available: await isProviderAvailableInSource(providerId, container).catch(() => false)
+        available: await isProviderAvailableInSource(providerId, container).catch(
+          (error: unknown) => {
+            console.warn(`Unable to check availability for provider ${providerId}`, error)
+            return false
+          }
+        )
       }))
     )
   ])
@@ -1547,6 +1622,7 @@ const deleteGitBranch = async (
       })
     }
   } catch (error) {
+    console.error(`Unable to delete Git branch ${branchName}`, error)
     const message = getGitErrorMessage(error)
     const worktreePath =
       !removeWorktree && scope !== 'remote' && isBranchUsedByWorktreeFailure(message)
@@ -2316,7 +2392,7 @@ const shouldStageFileForSystemApp = async (
 ): Promise<boolean> =>
   Boolean(
     container?.kind === 'container' &&
-    (container.tool === 'ssh' || !(await isCurrentContainerTarget(container)))
+      (container.tool === 'ssh' || !(await isCurrentContainerTarget(container)))
   )
 
 const openFileInSystemApp = async (options: AppFileContentsOptions): Promise<void> => {
@@ -2329,7 +2405,9 @@ const openFileInSystemApp = async (options: AppFileContentsOptions): Promise<voi
     try {
       await copyTargetFile(options.container, cwd, options.path, openPath)
     } catch (error) {
-      await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+      await rm(tempDirectory, { recursive: true, force: true }).catch((cleanupError: unknown) => {
+        console.warn('Unable to remove a staged system-app file after a copy failure', cleanupError)
+      })
       throw error
     }
   } else {
@@ -2357,7 +2435,9 @@ const downloadFile = async (
     await copyFile(tempPath, result.filePath)
     return result.filePath
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn('Unable to remove a temporary downloaded-file directory', error)
+    })
   }
 }
 
@@ -2449,7 +2529,9 @@ const getUncommittedGitDiff = async (cwd: string): Promise<{ diff: string }> => 
 
     return { diff: diff ?? '' }
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn('Unable to remove a temporary Git index directory', error)
+    })
   }
 }
 
@@ -2487,7 +2569,9 @@ const getGitCommitMessageContext = async (
       diff: diff ?? null
     }
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn('Unable to remove a temporary Git commit-context directory', error)
+    })
   }
 }
 
@@ -2510,11 +2594,12 @@ const getGitFileDiff = async (
 
   try {
     await initializeTemporaryIndex(repositoryRoot, indexPath)
-    await runGit(repositoryRoot, ['add', '-A', '--', '.'], { env, required: true })
+    await stageGitFileDiffPaths(repositoryRoot, indexPath, paths, runGit)
 
     const diff = await runGit(
       repositoryRoot,
       [
+        '--literal-pathspecs',
         'diff',
         '--cached',
         '--binary',
@@ -2529,7 +2614,9 @@ const getGitFileDiff = async (
 
     return { diff: diff ?? '' }
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn('Unable to remove a temporary Git file-diff directory', error)
+    })
   }
 }
 
@@ -2544,6 +2631,7 @@ const applyUnifiedPatchToIndex = async (
   try {
     await runGit(repositoryRoot, applyArgs, { env, input: patch, required: true })
   } catch (error) {
+    console.warn('Git patch did not apply forward; checking whether it is already applied', error)
     const reverseCheck = await runGit(repositoryRoot, [...applyArgs, '--reverse', '--check'], {
       env,
       input: patch
@@ -2648,7 +2736,8 @@ const patchChangesHead = async (
     await applyPatchChangeToIndex(repositoryRoot, indexPath, change)
 
     return (await getTemporaryIndexChangedPaths(repositoryRoot, indexPath)).length > 0
-  } catch {
+  } catch (error) {
+    console.warn('Unable to test whether a patch changes HEAD', error)
     return false
   }
 }
@@ -2690,7 +2779,8 @@ const reversePatchReducesWorktreeDiff = async (
     return (
       (await getTemporaryIndexDiffWeight(repositoryRoot, reverseIndexPath, [path])) < beforeWeight
     )
-  } catch {
+  } catch (error) {
+    console.warn('Unable to test whether a patch reverses a worktree change', error)
     return false
   }
 }
@@ -2756,7 +2846,9 @@ const getUncommittedGitPatchChanges = async (
 
     return { patches: uncommittedPatches }
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn('Unable to remove a temporary uncommitted-patch directory', error)
+    })
   }
 }
 
@@ -2810,7 +2902,9 @@ const commitGitPatchChanges = async (
 
     await runGit(repositoryRoot, ['reset', '-q', 'HEAD', '--', ...changedPaths], true)
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
+    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn('Unable to remove a temporary patch-application directory', error)
+    })
   }
 }
 
@@ -2898,6 +2992,7 @@ const pushGitChanges = async (
   } catch (error) {
     const message = getGitErrorMessage(error)
     if (!setUpstream && isNoUpstreamPushFailure(message)) {
+      console.warn('Git push requires an upstream selection', error)
       const branchName = await getCurrentBranchName(repositoryRoot)
       if (branchName) {
         return {
@@ -2908,6 +3003,7 @@ const pushGitChanges = async (
     }
 
     if (!setUpstream && !target && isUpstreamBranchMismatchPushFailure(message)) {
+      console.warn('Git push found an upstream branch name mismatch', error)
       const branchName = await getCurrentBranchName(repositoryRoot)
       const upstream = branchName ? await getGitUpstreamTarget(repositoryRoot, branchName) : null
       if (branchName && upstream) {
@@ -2988,6 +3084,7 @@ const pullGitChanges = async (
   } catch (error) {
     const message = getGitErrorMessage(error)
     if ((strategy == null || strategy === 'ff-only') && isDivergedPullFailure(message)) {
+      console.warn('Git pull requires a divergence strategy', error)
       return {
         pulled: false,
         failure: getDivergedPullFailure(`git ${args.join(' ')}`, message)
@@ -3039,7 +3136,14 @@ export const registerAppIpc = (): void => {
   handleLoggedIpc(appIpcChannels.addProject, async (_event, value: unknown) => {
     const options = getAddProjectOptions(value)
     const cwds = [options.cwd, ...(options.additionalCwds ?? [])]
-    const cwdStats = await Promise.all(cwds.map((cwd) => stat(cwd).catch(() => null)))
+    const cwdStats = await Promise.all(
+      cwds.map((cwd) =>
+        stat(cwd).catch((error: unknown) => {
+          console.warn('Unable to inspect a project directory', error)
+          return null
+        })
+      )
+    )
     if (!cwdStats[0]?.isDirectory()) throw new Error('Project folder does not exist')
     if (cwdStats.slice(1).some((cwdStat) => !cwdStat?.isDirectory())) {
       throw new Error('An additional project folder does not exist')

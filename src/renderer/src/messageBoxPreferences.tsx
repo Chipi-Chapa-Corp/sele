@@ -139,7 +139,8 @@ export const readStoredMessageBoxSelections = (): StoredMessageBoxSelections => 
         )
       }
     }
-  } catch {
+  } catch (error) {
+    console.error('Unable to read stored composer preferences.', error)
     // Fall through to the legacy single-provider preference.
   }
 
@@ -151,7 +152,8 @@ export const readStoredMessageBoxSelections = (): StoredMessageBoxSelections => 
     if (Object.keys(legacySelection).length === 0) return {}
 
     return Object.fromEntries(providerIds.map((providerId) => [providerId, { ...legacySelection }]))
-  } catch {
+  } catch (error) {
+    console.error('Unable to read legacy composer preferences.', error)
     return {}
   }
 }
@@ -159,7 +161,8 @@ export const readStoredMessageBoxSelections = (): StoredMessageBoxSelections => 
 export const writeStoredMessageBoxSelections = (selections: StoredMessageBoxSelections): void => {
   try {
     window.localStorage.setItem(messageBoxSelectionsStorageKey, JSON.stringify(selections))
-  } catch {
+  } catch (error) {
+    console.error('Unable to store composer preferences.', error)
     // Composer preferences are non-critical; ignore unavailable storage.
   }
 }
@@ -178,7 +181,8 @@ export const readStoredChatMessageBoxSelections = (): Record<string, StoredMessa
         parseStoredMessageBoxSelection(selection)
       ])
     )
-  } catch {
+  } catch (error) {
+    console.error('Unable to read stored chat composer preferences.', error)
     return {}
   }
 }
@@ -188,7 +192,8 @@ export const writeStoredChatMessageBoxSelections = (
 ): void => {
   try {
     window.localStorage.setItem(chatMessageBoxSelectionsStorageKey, JSON.stringify(selections))
-  } catch {
+  } catch (error) {
+    console.error('Unable to store chat composer preferences.', error)
     // Composer preferences are non-critical; ignore unavailable storage.
   }
 }

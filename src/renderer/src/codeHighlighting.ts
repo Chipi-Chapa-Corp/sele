@@ -76,7 +76,8 @@ export const highlightCode = (code: string, language: string | null): RootConten
 
   try {
     return refractor.highlight(code, language).children
-  } catch {
+  } catch (error) {
+    console.error('[caught:codeHighlighting:highlightCode]', error)
     return null
   }
 }

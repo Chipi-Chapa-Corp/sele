@@ -145,6 +145,7 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
       }
       return true
     } catch (error) {
+      console.error('[caught:useFileNavigationController:handleSwitchBranch]', error)
       if (gitBranchRequestIdRef.current === requestId) {
         setGitBranchActionState('error')
         setGitBranchError(
@@ -215,6 +216,7 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
         })
       }
     } catch (error) {
+      console.error('[caught:useFileNavigationController:handleDeleteBranch]', error)
       if (gitBranchRequestIdRef.current !== requestId) return
 
       setGitBranchActionState('error')
@@ -461,7 +463,8 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
           setChatDetail(nextDetail)
           setChatTurnWindow(nextWindow)
         })
-      } catch {
+      } catch (error) {
+        console.error('[caught:useFileNavigationController:useFileNavigationController]', error)
         const pendingReference = pendingPinnedMessageNavigationRef.current
         if (pendingReference && getRecentChatReferenceKey(pendingReference) === navigationKey) {
           pendingPinnedMessageNavigationRef.current = null

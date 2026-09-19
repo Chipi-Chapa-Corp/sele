@@ -60,7 +60,8 @@ export function useBrowserAutomation(options: Options): void {
               active: workspace?.activeTabId === tab.id
             }
           ]
-        } catch {
+        } catch (error) {
+          console.error('[caught:useBrowserAutomation:readTabs]', error)
           return []
         }
       })
@@ -137,7 +138,8 @@ export function useBrowserAutomation(options: Options): void {
       const tab = workspace?.tabs.find((item) => {
         try {
           return state.webviews.current.get(item.id)?.getWebContentsId() === request.tabId
-        } catch {
+        } catch (error) {
+          console.error('[caught:useBrowserAutomation:handle]', error)
           return false
         }
       })
@@ -171,6 +173,7 @@ export function useBrowserAutomation(options: Options): void {
             if (mounted) browserApi.automationRespond({ id: request.id, result })
           },
           (error: unknown) => {
+            console.error('[useBrowserAutomation:handle] Automation request failed', error)
             if (mounted)
               browserApi.automationRespond({
                 id: request.id,

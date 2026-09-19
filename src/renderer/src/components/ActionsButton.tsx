@@ -286,6 +286,7 @@ export const ActionsButton = ({
     try {
       await onRunAction(action)
     } catch (error) {
+      console.error('[caught:ActionsButton:handleRunAction]', error)
       const message =
         error instanceof Error && error.message ? error.message : 'Unable to run action.'
       setActionError(message)
@@ -332,30 +333,32 @@ export const ActionsButton = ({
           }
         ]
       : []),
-    ...visibleActions.map((action): ButtonDropdownAction => ({
-      id: `run-${action.id}`,
-      label: renderActionMenuLabel(action),
-      title: getActionContent(action),
-      disabled: Boolean(runningActionId),
-      icon: renderActionIcon(action.icon),
-      callback: () => handleRunAction(action),
-      inlineActions: [
-        {
-          id: `edit-${action.id}`,
-          ariaLabel: `Edit ${action.name}`,
-          title: `Edit ${action.name}`,
-          icon: <Pencil aria-hidden="true" />,
-          callback: () => openDraftDialog(action)
-        },
-        {
-          id: `delete-${action.id}`,
-          ariaLabel: `Delete ${action.name}`,
-          title: `Delete ${action.name}`,
-          icon: <X aria-hidden="true" />,
-          callback: () => handleDeleteAction(action.id)
-        }
-      ]
-    })),
+    ...visibleActions.map(
+      (action): ButtonDropdownAction => ({
+        id: `run-${action.id}`,
+        label: renderActionMenuLabel(action),
+        title: getActionContent(action),
+        disabled: Boolean(runningActionId),
+        icon: renderActionIcon(action.icon),
+        callback: () => handleRunAction(action),
+        inlineActions: [
+          {
+            id: `edit-${action.id}`,
+            ariaLabel: `Edit ${action.name}`,
+            title: `Edit ${action.name}`,
+            icon: <Pencil aria-hidden="true" />,
+            callback: () => openDraftDialog(action)
+          },
+          {
+            id: `delete-${action.id}`,
+            ariaLabel: `Delete ${action.name}`,
+            title: `Delete ${action.name}`,
+            icon: <X aria-hidden="true" />,
+            callback: () => handleDeleteAction(action.id)
+          }
+        ]
+      })
+    ),
     {
       id: 'create-action',
       label: 'Create action',

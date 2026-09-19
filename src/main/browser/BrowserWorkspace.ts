@@ -19,6 +19,10 @@ import {
 } from './BrowserInput'
 
 type ConsoleEntry = { level: string; text: string; timestamp?: number }
+const isExpectedNavigationContextReplacement = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : ''
+  return /execution context was destroyed|cannot find context with specified id/i.test(message)
+}
 type NetworkEntry = {
   requestId: string
   url: string
@@ -88,7 +92,9 @@ export class BrowserWorkspace {
       this.assertOpen()
       return action()
     })
-    this.queue = task.catch(() => {})
+    this.queue = task.catch((error) => {
+      console.error('[caught:BrowserWorkspace:run]', error)
+    })
     return task
   }
 
@@ -260,7 +266,10 @@ export class BrowserWorkspace {
       await this.delay(50)
       try {
         if (await this.evaluateOn(page, 'document.readyState !== "loading"')) break
-      } catch {
+      } catch (error) {
+        if (!isExpectedNavigationContextReplacement(error)) {
+          console.error('[caught:BrowserWorkspace:navigate]', error)
+        }
         /* A navigation may replace the execution context between polls. */
       }
     }

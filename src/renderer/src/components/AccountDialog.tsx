@@ -50,6 +50,7 @@ export const AccountDialog = ({ onClose, onLogin }: AccountDialogProps): ReactEl
       await session.completion
       onClose()
     } catch (loginError) {
+      console.error('[caught:AccountDialog:handleLogin]', loginError)
       if (cancelingRef.current) return
       setError(
         loginError instanceof Error && loginError.message
@@ -71,6 +72,7 @@ export const AccountDialog = ({ onClose, onLogin }: AccountDialogProps): ReactEl
       await authorization.cancel()
       onClose()
     } catch (cancelError) {
+      console.error('[caught:AccountDialog:handleCancel]', cancelError)
       cancelingRef.current = false
       setError(
         cancelError instanceof Error && cancelError.message
@@ -88,6 +90,7 @@ export const AccountDialog = ({ onClose, onLogin }: AccountDialogProps): ReactEl
     try {
       await authorization.authorize()
     } catch (authorizationError) {
+      console.error('[caught:AccountDialog:handleAuthorize]', authorizationError)
       setError(
         authorizationError instanceof Error && authorizationError.message
           ? authorizationError.message

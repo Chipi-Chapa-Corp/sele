@@ -152,7 +152,8 @@ const boundRawValue = (value: unknown): unknown => {
     return !serialized || serialized.length <= maxRawToolValueLength
       ? value
       : `${serialized.slice(0, maxRawToolValueLength)}\n${truncatedMarker}`
-  } catch {
+  } catch (error) {
+    console.error('[caught:OpenCodeItemRenderers:boundRawValue]', error)
     return String(value)
   }
 }
@@ -220,7 +221,8 @@ const filePartPath = (part: Extract<Part, { type: 'file' }>): string | null => {
   if (!part.url.startsWith('file:')) return null
   try {
     return fileURLToPath(part.url)
-  } catch {
+  } catch (error) {
+    console.error('[caught:OpenCodeItemRenderers:filePartPath]', error)
     return null
   }
 }

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
 
 type SessionIndexRecord = {
   id?: unknown
@@ -33,11 +34,15 @@ export const loadSessionThreadNames = async (threadIds: string[]): Promise<Map<s
 
         const name = getRecordThreadName(record)
         if (name) names.set(record.id, name)
-      } catch {
+      } catch (error) {
         // Keep scanning; one malformed row should not hide names from later rows.
+        console.warn('Unable to parse a Codex session index row', error)
       }
     }
-  } catch {
+  } catch (error) {
+    if (!isExpectedFileAbsenceError(error)) {
+      console.warn('Unable to read the Codex session index', error)
+    }
     return names
   }
 

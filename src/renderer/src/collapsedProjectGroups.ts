@@ -23,7 +23,8 @@ export const parseStoredCollapsedProjectGroups = (value: string | null): Collaps
       if (isProjectGroupKey(groupKey)) collapsedGroups[groupKey] = true
     })
     return collapsedGroups
-  } catch {
+  } catch (error) {
+    console.error('[caught:collapsedProjectGroups:parseStoredCollapsedProjectGroups]', error)
     return {}
   }
 }
@@ -33,7 +34,8 @@ export const readStoredCollapsedProjectGroups = (): CollapsedProjectGroups => {
     return parseStoredCollapsedProjectGroups(
       window.localStorage.getItem(collapsedProjectGroupsStorageKey)
     )
-  } catch {
+  } catch (error) {
+    console.error('[caught:collapsedProjectGroups:readStoredCollapsedProjectGroups]', error)
     return {}
   }
 }
@@ -56,7 +58,8 @@ export const writeStoredCollapsedProjectGroups = (
       collapsedProjectGroupsStorageKey,
       JSON.stringify(collapsedProjectGroupKeys)
     )
-  } catch {
+  } catch (error) {
+    console.error('[caught:collapsedProjectGroups:writeStoredCollapsedProjectGroups]', error)
     // Sidebar state is non-critical; ignore unavailable storage.
   }
 }

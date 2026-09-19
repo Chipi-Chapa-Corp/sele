@@ -49,8 +49,9 @@ export function getBrowserToolLabel(names: string[], input: unknown): string | n
   if (typeof args === 'string') {
     try {
       args = JSON.parse(args)
-    } catch {
+    } catch (error) {
       /* Nested calls may contain raw JavaScript. */
+      console.warn('Unable to parse nested Codex browser tool arguments as JSON', error)
     }
   }
   const code =

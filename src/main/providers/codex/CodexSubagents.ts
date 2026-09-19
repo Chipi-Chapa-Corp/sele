@@ -160,7 +160,7 @@ export const getCodexSubagentTaskDescription = (thread: CodexSubagentThread): st
 export const isCodexSubagentThread = (thread: CodexSubagentThread): boolean =>
   Boolean(
     getThreadSpawn(thread.source) ||
-    (thread.parentThreadId && (thread.agentNickname?.trim() || thread.agentRole?.trim()))
+      (thread.parentThreadId && (thread.agentNickname?.trim() || thread.agentRole?.trim()))
   )
 
 const getStatus = (thread: CodexSubagentThread): ProviderSubagent['status'] => {
@@ -220,7 +220,12 @@ export const getCodexSubagentInstruction = (
 ): string | null => {
   for (const turn of turns) {
     for (const item of turn.items) {
-      if (item.type === 'subAgentActivity' && item.agentThreadId === subagentId) {
+      if (
+        (item.type === 'subAgentActivity' && item.agentThreadId === subagentId) ||
+        (item.type === 'collabAgentToolCall' &&
+          (item.tool === 'spawnAgent' || item.tool === 'spawn_agent') &&
+          item.receiverThreadIds?.includes(subagentId))
+      ) {
         const prompt = item.prompt?.trim()
         if (prompt) return prompt
       }

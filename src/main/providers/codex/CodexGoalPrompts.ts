@@ -1,4 +1,5 @@
 import type { CodexTurn } from './CodexItemRenderers.ts'
+import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
 
 export type CodexGoalPrompt = { id: string; text: string }
 
@@ -50,8 +51,9 @@ export const readCodexGoalPrompts = (contents: string): Map<string, CodexGoalPro
       const metadata = record(payload.internal_chat_message_metadata_passthrough)
       const turnId = typeof metadata?.turn_id === 'string' ? metadata.turn_id : currentTurnId
       if (prompt && turnId) prompts.set(turnId, prompt)
-    } catch {
+    } catch (error) {
       // A live rollout may end with a partially written line.
+      console.warn('Unable to parse a Codex goal event from the live rollout tail', error)
     }
   }
   return prompts
@@ -133,8 +135,11 @@ export class CodexGoalPrompts {
         }
         while (cache.checked.size > 512) cache.checked.delete(cache.checked.keys().next().value!)
         return changed
-      } catch {
+      } catch (error) {
         // Missing/remote rollouts must never prevent the authoritative chat page from loading.
+        if (!isExpectedFileAbsenceError(error)) {
+          console.warn(`Unable to read optional Codex goal prompts for thread ${thread.id}`, error)
+        }
         return false
       } finally {
         cache.pending = undefined

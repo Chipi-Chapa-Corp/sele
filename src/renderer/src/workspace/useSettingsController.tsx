@@ -621,7 +621,8 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     try {
       const project = await appApi.addProject({ cwd: normalizedCwd })
       setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
-    } catch {
+    } catch (error) {
+      console.error('[caught:useSettingsController:useSettingsController]', error)
       // Keep the project selected even if local persistence fails.
     }
   }, [])
@@ -767,6 +768,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
           : null
       )
     } catch (error) {
+      console.error('[caught:useSettingsController:handleUpdateProvider]', error)
       setProviderUpdateError(
         getErrorMessage(error, `Unable to update ${providerLabels[suggestion.providerId]}.`)
       )

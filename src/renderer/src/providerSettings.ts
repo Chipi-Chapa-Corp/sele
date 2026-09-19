@@ -125,7 +125,8 @@ export const readStoredProviderUpdatePreferences = (): ProviderUpdatePreferences
     }
 
     return preferences
-  } catch {
+  } catch (error) {
+    console.error('[caught:providerSettings:readStoredProviderUpdatePreferences]', error)
     return {}
   }
 }
@@ -135,7 +136,8 @@ export const writeStoredProviderUpdatePreferences = (
 ): void => {
   try {
     window.localStorage.setItem(providerUpdatePreferenceStorageKey, JSON.stringify(preferences))
-  } catch {
+  } catch (error) {
+    console.error('[caught:providerSettings:writeStoredProviderUpdatePreferences]', error)
     // Update suggestion preferences are non-critical; ignore unavailable storage.
   }
 }

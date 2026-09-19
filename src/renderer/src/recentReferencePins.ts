@@ -7,7 +7,9 @@ import {
 import type { RecentlyOpenedFile } from './recentlyOpenedFiles.ts'
 
 export type PinnedRecentReference =
-  RecentChatReference | RecentlyOpenedFile | PinnedChatTextReference
+  | RecentChatReference
+  | RecentlyOpenedFile
+  | PinnedChatTextReference
 
 export type PinnedRecentChatReferencesByChat = Record<string, PinnedRecentReference[]>
 
@@ -32,7 +34,8 @@ const isNonNegativeInteger = (value: unknown): value is number =>
 const isSupportedExternalHref = (value: string): boolean => {
   try {
     return externalLinkProtocols.has(new URL(value).protocol)
-  } catch {
+  } catch (error) {
+    console.error('[caught:recentReferencePins:isSupportedExternalHref]', error)
     return false
   }
 }
@@ -104,7 +107,8 @@ export const readStoredPinnedRecentChatReferences = (): PinnedRecentChatReferenc
   try {
     const storedValue = window.localStorage.getItem(pinnedRecentChatReferencesStorageKey)
     return storedValue ? parsePinnedRecentChatReferences(JSON.parse(storedValue)) : {}
-  } catch {
+  } catch (error) {
+    console.error('[caught:recentReferencePins:readStoredPinnedRecentChatReferences]', error)
     return {}
   }
 }
@@ -122,7 +126,8 @@ export const writeStoredPinnedRecentChatReferences = (
       pinnedRecentChatReferencesStorageKey,
       JSON.stringify(referencesByChat)
     )
-  } catch {
+  } catch (error) {
+    console.error('[caught:recentReferencePins:writeStoredPinnedRecentChatReferences]', error)
     // Pinned references are non-critical; ignore unavailable storage.
   }
 }

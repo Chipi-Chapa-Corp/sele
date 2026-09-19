@@ -93,6 +93,7 @@ export const BrowserImportSettings: React.FC<BrowserImportSettingsProps> = ({
             }
       )
     } catch (error) {
+      console.error('[caught:BrowserImportSettings:handleLoadProfiles]', error)
       setStatus({
         error: true,
         message: getErrorMessage(error, `Unable to load ${browserLabel} profiles.`)
@@ -114,6 +115,7 @@ export const BrowserImportSettings: React.FC<BrowserImportSettingsProps> = ({
         message: getBrowserCookieImportMessage(result, selectedProfile.name)
       })
     } catch (error) {
+      console.error('[caught:BrowserImportSettings:handleImport]', error)
       setStatus({
         error: true,
         message: getErrorMessage(error, `Unable to import ${browserLabel} cookies.`)

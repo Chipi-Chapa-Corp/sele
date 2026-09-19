@@ -33,7 +33,8 @@ export type ChromeCookieDecryptionKey = {
 }
 
 export type ChromeCookieDecryptionResult =
-  { protection: null; value: string } | { protection: string; value: null }
+  | { protection: null; value: string }
+  | { protection: string; value: null }
 
 export type ChromeCookieConversionResult =
   | { cookie: BrowserCookieDetails; skipReason: null }
@@ -92,7 +93,8 @@ export const parseChromeLocalState = (contents: string): ChromeProfileEntry[] =>
   let parsed: unknown
   try {
     parsed = JSON.parse(contents)
-  } catch {
+  } catch (error) {
+    console.error('[caught:chromeCookieImport:parseChromeLocalState]', error)
     return []
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return []
@@ -127,7 +129,8 @@ export const parseChromeLocalState = (contents: string): ChromeProfileEntry[] =>
 export const getChromeCookieExpirationDate = (expiresUtc: string): number => {
   try {
     return Number(BigInt(expiresUtc) / 1_000_000n - chromeWindowsEpochOffsetSeconds)
-  } catch {
+  } catch (error) {
+    console.error('[caught:chromeCookieImport:getChromeCookieExpirationDate]', error)
     return Number.NaN
   }
 }
@@ -219,7 +222,8 @@ export const decryptChromeCookieValue = (
       return { protection: null, value: plaintext.subarray(32).toString('utf8') }
     }
     return { protection: null, value: plaintext.toString('utf8') }
-  } catch {
+  } catch (error) {
+    console.error('[caught:chromeCookieImport:decryptChromeCookieValue]', error)
     return { protection, value: null }
   }
 }

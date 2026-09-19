@@ -58,7 +58,8 @@ export function useChatListController(dependencies: ChatListControllerDependenci
           currentChat.container ?? newSessionContainer
         )
       }
-    } catch {
+    } catch (error) {
+      console.error('[caught:useChatListController:handleMarkChatDone]', error)
       // Leave the chat as-is if local metadata cannot be updated.
     }
   }
@@ -70,7 +71,8 @@ export function useChatListController(dependencies: ChatListControllerDependenci
     try {
       const metadata = await providerApi.setChatPinned(chat.providerId, chat.id, !chat.pinned)
       applyChatMetadata([metadata])
-    } catch {
+    } catch (error) {
+      console.error('[caught:useChatListController:handleToggleChatPinned]', error)
       // Leave the chat as-is if local metadata cannot be updated.
     }
   }
@@ -103,7 +105,9 @@ export function useChatListController(dependencies: ChatListControllerDependenci
           applyChatMetadata(metadataList)
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('[caught:useChatListController:handleReorderChats]', error)
+
         if (chatOrderMutationsRef.current.get(group.key) !== mutationId) return
 
         setChats((currentChats) =>
@@ -166,7 +170,9 @@ export function useChatListController(dependencies: ChatListControllerDependenci
         if (projectOrderMutationRef.current !== mutationId) return
         setProjects((currentProjects) => mergeProjects(currentProjects, storedProjects))
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('[caught:useChatListController:handlePersistProjectOrder]', error)
+
         if (projectOrderMutationRef.current !== mutationId) return
         setProjects((currentProjects) =>
           currentProjects.flatMap((project) => {
@@ -260,7 +266,8 @@ export function useChatListController(dependencies: ChatListControllerDependenci
         group.chats.map((chat) => providerApi.setChatPinned(chat.providerId, chat.id, false))
       )
       applyChatMetadata(metadataList)
-    } catch {
+    } catch (error) {
+      console.error('[caught:useChatListController:handleUnpinPinnedChats]', error)
       // Leave the group as-is if local metadata cannot be updated.
     }
   }
@@ -285,7 +292,8 @@ export function useChatListController(dependencies: ChatListControllerDependenci
         const currentChat = chatDetail?.id === selectedChat.id ? chatDetail : selectedChat
         showNewChatView(group.cwd, currentChat.container ?? newSessionContainer)
       }
-    } catch {
+    } catch (error) {
+      console.error('[caught:useChatListController:handleMarkCwdChatsDone]', error)
       // Leave the group as-is if local metadata cannot be updated.
     }
   }

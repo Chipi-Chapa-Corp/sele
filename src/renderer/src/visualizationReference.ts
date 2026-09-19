@@ -16,7 +16,10 @@ export function parseVisualizationReference(value: string): VisualizationReferen
     )
       return null
     return { path: data.path, title: data.title, mode: data.mode }
-  } catch {
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      console.error('[caught:visualizationReference:parseVisualizationReference]', error)
+    }
     return null
   }
 }
@@ -42,7 +45,10 @@ export const visualizationExtension: TokenizerExtension & RendererExtension = {
 export function decodeVisualizationReference(value: string): VisualizationReference | null {
   try {
     return parseVisualizationReference(decodeURIComponent(value))
-  } catch {
+  } catch (error) {
+    if (!(error instanceof URIError)) {
+      console.error('[caught:visualizationReference:decodeVisualizationReference]', error)
+    }
     return null
   }
 }

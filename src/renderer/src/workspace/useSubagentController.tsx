@@ -1,4 +1,15 @@
-import type { ProviderSubagent } from '../../../shared/provider'
+import { mergeWorkingStepPage, mergeWorkingToolPage } from '../chatDetailWindow'
+import {
+  chatWorkingItemPageSize,
+  chatWorkingItemWindowSize,
+  chatWorkingToolPageSize,
+  chatWorkingToolWindowSize
+} from './controllerTypes'
+import type {
+  ProviderWorkingItem,
+  ProviderWorkingStep,
+  ProviderSubagent
+} from '../../../shared/provider'
 import { providerApi } from '../providerApi'
 import {
   ChatCommitMarkerItem,
@@ -11,6 +22,7 @@ import type { SubagentControllerDependencies } from './controllerDependencies'
 // Return shape is inferred from the controller declarations below.
 export function useSubagentController(dependencies: SubagentControllerDependencies) {
   const {
+    activeSubagentChatView,
     selectedProviderId,
     selectedChatId,
     selectedChatKey,
@@ -69,6 +81,7 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
         if (contentElement) scrollChatContentToBottom(contentElement)
       })
     } catch (error) {
+      console.error('[caught:useSubagentController:handleOpenSubagentChat]', error)
       if (
         subagentChatLoadRequestRef.current !== requestId ||
         selectedChatKeyRef.current !== selectedChatKey
@@ -84,6 +97,119 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
         error: getErrorMessage(error, 'Unable to open this subagent chat.')
       })
     }
+  }
+  const updateWorkingStep = (
+    requestId: number,
+    subagentId: string,
+    workingStepId: string,
+    update: (step: ProviderWorkingStep) => ProviderWorkingStep
+  ): void => {
+    if (
+      subagentChatLoadRequestRef.current !== requestId ||
+      selectedChatKeyRef.current !== selectedChatKey
+    )
+      return
+    setSubagentChatView((view) => {
+      if (view?.rootChatKey !== selectedChatKey || view.summary.id !== subagentId || !view.detail)
+        return view
+      return {
+        ...view,
+        detail: {
+          ...view.detail,
+          items: view.detail.items.map((item) =>
+            item.type === 'working' && item.id === workingStepId ? update(item) : item
+          )
+        }
+      }
+    })
+  }
+  const mapWorkingItems = (
+    step: ProviderWorkingStep,
+    map: (item: ProviderWorkingItem) => ProviderWorkingItem
+  ): ProviderWorkingStep => ({
+    ...step,
+    items: step.items.map(map),
+    itemSegments: step.itemSegments?.map((segment) => ({
+      ...segment,
+      items: segment.items.map(map)
+    }))
+  })
+  const handleLoadSubagentWorkingStep = async (
+    workingStepId: string,
+    requestedStartIndex?: number
+  ): Promise<void> => {
+    if (!selectedProviderId || !activeSubagentChatView?.detail) return
+    const subagentId = activeSubagentChatView.summary.id
+    const requestId = subagentChatLoadRequestRef.current
+    const step = activeSubagentChatView.detail.items.find(
+      (item) => item.type === 'working' && item.id === workingStepId
+    )
+    if (step?.type !== 'working') return
+    const startIndex = Math.max(
+      0,
+      requestedStartIndex ?? (step.itemCount ?? step.items.length) - chatWorkingItemPageSize
+    )
+    const page = await providerApi.getChatWorkingStepPage(
+      selectedProviderId,
+      subagentId,
+      workingStepId,
+      startIndex,
+      chatWorkingItemPageSize,
+      selectedChatId
+    )
+    updateWorkingStep(requestId, subagentId, workingStepId, (current) =>
+      mergeWorkingStepPage(current, page, chatWorkingItemPageSize, chatWorkingItemWindowSize)
+    )
+  }
+  const handleLoadSubagentWorkingToolPage = async (
+    workingStepId: string,
+    workingItemId: string,
+    startIndex: number
+  ): Promise<void> => {
+    if (!selectedProviderId || !activeSubagentChatView?.detail) return
+    const subagentId = activeSubagentChatView.summary.id
+    const requestId = subagentChatLoadRequestRef.current
+    const page = await providerApi.getChatWorkingToolPage(
+      selectedProviderId,
+      subagentId,
+      workingStepId,
+      workingItemId,
+      startIndex,
+      chatWorkingToolPageSize,
+      selectedChatId
+    )
+    updateWorkingStep(requestId, subagentId, workingStepId, (step) =>
+      mapWorkingItems(step, (item) =>
+        item.type === 'toolGroup' && item.id === workingItemId
+          ? mergeWorkingToolPage(item, page, chatWorkingToolWindowSize)
+          : item
+      )
+    )
+  }
+  const handleLoadSubagentWorkingItem = async (
+    workingStepId: string,
+    workingItemId: string
+  ): Promise<void> => {
+    if (!selectedProviderId || !activeSubagentChatView?.detail) return
+    const subagentId = activeSubagentChatView.summary.id
+    const requestId = subagentChatLoadRequestRef.current
+    const loaded = await providerApi.getChatWorkingItem(
+      selectedProviderId,
+      subagentId,
+      workingStepId,
+      workingItemId,
+      selectedChatId
+    )
+    updateWorkingStep(requestId, subagentId, workingStepId, (step) =>
+      mapWorkingItems(step, (item) => {
+        if (item.id === workingItemId) return loaded
+        if (item.type !== 'toolGroup' || loaded.type !== 'tool') return item
+        return {
+          ...item,
+          tools: item.tools.map((tool) => (tool.id === workingItemId ? loaded : tool))
+        }
+      })
+    )
   }
   const handleCancelSubagent = async (subagent: ProviderSubagent): Promise<void> => {
     if (
@@ -127,6 +253,7 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
           : currentView
       )
     } catch (error) {
+      console.error('[caught:useSubagentController:handleCancelSubagent]', error)
       setSubagentListState((currentState) =>
         currentState?.rootChatKey === selectedChatKey
           ? {
@@ -184,5 +311,12 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
     />
   )
 
-  return { handleReturnFromSubagentChat, renderChatCommitMarker, renderChatSubagentMarker }
+  return {
+    handleLoadSubagentWorkingStep,
+    handleLoadSubagentWorkingItem,
+    handleLoadSubagentWorkingToolPage,
+    handleReturnFromSubagentChat,
+    renderChatCommitMarker,
+    renderChatSubagentMarker
+  }
 }

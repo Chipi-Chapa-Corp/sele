@@ -154,7 +154,8 @@ const parseCodexFileAttachmentPayload = (
       name: payload.name,
       path: payload.path
     }
-  } catch {
+  } catch (error) {
+    console.warn('Unable to parse a Codex file attachment marker', error)
     return null
   }
 }
@@ -708,7 +709,8 @@ const getJsonRecord = (value: string): Record<string, unknown> | null => {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null
-  } catch {
+  } catch (error) {
+    console.warn('Unable to parse Codex tool arguments', error)
     return null
   }
 }
@@ -749,7 +751,8 @@ const getJsonToolArgument = (input: string, toolName: string): Record<string, un
 
     try {
       return JSON.parse(input.slice(objectStart, index + 1)) as Record<string, unknown>
-    } catch {
+    } catch (error) {
+      console.warn('Unable to parse an embedded Codex tool argument object', error)
       return null
     }
   }
@@ -773,7 +776,8 @@ const getToolStringArgument = (input: string, toolName: string, key: string): st
   try {
     const value = JSON.parse(match[1])
     return typeof value === 'string' ? value : null
-  } catch {
+  } catch (error) {
+    console.warn('Unable to decode a quoted Codex command token', error)
     return match[1]
       .slice(1, -1)
       .replace(/\\(u[\dA-Fa-f]{4}|x[\dA-Fa-f]{2}|[\\"'bfnrtv0])/g, (_, escape: string) => {
@@ -968,7 +972,8 @@ const getToolStdout = (value: unknown, seen = new WeakSet<object>(), depth = 0):
       try {
         const parsed = JSON.parse(trimmed) as unknown
         return getOutputFromEnvelope(parsed, seen, depth + 1) ?? output
-      } catch {
+      } catch (error) {
+        console.warn('Unable to parse a nested Codex tool output envelope', error)
         return output
       }
     }
@@ -988,7 +993,8 @@ const getSearchableToolOutput = (value: unknown): string => {
 
   try {
     return JSON.stringify(value)
-  } catch {
+  } catch (error) {
+    console.warn('Unable to serialize Codex tool output', error)
     return ''
   }
 }
@@ -1711,6 +1717,7 @@ type CodexProjectionCheckpoint = {
   finalMessage: ProviderMessage | null
   workingItems: ProviderWorkingItem[]
   pendingTimelineAnchors: ProviderChatItem[]
+  renderedSubagentCompletionAnchorIds: Set<string>
   workingItemCount: number
   hasSeenInitialUserMessage: boolean
   renderedContextCompactionItemIds: Set<string>
@@ -1837,6 +1844,7 @@ const renderChatItems = (
     let finalMessage: ProviderMessage | null = resume?.finalMessage ?? null
     const workingItems: ProviderWorkingItem[] = resume?.workingItems.slice() ?? []
     const pendingTimelineAnchors: ProviderChatItem[] = resume?.pendingTimelineAnchors.slice() ?? []
+    const renderedSubagentCompletionAnchorIds = new Set(resume?.renderedSubagentCompletionAnchorIds)
     let workingItemCount = resume?.workingItemCount ?? 0
     const workingItemTailLimit = Math.max(1, tailLimit ?? Number.MAX_SAFE_INTEGER)
     let hasSeenInitialUserMessage = resume?.hasSeenInitialUserMessage ?? false
@@ -1949,6 +1957,7 @@ const renderChatItems = (
           finalMessage,
           workingItems: workingItems.slice(),
           pendingTimelineAnchors: pendingTimelineAnchors.slice(),
+          renderedSubagentCompletionAnchorIds: new Set(renderedSubagentCompletionAnchorIds),
           workingItemCount,
           hasSeenInitialUserMessage,
           renderedContextCompactionItemIds: new Set(renderedContextCompactionItemIds),
@@ -2012,10 +2021,14 @@ const renderChatItems = (
       }
 
       if (item.type === 'subAgentActivity' && item.kind === 'completed' && item.agentThreadId) {
-        pendingTimelineAnchors.push({
-          type: 'timelineAnchor',
-          id: getCodexSubagentTimelineAnchorId(turn.id, item.agentThreadId)
-        })
+        const anchorId = getCodexSubagentTimelineAnchorId(turn.id, item.agentThreadId)
+        if (!renderedSubagentCompletionAnchorIds.has(anchorId)) {
+          renderedSubagentCompletionAnchorIds.add(anchorId)
+          pendingTimelineAnchors.push({
+            type: 'timelineAnchor',
+            id: anchorId
+          })
+        }
         continue
       }
 

@@ -513,7 +513,8 @@ const formatToolValue = (value: unknown): string => {
 
   try {
     return JSON.stringify(value, null, 2) ?? String(value)
-  } catch {
+  } catch (error) {
+    console.error('[caught:ChatDetailItem:formatToolValue]', error)
     return String(value)
   }
 }
@@ -525,7 +526,8 @@ const isJson = (value: string): boolean => {
   try {
     JSON.parse(trimmed)
     return true
-  } catch {
+  } catch (error) {
+    console.error('[caught:ChatDetailItem:isJson]', error)
     return false
   }
 }
@@ -701,10 +703,10 @@ const getToolsFromToolItem = (item: ProviderToolItem): ProviderWorkingTool[] =>
 const hasToolDetails = (tool: ProviderWorkingTool): boolean =>
   Boolean(
     tool.command ||
-    tool.stdout ||
-    tool.diffs.length > 0 ||
-    tool.rawInput != null ||
-    tool.rawOutput != null
+      tool.stdout ||
+      tool.diffs.length > 0 ||
+      tool.rawInput != null ||
+      tool.rawOutput != null
   )
 
 const GeneratedImageThumbnail: React.FC<{
@@ -735,7 +737,9 @@ const GeneratedImageThumbnail: React.FC<{
         objectUrl = createLocalImageUrl(image)
         setLoadedImage({ path, url: objectUrl })
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('[caught:ChatDetailItem:GeneratedImageThumbnail]', error)
+
         if (current) setFailedPath(path)
       })
 
@@ -1178,7 +1182,8 @@ const ToolItem: React.FC<{
       try {
         await onLoad()
         setLoadState('idle')
-      } catch {
+      } catch (error) {
+        console.error('[caught:ChatDetailItem:handleLoad]', error)
         setLoadState('error')
       }
     }
@@ -1341,7 +1346,9 @@ const MarkdownMessageComponent: React.FC<{
           imageElement.alt = name
           button.replaceChildren(imageElement)
         })
-        .catch(() => {
+        .catch((loadError) => {
+          console.error('[caught:ChatDetailItem:MarkdownMessageComponent]', loadError)
+
           if (!current || !markdownContainer.contains(button)) return
 
           const error = document.createElement('span')
@@ -1600,7 +1607,8 @@ const ToolSequence: React.FC<{
     try {
       await onLoadPage(sequenceItem.id, nextStartIndex)
       setLoadState('idle')
-    } catch {
+    } catch (error) {
+      console.error('[caught:ChatDetailItem:loadPage]', error)
       setLoadState('error')
     }
   }
@@ -2053,7 +2061,8 @@ const WorkingStep: React.FC<{
     try {
       await onLoad(startIndex)
       setLoadState('idle')
-    } catch {
+    } catch (error) {
+      console.error('[caught:ChatDetailItem:loadPage]', error)
       setLoadState('error')
     }
   }
@@ -2211,7 +2220,9 @@ const WorkingStep: React.FC<{
                         key={block.item.id}
                         disabled={!onLoadItem}
                         onClick={() =>
-                          void Promise.resolve(onLoadItem?.(block.item.id)).catch(() => {})
+                          void Promise.resolve(onLoadItem?.(block.item.id)).catch((error) => {
+                            console.error('[caught:ChatDetailItem:WorkingStep]', error)
+                          })
                         }
                       >
                         Load reasoning

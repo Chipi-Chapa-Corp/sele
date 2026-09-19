@@ -240,6 +240,7 @@ export class CodexAppServerClient {
       try {
         this.write({ id, method, params })
       } catch (error) {
+        console.error(`Unable to send Codex app-server request ${method}`, error)
         clearTimeout(timeout)
         this.pendingRequests.delete(id)
         reject(error instanceof Error ? error : new Error(String(error)))
@@ -261,7 +262,8 @@ export class CodexAppServerClient {
 
     try {
       message = JSON.parse(line) as Record<string, unknown>
-    } catch {
+    } catch (error) {
+      console.error('Unable to parse a Codex app-server message', error)
       return
     }
 
@@ -295,6 +297,7 @@ export class CodexAppServerClient {
     this.pendingRequests.delete(response.id)
 
     if (response.error) {
+      console.error('Codex app-server request failed', response.error)
       pending.reject(new Error(response.error.message))
       return
     }
@@ -307,6 +310,7 @@ export class CodexAppServerClient {
       try {
         if (listener(request)) return
       } catch (error) {
+        console.error(`Codex server request listener failed for ${request.method}`, error)
         this.rejectServerRequest(
           request.id,
           error instanceof Error ? error.message : String(error),
@@ -325,7 +329,10 @@ export class CodexAppServerClient {
     this.process = null
     this.startPromise = null
     this.rejectPending(error)
-    if (hadProcess) this.stoppedListeners.forEach((listener) => listener(error))
+    if (hadProcess) {
+      console.error('Codex app-server stopped unexpectedly', error)
+      this.stoppedListeners.forEach((listener) => listener(error))
+    }
   }
 
   private rejectPending = (error: Error): void => {

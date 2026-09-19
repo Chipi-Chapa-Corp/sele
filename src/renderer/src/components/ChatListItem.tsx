@@ -226,7 +226,8 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
       await onRename(normalizedNameDraft)
       setDetailFocused(false)
       setEditingName(false)
-    } catch {
+    } catch (error) {
+      console.error('[caught:ChatListItem:saveName]', error)
       // Keep the input open so the user can retry or cancel.
     } finally {
       setSavingName(false)

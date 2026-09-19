@@ -17,7 +17,8 @@ const getRendererErrorDetails = (error: unknown): string => {
 
   try {
     return String(error) || 'Unknown renderer error.'
-  } catch {
+  } catch (error) {
+    console.error('[caught:RendererErrorBoundary:getRendererErrorDetails]', error)
     return 'Unknown renderer error.'
   }
 }

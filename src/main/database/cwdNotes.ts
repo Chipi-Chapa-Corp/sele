@@ -59,7 +59,8 @@ export const getCwdNotes = async (
 
   try {
     return normalizeCwdNotes(JSON.parse(row.notes_json))
-  } catch {
+  } catch (error) {
+    console.error('[caught:cwdNotes:getCwdNotes]', error)
     return []
   }
 }

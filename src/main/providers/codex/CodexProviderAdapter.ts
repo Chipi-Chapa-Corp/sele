@@ -59,7 +59,6 @@ import type {
 } from '../../../shared/provider'
 import {
   fallbackProviderApprovalModes,
-  fallbackProviderModels,
   fallbackProviderSandboxModes,
   providerOneShotGenerationCanceledMessage
 } from '../../../shared/provider'
@@ -95,14 +94,19 @@ import {
 } from './CodexItemRenderers'
 import { getCodexUpdateAvailability, updateCodexProvider } from './CodexProviderUpdate'
 import {
+  assertCodexHistoryWritable,
   assertCodexTurnCatalogDidNotRegress,
+  getUnsupportedCodexHistoryMessage,
+  isLegacyCodexHistory,
   isSupportedCodexHistory,
   hydrateCodexTurnRange,
+  loadCodexLegacyThread,
   loadCodexTurnCatalog,
   loadCodexTurnCursorWindow,
   loadCodexLatestTurnBoundary,
   planCodexHistoryEdit,
   retryCodexTurnWindowWithFreshCatalog,
+  retryCodexEmptyRolloutRead,
   retainCodexTurnTail
 } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
@@ -882,10 +886,13 @@ const codexCapabilities = {
 } satisfies ProviderCapabilities
 
 const assertSupportedCodexHistory = (thread: Pick<CodexThread, 'historyMode'>): void => {
-  if (isSupportedCodexHistory(thread.historyMode)) return
-  throw new Error(
-    'This chat uses unsupported legacy Codex history. Start a new chat to use the current history protocol.'
-  )
+  assertCodexHistoryWritable(thread.historyMode)
+}
+
+const assertReadableCodexHistory = (thread: Pick<CodexThread, 'historyMode'>): void => {
+  if (isSupportedCodexHistory(thread.historyMode) || isLegacyCodexHistory(thread.historyMode))
+    return
+  throw new Error(getUnsupportedCodexHistoryMessage(thread.historyMode))
 }
 
 type CodexThreadAction =
@@ -1063,7 +1070,8 @@ const parseThreadTitleGenerationResult = (text: string): ThreadNameGenerationRes
 
   try {
     parsed = JSON.parse(getJsonText(text))
-  } catch {
+  } catch (error) {
+    console.warn('Unable to parse a generated Codex title response', error)
     return null
   }
 
@@ -1268,6 +1276,27 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return this.getClient(this.clientContainerContext.getStore() ?? null)
   }
 
+  private readThread = (threadId: string, includeTurns: boolean): Promise<ThreadReadResponse> =>
+    retryCodexEmptyRolloutRead(
+      () =>
+        this.client.request<ThreadReadResponse>('thread/read', {
+          threadId,
+          includeTurns
+        }),
+      {
+        onRetry: (error, attempt, attempts) =>
+          console.warn(
+            `Codex thread ${threadId} has an empty initializing rollout; retrying read ${attempt + 1}/${attempts}`,
+            error
+          ),
+        onFinalFailure: (error, attempts) =>
+          console.error(
+            `Codex thread ${threadId} rollout remained empty after ${attempts} read attempts`,
+            error
+          )
+      }
+    )
+
   private getClient = (container: AppContainerTarget | null | undefined): CodexAppServerClient => {
     const normalizedContainer = normalizeContainerTarget(container)
     const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
@@ -1420,7 +1449,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
         refreshToken: false
       })
       .catch((error: unknown) => {
-        if (isRecoverableCodexLoginAccountReadError(error)) return null
+        if (isRecoverableCodexLoginAccountReadError(error)) {
+          console.warn('Unable to read the optional Codex login account state', error)
+          return null
+        }
         throw error
       })
 
@@ -1482,9 +1514,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const models = (await this.listModelsInContext())
         .map(mapCodexModel)
         .filter((model): model is ProviderModel => Boolean(model))
-      return models.length > 0 ? models : fallbackProviderModels
-    } catch {
-      return fallbackProviderModels
+      if (models.length === 0) throw new Error('Codex returned no available models')
+      return models
+    } catch (error) {
+      console.error('Unable to discover Codex models', error)
+      throw error
     }
   }
 
@@ -1517,8 +1551,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ...(cwd ? { cwds: [cwd] } : {}),
         forceRefetch: false
       })
-    } catch {
+    } catch (error) {
       // Local and system skills remain available when plugin discovery is unavailable.
+      console.warn('Unable to discover Codex plugin skills', error)
     }
 
     const response = await this.client.request<SkillsListResponse>('skills/list', {
@@ -1724,8 +1759,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
           includeTools: false
         })
         metadata.apps.forEach((app) => metadataById.set(app.id, app))
-      } catch {
+      } catch (error) {
         // Runtime names still provide a useful fallback if connector metadata is unavailable.
+        console.warn('Unable to read Codex connector metadata', error)
       }
     }
 
@@ -1754,7 +1790,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     let installed: PluginsInstalledResponse
     try {
       installed = await this.client.request<PluginsInstalledResponse>('plugin/installed', {})
-    } catch {
+    } catch (error) {
+      console.warn('Unable to read installed Codex plugins', error)
       return new Map()
     }
 
@@ -1992,6 +2029,26 @@ export class CodexProviderAdapter implements ProviderAdapter {
       return this.probeChatWriteAccess(detail)
     })
 
+  private loadLegacyThread = async (
+    threadId: string,
+    fallbackCwd: string | null = null
+  ): Promise<CodexThread> => {
+    const legacyThread = await loadCodexLegacyThread<CodexThread>(
+      () => this.readThread(threadId, true),
+      threadId
+    )
+    const [name, cwd] = await Promise.all([
+      this.resolveThreadName(legacyThread),
+      this.resolveThreadCwd(legacyThread, fallbackCwd)
+    ])
+    const thread = { ...legacyThread, name, cwd }
+    await Promise.all([
+      this.loadGoalPrompts(thread),
+      this.goals.read(thread.id, (method, params) => this.client.request(method, params))
+    ])
+    return thread
+  }
+
   /**
    * Codex deliberately keeps transcript reads independent from the single-writer lease. There is
    * no read-only ownership field, so use a short-lived app-server to test resume availability.
@@ -2001,13 +2058,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private probeChatWriteAccess = async (
     detail: ProviderChatDetail
   ): Promise<ProviderChatDetail> => {
+    if (isLegacyCodexHistory(this.threads.get(detail.id)?.historyMode)) return detail
+
     const hasLocallyOwnedTurn =
       this.pendingTurnStarts.has(detail.id) ||
       this.pendingTurnIds.has(detail.id) ||
       this.activeTurnIds.has(detail.id)
     if (hasLocallyOwnedTurn) {
       this.externallyOwnedThreadIds.delete(detail.id)
-      return { ...detail, writeAccess: 'writable', capabilities: codexCapabilities }
+      return {
+        ...detail,
+        writeAccess: 'writable',
+        writeAccessReason: undefined,
+        capabilities: codexCapabilities
+      }
     }
 
     const probeClient = new CodexAppServerClient(this.getCurrentContainer())
@@ -2017,18 +2081,30 @@ export class CodexProviderAdapter implements ProviderAdapter {
         excludeTurns: true
       })
       this.externallyOwnedThreadIds.delete(detail.id)
-      return { ...detail, writeAccess: 'writable', capabilities: codexCapabilities }
+      return {
+        ...detail,
+        writeAccess: 'writable',
+        writeAccessReason: undefined,
+        capabilities: codexCapabilities
+      }
     } catch (error) {
       if (!isActiveWriterError(error)) {
+        console.warn(`Unable to determine write access for Codex thread ${detail.id}`, error)
         return this.externallyOwnedThreadIds.has(detail.id)
           ? { ...detail, writeAccess: 'readOnly' }
-          : { ...detail, writeAccess: 'unknown', capabilities: codexCapabilities }
+          : {
+              ...detail,
+              writeAccess: 'unknown',
+              writeAccessReason: undefined,
+              capabilities: codexCapabilities
+            }
       }
 
       this.externallyOwnedThreadIds.add(detail.id)
       return {
         ...detail,
         writeAccess: 'readOnly',
+        writeAccessReason: 'externalOwner',
         capabilities: { ...detail.capabilities, editMessages: false, activeMessages: false }
       }
     } finally {
@@ -2068,10 +2144,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
       this.rememberThreadContainer(chatId)
-      const response = await this.client.request<ThreadReadResponse>('thread/read', {
-        threadId: chatId,
-        includeTurns: false
-      })
+      const response = await this.readThread(chatId, false)
+      if (isLegacyCodexHistory(response.thread.historyMode)) {
+        const thread = await this.loadLegacyThread(chatId, response.thread.cwd ?? null)
+        const renderableTurns = this.getRenderableTurns(thread)
+        const targetTurnIndex = renderableTurns.findIndex(
+          (turn) => itemId === turn.id || itemId.startsWith(`${turn.id}:`)
+        )
+        if (targetTurnIndex < 0) throw new Error('Chat item not found')
+        const boundedLimit = Math.max(1, Math.floor(limit))
+        const startIndex = Math.min(
+          Math.max(0, targetTurnIndex - Math.floor(boundedLimit / 2)),
+          Math.max(0, renderableTurns.length - boundedLimit)
+        )
+        this.cacheThread(thread)
+        return this.createChatDetail(thread, { turnWindow: { startIndex, limit: boundedLimit } })
+      }
       assertSupportedCodexHistory(response.thread)
       const cachedCatalog = this.paginatedTurnCatalogs.get(chatId)
       const catalog =
@@ -2108,14 +2196,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rememberThreadContainer(chatId)
     const loadStartedAtRevision = this.threadRevisions.get(chatId) ?? 0
     const cachedThread = this.threads.get(chatId)
-    const threadMetadata =
-      cachedThread ??
-      (
-        await this.client.request<ThreadReadResponse>('thread/read', {
-          threadId: chatId,
-          includeTurns: false
-        })
-      ).thread
+    const threadMetadata = cachedThread ?? (await this.readThread(chatId, false)).thread
+    if (isLegacyCodexHistory(threadMetadata.historyMode)) {
+      if (window.cursor != null) {
+        throw new Error('Legacy Codex history does not support cursor pagination')
+      }
+      const thread =
+        cachedThread ?? (await this.loadLegacyThread(chatId, threadMetadata.cwd ?? null))
+      if (cacheLatest) this.cacheThread(thread)
+      return this.createChatDetail(thread, {
+        turnWindow: { startIndex: null, limit: window.limit },
+        cursorPendingMessages:
+          window.direction === 'older' ? this.getProviderPendingMessages(chatId) : []
+      })
+    }
     assertSupportedCodexHistory(threadMetadata)
     let requestedCursor = window.cursor
     if (
@@ -2234,7 +2328,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     // Live chats keep either the complete thread or a contiguous tail window. The latter can
     // answer latest/overlapping reads; older pages still come from the paginated history API.
     const cachedThread = this.threads.get(chatId)
-    if (cachedThread) assertSupportedCodexHistory(cachedThread)
+    if (cachedThread) assertReadableCodexHistory(cachedThread)
     if (cachedThread?.turnPagination && window.startIndex == null) {
       return this.createChatDetail(cachedThread, { turnWindow: window })
     }
@@ -2260,11 +2354,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     // Metadata and transcript are deliberately separate reads. History always comes from the
     // bounded pagination API.
-    const response = await this.client.request<ThreadReadResponse>('thread/read', {
-      threadId: chatId,
-      includeTurns: false
-    })
+    const response = await this.readThread(chatId, false)
     const threadMetadata = response.thread
+    if (isLegacyCodexHistory(threadMetadata.historyMode)) {
+      const thread = await this.loadLegacyThread(chatId, threadMetadata.cwd ?? null)
+      this.cacheThread(thread)
+      return this.createChatDetail(thread, { turnWindow: window })
+    }
     assertSupportedCodexHistory(threadMetadata)
     const cachedCatalog = this.paginatedTurnCatalogs.get(chatId)
     const turnCatalog =
@@ -2414,10 +2510,35 @@ export class CodexProviderAdapter implements ProviderAdapter {
       (candidate) => candidate.id === subagentId
     )
 
-    const response = await this.client.request<ThreadReadResponse>('thread/read', {
-      threadId: subagentId,
-      includeTurns: false
-    })
+    const response = await this.readThread(subagentId, false)
+    if (isLegacyCodexHistory(response.thread.historyMode)) {
+      const legacyThread = await this.loadLegacyThread(subagentId, response.thread.cwd ?? null)
+      const turns = legacyThread.turns
+      const thread = {
+        ...legacyThread,
+        turns: selectCodexSubagentTurns(
+          this.filterRolledBackTurns(legacyThread.id, turns),
+          legacyThread.createdAt
+        )
+      }
+      this.rememberThreadContainer(thread.id)
+      this.cacheThread(thread)
+      const instruction = getCodexSubagentInstruction(
+        [
+          ...(this.threads.get(chatId) ? this.getRenderableTurns(this.threads.get(chatId)!) : []),
+          ...turns
+        ],
+        subagentId
+      )
+      return {
+        ...createCodexSubagentSummary(thread, chatId, cachedSummary?.afterItemId ?? null),
+        items: createCodexSubagentTranscriptItems(
+          createCodexSubagentSummary(thread, chatId, cachedSummary?.afterItemId ?? null),
+          getChatItems(thread.turns, thread.createdAt),
+          instruction
+        )
+      }
+    }
     assertSupportedCodexHistory(response.thread)
     const turnCatalog = await loadCodexTurnCatalog(
       (method, params) => this.client.request(method, params),
@@ -2559,7 +2680,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const throwIfCanceled = async (): Promise<void> => {
       if (!generation?.canceled) return
 
-      await this.interruptOneShotGeneration(generation).catch(() => {})
+      await this.interruptOneShotGeneration(generation).catch((error: unknown) => {
+        console.warn('Unable to interrupt a canceled Codex one-shot generation', error)
+      })
       throw new Error(providerOneShotGenerationCanceledMessage)
     }
 
@@ -2627,12 +2750,25 @@ export class CodexProviderAdapter implements ProviderAdapter {
       await throwIfCanceled()
       return generatedResponseText
     } catch (error) {
-      generatedText?.catch(() => {})
+      generatedText?.catch((generationError: unknown) => {
+        console.warn(
+          'Codex one-shot generation also failed while handling another error',
+          generationError
+        )
+      })
       if (generation?.canceled) throw new Error(providerOneShotGenerationCanceledMessage)
       throw error
     } finally {
       if (generationId) this.activeOneShotGenerations.delete(generationId)
-      if (threadId) await client.request('thread/unsubscribe', { threadId }).catch(() => {})
+      if (threadId)
+        await client
+          .request('thread/unsubscribe', { threadId })
+          .catch((unsubscribeError: unknown) => {
+            console.warn(
+              `Unable to unsubscribe from Codex one-shot thread ${threadId}`,
+              unsubscribeError
+            )
+          })
       client.dispose()
     }
   }
@@ -2850,6 +2986,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     const sourceThread = await this.ensureChatTailLoaded(chatId)
+    assertSupportedCodexHistory(sourceThread)
     if (this.hasActiveOrSubmittingTurn(chatId)) {
       throw new Error('Cannot fork a chat with an active turn')
     }
@@ -2920,6 +3057,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
     const sourceThread = await this.ensureChatTailLoaded(chatId)
+    assertSupportedCodexHistory(sourceThread)
     if (this.hasActiveOrSubmittingTurn(chatId)) {
       throw new Error('Cannot fork a chat with an active turn')
     }
@@ -3339,7 +3477,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.emitChatUpdated(chatId)
 
-    void this.processWaitingSteeringMessage(chatId, steeringMessage.id).catch(() => {
+    void this.processWaitingSteeringMessage(chatId, steeringMessage.id).catch((error: unknown) => {
+      console.error(`Unable to process a steering message for Codex thread ${chatId}`, error)
       if (this.removeSteeringMessage(chatId, steeringMessage.id)) this.emitChatUpdated(chatId)
       if (!this.getActiveTurnId(chatId)) this.scheduleQueueDrain(chatId)
     })
@@ -3408,6 +3547,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
         } catch (error) {
           const serverTurnId = didRetryWithServerTurnId ? null : getFoundActiveTurnId(error)
           if (!serverTurnId || serverTurnId === expectedTurnId) throw error
+          console.warn(
+            `Codex steering used a different active turn for thread ${chatId}; retrying`,
+            error
+          )
 
           steeringMessageId =
             this.updateSteeringMessageTurn(chatId, steeringMessageId, serverTurnId) ??
@@ -3422,6 +3565,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.emitChatUpdated(chatId)
 
       if (isRecoverableCodexStopError(error)) {
+        console.warn(`Codex steering raced with a stopped turn for thread ${chatId}`, error)
         await this.continueChatImmediately(chatId, steeringMessage.text, steeringMessage.options)
         return
       }
@@ -3542,7 +3686,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     } catch (error) {
       const serverTurnId = getFoundActiveTurnId(error)
       if (!serverTurnId || serverTurnId === turnId) {
-        if (isRecoverableCodexStopError(error)) return { turnId, interrupted: false }
+        if (isRecoverableCodexStopError(error)) {
+          console.warn(`Codex turn ${turnId} was already stopped`, error)
+          return { turnId, interrupted: false }
+        }
         throw error
       }
 
@@ -3554,6 +3701,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         return { turnId: serverTurnId, interrupted: true }
       } catch (retryError) {
         if (isRecoverableCodexStopError(retryError)) {
+          console.warn(`Codex turn ${serverTurnId} was already stopped`, retryError)
           return { turnId: serverTurnId, interrupted: false }
         }
         throw retryError
@@ -3572,7 +3720,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     // A local optimistic turn has no server identity and must never be passed to turn/interrupt.
     // Wait for turn/start to durably bind the submitted message to the server turn first.
-    await this.pendingTurnStarts.get(chatId)?.promise.catch(() => null)
+    await this.pendingTurnStarts.get(chatId)?.promise.catch((error: unknown) => {
+      console.warn(`Pending Codex turn start failed before stopping thread ${chatId}`, error)
+      return null
+    })
     await this.ensureChatTailLoaded(chatId)
     const turnId = this.getActiveTurnId(chatId)
     this.cancelPendingApprovals(chatId)
@@ -3611,7 +3762,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
     } = {}
   ): ProviderChatDetail => {
-    assertSupportedCodexHistory(thread)
+    assertReadableCodexHistory(thread)
     const cwd = getThreadApiCwd(thread)
     if (!cwd) throw new Error('Unable to load chat: working directory is missing.')
 
@@ -3654,6 +3805,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       turnCount = loadedTurnStartIndex + allRenderableTurns.length + allPendingMessages.length
     }
 
+    const isReadOnlyHistory = isLegacyCodexHistory(thread.historyMode)
+    const isReadOnly = isReadOnlyHistory || this.externallyOwnedThreadIds.has(thread.id)
+
     return {
       id: thread.id,
       revision: this.threadRevisions.get(thread.id) ?? 0,
@@ -3674,8 +3828,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
       seenUpdatedAt: null,
       purpose: null,
       container: this.threadContainers.get(thread.id) ?? null,
-      writeAccess: this.externallyOwnedThreadIds.has(thread.id) ? 'readOnly' : 'writable',
-      capabilities: this.externallyOwnedThreadIds.has(thread.id)
+      writeAccess: isReadOnly ? 'readOnly' : 'writable',
+      ...(isReadOnly
+        ? {
+            writeAccessReason: isReadOnlyHistory
+              ? ('legacyHistory' as const)
+              : ('externalOwner' as const)
+          }
+        : {}),
+      capabilities: isReadOnly
         ? { ...codexCapabilities, editMessages: false, activeMessages: false }
         : codexCapabilities,
       pendingApproval: this.getProviderPendingApproval(thread.id),
@@ -3775,6 +3936,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         } catch (error) {
           lastError = error
           if (attempt < 3) {
+            console.warn(`Unable to refresh Codex thread ${threadId}; retrying`, error)
             await new Promise((resolve) => setTimeout(resolve, 50 * 2 ** attempt))
           }
         }
@@ -3902,7 +4064,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): void => {
     void this.runWithContainer(container, () =>
       this.generateAndSetThreadTitle(threadId, prompt, cwd)
-    ).catch(() => {})
+    ).catch((error: unknown) => {
+      console.warn(`Unable to generate a title for Codex thread ${threadId}`, error)
+    })
   }
 
   private generateAndSetThreadTitle = async (
@@ -3913,7 +4077,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const currentThread = this.threads.get(threadId)
     if (currentThread && getThreadName(currentThread)) return
 
-    const generatedTitle = await this.generateThreadTitle(prompt, cwd).catch(() => null)
+    const generatedTitle = await this.generateThreadTitle(prompt, cwd).catch((error: unknown) => {
+      console.warn('Unable to generate a Codex thread title', error)
+      return null
+    })
     if (!generatedTitle) return
 
     await this.setThreadNameIfUntitled(threadId, generatedTitle)
@@ -3925,7 +4092,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<string | null> => {
     const selection = await this.listModelsInContext()
       .then(selectCodexTitleModel)
-      .catch(() => null)
+      .catch((error: unknown) => {
+        console.warn('Unable to select a model for Codex title generation', error)
+        return null
+      })
     const modelOptions = selection ? { model: selection.model } : {}
     const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
       cwd,
@@ -3964,10 +4134,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       return getGeneratedThreadTitle(text)
     } catch (error) {
-      generatedText.catch(() => {})
+      generatedText.catch((generationError: unknown) => {
+        console.warn(
+          'Codex title generation also failed while handling another error',
+          generationError
+        )
+      })
       throw error
     } finally {
-      await this.client.request('thread/unsubscribe', { threadId: titleThreadId }).catch(() => {})
+      await this.client
+        .request('thread/unsubscribe', { threadId: titleThreadId })
+        .catch((unsubscribeError: unknown) => {
+          console.warn(
+            `Unable to unsubscribe from Codex title thread ${titleThreadId}`,
+            unsubscribeError
+          )
+        })
     }
   }
 
@@ -4081,6 +4263,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       })
     }
     const existingThread = this.threads.get(threadId) ?? null
+    if (existingThread) assertSupportedCodexHistory(existingThread)
     let resume: ThreadResumeResponse
     try {
       resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
@@ -4830,7 +5013,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     queueMicrotask(() => {
       void this.runWithContainer(container, () => this.drainNextQueuedTurn(threadId))
-        .catch(() => this.scheduleQueueDrainRetry(threadId))
+        .catch((error: unknown) => {
+          console.error(`Unable to drain the queued Codex turn for thread ${threadId}`, error)
+          this.scheduleQueueDrainRetry(threadId)
+        })
         .finally(() => {
           this.queuedTurnStartThreads.delete(threadId)
           const nextDecision = this.getQueueDrainDecision(threadId, false)
@@ -4854,10 +5040,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private reconcileIdleThreadForQueueDrain = async (threadId: string): Promise<void> => {
     const activeTurnIdBeforeRead = this.getActiveTurnId(threadId)
-    const response = await this.client.request<ThreadReadResponse>('thread/read', {
-      threadId,
-      includeTurns: false
-    })
+    const response = await this.readThread(threadId, false)
     assertSupportedCodexHistory(response.thread)
     const [cwd, name, cursorWindow] = await Promise.all([
       this.resolveThreadCwd(response.thread, this.threads.get(threadId)?.cwd ?? null),
@@ -4942,12 +5125,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
       // A turn/started notification can win the race against the turn/start response. In that
       // case the queued turn is already running and the failed/late response must not undo it.
       if (!pendingTurnStillSynthetic && activeTurnId && activeTurnId !== queuedTurn.id) {
+        console.warn(
+          `Codex queued turn ${queuedTurn.id} received a late failed response after starting`,
+          error
+        )
         this.emitChatUpdated(threadId)
         return
       }
 
       const competingTurnId = getFoundActiveTurnId(error)
       if (competingTurnId && competingTurnId !== queuedTurn.id) {
+        console.warn(
+          `Codex queued turn ${queuedTurn.id} found competing active turn ${competingTurnId}`,
+          error
+        )
         this.clearPendingTurnId(threadId, queuedTurn.id)
         this.removeSyntheticTurn(threadId, queuedTurn.id)
         const remainingQueuedTurns = this.queuedTurnsByThread.get(threadId) ?? []
@@ -4959,6 +5150,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
 
       this.clearPendingTurnId(threadId, queuedTurn.id)
+      console.error(`Unable to start queued Codex turn ${queuedTurn.id}`, error)
       if (pendingTurn) this.setTurnStatus(threadId, queuedTurn.id, 'failed')
       this.setThreadStatus(threadId, { type: 'idle' })
       this.emitChatUpdated(threadId)
@@ -5398,6 +5590,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'turn/completed') {
+      if (turn.status === 'failed' || turn.error) {
+        console.error(`Codex turn ${turn.id} failed in thread ${threadId}`, turn.error ?? turn.status)
+      }
       if (this.activeTurnIds.get(threadId) === turn.id) this.activeTurnIds.delete(threadId)
       this.pendingApprovalsByThread.delete(threadId)
       if (!this.getActiveTurnId(threadId)) this.setThreadStatus(threadId, { type: 'idle' })
@@ -5438,6 +5633,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const items = this.normalizeLiveItem(params.item as CodexThreadItem).map((item) =>
       this.applyLiveItemStatus(item, status)
     )
+
+    if (notification.method === 'item/completed') {
+      items.forEach((item) => {
+        if (item.status === 'failed' || item.error) {
+          console.error(
+            `Codex item ${item.id} failed in turn ${turnId} for thread ${threadId}`,
+            item.error ?? item.status
+          )
+        }
+      })
+    }
 
     this.upsertItems(threadId, turnId, items)
     if (items.some((item) => item.type === 'agentMessage')) {
@@ -5584,6 +5790,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (notification.method === 'thread/status/changed' && params.status) {
       const status = params.status as CodexThreadStatus
+      if (status.type === 'systemError') {
+        console.error(`Codex thread ${threadId} entered a system error state`)
+      }
       this.setThreadStatus(threadId, status)
       if (status.type === 'idle') this.scheduleQueueDrain(threadId)
     }
@@ -5698,9 +5907,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (notification.method === 'account/login/completed') {
       const loginId = getStringValue((params as Record<string, unknown>).loginId)
       if (!loginId) return
+      const success = (params as Record<string, unknown>).success === true
+      const error = getStringValue((params as Record<string, unknown>).error)
+      if (!success) console.error(`Codex login ${loginId} failed`, error)
       this.resolveLogin(loginId, {
-        success: (params as Record<string, unknown>).success === true,
-        error: getStringValue((params as Record<string, unknown>).error)
+        success,
+        error
       })
       return
     }

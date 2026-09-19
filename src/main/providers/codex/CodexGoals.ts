@@ -25,8 +25,9 @@ export class CodexGoals {
       // A notification or mutation received during the read is newer than its response.
       if (!this.mutations.has(threadId) && this.states.get(threadId) === previous)
         this.update(threadId, response.goal)
-    } catch {
+    } catch (error) {
       // Goal support is optional on older app servers; chat loading must still work.
+      console.warn(`Unable to read optional Codex goal for thread ${threadId}`, error)
     }
   }
 

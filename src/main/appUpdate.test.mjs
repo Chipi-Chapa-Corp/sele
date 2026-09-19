@@ -100,6 +100,9 @@ app-commit=${'b'.repeat(64)}`
         handlers[channel] = callback
       }
     },
+    '../shared/expectedAbsence.ts': {
+      isExpectedFileAbsenceError: (error) => error?.code === 'ENOENT' || error?.code === 'ENOTDIR'
+    },
     '../shared/app': { appIpcChannels: channels },
     '../shared/appUpdate': { isNewerStableVersion }
   }
@@ -225,7 +228,6 @@ test('unpacked Windows distributions do not offer installer updates', async () =
   await settle()
   assert.equal(h.counts().checks, 0)
 })
-
 
 test('user Flatpak checks, update, verification and restart keep the user scope', async () => {
   const h = harness({ flatpak: true, flatpakRoot: '/home/test/.local/share/flatpak' })

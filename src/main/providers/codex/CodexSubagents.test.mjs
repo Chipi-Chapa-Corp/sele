@@ -135,3 +135,34 @@ test('does not fabricate an instruction from the name when the prompt is unavail
   const items = []
   assert.equal(createCodexSubagentTranscriptItems(summary, items, instruction), items)
 })
+
+test('recovers the instruction from a spawn call for the matching child only', () => {
+  const turns = [
+    {
+      items: [
+        {
+          type: 'collabAgentToolCall',
+          tool: 'spawnAgent',
+          receiverThreadIds: ['other-child'],
+          prompt: 'Other task'
+        },
+        {
+          type: 'collabAgentToolCall',
+          tool: 'sendInput',
+          receiverThreadIds: ['child-chat'],
+          prompt: 'Follow-up'
+        },
+        {
+          type: 'collabAgentToolCall',
+          tool: 'spawnAgent',
+          receiverThreadIds: ['child-chat'],
+          prompt: 'Inspect the UI'
+        }
+      ]
+    }
+  ]
+  const instruction = getCodexSubagentInstruction(turns, 'child-chat')
+  assert.equal(instruction, 'Inspect the UI')
+  assert.equal(createCodexSubagentTranscriptItems(summary, [], instruction)[0].role, 'user')
+  assert.equal(getCodexSubagentInstruction(turns, 'missing-child'), null)
+})

@@ -149,6 +149,12 @@ const createInitialBrowserWorkspaces = (
 const getBrowserErrorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Unable to load this page.'
 
+const isExpectedWebviewUnavailableError = (error: unknown): boolean =>
+  error instanceof Error &&
+  /webview.*(?:not attached|dom-ready)|object has been destroyed|webcontents (?:was|is) destroyed|render frame was disposed/i.test(
+    error.message
+  )
+
 const BrowserTabIcon: React.FC<{ url: string }> = ({ url }) => {
   const faviconUrl = getBrowserFaviconUrl(url)
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
@@ -191,7 +197,9 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
           canGoBack: webview.canGoBack(),
           canGoForward: webview.canGoForward()
         })
-      } catch {
+      } catch (error) {
+        if (!isExpectedWebviewUnavailableError(error))
+          console.error('[caught:BrowserPanel:updateNavigationState]', error)
         // The guest may not be attached yet or may have just been destroyed.
       }
     }
@@ -255,7 +263,9 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
     const setPageScale = (scale: number): void => {
       try {
         webview.setZoomFactor(getBrowserPageZoomFactor(scale, applicationZoomFactor))
-      } catch {
+      } catch (error) {
+        if (!isExpectedWebviewUnavailableError(error))
+          console.error('[caught:BrowserPanel:setPageScale]', error)
         // The guest may not be attached yet or may have just been destroyed.
       }
     }
@@ -263,7 +273,9 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
       let url: string
       try {
         url = webview.getURL()
-      } catch {
+      } catch (error) {
+        if (!isExpectedWebviewUnavailableError(error))
+          console.error('[caught:BrowserPanel:applyPageScale]', error)
         return
       }
 
@@ -273,7 +285,9 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
       let webContentsId: number
       try {
         webContentsId = webview.getWebContentsId()
-      } catch {
+      } catch (error) {
+        if (!isExpectedWebviewUnavailableError(error))
+          console.error('[caught:BrowserPanel:applyPageScale]', error)
         return
       }
 
@@ -285,12 +299,16 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
           let currentHostname: string | null = null
           try {
             currentHostname = getBrowserPageHostname(webview.getURL())
-          } catch {
+          } catch (error) {
+            if (!isExpectedWebviewUnavailableError(error))
+              console.error('[caught:BrowserPanel:applyPageScale]', error)
             return
           }
           if (currentHostname === hostname) setPageScale(resolvedScale)
         })
-        .catch(() => {})
+        .catch((error) => {
+          console.error('[caught:BrowserPanel:applyPageScale]', error)
+        })
     }
 
     applyPageScale()
@@ -678,7 +696,9 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     const webview = activeTabId ? webviewsRef.current.get(activeTabId) : null
     try {
       webview?.stopFindInPage('clearSelection')
-    } catch {
+    } catch (error) {
+      if (!isExpectedWebviewUnavailableError(error))
+        console.error('[caught:BrowserPanel:BrowserPanel]', error)
       // The guest may have just navigated or been destroyed.
     }
     findRequestIdRef.current = null
@@ -700,7 +720,9 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
         findNext: false,
         forward
       })
-    } catch {
+    } catch (error) {
+      if (!isExpectedWebviewUnavailableError(error))
+        console.error('[caught:BrowserPanel:BrowserPanel]', error)
       // The guest may have just navigated or been destroyed.
     }
   }, [])
@@ -715,7 +737,9 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
       if (request.webContentsId !== null) {
         try {
           if (webview.getWebContentsId() !== request.webContentsId) return
-        } catch {
+        } catch (error) {
+          if (!isExpectedWebviewUnavailableError(error))
+            console.error('[caught:BrowserPanel:BrowserPanel]', error)
           return
         }
       }
@@ -741,7 +765,9 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     setFindResult(emptyBrowserFindResult)
     try {
       webview.stopFindInPage('clearSelection')
-    } catch {
+    } catch (error) {
+      if (!isExpectedWebviewUnavailableError(error))
+        console.error('[caught:BrowserPanel:BrowserPanel]', error)
       return
     }
     if (!findQuery || activeRuntime.loading) return
@@ -753,7 +779,9 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
         forward: true
       })
       findRequestIdRef.current = requestId
-    } catch {
+    } catch (error) {
+      if (!isExpectedWebviewUnavailableError(error))
+        console.error('[caught:BrowserPanel:BrowserPanel]', error)
       return
     }
 
@@ -761,7 +789,9 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
       if (findRequestIdRef.current === requestId) findRequestIdRef.current = null
       try {
         webview.stopFindInPage('clearSelection')
-      } catch {
+      } catch (error) {
+        if (!isExpectedWebviewUnavailableError(error))
+          console.error('[caught:BrowserPanel:BrowserPanel]', error)
         // The guest may have just navigated or been destroyed.
       }
     }
@@ -789,6 +819,8 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     if (!webview) return
 
     void webview.loadURL(url).catch((error) => {
+      console.error('[caught:BrowserPanel:navigateToAddress]', error)
+
       handlePageStateChange(activeTab.id, {
         error: getBrowserErrorMessage(error),
         loading: false

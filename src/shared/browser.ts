@@ -1,4 +1,5 @@
 import type { AppContainerTarget } from './app'
+import { isExpectedUrlParseError } from './expectedAbsence.ts'
 import type { ProviderId } from './provider'
 
 export type BrowserOpenRequest = {
@@ -224,7 +225,10 @@ export const getBrowserPageHostname = (value: string): string | null => {
     return browserPageProtocols.has(url.protocol) && url.hostname
       ? url.hostname.toLocaleLowerCase()
       : null
-  } catch {
+  } catch (error) {
+    if (!isExpectedUrlParseError(error)) {
+      console.error('[caught:browser:getBrowserPageHostname]', error)
+    }
     return null
   }
 }
@@ -232,7 +236,10 @@ export const getBrowserPageHostname = (value: string): string | null => {
 export const isBrowserPageUrl = (value: string): boolean => {
   try {
     return browserPageProtocols.has(new URL(value).protocol)
-  } catch {
+  } catch (error) {
+    if (!isExpectedUrlParseError(error)) {
+      console.error('[caught:browser:isBrowserPageUrl]', error)
+    }
     return false
   }
 }
@@ -252,7 +259,10 @@ export const normalizeBrowserAddress = (value: string): string | null => {
   try {
     const url = new URL(candidate)
     return browserPageProtocols.has(url.protocol) ? url.toString() : null
-  } catch {
+  } catch (error) {
+    if (!isExpectedUrlParseError(error)) {
+      console.error('[caught:browser:normalizeBrowserAddress]', error)
+    }
     return null
   }
 }
@@ -260,7 +270,10 @@ export const normalizeBrowserAddress = (value: string): string | null => {
 export const getBrowserPageLabel = (value: string): string => {
   try {
     return new URL(value).hostname || 'New tab'
-  } catch {
+  } catch (error) {
+    if (!isExpectedUrlParseError(error)) {
+      console.error('[caught:browser:getBrowserPageLabel]', error)
+    }
     return 'New tab'
   }
 }
@@ -271,7 +284,10 @@ export const getBrowserFaviconUrl = (value: string): string | null => {
     if (!browserPageProtocols.has(url.protocol)) return null
 
     return `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(url.origin)}&sz=32`
-  } catch {
+  } catch (error) {
+    if (!isExpectedUrlParseError(error)) {
+      console.error('[caught:browser:getBrowserFaviconUrl]', error)
+    }
     return null
   }
 }

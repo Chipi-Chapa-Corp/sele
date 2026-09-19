@@ -47,7 +47,8 @@ const getExternalLinkHref = (href: string): string | null => {
   try {
     const url = new URL(href)
     return externalLinkProtocols.has(url.protocol) ? url.toString() : null
-  } catch {
+  } catch (error) {
+    console.error('[caught:chatRecents:getExternalLinkHref]', error)
     return null
   }
 }

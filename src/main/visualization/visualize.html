@@ -115,7 +115,12 @@
         floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
         floating.style.visibility = "visible";
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('[visualize:positionTooltip] Unable to position tooltip', error);
+        window.parent.postMessage(
+          { type: 'visualization:warning', message: 'Unable to position visualization tooltip' },
+          '*',
+        );
         if (activeTrigger === trigger && request === positionRequest) {
           closeTooltip(false);
         }

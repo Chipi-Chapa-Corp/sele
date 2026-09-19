@@ -252,7 +252,8 @@ export const readChatGroupingPreference = (): ChatGroupingPreference => {
     return window.localStorage.getItem(chatGroupingPreferenceStorageKey) === 'ungrouped'
       ? 'ungrouped'
       : 'grouped'
-  } catch {
+  } catch (error) {
+    console.error('[caught:controllerTypes:readChatGroupingPreference]', error)
     return 'grouped'
   }
 }
@@ -260,7 +261,8 @@ export const readChatGroupingPreference = (): ChatGroupingPreference => {
 export const writeChatGroupingPreference = (preference: ChatGroupingPreference): void => {
   try {
     window.localStorage.setItem(chatGroupingPreferenceStorageKey, preference)
-  } catch {
+  } catch (error) {
+    console.error('[caught:controllerTypes:writeChatGroupingPreference]', error)
     // Sidebar grouping is non-critical; ignore unavailable storage.
   }
 }

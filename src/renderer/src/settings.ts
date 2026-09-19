@@ -110,7 +110,9 @@ export type AppChatDropdownSettings = {
   forceModel: typeof appChatManualDropdownValue | ProviderModelId
   forceReasoning: typeof appChatManualDropdownValue | ProviderReasoningEffort
   forceSpeed:
-    typeof appChatManualDropdownValue | typeof appChatStandardSpeedValue | ProviderServiceTier
+    | typeof appChatManualDropdownValue
+    | typeof appChatStandardSpeedValue
+    | ProviderServiceTier
 }
 
 export type AppPerformanceSettings = {
@@ -1205,7 +1207,8 @@ export const readStoredAppSettings = (): AppSettings => {
         }
       }
     }
-  } catch {
+  } catch (error) {
+    console.error('[caught:settings:readStoredAppSettings]', error)
     return defaultAppSettings
   }
 }
@@ -1287,7 +1290,8 @@ export const readStoredAppProjectSettings = (): AppProjectSettingsByCwd => {
     }
 
     return projectSettings
-  } catch {
+  } catch (error) {
+    console.error('[caught:settings:readStoredAppProjectSettings]', error)
     return {}
   }
 }
@@ -1312,7 +1316,8 @@ export const writeStoredAppProjectSettings = (projectSettings: AppProjectSetting
     }
 
     window.localStorage.setItem(appProjectSettingsStorageKey, JSON.stringify(storedProjectSettings))
-  } catch {
+  } catch (error) {
+    console.error('[caught:settings:writeStoredAppProjectSettings]', error)
     // App settings are non-critical; ignore unavailable storage.
   }
 }
@@ -1592,7 +1597,8 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
 
     window.localStorage.setItem(appSettingsStorageKey, JSON.stringify(storedSettings))
-  } catch {
+  } catch (error) {
+    console.error('[caught:settings:writeStoredAppSettings]', error)
     // App settings are non-critical; ignore unavailable storage.
   }
 }

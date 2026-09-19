@@ -34,6 +34,11 @@ import type {
   AppWindowState
 } from '../../shared/app'
 import type { BrowserOpenRequest } from '../../shared/browser'
+import {
+  isExpectedCommandAbsenceError,
+  isExpectedFileAbsenceError,
+  isExpectedUrlParseError
+} from '../../shared/expectedAbsence.ts'
 import type {
   ProviderChat,
   ProviderChatDetail,
@@ -74,6 +79,7 @@ import { getWorkingStepProgressPolicy } from './workingStepDisclosure'
 import type { AccountAuthorizationSession } from './components/AccountDialog'
 import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
+import { getChatWriteAccessPresentation } from './chatWriteAccess'
 import { type ChatListGroupData } from './components/ChatListGroup'
 import { Button } from './components/Button'
 import type { ChatPlanData } from './components/ChatPlan'
@@ -81,6 +87,10 @@ import type { DropdownOption } from './components/Dropdown'
 import type { FileEditorTarget } from './components/FileEditorDialog'
 import { getReasoningEffortPresentation } from './reasoningEffortPresentation'
 import { reconcileModelSelection, reconcileReasoningSelection } from './modelSelection'
+import {
+  resolveProviderModelCatalogFailure,
+  resolveProviderModelCatalogSuccess
+} from './modelCatalogLoad'
 import type { MessageBoxQuoteRequest } from './components/MessageBox'
 import type { TerminalCommandLaunchRequest } from './components/TerminalPanel'
 import { appApi } from './appApi'
@@ -421,6 +431,7 @@ export const useWorkspaceController = () => {
     storedMessageBoxSelection.sandboxMode ?? fallbackDefaultSandboxMode
   )
   const [models, setModels] = useState<ProviderModel[]>(fallbackProviderModels)
+  const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelsLoading, setModelsLoading] = useState(false)
   const [gitSettingsModels, setGitSettingsModels] = useState<ProviderModel[]>([])
   const [gitSettingsModelsLoading, setGitSettingsModelsLoading] = useState(false)
@@ -795,13 +806,18 @@ export const useWorkspaceController = () => {
       while (deferredProviderResourceRefreshesRef.current.size > 0) {
         const refreshes = Array.from(deferredProviderResourceRefreshesRef.current.values())
         deferredProviderResourceRefreshesRef.current.clear()
-        await Promise.allSettled(
-          refreshes.map(({ providerId, cwd, container }) =>
-            Promise.allSettled([
+        await Promise.all(
+          refreshes.map(async ({ providerId, cwd, container }) => {
+            const results = await Promise.allSettled([
               providerApi.getSkills(providerId, cwd, { container, forceRefresh: true }),
               providerApi.getApps(providerId, { container, forceRefresh: true })
             ])
-          )
+            results.forEach((result) => {
+              if (result.status === 'rejected') {
+                console.error(`Unable to refresh ${providerId} resources.`, result.reason)
+              }
+            })
+          })
         )
         setProviderResourcesRevision((revision) => revision + 1)
         setProviderResourcesRefresh((refresh) => refresh + 1)
@@ -1073,7 +1089,10 @@ export const useWorkspaceController = () => {
       .then((families) => {
         if (active) setInstalledFontFamilies(families)
       })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        if (isExpectedCommandAbsenceError(error)) return
+        console.error('Unable to load installed font families.', error)
+      })
       .finally(() => {
         if (active) setInstalledFontsLoaded(true)
       })
@@ -1084,13 +1103,21 @@ export const useWorkspaceController = () => {
   }, [])
 
   useEffect(() => {
-    void appApi.setWindowZoomLevel(effectiveAppSettings.appearance.zoomLevel).catch(() => {})
+    void appApi
+      .setWindowZoomLevel(effectiveAppSettings.appearance.zoomLevel)
+      .catch((error: unknown) => {
+        console.error('Unable to set the window zoom level.', error)
+      })
   }, [effectiveAppSettings.appearance.zoomLevel])
 
   const handleOpenBrowserRequest = useCallback(
     (request: BrowserOpenRequest): void => {
       if (!effectiveAppSettings.browser.enabled) {
-        void appApi.handleExternalLink({ url: request.url, action: 'open' }).catch(() => {})
+        void appApi
+          .handleExternalLink({ url: request.url, action: 'open' })
+          .catch((error: unknown) => {
+            console.error('Unable to open a browser link externally.', error)
+          })
         return
       }
 
@@ -1162,7 +1189,9 @@ export const useWorkspaceController = () => {
       let url: URL
       try {
         url = new URL(anchor.href)
-      } catch {
+      } catch (error) {
+        if (isExpectedUrlParseError(error)) return
+        console.error('Unable to parse a clicked link.', error)
         return
       }
       if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) return
@@ -1173,7 +1202,11 @@ export const useWorkspaceController = () => {
         return
       }
 
-      void appApi.handleExternalLink({ url: url.toString(), action: 'open' }).catch(() => {})
+      void appApi
+        .handleExternalLink({ url: url.toString(), action: 'open' })
+        .catch((error: unknown) => {
+          console.error('Unable to open an external link.', error)
+        })
     }
 
     document.addEventListener('click', handleLinkClick)
@@ -1342,7 +1375,9 @@ export const useWorkspaceController = () => {
       .then((nextWindowState) => {
         if (active) setWindowState(nextWindowState)
       })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        console.error('Unable to load the window state.', error)
+      })
 
     const unsubscribe = appApi.onWindowStateUpdated((nextWindowState) => {
       setWindowState(nextWindowState)
@@ -1368,9 +1403,15 @@ export const useWorkspaceController = () => {
     let active = true
 
     Promise.all([
-      appApi.getContainerSuggestions().catch(() => [] satisfies AppContainerSuggestion[]),
+      appApi.getContainerSuggestions().catch((error: unknown) => {
+        console.error('Unable to load container suggestions.', error)
+        return [] satisfies AppContainerSuggestion[]
+      }),
       appApi.getSshEnvironments(),
-      providerApi.getChatContainers().catch(() => [] satisfies AppContainerTarget[])
+      providerApi.getChatContainers().catch((error: unknown) => {
+        console.error('Unable to load containers referenced by chats.', error)
+        return [] satisfies AppContainerTarget[]
+      })
     ])
       .then(([suggestions, environments, chatContainers]) => {
         if (!active) return
@@ -1398,7 +1439,8 @@ export const useWorkspaceController = () => {
         containerSelectionReadyRef.current = true
         setContainerSelectionReady(true)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to initialize available environments.', error)
         if (!active) return
 
         setContainerSuggestions([])
@@ -1474,6 +1516,7 @@ export const useWorkspaceController = () => {
         })
       })
       .catch((error) => {
+        console.error('Unable to check containers over SSH.', error)
         if (!active) return
         setRemoteContainerSuggestions([])
         setRemoteContainerSuggestionsError(
@@ -1509,6 +1552,7 @@ export const useWorkspaceController = () => {
         setNewSessionSourceAvailability({ containerKey, availability, error: null })
       })
       .catch((error) => {
+        console.error('Unable to check source availability.', error)
         if (!active) return
 
         setNewSessionSourceAvailability({
@@ -1548,6 +1592,7 @@ export const useWorkspaceController = () => {
         setProviderAccountsLoadState('ready')
       })
       .catch((error) => {
+        console.error('Unable to inspect provider accounts.', error)
         if (!active) return
         setSettingsProviderAccounts(null)
         setProviderAccountsError(
@@ -1635,6 +1680,12 @@ export const useWorkspaceController = () => {
       providerApi.getSkills(providerId, settingsProjectCwd, { container }),
       providerApi.getApps(providerId, { container })
     ]).then(([skills, apps]) => {
+      if (skills.status === 'rejected') {
+        console.error(`Unable to load ${providerId} skills.`, skills.reason)
+      }
+      if (apps.status === 'rejected') {
+        console.error(`Unable to load ${providerId} apps.`, apps.reason)
+      }
       if (!active) return
 
       setSettingsProviderSkills(
@@ -1731,7 +1782,8 @@ export const useWorkspaceController = () => {
             : null
         )
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to check provider update availability.', error)
         if (active) setProviderUpdateSuggestion(null)
       })
 
@@ -1831,7 +1883,8 @@ export const useWorkspaceController = () => {
         }
 
         void loadProviderChats()
-          .catch(() => {
+          .catch((error: unknown) => {
+            console.error(`Unable to load initial chats for ${providerId}.`, error)
             // Other providers should still populate the sidebar.
           })
           .finally(() => {
@@ -1863,12 +1916,14 @@ export const useWorkspaceController = () => {
     const sources = (
       [
         { kind: 'host' },
-        ...sshEnvironments.map((environment): AppContainerTarget => ({
-          kind: 'container',
-          tool: 'ssh',
-          name: environment.id,
-          runtime: { kind: 'host' }
-        })),
+        ...sshEnvironments.map(
+          (environment): AppContainerTarget => ({
+            kind: 'container',
+            tool: 'ssh',
+            name: environment.id,
+            runtime: { kind: 'host' }
+          })
+        ),
         ...containerSuggestions.map(getContainerTargetFromSuggestion),
         ...storedChatContainers.filter(
           (container) =>
@@ -1892,7 +1947,7 @@ export const useWorkspaceController = () => {
         provider.available ? [provider.providerId] : []
       )
 
-      await Promise.allSettled(
+      const results = await Promise.allSettled(
         availableProviderIds.map(async (providerId) => {
           const initialChatKeys = new Set(
             chatsRef.current
@@ -1935,11 +1990,17 @@ export const useWorkspaceController = () => {
           )
         })
       )
+      results.forEach((result) => {
+        if (result.status === 'rejected') {
+          console.error('Unable to load chats from a secondary provider.', result.reason)
+        }
+      })
     }
 
     sources.forEach((source) => {
       if (getContainerTargetKey(source) === newSessionContainerKeyRef.current) return
-      void loadSourceChats(source).catch(() => {
+      void loadSourceChats(source).catch((error: unknown) => {
+        console.error('Unable to load chats from a secondary source.', error)
         // Unreachable environments should not hide chats loaded from other sources.
       })
     })
@@ -1957,7 +2018,8 @@ export const useWorkspaceController = () => {
       .then((storedProjects) => {
         if (active) setProjects(mergeProjects(storedProjects))
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to load projects.', error)
         if (active) setProjects([])
       })
 
@@ -1995,7 +2057,8 @@ export const useWorkspaceController = () => {
         setAgentModes(nextAgentModes)
         setAgentModesLoading(false)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to load provider agent modes.', error)
         if (!active) return
         setAgentModes([])
         setAgentModesLoading(false)
@@ -2038,7 +2101,8 @@ export const useWorkspaceController = () => {
 
         setApprovalModes(nextApprovalModes)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to load provider approval modes.', error)
         if (active) setApprovalModes(fallbackProviderApprovalModes)
       })
 
@@ -2079,7 +2143,8 @@ export const useWorkspaceController = () => {
 
         setSandboxModes(nextSandboxModes)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to load provider sandbox modes.', error)
         if (active) setSandboxModes(fallbackProviderSandboxModes)
       })
 
@@ -2126,6 +2191,7 @@ export const useWorkspaceController = () => {
             return null
           })
         }
+        setModelsError(null)
         setModelsLoading(false)
       })
 
@@ -2146,6 +2212,7 @@ export const useWorkspaceController = () => {
         setModelsLoading(true)
         setDisplayedModelCatalogKey(null)
       }
+      setModelsError(null)
     })
 
     providerApi
@@ -2153,18 +2220,24 @@ export const useWorkspaceController = () => {
       .then((nextModels) => {
         if (!active) return
 
-        const resolvedModels = nextModels.length > 0 ? nextModels : fallbackModels
-        providerModelCatalogCacheRef.current.set(configProviderModelCatalogKey, resolvedModels)
+        const result = resolveProviderModelCatalogSuccess(nextModels, fallbackModels)
+        providerModelCatalogCacheRef.current.set(configProviderModelCatalogKey, result.models)
         setDisplayedModelCatalogKey(configProviderModelCatalogKey)
-        setModels(resolvedModels)
+        setModels(result.models)
+        setModelsError(result.error)
         setModelsLoading(false)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to load provider models.', error)
         if (!active) return
-        const resolvedModels = cachedModels ?? fallbackModels
-        providerModelCatalogCacheRef.current.set(configProviderModelCatalogKey, resolvedModels)
+        const result = resolveProviderModelCatalogFailure(
+          cachedModels,
+          fallbackModels,
+          getErrorMessage(error, 'Unable to load models.')
+        )
         setDisplayedModelCatalogKey(configProviderModelCatalogKey)
-        setModels(resolvedModels)
+        setModels(result.models)
+        setModelsError(result.error)
         setModelsLoading(false)
       })
 
@@ -2224,7 +2297,8 @@ export const useWorkspaceController = () => {
         setGitSettingsModels(resolvedModels)
         setGitSettingsModelsLoading(false)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to load models for Git settings.', error)
         if (!active) return
         const resolvedModels = cachedModels ?? fallbackModels
         providerModelCatalogCacheRef.current.set(gitSettingsModelCatalogKey, resolvedModels)
@@ -2606,7 +2680,8 @@ export const useWorkspaceController = () => {
       void providerApi
         .markChatSeen(providerId, chatId, seenUpdatedAt)
         .then((metadata) => applyChatMetadata([metadata]))
-        .catch(() => {
+        .catch((error: unknown) => {
+          console.error('Unable to persist the chat seen state.', error)
           // Keep the optimistic in-memory seen state if persistence fails.
         })
     },
@@ -2681,8 +2756,8 @@ export const useWorkspaceController = () => {
         }
         const staleSelectedDetail = Boolean(
           viewingUpdatedChat &&
-          event.detail &&
-          isChatDetailSnapshotStale(event.detail, chatDetailRef.current)
+            event.detail &&
+            isChatDetailSnapshotStale(event.detail, chatDetailRef.current)
         )
         const mergedSelectedDetail =
           viewingUpdatedChat && event.detail && !staleSelectedDetail
@@ -2709,12 +2784,12 @@ export const useWorkspaceController = () => {
         })()
         const selectedDetailMatchesDeliveredTranscript = Boolean(
           selectedDetail &&
-          mergedSelectedDetail?.detailApplied &&
-          selectedDetail.revision === mergedSelectedDetail.detail.revision &&
-          selectedDetail.items.length === mergedSelectedDetail.detail.items.length &&
-          selectedDetail.items.every(
-            (item, index) => item.id === mergedSelectedDetail.detail.items[index]?.id
-          )
+            mergedSelectedDetail?.detailApplied &&
+            selectedDetail.revision === mergedSelectedDetail.detail.revision &&
+            selectedDetail.items.length === mergedSelectedDetail.detail.items.length &&
+            selectedDetail.items.every(
+              (item, index) => item.id === mergedSelectedDetail.detail.items[index]?.id
+            )
         )
 
         if (staleSelectedDetail) {
@@ -2758,7 +2833,8 @@ export const useWorkspaceController = () => {
                     if (selectedChatKeyRef.current !== updatedChatKey) return
                     applyChatDetail(event.providerId, detail)
                   })
-                  .catch(() => {
+                  .catch((error: unknown) => {
+                    console.error('Unable to resynchronize an updated chat.', error)
                     if (chatDetailResyncRef.current?.requestId === requestId) {
                       chatDetailResyncRef.current = null
                     }
@@ -2828,7 +2904,8 @@ export const useWorkspaceController = () => {
             void providerApi
               .getChat(event.providerId, event.chatId)
               .then(finishCommitActivity)
-              .catch(() => {
+              .catch((error: unknown) => {
+                console.error('Unable to load a chat while finishing commit activity.', error)
                 // Keep the activity pending so startup recovery can finish it later.
               })
           }
@@ -3106,7 +3183,13 @@ export const useWorkspaceController = () => {
         providerApi
           .getCwdNotes('codex', group.cwd)
           .then((notes) => ({ key: group.key, notes }))
-          .catch(() => ({ key: group.key, notes: [] }))
+          .catch((error: unknown) => {
+            console.error(
+              `Unable to load notes for ${group.cwd ?? 'the default workspace'}.`,
+              error
+            )
+            return { key: group.key, notes: [] }
+          })
       )
     ).then((groupNotes) => {
       groupNotes.forEach(({ key }) => loadingCwdNotesRef.current.delete(key))
@@ -3146,7 +3229,14 @@ export const useWorkspaceController = () => {
         appApi
           .getProjectIcon({ cwd: entry.cwd })
           .then((icon) => ({ key: entry.key, icon }))
-          .catch(() => ({ key: entry.key, icon: null }))
+          .catch((error: unknown) => {
+            if (isExpectedFileAbsenceError(error)) return { key: entry.key, icon: null }
+            console.error(
+              `Unable to load the project icon for ${entry.cwd ?? 'the home view'}.`,
+              error
+            )
+            return { key: entry.key, icon: null }
+          })
       )
     ).then((groupIcons) => {
       groupIcons.forEach(({ key }) => loadingProjectIconsRef.current.delete(key))
@@ -3258,6 +3348,7 @@ export const useWorkspaceController = () => {
             : currentContainer
         )
       } catch (error) {
+        console.error('Unable to remove the SSH environment.', error)
         setSshEnvironmentError(getErrorMessage(error, 'Unable to remove environment.'))
       } finally {
         setDeletingSshEnvironmentId(null)
@@ -3430,6 +3521,7 @@ export const useWorkspaceController = () => {
       )
       setProviderAccountRevision((revision) => revision + 1)
     } catch (error) {
+      console.error('Unable to switch provider accounts.', error)
       setProviderAccountsError(getErrorMessage(error, 'Unable to switch accounts.'))
     } finally {
       setProviderAccountUpdatingId(null)
@@ -3451,6 +3543,7 @@ export const useWorkspaceController = () => {
       )
       setProviderAccountRevision((revision) => revision + 1)
     } catch (error) {
+      console.error('Unable to delete the provider account.', error)
       setProviderAccountsError(getErrorMessage(error, 'Unable to delete the account.'))
     } finally {
       setProviderAccountUpdatingId(null)
@@ -3482,7 +3575,8 @@ export const useWorkspaceController = () => {
         )
         applyProviderAccountConfiguration(restoredConfiguration)
         setProviderAccountRevision((revision) => revision + 1)
-      } catch {
+      } catch (cleanupError) {
+        console.error('Unable to clean up an incomplete provider account.', cleanupError)
         // Keep the original login error when cleanup cannot be completed.
       }
       throw error
@@ -3504,7 +3598,13 @@ export const useWorkspaceController = () => {
       } catch (error) {
         const restoredConfiguration = await providerApi
           .getAccounts(providerId, { container })
-          .catch(() => null)
+          .catch((restoreError: unknown) => {
+            console.error(
+              'Unable to restore provider accounts after authorization failed.',
+              restoreError
+            )
+            return null
+          })
         if (restoredConfiguration) applyProviderAccountConfiguration(restoredConfiguration)
         throw error
       }
@@ -3560,6 +3660,7 @@ export const useWorkspaceController = () => {
         }
       )
     } catch (error) {
+      console.error('Unable to update a provider skill.', error)
       setSettingsProviderSkills((currentResources) =>
         currentResources.map((currentResource) =>
           currentResource.skill.path === resource.skill.path
@@ -3621,6 +3722,7 @@ export const useWorkspaceController = () => {
         knownSkills: childSkills.map((childSkill) => childSkill.skill)
       })
     } catch (error) {
+      console.error('Unable to update a provider app.', error)
       const previousChildState = new Map(
         childSkills.map((childSkill) => [childSkill.skill.path, childSkill.skill.enabled])
       )
@@ -3715,6 +3817,7 @@ export const useWorkspaceController = () => {
         )
       }
     } catch (error) {
+      console.error('Unable to update provider skills.', error)
       setSettingsProviderSkills((currentResources) =>
         currentResources.map((currentResource) => {
           const previousEnabled = previousSkillState.get(currentResource.skill.path)
@@ -4119,6 +4222,11 @@ export const useWorkspaceController = () => {
 
     void Promise.allSettled(Array.from(sourcesByKey.values()).map(loadSourceDoneChats)).then(
       (results) => {
+        results.forEach((result) => {
+          if (result.status === 'rejected') {
+            console.error('Unable to load completed chats for the project filter.', result.reason)
+          }
+        })
         if (doneProjectFilterRequestIdRef.current !== requestId) return
 
         const successfulChatGroups = results.flatMap((result) =>
@@ -4183,7 +4291,8 @@ export const useWorkspaceController = () => {
           [group.key]: storedNotes
         }))
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to persist workspace notes.', error)
         // Keep the optimistic note list visible if local persistence fails.
       })
   }
@@ -4194,7 +4303,8 @@ export const useWorkspaceController = () => {
     let icon: AppProjectIcon | null = null
     try {
       icon = await appApi.selectProjectIcon({ cwd: group.cwd })
-    } catch {
+    } catch (error) {
+      console.error('Unable to select a project icon.', error)
       return
     }
     if (!icon) return
@@ -4210,7 +4320,9 @@ export const useWorkspaceController = () => {
         .then((project) =>
           setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
         )
-        .catch(() => {})
+        .catch((error: unknown) => {
+          console.error('Unable to save the selected project icon.', error)
+        })
     }
   }
 
@@ -4428,13 +4540,17 @@ export const useWorkspaceController = () => {
     setProviderModelsRevision,
     providerUpdatePreferences
   })
-  const chatOpenedElsewhere = chatDetail?.writeAccess === 'readOnly'
-  const requestErrorVisible = chatOpenedElsewhere || sendState === 'error'
-  const requestErrorSummary = chatOpenedElsewhere
-    ? chatOpenElsewhereMessage
-    : sendState === 'error' && sendError
-      ? sendError
-      : 'Unable to complete request.'
+  const chatWriteAccess = getChatWriteAccessPresentation(chatDetail)
+  const chatOpenedElsewhere = chatWriteAccess.openedElsewhere
+  const chatLegacyHistoryReadOnly = chatWriteAccess.legacyHistory
+  const requestErrorVisible = chatWriteAccess.readOnly || sendState === 'error'
+  const requestErrorSummary = chatLegacyHistoryReadOnly
+    ? 'This legacy Codex chat is available read-only.'
+    : chatOpenedElsewhere
+      ? chatOpenElsewhereMessage
+      : sendState === 'error' && sendError
+        ? sendError
+        : 'Unable to complete request.'
 
   const handleSendFailure = useCallback((error: unknown, fallback: string): void => {
     setSendError(getErrorMessage(error, fallback))
@@ -5088,29 +5204,36 @@ export const useWorkspaceController = () => {
     hasAiCommitInProgressForProject
   })
 
-  const { handleReturnFromSubagentChat, renderChatCommitMarker, renderChatSubagentMarker } =
-    useSubagentController({
-      selectedProviderId,
-      selectedChatId,
-      selectedChatKey,
-      subagentChatLoadRequestRef,
-      resetChatSearch,
-      setEditingMessage,
-      setSubagentChatView,
-      selectedChatKeyRef,
-      subagentContentRef,
-      scrollChatContentToBottom,
-      cancelingSubagentIds,
-      setCancelingSubagentIds,
-      setSubagentListState,
-      contentRef,
-      scopedCommitActivitiesByMarkerId,
-      providerUpdateInProgress,
-      cancelingAiCommitKeys,
-      openingAiCommitChatIds,
-      handleCancelAiCommit,
-      handleOpenAiCommitChat
-    })
+  const {
+    handleLoadSubagentWorkingStep,
+    handleLoadSubagentWorkingItem,
+    handleLoadSubagentWorkingToolPage,
+    handleReturnFromSubagentChat,
+    renderChatCommitMarker,
+    renderChatSubagentMarker
+  } = useSubagentController({
+    activeSubagentChatView,
+    selectedProviderId,
+    selectedChatId,
+    selectedChatKey,
+    subagentChatLoadRequestRef,
+    resetChatSearch,
+    setEditingMessage,
+    setSubagentChatView,
+    selectedChatKeyRef,
+    subagentContentRef,
+    scrollChatContentToBottom,
+    cancelingSubagentIds,
+    setCancelingSubagentIds,
+    setSubagentListState,
+    contentRef,
+    scopedCommitActivitiesByMarkerId,
+    providerUpdateInProgress,
+    cancelingAiCommitKeys,
+    openingAiCommitChatIds,
+    handleCancelAiCommit,
+    handleOpenAiCommitChat
+  })
 
   const handleMinimizeWindow = (): void => {
     void appApi.minimizeWindow()
@@ -5120,7 +5243,9 @@ export const useWorkspaceController = () => {
     void appApi
       .toggleWindowMaximized()
       .then((nextWindowState) => setWindowState(nextWindowState))
-      .catch(() => {})
+      .catch((error: unknown) => {
+        console.error('Unable to toggle the window maximized state.', error)
+      })
   }
 
   const handleCloseWindow = (): void => {
@@ -5433,6 +5558,9 @@ export const useWorkspaceController = () => {
             key={item.id}
             cwd={changesCwd}
             modelLabelsById={modelLabelsById}
+            onLoadWorkingStep={handleLoadSubagentWorkingStep}
+            onLoadWorkingItem={handleLoadSubagentWorkingItem}
+            onLoadWorkingToolPage={handleLoadSubagentWorkingToolPage}
             onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
             previousItem={itemIndex > 0 ? subagentVisibleChatItems[itemIndex - 1] : null}
             projectCwd={changesProjectCwd}
@@ -5450,10 +5578,10 @@ export const useWorkspaceController = () => {
 
   const showChatTurnDownButton = Boolean(
     !activeSubagentChatView &&
-    effectiveChatTurnWindow &&
-    (!chatAtConversationBottom ||
-      effectiveChatTurnWindow.endIndex < effectiveChatTurnWindow.totalCount ||
-      Boolean(chatDetail?.turnPagination?.newerCursor))
+      effectiveChatTurnWindow &&
+      (!chatAtConversationBottom ||
+        effectiveChatTurnWindow.endIndex < effectiveChatTurnWindow.totalCount ||
+        Boolean(chatDetail?.turnPagination?.newerCursor))
   )
 
   return {
@@ -5627,6 +5755,7 @@ export const useWorkspaceController = () => {
       messageBoxProviderAvailable,
       messageBoxQuoteRequest,
       models,
+      modelsError,
       modelsLoading,
       newChatOpen,
       newSessionContainerValue,
@@ -5654,6 +5783,7 @@ export const useWorkspaceController = () => {
       requestErrorSummary,
       requestErrorVisible,
       chatOpenedElsewhere,
+      chatLegacyHistoryReadOnly,
       resetAccountRateLimits,
       resolveSelectedUserInput,
       sandboxModes,

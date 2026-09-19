@@ -57,6 +57,8 @@ function VisualizationContent({
         setPendingDocument({ id: ++nextDocumentIdRef.current, html: contents })
       })
       .catch((reason: unknown) => {
+        console.error('[caught:Visualization:VisualizationContent]', reason)
+
         if (!current) return
         setLoading(false)
         setError(reason instanceof Error ? reason.message : 'Unable to load visualization.')
@@ -112,6 +114,10 @@ function VisualizationContent({
       } else if (data?.type === 'visualization:escape') {
         setExpanded(false)
       } else if (data?.type === 'visualization:warning') {
+        console.error(
+          '[Visualization:message] Visualization runtime warning',
+          typeof data.message === 'string' ? data.message : 'Unknown visualization error'
+        )
         warningIdsRef.current.add(document.id)
         if (document.id === activeDocument?.id) setWarning(true)
       } else if (

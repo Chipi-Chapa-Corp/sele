@@ -1,4 +1,9 @@
-import type { ProviderChatItem, ProviderSubagent } from '../../shared/provider'
+import { mergeWorkingStepPage } from './chatDetailWindow.ts'
+import type {
+  ProviderChatItem,
+  ProviderSubagent,
+  ProviderSubagentDetail
+} from '../../shared/provider'
 
 export type SubagentMarkerPresentation = {
   label: string
@@ -142,4 +147,43 @@ export const getSubagentMarkerPresentation = (
   }
 
   return { label: subagent.title, status: 'finished' }
+}
+
+/** Preserve explicitly loaded history while polling the child transcript's latest tail. */
+export const refreshSubagentDetail = (
+  current: ProviderSubagentDetail | null,
+  incoming: ProviderSubagentDetail,
+  tailLimit: number,
+  historyLimit: number
+): ProviderSubagentDetail => {
+  if (current?.id !== incoming.id) return incoming
+  const previousItems = new Map(current.items.map((item) => [item.id, item]))
+  return {
+    ...incoming,
+    items: incoming.items.map((item) => {
+      const previous = previousItems.get(item.id)
+      if (item.type !== 'working' || previous?.type !== 'working') return item
+      // Completed sections are immutable; keep any expanded pages and tool payloads.
+      if (
+        previous.status !== 'working' &&
+        previous.status === item.status &&
+        (previous.itemCount ?? previous.items.length) === (item.itemCount ?? item.items.length)
+      )
+        return previous
+      if (!previous.itemSegments?.length || item.itemsLoaded === false) return item
+      const totalCount = item.itemCount ?? item.items.length
+      return mergeWorkingStepPage(
+        previous,
+        {
+          workingStepId: item.id,
+          items: item.items,
+          startIndex: item.itemsStartIndex ?? Math.max(0, totalCount - item.items.length),
+          totalCount,
+          status: item.status
+        },
+        tailLimit,
+        historyLimit
+      )
+    })
+  }
 }

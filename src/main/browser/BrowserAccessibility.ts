@@ -33,6 +33,10 @@ const interactiveRoles = new Set([
   'option'
 ])
 
+const isExpectedReleasedObjectAbsence = (error: unknown): boolean =>
+  error instanceof Error &&
+  /cannot find object with given id|invalid remote object id/i.test(error.message)
+
 /** References belong to a document, not a CSS selector that could silently target a new element. */
 export class BrowserAccessibility {
   private refs = new Map<string, number>()
@@ -123,7 +127,11 @@ export class BrowserAccessibility {
         )
       return result.result.value
     } finally {
-      await this.cdp('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {})
+      await this.cdp('Runtime.releaseObject', { objectId: object.objectId }).catch((error) => {
+        if (!isExpectedReleasedObjectAbsence(error)) {
+          console.error('[caught:BrowserAccessibility:withElement]', error)
+        }
+      })
     }
   }
 

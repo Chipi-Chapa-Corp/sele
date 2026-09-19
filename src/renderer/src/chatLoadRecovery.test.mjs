@@ -147,12 +147,13 @@ test('a duplicate update clears a stale overlay without replacing newer messages
   assert.equal(h.state.detail, current)
   assert.equal(h.state.loadState, 'ready')
 })
-test('a failed request from a closed chat cannot change the view', async () => {
+test('a failed request from a closed chat is logged without changing the view', async () => {
   const h = setup('claude')
   const cleanup = h.startLoad()
   cleanup()
   h.reject(new Error('Old request failed'))
   await settle()
   assert.equal(h.state.loadState, 'loading')
-  assert.equal(h.state.errors.length, 0)
+  assert.equal(h.state.errors.length, 1)
+  assert.match(h.state.errors[0][0], /Unable to load messages/)
 })

@@ -203,24 +203,34 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getSubagent, providerId, chatId, subagentId),
   cancelSubagent: (providerId, chatId, subagentId) =>
     ipcRenderer.invoke(providerIpcChannels.cancelSubagent, providerId, chatId, subagentId),
-  getChatWorkingStepPage: (providerId, chatId, workingStepId, startIndex, limit) =>
+  getChatWorkingStepPage: (providerId, chatId, workingStepId, startIndex, limit, rootChatId) =>
     ipcRenderer.invoke(
       providerIpcChannels.getChatWorkingStepPage,
       providerId,
       chatId,
       workingStepId,
       startIndex,
-      limit
+      limit,
+      rootChatId
     ),
-  getChatWorkingItem: (providerId, chatId, workingStepId, workingItemId) =>
+  getChatWorkingItem: (providerId, chatId, workingStepId, workingItemId, rootChatId) =>
     ipcRenderer.invoke(
       providerIpcChannels.getChatWorkingItem,
       providerId,
       chatId,
       workingStepId,
-      workingItemId
+      workingItemId,
+      rootChatId
     ),
-  getChatWorkingToolPage: (providerId, chatId, workingStepId, workingItemId, startIndex, limit) =>
+  getChatWorkingToolPage: (
+    providerId,
+    chatId,
+    workingStepId,
+    workingItemId,
+    startIndex,
+    limit,
+    rootChatId
+  ) =>
     ipcRenderer.invoke(
       providerIpcChannels.getChatWorkingToolPage,
       providerId,
@@ -228,7 +238,8 @@ const providerApi: ProviderRendererApi = {
       workingStepId,
       workingItemId,
       startIndex,
-      limit
+      limit,
+      rootChatId
     ),
   getChatTurnPage: (providerId, chatId, startIndex, limit) =>
     ipcRenderer.invoke(providerIpcChannels.getChatTurnPage, providerId, chatId, startIndex, limit),

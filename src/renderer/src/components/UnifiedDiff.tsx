@@ -355,7 +355,8 @@ const getTokens = (hunks: HunkData[], language: string | null): HunkTokens | nul
       language,
       enhancers
     })
-  } catch {
+  } catch (error) {
+    console.error('[caught:UnifiedDiff:getTokens]', error)
     return null
   }
 }
@@ -375,7 +376,8 @@ const getRenderedFiles = (
         file,
         tokens: getTokens(file.hunks, language)
       }))
-  } catch {
+  } catch (error) {
+    console.error('[caught:UnifiedDiff:getRenderedFiles]', error)
     return []
   }
 }
@@ -395,7 +397,8 @@ const getOriginalContents = (fileDiff: ProviderFileDiff, currentContents: string
     )
     const contents = oldLines.join('\n')
     return file.oldEndingNewLine && oldLines.length > 0 ? `${contents}\n` : contents
-  } catch {
+  } catch (error) {
+    console.error('[caught:UnifiedDiff:getOriginalContents]', error)
     return fileDiff.kind === 'create' ? '' : currentContents
   }
 }

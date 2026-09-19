@@ -71,6 +71,8 @@ function ProviderConfigPanel({ providerId, container }: Omit<Props, 'children'>)
         if (active) setConfig(value)
       })
       .catch((error) => {
+        console.error('[caught:ProviderSettingsContent:ProviderConfigPanel]', error)
+
         if (active) setError(error instanceof Error ? error.message : String(error))
       })
       .finally(() => {
@@ -93,6 +95,7 @@ function ProviderConfigPanel({ providerId, container }: Omit<Props, 'children'>)
       setConfig(await providerApi.setConfigValue(providerId, name, path, value, { container }))
       setSaved(true)
     } catch (error) {
+      console.error('[caught:ProviderSettingsContent:save]', error)
       setError(error instanceof Error ? error.message : String(error))
     } finally {
       setSaving(null)

@@ -233,7 +233,11 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     const generation = worktreeBranchGenerationRef.current
     if (!generation) return
 
-    await providerApi.cancelOneShot(generation.providerId, generation.generationId).catch(() => {})
+    await providerApi
+      .cancelOneShot(generation.providerId, generation.generationId)
+      .catch((error) => {
+        console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
+      })
   }, [])
   const handleSendMessage = async (
     message: string,
@@ -328,6 +332,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         setSendState('idle')
         return true
       } catch (error) {
+        console.error('[caught:useChatMessagingController:handleSendMessage]', error)
         handleSendFailure(error, 'Unable to edit message.')
         return false
       } finally {
@@ -413,7 +418,9 @@ export function useChatMessagingController(dependencies: ChatMessagingController
             if (selectedChatKeyRef.current !== startedChatKey) return
             applyViewedChatDetail(startingProviderId, latestDetail, { allowEqualRevision: true })
           })
-          .catch(() => {
+          .catch((error) => {
+            console.error('[caught:useChatMessagingController:handleSendMessage]', error)
+
             // Live updates continue normally; reopening the chat remains a manual recovery path.
           })
         if (startingCwd?.trim() && startingCwd.trim() === defaultCwd?.trim()) {
@@ -422,6 +429,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         setSendState('idle')
         return true
       } catch (error) {
+        console.error('[caught:useChatMessagingController:handleSendMessage]', error)
         if (
           worktreeCreationCanceledRef.current ||
           (error instanceof Error && error.message === providerOneShotGenerationCanceledMessage)
@@ -459,6 +467,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         setSendState('idle')
         return true
       } catch (error) {
+        console.error('[caught:useChatMessagingController:handleSendMessage]', error)
         handleSendFailure(error, 'Unable to send message.')
         return false
       } finally {
@@ -493,10 +502,13 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       setSendState('idle')
       return true
     } catch (error) {
+      console.error('[caught:useChatMessagingController:handleSendMessage]', error)
       void providerApi
         .getChat(providerId, chatId)
         .then((detail) => applyViewedChatDetail(providerId, detail, { allowEqualRevision: true }))
-        .catch(() => {})
+        .catch((error) => {
+          console.error('[caught:useChatMessagingController:handleSendMessage]', error)
+        })
       handleSendFailure(error, 'Unable to send message.')
       return false
     } finally {
@@ -753,6 +765,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
         setSendState('idle')
       } catch (error) {
+        console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
         handleSendFailure(error, 'Unable to retry message.')
       } finally {
         sendInFlightRef.current = false
@@ -799,7 +812,8 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       const detail = await providerApi.resolveApproval(chat.providerId, chat.id, decision)
       if (options.markViewed) applyViewedChatDetail(chat.providerId, detail)
       else applyChatDetail(chat.providerId, detail)
-    } catch {
+    } catch (error) {
+      console.error('[caught:useChatMessagingController:resolveChatApproval]', error)
       setApprovalResolution({
         approvalId,
         decision: null,
@@ -848,6 +862,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       )
       applyViewedChatDetail(selectedChat.providerId, detail)
     } catch (error) {
+      console.error('[caught:useChatMessagingController:resolveSelectedUserInput]', error)
       setUserInputResolution({
         requestId,
         resolving: false,
@@ -877,6 +892,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
       setSendState('idle')
     } catch (error) {
+      console.error('[caught:useChatMessagingController:handleCompactChat]', error)
       handleSendFailure(error, 'Unable to compact chat context.')
     } finally {
       sendInFlightRef.current = false
@@ -902,6 +918,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
       setSendState('idle')
     } catch (error) {
+      console.error('[caught:useChatMessagingController:handleStopChat]', error)
       handleSendFailure(error, 'Unable to stop chat.')
     } finally {
       sendInFlightRef.current = false
@@ -924,6 +941,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         applyViewedChatDetail(selectedProviderId, detail)
         if (sendState === 'error') setSendState('idle')
       } catch (error) {
+        console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
         handleSendFailure(error, 'Unable to delete queued message.')
       }
     },
@@ -963,6 +981,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         applyViewedChatDetail(selectedProviderId, detail)
         setSendState('idle')
       } catch (error) {
+        console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
         handleSendFailure(error, 'Unable to send queued message.')
       } finally {
         sendInFlightRef.current = false
@@ -1009,6 +1028,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         applyViewedChatDetail(selectedProviderId, detail)
         setSendState('idle')
       } catch (error) {
+        console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
         handleSendFailure(error, 'Unable to steer with queued message.')
       } finally {
         sendInFlightRef.current = false

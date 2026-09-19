@@ -95,6 +95,7 @@ export const SshEnvironmentDialog = ({
       const identityFile = await appApi.selectSshIdentityFile()
       if (identityFile) updateDraft({ identityFile })
     } catch (selectionError) {
+      console.error('[caught:SshEnvironmentDialog:handleSelectIdentity]', selectionError)
       setError(getErrorMessage(selectionError))
     } finally {
       setSelectingIdentity(false)
@@ -134,6 +135,7 @@ export const SshEnvironmentDialog = ({
       setDraft(emptyDraft)
       onClose()
     } catch (saveError) {
+      console.error('[caught:SshEnvironmentDialog:handleSubmit]', saveError)
       setError(getErrorMessage(saveError))
     } finally {
       setSaving(false)

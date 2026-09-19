@@ -126,7 +126,8 @@ const getShell = (): { file: string; args: string[] } => {
   const configuredUserShell = (() => {
     try {
       return userInfo().shell
-    } catch {
+    } catch (error) {
+      console.error('[caught:registerTerminalIpc:getShell]', error)
       return null
     }
   })()
@@ -218,7 +219,8 @@ const getProcessStatus = (session: ManagedTerminalSession): TerminalProcessStatu
 
   try {
     processName = session.pty.process?.trim() || null
-  } catch {
+  } catch (error) {
+    console.error('[caught:registerTerminalIpc:getProcessStatus]', error)
     // Process lookup can race with PTY shutdown.
   }
 
@@ -280,7 +282,8 @@ const disposeSession = (session: ManagedTerminalSession, killProcess: boolean): 
   if (killProcess) {
     try {
       session.pty.kill()
-    } catch {
+    } catch (error) {
+      console.error('[caught:registerTerminalIpc:disposeSession]', error)
       // The PTY may already have exited between the lookup and cleanup.
     }
   }
@@ -431,7 +434,9 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
       }
 
       settled = true
-      child.on('error', () => {})
+      child.on('error', (error) => {
+        console.error('[registerTerminalIpc:runDetachedCommand] Detached command error', error)
+      })
       child.unref()
       resolve({ pid: child.pid })
     })
@@ -459,7 +464,8 @@ export const registerTerminalIpc = (): void => {
           getDimension(cols, minimumColumns, maximumColumns, 'columns'),
           getDimension(rows, minimumRows, maximumRows, 'rows')
         )
-      } catch {
+      } catch (error) {
+        console.error('[caught:registerTerminalIpc:registerTerminalIpc]', error)
         // Ignore stale resize events racing with PTY exit.
       }
     }

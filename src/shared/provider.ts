@@ -83,7 +83,12 @@ export type ProviderSkill = {
 }
 
 export type ProviderConfigValue =
-  string | number | boolean | null | ProviderConfigValue[] | { [key: string]: ProviderConfigValue }
+  | string
+  | number
+  | boolean
+  | null
+  | ProviderConfigValue[]
+  | { [key: string]: ProviderConfigValue }
 
 export type ProviderConfigField = {
   type: 'boolean' | 'string' | 'number' | 'integer' | 'array' | 'object' | 'unsupported'
@@ -467,7 +472,10 @@ export type ProviderAccountRateLimitResetCredit = {
 }
 
 export type ProviderAccountRateLimitResetOutcome =
-  'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed'
+  | 'reset'
+  | 'nothingToReset'
+  | 'noCredit'
+  | 'alreadyRedeemed'
 
 export type ProviderAccountUsage = {
   updatedAt: number
@@ -686,7 +694,13 @@ export type ProviderToolActivity =
 export type ProviderWorkingToolStatus = 'running' | 'finished'
 
 export type ProviderToolIcon =
-  'image-view' | 'image-generation' | 'openai-docs' | 'plan' | 'question' | 'subagent' | 'browser'
+  | 'image-view'
+  | 'image-generation'
+  | 'openai-docs'
+  | 'plan'
+  | 'question'
+  | 'subagent'
+  | 'browser'
 
 export type ProviderToolImage = {
   path?: string | null
@@ -733,7 +747,9 @@ export type ProviderWorkingToolGroup = {
 }
 
 export type ProviderWorkingItem =
-  ProviderWorkingMessage | ProviderWorkingTool | ProviderWorkingToolGroup
+  | ProviderWorkingMessage
+  | ProviderWorkingTool
+  | ProviderWorkingToolGroup
 
 export type ProviderWorkingItemSegment = {
   kind: 'history' | 'tail'
@@ -797,7 +813,13 @@ export type ProviderChatItem = (
 }
 
 export type ProviderSubagentStatus =
-  'pending' | 'running' | 'idle' | 'completed' | 'failed' | 'stopped' | 'unknown'
+  | 'pending'
+  | 'running'
+  | 'idle'
+  | 'completed'
+  | 'failed'
+  | 'stopped'
+  | 'unknown'
 
 export type ProviderSubagent = {
   id: string
@@ -847,6 +869,8 @@ export type ProviderChatDetail = {
   container: AppContainerTarget | null
   /** Whether this provider session can currently mutate the chat. Missing means writable. */
   writeAccess?: ProviderChatWriteAccess
+  /** Why a read-only chat cannot be changed. Missing read-only reasons are external ownership. */
+  writeAccessReason?: 'externalOwner' | 'legacyHistory'
   capabilities: ProviderCapabilities
   pendingApproval: ProviderPendingApproval | null
   pendingUserInput: ProviderPendingUserInput | null
@@ -1200,13 +1224,15 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
     chatId: string,
     workingStepId: string,
     startIndex: number,
-    limit: number
+    limit: number,
+    rootChatId?: string
   ) => Promise<ProviderWorkingStepPage>
   getChatWorkingItem: (
     providerId: ProviderId,
     chatId: string,
     workingStepId: string,
-    workingItemId: string
+    workingItemId: string,
+    rootChatId?: string
   ) => Promise<ProviderWorkingItem>
   getChatWorkingToolPage: (
     providerId: ProviderId,
@@ -1214,7 +1240,8 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
     workingStepId: string,
     workingItemId: string,
     startIndex: number,
-    limit: number
+    limit: number,
+    rootChatId?: string
   ) => Promise<ProviderWorkingToolPage>
   getChatTurnPage: (
     providerId: ProviderId,

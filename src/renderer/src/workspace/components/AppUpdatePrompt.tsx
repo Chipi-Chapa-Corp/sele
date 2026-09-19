@@ -20,7 +20,9 @@ export function AppUpdatePrompt(): ReactElement | null {
       .then((next) => {
         if (active && !receivedEvent) setState(next)
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error('[caught:AppUpdatePrompt:AppUpdatePrompt]', error)
+      })
     return () => {
       active = false
       unsubscribe()
@@ -29,12 +31,18 @@ export function AppUpdatePrompt(): ReactElement | null {
   if (!state?.version) return null
   const busy = state.status === 'updating'
   const dismiss = (mode: AppUpdateDismissal): void => {
-    void appApi.dismissAppUpdate(mode).catch((reason) => setError(String(reason)))
+    void appApi.dismissAppUpdate(mode).catch((reason) => {
+      console.error('[caught:AppUpdatePrompt:dismiss]', reason)
+      return setError(String(reason))
+    })
   }
   const update = (): void => {
     if (!window.confirm('Update Sele and restart? Running chats and terminals will stop.')) return
     setError(null)
-    void appApi.installAppUpdate().catch((reason) => setError(String(reason)))
+    void appApi.installAppUpdate().catch((reason) => {
+      console.error('[caught:AppUpdatePrompt:update]', reason)
+      return setError(String(reason))
+    })
   }
   return (
     <section className="chat-approval app-update-prompt" aria-label="Sele update available">

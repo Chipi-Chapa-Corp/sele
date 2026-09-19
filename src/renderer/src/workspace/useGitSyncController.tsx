@@ -170,6 +170,7 @@ export function useGitSyncController(dependencies: GitSyncControllerDependencies
       })
       setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
     } catch (error) {
+      console.error('[caught:useGitSyncController:runSyncChanges]', error)
       const message = getErrorMessage(
         error,
         currentAction === 'pull' ? 'Unable to pull changes.' : 'Unable to push changes.'

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { CodexGoalPrompts, getCodexGoalPrompt, readCodexGoalPrompts } from './CodexGoalPrompts.ts'
 import { CodexTranscriptProjection, getChatItems } from './CodexItemRenderers.ts'
+import { loadSessionThreadNames } from './CodexSessionIndex.ts'
 import { getProviderChatTurns } from '../../../shared/chatTurns.ts'
 
 const goalMessage = (text = 'Continue the active goal.', turnId) => ({
@@ -118,6 +122,43 @@ test('rollout enrichment is optional and does not read files for ordinary user t
     }),
     false
   )
+})
+
+test('missing optional Codex files stay quiet while I/O failures are logged', async (t) => {
+  const originalWarn = console.warn
+  const warnings = []
+  console.warn = (...args) => warnings.push(args)
+  t.after(() => {
+    console.warn = originalWarn
+  })
+
+  const store = new CodexGoalPrompts()
+  assert.equal(
+    await store.load({ id: 'missing', path: '/missing', turns: [turn('goal')] }, async () => {
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    }),
+    false
+  )
+  assert.equal(warnings.length, 0)
+
+  assert.equal(
+    await store.load({ id: 'broken', path: '/broken', turns: [turn('goal')] }, async () => {
+      throw Object.assign(new Error('I/O failure'), { code: 'EIO' })
+    }),
+    false
+  )
+  assert.equal(warnings.length, 1)
+
+  const codexHome = await mkdtemp(join(tmpdir(), 'sele-empty-codex-home-'))
+  const previousCodexHome = process.env.CODEX_HOME
+  process.env.CODEX_HOME = codexHome
+  t.after(async () => {
+    if (previousCodexHome == null) delete process.env.CODEX_HOME
+    else process.env.CODEX_HOME = previousCodexHome
+    await rm(codexHome, { recursive: true, force: true })
+  })
+  assert.deepEqual(await loadSessionThreadNames(['thread']), new Map())
+  assert.equal(warnings.length, 1)
 })
 
 test('raw goal events use the same prompt identity as history recovery', () => {

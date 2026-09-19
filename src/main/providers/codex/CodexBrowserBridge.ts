@@ -150,7 +150,8 @@ export async function startBrowserUseBridge(
         try {
           request = object(JSON.parse(body.toString())) as RpcRequest
           if (typeof request.method !== 'string') throw new Error('Invalid request')
-        } catch {
+        } catch (error) {
+          console.error('Unable to parse a Codex browser bridge request', error)
           socket.destroy()
           return
         }
@@ -160,6 +161,7 @@ export async function startBrowserUseBridge(
               if (request.id !== undefined) send(socket, { jsonrpc: '2.0', id: request.id, result })
             },
             (error: unknown) => {
+              console.error(`Codex browser bridge request ${request.method} failed`, error)
               if (request.id !== undefined)
                 send(socket, {
                   jsonrpc: '2.0',
@@ -171,10 +173,16 @@ export async function startBrowserUseBridge(
                 })
             }
           )
-          .catch(() => socket.destroy())
+          .catch((error: unknown) => {
+            console.error('Unable to send a Codex browser bridge response', error)
+            socket.destroy()
+          })
       }
     })
-    socket.on('error', () => socket.destroy())
+    socket.on('error', (error) => {
+      console.error('Codex browser bridge socket error', error)
+      socket.destroy()
+    })
     socket.on('close', () => {
       sockets.delete(socket)
       for (const client of connections.get(socket)?.values() ?? []) client.close()
@@ -218,7 +226,10 @@ export async function startBrowserUseBridge(
     connections.clear()
     for (const socket of sockets) socket.destroy()
     await new Promise<void>((resolve) => server.close(() => resolve()))
-    if (process.platform !== 'win32') await unlink(path).catch(() => {})
+    if (process.platform !== 'win32')
+      await unlink(path).catch((error: unknown) => {
+        console.error('Unable to remove the Codex browser bridge socket', error)
+      })
   }
   const onQuit = (): void => {
     void close()

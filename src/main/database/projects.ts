@@ -40,7 +40,8 @@ const mapProjectRow = (row: {
         )
       )
     }
-  } catch {
+  } catch (error) {
+    console.error('[caught:projects:mapProjectRow]', error)
     // Treat malformed legacy data as an empty folder list.
   }
 

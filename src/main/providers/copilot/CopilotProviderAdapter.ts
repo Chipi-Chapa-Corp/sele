@@ -47,10 +47,7 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getCurrentContainerHostBridge } from '../../currentContainer'
 import { getHostExecutableCommand, isRunningInFlatpak } from '../../hostProcess'
-import {
-  fallbackCopilotModels,
-  providerOneShotGenerationCanceledMessage
-} from '../../../shared/provider'
+import { providerOneShotGenerationCanceledMessage } from '../../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from '../ProviderAdapter'
 import {
   ProviderConversationCompletionCoordinator,
@@ -643,14 +640,17 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       const client = await this.ensureClient(options.container)
       const models = await client.listModels()
       const enabledModels = models.filter((model) => model.policy?.state !== 'disabled')
-      if (enabledModels.length === 0) return fallbackCopilotModels
+      if (enabledModels.length === 0) {
+        throw new Error('No Copilot models are enabled for this account.')
+      }
 
       const defaultIndex = enabledModels.findIndex((model) => model.id === 'auto')
       return enabledModels.map((model, index) =>
         mapModel(model, index === (defaultIndex >= 0 ? defaultIndex : 0))
       )
-    } catch {
-      return fallbackCopilotModels
+    } catch (error) {
+      console.error('[CopilotProviderAdapter:getModels] Unable to load models', error)
+      throw error
     }
   }
 
@@ -730,10 +730,26 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       if (!restored) throw new Error('Skill was not disabled by Sele')
     }
     const updateResults = await Promise.allSettled(changedSkills.map(updateSkill))
+    updateResults.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.error(
+          `[CopilotProviderAdapter:setSkillsEnabledInContext] Initial update failed for skill ${changedSkills[index]?.path ?? 'unknown'}`,
+          result.reason
+        )
+      }
+    })
     const failedSkills = changedSkills.filter(
       (_, index) => updateResults[index]?.status === 'rejected'
     )
     const retryResults = await Promise.allSettled(failedSkills.map(updateSkill))
+    retryResults.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.error(
+          `[CopilotProviderAdapter:setSkillsEnabledInContext] Retry failed for skill ${failedSkills[index]?.path ?? 'unknown'}`,
+          result.reason
+        )
+      }
+    })
     const failedAfterRetry = new Set(
       failedSkills
         .filter((_, index) => retryResults[index]?.status === 'rejected')
@@ -781,6 +797,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         errors: []
       }
     } catch (error) {
+      console.error('[caught:CopilotProviderAdapter:getUsage]', error)
       return {
         updatedAt: Date.now(),
         statisticsLoaded: false,
@@ -857,7 +874,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const tasks = await state
       .session!.rpc.tasks.list()
       .then((result) => result.tasks.filter((task) => task.type === 'agent'))
-      .catch(() => [])
+      .catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:getSubagents]', error)
+        return []
+      })
     return createCopilotSubagentSummaries(state.events, tasks)
   }
 
@@ -871,7 +891,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const tasks = await state
       .session!.rpc.tasks.list()
       .then((result) => result.tasks.filter((task) => task.type === 'agent'))
-      .catch(() => [])
+      .catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:getSubagent]', error)
+        return []
+      })
     const summary = createCopilotSubagentSummaries(state.events, tasks).find(
       (candidate) => candidate.id === subagentId
     )
@@ -939,7 +962,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     const throwIfCanceled = async (): Promise<void> => {
       if (!generation.canceled) return
-      await (generation.session ?? generation.state?.session)?.abort().catch(() => {})
+      await (generation.session ?? generation.state?.session)?.abort().catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:throwIfCanceled]', error)
+      })
       throw new Error(providerOneShotGenerationCanceledMessage)
     }
 
@@ -971,8 +996,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         this.oneShotGenerations.delete(generationId)
       }
       const session = state.session
-      if (session) await session.disconnect().catch(() => {})
-      await state.client?.deleteSession(sessionId).catch(() => {})
+      if (session)
+        await session.disconnect().catch((error) => {
+          console.error('[caught:CopilotProviderAdapter:generateOneShot]', error)
+        })
+      await state.client?.deleteSession(sessionId).catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:generateOneShot]', error)
+      })
       const timer = this.updateTimers.get(sessionId)
       if (timer) clearTimeout(timer)
       this.updateTimers.delete(sessionId)
@@ -991,7 +1021,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
 
     generation.canceled = true
-    await (generation.session ?? generation.state?.session)?.abort().catch(() => {})
+    await (generation.session ?? generation.state?.session)?.abort().catch((error) => {
+      console.error('[caught:CopilotProviderAdapter:cancelOneShot]', error)
+    })
   }
 
   private rememberCanceledOneShotGeneration = (generationId: string): void => {
@@ -1242,7 +1274,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.stopped = false
     state.failed = false
     state.metadata =
-      (await state.client?.getSessionMetadata(chatId).catch(() => undefined)) ?? state.metadata
+      (await state.client?.getSessionMetadata(chatId).catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:editMessage]', error)
+        return undefined
+      })) ?? state.metadata
     await this.loadSessionTitle(state)
     await this.loadEvents(state)
     await this.refreshPendingMessages(state)
@@ -1335,7 +1370,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.updateTimers.clear()
     this.completionCoordinator.clear()
     this.oneShotGenerations.forEach((generation) => {
-      void (generation.session ?? generation.state?.session)?.abort().catch(() => {})
+      void (generation.session ?? generation.state?.session)?.abort().catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:dispose]', error)
+      })
     })
     this.oneShotGenerations.clear()
     this.canceledOneShotGenerationIds.clear()
@@ -1525,7 +1562,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     })
     await this.addAdditionalDirectories(session, options)
     state.session = session
-    state.metadata = (await client.getSessionMetadata(state.id).catch(() => undefined)) ?? null
+    state.metadata =
+      (await client.getSessionMetadata(state.id).catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:createSession]', error)
+        return undefined
+      })) ?? null
     await this.loadSessionTitle(state)
     await this.loadEvents(state)
     return session
@@ -1542,7 +1583,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (options) state.options = options
     if (state.session) return state
 
-    state.metadata = (await client.getSessionMetadata(sessionId).catch(() => undefined)) ?? null
+    state.metadata =
+      (await client.getSessionMetadata(sessionId).catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:ensureSession]', error)
+        return undefined
+      })) ?? null
     if (!state.metadata) throw new Error(`Copilot session was not found: ${sessionId}`)
 
     const reasoningEffort = normalizeReasoningEffort(options?.reasoningEffort)
@@ -1635,7 +1680,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         await this.loadSessionTitle(state)
         this.emitUpdate(state)
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:startChatTitleGeneration]', error)
+      })
   }
 
   private generateChatTitle = async (
@@ -1646,7 +1693,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const selection = await this.ensureClient(container)
       .then((client) => client.listModels())
       .then(selectCopilotTitleModel)
-      .catch(() => null)
+      .catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:generateChatTitle]', error)
+        return null
+      })
     const titleOptions: ProviderOneShotOptions = {
       ...options,
       approvalPolicy: 'never',
@@ -1668,7 +1718,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   private loadSessionTitle = async (state: CopilotSessionState): Promise<void> => {
     if (!state.session) return
-    const result = await state.session.rpc.name.get().catch(() => null)
+    const result = await state.session.rpc.name.get().catch((error) => {
+      console.error('[caught:CopilotProviderAdapter:loadSessionTitle]', error)
+      return null
+    })
     if (!result) return
 
     state.title = result.name?.trim() || null
@@ -1710,7 +1763,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       state.stopped = false
       state.failed = false
     }
-    if (event.type === 'session.error') state.failed = true
+    if (event.type === 'session.error') {
+      console.error(
+        `[CopilotProviderAdapter:handleEvent] Session ${state.id} failed: ${event.data.message}`
+      )
+      state.failed = true
+    }
     if (event.type === 'abort') {
       state.active = false
       state.stopped = true
@@ -1736,6 +1794,14 @@ export class CopilotProviderAdapter implements ProviderAdapter {
           const rejected = results.find(
             (result): result is PromiseRejectedResult => result.status === 'rejected'
           )
+          results.forEach((result) => {
+            if (result.status === 'rejected') {
+              console.error(
+                `[CopilotProviderAdapter:reconcile] Unable to reconcile completed session ${state.id}`,
+                result.reason
+              )
+            }
+          })
           if (state.turnGeneration === completedTurnGeneration) state.active = false
           if (rejected) throw rejected.reason
         },
@@ -1820,18 +1886,22 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.pendingMessages = [
       ...result.items
         .filter((item) => item.kind === 'message')
-        .map((item): ProviderPendingMessage => ({
+        .map(
+          (item): ProviderPendingMessage => ({
+            type: 'pendingMessage',
+            id: item.id,
+            kind: 'queued',
+            content: item.displayText
+          })
+        ),
+      ...result.steeringMessages.map(
+        (message): ProviderPendingMessage => ({
           type: 'pendingMessage',
-          id: item.id,
-          kind: 'queued',
-          content: item.displayText
-        })),
-      ...result.steeringMessages.map((message): ProviderPendingMessage => ({
-        type: 'pendingMessage',
-        id: takeId('steering', message),
-        kind: 'steering',
-        content: message
-      }))
+          id: takeId('steering', message),
+          kind: 'steering',
+          content: message
+        })
+      )
     ]
   }
 
@@ -1841,8 +1911,14 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     const sequence = ++state.planRefreshSequence
     const [todosResult, planResult] = await Promise.all([
-      session.rpc.plan.readSqlTodosWithDependencies().catch(() => null),
-      session.rpc.plan.read().catch(() => null)
+      session.rpc.plan.readSqlTodosWithDependencies().catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:refreshPlan]', error)
+        return null
+      }),
+      session.rpc.plan.read().catch((error) => {
+        console.error('[caught:CopilotProviderAdapter:refreshPlan]', error)
+        return null
+      })
     ])
     if (
       state.session !== session ||

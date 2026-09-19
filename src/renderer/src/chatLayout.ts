@@ -206,7 +206,8 @@ export const readStoredChatPanePercents = (): ChatPanePercents | null => {
       sidebar: roundPanePercent(parsedValue.sidebar),
       changes: roundPanePercent(parsedValue.changes)
     }
-  } catch {
+  } catch (error) {
+    console.error('[caught:chatLayout:readStoredChatPanePercents]', error)
     return null
   }
 }
@@ -214,7 +215,8 @@ export const readStoredChatPanePercents = (): ChatPanePercents | null => {
 export const writeStoredChatPanePercents = (percents: ChatPanePercents): void => {
   try {
     window.localStorage.setItem(chatPanePreferenceStorageKey, JSON.stringify(percents))
-  } catch {
+  } catch (error) {
+    console.error('[caught:chatLayout:writeStoredChatPanePercents]', error)
     // Layout preferences are non-critical; ignore unavailable storage.
   }
 }

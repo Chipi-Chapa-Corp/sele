@@ -63,7 +63,8 @@ const browserSystemProtocols = new Set(['mailto:', 'tel:'])
 const getUrlProtocol = (value: string): string | null => {
   try {
     return new URL(value).protocol
-  } catch {
+  } catch (error) {
+    console.error('[caught:index:getUrlProtocol]', error)
     return null
   }
 }
@@ -161,7 +162,9 @@ const secureBrowserWebContents = (mainWindow: BrowserWindow, guest: WebContents)
         zoomAction === 'reset'
           ? deleteBrowserHostnameZoomScale(hostname)
           : setBrowserHostnameZoomScale(hostname, nextScale)
-      void persistZoom.catch(() => {})
+      void persistZoom.catch((error) => {
+        console.error('[caught:index:secureBrowserWebContents]', error)
+      })
     }
   })
 }

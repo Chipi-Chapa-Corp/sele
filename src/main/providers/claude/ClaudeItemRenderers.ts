@@ -102,7 +102,8 @@ const getBoundedRawValue = (value: unknown): unknown => {
     const serialized = JSON.stringify(value)
     if (!serialized || serialized.length <= maxRawToolValueLength) return value
     return `${serialized.slice(0, maxRawToolValueLength)}\n${truncatedToolValueMarker}`
-  } catch {
+  } catch (error) {
+    console.error('Unable to serialize a Claude tool value.', error)
     return String(value)
   }
 }

@@ -55,6 +55,7 @@ import {
   restoreProviderSkill
 } from '../providerResources'
 import {
+  getOpenCodeErrorMessage,
   getOpenCodeDisplayTitle,
   renderOpenCodeChatItems,
   type OpenCodeMessageWithParts
@@ -412,9 +413,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         })
       })
       const models = mapOpenCodeModels(catalog.providers, catalog.default, config.model)
-      return models.length > 0 ? models : fallbackOpenCodeModels
-    } catch {
-      return fallbackOpenCodeModels
+      if (models.length === 0) throw new Error('OpenCode returned no available models.')
+      return models
+    } catch (error) {
+      console.error('[OpenCodeProviderAdapter:getModels] Unable to load models', error)
+      throw error
     }
   }
 
@@ -428,15 +431,17 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     ])
     const discovered = requireData(
       await entry.client.app.skills(cwd ? { directory: cwd } : {}, { throwOnError: true })
-    ).map((skill): ProviderSkill => ({
-      name: skill.name,
-      description: skill.description ?? '',
-      shortDescription: skill.description?.trim() || null,
-      displayName: null,
-      path: skill.location,
-      scope: getSkillScope(skill.location, cwd),
-      enabled: true
-    }))
+    ).map(
+      (skill): ProviderSkill => ({
+        name: skill.name,
+        description: skill.description ?? '',
+        shortDescription: skill.description?.trim() || null,
+        displayName: null,
+        path: skill.location,
+        scope: getSkillScope(skill.location, cwd),
+        enabled: true
+      })
+    )
     return mergeProviderSkills(discovered, disabledSkills)
   }
 
@@ -483,6 +488,14 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       }
     }
     const results = await Promise.allSettled(changedSkills.map(updateSkill))
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.error(
+          `[OpenCodeProviderAdapter:setSkillsEnabledInternal] Unable to update skill ${changedSkills[index]?.path ?? 'unknown'}`,
+          result.reason
+        )
+      }
+    })
     const failure = results.find((result) => result.status === 'rejected')
     if (!toleratePartialFailure && failure?.status === 'rejected') throw failure.reason
     if (options.deferRefresh) {
@@ -524,6 +537,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     ])
 
     const errors: string[] = []
+    if (rateLimitsResult.status === 'rejected') {
+      console.error(
+        '[OpenCodeProviderAdapter:getUsage] Unable to load rate limits',
+        rateLimitsResult.reason
+      )
+    }
     if (
       rateLimitsResult.status === 'rejected' &&
       !(rateLimitsResult.reason instanceof OpenCodeGoNoSubscriptionError) &&
@@ -536,6 +555,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     }
     if (statisticsResult.status === 'rejected') {
+      console.error(
+        '[OpenCodeProviderAdapter:getUsage] Unable to load usage statistics',
+        statisticsResult.reason
+      )
       errors.push(
         statisticsResult.reason instanceof Error
           ? statisticsResult.reason.message
@@ -574,7 +597,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const chats = await Promise.all(
       visibleSessions.map(async (session) => {
         this.rememberSession(session, entry.container)
-        const messages = await this.loadMessages(entry.client, session).catch(() => [])
+        const messages = await this.loadMessages(entry.client, session).catch((error) => {
+          console.error('[caught:OpenCodeProviderAdapter:getChats]', error)
+          return []
+        })
         const state = this.states.get(session.id)
         if (state) {
           state.messages = reconcileProviderRecords(state.messages, messages, {
@@ -610,7 +636,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       client.session
         .status({ directory: state.directory }, { throwOnError: true })
         .then(requireData)
-        .catch(() => ({}))
+        .catch((error) => {
+          console.error('[caught:OpenCodeProviderAdapter:getSubagents]', error)
+          return {}
+        })
     ])
     return sessions.map((session) =>
       createOpenCodeSubagentSummary(session, chatId, statuses[session.id])
@@ -699,7 +728,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
             { sessionID: generation.sessionId, directory: generation.directory },
             { throwOnError: true }
           )
-          .catch(() => {})
+          .catch((error) => {
+            console.error('[caught:OpenCodeProviderAdapter:throwIfCanceled]', error)
+          })
       }
       throw new Error(providerOneShotGenerationCanceledMessage)
     }
@@ -758,7 +789,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
             { sessionID: generation.sessionId, directory: generation.directory },
             { throwOnError: true }
           )
-          .catch(() => {})
+          .catch((error) => {
+            console.error('[caught:OpenCodeProviderAdapter:generateOneShot]', error)
+          })
       }
       this.oneShotGenerations.delete(generationId)
     }
@@ -777,7 +810,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           { sessionID: generation.sessionId, directory: generation.directory },
           { throwOnError: true }
         )
-        .catch(() => {})
+        .catch((error) => {
+          console.error('[caught:OpenCodeProviderAdapter:cancelOneShot]', error)
+        })
     }
   }
 
@@ -894,7 +929,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     try {
       await this.sendPrompt(state, message, options)
       return this.createChatDetail(state, true)
-    } catch {
+    } catch (error) {
+      console.error('[caught:OpenCodeProviderAdapter:sendActiveChatMessage]', error)
       return this.queueMessage(state, message, options, 'steering')
     }
   }
@@ -930,7 +966,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (!pending) throw new Error('Pending message was not found.')
     try {
       await this.sendPrompt(state, pending.content, pending.options)
-    } catch {
+    } catch (error) {
+      console.error('[caught:OpenCodeProviderAdapter:steerPendingMessage]', error)
       state.queuedMessages.unshift({ ...pending, kind: 'steering' })
     }
     return this.createChatDetail(state, true)
@@ -1047,7 +1084,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const state = await this.ensureState(chatId)
     const client = (await this.getClientEntry(state.container)).client
     state.stopped = true
-    await Promise.allSettled([
+    const pendingRequestResults = await Promise.allSettled([
       ...state.pendingApprovals.map((request) =>
         client.permission.reply(
           { requestID: request.id, directory: state.directory, reply: 'reject' },
@@ -1061,6 +1098,14 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         )
       )
     ])
+    pendingRequestResults.forEach((result) => {
+      if (result.status === 'rejected') {
+        console.error(
+          '[OpenCodeProviderAdapter:stopChat] Unable to reject pending request',
+          result.reason
+        )
+      }
+    })
     await this.abortState(state)
     state.pendingApprovals = []
     state.pendingQuestions = []
@@ -1083,7 +1128,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       if (generation.client && generation.sessionId && generation.directory) {
         void generation.client.session
           .abort({ sessionID: generation.sessionId, directory: generation.directory })
-          .catch(() => {})
+          .catch((error) => {
+            console.error('[caught:OpenCodeProviderAdapter:dispose]', error)
+          })
       }
     })
     this.oneShotGenerations.clear()
@@ -1103,6 +1150,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const entries = new Set(this.clientEntries.values())
     settledPendingEntries.forEach((result) => {
       if (result.status === 'fulfilled') entries.add(result.value)
+      else {
+        console.error(
+          '[OpenCodeProviderAdapter:disposeClients] Unable to resolve pending client entry',
+          result.reason
+        )
+      }
     })
     await Promise.all(
       Array.from(entries, async (entry) => {
@@ -1126,7 +1179,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       container: storedContainer,
       eventAbortController: new AbortController()
     }
-    server.onExit(() => {
+    server.onExit((error) => {
+      console.error('[OpenCodeProviderAdapter:createClientEntry] OpenCode server exited', error)
       const key = getContainerTargetKey(storedContainer)
       if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
       entry.eventAbortController.abort()
@@ -1165,9 +1219,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         this.handleEvent(entry, event)
       }
     } catch (error) {
-      if (!entry.eventAbortController.signal.aborted) {
-        console.error('OpenCode event stream stopped', error)
-      }
+      console.error(
+        entry.eventAbortController.signal.aborted
+          ? '[OpenCodeProviderAdapter:consumeEvents] Event stream stopped during shutdown'
+          : '[OpenCodeProviderAdapter:consumeEvents] Event stream stopped unexpectedly',
+        error
+      )
     }
   }
 
@@ -1216,6 +1273,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       return
     }
     if (type === 'session.error') {
+      console.error(
+        `[OpenCodeProviderAdapter:handleEvent] Session ${sessionID} failed: ${getOpenCodeErrorMessage(properties.error)}`
+      )
       state.active = false
       state.failed = true
     }
@@ -1357,15 +1417,24 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       client.session
         .status({ directory: state.directory }, { throwOnError: true })
         .then(requireData)
-        .catch(() => ({})),
+        .catch((error) => {
+          console.error('[caught:OpenCodeProviderAdapter:refreshState]', error)
+          return {}
+        }),
       client.permission
         .list({ directory: state.directory }, { throwOnError: true })
         .then(requireData)
-        .catch(() => []),
+        .catch((error) => {
+          console.error('[caught:OpenCodeProviderAdapter:refreshState]', error)
+          return []
+        }),
       client.question
         .list({ directory: state.directory }, { throwOnError: true })
         .then(requireData)
-        .catch(() => [])
+        .catch((error) => {
+          console.error('[caught:OpenCodeProviderAdapter:refreshState]', error)
+          return []
+        })
     ])
     state.session = session
     state.messages = reconcileProviderRecords(state.messages, messages, {
@@ -1448,14 +1517,16 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const session = state.session
     if (!session) throw new Error('Unable to load OpenCode session.')
     state.revision += 1
-    const pendingItems = state.queuedMessages.map((message): ProviderPendingMessage => ({
-      type: message.type,
-      id: message.id,
-      kind: message.kind,
-      content: message.content,
-      attachments: message.attachments,
-      createdAt: message.createdAt
-    }))
+    const pendingItems = state.queuedMessages.map(
+      (message): ProviderPendingMessage => ({
+        type: message.type,
+        id: message.id,
+        kind: message.kind,
+        content: message.content,
+        attachments: message.attachments,
+        createdAt: message.createdAt
+      })
+    )
     return {
       id: session.id,
       revision: state.revision,

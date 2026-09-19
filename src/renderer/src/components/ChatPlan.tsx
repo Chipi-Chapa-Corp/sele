@@ -21,7 +21,8 @@ const readSeenPlanSignatures = (): Record<string, string> => {
         )
         .slice(-maxStoredSeenPlans) as [string, string][]
     )
-  } catch {
+  } catch (error) {
+    console.error('[caught:ChatPlan:readSeenPlanSignatures]', error)
     return {}
   }
 }
@@ -32,7 +33,8 @@ const writeSeenPlanSignatures = (signatures: Record<string, string>): void => {
       Object.entries(signatures).slice(-maxStoredSeenPlans)
     )
     window.localStorage.setItem(seenPlansStorageKey, JSON.stringify(storedSignatures))
-  } catch {
+  } catch (error) {
+    console.error('[caught:ChatPlan:writeSeenPlanSignatures]', error)
     // Seen state is non-critical; ignore unavailable storage.
   }
 }

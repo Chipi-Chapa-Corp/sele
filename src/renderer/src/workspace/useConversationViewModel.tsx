@@ -7,6 +7,7 @@ import { getSubagentMarkerPlacements } from '../subagentUi'
 import { providerApi } from '../providerApi'
 import { getDisplayedRecentChatReferences } from '../recentReferencePins'
 import { getDisplayedRecentlyOpenedFiles } from '../recentlyOpenedFiles'
+import { getChatWriteAccessPresentation } from '../chatWriteAccess'
 import {
   getEffectiveChatTurnWindow,
   getLatestChatTurnWindow,
@@ -93,23 +94,23 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   } = dependencies
 
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
-  const chatOpenedElsewhere = chatDetail?.writeAccess === 'readOnly'
+  const chatReadOnly = getChatWriteAccessPresentation(chatDetail).readOnly
   const messageBoxDisabled = selectedChat
     ? providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
-      chatOpenedElsewhere ||
+      chatReadOnly ||
       Boolean(activeSubagentChatView) ||
       (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
     : providerUpdateInProgress || !newSessionProviderAvailable
   const canEditOwnMessages = Boolean(
     selectedChat &&
-    !activeSubagentChatView &&
-    !chatOpenedElsewhere &&
-    chatDetail?.capabilities.editMessages &&
-    chatLoadState === 'ready' &&
-    sendState !== 'sending' &&
-    !providerUpdateInProgress &&
-    !editingMessage
+      !activeSubagentChatView &&
+      !chatReadOnly &&
+      chatDetail?.capabilities.editMessages &&
+      chatLoadState === 'ready' &&
+      sendState !== 'sending' &&
+      !providerUpdateInProgress &&
+      !editingMessage
   )
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])
   const subagentVisibleChatItems = useMemo(
@@ -138,18 +139,18 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   const recentsStartTurnIndex = Math.max(0, totalChatTurnCount - recentsMessageLimit)
   const loadedChatItemsCoverRecents = Boolean(
     chatDetail?.id === selectedChatId &&
-    (chatTurnPagination
-      ? !chatTurnPagination.olderCursor || totalChatTurnCount >= recentsMessageLimit
-      : loadedChatTurnStartIndex <= recentsStartTurnIndex &&
-        loadedChatTurnEndIndex >= totalChatTurnCount)
+      (chatTurnPagination
+        ? !chatTurnPagination.olderCursor || totalChatTurnCount >= recentsMessageLimit
+        : loadedChatTurnStartIndex <= recentsStartTurnIndex &&
+          loadedChatTurnEndIndex >= totalChatTurnCount)
   )
   const recentChatReferencePageMatches = Boolean(
     selectedChatKey &&
-    recentChatReferencePage?.chatKey === selectedChatKey &&
-    recentChatReferencePage.messageLimit === recentsMessageLimit &&
-    (chatTurnPagination
-      ? recentChatReferencePage.latestItemId === latestVisibleChatItemId
-      : recentChatReferencePage.totalTurnCount === totalChatTurnCount)
+      recentChatReferencePage?.chatKey === selectedChatKey &&
+      recentChatReferencePage.messageLimit === recentsMessageLimit &&
+      (chatTurnPagination
+        ? recentChatReferencePage.latestItemId === latestVisibleChatItemId
+        : recentChatReferencePage.totalTurnCount === totalChatTurnCount)
   )
   const recentChatReferenceItems = loadedChatItemsCoverRecents
     ? visibleChatItems
@@ -162,8 +163,8 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   )
   const currentChatDetailIncludesLatest = Boolean(
     selectedChatKey &&
-    chatDetail?.id === selectedChatId &&
-    loadedChatTurnEndIndex >= totalChatTurnCount
+      chatDetail?.id === selectedChatId &&
+      loadedChatTurnEndIndex >= totalChatTurnCount
   )
   const recentChatReferenceSourceIncludesLatest =
     currentChatDetailIncludesLatest || recentChatReferencePageMatches
@@ -255,7 +256,9 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           totalTurnCount: page.totalCount
         })
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error('[caught:useConversationViewModel:useConversationViewModel]', error)
+      })
 
     return () => {
       active = false

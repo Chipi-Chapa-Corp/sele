@@ -77,19 +77,28 @@ export const ProjectDialog = ({
     if (keepExplicitIcon) return
 
     const nextIcon = existingProject?.icon ?? null
-    const image = await appApi.getProjectIcon({ cwd: folder }).catch(() => null)
+    const image = await appApi.getProjectIcon({ cwd: folder }).catch((error) => {
+      console.error('[caught:ProjectDialog:updateFromMainFolder]', error)
+      return null
+    })
     if (sequence !== mainFolderSequenceRef.current || iconExplicitlySelectedRef.current) return
     setProjectImage(image)
     setIcon(nextIcon ?? (image ? 'image' : 'folder'))
   }
 
   const handleSelectMainFolder = async (): Promise<void> => {
-    const folder = await appApi.selectFolder({ defaultPath: cwd || defaultPath }).catch(() => null)
+    const folder = await appApi.selectFolder({ defaultPath: cwd || defaultPath }).catch((error) => {
+      console.error('[caught:ProjectDialog:handleSelectMainFolder]', error)
+      return null
+    })
     if (folder) await updateFromMainFolder(folder)
   }
 
   const handleAddFolder = async (): Promise<void> => {
-    const folder = await appApi.selectFolder({ defaultPath: cwd || defaultPath }).catch(() => null)
+    const folder = await appApi.selectFolder({ defaultPath: cwd || defaultPath }).catch((error) => {
+      console.error('[caught:ProjectDialog:handleAddFolder]', error)
+      return null
+    })
     if (!folder || folder === cwd) return
 
     setAdditionalCwds((currentCwds) =>
@@ -101,7 +110,10 @@ export const ProjectDialog = ({
   const handleSelectImage = async (): Promise<void> => {
     const image = await appApi
       .selectProjectIcon({ cwd: cwd || null, persist: false })
-      .catch(() => null)
+      .catch((error) => {
+        console.error('[caught:ProjectDialog:handleSelectImage]', error)
+        return null
+      })
     if (!image) return
 
     iconExplicitlySelectedRef.current = true
@@ -148,6 +160,7 @@ export const ProjectDialog = ({
       const project = await appApi.addProject(options)
       onSaved(project, icon === 'image' ? projectImage : null)
     } catch (saveError) {
+      console.error('[caught:ProjectDialog:handleSave]', saveError)
       setError(
         saveError instanceof Error && saveError.message
           ? saveError.message

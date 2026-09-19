@@ -56,7 +56,8 @@ export const parseStoredBrowserSession = (value: string | null): StoredBrowserSe
 
   try {
     return parseStoredBrowserSessionValue(JSON.parse(value))
-  } catch {
+  } catch (error) {
+    console.error('[caught:browserTabs:parseStoredBrowserSession]', error)
     return null
   }
 }
@@ -79,7 +80,8 @@ export const parseStoredBrowserWorkspaces = (value: string | null): StoredBrowse
       if (session) workspaces[workspaceKey] = session
     }
     return workspaces
-  } catch {
+  } catch (error) {
+    console.error('[caught:browserTabs:parseStoredBrowserWorkspaces]', error)
     return {}
   }
 }
@@ -97,7 +99,8 @@ export const readStoredBrowserWorkspaces = (
       window.localStorage.getItem(legacyBrowserTabsStorageKey)
     )
     return legacySession ? { [legacyWorkspaceKey]: legacySession } : {}
-  } catch {
+  } catch (error) {
+    console.error('[caught:browserTabs:readStoredBrowserWorkspaces]', error)
     return {}
   }
 }
@@ -106,7 +109,8 @@ export const writeStoredBrowserWorkspaces = (workspaces: StoredBrowserWorkspaces
   try {
     window.localStorage.setItem(browserTabsStorageKey, JSON.stringify(workspaces))
     window.localStorage.removeItem(legacyBrowserTabsStorageKey)
-  } catch {
+  } catch (error) {
+    console.error('[caught:browserTabs:writeStoredBrowserWorkspaces]', error)
     // Browsing remains available when local storage is unavailable or full.
   }
 }

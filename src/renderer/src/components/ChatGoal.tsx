@@ -29,6 +29,7 @@ export const ChatGoal: React.FC<ChatGoalProps> = ({ goal, onSaveObjective }) => 
       await onSaveObjective(value?.trim() || null)
       setEditing(false)
     } catch (error) {
+      console.error('[caught:ChatGoal:save]', error)
       setError(error instanceof Error ? error.message : 'Unable to update goal')
     } finally {
       savingRef.current = false

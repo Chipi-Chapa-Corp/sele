@@ -399,9 +399,9 @@ export const getChatDetailFromSnapshot = (
 
   const viewingOlderCursorPage = Boolean(
     currentDetail.turnPagination?.kind === 'cursor' &&
-    currentDetail.turnPagination.newerCursor &&
-    snapshot.turnPagination?.kind === 'cursor' &&
-    !snapshot.turnPagination.newerCursor
+      currentDetail.turnPagination.newerCursor &&
+      snapshot.turnPagination?.kind === 'cursor' &&
+      !snapshot.turnPagination.newerCursor
   )
   if (viewingOlderCursorPage) {
     return {
@@ -812,7 +812,8 @@ export const getToolInputRecord = (rawInput: unknown): Record<string, unknown> |
     return parsedInput && typeof parsedInput === 'object' && !Array.isArray(parsedInput)
       ? (parsedInput as Record<string, unknown>)
       : null
-  } catch {
+  } catch (error) {
+    console.error('[caught:chatControllerUtils:getToolInputRecord]', error)
     return null
   }
 }
@@ -1089,11 +1090,11 @@ export const isGitChangesScope = (
 ): boolean =>
   Boolean(
     scope &&
-    cwd &&
-    source &&
-    scope.sourceKey === sourceKey &&
-    scope.cwd === cwd &&
-    scope.source === source
+      cwd &&
+      source &&
+      scope.sourceKey === sourceKey &&
+      scope.cwd === cwd &&
+      scope.source === source
   )
 
 export const isFileTreeScope = (

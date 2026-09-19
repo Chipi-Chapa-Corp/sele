@@ -193,7 +193,10 @@ export class OpenCodeServerClient {
     const command = await getHostCommand('kill', ['-TERM', String(targetPid)], {
       container: this.container,
       env: process.env
-    }).catch(() => null)
+    }).catch((error) => {
+      console.error('[caught:OpenCodeServerClient:stopTargetProcess]', error)
+      return null
+    })
     if (!command) return
 
     await new Promise<void>((resolve) => {

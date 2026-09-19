@@ -14,7 +14,10 @@ const fragmentLocationPattern = /#L(\d+)(?:C\d+)?$/i
 const decodeLinkTarget = (target: string): string => {
   try {
     return decodeURIComponent(target)
-  } catch {
+  } catch (error) {
+    if (!(error instanceof URIError)) {
+      console.error('[caught:markdownFileLink:decodeLinkTarget]', error)
+    }
     return target
   }
 }
@@ -39,7 +42,10 @@ export const getMarkdownFileTarget = (href: string | undefined): MarkdownFileTar
     try {
       path = decodeLinkTarget(new URL(path).pathname)
       if (/^\/[a-z]:\//i.test(path)) path = path.slice(1)
-    } catch {
+    } catch (error) {
+      if (!(error instanceof TypeError)) {
+        console.error('[caught:markdownFileLink:getMarkdownFileTarget]', error)
+      }
       return null
     }
   } else if (/^[a-z][a-z\d+.-]*:/i.test(path) && !windowsAbsolutePathPattern.test(path)) {

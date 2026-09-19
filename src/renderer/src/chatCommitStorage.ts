@@ -100,7 +100,8 @@ export const readStoredChatCommitMarkers = (): Record<string, ChatCommitMarker> 
     })
 
     return markers
-  } catch {
+  } catch (error) {
+    console.error('[caught:chatCommitStorage:readStoredChatCommitMarkers]', error)
     return {}
   }
 }
@@ -113,7 +114,8 @@ export const writeStoredChatCommitMarkers = (markers: Record<string, ChatCommitM
     }
 
     window.localStorage.setItem(chatCommitMarkersStorageKey, JSON.stringify(markers))
-  } catch {
+  } catch (error) {
+    console.error('[caught:chatCommitStorage:writeStoredChatCommitMarkers]', error)
     // Visual commit history remains available for this session if storage is unavailable.
   }
 }
@@ -137,7 +139,8 @@ export const readStoredContinuedStoppedWorkingSteps = (): ContinuedStoppedWorkin
     })
 
     return continuedSteps
-  } catch {
+  } catch (error) {
+    console.error('[caught:chatCommitStorage:readStoredContinuedStoppedWorkingSteps]', error)
     return {}
   }
 }
@@ -155,7 +158,8 @@ export const writeStoredContinuedStoppedWorkingSteps = (
       continuedStoppedWorkingStepsStorageKey,
       JSON.stringify(continuedSteps)
     )
-  } catch {
+  } catch (error) {
+    console.error('[caught:chatCommitStorage:writeStoredContinuedStoppedWorkingSteps]', error)
     // Continued-step grouping remains available for this session if storage is unavailable.
   }
 }

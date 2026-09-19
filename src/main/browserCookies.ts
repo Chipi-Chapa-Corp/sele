@@ -7,6 +7,10 @@ import { join, posix, win32 } from 'node:path'
 import Database from 'better-sqlite3'
 import { session } from 'electron'
 import type { AppContainerTarget } from '../shared/app'
+import {
+  isExpectedCommandAbsenceError,
+  isExpectedFileAbsenceError
+} from '../shared/expectedAbsence.ts'
 import type {
   BrowserCookieImportBrowser,
   BrowserCookieImportOptions,
@@ -202,7 +206,10 @@ const getDirectCookieStorageIdentity = async (path: string): Promise<string | nu
     await access(path, constants.R_OK)
     const details = await stat(path)
     return details.isFile() ? `stat:${details.dev}:${details.ino}` : null
-  } catch {
+  } catch (error) {
+    if (!isExpectedFileAbsenceError(error)) {
+      console.error('[caught:browserCookies:getDirectCookieStorageIdentity]', error)
+    }
     return null
   }
 }
@@ -255,7 +262,10 @@ const readDirectProfilesIniFiles = async (
     getDirectProfilesIniFiles(browser).map(async (file) => {
       try {
         return { ...file, contents: await readFile(file.path, 'utf8') }
-      } catch {
+      } catch (error) {
+        if (!isExpectedFileAbsenceError(error)) {
+          console.error('[caught:browserCookies:readDirectProfilesIniFiles]', error)
+        }
         return null
       }
     })
@@ -268,7 +278,10 @@ const readDirectChromeLocalStateFiles = async (): Promise<BrowserProfileMetadata
     getDirectChromeLocalStateFiles().map(async (file) => {
       try {
         return { ...file, contents: await readFile(file.path, 'utf8') }
-      } catch {
+      } catch (error) {
+        if (!isExpectedFileAbsenceError(error)) {
+          console.error('[caught:browserCookies:readDirectChromeLocalStateFiles]', error)
+        }
         return null
       }
     })
@@ -280,17 +293,13 @@ const decodeBase64 = (value: string): string | null => {
   if (!value || !/^[A-Za-z\d+/]*={0,2}$/.test(value)) return null
   try {
     return Buffer.from(value, 'base64').toString('utf8')
-  } catch {
+  } catch (error) {
+    console.error('[caught:browserCookies:decodeBase64]', error)
     return null
   }
 }
 
-const commandWasUnavailable = (error: unknown): boolean => {
-  const commandError = error as { code?: unknown }
-  if (commandError?.code === 'ENOENT' || commandError?.code === 127) return true
-  const message = error instanceof Error ? error.message.toLocaleLowerCase() : ''
-  return message.includes('command not found') || message.includes('not found: python')
-}
+const commandWasUnavailable = (error: unknown): boolean => isExpectedCommandAbsenceError(error)
 
 const getCookieDatabaseReadError = (browserName: string, detail: string): Error => {
   const normalizedDetail = detail.trim().replace(/\s+/g, ' ').slice(0, 240)
@@ -568,7 +577,12 @@ export const discoverBrowserCookieProfiles = async (
       (options.browser === 'chrome'
         ? discoverChromeProfilesFromSource(source)
         : discoverBrowserProfilesFromSource(source, options.browser)
-      ).catch(() => [])
+      ).catch((error) => {
+        if (!isExpectedCommandAbsenceError(error)) {
+          console.error('[caught:browserCookies:discoverBrowserCookieProfiles]', error)
+        }
+        return []
+      })
     )
   )
   const uniqueProfiles = new Map<string, DiscoveredBrowserProfile>()
@@ -659,7 +673,10 @@ const readCookieDatabaseSnapshot = async <TResult>(
     try {
       await copyFile(`${cookiePath}-wal`, `${snapshotPath}-wal`)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      if (!isExpectedFileAbsenceError(error)) {
+        console.error('[caught:browserCookies:readCookieDatabaseSnapshot]', error)
+        throw error
+      }
     }
     return reader(snapshotPath)
   } finally {
@@ -745,7 +762,8 @@ const readDirectChromeCookieDatabase = (cookiePath: string): ChromeCookieDatabas
       .prepare(`SELECT ${selectedColumns.join(', ')} FROM cookies`)
       .all() as Array<Record<string, unknown>>
     const versionRow = database.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
-      { value?: unknown } | undefined
+      | { value?: unknown }
+      | undefined
 
     return {
       databaseVersion: Number(versionRow?.value ?? 0),
@@ -820,6 +838,9 @@ const readTargetFirefoxCookies = async (
       )
       break
     } catch (error) {
+      if (!commandWasUnavailable(error)) {
+        console.error('[caught:browserCookies:readTargetFirefoxCookies]', error)
+      }
       readerFailures.push(error)
       // Try the other common Python executable name.
     }
@@ -893,6 +914,9 @@ const readTargetChromeCookies = async (
       )
       break
     } catch (error) {
+      if (!commandWasUnavailable(error)) {
+        console.error('[browserCookies:readTargetChromeCookies] Cookie reader failed', error)
+      }
       readerFailures.push(error)
     }
   }
@@ -1016,7 +1040,10 @@ const getChromeWindowsV10Key = async (
         )
       ).trim()
       break
-    } catch {
+    } catch (error) {
+      if (!commandWasUnavailable(error)) {
+        console.error('[caught:browserCookies:getChromeWindowsV10Key]', error)
+      }
       // Try the other standard PowerShell executable name.
     }
   }
@@ -1154,7 +1181,8 @@ export const importBrowserCookies = async (
       try {
         await cookieStore.set(conversion.cookie)
         imported += 1
-      } catch {
+      } catch (error) {
+        console.error('[caught:browserCookies:importBrowserCookies]', error)
         skipReasons.rejected += 1
       }
     }
@@ -1176,7 +1204,8 @@ export const importBrowserCookies = async (
     try {
       await cookieStore.set(conversion.cookie)
       imported += 1
-    } catch {
+    } catch (error) {
+      console.error('[caught:browserCookies:importBrowserCookies]', error)
       skipReasons.rejected += 1
     }
   }

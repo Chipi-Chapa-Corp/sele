@@ -33,6 +33,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     chatHasActiveTurn,
     chatHasPendingSteeringMessage,
     chatOpenedElsewhere,
+    chatLegacyHistoryReadOnly,
     containerOptions,
     cwdNotesByGroup,
     editingMessage,
@@ -77,6 +78,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     messageBoxProviderAvailable,
     messageBoxQuoteRequest,
     models,
+    modelsError,
     modelsLoading,
     newChatOpen,
     newSessionContainerValue,
@@ -153,7 +155,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
                   size="small"
                   theme="transparent"
                 />
-              ) : (
+              ) : chatLegacyHistoryReadOnly ? null : (
                 <Button
                   aria-label="Dismiss error"
                   title="Dismiss error"
@@ -446,6 +448,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           lastActionId={appSettings.lastActionId}
           model={effectiveModel}
           models={models}
+          modelsError={modelsError}
           modelsLoading={modelsLoading}
           modelsUnavailable={!messageBoxProviderAvailable}
           notesContextKey={messageBoxNotesGroup?.key}

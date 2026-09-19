@@ -348,7 +348,9 @@ const runWithStoredReview = async (
   try {
     return await run()
   } catch (error) {
-    await deleteMessageReview(review.id).catch(() => {})
+    await deleteMessageReview(review.id).catch((error) => {
+      console.error('[caught:providerService:runWithStoredReview]', error)
+    })
     throw error
   }
 }
@@ -466,7 +468,9 @@ export const providerApi: ProviderApi = {
       try {
         completion = await codexAdapter.waitForLogin(loginId, options)
       } catch (error) {
-        await removePendingCodexAccount(accountId, options?.container).catch(() => {})
+        await removePendingCodexAccount(accountId, options?.container).catch((error) => {
+          console.error('[caught:providerService:completeAccountCreation]', error)
+        })
         codexAdapter.resetClientsForContainer(options?.container)
         throw error
       }
@@ -482,7 +486,9 @@ export const providerApi: ProviderApi = {
       const configuration = await finalizeCodexAccount(accountId, options?.container)
       return { ...completion, configuration }
     } catch (error) {
-      await removePendingCodexAccount(accountId, options?.container).catch(() => {})
+      await removePendingCodexAccount(accountId, options?.container).catch((error) => {
+        console.error('[caught:providerService:completeAccountCreation]', error)
+      })
       codexAdapter.resetClientsForContainer(options?.container)
       throw error
     }
@@ -491,7 +497,10 @@ export const providerApi: ProviderApi = {
     if (providerId !== 'codex') {
       throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
     }
-    if (loginId) await codexAdapter.cancelLogin(loginId, options).catch(() => {})
+    if (loginId)
+      await codexAdapter.cancelLogin(loginId, options).catch((error) => {
+        console.error('[caught:providerService:cancelAccountCreation]', error)
+      })
     const configuration = await removePendingCodexAccount(accountId, options?.container)
     codexAdapter.resetClientsForContainer(options?.container)
     return configuration
@@ -628,7 +637,10 @@ export const providerApi: ProviderApi = {
       )
       return applyMetadataToDetail(detail)
     } catch (error) {
-      if (options?.review) await deleteMessageReview(options.review.id).catch(() => {})
+      if (options?.review)
+        await deleteMessageReview(options.review.id).catch((error) => {
+          console.error('[caught:providerService:startChat]', error)
+        })
       throw error
     }
   },
@@ -656,7 +668,10 @@ export const providerApi: ProviderApi = {
       )
       return applyMetadataToDetail(detail)
     } catch (error) {
-      if (options?.review) await deleteMessageReview(options.review.id).catch(() => {})
+      if (options?.review)
+        await deleteMessageReview(options.review.id).catch((error) => {
+          console.error('[caught:providerService:continueChatInFork]', error)
+        })
       throw error
     }
   },

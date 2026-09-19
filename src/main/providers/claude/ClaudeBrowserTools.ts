@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
+import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import type { BrowserAutomationScope } from '../../../shared/browser'
 import type { BrowserAutomationService } from '../../browser/BrowserAutomation'
 import { BrowserWorkspace, type BrowserScreenshot } from '../../browser/BrowserWorkspace'
@@ -55,6 +56,7 @@ export function createClaudeBrowserIntegration(
     try {
       return await browser.run(action)
     } catch (error) {
+      console.error('Claude browser tool failed.', error)
       return {
         ...textResult(error instanceof Error ? error.message : String(error)),
         isError: true
@@ -228,7 +230,10 @@ export function createClaudeBrowserIntegration(
     server,
     close: () => {
       browser.close()
-      void server.instance.close().catch(() => {})
+      void server.instance.close().catch((error: unknown) => {
+        if (isExpectedClaudeQueryShutdownError(error)) return
+        console.error('Unable to close Claude browser MCP server.', error)
+      })
     }
   }
 }

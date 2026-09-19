@@ -62,7 +62,8 @@ export const readStoredRecentlyOpenedFiles = (): RecentlyOpenedFilesByWorkspace 
   try {
     const storedValue = window.localStorage.getItem(recentlyOpenedFilesStorageKey)
     return storedValue ? parseRecentlyOpenedFiles(JSON.parse(storedValue)) : {}
-  } catch {
+  } catch (error) {
+    console.error('[caught:recentlyOpenedFiles:readStoredRecentlyOpenedFiles]', error)
     return {}
   }
 }
@@ -77,7 +78,8 @@ export const writeStoredRecentlyOpenedFiles = (
     }
 
     window.localStorage.setItem(recentlyOpenedFilesStorageKey, JSON.stringify(filesByWorkspace))
-  } catch {
+  } catch (error) {
+    console.error('[caught:recentlyOpenedFiles:writeStoredRecentlyOpenedFiles]', error)
     // Recently opened files are non-critical; ignore unavailable storage.
   }
 }

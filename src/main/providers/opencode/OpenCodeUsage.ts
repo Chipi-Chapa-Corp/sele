@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import type { AppContainerTarget } from '../../../shared/app'
+import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
 import type { ProviderAccountRateLimit } from '../../../shared/provider'
 
 export const openCodeGoUsageEndpoint = 'https://opencode.ai/zen/go/v1/usage'
@@ -52,7 +53,8 @@ export const extractOpenCodeGoApiKey = (store: unknown): string | null => {
 export const parseOpenCodeAuthContent = (content: string): string | null => {
   try {
     return extractOpenCodeGoApiKey(JSON.parse(content))
-  } catch {
+  } catch (error) {
+    console.error('[caught:OpenCodeUsage:parseOpenCodeAuthContent]', error)
     return null
   }
 }
@@ -67,7 +69,8 @@ export const resolveOpenCodeAuthContent = async (
     try {
       JSON.parse(envContent)
       return envContent
-    } catch {
+    } catch (error) {
+      console.error('[caught:OpenCodeUsage:resolveOpenCodeAuthContent]', error)
       // Match OpenCode's fallback for malformed environment content.
     }
   }
@@ -153,7 +156,7 @@ export const getOpenCodeGoApiKey = async (
         try {
           return await readFile(getOpenCodeAuthPath(process.env, homedir()), 'utf8')
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+          if (isExpectedFileAbsenceError(error)) return null
           throw new Error('Could not read OpenCode credentials in the selected environment.')
         }
       })
@@ -184,7 +187,8 @@ export const fetchOpenCodeGoUsage = async (
   let payload: unknown = null
   try {
     payload = await response.json()
-  } catch {
+  } catch (error) {
+    console.error('[caught:OpenCodeUsage:fetchOpenCodeGoUsage]', error)
     payload = null
   }
   if (response.status === 401) {

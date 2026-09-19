@@ -44,3 +44,31 @@ test('every prefix of a document parses without throwing', () => {
   }
   assert.deepEqual(parsePartialJson(document), JSON.parse(document))
 })
+
+test('expected incomplete JSON fragments do not produce diagnostics', () => {
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (...args) => warnings.push(args)
+  try {
+    assert.deepEqual(parsePartialJson('{"command": "npm run bui'), {
+      command: 'npm run bui'
+    })
+    assert.deepEqual(parsePartialJson('{"a": tr'), { a: true })
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.deepEqual(warnings, [])
+})
+
+test('structurally malformed streamed JSON is logged after recovery fails', () => {
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (...args) => warnings.push(args)
+  try {
+    assert.equal(parsePartialJson('{"a": ]}'), undefined)
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.equal(warnings.length, 1)
+  assert.match(String(warnings[0]?.[0]), /malformed JSON/)
+})

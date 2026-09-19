@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import type { AppContainerTarget } from '../../../shared/app'
+import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
 import type { ProviderUpdateAvailability } from '../../../shared/provider'
 import { getHostCommand } from '../../hostProcess'
 import { getOpenCodeExecutable, getOpenCodeExecutableError } from './OpenCodeExecutable'
@@ -103,10 +104,14 @@ const getLatestVersion = async (): Promise<string> => {
 export const getOpenCodeUpdateAvailability = async (
   options: OpenCodeProviderUpdateOptions = {}
 ): Promise<ProviderUpdateAvailability | null> => {
-  const [currentVersion, latestVersion] = await Promise.all([
-    getCurrentVersion(options),
-    getLatestVersion()
-  ])
+  let currentVersion: string
+  try {
+    currentVersion = await getCurrentVersion(options)
+  } catch (error) {
+    if (isExpectedCommandAbsenceError(error)) return null
+    throw error
+  }
+  const latestVersion = await getLatestVersion()
   return compareVersions(currentVersion, latestVersion) < 0
     ? { currentVersion, latestVersion }
     : null

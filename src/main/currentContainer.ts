@@ -1,6 +1,10 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import type { AppContainerTarget, AppContainerTool } from '../shared/app'
+import {
+  isExpectedCommandAbsenceError,
+  isExpectedFileAbsenceError
+} from '../shared/expectedAbsence.ts'
 import { normalizeContainerTarget } from './containerTarget'
 
 type ContainerEnvironment = Record<string, string>
@@ -65,7 +69,10 @@ const readEnvironmentFile = async (path: string): Promise<ContainerEnvironment |
     }
 
     return environment
-  } catch {
+  } catch (error) {
+    if (!isExpectedFileAbsenceError(error)) {
+      console.error('[caught:currentContainer:readEnvironmentFile]', error)
+    }
     return null
   }
 }
@@ -74,7 +81,10 @@ const fileExists = async (path: string): Promise<boolean> => {
   try {
     await readFile(path, { encoding: 'utf8', flag: 'r' })
     return true
-  } catch {
+  } catch (error) {
+    if (!isExpectedFileAbsenceError(error)) {
+      console.error('[caught:currentContainer:fileExists]', error)
+    }
     return false
   }
 }
@@ -82,7 +92,10 @@ const fileExists = async (path: string): Promise<boolean> => {
 const readTextFile = async (path: string): Promise<string | null> => {
   try {
     return await readFile(path, 'utf8')
-  } catch {
+  } catch (error) {
+    if (!isExpectedFileAbsenceError(error)) {
+      console.error('[caught:currentContainer:readTextFile]', error)
+    }
     return null
   }
 }
@@ -99,9 +112,9 @@ const getEnvironmentValue = (...keys: string[]): string | null => {
 const isDistroboxEnvironment = (): boolean =>
   Boolean(
     process.env.DISTROBOX_ENTER_PATH ||
-    process.env.DISTROBOX_HOST_HOME ||
-    process.env.DISTROBOX_ENVIRONMENT ||
-    process.env.container === 'distrobox'
+      process.env.DISTROBOX_HOST_HOME ||
+      process.env.DISTROBOX_ENVIRONMENT ||
+      process.env.container === 'distrobox'
   )
 
 const hasCurrentContainerMarker = async (): Promise<boolean> => {
@@ -109,12 +122,12 @@ const hasCurrentContainerMarker = async (): Promise<boolean> => {
 
   return Boolean(
     process.env.container ||
-    isDistroboxEnvironment() ||
-    process.env.CONTAINER_ID ||
-    process.env.container_id ||
-    (await fileExists('/run/.containerenv')) ||
-    (await fileExists('/run/.toolboxenv')) ||
-    (await fileExists('/.dockerenv'))
+      isDistroboxEnvironment() ||
+      process.env.CONTAINER_ID ||
+      process.env.container_id ||
+      (await fileExists('/run/.containerenv')) ||
+      (await fileExists('/run/.toolboxenv')) ||
+      (await fileExists('/.dockerenv'))
   )
 }
 
@@ -130,6 +143,9 @@ const runTextCommand = (file: string, args: string[]): Promise<string | null> =>
         timeout: currentContainerCommandTimeoutMs
       },
       (error, stdout) => {
+        if (error && !isExpectedCommandAbsenceError(error)) {
+          console.error('[currentContainer:runTextCommand] Container probe failed', error)
+        }
         resolve(error ? null : stdout.trim())
       }
     )

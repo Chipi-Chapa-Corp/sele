@@ -54,6 +54,9 @@ export const stopActiveProviderChats = async (
 ): Promise<void> => {
   const results = await Promise.allSettled(chats.map((chat) => adapter.stopChat(chat.id)))
   const failures = results.filter((result) => result.status === 'rejected')
+  failures.forEach((failure) =>
+    console.error('[providerUpdate:stopActiveProviderChats]', failure.reason)
+  )
   if (failures.length === 0) return
 
   const firstFailure = failures[0].reason

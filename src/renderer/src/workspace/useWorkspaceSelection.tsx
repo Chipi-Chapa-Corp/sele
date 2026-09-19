@@ -1,3 +1,5 @@
+import { refreshSubagentDetail } from '../subagentUi'
+import { chatWorkingItemPageSize, chatWorkingItemWindowSize } from './controllerTypes'
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import { flushSync } from 'react-dom'
@@ -270,6 +272,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           })
         })
         .catch((error) => {
+          console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+
           if (!active || selectedChatKeyRef.current !== selectedChatKey) return
 
           setSubagentListState((currentState) => ({
@@ -324,7 +328,12 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
             ? {
                 rootChatKey: selectedChatKey,
                 summary: detail,
-                detail,
+                detail: refreshSubagentDetail(
+                  currentView.detail,
+                  detail,
+                  chatWorkingItemPageSize,
+                  chatWorkingItemWindowSize
+                ),
                 loadState: 'ready',
                 error: null
               }
@@ -339,7 +348,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         ) {
           scheduleRefresh(1_500)
         }
-      } catch {
+      } catch (error) {
+        console.error('[caught:useWorkspaceSelection:refresh]', error)
         if (
           active &&
           subagentChatLoadRequestRef.current === requestId &&
@@ -517,6 +527,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         })
       })
       .catch((error) => {
+        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+
         if (!active) return
 
         setGitSourceAvailability({
@@ -692,6 +704,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         setAccountUsage((currentUsage) => mergeAccountUsage(currentUsage, usage))
         setAccountUsageState('ready')
       } catch (error) {
+        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
         setAccountUsageState('error')
         setAccountUsageError(getErrorMessage(error, 'Unable to load usage.'))
       }
@@ -746,6 +759,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         setAccountUsageState('ready')
       })
       .catch((error) => {
+        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+
         if (!active) return
         setAccountUsageState('error')
         setAccountUsageError(getErrorMessage(error, 'Unable to load usage.'))
@@ -797,12 +812,12 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
       })
       .catch((error) => {
-        if (!active) return
-
         console.error(
           `Unable to load messages for ${selectedProviderId} chat ${selectedChatId}.`,
           error
         )
+        if (!active) return
+
         // Cached history or a live update may already have supplied this chat. A failed
         // background read must not discard it or leave an error over usable messages.
         if (chatDetailRef.current?.id === selectedChatId) {
@@ -946,8 +961,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     chatAutoScrollEnabledRef.current = contentElement
       ? Boolean(
           isScrolledToBottom(contentElement) &&
-          currentTurnWindow &&
-          currentTurnWindow.endIndex >= currentTurnWindow.totalCount
+            currentTurnWindow &&
+            currentTurnWindow.endIndex >= currentTurnWindow.totalCount
         )
       : true
     if (chatAutoScrollEnabledRef.current) {
@@ -1090,7 +1105,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           setNewSessionCwd(cwd)
         }
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+      })
 
     return () => {
       active = false
@@ -1146,6 +1163,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         setGitBranchLoadState('ready')
       })
       .catch((error) => {
+        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+
         if (!active || gitBranchRequestIdRef.current !== requestId) return
         setGitBranchLoadState('error')
         setGitBranchError(getErrorMessage(error, 'Unable to load branches.'))
@@ -1220,6 +1239,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('ready')
       })
       .catch((error) => {
+        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+
         if (!active) return
         const message = getErrorMessage(error, 'Unable to load changes.')
         setGitChangeLoadScope(gitChangeScope)
@@ -1305,6 +1326,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         setUncommittedPatchFilterState('ready')
       })
       .catch((error) => {
+        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+
         if (!active) return
 
         setGitChangeLoadErrorDismissed(false)
@@ -1361,7 +1384,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         setCollapsedFileTreeFolders(nextCollapsedFolders)
         collapsedFileTreeFoldersByCwdRef.current.set(nextFileTreeScope.cwd, nextCollapsedFolders)
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+
         if (!active) return
         setFileTreeLoadScope(nextFileTreeScope)
         setFileTreeLoadState('error')

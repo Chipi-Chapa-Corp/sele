@@ -37,7 +37,9 @@ export const renderMermaidDiagram = (
   const result = renderQueue.then(() => renderNextDiagram(source, colorScheme))
   renderQueue = result.then(
     () => undefined,
-    () => undefined
+    (error: unknown) => {
+      console.error('[mermaidRendering:renderMermaidDiagram] Render queue rejected', error)
+    }
   )
   return result
 }
@@ -66,9 +68,9 @@ export const hydrateMermaidDiagrams = (container: HTMLElement): void => {
         bindFunctions?.(diagram)
       })
       .catch((error: unknown) => {
+        console.error('[mermaid]', 'failed to render diagram', error)
         if (!diagram.isConnected || !container.contains(diagram)) return
 
-        console.error('[mermaid]', 'failed to render diagram', error)
         const errorMessage = document.createElement('div')
         errorMessage.className = 'markdown-mermaid__error'
         errorMessage.setAttribute('role', 'alert')

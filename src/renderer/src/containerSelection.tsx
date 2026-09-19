@@ -101,7 +101,8 @@ const parseStoredContainerSelection = (
 
   try {
     const parsedValue = JSON.parse(storedValue) as
-      (Partial<AppContainerTarget> & { runtime?: unknown }) | null
+      | (Partial<AppContainerTarget> & { runtime?: unknown })
+      | null
     if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
       return null
     }
@@ -144,7 +145,8 @@ const parseStoredContainerSelection = (
         name: parsedValue.name.trim()
       }
     }
-  } catch {
+  } catch (error) {
+    console.error('[caught:containerSelection:parseStoredContainerSelection]', error)
     return null
   }
 
@@ -168,7 +170,8 @@ export const readStoredContainerSelection = (): AppContainerTarget | null => {
     }
 
     return null
-  } catch {
+  } catch (error) {
+    console.error('[caught:containerSelection:readStoredContainerSelection]', error)
     return null
   }
 }
@@ -179,7 +182,8 @@ export const writeStoredContainerSelection = (container: AppContainerTarget): vo
       containerSelectionStorageKey,
       JSON.stringify(normalizeContainerTarget(container))
     )
-  } catch {
+  } catch (error) {
+    console.error('[caught:containerSelection:writeStoredContainerSelection]', error)
     // Container selection is a convenience preference; ignore unavailable storage.
   }
 }

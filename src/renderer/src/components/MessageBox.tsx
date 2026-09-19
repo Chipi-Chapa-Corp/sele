@@ -19,7 +19,6 @@ import {
   Blocks,
   Check,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   CornerDownRight,
   FileLock,
@@ -44,6 +43,7 @@ import type {
   AppFileTreeFile,
   AppSelectedAttachment
 } from '../../../shared/app'
+import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
 import { toCssRem } from '../cssUnits'
 import type {
   ProviderActiveSendMode,
@@ -94,6 +94,7 @@ import type { AppChatUsageDisplay } from '../settings'
 import { AttachmentChip } from './AttachmentChip'
 import { ActionsButton } from './ActionsButton'
 import { Button } from './Button'
+import { ChatConfigSectionHeader } from './ChatConfigSectionHeader'
 import { CwdNotesButton } from './CwdNotesButton'
 import { DisclosureToggle } from './DisclosureToggle'
 import { Dropdown, type DropdownOption } from './Dropdown'
@@ -125,6 +126,7 @@ type MessageBoxProps = {
   container?: AppContainerTarget | null
   model: ProviderModelId
   models: ProviderModel[]
+  modelsError?: string | null
   modelsLoading?: boolean
   modelsUnavailable?: boolean
   operationsDisabled?: boolean
@@ -293,6 +295,7 @@ type ChatConfigSection = {
 type ChatConfigDropdownProps = {
   disabled: boolean
   id: string
+  modelsError?: string | null
   modelLabel: string
   providerIcon: ReactNode
   reasoningLabel?: string | null
@@ -370,6 +373,7 @@ const getChatConfigMenuStyle = (buttonRect: DOMRect): ChatConfigMenuStyle => {
 const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   disabled,
   id,
+  modelsError,
   modelLabel,
   providerIcon,
   reasoningLabel,
@@ -539,20 +543,14 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
 
   const renderSectionOptions = (section: ChatConfigSection): ReactNode => (
     <>
-      <div className="message-box__chat-config-header">
-        <button
-          className="message-box__chat-config-back"
-          type="button"
-          onClick={() => {
-            setActiveSectionId(null)
-            setModelSearchQuery('')
-            focusFirstMenuButton()
-          }}
-        >
-          <ChevronLeft aria-hidden="true" />
-          <span>Back</span>
-        </button>
-      </div>
+      <ChatConfigSectionHeader
+        modelError={section.id === 'model' ? modelsError : null}
+        onBack={() => {
+          setActiveSectionId(null)
+          setModelSearchQuery('')
+          focusFirstMenuButton()
+        }}
+      />
       {section.id === 'model' && (
         <div className="message-box__chat-config-search">
           <Input
@@ -1080,6 +1078,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   showSpeedSelector = true,
   model,
   models,
+  modelsError = null,
   modelsLoading = false,
   modelsUnavailable = false,
   operationsDisabled = false,
@@ -1201,13 +1200,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const reviewSelectorVisible = showReviewSelector && !fullAccessSelected
   const effectiveApprovalMode = fullAccessSelected ? 'never' : approvalMode
   const selectedApprovalMode = approvalModes.find((mode) => mode.id === effectiveApprovalMode)
-  const approvalModeOptions = approvalModes.map((mode): DropdownOption<ProviderApprovalMode> => ({
-    value: mode.id,
-    label: mode.label,
-    menuLabel: mode.isDefault ? `${mode.label} (default)` : mode.label,
-    description: mode.description || undefined,
-    icon: approvalModeIcons[mode.id]
-  }))
+  const approvalModeOptions = approvalModes.map(
+    (mode): DropdownOption<ProviderApprovalMode> => ({
+      value: mode.id,
+      label: mode.label,
+      menuLabel: mode.isDefault ? `${mode.label} (default)` : mode.label,
+      description: mode.description || undefined,
+      icon: approvalModeIcons[mode.id]
+    })
+  )
   const displayedApprovalModeOptions = approvalModeOptions.some(
     (option) => option.value === effectiveApprovalMode
   )
@@ -1221,13 +1222,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         }
       ]
   const selectedSandboxMode = sandboxModes.find((mode) => mode.id === sandboxMode)
-  const sandboxModeOptions = sandboxModes.map((mode): DropdownOption<ProviderSandboxMode> => ({
-    value: mode.id,
-    label: mode.label,
-    menuLabel: mode.isDefault ? `${mode.label} (default)` : mode.label,
-    description: mode.description || undefined,
-    icon: sandboxModeIcons[mode.id]
-  }))
+  const sandboxModeOptions = sandboxModes.map(
+    (mode): DropdownOption<ProviderSandboxMode> => ({
+      value: mode.id,
+      label: mode.label,
+      menuLabel: mode.isDefault ? `${mode.label} (default)` : mode.label,
+      description: mode.description || undefined,
+      icon: sandboxModeIcons[mode.id]
+    })
+  )
   const displayedSandboxModeOptions = sandboxModeOptions.some(
     (option) => option.value === sandboxMode
   )
@@ -1246,16 +1249,18 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     modelsLoading && !modelsUnavailable ? 'Loading models…' : 'No models'
   const modelOptions = modelSelectionUnavailable
     ? []
-    : models.map((candidateModel): DropdownOption<ProviderModelId> => ({
-        value: candidateModel.id,
-        label: formatModelLabel(candidateModel.label),
-        menuLabel: getModelMenuLabel(
-          formatModelLabel(candidateModel.label),
-          candidateModel.isDefault
-        ),
-        description: candidateModel.description || undefined,
-        icon: <ProviderIcon providerId={providerId} aria-hidden="true" />
-      }))
+    : models.map(
+        (candidateModel): DropdownOption<ProviderModelId> => ({
+          value: candidateModel.id,
+          label: formatModelLabel(candidateModel.label),
+          menuLabel: getModelMenuLabel(
+            formatModelLabel(candidateModel.label),
+            candidateModel.isDefault
+          ),
+          description: candidateModel.description || undefined,
+          icon: <ProviderIcon providerId={providerId} aria-hidden="true" />
+        })
+      )
   const displayedModelOptions = modelSelectionUnavailable
     ? [
         {
@@ -1567,9 +1572,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const usageMenuOpen = usageOpen && !usageDisabled
   const fileMentionMenuOpen = Boolean(
     fileMention &&
-    !textareaDisabled &&
-    !editing &&
-    selectedAttachments.length < maxSelectedAttachmentCount
+      !textareaDisabled &&
+      !editing &&
+      selectedAttachments.length < maxSelectedAttachmentCount
   )
   const composerSourceKey = useMemo(() => JSON.stringify(container ?? null), [container])
   const fileMentionResults = useMemo(
@@ -1587,8 +1592,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const skillScope = `${providerId}\0${cwd ?? ''}\0${composerSourceKey}`
   const skillMentionMenuOpen = Boolean(
     skillMention &&
-    !textareaDisabled &&
-    (selectedSkills.length < maxSelectedSkillCount || selectedApps.length < maxSelectedAppCount)
+      !textareaDisabled &&
+      (selectedSkills.length < maxSelectedSkillCount || selectedApps.length < maxSelectedAppCount)
   )
   const composerResults = useMemo(
     () =>
@@ -1749,7 +1754,20 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         })
         setProjectFilesErrorCwd(null)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        if (isExpectedFileAbsenceError(error)) {
+          if (active) {
+            setProjectFileCache({
+              cwd: projectCwd,
+              files: [],
+              repositoryRoot: projectCwd,
+              sourceKey: composerSourceKey
+            })
+            setProjectFilesErrorCwd(null)
+          }
+          return
+        }
+        console.error('Unable to load files for composer mentions.', error)
         if (!active) return
         setProjectFilesErrorCwd(projectCwd)
       })
@@ -1779,6 +1797,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       providerApi.getSkills(providerId, cwd, { container }),
       providerApi.getApps(providerId, { container })
     ]).then(([skillsResult, appsResult]) => {
+      if (skillsResult.status === 'rejected') {
+        console.error('Unable to load composer skills.', skillsResult.reason)
+      }
+      if (appsResult.status === 'rejected') {
+        console.error('Unable to load composer apps.', appsResult.reason)
+      }
       if (!active) return
 
       if (skillsResult.status === 'rejected' && appsResult.status === 'rejected') {
@@ -1865,7 +1889,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         void (async () => {
           try {
             await onUsageRefresh?.()
-          } catch {
+          } catch (error) {
+            console.error('Unable to refresh account usage while polling.', error)
             // Keep polling after transient refresh failures.
           } finally {
             if (active) scheduleRefresh()
@@ -2054,7 +2079,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           skillsBeforeEditRef.current = null
           appsBeforeEditRef.current = null
         })
-        .catch(() => {})
+        .catch((error: unknown) => {
+          console.error('Unable to persist the cleared composer draft.', error)
+        })
       return
     }
 
@@ -2081,7 +2108,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           restoreFailedComposerMessage(drafts, draftScopeKey, nextMessage)
         )
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('Unable to send the composer message.', error)
         if (!nextMessage) return
 
         setComposerDrafts((drafts) =>
@@ -2140,6 +2168,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       })
       textareaRef.current?.focus({ preventScroll: true })
     } catch (selectionError) {
+      console.error('Unable to attach selected files.', selectionError)
       setAttachmentSelectionError(
         selectionError instanceof Error ? selectionError.message : 'Unable to attach files.'
       )
@@ -2216,6 +2245,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       })
       textareaRef.current?.focus({ preventScroll: true })
     } catch (dropError) {
+      console.error('Unable to attach dropped files.', dropError)
       setAttachmentSelectionError(
         dropError instanceof Error ? dropError.message : 'Unable to attach dropped files.'
       )
@@ -2254,6 +2284,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         return [...currentAttachments, image]
       })
     } catch (pasteError) {
+      console.error('Unable to paste an image attachment.', pasteError)
       setAttachmentSelectionError(
         pasteError instanceof Error ? pasteError.message : 'Unable to paste this image.'
       )
@@ -2599,9 +2630,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const statisticsSupported = providerId === 'codex'
   const statisticsReported = Boolean(
     statisticsSupported &&
-    accountUsage?.statisticsLoaded &&
-    accountUsage.summary &&
-    Object.values(accountUsage.summary).some((value) => value !== null)
+      accountUsage?.statisticsLoaded &&
+      accountUsage.summary &&
+      Object.values(accountUsage.summary).some((value) => value !== null)
   )
   const visibleUsageView: UsagePopoverView = statisticsReported ? usageView : 'usage'
   const statisticsLoading =
@@ -2992,6 +3023,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 <ChatConfigDropdown
                   disabled={selectorsDisabled}
                   id="chat-config-mode"
+                  modelsError={modelsError}
                   modelLabel={selectedModelLabel}
                   providerIcon={<ProviderIcon providerId={providerId} />}
                   reasoningLabel={

@@ -125,6 +125,7 @@ export type GitSyncControllerDependencies = {
 }
 
 export type SubagentControllerDependencies = {
+  activeSubagentChatView: SubagentChatView | null
   selectedProviderId: 'codex' | 'claude' | 'copilot' | 'opencode' | undefined
   selectedChatId: string | undefined
   selectedChatKey: string | null

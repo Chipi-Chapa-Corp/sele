@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { constants } from 'node:fs'
-import { access, chmod, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { basename, delimiter, extname, isAbsolute, join } from 'node:path'
 import { spawn as spawnPty } from '@lydell/node-pty'
 import type { AppContainerTarget, AppContainerTool, AppLocalContainerTarget } from '../shared/app'
+import { isExpectedFileAbsenceError } from '../shared/expectedAbsence.ts'
 import {
   getCurrentContainerHostBridge,
   isCurrentContainerTarget,
@@ -19,6 +19,7 @@ import {
   quotePosixShellArg
 } from './targetShell'
 import { normalizeWindowsExecutableCommand } from './windowsExecutableCommand'
+import { isExecutableFile, isExpectedShellCandidateAbsence } from './optionalProbe'
 
 type HostCommandOptions = {
   container?: AppContainerTarget | null
@@ -168,6 +169,12 @@ const getFlatpakHostEnvironment = (): Promise<NodeJS.ProcessEnv> => {
           timeout: hostEnvironmentTimeoutMs
         },
         (error, stdout) => {
+          if (error) {
+            console.error(
+              '[hostProcess:getFlatpakHostEnvironment] Unable to read host environment',
+              error
+            )
+          }
           resolve(error ? process.env : parseEnvironment(stdout))
         }
       )
@@ -217,15 +224,6 @@ const getLookupEnvironment = async (
   }
 }
 
-const isExecutableFile = async (file: string): Promise<boolean> => {
-  try {
-    await access(file, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
 const getToolPathEntries = (...basePaths: Array<string | undefined>): string[] =>
   unique(basePaths.flatMap(splitPath))
 
@@ -259,7 +257,8 @@ const resolveFromPathEntries = async (
 const getConfiguredUserShell = (): string | null => {
   try {
     return userInfo().shell
-  } catch {
+  } catch (error) {
+    console.error('[caught:hostProcess:getConfiguredUserShell]', error)
     return null
   }
 }
@@ -470,6 +469,9 @@ const runLocalShellLookup = (
       },
       (error, stdout) => {
         if (error) {
+          if (!isExpectedFileAbsenceError(error)) {
+            console.error('[hostProcess:runLocalShellLookup] Shell lookup failed', error)
+          }
           resolve(null)
           return
         }
@@ -503,8 +505,11 @@ const runFlatpakShellLookup = (
         maxBuffer: shellLookupMaxBuffer,
         timeout: shellLookupTimeoutMs
       },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         if (error) {
+          if (!isExpectedShellCandidateAbsence(error, stderr)) {
+            console.error('[hostProcess:runFlatpakShellLookup] Host shell lookup failed', error)
+          }
           resolve(null)
           return
         }
@@ -519,7 +524,8 @@ const killPty = (pty: ReturnType<typeof spawnPty> | null): void => {
 
   try {
     pty.kill()
-  } catch {
+  } catch (error) {
+    console.error('[caught:hostProcess:killPty]', error)
     return
   }
 }
@@ -543,6 +549,7 @@ const runLocalPtyShellLookup = (
     }
 
     const timeout = setTimeout(() => {
+      console.warn('[hostProcess:runLocalPtyShellLookup] Shell lookup timed out')
       killPty(pty)
       settle(null)
     }, shellLookupTimeoutMs)
@@ -555,7 +562,10 @@ const runLocalPtyShellLookup = (
         name: 'xterm-256color',
         rows: 24
       })
-    } catch {
+    } catch (error) {
+      if (!isExpectedFileAbsenceError(error)) {
+        console.error('[hostProcess:runLocalPtyShellLookup] Unable to start shell lookup', error)
+      }
       clearTimeout(timeout)
       resolve(null)
       return
@@ -564,7 +574,16 @@ const runLocalPtyShellLookup = (
     pty.onData((data) => {
       output = `${output}${data}`.slice(-shellLookupMaxBuffer)
     })
-    pty.onExit(() => settle(parseShellLookupOutput(output)))
+    pty.onExit(({ exitCode, signal }) => {
+      if (exitCode !== 0) {
+        console.error('[hostProcess:runLocalPtyShellLookup] Shell lookup exited unsuccessfully', {
+          exitCode,
+          shell,
+          signal
+        })
+      }
+      settle(exitCode === 0 ? parseShellLookupOutput(output) : null)
+    })
   })
 
 const runFlatpakPtyShellLookup = (
@@ -587,6 +606,7 @@ const runFlatpakPtyShellLookup = (
     }
 
     const timeout = setTimeout(() => {
+      console.warn('[hostProcess:runFlatpakPtyShellLookup] Host shell lookup timed out')
       killPty(pty)
       settle(null)
     }, shellLookupTimeoutMs)
@@ -610,7 +630,8 @@ const runFlatpakPtyShellLookup = (
           rows: 24
         }
       )
-    } catch {
+    } catch (error) {
+      console.error('[caught:hostProcess:runFlatpakPtyShellLookup]', error)
       clearTimeout(timeout)
       resolve(null)
       return
@@ -619,7 +640,15 @@ const runFlatpakPtyShellLookup = (
     pty.onData((data) => {
       output = `${output}${data}`.slice(-shellLookupMaxBuffer)
     })
-    pty.onExit(() => settle(parseShellLookupOutput(output)))
+    pty.onExit(({ exitCode, signal }) => {
+      if (exitCode !== 0 && !isExpectedShellCandidateAbsence({ code: exitCode }, output)) {
+        console.error(
+          '[hostProcess:runFlatpakPtyShellLookup] Host shell lookup exited unsuccessfully',
+          { exitCode, shell, signal }
+        )
+      }
+      settle(exitCode === 0 ? parseShellLookupOutput(output) : null)
+    })
   })
 
 const runShellLookup = (
@@ -706,6 +735,9 @@ const getExecutableNotFoundMessage = (file: string): string =>
     'Desktop apps may not inherit your terminal PATH directly.'
   ].join(' ')
 
+const getExecutableNotFoundError = (file: string): Error & { code: 'ENOENT' } =>
+  Object.assign(new Error(getExecutableNotFoundMessage(file)), { code: 'ENOENT' as const })
+
 const shouldResolveWithPath = (file: string): boolean =>
   !isAbsolute(file) && !file.includes('/') && !file.includes('\\')
 
@@ -757,9 +789,14 @@ const resolveHostFile = async (
         : await resolveFromPathEntries(file, pathEntries, lookupEnvironment.env)
       if (pathCandidate) return { file: pathCandidate, path: lookupPath || undefined }
 
-      throw new Error(getExecutableNotFoundMessage(file))
+      throw getExecutableNotFoundError(file)
     })()
-    void resolved.catch(() => resolvedCommandCache.delete(cacheKey))
+    void resolved.catch((error) => {
+      if (!isExpectedFileAbsenceError(error)) {
+        console.error('[hostProcess:resolveHostFile] Executable lookup failed', error)
+      }
+      return resolvedCommandCache.delete(cacheKey)
+    })
     resolvedCommandCache.set(cacheKey, resolved)
   }
 
@@ -1028,7 +1065,10 @@ const buildResolvedLocalCommand = async (
   }
 
   const flatpakSpawnFile = await resolveHostFile('flatpak-spawn', undefined, process.env).catch(
-    () => ({ file: 'flatpak-spawn' })
+    (error) => {
+      console.error('[caught:hostProcess:buildResolvedLocalCommand]', error)
+      return { file: 'flatpak-spawn' }
+    }
   )
 
   return {

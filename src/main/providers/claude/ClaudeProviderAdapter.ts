@@ -14,7 +14,6 @@ import {
   type CanUseTool,
   type EffortLevel,
   type Options as ClaudeQueryOptions,
-  type PermissionMode,
   type PermissionResult,
   type Query,
   type SDKMessage,
@@ -27,7 +26,10 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { AppContainerTarget } from '../../../shared/app'
 import {
-  fallbackClaudeModels,
+  isExpectedCommandAbsenceError,
+  isExpectedFileAbsenceError
+} from '../../../shared/expectedAbsence.ts'
+import {
   providerOneShotGenerationCanceledMessage,
   type ProviderAccountUsage,
   type ProviderActiveSendMode,
@@ -81,6 +83,12 @@ import {
   type ClaudeTranscriptMessage
 } from './ClaudeItemRenderers'
 import { mapClaudeModels } from './ClaudeModels'
+import { discoverClaudeModels } from './ClaudeModelDiscovery'
+import {
+  claudeReadOnlyAllowedTools,
+  getClaudePermissionAction,
+  getClaudePermissionMode
+} from './ClaudePermissions'
 import { getClaudeUpdateAvailability, updateClaudeProvider } from './ClaudeProviderUpdate'
 import {
   getClaudeResultLifecycleDecision,
@@ -90,6 +98,7 @@ import { getClaudeQueueDrainDecision } from './ClaudeQueueDrain'
 import { discoverClaudeSkills } from './ClaudeSkillDiscovery'
 import { applyClaudeStreamEvent, clearClaudeStreamMessages } from './ClaudeStreaming'
 import { createClaudeSubagentSummary } from './ClaudeSubagents'
+import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import { mapClaudeRateLimits } from './ClaudeUsage'
 import { getClaudeUserQuestions } from './ClaudeUserQuestions'
 import { parseClaudeVersion, supportsClaudeResumeDropsTurn } from './ClaudeVersion'
@@ -268,18 +277,6 @@ const maxFallbackTitleLength = 80
 const sessionTitleRefreshDelayMs = 5_000
 const maxPreviewLength = 500
 const allowedEffortLevels = new Set<EffortLevel>(['low', 'medium', 'high', 'xhigh', 'max'])
-const readOnlyAllowedTools = [
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'Glob',
-  'Grep',
-  'Read',
-  'Skill',
-  'TodoWrite',
-  'WebFetch',
-  'WebSearch'
-]
 const backgroundFeatureRestrictions = {
   disableAllHooks: true,
   disableAgentView: true,
@@ -401,8 +398,7 @@ exit 4
 `,
       [key.sessionId, key.subpath ?? '']
     ).catch((error: unknown) => {
-      const code = isRecord(error) ? error.code : undefined
-      if (code === 4) return null
+      if (isExpectedCommandAbsenceError(error, [4])) return null
       throw error
     })
     if (output === null) return null
@@ -411,7 +407,8 @@ exit 4
       try {
         const entry: unknown = JSON.parse(line)
         return isRecord(entry) && typeof entry.type === 'string' ? [entry as SessionStoreEntry] : []
-      } catch {
+      } catch (error) {
+        console.error('Unable to parse a Claude remote transcript entry.', error)
         return []
       }
     })
@@ -456,6 +453,9 @@ exit 4
 const getString = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null
 
+const isExpectedClaudeSessionMetadataAbsenceError = (error: unknown): boolean =>
+  isExpectedFileAbsenceError(error) || isExpectedCommandAbsenceError(error, [4])
+
 const truncate = (value: string, limit: number): string =>
   value.length <= limit ? value : `${value.slice(0, limit - 1)}…`
 
@@ -477,12 +477,6 @@ const isStoredContainer = (
   container: AppContainerTarget | null | undefined
 ): container is Extract<AppContainerTarget, { kind: 'container' }> =>
   container?.kind === 'container'
-
-const getPermissionMode = (options: ProviderTurnOptions | undefined): PermissionMode => {
-  if (options?.approvalsReviewer === 'auto_review') return 'auto'
-  if (options?.approvalPolicy === 'never') return 'bypassPermissions'
-  return 'default'
-}
 
 const getSandbox = (
   options: ProviderTurnOptions | ProviderOneShotOptions | undefined
@@ -620,6 +614,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private hiddenSessionIds = new Set<string>()
   private resumeDropsTurnSupport = new Map<string, Promise<boolean>>()
+  private modelDiscoveryRequests = new Map<string, Promise<ProviderModel[]>>()
+  private modelDiscoveryQueries = new WeakSet<Query>()
   private controlQueries = new ProviderClientPool<ClaudeControlQueryEntry>((entry) =>
     this.closeControlQueryEntry(entry)
   )
@@ -650,6 +646,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return await updateClaudeProvider({ container: options.container, env: process.env })
     } finally {
       this.resumeDropsTurnSupport.clear()
+      const key = `account:${getContainerTargetKey(options.container)}`
+      this.controlQueries.invalidateKey(key)
+      this.modelDiscoveryRequests.delete(key)
     }
   }
 
@@ -658,14 +657,28 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   getSandboxModes = async (): Promise<ProviderSandboxModeOption[]> => claudeSandboxModes
 
   getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> => {
-    try {
-      return await this.withControlQuery(options, 'account', async (control) => {
-        const models = await control.supportedModels()
-        return models.length > 0 ? mapClaudeModels(models) : fallbackClaudeModels
+    const key = `account:${getContainerTargetKey(options.container)}`
+    const pending = this.modelDiscoveryRequests.get(key)
+    if (pending) return pending
+
+    const request = this.withControlQuery(options, 'account', async (control) => {
+      const refresh = this.modelDiscoveryQueries.has(control)
+      this.modelDiscoveryQueries.add(control)
+      const models = await discoverClaudeModels(control, refresh)
+      if (models.length === 0) throw new Error('Claude did not report any supported models.')
+      return mapClaudeModels(models)
+    })
+      .catch((error: unknown) => {
+        console.error('Unable to discover Claude models.', error)
+        throw error
       })
-    } catch {
-      return fallbackClaudeModels
-    }
+      .finally(() => {
+        if (this.modelDiscoveryRequests.get(key) === request) {
+          this.modelDiscoveryRequests.delete(key)
+        }
+      })
+    this.modelDiscoveryRequests.set(key, request)
+    return request
   }
 
   getSkills = async (
@@ -741,6 +754,14 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       })
     )
     const failure = results.find((result) => result.status === 'rejected')
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.error(
+          `Unable to update Claude skill ${changedSkills[index]?.path ?? index}.`,
+          result.reason
+        )
+      }
+    })
     if (!toleratePartialFailure && failure?.status === 'rejected') throw failure.reason
     if (options.deferRefresh) {
       return changedSkills.map((skill, index) =>
@@ -786,6 +807,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         }
       })
     } catch (error) {
+      console.error('Unable to load Claude usage.', error)
       return {
         updatedAt: Date.now(),
         statisticsLoaded: false,
@@ -1250,7 +1272,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.waitingForSessionIdle = false
     state.queuedMessagesPaused = state.queuedMessages.length > 0
     this.rejectPendingRequests(state)
-    const interrupt = state.query?.interrupt().catch(() => undefined)
+    const interrupt = state.query?.interrupt().catch((error: unknown) => {
+      if (isExpectedClaudeQueryShutdownError(error)) return
+      console.error(`Unable to interrupt Claude session ${state.id} while stopping it.`, error)
+    })
     if (interrupt) await settleWithin(interrupt, interruptCloseGraceMs)
     await this.closeStateQuery(state)
     this.emitUpdate(state, true)
@@ -1282,6 +1307,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationTimers.clear()
     this.canceledOneShotGenerationIds.clear()
     this.resumeDropsTurnSupport.clear()
+    this.modelDiscoveryRequests.clear()
     this.controlQueries.dispose()
     this.hiddenSessionIds.clear()
     this.sessionContainers.clear()
@@ -1291,7 +1317,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     entry.input.close()
     try {
       entry.query.close()
-    } catch {
+    } catch (error) {
+      if (isExpectedClaudeQueryShutdownError(error)) return
+      console.error('Unable to close a Claude control query.', error)
       // The process is already unusable; dropping the entry is sufficient.
     }
   }
@@ -1345,7 +1373,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     } catch (error) {
       const healthy = await entry.query.reinitialize().then(
         () => true,
-        () => false
+        (reinitializeError: unknown) => {
+          console.error(
+            `Unable to reinitialize Claude ${profile} control query.`,
+            reinitializeError
+          )
+          return false
+        }
       )
       if (!healthy) this.controlQueries.invalidate(key, entry)
       throw error
@@ -1371,7 +1405,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options: ProviderTurnOptions | ProviderOneShotOptions | undefined,
     runtime: Awaited<ReturnType<ClaudeProviderAdapter['getQueryRuntime']>>
   ): ClaudeQueryOptions => {
-    const permissionMode = getPermissionMode(options)
+    const permissionMode = getClaudePermissionMode(options)
     return {
       cwd: runtime.container ? undefined : options?.cwd,
       pathToClaudeCodeExecutable: runtime.command.file,
@@ -1391,16 +1425,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       model: getClaudeModel(options),
       effort: toEffortLevel(options?.reasoningEffort),
       permissionMode,
-      // Claude requires this opt-in when permission mode may later be changed to
-      // bypassPermissions on an already-running query. The actual mode remains
-      // governed by the user's approval selection above.
-      allowDangerouslySkipPermissions: true,
       sandbox: getSandbox(options),
       settings: {
         fastMode: options?.serviceTier === 'fast',
         ...(options?.sandboxMode === 'read-only' ? backgroundFeatureRestrictions : {})
       },
-      tools: options?.sandboxMode === 'read-only' ? readOnlyAllowedTools : undefined,
+      tools: options?.sandboxMode === 'read-only' ? [...claudeReadOnlyAllowedTools] : undefined,
       strictMcpConfig: options?.sandboxMode === 'read-only' ? true : undefined,
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,
@@ -1469,8 +1499,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         const version = parseClaudeVersion(output)
         return version ? supportsClaudeResumeDropsTurn(version) : false
       },
-      () => {
+      (error: unknown) => {
         this.resumeDropsTurnSupport.delete(key)
+        if (!isExpectedCommandAbsenceError(error)) {
+          console.error(`Unable to inspect Claude resume support for session ${state.id}.`, error)
+        }
         return false
       }
     )
@@ -1582,7 +1615,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.partialMessages.clear()
     try {
       control.close()
-    } catch {
+    } catch (error) {
+      if (isExpectedClaudeQueryShutdownError(error)) return
+      console.error(`Unable to close Claude session query ${state.id}.`, error)
       // Closing is best-effort after all local references have been released.
     }
   }
@@ -1595,7 +1630,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.options = options
     const needsReadOnlyQuery = options.sandboxMode === 'read-only'
     if (state.queryReadOnly !== needsReadOnlyQuery) {
-      const interrupt = state.active ? state.query.interrupt().catch(() => undefined) : null
+      const interrupt = state.active
+        ? state.query.interrupt().catch((error: unknown) => {
+            if (isExpectedClaudeQueryShutdownError(error)) return
+            console.error(
+              `Unable to interrupt Claude session ${state.id} while changing access mode.`,
+              error
+            )
+          })
+        : null
       if (interrupt) await settleWithin(interrupt, interruptCloseGraceMs)
       await this.startStateQuery(state, options)
       return
@@ -1605,7 +1648,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const modelChanged = state.queryModel !== model
     await Promise.all([
       ...(modelChanged ? [control.setModel(model)] : []),
-      control.setPermissionMode(getPermissionMode(options)),
+      control.setPermissionMode(getClaudePermissionMode(options)),
       control.applyFlagSettings({
         effortLevel: toEffortLevel(options.reasoningEffort) ?? null,
         fastMode: options.serviceTier === 'fast',
@@ -1618,7 +1661,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private createPermissionHandler =
     (state: ClaudeSessionState): CanUseTool =>
     async (toolName, input, permissionOptions): Promise<PermissionResult> => {
-      if (toolName === 'AskUserQuestion') {
+      const action = getClaudePermissionAction(state.options, toolName, input)
+      if (action.kind === 'userQuestion') {
         const questions = getClaudeUserQuestions(input)
         const answers: Record<string, string> = {}
         for (const question of questions) {
@@ -1640,19 +1684,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         }
         return { behavior: 'allow', updatedInput: { ...input, answers } }
       }
-
-      if (state.options?.sandboxMode === 'read-only' && !readOnlyAllowedTools.includes(toolName)) {
-        return { behavior: 'deny', message: 'This chat is in read-only mode.' }
-      }
-      if (state.options?.approvalPolicy === 'never') {
-        return { behavior: 'allow', updatedInput: input }
-      }
-      if (state.options?.approvalsReviewer === 'auto_review') {
-        return {
-          behavior: 'deny',
-          message: 'Claude auto-mode could not approve this tool request.'
-        }
-      }
+      if (action.kind === 'resolve') return action.result
 
       return new Promise<PermissionResult>((resolve) => {
         state.pendingApprovals.push({
@@ -1676,6 +1708,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         if (await this.handleQueryEvent(state, control, event)) break
       }
     } catch (error) {
+      if (state.query !== control && isExpectedClaudeQueryShutdownError(error)) return
+      console.error(`Claude session ${state.id} event stream failed.`, error)
       if (state.query !== control) return
       state.failed = true
       state.active = false
@@ -1752,6 +1786,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return false
     }
     if (event.type === 'system' && event.subtype === 'task_notification') {
+      if (event.status === 'failed') {
+        console.error(`Claude background task ${event.task_id} failed in session ${state.id}.`)
+      }
       state.subagentTaskStatuses.set(
         event.task_id,
         event.status === 'failed' ? 'failed' : event.status === 'stopped' ? 'stopped' : 'completed'
@@ -1780,6 +1817,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.failed = !wasStopped && event.subtype !== 'success'
     if (state.failed) {
       const errors = 'errors' in event ? event.errors : []
+      console.error(`Claude session ${state.id} returned ${event.subtype}.`, { errors })
       const content = errors.join('\n').trim()
       if (content) {
         this.addTranscriptMessage(state, {
@@ -1826,10 +1864,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         }
         this.queueUpdate(state, false)
       })
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        console.error(`Unable to refresh Claude context usage for session ${state.id}.`, error)
+      })
     // Claude Code writes the auto-generated session title to the transcript during the turn; it
     // is not surfaced as a stream event, so re-read session metadata once the turn has ended.
-    const refreshMetadata = this.refreshSessionMetadata(state).catch(() => undefined)
+    const refreshMetadata = this.refreshSessionMetadata(state).catch((error: unknown) => {
+      if (isExpectedClaudeSessionMetadataAbsenceError(error)) return
+      console.error(`Unable to refresh Claude session metadata for ${state.id}.`, error)
+    })
 
     state.active = false
     state.stopped = wasStopped
@@ -1957,7 +2000,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const interrupted = control
       ? await control.interrupt().then(
           () => true,
-          () => false
+          (error: unknown) => {
+            if (isExpectedClaudeQueryShutdownError(error)) return false
+            console.error(`Unable to interrupt Claude session ${state.id} for steering.`, error)
+            return false
+          }
         )
       : false
     const queuedIndex = state.queuedMessages.findIndex((queued) => queued.id === message.id)
@@ -2239,7 +2286,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private scheduleSessionMetadataRefresh = (state: ClaudeSessionState): void => {
     setTimeout(() => {
       if (this.states.get(state.id) !== state) return
-      void this.refreshSessionMetadata(state).catch(() => undefined)
+      void this.refreshSessionMetadata(state).catch((error: unknown) => {
+        if (isExpectedClaudeSessionMetadataAbsenceError(error)) return
+        console.error(`Unable to refresh delayed Claude session metadata for ${state.id}.`, error)
+      })
     }, sessionTitleRefreshDelayMs).unref?.()
   }
 

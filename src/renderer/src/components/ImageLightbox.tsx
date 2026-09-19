@@ -65,7 +65,8 @@ export const ImageLightbox = ({
         copyFeedbackTimerRef.current = null
         setCopyState('idle')
       }, 1000)
-    } catch {
+    } catch (error) {
+      console.error('[caught:ImageLightbox:handleCopy]', error)
       setCopyState('error')
     }
   }
@@ -90,7 +91,8 @@ export const ImageLightbox = ({
         saveFeedbackTimerRef.current = null
         setSaveState('idle')
       }, 1000)
-    } catch {
+    } catch (error) {
+      console.error('[caught:ImageLightbox:handleSave]', error)
       setSaveState('error')
     }
   }

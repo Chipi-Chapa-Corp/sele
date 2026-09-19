@@ -42,7 +42,8 @@ const parseComments = (value: string): ProviderReviewComment[] => {
         }
       ]
     })
-  } catch {
+  } catch (error) {
+    console.error('[caught:messageReviews:parseComments]', error)
     return []
   }
 }

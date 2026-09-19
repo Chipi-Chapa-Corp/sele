@@ -122,6 +122,12 @@ const getTerminalTheme = (): ITheme =>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Unable to start the terminal.'
 
+const isExpectedWebglUnavailableError = (error: unknown): boolean =>
+  error instanceof Error &&
+  /webgl(?:2)? (?:is )?not supported|unable to create (?:a )?webgl|webgl context (?:creation )?failed/i.test(
+    error.message
+  )
+
 const createTerminalTab = (
   number: number,
   cwd: string | null,
@@ -286,7 +292,10 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
             webglAddon.dispose()
           })
           terminal.loadAddon(webglAddon)
-        } catch {
+        } catch (error) {
+          if (!isExpectedWebglUnavailableError(error)) {
+            console.error('[caught:TerminalPanel:start]', error)
+          }
           // xterm keeps using its default DOM renderer when WebGL is unavailable.
         }
 
@@ -403,6 +412,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
         })
         if (visibleRef.current) terminal.focus()
       } catch (startError) {
+        console.error('[caught:TerminalPanel:start]', startError)
         if (!active) return
         const message = getErrorMessage(startError)
         setError(message)
@@ -613,7 +623,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       if (runtime?.state === 'running' && runtime.sessionId) {
         const processStatus = await terminalApi
           .getProcessStatus(runtime.sessionId)
-          .catch(() => null)
+          .catch((error) => {
+            console.error('[caught:TerminalPanel:handleCloseTab]', error)
+            return null
+          })
 
         if (
           processStatus?.hasActiveProcess &&

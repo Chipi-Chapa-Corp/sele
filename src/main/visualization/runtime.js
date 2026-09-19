@@ -124,7 +124,7 @@
         loaded = new Promise((resolve) => {
           addEventListener(completionEvent, resolve, { once: true })
           script.onerror = () => {
-            send('visualization:warning')
+            send('visualization:warning', { message: 'Inline visualization module failed' })
             dispatchEvent(new Event(completionEvent))
           }
         })
@@ -134,7 +134,7 @@
         loaded = new Promise((resolve) => {
           script.onload = resolve
           script.onerror = () => {
-            send('visualization:warning')
+            send('visualization:warning', { message: 'Visualization script failed to load' })
             resolve()
           }
         })
@@ -159,6 +159,11 @@
     }
   }
   new ResizeObserver(measure).observe(document.body)
-  addEventListener('error', () => send('visualization:warning'))
+  addEventListener('error', (event) =>
+    send('visualization:warning', {
+      message:
+        event.error instanceof Error ? event.error.message : event.message || 'Visualization error'
+    })
+  )
   send('visualization:ready', { supportsRenderedMessage: true })
 })()

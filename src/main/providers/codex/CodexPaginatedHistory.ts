@@ -17,6 +17,74 @@ export type CodexTurnCursorWindow = {
 export const isSupportedCodexHistory = (historyMode: unknown): boolean =>
   historyMode === 'paginated'
 
+export const isLegacyCodexHistory = (historyMode: unknown): boolean => historyMode === 'legacy'
+
+export const getUnsupportedCodexHistoryMessage = (historyMode: unknown): string =>
+  historyMode == null
+    ? 'This chat does not report its Codex history protocol. Update Codex and retry.'
+    : `This chat uses an unsupported Codex history protocol: ${String(historyMode)}`
+
+export const assertCodexHistoryWritable = (historyMode: unknown): void => {
+  if (isSupportedCodexHistory(historyMode)) return
+  if (isLegacyCodexHistory(historyMode)) {
+    throw new Error('Legacy Codex chats are read-only in Sele.')
+  }
+  throw new Error(getUnsupportedCodexHistoryMessage(historyMode))
+}
+
+const emptyRolloutErrorPattern =
+  /failed to read session metadata[\s\S]*rollout at [\s\S]* is empty/i
+
+export const isCodexEmptyRolloutInitializationError = (error: unknown): boolean =>
+  emptyRolloutErrorPattern.test(error instanceof Error ? error.message : String(error))
+
+export const retryCodexEmptyRolloutRead = async <Result>(
+  read: () => Promise<Result>,
+  options: {
+    attempts?: number
+    delay?: (attempt: number) => Promise<void>
+    onRetry?: (error: unknown, attempt: number, attempts: number) => void
+    onFinalFailure?: (error: unknown, attempts: number) => void
+  } = {}
+): Promise<Result> => {
+  const attempts = Math.max(1, Math.floor(options.attempts ?? 3))
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await read()
+    } catch (error) {
+      if (!isCodexEmptyRolloutInitializationError(error)) throw error
+      console.warn('Codex thread read found an empty initializing rollout', error)
+      if (attempt >= attempts) {
+        options.onFinalFailure?.(error, attempts)
+        throw error
+      }
+      options.onRetry?.(error, attempt, attempts)
+      await (options.delay?.(attempt) ??
+        new Promise<void>((resolve) => setTimeout(resolve, attempt * 75)))
+    }
+  }
+}
+
+export const loadCodexLegacyThread = async <
+  Thread extends { historyMode?: unknown; turns: CodexTurn[] }
+>(
+  request: CodexHistoryRequest,
+  threadId: string
+): Promise<Thread> => {
+  const response = (await request('thread/read', {
+    threadId,
+    includeTurns: true
+  })) as { thread?: Thread }
+  if (!response.thread || !Array.isArray(response.thread.turns)) {
+    throw new Error('Invalid legacy Codex thread response')
+  }
+  if (!isLegacyCodexHistory(response.thread.historyMode)) {
+    throw new Error(getUnsupportedCodexHistoryMessage(response.thread.historyMode))
+  }
+  return response.thread
+}
+
 export const retainCodexTurnTail = (
   turns: readonly CodexTurn[],
   limit: number
@@ -66,7 +134,8 @@ const decodeCodexTurnCursor = (token: string | null): CodexTurnCursorToken | nul
       cursor: parsed.cursor,
       anchorTurnId: typeof parsed.anchorTurnId === 'string' ? parsed.anchorTurnId : null
     }
-  } catch {
+  } catch (error) {
+    console.warn('Unable to parse a Codex turn cursor', error)
     throw new Error('Invalid Codex turn cursor')
   }
 }
@@ -351,6 +420,7 @@ export const retryCodexTurnWindowWithFreshCatalog = async <Result>(
     return { turnCatalog, result: await loadWindow(turnCatalog) }
   } catch (error) {
     if (!(error instanceof CodexTurnWindowMismatchError)) throw error
+    console.warn('Codex turn history changed during hydration; refreshing its catalog', error)
   }
 
   const refreshedTurnCatalog = await refreshTurnCatalog()

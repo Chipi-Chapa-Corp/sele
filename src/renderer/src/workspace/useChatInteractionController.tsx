@@ -88,7 +88,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     const adjustmentTarget = chatScrollAdjustmentTargetRef.current
     const isScrollAdjustment = Boolean(
       adjustmentTarget?.element === contentElement &&
-      Math.abs(adjustmentTarget.top - contentElement.scrollTop) <= 1
+        Math.abs(adjustmentTarget.top - contentElement.scrollTop) <= 1
     )
     if (adjustmentTarget?.element === contentElement) {
       chatScrollAdjustmentTargetRef.current = null
@@ -107,8 +107,8 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
 
     const atConversationBottom = Boolean(
       isScrolledToBottom(contentElement) &&
-      currentTurnWindow &&
-      currentTurnWindow.endIndex >= currentTurnWindow.totalCount
+        currentTurnWindow &&
+        currentTurnWindow.endIndex >= currentTurnWindow.totalCount
     )
     setChatAtConversationBottom(atConversationBottom)
 
@@ -308,6 +308,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         )
         applyViewedChatDetail(selectedChat.providerId, detail, { select: true })
       } catch (error) {
+        console.error('[caught:useChatInteractionController:useChatInteractionController]', error)
         handleSendFailure(error, 'Unable to fork chat.')
       } finally {
         forkInFlightRef.current = false
@@ -332,7 +333,10 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       event.preventDefault()
       void handleSendMessage(prompt)
         .then((sent) => reply(sent ? undefined : 'Unable to send follow-up in this view.'))
-        .catch(() => reply('Unable to send follow-up.'))
+        .catch((error) => {
+          console.error('[caught:useChatInteractionController:followUp]', error)
+          return reply('Unable to send follow-up.')
+        })
     }
     content.addEventListener('sele:visualization-follow-up', followUp)
     return () => content.removeEventListener('sele:visualization-follow-up', followUp)
