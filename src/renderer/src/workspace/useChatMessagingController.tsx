@@ -476,21 +476,17 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     }
 
     if (chatDetail?.id === chatId) {
-      applyViewedChatDetail(
-        providerId,
-        {
-          ...chatDetail,
-          status: 'active',
-          contextUsage: chatDetail.contextUsage,
-          items: getOptimisticItems(
-            chatDetail.items,
-            messageWithComposerMentions,
-            attachments,
-            review
-          )
-        },
-        { allowEqualRevision: true }
-      )
+      applyViewedChatDetail(providerId, {
+        ...chatDetail,
+        status: 'active',
+        contextUsage: chatDetail.contextUsage,
+        items: getOptimisticItems(
+          chatDetail.items,
+          messageWithComposerMentions,
+          attachments,
+          review
+        )
+      })
     }
 
     try {

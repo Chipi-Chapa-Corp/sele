@@ -152,27 +152,3 @@ test('goal boundaries survive live checkpoints and final-only continuation turns
   assert.equal(finalOnly[0].type, 'message')
   assert.equal(finalOnly[0].startsTurn, true)
 })
-
-test('a final-tagged request stays before subsequent work, including cached live appends', () => {
-  const projection = new CodexTranscriptProjection()
-  let turn = {
-    id: 'turn', status: 'inProgress',
-    items: [user('u'), answer('sudo', 'Please run the audit; I will continue meanwhile.', 'final_answer')]
-  }
-  compare(projection, turn)
-  // Move the final answer inside the cached prefix before work resumes.
-  turn = update(turn, turn.items.length, { type: 'reasoning', id: 'silent', summary: [] })
-  compare(projection, turn)
-  turn = update(turn, turn.items.length, tool('continued-work'))
-  for (const status of ['inProgress', 'completed']) {
-    const current = { ...turn, status }
-    compare(projection, current)
-    for (const cache of [undefined, projection]) {
-      const items = getChatItems([current], null, options, cache)
-      const messageIndex = items.findIndex(item => item.type === 'message' && item.content.includes('Please run'))
-      const workIndex = items.findIndex(item => item.type === 'working' && item.items.some(tool => tool.id.includes('continued-work')))
-      assert.ok(messageIndex >= 0)
-      assert.ok(workIndex > messageIndex, 'continued work must follow the request')
-    }
-  }
-})

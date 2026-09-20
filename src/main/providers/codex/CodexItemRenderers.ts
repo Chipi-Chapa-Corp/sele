@@ -89,6 +89,14 @@ export type CodexTurn = {
 export const getCodexSubagentTimelineAnchorId = (turnId: string, agentThreadId: string): string =>
   `${turnId}:subagent-completed:${agentThreadId}`
 
+export const hasCompletedCodexFinalAnswer = (turn: CodexTurn | null | undefined): boolean =>
+  Boolean(
+    turn?.items.some(
+      (item) =>
+        item.type === 'agentMessage' && item.phase === 'final_answer' && item.status !== 'running'
+    )
+  )
+
 type GetChatItemsOptions = {
   turnWindow?: ProviderChatTurnWindow
   workingItemTailLimit?: number
@@ -1623,11 +1631,7 @@ const getFinalMessageIndex = (items: CodexThreadItem[], turnStatus: string | nul
   const explicitFinalIndex = items.findLastIndex(
     (item) => item.type === 'agentMessage' && item.phase === 'final_answer'
   )
-  if (explicitFinalIndex >= 0) {
-    return items.slice(explicitFinalIndex + 1).some(hasRenderableWorkingItems)
-      ? -1
-      : explicitFinalIndex
-  }
+  if (explicitFinalIndex >= 0) return explicitFinalIndex
 
   if (turnStatus === 'inProgress') return getLiveFinalMessageIndex(items)
 
@@ -1811,9 +1815,7 @@ const renderChatItems = (
     }
     const finalMessageIndex = projection
       ? scan.explicitFinal >= 0
-        ? scan.lastWorking > scan.explicitFinal
-          ? -1
-          : scan.explicitFinal
+        ? scan.explicitFinal
         : turn.status === 'inProgress'
           ? scan.lastWorking > scan.liveCandidate
             ? -1
@@ -2038,7 +2040,7 @@ const renderChatItems = (
 
       if (item.type === 'agentMessage' && item.phase === 'final_answer' && item.text?.trim()) {
         const hasLaterSteeringMessage = turn.items.slice(itemIndex + 1).some(hasUserMessageContent)
-        if (hasLaterSteeringMessage || itemIndex !== finalMessageIndex) {
+        if (hasLaterSteeringMessage) {
           pushWorkingStep('worked')
           chatItems.push(createAssistantMessage(turn, item, completedAt))
           continue

@@ -87,6 +87,7 @@ import {
   createCodexFileAttachmentInput,
   CodexTranscriptProjection,
   getChatItems,
+  hasCompletedCodexFinalAnswer,
   type CodexThreadItem,
   type CodexTurn,
   type CodexUserInput
@@ -3485,9 +3486,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const turnId = this.getActiveTurnId(chatId)
     if (!turnId) return this.continueChat(chatId, text, options)
 
-    // A final-tagged message can be followed by more work in the same active turn.
-    // Let turn/steer decide whether the turn still accepts input; its stopped-turn
-    // race is handled by processWaitingSteeringMessage.
+    const activeTurn = this.threads.get(chatId)?.turns.find((candidate) => candidate.id === turnId)
+    if (hasCompletedCodexFinalAnswer(activeTurn)) {
+      return this.queueChatMessage(chatId, text, options)
+    }
+
     if (this.hasPendingSteeringMessage(chatId)) {
       return this.queueChatMessage(chatId, text, options)
     }
