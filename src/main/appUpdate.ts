@@ -5,7 +5,13 @@ import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { handleLoggedIpc } from './logging'
+import { handleLoggedIpc, logDiagnostic } from './logging'
+import {
+  checkMacUpdate,
+  installMacUpdate,
+  readMacUpdateResult,
+  type MacUpdate
+} from './macAppUpdate'
 import { appIpcChannels } from '../shared/app'
 import { isNewerStableVersion, type AppUpdateState } from '../shared/appUpdate'
 import { isExpectedFileAbsenceError } from '../shared/expectedAbsence.ts'
@@ -34,6 +40,8 @@ export function registerAppUpdate(): void {
   const supported = app.isPackaged && (flatpak || installedWindows || installedMac)
   let flatpakTarget: { scope: string; ref: string; commit: string; instance: string } | null = null
 
+  let macTarget: MacUpdate | null = null
+
   const publish = (patch: Partial<AppUpdateState>): void => {
     state = { ...state, ...patch }
     for (const window of BrowserWindow.getAllWindows()) {
@@ -60,7 +68,15 @@ export function registerAppUpdate(): void {
     checking = true
     try {
       let version: string | null = null
-      if (flatpak) {
+      if (installedMac) {
+        macTarget = await checkMacUpdate(app.getVersion())
+        version = macTarget?.version ?? null
+        logDiagnostic('info', 'app-update', {
+          platform: 'darwin',
+          current: app.getVersion(),
+          available: version
+        })
+      } else if (flatpak) {
         const response = await fetch(repository, {
           signal: AbortSignal.timeout(20_000),
           headers: { Accept: 'application/vnd.github+json' }
@@ -108,7 +124,12 @@ export function registerAppUpdate(): void {
           version = result.updateInfo.version
       }
       if (version && !ignored.includes(version) && !skipped.has(version))
-        publish({ version, status: 'available', progress: null, error: null })
+        publish({
+          version,
+          status: state.version === version && state.error ? 'error' : 'available',
+          progress: null,
+          error: state.version === version ? state.error : null
+        })
     } catch (error) {
       console.error('[caught:appUpdate:check]', error)
       // Background network failures do not interrupt chat or remove an existing suggestion.
@@ -118,15 +139,17 @@ export function registerAppUpdate(): void {
     }
   }
 
-  autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = false
-  autoUpdater.allowPrerelease = false
-  autoUpdater.allowDowngrade = false
-  autoUpdater.on('error', (error) => {
-    if (state.status === 'updating') fail(error)
-    else console.error('Application updater:', error)
-  })
-  autoUpdater.on('download-progress', ({ percent }) => publish({ progress: Math.round(percent) }))
+  if (installedWindows) {
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
+    autoUpdater.allowPrerelease = false
+    autoUpdater.allowDowngrade = false
+    autoUpdater.on('error', (error) => {
+      if (state.status === 'updating') fail(error)
+      else console.error('Application updater:', error)
+    })
+    autoUpdater.on('download-progress', ({ percent }) => publish({ progress: Math.round(percent) }))
+  }
 
   handleLoggedIpc(appIpcChannels.getAppUpdate, () => state)
   handleLoggedIpc(appIpcChannels.dismissAppUpdate, async (_, mode: unknown) => {
@@ -150,7 +173,17 @@ export function registerAppUpdate(): void {
     if (!supported || !state.version || state.status === 'updating' || checking) return
     publish({ status: 'updating', progress: null, error: null })
     try {
-      if (flatpak) {
+      if (installedMac) {
+        if (!macTarget || macTarget.version !== state.version)
+          throw new Error('Please wait for the next update check.')
+        await installMacUpdate({
+          update: macTarget,
+          executable,
+          userData: app.getPath('userData'),
+          progress: (progress) => publish({ progress }),
+          quit: () => app.quit()
+        })
+      } else if (flatpak) {
         const target = flatpakTarget
         if (!target) throw new Error('Please wait for the next update check.')
         await host(
@@ -210,6 +243,15 @@ export function registerAppUpdate(): void {
         console.error('[caught:appUpdate:registerAppUpdate]', error)
       }
       /* Missing preferences use the defaults. */
+    }
+    if (installedMac) {
+      try {
+        const result = await readMacUpdateResult(app.getPath('userData'))
+        if (result?.error)
+          publish({ version: result.version, status: 'error', error: result.error })
+      } catch (error) {
+        fail(error)
+      }
     }
     await check()
   })()

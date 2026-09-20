@@ -13,7 +13,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test:chat-delivery": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/registerProviderIpc.test.mjs src/main/providers/ProviderClientPool.test.mjs",
-    "test:app-update": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/appUpdate.test.mjs",
+    "test:app-update": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/appUpdate.test.mjs src/main/macAppUpdate.test.mjs",
     "test:logging": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/diagnosticLog.test.mjs",
     "test:error-logging": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/errorLoggingAudit.test.mjs src/shared/expectedAbsence.test.mjs",
     "test:chat-scaling": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/chatScaling.regression.test.mjs src/main/providers/chatAdapterScaling.test.mjs src/main/providers/workingPageScaling.test.mjs src/main/providers/chatWindow.test.mjs",

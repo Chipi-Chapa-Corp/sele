@@ -23,6 +23,8 @@ function harness({
   flatpak = false,
   flatpakFailure = false,
   flatpakRoot = '/var/lib/flatpak',
+  platform,
+  macError = false,
   installed = true
 } = {}) {
   const commands = []
@@ -49,7 +51,10 @@ function harness({
   const app = Object.assign(new EventEmitter(), {
     isPackaged: packaged,
     getVersion: () => '2.13.0',
-    getPath: () => '/test',
+    getPath: (name) =>
+      name === 'exe' && platform === 'darwin'
+        ? '/Applications/Sele.app/Contents/MacOS/Sele'
+        : '/test',
     quit: () => {
       restarts++
     }
@@ -95,7 +100,20 @@ app-commit=${'b'.repeat(64)}`
         saved = JSON.parse(value)
       }
     },
+    './macAppUpdate': {
+      checkMacUpdate: async () => {
+        checks++
+        return { version: '2.14.0' }
+      },
+      readMacUpdateResult: async () => null,
+      installMacUpdate: async ({ quit }) => {
+        downloads++
+        if (macError) throw new Error('Authorization cancelled')
+        quit()
+      }
+    },
     './logging': {
+      logDiagnostic: () => {},
       handleLoggedIpc: (channel, callback) => {
         handlers[channel] = callback
       }
@@ -109,7 +127,7 @@ app-commit=${'b'.repeat(64)}`
   const context = {
     exports: {},
     require: (name) => mocks[name] ?? require(name),
-    process: { platform: flatpak ? 'linux' : 'win32' },
+    process: { platform: platform ?? (flatpak ? 'linux' : 'win32') },
     AbortSignal,
     fetch: async () => ({ ok: true, json: async () => ({ tag_name: 'v2.14.0' }) }),
     console: { error: () => {} },
@@ -240,4 +258,23 @@ test('user Flatpak checks, update, verification and restart keep the user scope'
     assert.equal(args.includes('--system'), false)
   }
   assert.equal(h.counts().restarts, 1)
+})
+
+test('Mac uses the custom installer, never Squirrel; cancellation leaves a retryable prompt', async () => {
+  const h = harness({ platform: 'darwin' })
+  h.updater.checkForUpdates = () => {
+    throw new Error('Squirrel must not check on Mac')
+  }
+  h.updater.downloadUpdate = () => {
+    throw new Error('Squirrel must not download on Mac')
+  }
+  await settle()
+  await h.install()
+  assert.deepEqual(h.counts(), { checks: 1, downloads: 1, restarts: 1 })
+  assert.equal(h.updater.listenerCount('error'), 0)
+  const cancelled = harness({ platform: 'darwin', macError: true })
+  await settle()
+  await cancelled.install()
+  assert.equal(cancelled.state().status, 'error')
+  assert.equal(cancelled.counts().restarts, 0)
 })

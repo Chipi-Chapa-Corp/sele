@@ -30,6 +30,16 @@ brew tap chipi-chapa-corp/sele https://github.com/Chipi-Chapa-Corp/sele.git
 brew install --cask chipi-chapa-corp/sele/sele
 ```
 
+Upgrade a Homebrew installation with:
+
+```bash
+brew update
+brew upgrade --cask chipi-chapa-corp/sele/sele
+```
+
+The cask tracks numbered stable releases and verifies the DMG checksum. Direct DMG
+downloads remain available for installations without Homebrew.
+
 > [!IMPORTANT]
 > macOS builds are currently unsigned. If Gatekeeper says Sele is damaged, corrupted, or
 > cannot be opened, remove the download quarantine and start the app again:
