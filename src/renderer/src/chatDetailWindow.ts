@@ -216,15 +216,19 @@ export const retainLoadedChatDetailTurnWindow = (
   detail: ProviderChatDetail,
   retainedWindow: Pick<ChatTurnWindow, 'startIndex' | 'endIndex' | 'totalCount'>
 ): ProviderChatDetail =>
-  mergeChatDetailTurnPage(
-    detail,
-    {
-      items: [],
-      startIndex: retainedWindow.startIndex,
-      totalCount: retainedWindow.totalCount
-    },
-    retainedWindow
-  )
+  // Cursor pages use page-local coordinates. A previous page's numeric window cannot
+  // crop a new tail snapshot: doing so can remove every message during a send.
+  detail.turnPagination
+    ? detail
+    : mergeChatDetailTurnPage(
+        detail,
+        {
+          items: [],
+          startIndex: retainedWindow.startIndex,
+          totalCount: retainedWindow.totalCount
+        },
+        retainedWindow
+      )
 
 const getWorkingItemSegmentEndIndex = (segment: ProviderWorkingItemSegment): number =>
   segment.startIndex + segment.items.length

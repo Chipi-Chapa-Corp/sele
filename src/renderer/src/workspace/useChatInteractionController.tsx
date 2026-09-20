@@ -94,9 +94,16 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       chatScrollAdjustmentTargetRef.current = null
     }
 
+    const autoScrollTarget = chatAutoScrollTargetRef.current
+    const isAutoScroll = Boolean(
+      !chatUserScrollIntentRef.current &&
+        autoScrollTarget?.element === contentElement &&
+        Math.abs(autoScrollTarget.top - contentElement.scrollTop) <= 1
+    )
     const previousScrollTop = previousChatScrollTopRef.current
     if (
       !isScrollAdjustment &&
+      !isAutoScroll &&
       previousScrollTop !== null &&
       Math.abs(contentElement.scrollTop - previousScrollTop) >= 0.5
     ) {
@@ -117,7 +124,11 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       chatViewportAnchorRef.current = chatKey ? readChatScrollAnchor(contentElement, chatKey) : null
     }
 
-    if (isScrollAdjustment) {
+    if (isScrollAdjustment || isAutoScroll) {
+      // Layout/auto-scroll corrections must not be mistaken for user history navigation.
+      if (isAutoScroll && !atConversationBottom && chatAutoScrollEnabledRef.current) {
+        scheduleChatAutoScroll(contentElement)
+      }
       updateViewportAnchor()
       return false
     }
@@ -129,18 +140,6 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         element: contentElement,
         top: contentElement.scrollTop
       }
-      updateViewportAnchor()
-      return true
-    }
-
-    const autoScrollTarget = chatAutoScrollTargetRef.current
-    if (
-      !chatUserScrollIntentRef.current &&
-      chatAutoScrollEnabledRef.current &&
-      autoScrollTarget?.element === contentElement &&
-      autoScrollTarget.top === contentElement.scrollTop
-    ) {
-      scheduleChatAutoScroll(contentElement)
       updateViewportAnchor()
       return true
     }

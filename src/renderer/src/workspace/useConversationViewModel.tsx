@@ -331,43 +331,35 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       pendingPinnedMessageNavigationRef.current = null
     }
   }, [effectiveChatTurnWindow, renderedChatTurns, scrollPinnedChatMessageIntoView, selectedChatKey])
-  useEffect(() => {
-    let active = true
+  useLayoutEffect(() => {
     chatTurnPageLoadRequestRef.current += 1
     chatTurnPageLoadInFlightRef.current = false
     chatTurnScrollDirectionRef.current = null
-    queueMicrotask(() => {
-      if (!active) return
-      setChatTurnPageLoadDirection(null)
+    setChatTurnPageLoadDirection(null)
 
-      if (!selectedChatKey) {
-        chatTurnWindowRef.current = null
-        setChatTurnWindow(null)
-        return
-      }
-
-      setChatTurnWindow((currentWindow) => {
-        const totalCount = totalChatTurnCount
-        const viewingLatest =
-          currentWindow?.chatKey !== selectedChatKey || chatAutoScrollEnabledRef.current
-        const requestedWindow: ChatTurnWindow = viewingLatest
-          ? getLatestChatTurnWindow(selectedChatKey, totalCount, chatTurnPageSize)
-          : {
-              chatKey: selectedChatKey,
-              startIndex: Math.min(currentWindow.startIndex, totalCount),
-              endIndex: Math.min(currentWindow.endIndex, totalCount),
-              totalCount
-            }
-        const nextWindow = getLoadedChatTurnWindow(chatDetailRef.current, requestedWindow)
-        chatTurnWindowRef.current = nextWindow
-        if (viewingLatest) scrollToLatestTurnAfterRenderRef.current = true
-        return nextWindow
-      })
-    })
-
-    return () => {
-      active = false
+    if (!selectedChatKey) {
+      chatTurnWindowRef.current = null
+      setChatTurnWindow(null)
+      return
     }
+
+    const currentWindow = chatTurnWindowRef.current
+    const totalCount = totalChatTurnCount
+    const viewingLatest =
+      currentWindow?.chatKey !== selectedChatKey || chatAutoScrollEnabledRef.current
+    const requestedWindow: ChatTurnWindow = viewingLatest
+      ? getLatestChatTurnWindow(selectedChatKey, totalCount, chatTurnPageSize)
+      : {
+          chatKey: selectedChatKey,
+          startIndex: Math.min(currentWindow!.startIndex, totalCount),
+          endIndex: Math.min(currentWindow!.endIndex, totalCount),
+          totalCount
+        }
+    const nextWindow = getLoadedChatTurnWindow(chatDetailRef.current, requestedWindow)
+    // Commit the window and scroll intent before paint, including page-local tail resets.
+    chatTurnWindowRef.current = nextWindow
+    if (viewingLatest) scrollToLatestTurnAfterRenderRef.current = true
+    setChatTurnWindow(nextWindow)
   }, [loadedChatTurnEndIndex, loadedChatTurnStartIndex, selectedChatKey, totalChatTurnCount])
   useLayoutEffect(() => {
     const anchor = pendingChatScrollAnchorRef.current
@@ -389,7 +381,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     pendingChatScrollAnchorRef.current = null
     const contentElement = contentRef.current
     if (contentElement) scrollChatContentToBottom(contentElement)
-  }, [effectiveChatTurnWindow?.endIndex, renderedChatTurns.length, scrollChatContentToBottom])
+  }, [effectiveChatTurnWindow?.endIndex, renderedChatTurns, scrollChatContentToBottom])
   const loadChatTurnPage = useCallback(
     async (direction: ChatTurnPageLoadDirection): Promise<void> => {
       const chat = selectedChatRef.current
