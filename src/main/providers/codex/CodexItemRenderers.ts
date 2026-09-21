@@ -89,14 +89,6 @@ export type CodexTurn = {
 export const getCodexSubagentTimelineAnchorId = (turnId: string, agentThreadId: string): string =>
   `${turnId}:subagent-completed:${agentThreadId}`
 
-export const hasCompletedCodexFinalAnswer = (turn: CodexTurn | null | undefined): boolean =>
-  Boolean(
-    turn?.items.some(
-      (item) =>
-        item.type === 'agentMessage' && item.phase === 'final_answer' && item.status !== 'running'
-    )
-  )
-
 type GetChatItemsOptions = {
   turnWindow?: ProviderChatTurnWindow
   workingItemTailLimit?: number
@@ -1613,27 +1605,11 @@ const collectUserInputAttachments = (inputs: CodexUserInput[]): ProviderMessageA
 
 const shouldShowCommandText = (activity: ProviderToolActivity): boolean => activity !== 'script'
 
-const hasRenderableWorkingItems = (item: CodexThreadItem): boolean =>
-  renderWorkingItems(item, 'working-probe').length > 0
-
-const getLiveFinalMessageIndex = (items: CodexThreadItem[]): number => {
-  const candidateIndex = items.findLastIndex(
-    (item) =>
-      item.type === 'agentMessage' && item.phase !== 'commentary' && Boolean(item.text?.trim())
-  )
-  if (candidateIndex < 0) return -1
-
-  const hasLaterWorkingItems = items.slice(candidateIndex + 1).some(hasRenderableWorkingItems)
-  return hasLaterWorkingItems ? -1 : candidateIndex
-}
-
-const getFinalMessageIndex = (items: CodexThreadItem[], turnStatus: string | null): number => {
+const getFinalMessageIndex = (items: CodexThreadItem[]): number => {
   const explicitFinalIndex = items.findLastIndex(
     (item) => item.type === 'agentMessage' && item.phase === 'final_answer'
   )
   if (explicitFinalIndex >= 0) return explicitFinalIndex
-
-  if (turnStatus === 'inProgress') return getLiveFinalMessageIndex(items)
 
   const lastAgentMessageIndex = items.findLastIndex((item) => item.type === 'agentMessage')
   if (lastAgentMessageIndex < 0) return -1
@@ -1677,13 +1653,6 @@ const isRateLimitFailure = (turn: CodexTurn): boolean =>
 const toMilliseconds = (seconds: number | null | undefined): number | null =>
   typeof seconds === 'number' && Number.isFinite(seconds) ? seconds * 1_000 : null
 
-const hasUserMessageContent = (item: CodexThreadItem): boolean =>
-  item.type === 'userMessage' &&
-  Boolean(
-    item.content &&
-      (getUserInputContent(item.content) || collectUserInputAttachments(item.content).length > 0)
-  )
-
 const isContextCompactionItem = (item: CodexThreadItem): boolean =>
   item.type === 'contextCompaction' ||
   item.type === 'context_compaction' ||
@@ -1711,10 +1680,6 @@ const createAssistantMessage = (
 })
 
 type CodexProjectionScan = {
-  explicitFinal: number
-  lastAgent: number
-  liveCandidate: number
-  lastWorking: number
   aborted: boolean
 }
 type CodexProjectionCheckpoint = {
@@ -1734,7 +1699,6 @@ type CodexProjectionCache = {
   turn: CodexTurn
   fallbackStartedAt: number | null
   tailLimit: number | undefined
-  finalMessageIndex: number
   checkpoint: CodexProjectionCheckpoint
 }
 
@@ -1756,24 +1720,8 @@ export class CodexTranscriptProjection {
   }
 }
 
-const emptyProjectionScan = (): CodexProjectionScan => ({
-  explicitFinal: -1,
-  lastAgent: -1,
-  liveCandidate: -1,
-  lastWorking: -1,
-  aborted: false
-})
-const scanProjectionItem = (
-  scan: CodexProjectionScan,
-  item: CodexThreadItem,
-  index: number
-): void => {
-  if (item.type === 'agentMessage') {
-    scan.lastAgent = index
-    if (item.phase === 'final_answer') scan.explicitFinal = index
-    if (item.phase !== 'commentary' && item.text?.trim()) scan.liveCandidate = index
-  }
-  if (hasRenderableWorkingItems(item)) scan.lastWorking = index
+const emptyProjectionScan = (): CodexProjectionScan => ({ aborted: false })
+const scanProjectionItem = (scan: CodexProjectionScan, item: CodexThreadItem): void => {
   if (item.type === 'turnAborted') scan.aborted = true
 }
 
@@ -1810,35 +1758,13 @@ const renderChatItems = (
     let checkpointScan = { ...scan }
     for (let index = reusable?.index ?? 0; projection && index < turn.items.length; index += 1) {
       if (index === turn.items.length - 1) checkpointScan = { ...scan }
-      scanProjectionItem(scan, turn.items[index], index)
+      scanProjectionItem(scan, turn.items[index])
       if (projection) projection.processedRecordCount += 1
     }
-    const finalMessageIndex = projection
-      ? scan.explicitFinal >= 0
-        ? scan.explicitFinal
-        : turn.status === 'inProgress'
-          ? scan.lastWorking > scan.liveCandidate
-            ? -1
-            : scan.liveCandidate
-          : scan.lastAgent >= 0 && turn.items[scan.lastAgent].phase !== 'commentary'
-            ? scan.lastAgent
-            : -1
-      : getFinalMessageIndex(turn.items, turn.status ?? null)
-    // A suffix can change how an older final answer is classified. Rebuild rather than reuse a
-    // checkpoint that has already consumed that answer (including steering after final_answer).
-    const resume =
-      reusable &&
-      cached &&
-      (cached.finalMessageIndex === finalMessageIndex ||
-        Math.min(...[cached.finalMessageIndex, finalMessageIndex].filter((index) => index >= 0)) >=
-          reusable.index) &&
-      !(
-        reusable.scan.explicitFinal >= 0 &&
-        (turn.items.slice(prefix).some(hasUserMessageContent) ||
-          cached.turn.items.slice(prefix).some(hasUserMessageContent))
-      )
-        ? reusable
-        : null
+    // Message phase describes content, not turn completion. Promote only once the
+    // provider ends the turn; live final-tagged messages remain chronological activity.
+    const finalMessageIndex = isFinishedTurn(turn) ? getFinalMessageIndex(turn.items) : -1
+    const resume = reusable
     const workingStatus = getWorkingStatus(turn, projection ? scan.aborted : undefined)
     if (resume) chatItems = resume.chatItems.slice()
     else if (turn.goalPrompt) {
@@ -2038,15 +1964,6 @@ const renderChatItems = (
         continue
       }
 
-      if (item.type === 'agentMessage' && item.phase === 'final_answer' && item.text?.trim()) {
-        const hasLaterSteeringMessage = turn.items.slice(itemIndex + 1).some(hasUserMessageContent)
-        if (hasLaterSteeringMessage) {
-          pushWorkingStep('worked')
-          chatItems.push(createAssistantMessage(turn, item, completedAt))
-          continue
-        }
-      }
-
       if (itemIndex === finalMessageIndex && item.text?.trim()) {
         finalMessage = createAssistantMessage(turn, item, completedAt)
         continue
@@ -2067,7 +1984,6 @@ const renderChatItems = (
         turn,
         fallbackStartedAt,
         tailLimit,
-        finalMessageIndex,
         checkpoint
       })
   }

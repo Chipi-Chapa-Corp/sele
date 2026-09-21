@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { chmod, lstat, mkdir, unlink } from 'node:fs/promises'
+import { chmod, lstat, mkdir, rm } from 'node:fs/promises'
 import { createServer, type Socket } from 'node:net'
 import { endianness } from 'node:os'
 import { join } from 'node:path'
@@ -227,7 +227,8 @@ export async function startBrowserUseBridge(
     for (const socket of sockets) socket.destroy()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     if (process.platform !== 'win32')
-      await unlink(path).catch((error: unknown) => {
+      // Closing the server normally removes its Unix socket already.
+      await rm(path, { force: true }).catch((error: unknown) => {
         console.error('Unable to remove the Codex browser bridge socket', error)
       })
   }

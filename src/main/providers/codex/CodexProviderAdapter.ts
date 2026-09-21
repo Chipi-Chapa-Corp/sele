@@ -1,3 +1,4 @@
+import { CodexCommandStartAnchors } from './CodexCommandStartAnchors.ts'
 import { CodexGoals } from './CodexGoals.ts'
 import { CodexGoalPrompts, getCodexGoalPrompt } from './CodexGoalPrompts.ts'
 import {
@@ -87,7 +88,6 @@ import {
   createCodexFileAttachmentInput,
   CodexTranscriptProjection,
   getChatItems,
-  hasCompletedCodexFinalAnswer,
   type CodexThreadItem,
   type CodexTurn,
   type CodexUserInput
@@ -1247,6 +1247,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private externallyOwnedThreadIds = new Set<string>()
   private goals = new CodexGoals()
   private goalPrompts = new CodexGoalPrompts()
+  private commandStartAnchors = new CodexCommandStartAnchors()
   private agentResponseOverlays = new Map<string, Map<string, CodexAgentResponseOverlay>>()
   private paginatedTurnCatalogs = new Map<string, { threadUpdatedAt: number; turns: CodexTurn[] }>()
   private pendingTurnIds = new Map<string, string>()
@@ -2045,7 +2046,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     ])
     const thread = { ...legacyThread, name, cwd }
     await Promise.all([
-      this.loadGoalPrompts(thread),
+      this.loadTranscriptMetadata(thread),
       this.goals.read(thread.id, (method, params) => this.client.request(method, params))
     ])
     return thread
@@ -2334,7 +2335,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     await Promise.all([
-      this.loadGoalPrompts(thread),
+      this.loadTranscriptMetadata(thread),
       this.goals.read(thread.id, (method, params) => this.client.request(method, params))
     ])
     return this.createChatDetail(cacheLatest ? (this.threads.get(chatId) ?? thread) : thread, {
@@ -2464,7 +2465,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     } = refreshedWindow.result
     const selectedTurns = await this.attachSubmittedUserMessages(chatId, rawSelectedTurns)
     await Promise.all([
-      this.loadGoalPrompts({ ...threadMetadata, turns: selectedTurns }),
+      this.loadTranscriptMetadata({ ...threadMetadata, turns: selectedTurns }),
       this.goals.read(chatId, (method, params) => this.client.request(method, params))
     ])
     const [name, cwd] = await Promise.all([
@@ -2578,7 +2579,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         turnCatalog.length
       )
     ])
-    await this.loadGoalPrompts({ ...response.thread, turns })
+    await this.loadTranscriptMetadata({ ...response.thread, turns })
     const thread: CodexThread = {
       ...response.thread,
       name,
@@ -3432,6 +3433,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.chatUpdatedTimers.clear()
     this.transcriptProjection.clear()
     this.goalPrompts.clear()
+    this.commandStartAnchors.clear()
     this.goals.clear()
     this.latestThreadRefreshes.clear()
     this.completionCoordinator.clear()
@@ -3486,11 +3488,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const turnId = this.getActiveTurnId(chatId)
     if (!turnId) return this.continueChat(chatId, text, options)
 
-    const activeTurn = this.threads.get(chatId)?.turns.find((candidate) => candidate.id === turnId)
-    if (hasCompletedCodexFinalAnswer(activeTurn)) {
-      return this.queueChatMessage(chatId, text, options)
-    }
-
+    // Final-tagged text does not end a turn. Let the active turn accept steering;
+    // processWaitingSteeringMessage already handles a concurrent turn completion.
     if (this.hasPendingSteeringMessage(chatId)) {
       return this.queueChatMessage(chatId, text, options)
     }
@@ -4353,11 +4352,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return thread
   }
 
-  private loadGoalPrompts = (thread: CodexThread): Promise<boolean> =>
-    this.goalPrompts.load(thread, async (path) => {
-      const response = await this.client.request<{ dataBase64: string }>('fs/readFile', { path })
-      return Buffer.from(response.dataBase64, 'base64').toString('utf8')
-    })
+  private loadTranscriptMetadata = async (thread: CodexThread): Promise<boolean> => {
+    let read: Promise<string> | undefined
+    const readFile = (path: string): Promise<string> =>
+      (read ??= this.client
+        .request<{ dataBase64: string }>('fs/readFile', { path })
+        .then((response) => Buffer.from(response.dataBase64, 'base64').toString('utf8')))
+    const changes = await Promise.all([
+      this.goalPrompts.load(thread, readFile),
+      this.commandStartAnchors.load(thread, readFile)
+    ])
+    return changes.some(Boolean)
+  }
 
   private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
     const thread = this.threads.get(threadId)
@@ -4369,8 +4375,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
 
     this.chatUpdatedListeners.forEach((listener) => listener(detail, metadata))
-    // Enrichment cannot delay live transcript delivery. Publish once more if a goal prompt arrives.
-    void this.loadGoalPrompts(thread).then((changed) => {
+    // Enrichment cannot delay live delivery. Publish again when transcript metadata arrives.
+    void this.loadTranscriptMetadata(thread).then((changed) => {
       if (changed && this.threads.has(threadId)) this.scheduleChatUpdated(threadId)
     })
   }
@@ -4977,7 +4983,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         this.goalPrompts.project(
           thread.id,
           projectCodexAgentResponseOverlay(
-            turn,
+            this.commandStartAnchors.project(turn),
             this.agentResponseOverlays.get(thread.id)?.get(turn.id)
           )
         )

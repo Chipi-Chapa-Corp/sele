@@ -211,7 +211,7 @@ test('marks an inline follow-up as a steering message', () => {
   assert.equal(steeringMessage?.kind, 'steering')
 })
 
-test('projects the final response both while live and after completion', () => {
+test('promotes the final response only after the turn finishes', () => {
   const createTurn = (status) => ({
     id: 'answer-turn',
     status,
@@ -240,9 +240,18 @@ test('projects the final response both while live and after completion', () => {
     const working = items.find((item) => item.type === 'working')
     const finalMessage = items.find((item) => item.type === 'message' && item.role === 'assistant')
 
-    assert.equal(finalMessage?.id, 'answer-turn:answer')
-    assert.equal(finalMessage?.content, 'Here is the answer.')
-    if (status === 'inProgress') assert.equal(working?.status, 'working')
+    if (status === 'inProgress') {
+      assert.equal(finalMessage, undefined)
+      assert.equal(working?.status, 'working')
+      assert.ok(
+        working.items.some(
+          (item) => item.type === 'message' && item.content === 'Here is the answer.'
+        )
+      )
+    } else {
+      assert.equal(finalMessage?.id, 'answer-turn:answer')
+      assert.equal(finalMessage?.content, 'Here is the answer.')
+    }
   }
 })
 

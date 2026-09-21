@@ -152,3 +152,58 @@ test('goal boundaries survive live checkpoints and final-only continuation turns
   assert.equal(finalOnly[0].type, 'message')
   assert.equal(finalOnly[0].startsTurn, true)
 })
+
+test('only the last final-tagged response is promoted at the terminal turn boundary', () => {
+  const projection = new CodexTranscriptProjection()
+  let turn = { id: 'turn', status: 'inProgress', items: [user('u')] }
+  for (const item of [
+    answer('first', 'Please run the audit.', 'final_answer'),
+    tool('work'),
+    user('steer'),
+    answer('last', 'Finished.', 'final_answer')
+  ]) {
+    turn = update(turn, turn.items.length, item)
+    compare(projection, turn)
+    const items = getChatItems([turn], null, options, projection)
+    assert.equal(
+      items.filter((item) => item.type === 'message' && item.role === 'assistant').length,
+      0
+    )
+    const workingMessages = items
+      .filter((item) => item.type === 'working')
+      .flatMap((item) => item.items)
+      .filter((item) => item.type === 'message')
+    assert.ok(workingMessages.some((item) => item.content === 'Please run the audit.'))
+  }
+  const completed = { ...turn, status: 'completed', completedAt: 10 }
+  const items = getChatItems([completed], null, options, projection)
+  assert.deepEqual(
+    items
+      .filter((item) => item.type === 'message' && item.role === 'assistant')
+      .map((item) => item.content),
+    ['Finished.']
+  )
+  assert.ok(
+    items
+      .filter((item) => item.type === 'working')
+      .flatMap((item) => item.items)
+      .some((item) => item.content === 'Please run the audit.')
+  )
+  assert.equal(items.at(-1).id, 'turn:last')
+  assert.deepEqual(
+    items,
+    getChatItems([completed], null, options),
+    'reopening matches the completed live view'
+  )
+  const late = update(completed, 2, {
+    ...completed.items[2],
+    status: 'failed',
+    aggregatedOutput: 'Late failure'
+  })
+  const afterLate = getChatItems([late], null, options)
+  assert.equal(afterLate.at(-1).id, 'turn:last')
+  assert.equal(
+    afterLate.filter((item) => item.type === 'message' && item.role === 'assistant').length,
+    1
+  )
+})
