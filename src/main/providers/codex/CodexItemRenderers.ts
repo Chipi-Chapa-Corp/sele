@@ -1557,6 +1557,13 @@ const getUserInputText = (input: CodexUserInput): string => {
   return ''
 }
 
+// Codex can record image sizing hints as synthetic user messages after tool output.
+// Ignore only standalone hints so they don't close the current working segment.
+const isImageSizingMetadata = (content: string): boolean =>
+  /^(?:\s*\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by \d+(?:\.\d+)? to map to original image\.\]\s*)+$/.test(
+    content
+  )
+
 const getUserInputContent = (inputs: CodexUserInput[]): string => {
   const text = inputs
     .filter((input): input is Extract<CodexUserInput, { type: 'text' }> => input.type === 'text')
@@ -1917,6 +1924,7 @@ const renderChatItems = (
       if (item.type === 'userMessage' && item.content) {
         const content = getUserInputContent(item.content)
         const attachments = collectUserInputAttachments(item.content)
+        if (attachments.length === 0 && isImageSizingMetadata(content)) continue
         if (content || attachments.length > 0) {
           const itemId = `${turn.id}:${item.id}`
 

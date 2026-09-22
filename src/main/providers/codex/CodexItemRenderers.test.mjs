@@ -2,7 +2,55 @@ import { getToolDisplayLabel } from '../../../renderer/src/toolDisplayLabel.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildChatConversationModel } from '../../../renderer/src/chatConversationModel.ts'
-import { getChatItems } from './CodexItemRenderers.ts'
+import { CodexTranscriptProjection, getChatItems } from './CodexItemRenderers.ts'
+
+const imageSizingMetadata =
+  '[Image: original 2380x292, displayed at 2000x245. Multiply coordinates by 1.19 to map to original image.]'
+
+test('image sizing metadata keeps one working segment in full and incremental history', () => {
+  for (const status of ['inProgress', 'completed']) {
+    const projection = new CodexTranscriptProjection()
+    let turn = {
+      id: 'image-turn',
+      status,
+      items: [
+        { type: 'userMessage', id: 'question', content: [{ type: 'text', text: 'Inspect it' }] },
+        { type: 'agentMessage', id: 'before', text: 'Before screenshot', phase: 'commentary' }
+      ]
+    }
+    getChatItems([turn], null, {}, projection)
+    for (const item of [
+      { type: 'userMessage', id: 'metadata', content: [{ type: 'text', text: imageSizingMetadata }] },
+      { type: 'agentMessage', id: 'after', text: 'After screenshot', phase: 'commentary' }
+    ]) {
+      turn = { ...turn, items: [...turn.items, item] }
+      const items = getChatItems([turn], null, {}, projection)
+      assert.deepEqual(items, getChatItems([turn]))
+      assert.equal(items.filter((entry) => entry.type === 'message').length, 1)
+      const working = items.filter((entry) => entry.type === 'working')
+      assert.equal(working.length, 1)
+      assert.equal(working[0].status, status === 'inProgress' ? 'working' : 'worked')
+      assert.equal(working[0].items.length, item.id === 'after' ? 2 : 1)
+    }
+  }
+})
+
+test('preserves user text discussing image metadata and messages with actual attachments', () => {
+  for (const content of [
+    [{ type: 'text', text: `What does this mean? ${imageSizingMetadata}` }],
+    [{ type: 'text', text: imageSizingMetadata }, { type: 'localImage', path: '/tmp/screenshot.png' }]
+  ]) {
+    const items = getChatItems([
+      {
+        id: 'turn',
+        status: 'completed',
+        items: [{ type: 'userMessage', id: 'message', content }]
+      }
+    ])
+    assert.equal(items[0]?.role, 'user')
+    assert.equal(items[0]?.content, content[0].text)
+  }
+})
 
 test('tool output preserves non-JSON text without warning and unwraps JSON envelopes', (t) => {
   const warn = t.mock.method(console, 'warn', () => {})

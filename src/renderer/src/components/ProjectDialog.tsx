@@ -237,6 +237,8 @@ export const ProjectDialog = ({
                     callback: handleSelectImage
                   }
                 ]}
+                searchable
+                searchPlaceholder="Search icons"
                 options={iconOptions}
                 title={`Icon: ${iconTitle}`}
                 value={icon}
