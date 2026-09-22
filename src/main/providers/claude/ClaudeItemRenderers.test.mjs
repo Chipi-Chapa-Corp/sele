@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  ClaudeTranscriptProjection,
   isClaudeInternalUserMessage,
   isClaudeSkillContextMessage,
   renderClaudeChatItems,
@@ -108,6 +109,56 @@ test('skill context is detected by content marker or live isMeta flag', () => {
   assert.equal(isClaudeSkillContextMessage(metaMessage), true)
   assert.equal(isClaudeSkillContextMessage(userPrompt), false)
   assert.equal(isClaudeSkillContextMessage(skillToolResult), false)
+})
+
+test('background task notifications stay hidden in history and live projection', () => {
+  const text =
+    '<task-notification>\n<task-id>background-1</task-id>\n<status>completed</status>\n<summary>Command completed (exit code 0)</summary>\n</task-notification>'
+  const options = { active: false, stopped: false }
+  for (const content of [
+    text,
+    `${text}\nRead the output file to retrieve the result: /tmp/task.output`
+  ]) {
+    const notification = {
+      ...userPrompt,
+      uuid: 'task-notification',
+      message: { role: 'user', content: [{ type: 'text', text: content }] }
+    }
+    assert.equal(isClaudeInternalUserMessage(notification), true)
+    const source = [userPrompt, skillToolUse, skillToolResult]
+    const expected = renderClaudeChatItems(source, options)
+    assert.deepEqual(renderClaudeChatItems([...source, notification], options), expected)
+    const projection = new ClaudeTranscriptProjection()
+    const before = structuredClone(projection.read(source, [], options))
+    assert.deepEqual(projection.read(source, [notification], options), before)
+    const updated = [...source, notification]
+    projection.acceptSource(source, updated, source.length)
+    assert.deepEqual(projection.read(updated, [], options), before)
+  }
+})
+
+test('mentions of task notifications and attached messages remain visible', () => {
+  for (const text of [
+    'What does <task-notification> mean?',
+    'Example: <task-notification>completed</task-notification>',
+    '<task-notification>incomplete'
+  ]) {
+    assert.equal(
+      isClaudeInternalUserMessage({
+        ...userPrompt,
+        message: { content: text }
+      }),
+      false
+    )
+  }
+  assert.equal(
+    isClaudeInternalUserMessage({
+      ...userPrompt,
+      message: { content: '<task-notification>completed</task-notification>' },
+      attachments: [{ id: 'attachment' }]
+    }),
+    false
+  )
 })
 
 const streamedResponse = {

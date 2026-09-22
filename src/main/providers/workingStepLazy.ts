@@ -61,6 +61,8 @@ const countStringCharacters = (
   return total
 }
 
+// Images are excluded from the payload budget: a data URL is useless once sliced, so they
+// are passed through whole instead of competing with text payloads for the character budget.
 const getToolPayloadCharacterCount = (tool: ProviderWorkingTool): number => {
   const traversal = { remainingEntries: rendererPayloadCountEntryLimit }
   const seen = new WeakSet<object>()
@@ -70,8 +72,7 @@ const getToolPayloadCharacterCount = (tool: ProviderWorkingTool): number => {
     tool.stdout,
     tool.diffs,
     tool.rawInput,
-    tool.rawOutput,
-    tool.images
+    tool.rawOutput
   ].reduce<number>(
     (total, value) => addCount(total, countStringCharacters(value, traversal, seen)),
     0
@@ -248,11 +249,7 @@ const limitToolPayload = (
   }))
   const rawInput = truncateUnknown(tool.rawInput, budget, structuralTruncation)
   const rawOutput = truncateUnknown(tool.rawOutput, budget, structuralTruncation)
-  const sourceImages = tool.images.slice(-rendererToolImageLimit)
-  const images = sourceImages.map((image) => ({
-    ...image,
-    dataUrl: truncateText(image.dataUrl ?? null, budget)
-  }))
+  const images = tool.images.slice(-rendererToolImageLimit)
 
   return {
     ...tool,
@@ -267,13 +264,13 @@ const limitToolPayload = (
     images,
     imageCount: Math.max(tool.imageCount ?? 0, tool.images.length),
     imagesStartIndex:
-      (tool.imagesStartIndex ?? 0) + Math.max(0, tool.images.length - sourceImages.length),
+      (tool.imagesStartIndex ?? 0) + Math.max(0, tool.images.length - images.length),
     payloadLoaded: true,
     payloadCharacterCount,
     payloadTruncated:
       payloadCharacterCount > before ||
       sourceDiffs.length < tool.diffs.length ||
-      sourceImages.length < tool.images.length ||
+      images.length < tool.images.length ||
       structuralTruncation.occurred
   }
 }

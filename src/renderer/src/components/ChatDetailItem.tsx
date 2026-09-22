@@ -557,17 +557,19 @@ const RawContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) => (
   <div className="chat-detail__activity-content chat-detail__activity-content--command">
     {tools.map((tool) => (
       <section key={tool.id}>
-        {tool.rawInput != null && (
+        {hasToolValue(tool.rawInput) && (
           <HighlightedCode language={getToolValueLanguage(tool.rawInput, true)}>
             {formatToolValue(tool.rawInput)}
           </HighlightedCode>
         )}
-        {tool.rawInput != null && (
+        {hasToolValue(tool.rawInput) && hasToolValue(tool.rawOutput) && (
           <span className="chat-detail__command-divider" aria-hidden="true" />
         )}
-        <BoundedHighlightedCode language={getToolValueLanguage(tool.rawOutput)}>
-          {formatToolValue(tool.rawOutput)}
-        </BoundedHighlightedCode>
+        {hasToolValue(tool.rawOutput) && (
+          <BoundedHighlightedCode language={getToolValueLanguage(tool.rawOutput)}>
+            {formatToolValue(tool.rawOutput)}
+          </BoundedHighlightedCode>
+        )}
       </section>
     ))}
   </div>
@@ -651,6 +653,7 @@ const Activity: React.FC<{
   const [manualOpen, setManualOpen] = useState<boolean | null>(null)
   const open = manualOpen ?? expanded
   const activity = tools[0]?.activity ?? 'other'
+  const detailKind = getToolDetailKind(activity)
 
   const detailLabel = getToolDisplayLabel(label || tools[0]?.toolId || 'Tool use', activity, active)
 
@@ -674,14 +677,9 @@ const Activity: React.FC<{
       </summary>
       {open && (
         <>
-          {activity === 'edit' || activity === 'create' || activity === 'delete' ? (
+          {detailKind === 'diff' ? (
             <DiffContent tools={tools} projectCwd={projectCwd} />
-          ) : activity === 'command' ||
-            activity === 'search' ||
-            activity === 'git' ||
-            activity === 'npm' ||
-            activity === 'npx' ||
-            activity === 'script' ? (
+          ) : detailKind === 'command' ? (
             <CommandContent tools={tools} />
           ) : (
             <RawContent tools={tools} />
@@ -700,14 +698,26 @@ const Activity: React.FC<{
 const getToolsFromToolItem = (item: ProviderToolItem): ProviderWorkingTool[] =>
   item.type === 'toolGroup' ? item.tools : [item]
 
-const hasToolDetails = (tool: ProviderWorkingTool): boolean =>
-  Boolean(
-    tool.command ||
-      tool.stdout ||
-      tool.diffs.length > 0 ||
-      tool.rawInput != null ||
-      tool.rawOutput != null
-  )
+const getToolDetailKind = (activity: ProviderToolActivity): 'diff' | 'command' | 'raw' => {
+  if (activity === 'edit') return 'diff'
+  if (['command', 'search', 'git', 'npm', 'npx', 'script'].includes(activity)) return 'command'
+  return 'raw'
+}
+
+const hasToolValue = (value: unknown): boolean =>
+  value != null && (typeof value !== 'string' || value.trim().length > 0)
+
+const hasToolDetails = (tool: ProviderWorkingTool, activity: ProviderToolActivity): boolean => {
+  // Match the content renderer: hidden metadata must not create an empty disclosure.
+  switch (getToolDetailKind(activity)) {
+    case 'diff':
+      return tool.diffs.length > 0
+    case 'command':
+      return Boolean(tool.command?.trim() || tool.stdout?.trim())
+    case 'raw':
+      return hasToolValue(tool.rawInput) || hasToolValue(tool.rawOutput)
+  }
+}
 
 const GeneratedImageThumbnail: React.FC<{
   path?: string | null
@@ -1163,12 +1173,16 @@ const ToolItem: React.FC<{
       : baseLabel
   const label = getToolDisplayLabel(rawLabel, activity, active)
 
-  // Browser actions are already human-readable and need no raw protocol disclosure.
-  if (tools.every((tool) => tool.icon === 'browser')) {
+  // These status rows need no payload disclosure, including unloaded history rows.
+  if (
+    activity === 'create' ||
+    activity === 'delete' ||
+    tools.every((tool) => tool.icon === 'browser')
+  ) {
     return (
       <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>
         <span className="chat-detail__tool-icon">
-          <ToolStatusIcon activity={activity} active={active} icon="browser" />
+          <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
         </span>
         <span className="chat-detail__tool-label">{label}</span>
       </div>
@@ -1223,7 +1237,7 @@ const ToolItem: React.FC<{
     tools.every((tool) => tool.compact) ||
     activity === 'read' ||
     tools.every((tool) => tool.icon === 'plan') ||
-    !tools.some(hasToolDetails)
+    !tools.some((tool) => hasToolDetails(tool, activity))
   ) {
     return (
       <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>

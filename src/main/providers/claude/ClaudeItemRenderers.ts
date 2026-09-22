@@ -307,6 +307,7 @@ const interruptedRequestMarker = '[Request interrupted by user]'
 const localCommandOutputPattern =
   /^<local-command-(?:stdout|stderr)>[\s\S]*<\/local-command-(?:stdout|stderr)>$/
 const skillContextPrefix = 'Base directory for this skill:'
+const taskNotificationPattern = /^<task-notification>[\s\S]*<\/task-notification>/
 
 const getStandaloneUserText = (message: ClaudeTranscriptMessage): string | null => {
   if (message.type !== 'user' || message.attachments?.length) return null
@@ -335,6 +336,7 @@ export const isClaudeInternalUserMessage = (message: ClaudeTranscriptMessage): b
   return (
     text === interruptedRequestMarker ||
     (text != null && localCommandOutputPattern.test(text)) ||
+    (text != null && taskNotificationPattern.test(text)) ||
     isClaudeSkillContextMessage(message)
   )
 }
@@ -404,7 +406,7 @@ export const renderClaudeChatItems = (
   }
 
   for (const message of messages) {
-    // Claude persists interrupt markers and local command output as user-role
+    // Claude persists interrupt markers, task notifications and local command output as user-role
     // transcript records. They are control metadata, not text entered by the person.
     if (isClaudeInternalUserMessage(message)) continue
 
