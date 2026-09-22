@@ -4541,16 +4541,19 @@ export const useWorkspaceController = () => {
     providerUpdatePreferences
   })
   const chatWriteAccess = getChatWriteAccessPresentation(chatDetail)
+  const chatCheckingWriteAccess = chatDetail?.writeAccess === 'checking'
   const chatOpenedElsewhere = chatWriteAccess.openedElsewhere
   const chatLegacyHistoryReadOnly = chatWriteAccess.legacyHistory
   const requestErrorVisible = chatWriteAccess.readOnly || sendState === 'error'
-  const requestErrorSummary = chatLegacyHistoryReadOnly
-    ? 'This legacy Codex chat is available read-only.'
-    : chatOpenedElsewhere
-      ? chatOpenElsewhereMessage
-      : sendState === 'error' && sendError
-        ? sendError
-        : 'Unable to complete request.'
+  const requestErrorSummary = chatCheckingWriteAccess
+    ? 'Checking whether this chat is available for editing…'
+    : chatLegacyHistoryReadOnly
+      ? 'This legacy Codex chat is available read-only.'
+      : chatOpenedElsewhere
+        ? chatOpenElsewhereMessage
+        : sendState === 'error' && sendError
+          ? sendError
+          : 'Unable to complete request.'
 
   const handleSendFailure = useCallback((error: unknown, fallback: string): void => {
     setSendError(getErrorMessage(error, fallback))
@@ -5783,6 +5786,7 @@ export const useWorkspaceController = () => {
       requestErrorSummary,
       requestErrorVisible,
       chatOpenedElsewhere,
+      chatCheckingWriteAccess,
       chatLegacyHistoryReadOnly,
       resetAccountRateLimits,
       resolveSelectedUserInput,

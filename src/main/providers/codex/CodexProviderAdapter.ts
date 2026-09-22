@@ -1245,6 +1245,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private threads = new Map<string, CodexThread>()
   private threadRevisions = new Map<string, number>()
   private externallyOwnedThreadIds = new Set<string>()
+  private writeAccessChecks = new Map<string, Promise<void>>()
   private goals = new CodexGoals()
   private goalPrompts = new CodexGoalPrompts()
   private commandStartAnchors = new CodexCommandStartAnchors()
@@ -2029,18 +2030,36 @@ export class CodexProviderAdapter implements ProviderAdapter {
         { cursor: null, direction: 'older', limit: rendererChatUpdateTurnLimit },
         true
       )
-      const checked = await this.probeChatWriteAccess(detail)
-      // The probe can outlive transcript updates. Publish ownership with a fresh revision
-      // so the renderer cannot discard the notice as an older history snapshot.
-      this.emitChatUpdated(chatId)
-      const latest = this.getCachedChatDetail(chatId) ?? detail
-      return {
-        ...latest,
-        writeAccess: checked.writeAccess,
-        writeAccessReason: checked.writeAccessReason,
-        capabilities: checked.capabilities
-      }
+      this.checkChatWriteAccessInBackground(detail)
+      return this.getCachedChatDetail(chatId) ?? detail
     })
+
+  private checkChatWriteAccessInBackground = (detail: ProviderChatDetail): void => {
+    if (
+      isLegacyCodexHistory(this.threads.get(detail.id)?.historyMode) ||
+      this.client.ownsThread(detail.id) ||
+      this.pendingTurnStarts.has(detail.id) ||
+      this.pendingTurnIds.has(detail.id) ||
+      this.activeTurnIds.has(detail.id) ||
+      this.writeAccessChecks.has(detail.id)
+    )
+      return
+
+    // Loading history must not wait for a separate app-server to start and release its lease.
+    // Keep writes disabled until the probe has exited, and coalesce concurrent opens/retries.
+    const check = this.probeChatWriteAccess(detail)
+      .then(() => {})
+      .catch((error: unknown) => {
+        console.warn(`Unable to check write access for Codex thread ${detail.id}`, error)
+      })
+      .finally(() => {
+        if (this.writeAccessChecks.get(detail.id) !== check) return
+        this.writeAccessChecks.delete(detail.id)
+        this.emitChatUpdated(detail.id)
+      })
+    this.writeAccessChecks.set(detail.id, check)
+    this.bumpThreadRevision(detail.id)
+  }
 
   private loadLegacyThread = async (
     threadId: string,
@@ -3461,6 +3480,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.queuedTurnRetryTimers.clear()
     this.threads.clear()
     this.externallyOwnedThreadIds.clear()
+    this.writeAccessChecks.clear()
     this.pendingTurnIds.clear()
     this.activeTurnIds.clear()
     this.rolledBackTurnIds.clear()
@@ -3873,7 +3893,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
       seenUpdatedAt: null,
       purpose: null,
       container: this.threadContainers.get(thread.id) ?? null,
-      writeAccess: isReadOnly ? 'readOnly' : 'writable',
+      writeAccess: isReadOnly
+        ? 'readOnly'
+        : this.writeAccessChecks.has(thread.id)
+          ? 'checking'
+          : 'writable',
       ...(isReadOnly
         ? {
             writeAccessReason: isReadOnlyHistory

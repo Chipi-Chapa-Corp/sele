@@ -609,7 +609,7 @@ export type ProviderCapabilities = {
   activeMessages: boolean
 }
 
-export type ProviderChatWriteAccess = 'writable' | 'readOnly' | 'unknown'
+export type ProviderChatWriteAccess = 'checking' | 'writable' | 'readOnly' | 'unknown'
 
 export type ProviderReviewComment = {
   id: string

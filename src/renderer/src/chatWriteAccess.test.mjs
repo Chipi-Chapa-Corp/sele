@@ -19,3 +19,11 @@ test('keeps unspecified read-only ownership compatible with external-owner retry
     legacyHistory: false
   })
 })
+
+test('checking ownership blocks writes without claiming another app owns the chat', () => {
+  assert.deepEqual(getChatWriteAccessPresentation({ writeAccess: 'checking' }), {
+    readOnly: true,
+    openedElsewhere: false,
+    legacyHistory: false
+  })
+})

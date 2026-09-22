@@ -24,17 +24,25 @@ const extract = (file, className, names, globals = {}) => {
   )
 }
 
-for (const locallyOwned of [false, true]) {
-  test(`opening a chat publishes known ownership before any send (local owner: ${locallyOwned})`, async () => {
+for (const [locallyOwned, externallyOwned] of [
+  [false, true],
+  [false, false],
+  [true, false]
+]) {
+  test(`history does not wait for ownership (local: ${locallyOwned}, external: ${externallyOwned})`, async () => {
     let revision = 2
     let probeCount = 0
     let disposed = false
+    let finishProbe
+    const probeGate = new Promise((resolve) => {
+      finishProbe = resolve
+    })
     const published = []
     const capabilities = { editMessages: true, activeMessages: true }
     const adapter = extract(
       './CodexProviderAdapter.ts',
       'CodexProviderAdapter',
-      ['getChat', 'probeChatWriteAccess'],
+      ['getChat', 'probeChatWriteAccess', 'checkChatWriteAccessInBackground'],
       {
         rendererChatUpdateTurnLimit: 10,
         isLegacyCodexHistory: () => false,
@@ -43,9 +51,11 @@ for (const locallyOwned of [false, true]) {
         CodexAppServerClient: class {
           async request() {
             probeCount++
+            await probeGate
             // A live update arrives while access is being checked.
             revision = 8
-            throw new Error('thread chat already has an active writer')
+            if (externallyOwned) throw new Error('thread chat already has an active writer')
+            return { thread: { id: 'chat' } }
           }
           async disposeAndWait() {
             disposed = true
@@ -58,7 +68,11 @@ for (const locallyOwned of [false, true]) {
       revision,
       items: ['latest transcript'],
       capabilities,
-      writeAccess: adapter.externallyOwnedThreadIds.has('chat') ? 'readOnly' : 'writable',
+      writeAccess: adapter.externallyOwnedThreadIds.has('chat')
+        ? 'readOnly'
+        : adapter.writeAccessChecks.has('chat')
+          ? 'checking'
+          : 'writable',
       writeAccessReason: adapter.externallyOwnedThreadIds.has('chat') ? 'externalOwner' : undefined
     })
     Object.assign(adapter, {
@@ -68,6 +82,10 @@ for (const locallyOwned of [false, true]) {
       pendingTurnIds: new Map(),
       activeTurnIds: new Map(),
       externallyOwnedThreadIds: new Set(),
+      writeAccessChecks: new Map(),
+      bumpThreadRevision: () => {
+        revision++
+      },
       getThreadContainer: () => null,
       getCurrentContainer: () => null,
       runWithContainer: (container, run) => run(),
@@ -80,14 +98,22 @@ for (const locallyOwned of [false, true]) {
     })
     const detail = await adapter.getChat('chat')
     assert.equal(probeCount, locallyOwned ? 0 : 1)
-    assert.equal(detail.writeAccess, locallyOwned ? 'writable' : 'readOnly')
-    assert.equal(published[0].writeAccess, detail.writeAccess)
-    assert.equal(detail.capabilities.editMessages, locallyOwned)
+    assert.equal(detail.writeAccess, locallyOwned ? 'writable' : 'checking')
+    assert.equal(published.length, 0)
     assert.deepEqual(Array.from(detail.items), ['latest transcript'])
     if (!locallyOwned) {
+      // History is ready even while process startup/shutdown is still blocked.
+      assert.equal(disposed, false)
+      const repeated = await adapter.getChat('chat')
+      assert.equal(repeated.writeAccess, 'checking')
+      assert.equal(probeCount, 1)
+      const check = adapter.writeAccessChecks.get('chat')
+      finishProbe()
+      await check
       assert.equal(disposed, true)
-      assert.equal(detail.revision, 9)
-      assert.equal(detail.writeAccessReason, 'externalOwner')
+      assert.equal(published[0].revision, 9)
+      assert.equal(published[0].writeAccess, externallyOwned ? 'readOnly' : 'writable')
+      assert.equal(published[0].writeAccessReason, externallyOwned ? 'externalOwner' : undefined)
     }
   })
 }

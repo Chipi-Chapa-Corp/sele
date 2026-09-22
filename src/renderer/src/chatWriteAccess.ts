@@ -9,11 +9,11 @@ export type ChatWriteAccessPresentation = {
 export const getChatWriteAccessPresentation = (
   detail: Pick<ProviderChatDetail, 'writeAccess' | 'writeAccessReason'> | null
 ): ChatWriteAccessPresentation => {
-  const readOnly = detail?.writeAccess === 'readOnly'
+  const readOnly = detail?.writeAccess === 'readOnly' || detail?.writeAccess === 'checking'
   const legacyHistory = readOnly && detail?.writeAccessReason === 'legacyHistory'
   return {
     readOnly,
     legacyHistory,
-    openedElsewhere: readOnly && !legacyHistory
+    openedElsewhere: detail?.writeAccess === 'readOnly' && !legacyHistory
   }
 }

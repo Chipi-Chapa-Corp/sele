@@ -33,6 +33,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     chatHasActiveTurn,
     chatHasPendingSteeringMessage,
     chatOpenedElsewhere,
+    chatCheckingWriteAccess,
     chatLegacyHistoryReadOnly,
     containerOptions,
     cwdNotesByGroup,
@@ -136,11 +137,11 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
         {!activeSubagentChatView && requestErrorVisible && (
           <section
             className="chat-approval chat-request-error"
-            aria-label="Request error"
-            role="alert"
+            aria-label={chatCheckingWriteAccess ? 'Checking write access' : 'Request error'}
+            role={chatCheckingWriteAccess ? 'status' : 'alert'}
           >
             <div className="chat-approval__main">
-              {requestErrorPresentation.label && (
+              {!chatCheckingWriteAccess && requestErrorPresentation.label && (
                 <span className="chat-approval__label">{requestErrorPresentation.label}</span>
               )}
               <span className="chat-approval__summary" title={requestErrorPresentation.summary}>
@@ -155,7 +156,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
                   size="small"
                   theme="transparent"
                 />
-              ) : chatLegacyHistoryReadOnly ? null : (
+              ) : chatLegacyHistoryReadOnly || chatCheckingWriteAccess ? null : (
                 <Button
                   aria-label="Dismiss error"
                   title="Dismiss error"
