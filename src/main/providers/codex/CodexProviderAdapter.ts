@@ -2045,9 +2045,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     )
       return
 
-    // Loading history must not wait for a separate app-server to start and release its lease.
-    // Keep writes disabled until the probe has exited, and coalesce concurrent opens/retries.
-    const check = this.probeChatWriteAccess(detail)
+    // Claim through the existing connection without delaying history. Keep writes disabled
+    // until ownership is confirmed, and coalesce concurrent opens/retries.
+    const check = this.claimChatWriteAccess(detail)
       .then(() => {})
       .catch((error: unknown) => {
         console.warn(`Unable to check write access for Codex thread ${detail.id}`, error)
@@ -2081,13 +2081,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return thread
   }
 
-  /**
-   * Codex deliberately keeps transcript reads independent from the single-writer lease. There is
-   * no read-only ownership field, so use a short-lived app-server to test resume availability.
-   * Codex retains its writer lease even after thread/unsubscribe, so the probe process must exit
-   * before Sele reports the chat as writable.
-   */
-  private probeChatWriteAccess = async (
+  /** Claim opened chats on Sele's persistent connection, retaining ownership while it lives. */
+  private claimChatWriteAccess = async (
     detail: ProviderChatDetail
   ): Promise<ProviderChatDetail> => {
     if (isLegacyCodexHistory(this.threads.get(detail.id)?.historyMode)) return detail
@@ -2107,9 +2102,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
     }
 
-    const probeClient = new CodexAppServerClient(this.getCurrentContainer())
     try {
-      await probeClient.request<ThreadResumeResponse>('thread/resume', {
+      await this.client.request<ThreadResumeResponse>('thread/resume', {
         threadId: detail.id,
         excludeTurns: true
       })
@@ -2140,8 +2134,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
         writeAccessReason: 'externalOwner',
         capabilities: { ...detail.capabilities, editMessages: false, activeMessages: false }
       }
-    } finally {
-      await probeClient.disposeAndWait()
     }
   }
 

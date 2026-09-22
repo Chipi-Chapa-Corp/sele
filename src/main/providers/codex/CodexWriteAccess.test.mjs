@@ -32,7 +32,7 @@ for (const [locallyOwned, externallyOwned] of [
   test(`history does not wait for ownership (local: ${locallyOwned}, external: ${externallyOwned})`, async () => {
     let revision = 2
     let probeCount = 0
-    let disposed = false
+    let ownsThread = locallyOwned
     let finishProbe
     const probeGate = new Promise((resolve) => {
       finishProbe = resolve
@@ -42,23 +42,15 @@ for (const [locallyOwned, externallyOwned] of [
     const adapter = extract(
       './CodexProviderAdapter.ts',
       'CodexProviderAdapter',
-      ['getChat', 'probeChatWriteAccess', 'checkChatWriteAccessInBackground'],
+      ['getChat', 'claimChatWriteAccess', 'checkChatWriteAccessInBackground'],
       {
         rendererChatUpdateTurnLimit: 10,
         isLegacyCodexHistory: () => false,
         codexCapabilities: capabilities,
         isActiveWriterError: () => true,
         CodexAppServerClient: class {
-          async request() {
-            probeCount++
-            await probeGate
-            // A live update arrives while access is being checked.
-            revision = 8
-            if (externallyOwned) throw new Error('thread chat already has an active writer')
-            return { thread: { id: 'chat' } }
-          }
-          async disposeAndWait() {
-            disposed = true
+          constructor() {
+            assert.fail('opening must reuse the persistent app-server')
           }
         }
       }
@@ -76,7 +68,20 @@ for (const [locallyOwned, externallyOwned] of [
       writeAccessReason: adapter.externallyOwnedThreadIds.has('chat') ? 'externalOwner' : undefined
     })
     Object.assign(adapter, {
-      client: { ownsThread: () => locallyOwned },
+      client: {
+        ownsThread: () => ownsThread,
+        request: async (method, params) => {
+          assert.equal(method, 'thread/resume')
+          assert.equal(params.threadId, 'chat')
+          assert.equal(params.excludeTurns, true)
+          probeCount++
+          await probeGate
+          revision = 8
+          if (externallyOwned) throw new Error('thread chat already has an active writer')
+          ownsThread = true
+          return { thread: { id: 'chat' } }
+        }
+      },
       threads: new Map([['chat', {}]]),
       pendingTurnStarts: new Map(),
       pendingTurnIds: new Map(),
@@ -102,18 +107,21 @@ for (const [locallyOwned, externallyOwned] of [
     assert.equal(published.length, 0)
     assert.deepEqual(Array.from(detail.items), ['latest transcript'])
     if (!locallyOwned) {
-      // History is ready even while process startup/shutdown is still blocked.
-      assert.equal(disposed, false)
+      // History is ready even while the ownership request is still pending.
       const repeated = await adapter.getChat('chat')
       assert.equal(repeated.writeAccess, 'checking')
       assert.equal(probeCount, 1)
       const check = adapter.writeAccessChecks.get('chat')
       finishProbe()
       await check
-      assert.equal(disposed, true)
       assert.equal(published[0].revision, 9)
       assert.equal(published[0].writeAccess, externallyOwned ? 'readOnly' : 'writable')
       assert.equal(published[0].writeAccessReason, externallyOwned ? 'externalOwner' : undefined)
+      if (!externallyOwned) {
+        const reopened = await adapter.getChat('chat')
+        assert.equal(reopened.writeAccess, 'writable')
+        assert.equal(probeCount, 1)
+      }
     }
   })
 }
