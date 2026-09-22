@@ -30,14 +30,14 @@ export const activeActivityLabels: Record<ProviderToolActivity, string> = {
 
 const activeLabelReplacements: Array<[RegExp, string]> = [
   [/^Read\b/, 'Reading'],
-  [/^Searched\b/, 'Searching'],
+  [/^(?:Search|Searched)\b/, 'Searching'],
   [/^Checked\b/, 'Checking'],
   [/^Viewed\b/, 'Viewing'],
   [/^Ran\b/, 'Running'],
   [/^Used\b/, 'Using'],
-  [/^Changed\b/, 'Changing'],
-  [/^Created\b/, 'Creating'],
-  [/^Deleted\b/, 'Deleting'],
+  [/^(?:Edit|Edited|Changed)\b/, 'Changing'],
+  [/^(?:Create|Created)\b/, 'Creating'],
+  [/^(?:Delete|Deleted)\b/, 'Deleting'],
   [/^Applied\b/, 'Applying'],
   [/^Updated\b/, 'Updating'],
   [/^Generated\b/, 'Generating'],

@@ -338,6 +338,11 @@ test('browser labels use the same active-to-finished display flow as other tools
     ['Took browser screenshot', 'Taking browser screenshot', 'other'],
     ['Read webpage', 'Reading webpage', 'other'],
     ['Read file', 'Reading file', 'read'],
+    ['Create network.gd', 'Creating network.gd', 'create'],
+    ['Created network.gd', 'Creating network.gd', 'create'],
+    ['Edit network.gd', 'Changing network.gd', 'edit'],
+    ['Delete network.gd', 'Deleting network.gd', 'delete'],
+    ['Search scripts', 'Searching scripts', 'search'],
     ['Ran a command', 'Running a command', 'command'],
     ['Applied patch', 'Applying patch', 'edit']
   ]) {

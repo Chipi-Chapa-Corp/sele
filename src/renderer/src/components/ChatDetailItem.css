@@ -1128,8 +1128,8 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 
 .chat-detail__tool-icon {
   display: grid;
-  width: 0.95rem;
-  height: 0.95rem;
+  width: 1.125rem;
+  height: 1.125rem;
   flex: none;
   place-items: center;
   color: inherit;
@@ -1137,15 +1137,15 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 
 .chat-detail__animated-icon {
   display: grid;
-  width: 0.9rem;
-  height: 0.9rem;
+  width: 1.125rem;
+  height: 1.125rem;
   place-items: center;
 }
 
 .chat-detail__animated-icon > svg,
 .chat-detail__tool-icon svg {
-  width: 0.9rem;
-  height: 0.9rem;
+  width: 1.125rem;
+  height: 1.125rem;
 }
 
 .chat-detail__tool-dot {
