@@ -1914,6 +1914,17 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       console.error(`Unable to refresh Claude session metadata for ${state.id}.`, error)
     })
 
+    // Steering is already in the SDK's queue, not queuedMessages. This result can
+    // belong to the preceding turn; closing the query here kills the follow-up.
+    if (!wasStopped && (event.queued_turn_count ?? 0) > 0) {
+      state.active = true
+      state.waitingForSessionIdle = false
+      this.emitUpdate(state)
+      void refreshContextUsage
+      void refreshMetadata
+      return false
+    }
+
     state.active = false
     state.stopped = wasStopped
     state.waitingForSessionIdle = false

@@ -1340,10 +1340,14 @@ export const registerProviderIpc = (): void => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredChatId = requireChatId(chatId)
     return getRendererChatDetail(() =>
-      getProviderChatWindow(requiredProviderId, requiredChatId, {
-        startIndex: null,
-        limit: rendererChatTurnPageSize
-      })
+      // Codex getChat includes the opening-time writer check and already reads a bounded
+      // cursor page. History-only reads deliberately do not acquire/probe writer access.
+      requiredProviderId === 'codex'
+        ? providerApi.getChat(requiredProviderId, requiredChatId)
+        : getProviderChatWindow(requiredProviderId, requiredChatId, {
+            startIndex: null,
+            limit: rendererChatTurnPageSize
+          })
     )
   })
 

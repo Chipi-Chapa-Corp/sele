@@ -98,6 +98,9 @@ export class CodexAppServerClient {
   private nextRequestId = 1
   private stderr = ''
   private browserSessionCwds = new Map<string, string>()
+  private ownedThreadIds = new Set<string>()
+
+  ownsThread = (threadId: string): boolean => this.ownedThreadIds.has(threadId)
 
   request = async <Result>(method: string, params: unknown): Promise<Result> => {
     await this.start()
@@ -114,6 +117,7 @@ export class CodexAppServerClient {
     if (method === 'thread/start' || method === 'thread/resume' || method === 'thread/fork') {
       const thread = (result as { thread?: { id?: string; cwd?: string } })?.thread
       if (typeof thread?.id === 'string') {
+        this.ownedThreadIds.add(thread.id)
         const cwd = thread.cwd ?? (typeof input.cwd === 'string' ? input.cwd : '')
         this.browserSessionCwds.set(thread.id, cwd)
         registerBrowserUseSession(this, thread.id, cwd, this.container)
@@ -146,6 +150,7 @@ export class CodexAppServerClient {
   }
 
   dispose = (): void => {
+    this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
     this.process?.kill()
     this.process = null
@@ -324,6 +329,7 @@ export class CodexAppServerClient {
   }
 
   private handleProcessEnd = (error: Error): void => {
+    this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
     const hadProcess = Boolean(this.process)
     this.process = null

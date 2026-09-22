@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { getClaudeQueueDrainDecision } from './ClaudeQueueDrain.ts'
+import { getClaudeResultLifecycleDecision } from './ClaudeQueryLifecycle.ts'
 
 // Exercise the actual adapter methods without starting Electron or the Claude CLI.
 const source = ts.createSourceFile(
@@ -19,7 +20,8 @@ const methods = new Set([
   'drainNextQueuedMessage',
   'getQueueDrainDecision',
   'getDrainingMessage',
-  'getPendingMessages'
+  'getPendingMessages',
+  'handleQueryEvent'
 ])
 const code = ts.transpileModule(
   `class Harness { ${adapter.members
@@ -28,7 +30,17 @@ const code = ts.transpileModule(
     .join('\n')} }; globalThis.Harness = Harness`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
 ).outputText
-const context = vm.createContext({ getClaudeQueueDrainDecision })
+const context = vm.createContext({
+  getClaudeQueueDrainDecision,
+  getClaudeResultLifecycleDecision,
+  getTokenBreakdown: (inputTokens, outputTokens, cachedInputTokens) => ({
+    inputTokens,
+    outputTokens,
+    cachedInputTokens
+  }),
+  settleWithin: (promise) => promise,
+  contextUsageCloseGraceMs: 0
+})
 vm.runInContext(code, context)
 
 const setup = () => {
@@ -89,4 +101,52 @@ test('startup failure publishes the paused queued message for recovery', async (
   assert.equal(updates.at(-1).sent, null)
   assert.deepEqual(updates.at(-1).pending, ['first'])
   assert.equal(updates.at(-1).draining, false)
+})
+
+test('a preceding result keeps SDK-queued steering alive until its own result', async () => {
+  const instance = new context.Harness()
+  const control = { getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }) }
+  const state = {
+    id: 'session',
+    query: control,
+    active: true,
+    stopped: false,
+    failed: false,
+    partialMessages: new Map(),
+    backgroundTaskIds: new Set(),
+    queuedMessages: [],
+    queuedMessagesPaused: false,
+    queueDrainInProgress: false,
+    pendingApprovals: [],
+    pendingUserInputs: []
+  }
+  const updates = []
+  instance.emitUpdate = (state, completed = false) =>
+    updates.push({ active: state.active, completed })
+  instance.queueUpdate = () => {}
+  instance.refreshSessionMetadata = async () => {}
+  const result = {
+    type: 'result',
+    subtype: 'success',
+    terminal_reason: 'completed',
+    usage: {
+      input_tokens: 1,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: 1
+    }
+  }
+  assert.equal(
+    await instance.handleQueryEvent(state, control, { ...result, queued_turn_count: 1 }),
+    false
+  )
+  assert.equal(state.active, true)
+  assert.equal(state.waitingForSessionIdle, false)
+  assert.deepEqual(updates, [{ active: true, completed: false }])
+  assert.equal(
+    await instance.handleQueryEvent(state, control, { ...result, queued_turn_count: 0 }),
+    true
+  )
+  assert.equal(state.active, false)
+  assert.deepEqual(updates.at(-1), { active: false, completed: true })
 })

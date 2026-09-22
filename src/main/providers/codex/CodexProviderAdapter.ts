@@ -2029,7 +2029,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
         { cursor: null, direction: 'older', limit: rendererChatUpdateTurnLimit },
         true
       )
-      return this.probeChatWriteAccess(detail)
+      const checked = await this.probeChatWriteAccess(detail)
+      // The probe can outlive transcript updates. Publish ownership with a fresh revision
+      // so the renderer cannot discard the notice as an older history snapshot.
+      this.emitChatUpdated(chatId)
+      const latest = this.getCachedChatDetail(chatId) ?? detail
+      return {
+        ...latest,
+        writeAccess: checked.writeAccess,
+        writeAccessReason: checked.writeAccessReason,
+        capabilities: checked.capabilities
+      }
     })
 
   private loadLegacyThread = async (
@@ -2064,6 +2074,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (isLegacyCodexHistory(this.threads.get(detail.id)?.historyMode)) return detail
 
     const hasLocallyOwnedTurn =
+      this.client.ownsThread(detail.id) ||
       this.pendingTurnStarts.has(detail.id) ||
       this.pendingTurnIds.has(detail.id) ||
       this.activeTurnIds.has(detail.id)
@@ -3499,10 +3510,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.emitChatUpdated(chatId)
 
-    void this.processWaitingSteeringMessage(chatId, steeringMessage.id).catch((error: unknown) => {
+    await this.processWaitingSteeringMessage(chatId, steeringMessage.id).catch((error: unknown) => {
       console.error(`Unable to process a steering message for Codex thread ${chatId}`, error)
       if (this.removeSteeringMessage(chatId, steeringMessage.id)) this.emitChatUpdated(chatId)
       if (!this.getActiveTurnId(chatId)) this.scheduleQueueDrain(chatId)
+      throw error
     })
 
     const detail = this.getCachedChatDetail(chatId)
@@ -3564,7 +3576,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
               this.updateSteeringMessageTurn(chatId, steeringMessageId, acceptedTurnId) ??
               steeringMessageId
           }
-          this.activeTurnIds.set(chatId, acceptedTurnId)
+          // Notifications can finish this turn (and start its successor) before the RPC
+          // acknowledgment arrives. An acknowledgment must not resurrect the old turn.
+          const acceptedTurn = this.threads
+            .get(chatId)
+            ?.turns.find((turn) => turn.id === acceptedTurnId)
+          const currentTurnId = this.getActiveTurnId(chatId)
+          if (
+            (!acceptedTurn || !isCodexTurnTerminal(acceptedTurn)) &&
+            (!currentTurnId || currentTurnId === expectedTurnId || currentTurnId === acceptedTurnId)
+          ) {
+            this.activeTurnIds.set(chatId, acceptedTurnId)
+          }
           break
         } catch (error) {
           const serverTurnId = didRetryWithServerTurnId ? null : getFoundActiveTurnId(error)

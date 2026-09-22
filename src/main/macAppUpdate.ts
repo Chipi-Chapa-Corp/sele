@@ -215,10 +215,11 @@ async function validateBundle(bundle: string, version: string): Promise<void> {
   ) {
     throw new Error('Downloaded application identity or version does not match the release.')
   }
+  // -verify_arch consumes all following arguments as architecture names.
   await exec('/usr/bin/lipo', [
+    join(bundle, 'Contents/MacOS/Sele'),
     '-verify_arch',
-    process.arch === 'arm64' ? 'arm64' : 'x86_64',
-    join(bundle, 'Contents/MacOS/Sele')
+    process.arch === 'arm64' ? 'arm64' : 'x86_64'
   ])
   // ditto --noqtn avoids adding quarantine. Clear any attribute already present in the archive.
   // xattr -dr succeeds for bundles without the attribute; any real failure aborts staging.

@@ -1931,7 +1931,7 @@ const renderChatItems = (
               content,
               attachments,
               kind: 'steering',
-              label: 'Steering with',
+              label: 'Steered with',
               createdAt: toMilliseconds(startedAt),
               model: turn.model ?? null
             })

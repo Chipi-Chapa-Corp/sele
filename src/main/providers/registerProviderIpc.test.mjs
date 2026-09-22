@@ -24,15 +24,16 @@ const bundled = await build({
         }))
         build.onLoad({ filter: /.*/, namespace: 'test' }, ({ path }) => ({
           contents: path.endsWith('logging')
-            ? `export const handleLoggedIpc = () => {};
+            ? `export const handleLoggedIpc = (channel, handler) => globalThis.harness.handlers.set(channel, handler);
              export const logDiagnostic = (...args) => globalThis.harness.logs.push(args);`
             : `export const providerApi = {
-               onChatUpdated: listener => { globalThis.harness.publish = listener }
+               onChatUpdated: listener => { globalThis.harness.publish = listener },
+               getChat: (...args) => globalThis.harness.getChat(...args)
              };
              export const getChatUpdateSummary = () => {};
              export const getProviderChatCursorWindow = () => {};
              export const getProviderChatItemWindow = () => {};
-             export const getProviderChatWindow = () => {};`
+             export const getProviderChatWindow = (...args) => globalThis.harness.getChatWindow(...args);`
         }))
       }
     }
@@ -49,7 +50,7 @@ const setup = () => {
     isDestroyed: () => false,
     send: (channel, event) => sent.push({ channel, event })
   })
-  const harness = { logs: [], publish: null }
+  const harness = { logs: [], publish: null, handlers: new Map() }
   const module = { exports: {} }
   vm.runInNewContext(bundled.outputFiles[0].text, {
     module,
@@ -157,4 +158,39 @@ test('stopping the subscription, destroying the window, and shutdown cancel diag
     h.expire()
     assert.equal(h.harness.logs.length, 0)
   }
+})
+
+test('opening Codex through renderer IPC checks access before any send or edit', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.getChat = async (providerId, chatId) => {
+    calls.push([providerId, chatId])
+    return {
+      id: chatId,
+      revision: 1,
+      items: [],
+      writeAccess: 'readOnly',
+      writeAccessReason: 'externalOwner',
+      capabilities: { editMessages: false, activeMessages: false }
+    }
+  }
+  h.harness.getChatWindow = () => assert.fail('opening Codex must not bypass its writer check')
+  const detail = await h.harness.handlers.get(channels.getChat)({}, 'codex', 'external-chat')
+  assert.deepEqual(calls, [['codex', 'external-chat']])
+  assert.equal(detail.writeAccess, 'readOnly')
+  assert.equal(detail.writeAccessReason, 'externalOwner')
+  assert.equal(detail.capabilities.editMessages, false)
+})
+
+test('other providers retain bounded opening reads', async () => {
+  const h = setup()
+  h.harness.getChat = () => assert.fail('must preserve paginated reads for other providers')
+  h.harness.getChatWindow = async (providerId, chatId, window) => {
+    assert.equal(providerId, 'claude')
+    assert.equal(window.startIndex, null)
+    assert.ok(window.limit > 0)
+    return { id: chatId, items: [] }
+  }
+  const detail = await h.harness.handlers.get(channels.getChat)({}, 'claude', 'chat')
+  assert.equal(detail.id, 'chat')
 })

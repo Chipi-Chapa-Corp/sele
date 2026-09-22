@@ -50,3 +50,92 @@ test('steering reaches an active turn even after a completed final-tagged messag
   await adapter.steerActiveChat('chat', 'The audit is done')
   assert.deepEqual(processed, [['chat', 'steer']])
 })
+
+const createAdapter = (methodNames, globals = {}) => {
+  const methods = declaration.members.filter((node) =>
+    methodNames.includes(node.name?.getText(source))
+  )
+  return vm.runInNewContext(
+    ts.transpile(
+      `class Adapter { ${methods.map((method) => method.getText(source)).join('\n')} }; new Adapter()`,
+      {
+        target: ts.ScriptTarget.ES2022
+      }
+    ),
+    globals
+  )
+}
+
+test('steering waits for delivery and reports transport failure to the caller', async () => {
+  const failure = new Error('Connection lost')
+  let rejectDelivery
+  const delivery = new Promise((resolve, reject) => {
+    rejectDelivery = reject
+  })
+  let removed = false
+  const adapter = createAdapter(['steerActiveChat'], { console: { error() {} } })
+  Object.assign(adapter, {
+    ensureChatTailLoaded: async () => {},
+    getActiveTurnId: () => 'turn',
+    hasPendingSteeringMessage: () => false,
+    addWaitingSteeringMessage: () => ({ id: 'steer' }),
+    emitChatUpdated() {},
+    processWaitingSteeringMessage: () => delivery,
+    removeSteeringMessage: () => {
+      removed = true
+      return true
+    },
+    getCachedChatDetail: () => ({ id: 'chat' })
+  })
+  let settled = false
+  const send = adapter.steerActiveChat('chat', 'Change direction')
+  void send.then(
+    () => {
+      settled = true
+    },
+    () => {
+      settled = true
+    }
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(settled, false)
+  rejectDelivery(failure)
+  await assert.rejects(send, (error) => error === failure)
+  assert.equal(removed, true)
+})
+
+for (const successor of [null, 'next-turn']) {
+  test(`a late steering acknowledgment cannot resurrect a completed turn (successor: ${successor})`, async () => {
+    let acknowledge
+    const response = new Promise((resolve) => {
+      acknowledge = resolve
+    })
+    const message = {
+      id: 'steer',
+      itemId: 'client-id',
+      turnId: 'turn',
+      text: 'Change direction',
+      status: 'waiting'
+    }
+    const turn = { id: 'turn', status: 'inProgress' }
+    const adapter = createAdapter(['processWaitingSteeringMessage', 'getActiveTurnId'], {
+      createUserInput: (text) => [{ type: 'text', text }],
+      getSteerResponseTurnId: (response) => response.turnId,
+      isCodexTurnTerminal: (turn) => turn.status === 'completed'
+    })
+    Object.assign(adapter, {
+      threads: new Map([['chat', { turns: [turn] }]]),
+      activeTurnIds: new Map([['chat', 'turn']]),
+      getSteeringMessage: () => message,
+      markWaitingSteeringMessagePending: () => ({ ...message, status: 'pending' }),
+      client: { request: () => response }
+    })
+    const send = adapter.processWaitingSteeringMessage('chat', 'steer')
+    turn.status = 'completed'
+    adapter.activeTurnIds.delete('chat')
+    if (successor) adapter.activeTurnIds.set('chat', successor)
+    acknowledge({ turnId: 'turn' })
+    await send
+    assert.equal(adapter.getActiveTurnId('chat'), successor)
+  })
+}

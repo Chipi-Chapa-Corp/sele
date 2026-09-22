@@ -209,6 +209,7 @@ test('marks an inline follow-up as a steering message', () => {
   )
 
   assert.equal(steeringMessage?.kind, 'steering')
+  assert.equal(steeringMessage?.label, 'Steered with')
 })
 
 test('promotes the final response only after the turn finishes', () => {
