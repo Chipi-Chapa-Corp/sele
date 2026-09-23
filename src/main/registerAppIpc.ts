@@ -468,14 +468,23 @@ const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
 const getImageMimeType = (imagePath: string): string | null =>
   imageMimeTypes[extname(imagePath).toLocaleLowerCase()] ?? null
 
-const getImageFile = async (imagePath: string, maxBytes: number): Promise<AppLocalImage | null> => {
-  const mimeType = getImageMimeType(imagePath)
-  if (!mimeType) return null
+const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 
+const getLocalImageMimeType = (imagePath: string, file: Buffer): string | null => {
+  const knownMimeType = getImageMimeType(imagePath)
+  if (knownMimeType) return knownMimeType
+
+  // Some tools save PNGs under names such as MakeHuman's `.thumb` files.
+  return file.subarray(0, pngSignature.length).equals(pngSignature) ? 'image/png' : null
+}
+
+const getImageFile = async (imagePath: string, maxBytes: number): Promise<AppLocalImage | null> => {
   const imageStat = await stat(imagePath)
   if (!imageStat.isFile() || imageStat.size > maxBytes) return null
 
   const file = await readFile(imagePath)
+  const mimeType = getLocalImageMimeType(imagePath, file)
+  if (!mimeType) return null
   return {
     data: file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer,
     mimeType,
@@ -2183,9 +2192,6 @@ const getTargetLocalImage = async (
   path: string,
   relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
 ): Promise<AppLocalImage> => {
-  const mimeType = getImageMimeType(path)
-  if (!mimeType) throw new Error('Unable to load this image.')
-
   let commandCwd = cwd ?? '/'
   let imagePath = path
   if (!isAbsolute(imagePath)) {
@@ -2219,6 +2225,8 @@ const getTargetLocalImage = async (
   if (!Number.isSafeInteger(size) || size < 0 || file.byteLength !== size) {
     throw new Error('Invalid remote image response')
   }
+  const mimeType = getLocalImageMimeType(path, file)
+  if (!mimeType) throw new Error('Unable to load this image.')
 
   return {
     data: file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer,

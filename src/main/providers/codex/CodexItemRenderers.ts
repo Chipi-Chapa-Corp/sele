@@ -1213,7 +1213,7 @@ const getViewedImages = (item: CodexThreadItem): ProviderToolImage[] => {
   const path = pathCandidates
     .find(
       (candidate): candidate is string =>
-        typeof candidate === 'string' && isAbsoluteGeneratedImagePath(candidate.trim())
+        typeof candidate === 'string' && /^(?:[A-Za-z]:[\\/]|\/)/.test(candidate.trim())
     )
     ?.trim()
   const dataUrls = new Set<string>()

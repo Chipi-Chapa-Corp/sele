@@ -87,6 +87,22 @@ test('tool output preserves non-JSON text without warning and unwraps JSON envel
   assert.equal(warn.mock.callCount(), 0)
 })
 
+test('renders viewed images with nonstandard filename extensions as previews', () => {
+  const path = '/tmp/makehuman/hair/long01.thumb'
+  const items = getChatItems([
+    {
+      id: 'turn',
+      status: 'completed',
+      items: [{ type: 'imageView', id: 'image', path, status: 'completed' }]
+    }
+  ])
+  const tool = items.find((item) => item.type === 'working')?.items[0]
+
+  assert.equal(tool?.label, 'Viewed image')
+  assert.deepEqual(tool?.images, [{ path, name: 'long01.thumb' }])
+  assert.equal(tool?.rawOutput, null)
+})
+
 // Test fixtures intentionally omit production-only Codex fields.
 const renderFailedWorkingStep = (codexErrorInfo) => {
   const items = getChatItems([
