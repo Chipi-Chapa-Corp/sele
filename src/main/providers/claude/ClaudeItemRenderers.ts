@@ -4,6 +4,7 @@ import {
   type TranscriptRenderWindow
 } from '../transcriptProjection/turnWindow.ts'
 import type { ProviderChatTurnWindow } from '../ProviderAdapter'
+import { isImageSizingMetadata } from '../imageSizingMetadata.ts'
 import { ProjectionJournal } from '../transcriptProjection/ProjectionJournal.ts'
 import {
   getWorkingItemPayloadCharacterCount,
@@ -335,6 +336,7 @@ export const isClaudeInternalUserMessage = (message: ClaudeTranscriptMessage): b
   const text = getStandaloneUserText(message)
   return (
     text === interruptedRequestMarker ||
+    (text != null && isImageSizingMetadata(text)) ||
     (text != null && localCommandOutputPattern.test(text)) ||
     (text != null && taskNotificationPattern.test(text)) ||
     isClaudeSkillContextMessage(message)

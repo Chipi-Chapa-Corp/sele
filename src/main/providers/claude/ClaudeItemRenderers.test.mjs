@@ -137,6 +137,51 @@ test('background task notifications stay hidden in history and live projection',
   }
 })
 
+test('image sizing hints without SDK metadata stay hidden and do not split working groups', () => {
+  const text =
+    '[Image: original 2048x2048, displayed at 2000x2000. Multiply coordinates by 1.02 to map to original image.]'
+  for (const active of [true, false]) {
+    for (const content of [text, [{ type: 'text', text }]]) {
+      const options = { active, stopped: false }
+      // History loaded through the SDK may omit the original isMeta flag.
+      const metadata = { ...userPrompt, uuid: 'image-metadata', message: { content } }
+      assert.equal(isClaudeInternalUserMessage(metadata), true)
+      const source = [userPrompt, skillToolUse]
+      const expected = renderClaudeChatItems([...source, skillToolResult], options)
+      assert.deepEqual(
+        renderClaudeChatItems([...source, metadata, skillToolResult], options),
+        expected
+      )
+      assert.equal(expected.filter((item) => item.type === 'working').length, 1)
+      const projection = new ClaudeTranscriptProjection()
+      const reference = new ClaudeTranscriptProjection()
+      projection.read(source, [], options)
+      assert.deepEqual(
+        projection.read(source, [metadata, skillToolResult], options),
+        reference.read([...source, skillToolResult], [], options)
+      )
+      const updated = [...source, metadata, skillToolResult]
+      projection.acceptSource(source, updated, source.length)
+      assert.deepEqual(
+        projection.read(updated, [], options),
+        reference.read([...source, skillToolResult], [], options)
+      )
+    }
+  }
+  assert.equal(
+    isClaudeInternalUserMessage({ ...userPrompt, message: { content: `Explain ${text}` } }),
+    false
+  )
+  assert.equal(
+    isClaudeInternalUserMessage({
+      ...userPrompt,
+      message: { content: text },
+      attachments: [{ kind: 'image', path: '/tmp/image.png' }]
+    }),
+    false
+  )
+})
+
 test('mentions of task notifications and attached messages remain visible', () => {
   for (const text of [
     'What does <task-notification> mean?',

@@ -1,4 +1,5 @@
 import type { ProviderChatTurnWindow } from '../ProviderAdapter'
+import { isImageSizingMetadata } from '../imageSizingMetadata.ts'
 import type { CodexGoalPrompt } from './CodexGoalPrompts.ts'
 import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
 import { getBrowserToolLabel } from './CodexBrowserToolPresentation.ts'
@@ -1556,13 +1557,6 @@ const getUserInputText = (input: CodexUserInput): string => {
   if (input.type === 'mention') return `@${input.name}`
   return ''
 }
-
-// Codex can record image sizing hints as synthetic user messages after tool output.
-// Ignore only standalone hints so they don't close the current working segment.
-const isImageSizingMetadata = (content: string): boolean =>
-  /^(?:\s*\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by \d+(?:\.\d+)? to map to original image\.\]\s*)+$/.test(
-    content
-  )
 
 export const getUserInputContent = (inputs: CodexUserInput[]): string => {
   const text = inputs
