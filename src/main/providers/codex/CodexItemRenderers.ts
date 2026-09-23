@@ -1564,7 +1564,7 @@ const isImageSizingMetadata = (content: string): boolean =>
     content
   )
 
-const getUserInputContent = (inputs: CodexUserInput[]): string => {
+export const getUserInputContent = (inputs: CodexUserInput[]): string => {
   const text = inputs
     .filter((input): input is Extract<CodexUserInput, { type: 'text' }> => input.type === 'text')
     .map(getUserInputText)
@@ -1934,7 +1934,7 @@ const renderChatItems = (
             chatItems.push({
               type: 'message',
               id: itemId,
-              editTargetId: null,
+              editTargetId: turn.local === true ? null : itemId,
               role: 'user',
               content,
               attachments,

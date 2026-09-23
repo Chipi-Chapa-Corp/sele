@@ -1,3 +1,4 @@
+import { getMessageModelLabel } from '../messageModelLabel'
 import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplayLabel'
 import { createPortal } from 'react-dom'
 import { Marked } from 'marked'
@@ -128,6 +129,7 @@ type ChatDetailItemProps = {
   hasNextWorkingStep?: boolean
   item: ProviderChatItem
   messagePinned?: boolean
+  resolvedModelIdsById?: ReadonlyMap<ProviderModelId, ProviderModelId>
   modelLabelsById?: ReadonlyMap<ProviderModelId, string>
   onDeletePendingMessage?: (message: ProviderPendingMessage) => void
   onEditPendingMessage?: (message: ProviderPendingMessage) => void
@@ -202,6 +204,7 @@ const areChatDetailItemPropsEqual = (
   first.hasNextWorkingStep === second.hasNextWorkingStep &&
   first.messagePinned === second.messagePinned &&
   first.modelLabelsById === second.modelLabelsById &&
+  first.resolvedModelIdsById === second.resolvedModelIdsById &&
   first.onDeletePendingMessage === second.onDeletePendingMessage &&
   first.onEditPendingMessage === second.onEditPendingMessage &&
   first.onSteerPendingMessage === second.onSteerPendingMessage &&
@@ -1509,20 +1512,6 @@ const copyTextToClipboard = async (content: string): Promise<void> => {
   }
 }
 
-const formatModelLabel = (label: string): string => label.replace(/-/g, ' ')
-
-const getMessageModelLabel = (
-  message: ProviderMessage,
-  selectedModelId: ProviderModelId | undefined,
-  modelLabelsById: ReadonlyMap<ProviderModelId, string> | undefined
-): string | null => {
-  const messageModel = message.model?.trim()
-  const selectedModel = selectedModelId?.trim()
-  if (!messageModel || !selectedModel || messageModel === selectedModel) return null
-
-  return modelLabelsById?.get(messageModel) ?? formatModelLabel(messageModel)
-}
-
 const MessageDate: React.FC<{
   timestamp: number | null | undefined
   markerSide: 'left' | 'right'
@@ -2288,6 +2277,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   item,
   messagePinned = false,
   modelLabelsById,
+  resolvedModelIdsById,
   onDeletePendingMessage,
   onEditPendingMessage,
   onSteerPendingMessage,
@@ -2369,7 +2359,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       (role === 'user' || !streaming)
     const canForkMessage = !pending && role === 'assistant' && !streaming && Boolean(onForkMessage)
     const timestamp = item.createdAt
-    const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById)
+    const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById, resolvedModelIdsById)
     const attachments = item.attachments ?? []
     const messagePresentation =
       role === 'user'

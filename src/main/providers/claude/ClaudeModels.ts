@@ -60,6 +60,7 @@ export const mapClaudeModel = (model: ModelInfo, index: number): ProviderModel =
 
   return {
     id: model.value,
+    resolvedModelId: isAuto ? undefined : model.resolvedModel,
     label: isAuto ? 'Auto' : canonicalName,
     usageScope: isAuto ? undefined : getClaudeModelUsageScope(model),
     description: isAuto

@@ -3882,6 +3882,12 @@ export const useWorkspaceController = () => {
   const savedGitCommitModelOption = savedGitCommitModel
     ? displayedGitSettingsModels.find((candidateModel) => candidateModel.id === savedGitCommitModel)
     : undefined
+  const resolvedModelIdsById = useMemo(
+    () => new Map<ProviderModelId, ProviderModelId>(
+      models.flatMap((model) => model.resolvedModelId ? [[model.id, model.resolvedModelId]] : [])
+    ),
+    [models]
+  )
   const modelLabelsById = useMemo(
     () =>
       new Map<ProviderModelId, string>(
@@ -5467,6 +5473,7 @@ export const useWorkspaceController = () => {
                 messagePinned={item.type === 'message' && pinnedChatMessageIds.has(item.id)}
                 cwd={changesCwd}
                 modelLabelsById={modelLabelsById}
+                resolvedModelIdsById={resolvedModelIdsById}
                 onDeletePendingMessage={handleDeletePendingMessage}
                 onEditPendingMessage={handleEditPendingMessage}
                 onSteerPendingMessage={
@@ -5561,6 +5568,7 @@ export const useWorkspaceController = () => {
             key={item.id}
             cwd={changesCwd}
             modelLabelsById={modelLabelsById}
+                resolvedModelIdsById={resolvedModelIdsById}
             onLoadWorkingStep={handleLoadSubagentWorkingStep}
             onLoadWorkingItem={handleLoadSubagentWorkingItem}
             onLoadWorkingToolPage={handleLoadSubagentWorkingToolPage}

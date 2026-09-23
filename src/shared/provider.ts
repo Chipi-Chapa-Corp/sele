@@ -59,6 +59,8 @@ export type ProviderServiceTierOption = {
 }
 
 export type ProviderModel = {
+  /** Concrete model behind a provider alias, when supplied by its model catalog. */
+  resolvedModelId?: ProviderModelId
   id: ProviderModelId
   label: string
   description: string

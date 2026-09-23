@@ -88,6 +88,8 @@ import {
   createCodexFileAttachmentInput,
   CodexTranscriptProjection,
   getChatItems,
+  getUserInputContent,
+  hasCodexUserInputAttachments,
   type CodexThreadItem,
   type CodexTurn,
   type CodexUserInput
@@ -373,7 +375,7 @@ type CodexTurnAccessOptions = {
 
 type CodexTurnModelOptions = {
   model: ProviderTurnOptions['model']
-  reasoningEffort: ProviderTurnOptions['reasoningEffort']
+  effort: ProviderTurnOptions['reasoningEffort']
   serviceTier: ProviderTurnOptions['serviceTier']
 }
 
@@ -1185,7 +1187,7 @@ const getThreadModelOptions = (options?: ProviderTurnOptions): CodexThreadModelO
 
 const getTurnModelOptions = (options?: ProviderTurnOptions): CodexTurnModelOptions => ({
   model: options?.model ?? 'gpt-5.5',
-  reasoningEffort: options?.reasoningEffort ?? 'xhigh',
+  effort: options?.reasoningEffort ?? 'xhigh',
   serviceTier: options?.serviceTier ?? null
 })
 
@@ -3265,7 +3267,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private editMessageInContext = async (
     chatId: string,
-    targetTurnId: string,
+    editTargetId: string,
     message: string,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
@@ -3274,6 +3276,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (!text && !hasAttachmentInput(options)) {
       throw new Error('Cannot edit a message to empty content')
     }
+
+    const separatorIndex = editTargetId.indexOf(':')
+    const targetTurnId = separatorIndex < 0 ? editTargetId : editTargetId.slice(0, separatorIndex)
+    const targetItemId = separatorIndex < 0 ? null : editTargetId.slice(separatorIndex + 1)
 
     let thread = await this.resumeThread(
       chatId,
@@ -3284,6 +3290,24 @@ export class CodexProviderAdapter implements ProviderAdapter {
     assertSupportedCodexHistory(thread)
     await this.stopActiveTurn(chatId, { startQueuedTurn: false })
     thread = this.threads.get(chatId) ?? thread
+
+    const targetTurn = thread.turns.find((turn) => turn.id === targetTurnId)
+    const userMessages =
+      targetTurn?.items.filter(
+        (item): item is CodexThreadItem & { content: CodexUserInput[] } =>
+          item.type === 'userMessage' && Array.isArray(item.content)
+      ) ?? []
+    const steeringIndex = targetItemId
+      ? userMessages.findIndex((item) => item.id === targetItemId)
+      : -1
+    if (targetItemId && steeringIndex < 1) {
+      throw new Error('Steering message cannot be edited safely because its history is unavailable')
+    }
+    const originalInput = steeringIndex >= 1 ? userMessages[0].content : null
+    const precedingSteeringMessages = steeringIndex >= 1 ? userMessages.slice(1, steeringIndex) : []
+    if (precedingSteeringMessages.some((item) => hasCodexUserInputAttachments(item.content))) {
+      throw new Error('Steering message cannot be edited safely with earlier attachments')
+    }
 
     const previousTurnCatalog = this.filterRolledBackTurns(
       chatId,
@@ -3369,7 +3393,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
 
     this.pausedQueuedTurnThreads.delete(chatId)
-    const pendingTurn = await this.addSubmittedPendingTurn(chatId, text, options)
+    const pendingTurn = await this.addSubmittedPendingTurn(
+      chatId,
+      originalInput ? getUserInputContent(originalInput) : text,
+      options,
+      undefined,
+      originalInput ?? undefined
+    )
     if (pendingTurn) this.emitChatUpdated(chatId)
 
     try {
@@ -3377,7 +3407,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
         this.client.request<TurnStartResponse>('turn/start', {
           threadId: chatId,
           clientUserMessageId: pendingTurn.id,
-          input: createUserInput(text, options?.images, options?.files, options?.skills),
+          input:
+            originalInput ??
+            createUserInput(text, options?.images, options?.files, options?.skills),
           ...getTurnModelOptions(options),
           ...getTurnAccessOptions(options)
         })
@@ -3386,6 +3418,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.removePendingTurn(chatId, pendingTurn.id)
       throw error
     }
+
+    const replayOptions = options
+      ? { ...options, images: undefined, files: undefined, skills: undefined }
+      : undefined
+    for (const precedingMessage of precedingSteeringMessages) {
+      await this.steerActiveChat(
+        chatId,
+        getUserInputContent(precedingMessage.content),
+        replayOptions
+      )
+    }
+    if (originalInput) await this.steerActiveChat(chatId, text, options)
 
     const detail = this.getCachedChatDetail(chatId)
     if (!detail) throw new Error('Unable to edit message')
@@ -4331,6 +4375,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
         threadId,
         config: getRecommendedPluginsConfig(options),
         excludeTurns: true,
+        ...(options?.model ? { model: options.model } : {}),
+        ...(options?.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
         ...getThreadAccessOptions(options)
       })
       this.externallyOwnedThreadIds.delete(threadId)
@@ -4577,7 +4623,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private createPendingTurn = (
     turnId: string,
     text: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    input?: CodexUserInput[]
   ): CodexTurn => ({
     id: turnId,
     local: true,
@@ -4591,7 +4638,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         id: `${turnId}:user`,
         clientId: turnId,
         local: true,
-        content: createUserInput(text, options?.images, options?.files, options?.skills)
+        content: input ?? createUserInput(text, options?.images, options?.files, options?.skills)
       }
     ]
   })
@@ -4600,7 +4647,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     threadId: string,
     text: string,
     options?: ProviderTurnOptions,
-    pendingTurnId: string = randomUUID()
+    pendingTurnId: string = randomUUID(),
+    input?: CodexUserInput[]
   ): Promise<CodexTurn> => {
     if (!this.threads.has(threadId)) throw new Error('Unable to record pending Codex message')
     if (this.pendingTurnIds.has(threadId) || this.pendingTurnStarts.has(threadId)) {
@@ -4610,9 +4658,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     await saveCodexSubmittedMessage(
       threadId,
       pendingTurnId,
-      createUserInput(text, options?.images, options?.files, options?.skills)
+      input ?? createUserInput(text, options?.images, options?.files, options?.skills)
     )
-    const pendingTurn = this.addPendingTurnWithId(threadId, pendingTurnId, text, options)
+    const pendingTurn = this.addPendingTurnWithId(threadId, pendingTurnId, text, options, input)
     if (!pendingTurn) throw new Error('Unable to add pending Codex message')
     return pendingTurn
   }
@@ -4621,13 +4669,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
     threadId: string,
     pendingTurnId: string,
     text: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    input?: CodexUserInput[]
   ): CodexTurn | null => {
     const thread = this.threads.get(threadId)
     if (!thread) return null
 
     const previousPendingTurnId = this.pendingTurnIds.get(threadId)
-    const pendingTurn = this.createPendingTurn(pendingTurnId, text, options)
+    const pendingTurn = this.createPendingTurn(pendingTurnId, text, options, input)
     this.pendingTurnIds.set(threadId, pendingTurnId)
 
     this.cacheThread({
