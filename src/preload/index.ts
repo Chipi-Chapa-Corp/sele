@@ -140,6 +140,14 @@ const providerApi: ProviderRendererApi = {
       loginId,
       options
     ),
+  submitAccountLoginCode: (providerId, loginId, code, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.submitAccountLoginCode,
+      providerId,
+      loginId,
+      code,
+      options
+    ),
   useAccount: (providerId, accountId, options) =>
     ipcRenderer.invoke(providerIpcChannels.useAccount, providerId, accountId, options),
   deleteAccount: (providerId, accountId, options) =>

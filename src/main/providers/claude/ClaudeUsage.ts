@@ -8,6 +8,47 @@ type ClaudeRateLimitValue = {
 
 const weeklyWindowMinutes = 10_080
 
+/** Fallback for CLI versions that return null after a successful usage request. */
+export const fetchClaudeRateLimits = async (
+  accessToken: string,
+  cliVersion: string,
+  fetchFn: typeof fetch = fetch
+): Promise<NonNullable<SDKControlGetUsageResponse['rate_limits']>> => {
+  let response: Response
+  try {
+    response = await fetchFn('https://api.anthropic.com/api/oauth/usage', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'anthropic-beta': 'oauth-2025-04-20',
+        'User-Agent': `claude-code/${cliVersion}`
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000)
+    })
+  } catch {
+    throw new Error('Unable to reach Claude usage. Please try again.')
+  }
+  if (!response.ok)
+    throw new Error(`Claude usage request failed (HTTP ${response.status}). Please try again.`)
+  let limits: SDKControlGetUsageResponse['rate_limits']
+  try {
+    limits = await response.json()
+  } catch {
+    throw new Error('Claude returned an unreadable usage response. Please try again.')
+  }
+  if (
+    !limits ||
+    typeof limits !== 'object' ||
+    Array.isArray(limits) ||
+    !['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'extra_usage'].some(
+      (key) => key in limits
+    )
+  )
+    throw new Error('Claude did not return usage limits. Please try again.')
+  return limits
+}
+
 const getScopedLimitId = (displayName: string, index: number): string => {
   const normalizedName = displayName
     .trim()

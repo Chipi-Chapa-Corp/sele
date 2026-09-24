@@ -50,6 +50,7 @@ import {
   useCodexAccount as selectCodexAccount
 } from './codex/CodexAccounts'
 import { ClaudeProviderAdapter } from './claude/ClaudeProviderAdapter'
+import { claudeAccounts } from './claude/ClaudeAccounts'
 import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
@@ -66,10 +67,11 @@ import {
 } from './providerUpdate'
 
 const codexAdapter = new CodexProviderAdapter()
+const claudeAdapter = new ClaudeProviderAdapter()
 
 const adapters: Record<ProviderId, ProviderAdapter> = {
   codex: codexAdapter,
-  claude: new ClaudeProviderAdapter(),
+  claude: claudeAdapter,
   copilot: new CopilotProviderAdapter(),
   opencode: new OpenCodeProviderAdapter()
 }
@@ -449,8 +451,11 @@ export const providerApi: ProviderApi = {
   getAccounts: (providerId, options) =>
     providerId === 'codex'
       ? getCodexAccounts(options?.container)
-      : Promise.resolve(getUnavailableAccountConfiguration(providerId)),
+      : providerId === 'claude'
+        ? claudeAccounts.get(options)
+        : Promise.resolve(getUnavailableAccountConfiguration(providerId)),
   createAccount: async (providerId, name, options) => {
+    if (providerId === 'claude') return claudeAccounts.create(name, options)
     if (providerId !== 'codex') {
       throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
     }
@@ -459,6 +464,23 @@ export const providerApi: ProviderApi = {
     return creation
   },
   completeAccountCreation: async (providerId, accountId, loginId, options) => {
+    if (providerId === 'claude') {
+      try {
+        await claudeAccounts.waitForLogin(accountId, loginId, options)
+        const configuration = await claudeAdapter.changeAccount(options?.container, () =>
+          claudeAccounts.complete(accountId, options)
+        )
+        return { success: true, error: null, configuration }
+      } catch (error) {
+        console.error('Unable to complete Claude account sign-in.', error)
+        const configuration = await claudeAccounts.cancel(accountId, options)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Claude sign-in failed.',
+          configuration
+        }
+      }
+    }
     if (providerId !== 'codex') {
       throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
     }
@@ -494,6 +516,7 @@ export const providerApi: ProviderApi = {
     }
   },
   cancelAccountCreation: async (providerId, accountId, loginId, options) => {
+    if (providerId === 'claude') return claudeAccounts.cancel(accountId, options)
     if (providerId !== 'codex') {
       throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
     }
@@ -506,12 +529,25 @@ export const providerApi: ProviderApi = {
     return configuration
   },
   useAccount: async (providerId, accountId, options) => {
+    if (providerId === 'claude')
+      return claudeAdapter.changeAccount(options?.container, () =>
+        claudeAccounts.select(accountId, options)
+      )
     if (providerId !== 'codex') return getUnavailableAccountConfiguration(providerId)
     const configuration = await selectCodexAccount(accountId, options?.container)
     codexAdapter.resetClientsForContainer(options?.container)
     return configuration
   },
   deleteAccount: async (providerId, accountId, options) => {
+    if (providerId === 'claude') {
+      const previous = await claudeAccounts.get(options)
+      if (previous.accounts.some((account) => account.id === accountId && account.active)) {
+        return claudeAdapter.changeAccount(options?.container, () =>
+          claudeAccounts.remove(accountId, options)
+        )
+      }
+      return claudeAccounts.remove(accountId, options)
+    }
     if (providerId !== 'codex') return getUnavailableAccountConfiguration(providerId)
     const previous = await getCodexAccounts(options?.container)
     const deletedAccountWasActive = previous.accounts.some(
@@ -520,6 +556,10 @@ export const providerApi: ProviderApi = {
     const configuration = await deleteCodexAccount(accountId, options?.container)
     if (deletedAccountWasActive) codexAdapter.resetClientsForContainer(options?.container)
     return configuration
+  },
+  submitAccountLoginCode: async (providerId, loginId, code, options) => {
+    if (providerId !== 'claude') throw new Error('This provider does not accept a sign-in code.')
+    await claudeAccounts.submitCode(loginId, code, options)
   },
   getUpdateAvailability: (providerId, options) =>
     adapters[providerId].getUpdateAvailability(options),

@@ -90,6 +90,18 @@ launchctl setenv SELE_OPENCODE_PATH "$(command -v opencode)"
 
 Authenticate Claude Code with `claude auth login` before using the Claude provider.
 
+With Claude Code 2.1.281 or newer, use **Settings → Providers → Claude → Accounts** to
+add and switch subscription accounts on Linux, macOS, or Windows. Accounts share the
+same local chats, settings, plugins, and memory. Sele selects only the credential store
+using `CLAUDE_SECURESTORAGE_CONFIG_DIR`; Claude stores credentials in Keychain on macOS
+and account-specific files elsewhere. **Default** uses your existing CLI authentication.
+Adding an account leaves the current account selected until sign-in succeeds. Switching
+stops running Claude turns in that environment; existing chats can then resume with the
+selected account. If browser authorization returns a code, paste it into the account dialog.
+Usage lookups use a separate per-account cache so Claude cannot reuse another account's
+limits. This background lookup does not create chats or change the shared chat configuration.
+Codex account switching remains Linux-only.
+
 For Copilot, start `copilot` once and use `/login` if the CLI is not already authenticated.
 
 For OpenCode, connect at least one model provider with `opencode auth login`. Sele runs a

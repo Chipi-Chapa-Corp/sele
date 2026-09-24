@@ -86,7 +86,16 @@ import type { ChatPlanData } from './components/ChatPlan'
 import type { DropdownOption } from './components/Dropdown'
 import type { FileEditorTarget } from './components/FileEditorDialog'
 import { getReasoningEffortPresentation } from './reasoningEffortPresentation'
-import { reconcileModelSelection, reconcileReasoningSelection } from './modelSelection'
+import {
+  reconcileModelSelection,
+  reconcileReasoningSelection,
+  resolveEffectiveModel
+} from './modelSelection'
+import {
+  getAccountModelPreferenceKey,
+  readAccountModelPreferences,
+  writeAccountModelPreferences
+} from './accountModelPreferences'
 import {
   resolveProviderModelCatalogFailure,
   resolveProviderModelCatalogSuccess
@@ -328,6 +337,7 @@ import { useWorkspaceSelection } from './workspace/useWorkspaceSelection'
 export const useWorkspaceController = () => {
   const storedMessageBoxSelections = useMemo(() => readStoredMessageBoxSelections(), [])
   const storedChatMessageBoxSelections = useMemo(() => readStoredChatMessageBoxSelections(), [])
+  const storedAccountModelPreferences = useMemo(() => readAccountModelPreferences(), [])
   const storedMessageBoxSelection = storedMessageBoxSelections.codex ?? {}
   const [appSettings, setAppSettings] = useState<AppSettings>(readStoredAppSettings)
   const [projectSettingsByCwd, setProjectSettingsByCwd] = useState<AppProjectSettingsByCwd>(
@@ -436,6 +446,12 @@ export const useWorkspaceController = () => {
   const [gitSettingsModels, setGitSettingsModels] = useState<ProviderModel[]>([])
   const [gitSettingsModelsLoading, setGitSettingsModelsLoading] = useState(false)
   const providerModelCatalogCacheRef = useRef(new Map<string, ProviderModel[]>())
+  const accountModelPreferencesRef = useRef(storedAccountModelPreferences)
+  const [modelCatalogIdentity, setModelCatalogIdentity] = useState<{
+    key: string
+    revision: number
+    accountKey: string | null
+  } | null>(null)
   const [displayedModelCatalogKey, setDisplayedModelCatalogKey] = useState<string | null>(null)
   const [displayedGitSettingsModelCatalogKey, setDisplayedGitSettingsModelCatalogKey] = useState<
     string | null
@@ -2215,12 +2231,33 @@ export const useWorkspaceController = () => {
       setModelsError(null)
     })
 
-    providerApi
-      .getModels(configProviderId, { container })
-      .then((nextModels) => {
+    Promise.all([
+      providerApi.getModels(configProviderId, { container }),
+      providerApi.getAccounts(configProviderId, { container }).catch((error: unknown) => {
+        console.error('Unable to identify the account for model preferences.', error)
+        return null
+      })
+    ])
+      .then(([nextModels, configuration]) => {
         if (!active) return
 
         const result = resolveProviderModelCatalogSuccess(nextModels, fallbackModels)
+        const accountId = configuration?.accounts.find((account) => account.active)?.id
+        setModelCatalogIdentity(
+          nextModels.length > 0
+            ? {
+                key: configProviderModelCatalogKey,
+                revision: providerModelsRevision,
+                accountKey: accountId
+                  ? getAccountModelPreferenceKey(
+                      configProviderId,
+                      configProviderContainerKey,
+                      accountId
+                    )
+                  : null
+              }
+            : null
+        )
         providerModelCatalogCacheRef.current.set(configProviderModelCatalogKey, result.models)
         setDisplayedModelCatalogKey(configProviderModelCatalogKey)
         setModels(result.models)
@@ -2321,32 +2358,54 @@ export const useWorkspaceController = () => {
     settingsTab
   ])
 
-  useEffect(() => {
-    const catalog = {
+  const activeModelCatalog = useMemo(
+    () => ({
       activeKey: configProviderModelCatalogKey,
       displayedKey: displayedModelCatalogKey,
-      loading: modelsLoading
-    }
+      loading:
+        modelsLoading ||
+        !configProviderModelsReady ||
+        modelCatalogIdentity?.key !== configProviderModelCatalogKey ||
+        modelCatalogIdentity.revision !== providerModelsRevision,
+      error: modelsError
+    }),
+    [
+      configProviderModelCatalogKey,
+      displayedModelCatalogKey,
+      modelsLoading,
+      configProviderModelsReady,
+      modelCatalogIdentity,
+      providerModelsRevision,
+      modelsError
+    ]
+  )
+  const modelAccountKey = modelCatalogIdentity?.accountKey ?? null
 
-    setModel((currentModel) => {
-      const selection = reconcileModelSelection(
-        models,
-        { model: currentModel, manuallySelected: modelManuallySelectedRef.current },
-        fallbackInitialModel.id,
-        catalog
-      )
-      modelManuallySelectedRef.current = selection.manuallySelected
-      return selection.model
-    })
-  }, [configProviderModelCatalogKey, displayedModelCatalogKey, models, modelsLoading])
+  useLayoutEffect(() => {
+    const selection = reconcileModelSelection(
+      models,
+      { model, manuallySelected: modelManuallySelectedRef.current },
+      activeModelCatalog,
+      modelAccountKey ? accountModelPreferencesRef.current[modelAccountKey] : undefined
+    )
+    modelManuallySelectedRef.current = selection.manuallySelected
+    if (selection.model !== model) setModel(selection.model)
+    if (
+      modelAccountKey &&
+      !activeModelCatalog.loading &&
+      !activeModelCatalog.error &&
+      activeModelCatalog.displayedKey === activeModelCatalog.activeKey &&
+      models.some((candidate) => candidate.id === selection.model) &&
+      accountModelPreferencesRef.current[modelAccountKey] !== selection.model
+    ) {
+      accountModelPreferencesRef.current[modelAccountKey] = selection.model
+      writeAccountModelPreferences(accountModelPreferencesRef.current)
+    }
+  }, [activeModelCatalog, modelAccountKey, model, models])
 
   useEffect(() => {
     const selectedModel = models.find((nextModel) => nextModel.id === model)
-    const catalog = {
-      activeKey: configProviderModelCatalogKey,
-      displayedKey: displayedModelCatalogKey,
-      loading: modelsLoading
-    }
+    const catalog = activeModelCatalog
 
     setReasoningEffort((currentReasoningEffort) => {
       const selection = reconcileReasoningSelection(
@@ -2361,7 +2420,12 @@ export const useWorkspaceController = () => {
       return selection.reasoningEffort
     })
 
-    if (catalog.loading || catalog.displayedKey !== catalog.activeKey || !selectedModel) return
+    if (
+      catalog.loading ||
+      catalog.error ||
+      catalog.displayedKey !== catalog.activeKey ||
+      !selectedModel
+    ) return
     setServiceTier((currentServiceTier) =>
       modelSupportsServiceTier(selectedModel, currentServiceTier)
         ? currentServiceTier
@@ -2375,7 +2439,9 @@ export const useWorkspaceController = () => {
     displayedModelCatalogKey,
     model,
     models,
-    modelsLoading
+    modelsLoading,
+    modelsError,
+    activeModelCatalog
   ])
 
   const removeRecentChatCacheEntry = useCallback((providerId: ProviderId, chatId: string): void => {
@@ -3558,12 +3624,14 @@ export const useWorkspaceController = () => {
     let loginId: string | null = null
     let userCode: string | null = null
     let authUrl: string | null = null
+    let acceptsCode = false
     try {
       const login = await providerApi.login(providerId, { container })
       if (login.status === 'pending') {
         loginId = login.loginId
         userCode = login.userCode ?? null
         authUrl = login.authUrl
+        acceptsCode = login.acceptsCode === true
       }
     } catch (error) {
       try {
@@ -3593,7 +3661,7 @@ export const useWorkspaceController = () => {
         applyProviderAccountConfiguration(result.configuration)
         setProviderAccountRevision((revision) => revision + 1)
         if (!result.success) {
-          throw new Error(result.error || 'Codex authorization was not completed.')
+          throw new Error(result.error || 'Account authorization was not completed.')
         }
       } catch (error) {
         const restoredConfiguration = await providerApi
@@ -3613,6 +3681,12 @@ export const useWorkspaceController = () => {
     return {
       userCode,
       completion,
+      ...(acceptsCode && loginId
+        ? {
+            submitCode: (code: string) =>
+              providerApi.submitAccountLoginCode(providerId, loginId!, code, { container })
+          }
+        : {}),
       authorize: async () => {
         if (!authUrl) return
         if (userCode) await appApi.writeClipboardText(userCode)
@@ -3944,13 +4018,17 @@ export const useWorkspaceController = () => {
       : effectiveAppSettings.chat.forceReview
   const effectiveApprovalMode =
     effectiveSandboxMode === 'danger-full-access' ? 'never' : configuredApprovalMode
-  const configuredModel =
+  const forcedModel =
     effectiveAppSettings.chat.forceModel === appChatManualDropdownValue
-      ? model
+      ? null
       : effectiveAppSettings.chat.forceModel
-  const effectiveModel = models.some((candidateModel) => candidateModel.id === configuredModel)
-    ? configuredModel
-    : getDefaultModel(models).id
+  const effectiveModel = resolveEffectiveModel(
+    models,
+    model,
+    forcedModel,
+    activeModelCatalog,
+    modelAccountKey ? accountModelPreferencesRef.current[modelAccountKey] : undefined
+  )
   const selectedEffectiveModel = models.find(
     (candidateModel) => candidateModel.id === effectiveModel
   )
@@ -3994,73 +4072,8 @@ export const useWorkspaceController = () => {
   const settingsSelectedEffectiveModel = models.find(
     (candidateModel) => candidateModel.id === settingsEffectiveModel
   )
-  useEffect(() => {
-    if (models.length === 0) return
-
-    let active = true
-    queueMicrotask(() => {
-      if (!active) return
-
-      setAppSettings((currentSettings) => {
-        const currentChatSettings = currentSettings.chat
-        let forceModel = currentChatSettings.forceModel
-        let forceReasoning = currentChatSettings.forceReasoning
-        let forceSpeed = currentChatSettings.forceSpeed
-
-        if (
-          forceModel !== appChatManualDropdownValue &&
-          !models.some((candidateModel) => candidateModel.id === forceModel)
-        ) {
-          forceModel = appChatManualDropdownValue
-        }
-
-        const configuredForcedModel = forceModel === appChatManualDropdownValue ? model : forceModel
-        const configuredForcedProviderModel =
-          models.find((candidateModel) => candidateModel.id === configuredForcedModel) ??
-          getDefaultModel(models)
-
-        if (
-          forceReasoning !== appChatManualDropdownValue &&
-          !modelSupportsReasoningEffort(configuredForcedProviderModel, forceReasoning)
-        ) {
-          forceReasoning = appChatManualDropdownValue
-        }
-
-        if (forceSpeed !== appChatManualDropdownValue) {
-          const configuredForcedServiceTier =
-            forceSpeed === appChatStandardSpeedValue ? null : forceSpeed
-          if (
-            !modelHasServiceTierOptions(configuredForcedProviderModel) ||
-            !modelSupportsServiceTier(configuredForcedProviderModel, configuredForcedServiceTier)
-          ) {
-            forceSpeed = appChatManualDropdownValue
-          }
-        }
-
-        if (
-          forceModel === currentChatSettings.forceModel &&
-          forceReasoning === currentChatSettings.forceReasoning &&
-          forceSpeed === currentChatSettings.forceSpeed
-        ) {
-          return currentSettings
-        }
-
-        return {
-          ...currentSettings,
-          chat: {
-            ...currentChatSettings,
-            forceModel,
-            forceReasoning,
-            forceSpeed
-          }
-        }
-      })
-    })
-
-    return () => {
-      active = false
-    }
-  }, [model, models])
+  // Model catalogs vary by provider, account, and refresh state. Never rewrite
+  // stored forced-model/reasoning/speed preferences to match a transient catalog.
   const forceAccessOptions: DropdownOption<AppChatDropdownSettings['forceAccess']>[] = [
     {
       value: appChatManualDropdownValue,

@@ -1168,6 +1168,17 @@ export const registerProviderIpc = (): void => {
   )
 
   handleLoggedIpc(
+    providerIpcChannels.submitAccountLoginCode,
+    (_, providerId: unknown, loginId: unknown, code: unknown, options: unknown) =>
+      providerApi.submitAccountLoginCode(
+        requireProviderId(providerId),
+        requireProviderResourceString(loginId, 'login ID', 128),
+        requireProviderResourceString(code, 'authorization code', 4096),
+        requireSourceOptions(options)
+      )
+  )
+
+  handleLoggedIpc(
     providerIpcChannels.useAccount,
     (_, providerId: unknown, accountId: unknown, options: unknown) =>
       providerApi.useAccount(

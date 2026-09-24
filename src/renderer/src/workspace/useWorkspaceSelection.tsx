@@ -1,7 +1,7 @@
 import { refreshSubagentDetail } from '../subagentUi'
 import { chatWorkingItemPageSize, chatWorkingItemWindowSize } from './controllerTypes'
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import type { ProviderSubagent, ProviderUsageOptions } from '../../../shared/provider'
 import { providerIds } from '../../../shared/provider'
@@ -685,6 +685,22 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     userInputResolution.requestId === pendingUserInput?.id ? userInputResolution : null
   const userInputResolving = currentUserInputResolution?.resolving ?? false
   const userInputError = currentUserInputResolution?.error ?? null
+  const usageScope = useMemo(
+    () => ({
+      container: changesContainer,
+      providerId: usageProviderId,
+      available: usageProviderAvailable,
+      revision: providerAccountRevision
+    }),
+    [changesContainer, usageProviderId, usageProviderAvailable, providerAccountRevision]
+  )
+  const usageScopeRef = useRef<object | null>(usageScope)
+  useLayoutEffect(() => {
+    usageScopeRef.current = usageScope
+    return () => {
+      usageScopeRef.current = null
+    }
+  }, [usageScope])
   const refreshAccountUsage = useCallback(
     async (options: ProviderUsageOptions = {}): Promise<void> => {
       if (!usageProviderAvailable) {
@@ -701,15 +717,23 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
 
       try {
         const usage = await providerApi.getUsage(providerId, { ...options, container })
+        if (usageScopeRef.current !== usageScope) return
         setAccountUsage((currentUsage) => mergeAccountUsage(currentUsage, usage))
         setAccountUsageState('ready')
       } catch (error) {
         console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+        if (usageScopeRef.current !== usageScope) return
         setAccountUsageState('error')
         setAccountUsageError(getErrorMessage(error, 'Unable to load usage.'))
       }
     },
-    [changesContainer, usageProviderAvailabilityReady, usageProviderAvailable, usageProviderId]
+    [
+      changesContainer,
+      usageProviderAvailabilityReady,
+      usageProviderAvailable,
+      usageProviderId,
+      usageScope
+    ]
   )
   const resetAccountRateLimits = useCallback(() => {
     if (!usageProviderAvailable) return Promise.resolve('nothingToReset' as const)

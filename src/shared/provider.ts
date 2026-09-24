@@ -413,7 +413,13 @@ export type ProviderAccountLoginCompletion = {
 
 export type ProviderLoginResult =
   | { status: 'authenticated'; account: ProviderAccount }
-  | { status: 'pending'; loginId: string; authUrl: string; userCode?: string }
+  | {
+      status: 'pending'
+      loginId: string
+      authUrl: string
+      userCode?: string
+      acceptsCode?: boolean
+    }
   | { status: 'notRequired' }
 
 export type ProviderUpdateAvailability = {
@@ -1015,6 +1021,12 @@ export type ProviderApi = {
     loginId: string | null,
     options?: ProviderSourceOptions
   ) => Promise<ProviderAccountConfiguration>
+  submitAccountLoginCode: (
+    providerId: ProviderId,
+    loginId: string,
+    code: string,
+    options?: ProviderSourceOptions
+  ) => Promise<void>
   useAccount: (
     providerId: ProviderId,
     accountId: string,
@@ -1288,6 +1300,7 @@ export const providerIpcChannels = {
   createAccount: 'provider:create-account',
   completeAccountCreation: 'provider:complete-account-creation',
   cancelAccountCreation: 'provider:cancel-account-creation',
+  submitAccountLoginCode: 'provider:submit-account-login-code',
   useAccount: 'provider:use-account',
   deleteAccount: 'provider:delete-account',
   getUpdateAvailability: 'provider:get-update-availability',

@@ -4,6 +4,7 @@ type ModelCatalogState = {
   activeKey: string
   displayedKey: string | null
   loading: boolean
+  error?: string | null
 }
 
 type ModelSelection = {
@@ -17,7 +18,7 @@ type ReasoningSelection = {
 }
 
 const isActiveModelCatalogReady = (catalog: ModelCatalogState): boolean =>
-  !catalog.loading && catalog.displayedKey === catalog.activeKey
+  !catalog.loading && !catalog.error && catalog.displayedKey === catalog.activeKey
 
 const getDefaultModel = (models: ProviderModel[]): ProviderModel | undefined =>
   models.find((model) => model.isDefault) ?? models[0]
@@ -31,8 +32,8 @@ const getDefaultReasoningEffort = (model: ProviderModel): ProviderReasoningEffor
 export const reconcileModelSelection = (
   models: ProviderModel[],
   selection: ModelSelection,
-  fallbackInitialModelId: ProviderModelId,
-  catalog: ModelCatalogState
+  catalog: ModelCatalogState,
+  rememberedModel?: ProviderModelId
 ): ModelSelection => {
   if (!isActiveModelCatalogReady(catalog)) return selection
 
@@ -40,13 +41,28 @@ export const reconcileModelSelection = (
   if (!defaultModel) return selection
 
   if (!models.some((model) => model.id === selection.model)) {
+    if (rememberedModel && models.some((model) => model.id === rememberedModel))
+      return { model: rememberedModel, manuallySelected: true }
     return { model: defaultModel.id, manuallySelected: false }
   }
-  if (!selection.manuallySelected && selection.model === fallbackInitialModelId) {
-    return { model: defaultModel.id, manuallySelected: false }
-  }
-
   return selection
+}
+
+export const resolveEffectiveModel = (
+  models: ProviderModel[],
+  selectedModel: ProviderModelId,
+  forcedModel: ProviderModelId | null,
+  catalog?: ModelCatalogState,
+  rememberedModel?: ProviderModelId
+): ProviderModelId => {
+  if (forcedModel && models.some((model) => model.id === forcedModel)) return forcedModel
+  if (!catalog) return selectedModel
+  return reconcileModelSelection(
+    models,
+    { model: selectedModel, manuallySelected: true },
+    catalog,
+    rememberedModel
+  ).model
 }
 
 export const reconcileReasoningSelection = (

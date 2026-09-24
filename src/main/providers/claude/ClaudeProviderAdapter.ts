@@ -81,6 +81,7 @@ import {
   restoreProviderSkill
 } from '../providerResources'
 import { getClaudeExecutable } from './ClaudeExecutable'
+import { claudeAccounts } from './ClaudeAccounts'
 import {
   ClaudeTranscriptProjection,
   isClaudeInternalUserMessage,
@@ -174,6 +175,7 @@ type ClaudeSessionState = {
 }
 
 type ClaudeOneShotGeneration = {
+  container?: AppContainerTarget | null
   query: Query | null
   input: AsyncMessageQueue<SDKUserMessage> | null
   canceled: boolean
@@ -188,9 +190,10 @@ type StartQueryOptions = {
 type ClaudeQueryRuntime = {
   command: HostCommand
   container: Extract<AppContainerTarget, { kind: 'container' }> | null
+  accountRevision: number
 }
 
-type ClaudeControlQueryProfile = 'account' | 'apps'
+type ClaudeControlQueryProfile = 'account' | 'apps' | 'usage'
 
 type ClaudeControlQueryEntry = {
   query: Query
@@ -624,23 +627,86 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private resumeDropsTurnSupport = new Map<string, Promise<boolean>>()
   private modelDiscoveryRequests = new Map<string, Promise<ProviderModel[]>>()
   private modelDiscoveryQueries = new WeakSet<Query>()
+  private accountChanges = new Map<string, Promise<unknown>>()
+  private accountRevisions = new Map<string, number>()
   private controlQueries = new ProviderClientPool<ClaudeControlQueryEntry>((entry) =>
     this.closeControlQueryEntry(entry)
   )
 
-  login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> =>
-    this.withControlQuery(options, 'account', async (control) => {
+  login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
+    const pending = await claudeAccounts.login(options)
+    if (pending) return pending
+    return this.withControlQuery(options, 'account', async (control) => {
       const account = await control.accountInfo()
       return {
         status: 'authenticated' as const,
         account: {
-          label: account.organization || account.email || account.subscriptionType || 'Claude'
+          label:
+            (await claudeAccounts.getAccountLabel(options)) ||
+            account.organization ||
+            account.email ||
+            account.subscriptionType ||
+            'Claude'
         }
       }
     }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Claude is not authenticated. Run \`claude auth login\` first. ${detail}`)
     })
+  }
+
+  changeAccount = <T>(
+    container: AppContainerTarget | null | undefined,
+    change: () => Promise<T>
+  ): Promise<T> => {
+    const key = getContainerTargetKey(container)
+    const previous = this.accountChanges.get(key) ?? Promise.resolve()
+    const pending = previous
+      .catch((error: unknown) => {
+        console.error('The previous Claude account switch failed.', error)
+      })
+      .then(async () => {
+        this.accountRevisions.set(key, (this.accountRevisions.get(key) ?? 0) + 1)
+        for (const profile of ['account', 'apps', 'usage'])
+          this.controlQueries.invalidateKey(`${profile}:${key}`)
+        this.modelDiscoveryRequests.delete(`account:${key}`)
+        for (const generation of this.oneShotGenerations.values()) {
+          if (getContainerTargetKey(generation.container) !== key) continue
+          generation.canceled = true
+          generation.input?.close()
+          generation.query?.close()
+        }
+        await Promise.all(
+          [...this.states.values()]
+            .filter((state) => getContainerTargetKey(state.container) === key)
+            .map(async (state) => {
+              const hasUnfinishedTurn =
+                state.active ||
+                (state.queueDrainInProgress && !state.queuedMessagesPaused) ||
+                state.pendingApprovals.length > 0 ||
+                state.pendingUserInputs.length > 0
+              if (hasUnfinishedTurn) {
+                await this.stopChat(state.id)
+              } else {
+                // Retire the old credentials without turning a completed (or failed)
+                // response into a stopped turn. Leave any queued messages paused.
+                state.queuedMessagesPaused = state.queuedMessages.length > 0
+                await this.closeStateQuery(state)
+              }
+            })
+        )
+        return change()
+      })
+    this.accountChanges.set(key, pending)
+    void pending
+      .finally(() => {
+        if (this.accountChanges.get(key) === pending) this.accountChanges.delete(key)
+      })
+      .catch((error: unknown) => {
+        console.error('Unable to switch Claude accounts.', error)
+      })
+    return pending
+  }
 
   getUpdateAvailability = async (
     options: ProviderSourceOptions = {}
@@ -802,14 +868,22 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
     try {
-      return await this.withControlQuery(options, 'account', async (control) => {
-        const usage = await control.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+      return await this.withControlQuery(options, 'usage', async (control) => {
+        const usage = await control.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
+          skipBehaviors: true
+        })
+        // Claude can report that subscription limits apply while silently returning
+        // null after its usage request. Read the same account's endpoint in that case;
+        // the SDK has already handled any credential refresh.
+        const limits = usage.rate_limits ?? (usage.rate_limits_available
+          ? await claudeAccounts.getUsageFallback(options)
+          : null)
         return {
           updatedAt: Date.now(),
           statisticsLoaded: false,
           summary: emptyUsageSummary,
           dailyUsageBuckets: null,
-          rateLimits: mapClaudeRateLimits(usage.rate_limits),
+          rateLimits: mapClaudeRateLimits(limits),
           rateLimitResetCredits: null,
           errors: []
         }
@@ -997,6 +1071,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       throw new Error('Duplicate one-shot generation ID')
     }
     const generation: ClaudeOneShotGeneration = {
+      container: options?.container,
       query: null,
       input: null,
       canceled: this.takeCanceledOneShotGeneration(generationId)
@@ -1010,6 +1085,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       const input = new AsyncMessageQueue<SDKUserMessage>()
       generation.input = input
       const runtime = await this.getQueryRuntime(options?.container, options?.cwd)
+      if (generation.canceled) throw new Error(providerOneShotGenerationCanceledMessage)
       const control = query({
         prompt: input,
         options: {
@@ -1330,6 +1406,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
+    claudeAccounts.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
     this.completionCoordinator.clear()
@@ -1369,7 +1446,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     profile: ClaudeControlQueryProfile
   ): Promise<ClaudeControlQueryEntry> => {
     const input = new AsyncMessageQueue<SDKUserMessage>()
-    const runtime = await this.getQueryRuntime(options.container)
+    const runtime = await this.getQueryRuntime(options.container, undefined, profile === 'usage')
     const control = query({
       prompt: input,
       options: {
@@ -1380,7 +1457,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         settings: backgroundFeatureRestrictions,
         includePartialMessages: false,
         forwardSubagentText: false,
-        strictMcpConfig: profile === 'account'
+        strictMcpConfig: profile !== 'apps'
       }
     })
     const entry = { query: control, input }
@@ -1428,17 +1505,26 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private getQueryRuntime = async (
     container: AppContainerTarget | null | undefined,
-    cwd?: string | null
+    cwd?: string | null,
+    usageOnly = false
   ): Promise<ClaudeQueryRuntime> => {
     const normalized = normalizeContainerTarget(container)
     const storedContainer = normalized.kind === 'container' ? normalized : null
+    const key = getContainerTargetKey(storedContainer)
+    await this.accountChanges.get(key)
+    const accountRevision = this.accountRevisions.get(key) ?? 0
     const executable = storedContainer ? 'claude' : getClaudeExecutable()
     const command = await getHostExecutableCommand(executable, [], {
       container: storedContainer,
       cwd: cwd ?? undefined,
-      env: process.env
+      env: usageOnly
+        ? await claudeAccounts.getUsageEnvironment(storedContainer)
+        : await claudeAccounts.getEnvironment(storedContainer)
     })
-    return { command, container: storedContainer }
+    if (accountRevision !== (this.accountRevisions.get(key) ?? 0) || this.accountChanges.has(key)) {
+      throw new Error('Claude account changed while starting the session. Please try again.')
+    }
+    return { command, container: storedContainer, accountRevision }
   }
 
   private getBaseQueryOptions = (
@@ -1453,14 +1539,22 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         ...getRuntimeEnvironment(runtime.command.env),
         CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1'
       },
-      spawnClaudeCodeProcess: ({ args, env, signal }) =>
-        spawn(runtime.command.file, [...runtime.command.args, ...args], {
+      spawnClaudeCodeProcess: ({ args, env, signal }) => {
+        const key = getContainerTargetKey(runtime.container)
+        if (
+          runtime.accountRevision !== (this.accountRevisions.get(key) ?? 0) ||
+          this.accountChanges.has(key)
+        ) {
+          throw new Error('Claude account changed before the session started. Please try again.')
+        }
+        return spawn(runtime.command.file, [...runtime.command.args, ...args], {
           cwd: runtime.command.cwd,
           env: { ...runtime.command.env, ...env },
           signal,
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true
-        }),
+        })
+      },
       additionalDirectories: options?.additionalDirectories,
       model: getClaudeModel(options),
       effort: toEffortLevel(options?.reasoningEffort),

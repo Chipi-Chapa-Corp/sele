@@ -64,6 +64,7 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
       />
       {accountDialogOpen && (
         <AccountDialog
+          providerLabel={settingsPanelProps.newSessionProvider === 'claude' ? 'Claude' : 'Codex'}
           onClose={() => setAccountDialogOpen(false)}
           onLogin={handleCreateProviderAccount}
         />
