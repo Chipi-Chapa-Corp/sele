@@ -657,18 +657,18 @@
 }
 
 .message-box__usage-control > .ui-button {
-  width: 1.5rem;
-  height: 1.5rem;
-  min-height: 1.5rem;
+  width: 3.5rem;
+  height: var(--control-height);
+  min-height: var(--control-height);
   padding: 0;
   border-color: transparent;
-  border-radius: 49.95rem;
+  border-radius: var(--control-radius);
   background: transparent;
   box-shadow: none;
 }
 
 .message-box__usage-control > .ui-button::before {
-  border-radius: 49.95rem;
+  border-radius: var(--control-radius);
   box-shadow: none;
 }
 
@@ -688,29 +688,42 @@
 }
 
 .message-box__usage-ring {
+  position: relative;
   display: grid;
   width: 100%;
   height: 100%;
   place-items: center;
-  border-radius: 49.95rem;
-  background: conic-gradient(
-    var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
-    color-mix(in srgb, var(--quiet) 24%, transparent) var(--message-box-usage-degrees) 360deg
-  );
-  -webkit-mask: radial-gradient(circle at center, transparent 52%, black 54%);
-  mask: radial-gradient(circle at center, transparent 52%, black 54%);
 }
 
-.message-box__usage-control > .ui-button:not(:disabled):hover .message-box__usage-ring,
-.message-box__usage-control > .ui-button[data-pressed] .message-box__usage-ring {
-  background: conic-gradient(
-    var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
-    color-mix(in srgb, var(--quiet) 28%, transparent) var(--message-box-usage-degrees) 360deg
-  );
+.message-box__usage-ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke-width: 3;
 }
 
-.message-box__usage-control > .ui-button:disabled .message-box__usage-ring {
-  background: conic-gradient(color-mix(in srgb, var(--quiet) 44%, transparent) 0deg 360deg);
+.message-box__usage-track {
+  stroke: color-mix(in srgb, var(--quiet) 24%, transparent);
+}
+
+.message-box__usage-strip {
+  stroke: var(--message-box-usage-accent);
+}
+
+.message-box__usage-percent {
+  position: relative;
+}
+
+.message-box__usage-control > .ui-button:not(:disabled):hover .message-box__usage-track,
+.message-box__usage-control > .ui-button[data-pressed] .message-box__usage-track {
+  stroke: color-mix(in srgb, var(--quiet) 28%, transparent);
+}
+
+.message-box__usage-control > .ui-button:disabled .message-box__usage-track,
+.message-box__usage-control > .ui-button:disabled .message-box__usage-strip {
+  stroke: color-mix(in srgb, var(--quiet) 44%, transparent);
 }
 
 .message-box__usage-popover {
@@ -823,11 +836,35 @@
   background: var(--message-box-usage-accent);
 }
 
-.message-box__limit {
+.message-box__limits {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.message-box__limit {
+  display: flex;
+  min-width: 5rem;
+  flex: 1 1 0;
   flex-direction: column;
+  align-items: center;
   gap: 0.3rem;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.message-box__limit-label {
+  color: var(--lead);
+}
+
+.message-box__limit .message-box__usage-ring {
+  width: 3.5rem;
+  height: var(--control-height);
+}
+
+.message-box__limit-reset {
+  color: var(--muted);
 }
 
 .message-box__limits-details {
@@ -844,10 +881,6 @@
 }
 
 .message-box__limits-details-body {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.4rem;
   padding-top: 0.3rem;
 }
 

@@ -242,19 +242,15 @@
 :root[data-control-style='transparent']
   .message-box__usage-control
   > .ui-button
-  .message-box__usage-ring,
+  .message-box__usage-track {
+  stroke: color-mix(in srgb, var(--quiet) 28%, transparent);
+}
+
 :root[data-control-style='transparent']
   .message-box__usage-control
-  > .ui-button:not(:disabled):hover
-  .message-box__usage-ring,
-:root[data-control-style='transparent']
-  .message-box__usage-control
-  > .ui-button[data-pressed]
-  .message-box__usage-ring {
-  background: conic-gradient(
-    var(--message-box-usage-accent) 0deg var(--message-box-usage-degrees),
-    color-mix(in srgb, var(--quiet) 28%, transparent) var(--message-box-usage-degrees) 360deg
-  );
+  > .ui-button
+  .message-box__usage-strip {
+  stroke: var(--message-box-usage-accent);
 }
 
 ::highlight(sele-chat-search-match) {

@@ -993,6 +993,30 @@ const formatPercent = (value: number): string => `${Math.round(value)}%`
 
 const clampPercent = (value: number): number => Math.min(Math.max(value, 0), 100)
 
+const usageStripPath =
+  'M28 1.5H48A6.5 6.5 0 0 1 54.5 8V24A6.5 6.5 0 0 1 48 30.5H8A6.5 6.5 0 0 1 1.5 24V8A6.5 6.5 0 0 1 8 1.5Z'
+
+const UsageStrip = ({ usedPercent }: { usedPercent: number | null }): ReactNode => {
+  const remainingPercent = usedPercent == null ? 0 : Math.round(100 - usedPercent)
+
+  return (
+    <span className="message-box__usage-ring">
+      <svg aria-hidden="true" viewBox="0 0 56 32">
+        <path className="message-box__usage-track" d={usageStripPath} />
+        <path
+          className="message-box__usage-strip"
+          d={usageStripPath}
+          pathLength={100}
+          strokeDasharray={remainingPercent >= 100 ? undefined : `${remainingPercent} 100`}
+        />
+      </svg>
+      {usedPercent != null && (
+        <span className="message-box__usage-percent">{formatPercent(remainingPercent)}</span>
+      )}
+    </span>
+  )
+}
+
 const getContextPercent = (contextUsage: MessageBoxContextUsage): number | null => {
   if (contextUsage.usedTokens == null || contextUsage.maxTokens == null) return null
   if (contextUsage.maxTokens <= 0) return null
@@ -2679,9 +2703,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         : contextUsage.usedTokens
           ? `Chat context ${formatTokenCount(contextUsage.usedTokens)} used`
           : 'No chat context used'
-  const usageButtonStyle = {
-    '--message-box-usage-degrees': `${(displayedUsagePercent ?? 0) * 3.6}deg`
-  } as CSSProperties
   const availableRateLimitResets = accountUsage?.rateLimitResetCredits?.availableCount ?? 0
   const rateLimitResetDisabled = shouldDisableRateLimitReset(
     rateLimits,
@@ -2726,26 +2747,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
   const renderRateLimit = (limit: AccountRateLimit, key: string): ReactNode => {
     const usedPercent = clampPercent(limit.usedPercent)
-    const roundedUsedPercent = Math.round(usedPercent)
     const resetTime = formatResetTime(limit.resetsAt)
     const windowLabel = formatWindowLabel(limit.windowMinutes)
     const limitLabel = limit.displayLabel ?? `${limit.label} ${windowLabel}`
 
     return (
       <div className="message-box__limit" key={key}>
-        <div className="message-box__usage-row">
-          <span>{limitLabel}</span>
-          <strong>{formatPercent(100 - roundedUsedPercent)} left</strong>
-        </div>
-        <div className="message-box__usage-meter" aria-hidden="true">
-          <span style={{ width: `${usedPercent}%` }} />
-        </div>
-        {resetTime && (
-          <div className="message-box__usage-row message-box__usage-row--muted">
-            <span>Resets</span>
-            <strong>{resetTime}</strong>
-          </div>
-        )}
+        <span className="message-box__limit-label">{limitLabel}</span>
+        <UsageStrip usedPercent={usedPercent} />
+        {resetTime && <span className="message-box__limit-reset">{resetTime}</span>}
       </div>
     )
   }
@@ -3104,9 +3114,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 callback={handleUsageToggle}
                 data-pressed={usageMenuOpen ? 'true' : undefined}
                 disabled={usageDisabled}
-                icon={<span className="message-box__usage-ring" />}
+                icon={<UsageStrip usedPercent={displayedUsagePercent} />}
                 size="small"
-                style={usageButtonStyle}
                 theme="transparent"
                 title={usageButtonLabel}
               />
@@ -3194,11 +3203,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                               {accountUsageError ?? 'Usage unavailable.'}
                             </p>
                           )}
-                          {sortRateLimitsForDisplay(visibleRateLimits).map((limit, index) =>
-                            renderRateLimit(
-                              limit,
-                              `${limit.id ?? limit.label}:${limit.kind}:${index}`
-                            )
+                          {visibleRateLimits.length > 0 && (
+                            <div className="message-box__limits">
+                              {sortRateLimitsForDisplay(visibleRateLimits).map((limit, index) =>
+                                renderRateLimit(
+                                  limit,
+                                  `${limit.id ?? limit.label}:${limit.kind}:${index}`
+                                )
+                              )}
+                            </div>
                           )}
                           {detailedRateLimits.length > 0 && (
                             <div className="message-box__limits-details">
@@ -3212,7 +3225,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                               </DisclosureToggle>
                               {otherLimitsOpen && (
                                 <div
-                                  className="message-box__limits-details-body"
+                                  className="message-box__limits message-box__limits-details-body"
                                   id={`message-other-limits-${usagePopoverId}`}
                                 >
                                   {detailedRateLimits.map((limit, index) =>
