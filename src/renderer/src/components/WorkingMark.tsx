@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react'
 import type { ReactElement } from 'react'
 
-// Two identical rounded, slanted slabs that periodically trade places. They are drawn as a single
+// Two identical rounded, slanted shapes that periodically trade places. They are drawn as a single
 // even-odd path, so wherever they overlap the background shows through — no extra shapes involved.
 
 // Geometry in viewBox units (100 × 100, centred at 50,50)
-const WIDTH = 40
+const WIDTH = 56
 const HEIGHT = 62
 const RADIUS = 13
 const SHEAR = 0.2 // top edge shifts right by SHEAR × height/2
@@ -73,7 +73,7 @@ export function WorkingMark({ className }: { className?: string }): ReactElement
   }, [])
 
   return (
-    <svg viewBox="8 8 84 84" className={className} aria-hidden="true" focusable="false">
+    <svg viewBox="0 0 100 100" className={className} aria-hidden="true" focusable="false">
       <path ref={pathRef} d={restD} fill="currentColor" fillRule="evenodd" />
     </svg>
   )

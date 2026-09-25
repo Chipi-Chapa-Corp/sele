@@ -1,4 +1,5 @@
 import { WorkingElapsedTime } from './WorkingElapsedTime'
+import { useReducedMotionPreference } from '../motion/useReducedMotionPreference'
 import { useWorkingToolMotion } from '../motion/useWorkingToolMotion'
 import { useStreamReveal } from '../motion/useStreamReveal'
 import { useMessageArrival } from '../motion/messageFlight'
@@ -1686,6 +1687,26 @@ const ToolSequence: React.FC<{
 
 const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
   const [placeholder] = useState(getRandomPlaceholderOption)
+  const labelRef = useRef<HTMLSpanElement>(null)
+  const reduced = useReducedMotionPreference()
+
+  // Match the composer's typewriter reveal without rerendering the conversation or timer.
+  useEffect(() => {
+    const node = labelRef.current
+    if (!node) return
+    if (reduced) {
+      node.textContent = placeholder
+      return
+    }
+    let index = 0
+    node.textContent = ''
+    const timer = window.setInterval(() => {
+      index += 2
+      node.textContent = placeholder.slice(0, index)
+      if (index >= placeholder.length) window.clearInterval(timer)
+    }, 30)
+    return () => window.clearInterval(timer)
+  }, [placeholder, reduced])
 
   return (
     <div className="chat-detail__tool-read chat-detail__tool-read--active chat-detail__tool-placeholder">
@@ -1693,7 +1714,7 @@ const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ ite
         <WorkingMark />
       </span>
       <span className="chat-detail__tool-label">
-        {placeholder}
+        <span ref={labelRef}>{placeholder}</span>
         <WorkingElapsedTime item={item} />
       </span>
     </div>
@@ -1701,7 +1722,7 @@ const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ ite
 }
 
 const WorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => (
-  <RandomWorkingPlaceholder key={item.id} item={item} />
+  <RandomWorkingPlaceholder key={`${item.id}:${item.itemCount ?? item.items.length}`} item={item} />
 )
 
 const getActiveToolIds = (item: ProviderWorkingStep): Set<string> => {
