@@ -19,6 +19,96 @@ const userPrompt = {
   parent_tool_use_id: null
 }
 
+const renderUserPresentations = (message) => {
+  const options = { active: false, stopped: false }
+  return [
+    renderClaudeChatItems([message], options)[0],
+    renderClaudeChatItems([message], {
+      ...options,
+      turnWindow: { startIndex: null, limit: 1 }
+    })[0],
+    new ClaudeTranscriptProjection().read([message], [], options).items[0]
+  ]
+}
+
+test('restores pasted images from persisted Claude prompts without in-memory metadata', () => {
+  const path = '/tmp/sele-message-images/pasted-image-2a6b8ab1-e339-4e6f-82f7-dfae3f7d29d4.png'
+  for (const text of ['Check this image', '']) {
+    const message = JSON.parse(
+      JSON.stringify({
+        ...userPrompt,
+        message: { content: `${text}${text ? '\n\n' : ''}@${path}` }
+      })
+    )
+    for (const item of renderUserPresentations(message)) {
+      assert.equal(item?.role, 'user')
+      assert.equal(item.content, text)
+      assert.deepEqual(item.attachments, [{ kind: 'image', name: path.split('/').at(-1), path }])
+    }
+  }
+})
+
+test('restores mixed attachments with spaces and durable or Windows image paths', () => {
+  const paths = [
+    '/home/me/.config/sele/sele-message-images/pasted-image.png',
+    '/home/me/design notes.txt',
+    'C:\\Users\\me\\My Pictures\\capture.PNG'
+  ]
+  const message = {
+    ...userPrompt,
+    message: {
+      content: [
+        {
+          type: 'text',
+          text: `Compare these\r\n\r\n${paths.map((path) => `@${path}`).join('\r\n')}`
+        }
+      ]
+    }
+  }
+  for (const item of renderUserPresentations(message)) {
+    assert.equal(item.content, 'Compare these')
+    assert.deepEqual(item.attachments, [
+      { kind: 'image', name: 'pasted-image.png', path: paths[0] },
+      { kind: 'file', name: 'design notes.txt', path: paths[1] },
+      { kind: 'image', name: 'capture.PNG', path: paths[2] }
+    ])
+  }
+})
+
+test('live SDK echoes strip attachment references while preserving attachment metadata', () => {
+  const attachment = {
+    kind: 'image',
+    name: 'Pasted image.png',
+    path: '/tmp/paste.png',
+    dataUrl: 'data:image/png;base64,aW1hZ2U='
+  }
+  for (const content of ['Look', 'Look\n\n@/tmp/paste.png']) {
+    for (const item of renderUserPresentations({
+      ...userPrompt,
+      message: { content },
+      attachments: [attachment]
+    })) {
+      assert.equal(item.content, 'Look')
+      assert.deepEqual(item.attachments, [attachment])
+    }
+  }
+})
+
+test('leaves inline references, relative mentions, code blocks and ordinary prose intact', () => {
+  for (const content of [
+    'Why does @/tmp/image.png appear here?',
+    'Explain this path\n@/tmp/image.png',
+    'Look\n\n@relative/image.png',
+    'Look\n\n@/tmp/image.png\nMore text',
+    '```\n@/tmp/image.png\n```'
+  ]) {
+    for (const item of renderUserPresentations({ ...userPrompt, message: { content } })) {
+      assert.equal(item.content, content)
+      assert.equal(item.attachments, undefined)
+    }
+  }
+})
+
 const skillToolUse = {
   type: 'assistant',
   uuid: 'assistant-1',
@@ -134,6 +224,74 @@ test('background task notifications stay hidden in history and live projection',
     const updated = [...source, notification]
     projection.acceptSource(source, updated, source.length)
     assert.deepEqual(projection.read(updated, [], options), before)
+  }
+})
+
+const compactionSummaryText =
+  'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\nEarlier work.'
+
+test('compaction summaries stay hidden while the delimiter and real user turns remain', () => {
+  const boundary = {
+    type: 'system',
+    uuid: 'compact',
+    message: { subtype: 'compact_boundary' }
+  }
+  const nextUser = { ...userPrompt, uuid: 'next-user', message: { content: 'Keep going' } }
+  for (const active of [true, false]) {
+    const options = { active, stopped: false }
+    const source = [userPrompt, boundary]
+    const reference = new ClaudeTranscriptProjection()
+    const expected = renderClaudeChatItems([...source, nextUser], options)
+    assert.deepEqual(
+      expected.filter((item) => item.type !== 'working').map((item) => item.type),
+      ['message', 'contextCompaction', 'message']
+    )
+    for (const content of [
+      compactionSummaryText,
+      [{ type: 'text', text: compactionSummaryText }]
+    ]) {
+      for (const flags of [{}, { isCompactSummary: true }]) {
+        const summary = { ...userPrompt, uuid: 'summary', message: { content }, ...flags }
+        assert.equal(isClaudeInternalUserMessage(summary), true)
+        const updated = [...source, summary, nextUser]
+        assert.deepEqual(renderClaudeChatItems(updated, options), expected)
+        assert.deepEqual(
+          renderClaudeChatItems(updated, { ...options, turnWindow: { startIndex: 0, limit: 2 } }),
+          expected
+        )
+        const projection = new ClaudeTranscriptProjection()
+        projection.read(source, [], options)
+        const expectedDetail = reference.read([...source, nextUser], [], options)
+        assert.deepEqual(projection.read(source, [summary, nextUser], options), expectedDetail)
+        projection.acceptSource(source, updated, source.length)
+        assert.deepEqual(projection.read(updated, [], options), expectedDetail)
+        assert.equal(expectedDetail.turnCount, 2)
+      }
+    }
+  }
+})
+
+test('compaction metadata hides alternate summary wording without hiding user discussion', () => {
+  assert.equal(
+    isClaudeInternalUserMessage({
+      ...userPrompt,
+      isCompactSummary: true,
+      message: { content: 'Alternate summary wording' }
+    }),
+    true
+  )
+  for (const message of [
+    { ...userPrompt, message: { content: `Explain this: ${compactionSummaryText}` } },
+    { ...userPrompt, message: { content: `\`\`\`\n${compactionSummaryText}\n\`\`\`` } },
+    { ...userPrompt, isSynthetic: true },
+    { ...skillToolResult, isCompactSummary: true },
+    {
+      ...userPrompt,
+      message: { content: compactionSummaryText },
+      attachments: [{ kind: 'image', name: 'image.png', path: '/tmp/image.png' }]
+    }
+  ]) {
+    assert.equal(isClaudeInternalUserMessage(message), false)
   }
 })
 

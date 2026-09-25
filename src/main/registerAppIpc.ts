@@ -3558,7 +3558,7 @@ export const registerAppIpc = (): void => {
       throw new Error('Paste an image smaller than 32 MB.')
     }
 
-    const imageDirectory = join(app.getPath('temp'), 'sele-message-images')
+    const imageDirectory = join(app.getPath('userData'), 'sele-message-images')
     const imageName = 'Pasted image.png'
     const imagePath = join(imageDirectory, `pasted-image-${randomUUID()}.png`)
     await mkdir(imageDirectory, { recursive: true })

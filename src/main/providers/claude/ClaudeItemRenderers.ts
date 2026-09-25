@@ -13,7 +13,7 @@ import {
   rendererWorkingItemPageSize,
   rendererWorkingToolGroupLimit
 } from '../workingStepLazy.ts'
-import { basename } from 'node:path'
+import { basename, extname, posix, win32 } from 'node:path'
 import type {
   ProviderChatItem,
   ProviderMessage,
@@ -38,6 +38,7 @@ export type ClaudeTranscriptMessage = {
   parent_tool_use_id: string | null
   isSynthetic?: boolean
   isMeta?: boolean
+  isCompactSummary?: boolean
   timestamp?: string
   tool_use_result?: unknown
   kind?: 'steering'
@@ -301,6 +302,42 @@ const getHumanText = (blocks: ClaudeContentBlock[]): string =>
     .join('\n')
     .trim()
 
+const messageImageExtensions = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
+
+// Sele appends attachment paths to the SDK prompt, while its richer attachment metadata
+// only lives in memory. Recover that final paragraph when replaying a saved transcript.
+const getUserMessagePresentation = (
+  message: ClaudeTranscriptMessage,
+  blocks: ClaudeContentBlock[]
+): Pick<ProviderMessage, 'content' | 'attachments'> => {
+  const content = getHumanText(blocks)
+  const attachments = message.attachments?.length ? message.attachments : undefined
+  const suffix = /(?:^|\r?\n\r?\n)(@[^\r\n]+(?:\r?\n@[^\r\n]+)*)$/.exec(content)
+  if (!suffix) return { content, attachments }
+
+  const paths = suffix[1].split(/\r?\n/).map((line) => line.slice(1))
+  if (paths.some((path) => !posix.isAbsolute(path) && !win32.isAbsolute(path))) {
+    return { content, attachments }
+  }
+  // Existing metadata is authoritative, including names and inline image payloads.
+  if (
+    attachments &&
+    paths.some((path) => !attachments.some((item) => 'path' in item && item.path === path))
+  ) {
+    return { content, attachments }
+  }
+  return {
+    content: content.slice(0, suffix.index).trimEnd(),
+    attachments:
+      attachments ??
+      [...new Set(paths)].map((path) => ({
+        kind: messageImageExtensions.has(extname(path).toLowerCase()) ? 'image' : 'file',
+        name: posix.isAbsolute(path) ? posix.basename(path) : win32.basename(path),
+        path
+      }))
+  }
+}
+
 const hasToolResults = (blocks: ClaudeContentBlock[]): boolean =>
   blocks.some((block) => block.type === 'tool_result')
 
@@ -309,6 +346,10 @@ const localCommandOutputPattern =
   /^<local-command-(?:stdout|stderr)>[\s\S]*<\/local-command-(?:stdout|stderr)>$/
 const skillContextPrefix = 'Base directory for this skill:'
 const taskNotificationPattern = /^<task-notification>[\s\S]*<\/task-notification>/
+const compactionSummaryPrefix =
+  'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.'
+const compactCommandPattern =
+  /^<command-name>\/compact<\/command-name>\s*<command-message>compact<\/command-message>\s*<command-args>[\s\S]*<\/command-args>$/
 
 const getStandaloneUserText = (message: ClaudeTranscriptMessage): string | null => {
   if (message.type !== 'user' || message.attachments?.length) return null
@@ -335,7 +376,15 @@ export const isClaudeSkillContextMessage = (message: ClaudeTranscriptMessage): b
 export const isClaudeInternalUserMessage = (message: ClaudeTranscriptMessage): boolean => {
   const text = getStandaloneUserText(message)
   return (
+    (message.type === 'user' &&
+      !message.attachments?.length &&
+      !hasToolResults(getContentBlocks(message.message)) &&
+      message.isCompactSummary === true) ||
     text === interruptedRequestMarker ||
+    (text != null && compactCommandPattern.test(text)) ||
+    // Session history returned by the SDK can omit the original isCompactSummary flag.
+    (text != null &&
+      (text === compactionSummaryPrefix || text.startsWith(`${compactionSummaryPrefix}\n`))) ||
     (text != null && isImageSizingMetadata(text)) ||
     (text != null && localCommandOutputPattern.test(text)) ||
     (text != null && taskNotificationPattern.test(text)) ||
@@ -418,15 +467,15 @@ export const renderClaudeChatItems = (
     if (isSubagentMessage && message.type === 'user' && !hasToolResults(blocks)) continue
 
     if (message.type === 'user' && !hasToolResults(blocks)) {
-      const content = getHumanText(blocks)
-      if (!content && !message.attachments?.length) continue
+      const { content, attachments } = getUserMessagePresentation(message, blocks)
+      if (!content && !attachments?.length) continue
       flushSegment(false)
       items.push({
         type: 'message',
         id: message.uuid,
         role: 'user',
         content,
-        attachments: message.attachments?.length ? message.attachments : undefined,
+        attachments,
         createdAt: toTimestamp(message.timestamp),
         kind: message.kind,
         label: message.label ?? null
@@ -679,8 +728,8 @@ export class ClaudeTranscriptProjection {
     const subagent = Boolean(message.parent_tool_use_id)
     if (subagent && message.type === 'user' && !hasToolResults(blocks)) return
     if (message.type === 'user' && !hasToolResults(blocks)) {
-      const content = getHumanText(blocks)
-      if (!content && !message.attachments?.length) return
+      const { content, attachments } = getUserMessagePresentation(message, blocks)
+      if (!content && !attachments?.length) return
       this.journal.set(this.state, 'current', null)
       this.journal.push(this.turnStarts, this.nodes.length)
       this.journal.push(this.nodes, {
@@ -688,7 +737,7 @@ export class ClaudeTranscriptProjection {
         id: message.uuid,
         role: 'user',
         content,
-        attachments: message.attachments?.length ? message.attachments : undefined,
+        attachments,
         createdAt: toTimestamp(message.timestamp),
         kind: message.kind,
         label: message.label ?? null

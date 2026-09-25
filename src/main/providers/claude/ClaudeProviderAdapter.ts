@@ -7,7 +7,6 @@ import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import {
   getSessionInfo,
-  getSessionMessages,
   getSubagentMessages,
   listSessions,
   listSubagents,
@@ -81,6 +80,7 @@ import {
   restoreProviderSkill
 } from '../providerResources'
 import { getClaudeExecutable } from './ClaudeExecutable'
+import { loadClaudeHistory } from './ClaudeHistory'
 import { claudeAccounts } from './ClaudeAccounts'
 import {
   ClaudeTranscriptProjection,
@@ -527,6 +527,9 @@ const toTranscriptMessage = (
   // The SDK types omit isMeta, but live stream events still carry it for injected context
   // such as skill bodies. Keep it so the renderer can hide those from the person.
   ...('isMeta' in message && message.isMeta === true ? { isMeta: true } : {}),
+  ...('isCompactSummary' in message && message.isCompactSummary === true
+    ? { isCompactSummary: true }
+    : {}),
   ...('timestamp' in message && typeof message.timestamp === 'string'
     ? { timestamp: message.timestamp }
     : {}),
@@ -1662,14 +1665,14 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
     const [metadata, messages] = await Promise.all([
       getSessionInfo(chatId, { sessionStore }),
-      getSessionMessages(chatId, { includeSystemMessages: true, sessionStore })
+      loadClaudeHistory(chatId, sessionStore)
     ])
     if (!metadata && messages.length === 0) throw new Error('Claude session was not found.')
     state.metadata = metadata ?? null
     state.createdAt = metadata?.createdAt ?? state.createdAt
     state.updatedAt = metadata?.lastModified ?? state.updatedAt
     state.cwd = metadata?.cwd ?? options?.cwd ?? null
-    state.messages = messages.map(toTranscriptMessage)
+    state.messages = messages
     state.messageIds = new Set(state.messages.map((message) => message.uuid))
     this.states.set(chatId, state)
     this.sessionContainers.set(chatId, state.container)
