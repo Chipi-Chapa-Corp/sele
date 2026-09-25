@@ -55,7 +55,7 @@ and terminal states. Run:
 ```sh
 npm run test:claude-history
 npm run test:codex-history
-node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/benchmark-transcript-projection.mjs
+node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/benchmarks/benchmark-transcript-projection.mjs
 ```
 
 The benchmark measures conversion separately from source copying, provider transport, IPC, and UI

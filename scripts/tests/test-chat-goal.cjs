@@ -31,7 +31,7 @@ if (!process.versions.electron) {
             }
             window.renderGoal()
           `,
-          resolveDir: path.resolve(__dirname, '..'),
+          resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
         },
         bundle: true,

@@ -33,7 +33,7 @@ if (!process.versions.electron) {
         external: ['electron']
       })
       await build({
-        entryPoints: ['scripts/fixtures/browser-use.tsx'],
+        entryPoints: ['scripts/tests/fixtures/browser-use.tsx'],
         outfile: path.join(directory, 'fixture.js'),
         bundle: true,
         platform: 'browser',

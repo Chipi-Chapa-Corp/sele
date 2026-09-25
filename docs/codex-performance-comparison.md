@@ -2,8 +2,8 @@
 
 This comparison was run against `main` at
 `be1b5a15ed24a6e9d89e4276a4e9f6b8a4bbf6fd` and the working tree containing the fixes.
-Raw samples, byte counts, source fingerprints and environment information are in
-[codex-performance-comparison.json](codex-performance-comparison.json).
+Generated raw samples are kept outside version control. The command below writes
+byte counts, source fingerprints and environment information alongside the timings.
 
 Reproduce it without switching branches or changing the working tree:
 
@@ -36,6 +36,36 @@ each operation. Zero means no lateness detected at that resolution, not literall
 These are medians except the cold rows. The large reordering stress case still exceeds a
 16.7 ms frame budget. Cold metadata loading still performs a full scan, but yields between
 chunks. Neither should be described as zero latency.
+
+## Initial ordinary chat open
+
+A separate run follows the actual `getChat` → `loadChatCursorWindowInContext` → detail
+construction/preparation path. Every sample starts with empty thread and metadata-index caches.
+Five samples per case; regenerate raw results with the command below.
+
+The fixes are now committed as `f9afca0f`; this comparison remains pinned to the pre-fix
+`be1b5a15` baseline, rather than whichever commit the `main` branch currently points to.
+
+| Initial chat-open measurement | Main | Uncommitted |
+| --- | ---: | ---: |
+| First detail, no metadata enrichment needed | 0.279 ms | 0.293 ms |
+| First detail, cold 33.7 MB metadata rollout | 56.095 ms | 0.449 ms |
+| Entire cold metadata operation, including enrichment | 56.141 ms | 40.414 ms |
+| Event-loop stall during the cold metadata operation | 55.183 ms | 1.769 ms |
+
+Both revisions fetch one ten-turn native page. Main waits for optional transcript metadata
+before returning it. The uncommitted version returns the page first and publishes enriched
+content afterward. The benchmark asserts that ordering of completion, and the normal test
+suite now contains a deterministic held-promise regression test in `CodexInitialLoad.test.mjs`.
+
+```sh
+npm run benchmark:codex-revisions -- --baseline be1b5a15 --initial-only --samples 5 --assert-improvement --output /tmp/codex-initial-load.json
+```
+
+These are times until serialized chat **data** is ready, not until pixels appear. Electron and
+Codex process startup, authentication, real provider RPC latency, title/goal lookups, writer
+ownership checks, and renderer paint are not measured. The rollout file is in the OS cache.
+Whole-application startup has not been profiled by this benchmark.
 
 ## What the test proves
 

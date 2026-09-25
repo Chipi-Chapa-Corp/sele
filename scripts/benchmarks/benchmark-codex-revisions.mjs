@@ -14,12 +14,13 @@ import vm from 'node:vm'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
-const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const option = (name, fallback) => {
   const index = process.argv.indexOf(name)
   return index < 0 ? fallback : process.argv[index + 1]
 }
 const samples = Number(option('--samples', '3'))
+const initialOnly = process.argv.includes('--initial-only')
 assert.ok(Number.isInteger(samples) && samples >= 3 && samples <= 20)
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
 const round = (value) => Number(value.toFixed(3))
@@ -105,6 +106,22 @@ const runWorker = async (root, label, output) => {
     return vm.runInNewContext(code, { ...helpers, Buffer, console, process, ...globals })
   }
   const rows = []
+  const saveResults = async () =>
+    writeFile(
+      output,
+      JSON.stringify(
+        {
+          label,
+          sourceHash: createHash('sha256')
+            .update(adapterText)
+            .update(await readFile(bundle))
+            .digest('hex'),
+          rows
+        },
+        null,
+        2
+      ) + '\n'
+    )
   const record = (scenario, measurements, extra = {}) => {
     const row = {
       scenario,
@@ -127,7 +144,7 @@ const runWorker = async (root, label, output) => {
   }
 
   // Identical native turn objects and timestamp maps, using each revision's exported algorithm.
-  for (const count of [10_000, 30_000]) {
+  for (const count of initialOnly ? [] : [10_000, 30_000]) {
     const commands = Array.from({ length: count }, (_, index) => ({
       id: `command-${index}`,
       type: 'commandExecution'
@@ -249,7 +266,7 @@ const runWorker = async (root, label, output) => {
     )
     assert.equal(metadata.commandStartAnchors.project(thread.turns[0]).items[0].id, 'command')
   }
-  for (const scenario of ['cold', 'unchanged', 'append-1KiB']) {
+  for (const scenario of initialOnly ? [] : ['cold', 'unchanged', 'append-1KiB']) {
     const measurements = []
     const byteSamples = []
     const readSamples = []
@@ -276,6 +293,151 @@ const runWorker = async (root, label, output) => {
       readsPerOperation: readSamples
     })
     if (updated && scenario !== 'cold') assert.ok(Math.max(...byteSamples) < 4096)
+  }
+
+  // First ordinary chat open, with an empty adapter/index cache for every sample.
+  // Measure initial detail separately from the background enrichment completion.
+  for (const needsMetadata of [false, true]) {
+    const measurements = []
+    const firstDetailSamples = []
+    const byteSamples = []
+    const beforeMetadata = []
+    for (let index = 0; index < samples; index++) {
+      metadata.goalPrompts = new helpers.CodexGoalPrompts()
+      metadata.commandStartAnchors = new helpers.CodexCommandStartAnchors()
+      metadata.transcriptMetadataIndex?.clear()
+      const ordinary = (id) => ({
+        id,
+        status: 'completed',
+        items: [
+          { id: `${id}-user`, type: 'userMessage', content: [{ type: 'text', text: 'Prompt' }] },
+          { id: `${id}-answer`, type: 'agentMessage', phase: 'final_answer', text: 'Done' }
+        ]
+      })
+      const selected = [
+        ...Array.from({ length: 9 }, (_, position) => ordinary(`older-${position}`)),
+        needsMetadata ? freshThread().turns[0] : ordinary('turn')
+      ]
+      const responseText = JSON.stringify({
+        data: [...selected].reverse(),
+        nextCursor: 'older-history',
+        backwardsCursor: null
+      })
+      let metadataPending
+      let metadataFinished = false
+      let fullTurnReads = 0
+      let backgroundPublications = 0
+      const initial = harness(['getChat', 'loadChatCursorWindowInContext', 'createChatDetail'], {
+        assertSupportedCodexHistory: () => {},
+        assertReadableCodexHistory: () => {},
+        getContainerTargetKey: () => 'host',
+        rendererChatUpdateTurnLimit: 10,
+        getThreadApiCwd: () => '/repo',
+        getThreadTitle: () => 'Initial chat',
+        getHydratedThreadStatus: () => 'idle',
+        codexCapabilities: {}
+      })
+      Object.assign(initial, {
+        threads: new Map(),
+        threadRevisions: new Map(),
+        runWithContainer: (_container, run) => run(),
+        getThreadContainer: () => null,
+        rememberThreadContainer: () => {},
+        readThread: async () => ({
+          thread: {
+            id: 'thread',
+            path: rolloutPath,
+            cwd: '/repo',
+            preview: 'Done',
+            historyMode: 'paginated',
+            createdAt: 100,
+            updatedAt: 200,
+            status: { type: 'idle' },
+            turns: []
+          }
+        }),
+        client: {
+          request: async (method, params) => {
+            assert.equal(method, 'thread/turns/list')
+            assert.equal(params.itemsView, 'full')
+            assert.equal(params.limit, 10)
+            assert.equal(params.cursor, null)
+            fullTurnReads++
+            return JSON.parse(responseText)
+          }
+        },
+        attachSubmittedUserMessages: async (_id, turns) => turns,
+        filterRolledBackTurns: (_id, turns) => turns,
+        resolveThreadName: async () => 'Initial chat',
+        resolveThreadCwd: async () => '/repo',
+        cacheThread: (thread) => initial.threads.set(thread.id, thread),
+        loadTranscriptMetadata: (thread) => {
+          metadataPending = metadata.loadTranscriptMetadata(thread).then((changed) => {
+            metadataFinished = true
+            return changed
+          })
+          return metadataPending
+        },
+        scheduleChatUpdated: () => {
+          backgroundPublications++
+        },
+        getRenderableTurns: (thread) =>
+          thread.turns.map((turn) =>
+            metadata.goalPrompts.project(thread.id, metadata.commandStartAnchors.project(turn))
+          ),
+        getProviderPendingMessages: () => [],
+        getProviderPendingApproval: () => null,
+        externallyOwnedThreadIds: new Set(),
+        writeAccessChecks: new Map(),
+        pendingTurnStarts: new Set(),
+        pendingTurnIds: new Map(),
+        threadContainers: new Map(),
+        contextUsageByThread: new Map(),
+        goals: { read: async () => {}, get: () => null },
+        checkChatWriteAccessInBackground: () => {},
+        getCachedChatDetail: () => null
+      })
+      bytesRead = 0
+      const measured = await measure(async () => {
+        const started = performance.now()
+        const detail = helpers.prepareChatDetailForRenderer(await initial.getChat('thread'))
+        const payloadBytes = Buffer.byteLength(JSON.stringify(detail))
+        const firstDetailMs = performance.now() - started
+        const returnedBeforeMetadata = !metadataFinished
+        assert.equal(
+          detail.items.findLast((item) => item.type === 'message' && item.role === 'assistant')
+            ?.content,
+          'Done'
+        )
+        assert.equal(fullTurnReads, 1)
+        await metadataPending
+        await Promise.resolve()
+        if (needsMetadata) {
+          assert.equal(returnedBeforeMetadata, updated)
+          assert.equal(backgroundPublications, updated ? 1 : 0)
+        } else assert.equal(bytesRead, 0)
+        return { firstDetailMs, returnedBeforeMetadata, payloadBytes }
+      })
+      measurements.push(measured)
+      firstDetailSamples.push(round(measured.result.firstDetailMs))
+      byteSamples.push(bytesRead)
+      beforeMetadata.push(measured.result.returnedBeforeMetadata)
+    }
+    const firstDetailMedianMs = round(median(firstDetailSamples))
+    record(`initial-chat/${needsMetadata ? 'cold-metadata' : 'ordinary'}`, measurements, {
+      firstDetailMedianMs,
+      firstDetailSamples,
+      returnedBeforeMetadata: beforeMetadata,
+      bytesReadPerOperation: byteSamples,
+      nativeTurnsPerOperation: 10
+    })
+    console.log(
+      `${label}: first chat detail (${needsMetadata ? 'cold metadata' : 'ordinary'}): ${firstDetailMedianMs} ms`
+    )
+  }
+  if (initialOnly) {
+    await saveResults()
+    return
   }
 
   // Real adapter method, real catalog/hydration helpers, real renderers and IPC preparation.
@@ -422,21 +584,7 @@ const runWorker = async (root, label, output) => {
     })
     if (updated && scenario !== 'cold-latest') assert.ok(Math.max(...turnSamples) <= 10)
   }
-  await writeFile(
-    output,
-    JSON.stringify(
-      {
-        label,
-        sourceHash: createHash('sha256')
-          .update(adapterText)
-          .update(await readFile(bundle))
-          .digest('hex'),
-        rows
-      },
-      null,
-      2
-    ) + '\n'
-  )
+  await saveResults()
 }
 
 if (process.argv.includes('--worker')) {
@@ -478,7 +626,8 @@ if (process.argv.includes('--worker')) {
             '--output',
             output,
             '--samples',
-            String(samples)
+            String(samples),
+            ...(initialOnly ? ['--initial-only'] : [])
           ],
           { stdio: 'inherit' }
         )
@@ -496,11 +645,15 @@ if (process.argv.includes('--worker')) {
         assert.equal(after.outputHash, before.outputHash, `${before.scenario}: ordering changed`)
       return {
         scenario: before.scenario,
-        mainMs: before.elapsedMedianMs,
-        uncommittedMs: after.elapsedMedianMs,
+        metric: before.firstDetailMedianMs === undefined ? 'elapsedMs' : 'firstDetailMs',
+        mainMs: before.firstDetailMedianMs ?? before.elapsedMedianMs,
+        uncommittedMs: after.firstDetailMedianMs ?? after.elapsedMedianMs,
         mainStallMs: before.stallMedianMs,
         uncommittedStallMs: after.stallMedianMs,
-        speedup: round(before.elapsedMedianMs / Math.max(after.elapsedMedianMs, 0.001))
+        speedup: round(
+          (before.firstDetailMedianMs ?? before.elapsedMedianMs) /
+            Math.max(after.firstDetailMedianMs ?? after.elapsedMedianMs, 0.001)
+        )
       }
     })
     const result = {
@@ -511,7 +664,7 @@ if (process.argv.includes('--worker')) {
       cpu: cpus()[0]?.model,
       samples,
       methodology:
-        'Sequential isolated Node processes, identical synthetic fixtures, actual revision methods/helpers. Mock provider transport excludes network/server latency. 1 ms heartbeat measures event-loop timer lateness. Cold scenarios have one sample; other scenarios report medians. No live Electron or production traces.',
+        'Sequential isolated Node processes, identical synthetic fixtures, actual revision methods/helpers. Mock provider transport excludes network/server latency. 1 ms heartbeat measures event-loop timer lateness. Standalone cold scans have one sample; initial-chat cases reset adapter/index caches for every sample. Other scenarios report medians. No live Electron or production traces.',
       comparisons,
       variants
     }
@@ -519,12 +672,15 @@ if (process.argv.includes('--worker')) {
     if (output) await writeFile(resolve(output), JSON.stringify(result, null, 2) + '\n')
     console.table(comparisons)
     if (process.argv.includes('--assert-improvement')) {
-      for (const scenario of [
-        'ordering/10000/already-ordered',
-        'metadata/unchanged',
-        'metadata/append-1KiB',
-        'subagent/poll-latest'
-      ]) {
+      for (const scenario of initialOnly
+        ? ['initial-chat/cold-metadata']
+        : [
+            'ordering/10000/already-ordered',
+            'metadata/unchanged',
+            'metadata/append-1KiB',
+            'subagent/poll-latest',
+            'initial-chat/cold-metadata'
+          ]) {
         const comparison = comparisons.find((row) => row.scenario === scenario)
         assert.ok(
           comparison.speedup >= 3,
@@ -532,7 +688,9 @@ if (process.argv.includes('--worker')) {
         )
       }
       console.log(
-        'PASS: identical ordering outputs, bounded metadata/subagent reads, and >=3x warm-path speedups.'
+        initialOnly
+          ? 'PASS: ten-turn initial loads, correct background enrichment, and >=3x first-detail speedup with cold metadata.'
+          : 'PASS: output correctness, bounded reads, and >=3x targeted latency improvements.'
       )
     }
   } finally {

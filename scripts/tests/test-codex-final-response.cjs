@@ -31,7 +31,7 @@ if (!process.versions.electron) {
             }
             window.renderTurn('early')
           `,
-          resolveDir: path.resolve(__dirname, '..'),
+          resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
         },
         plugins: [

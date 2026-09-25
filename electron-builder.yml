@@ -9,6 +9,7 @@ directories:
 files:
   - '!**/.vscode/*'
   - '!src/*'
+  - '!{scripts,docs,screenshots,test-results,benchmark-results,coverage,tmp,temp}/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{biome.json,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'

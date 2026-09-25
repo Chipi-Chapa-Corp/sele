@@ -20,7 +20,7 @@ if (!process.versions.electron) {
               <ChatDetailItem item={{type: 'working', id: 'step', status, items}} />
             ))
           `,
-          resolveDir: path.resolve(__dirname, '..'),
+          resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
         },
         bundle: true,

@@ -105,7 +105,7 @@ reduce main-thread stalls but does not eliminate repeated whole-file work.
 
 ## Local measurements
 
-Run `node --experimental-strip-types scripts/benchmark-chat-scaling.mjs`.
+Run `node --experimental-strip-types scripts/benchmarks/benchmark-chat-scaling.mjs`.
 Times are warmed medians in milliseconds, measured on this machine. Counts refer
 to native records; the Claude fixture alternates short user/assistant messages,
 while Codex uses one long active tool turn. These are component CPU benchmarks,
@@ -209,8 +209,8 @@ objects so cache hits cannot hide full-history conversion.
 
 ### Evidence and scope
 
-Local raw logs are in `test-results/chat-scaling/baseline-confirmed.tap` and
-`test-results/chat-scaling/after.tap`. The directory is intentionally gitignored.
+Raw logs from this investigation were local artifacts and are not retained in the
+repository. Use the gitignored `test-results/` directory for new runs.
 The original investigation benchmark remains available for exploratory measurements;
 its old timings are baseline results, not expected current timings after caching.
 

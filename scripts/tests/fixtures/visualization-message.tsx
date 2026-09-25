@@ -1,7 +1,7 @@
 import { StrictMode, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { MarkdownMessage } from '../../src/renderer/src/components/ChatDetailItem'
-import '../../src/renderer/src/assets/main.css'
+import { MarkdownMessage } from '../../../src/renderer/src/components/ChatDetailItem'
+import '../../../src/renderer/src/assets/main.css'
 
 const marker = 'visualize{"path":"/work/visualization-test.html"}'
 const content = `Before the visualization.\n\n${marker}\n\nAfter the visualization.

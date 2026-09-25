@@ -1,16 +1,16 @@
 // Synthetic local CPU benchmark; no provider requests or user chat data.
-// Run: node --experimental-strip-types scripts/benchmark-chat-scaling.mjs
+// Run: node --experimental-strip-types scripts/benchmarks/benchmark-chat-scaling.mjs
 import { performance } from 'node:perf_hooks'
-import { updateIndexedTranscriptRecord } from '../src/main/providers/transcriptProjection/recordChanges.ts'
-import { getCodexTurnSubagents } from '../src/main/providers/codex/CodexSubagents.ts'
-import { getChatItems } from '../src/main/providers/codex/CodexItemRenderers.ts'
-import { renderClaudeChatItems } from '../src/main/providers/claude/ClaudeItemRenderers.ts'
+import { updateIndexedTranscriptRecord } from '../../src/main/providers/transcriptProjection/recordChanges.ts'
+import { getCodexTurnSubagents } from '../../src/main/providers/codex/CodexSubagents.ts'
+import { getChatItems } from '../../src/main/providers/codex/CodexItemRenderers.ts'
+import { renderClaudeChatItems } from '../../src/main/providers/claude/ClaudeItemRenderers.ts'
 import {
   groupWorkingItemsForRenderer,
   prepareWorkingStepPage
-} from '../src/main/providers/workingStepLazy.ts'
-import { prepareChatDetailForRenderer } from '../src/main/providers/chatDetailLazy.ts'
-import { readCodexGoalPrompts } from '../src/main/providers/codex/CodexGoalPrompts.ts'
+} from '../../src/main/providers/workingStepLazy.ts'
+import { prepareChatDetailForRenderer } from '../../src/main/providers/chatDetailLazy.ts'
+import { readCodexGoalPrompts } from '../../src/main/providers/codex/CodexGoalPrompts.ts'
 function ms(fn, n = 5) {
   fn()
   const times = []

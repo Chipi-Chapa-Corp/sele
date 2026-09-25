@@ -2,12 +2,12 @@ import { performance } from 'node:perf_hooks'
 import {
   ClaudeTranscriptProjection,
   renderClaudeChatItems
-} from '../src/main/providers/claude/ClaudeItemRenderers.ts'
+} from '../../src/main/providers/claude/ClaudeItemRenderers.ts'
 import {
   CodexTranscriptProjection,
   getChatItems
-} from '../src/main/providers/codex/CodexItemRenderers.ts'
-import { updateIndexedTranscriptRecord } from '../src/main/providers/transcriptProjection/recordChanges.ts'
+} from '../../src/main/providers/codex/CodexItemRenderers.ts'
+import { updateIndexedTranscriptRecord } from '../../src/main/providers/transcriptProjection/recordChanges.ts'
 
 // Measures conversion, not provider transport, source-array copying, IPC, or React rendering.
 const median = (samples) => samples.sort((a, b) => a - b)[Math.floor(samples.length / 2)]

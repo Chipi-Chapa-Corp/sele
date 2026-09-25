@@ -7,7 +7,7 @@ if (!process.versions.electron) {
     const directory = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'sele-responsive-'))
     try {
       await require('esbuild').build({
-        entryPoints: [path.resolve(__dirname, '../src/renderer/src/components/vegvisir.worker.ts')],
+        entryPoints: [path.resolve(__dirname, '../../src/renderer/src/components/vegvisir.worker.ts')],
         bundle: true,
         outfile: path.join(directory, 'vegvisir.worker.js')
       })
@@ -54,7 +54,7 @@ if (!process.versions.electron) {
             window.renderWorkspace()
           `,
           loader: 'tsx',
-          resolveDir: path.resolve(__dirname, '..')
+          resolveDir: path.resolve(__dirname, '../..')
         },
         bundle: true,
         platform: 'browser',
@@ -93,7 +93,7 @@ if (!process.versions.electron) {
                           'git',
                           [
                             'show',
-                            'HEAD:' + path.relative(path.resolve(__dirname, '..'), args.path)
+                            'HEAD:' + path.relative(path.resolve(__dirname, '../..'), args.path)
                           ],
                           { encoding: 'utf8' }
                         ),

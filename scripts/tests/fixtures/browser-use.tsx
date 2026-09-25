@@ -1,8 +1,8 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserPanel } from '../../src/renderer/src/components/BrowserPanel'
-import { browserApi } from '../../src/renderer/src/browserApi'
-import '../../src/renderer/src/assets/main.css'
+import { BrowserPanel } from '../../../src/renderer/src/components/BrowserPanel'
+import { browserApi } from '../../../src/renderer/src/browserApi'
+import '../../../src/renderer/src/assets/main.css'
 
 export function Fixture(): React.JSX.Element {
   const [active, setActive] = useState(true)

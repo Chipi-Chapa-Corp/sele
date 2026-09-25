@@ -1,14 +1,14 @@
 // Synthetic CPU/payload measurements; no provider requests or user chat data.
-// Run: node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/benchmark-performance-hotpaths.mjs
+// Run: node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/benchmarks/benchmark-performance-hotpaths.mjs
 import { performance } from 'node:perf_hooks'
-import { anchorCodexCommandsByStart } from '../src/main/providers/codex/CodexCommandStartAnchors.ts'
-import { CopilotEventStore } from '../src/main/providers/copilot/CopilotEventStore.ts'
-import { reconcileProviderRecords } from '../src/main/providers/ProviderConversationEngine.ts'
-import { renderClaudeChatItems } from '../src/main/providers/claude/ClaudeItemRenderers.ts'
+import { anchorCodexCommandsByStart } from '../../src/main/providers/codex/CodexCommandStartAnchors.ts'
+import { CopilotEventStore } from '../../src/main/providers/copilot/CopilotEventStore.ts'
+import { reconcileProviderRecords } from '../../src/main/providers/ProviderConversationEngine.ts'
+import { renderClaudeChatItems } from '../../src/main/providers/claude/ClaudeItemRenderers.ts'
 import {
   prepareChatDetailForRenderer,
   prepareChatItemsForRenderer
-} from '../src/main/providers/chatDetailLazy.ts'
+} from '../../src/main/providers/chatDetailLazy.ts'
 
 const median = (operation, repetitions = 7) => {
   operation()

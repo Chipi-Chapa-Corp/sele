@@ -127,6 +127,16 @@ npm run typecheck
 npm run build
 ```
 
+Regression tests live beside the source they cover (`*.test.mjs`); use the named
+`npm run test:*` commands in `package.json` to run a focused suite. Electron and
+worker integration checks live in `scripts/tests/`, with fixtures in its `fixtures/`
+directory. These checks may require a desktop session or a built app.
+
+Reusable performance benchmarks live in `scripts/benchmarks/`. Keep generated
+reports, screenshots, and profiling output in the gitignored `test-results/` or
+`benchmark-results/` directories, and use `tmp/` for local scratch files. The
+`build/` directory contains required packaging assets, not generated output.
+
 Linting uses [Biome](https://biomejs.dev/guides/migrate-eslint-prettier/) with rules migrated
 from the previous ESLint configuration. `npm run lint:fix` applies safe lint fixes;
 `npm run format` formats supported source files using two spaces, single quotes,

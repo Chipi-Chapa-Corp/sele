@@ -3,5 +3,12 @@ dist
 out
 agents
 test-results
+coverage
+.nyc_output
+benchmark-results
+/tmp/
+/temp/
+*.tsbuildinfo
+/docs/*-comparison.json
 .DS_Store
 *.log*

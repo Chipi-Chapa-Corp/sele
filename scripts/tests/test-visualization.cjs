@@ -10,7 +10,7 @@ if (!process.versions.electron) {
     try {
       for (const legacy of [false, true]) {
         await build({
-          entryPoints: [path.resolve(__dirname, '../src/main/visualizationProtocol.ts')],
+          entryPoints: [path.resolve(__dirname, '../../src/main/visualizationProtocol.ts')],
           bundle: true,
           platform: 'node',
           outfile: path.join(directory, legacy ? 'legacy-protocol.cjs' : 'protocol.cjs'),
