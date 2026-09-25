@@ -1,5 +1,7 @@
 import type { SessionEvent } from '@github/copilot-sdk'
 import type { ProviderChatItem, ProviderSubagent } from '../../../shared/provider'
+import type { ProviderChatTurnWindow } from '../ProviderAdapter'
+import { isCopilotSystemContextMessage, renderCopilotChatWindow } from './CopilotItemRenderers.ts'
 
 export type CopilotAgentTask = {
   type: 'agent'
@@ -114,4 +116,40 @@ export const createCopilotSubagentTranscriptItems = (
     },
     ...items
   ]
+}
+
+export const renderCopilotSubagentWindow = (
+  summary: ProviderSubagent,
+  events: SessionEvent[],
+  window: ProviderChatTurnWindow
+): { items: ProviderChatItem[]; itemsStartTurnIndex: number; turnCount: number } => {
+  const page = renderCopilotChatWindow(
+    events,
+    {
+      agentId: summary.id,
+      active: summary.status === 'pending' || summary.status === 'running',
+      stopped: summary.status === 'stopped',
+      failed: summary.status === 'failed'
+    },
+    window
+  )
+  const hasUserMessage = events.some(
+    (event) =>
+      event.agentId === summary.id &&
+      event.type === 'user.message' &&
+      !isCopilotSystemContextMessage(event)
+  )
+  if (hasUserMessage || !summary.description?.trim()) return page
+  // An out-of-band instruction belongs at the beginning, never on every historical page.
+  if (page.turnCount === 0) {
+    const startIndex = window.startIndex === null ? 0 : Math.min(window.startIndex, 1)
+    return {
+      items: startIndex === 0 ? createCopilotSubagentTranscriptItems(summary, []) : [],
+      itemsStartTurnIndex: startIndex,
+      turnCount: 1
+    }
+  }
+  return page.itemsStartTurnIndex === 0
+    ? { ...page, items: createCopilotSubagentTranscriptItems(summary, page.items) }
+    : page
 }

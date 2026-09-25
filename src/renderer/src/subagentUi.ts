@@ -1,4 +1,14 @@
 import { mergeWorkingStepPage } from './chatDetailWindow.ts'
+import { getProviderChatTurnCount } from '../../shared/chatTurns.ts'
+
+const subagentPageNavigationEpochs = new WeakMap<object, number>()
+export const getSubagentPageNavigationEpoch = (requestRef: object): number =>
+  subagentPageNavigationEpochs.get(requestRef) ?? 0
+export const beginSubagentPageNavigation = (requestRef: object): number => {
+  const next = getSubagentPageNavigationEpoch(requestRef) + 1
+  subagentPageNavigationEpochs.set(requestRef, next)
+  return next
+}
 import type {
   ProviderChatItem,
   ProviderSubagent,
@@ -157,6 +167,17 @@ export const refreshSubagentDetail = (
   historyLimit: number
 ): ProviderSubagentDetail => {
   if (current?.id !== incoming.id) return incoming
+  const currentEnd = (current.itemsStartTurnIndex ?? 0) + getProviderChatTurnCount(current.items)
+  if (current.turnCount !== undefined && currentEnd < current.turnCount) {
+    // Polls always fetch the newest page. Keep the reader's historical page in place.
+    return {
+      ...current,
+      ...incoming,
+      items: current.items,
+      itemsStartTurnIndex: current.itemsStartTurnIndex,
+      turnCount: Math.max(current.turnCount, incoming.turnCount ?? 0)
+    }
+  }
   const previousItems = new Map(current.items.map((item) => [item.id, item]))
   return {
     ...incoming,

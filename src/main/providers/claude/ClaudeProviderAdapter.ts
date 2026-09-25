@@ -167,6 +167,7 @@ type ClaudeSessionState = {
   contextUsage: ProviderChatContextUsage | null
   queryReadOnly: boolean | null
   queryModel: string | undefined | null
+  queryStartupRevision: number
   backgroundTaskIds: Set<string>
   subagentTaskStatuses: Map<string, ProviderSubagent['status']>
   waitingForSessionIdle: boolean
@@ -284,6 +285,8 @@ const interruptCloseGraceMs = 500
 const oneShotCancellationRetentionMs = 60_000
 const maxFallbackTitleLength = 80
 const sessionTitleRefreshDelayMs = 5_000
+const maxIdleSessionStates = 8
+const maxIdleTranscriptBytes = 32 * 1024 * 1024
 const maxPreviewLength = 500
 const allowedEffortLevels = new Set<EffortLevel>(['low', 'medium', 'high', 'xhigh', 'max'])
 const backgroundFeatureRestrictions = {
@@ -361,9 +364,12 @@ const settleWithin = (promise: Promise<unknown>, timeoutMs: number): Promise<voi
 class ClaudeRemoteSessionStore extends RemoteSessionStore {
   constructor(container: StoredClaudeContainer) {
     super(async (script, args = []) =>
-      runHostCommand(await getHostCommand(
-        'sh', ['-lc', script, 'sele-claude-session-store', ...args], { container, env: process.env }
-      ))
+      runHostCommand(
+        await getHostCommand('sh', ['-lc', script, 'sele-claude-session-store', ...args], {
+          container,
+          env: process.env
+        })
+      )
     )
   }
 }
@@ -524,12 +530,21 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   id = 'claude' as const
 
   private states = new Map<string, ClaudeSessionState>()
+  private stateLoads = new Map<string, Promise<ClaudeSessionState>>()
+  private stateGeneration = 0
+  private disposed = false
+  private pinnedStates = new Map<ClaudeSessionState, number>()
+  private completingStates = new Set<ClaudeSessionState>()
+  private stateTranscriptBytes = new WeakMap<ClaudeSessionState, number>()
+  private admissionLeases = new Map<ClaudeSessionState, ReturnType<typeof setTimeout>>()
   private sessionContainers = new Map<string, StoredClaudeContainer | null>()
+  private sessionOptions = new Map<string, ProviderTurnOptions>()
   private transcriptProjections = new Map<ClaudeSessionState, ClaudeTranscriptProjection>()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private metadataRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private completionCoordinator = new ProviderConversationCompletionCoordinator()
   private oneShotGenerations = new Map<string, ClaudeOneShotGeneration>()
   private canceledOneShotGenerationIds = new Set<string>()
@@ -786,9 +801,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         // Claude can report that subscription limits apply while silently returning
         // null after its usage request. Read the same account's endpoint in that case;
         // the SDK has already handled any credential refresh.
-        const limits = usage.rate_limits ?? (usage.rate_limits_available
-          ? await claudeAccounts.getUsageFallback(options)
-          : null)
+        const limits =
+          usage.rate_limits ??
+          (usage.rate_limits_available ? await claudeAccounts.getUsageFallback(options) : null)
         return {
           updatedAt: Date.now(),
           statisticsLoaded: false,
@@ -908,7 +923,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   getSubagent = async (
     chatId: string,
     subagentId: string,
-    options: { container?: AppContainerTarget | null } = {}
+    options: { container?: AppContainerTarget | null } = {},
+    window?: ProviderChatTurnWindow
   ): Promise<ProviderSubagentDetail> => {
     const state = await this.ensureState(chatId, undefined, options.container)
     const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
@@ -930,12 +946,25 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       ...toTranscriptMessage(message),
       parent_tool_use_id: null
     }))
+    const rendered = window
+      ? renderClaudeChatWindow(
+          transcript,
+          {
+            active: summary.status === 'running' || summary.status === 'pending',
+            stopped: summary.status === 'stopped',
+            failed: summary.status === 'failed'
+          },
+          window
+        )
+      : null
     return {
       ...summary,
-      items: renderClaudeChatItems(transcript, {
-        active: summary.status === 'running' || summary.status === 'pending',
-        stopped: summary.status === 'stopped',
-        failed: summary.status === 'failed'
+      ...(rendered ?? {
+        items: renderClaudeChatItems(transcript, {
+          active: summary.status === 'running' || summary.status === 'pending',
+          stopped: summary.status === 'stopped',
+          failed: summary.status === 'failed'
+        })
       })
     }
   }
@@ -956,22 +985,28 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
-    await renameSession(chatId, title, {
-      ...(state.cwd ? { dir: state.cwd } : {}),
-      ...(state.container ? { sessionStore: new ClaudeRemoteSessionStore(state.container) } : {})
-    })
-    state.metadata = state.metadata
-      ? { ...state.metadata, customTitle: title, summary: title }
-      : {
-          sessionId: chatId,
-          summary: title,
-          customTitle: title,
-          lastModified: Date.now(),
-          createdAt: state.createdAt,
-          cwd: state.cwd ?? undefined
-        }
-    this.emitUpdate(state)
-    return this.createChatDetail(state)
+    this.pinState(state)
+    try {
+      await renameSession(chatId, title, {
+        ...(state.cwd ? { dir: state.cwd } : {}),
+        ...(state.container ? { sessionStore: new ClaudeRemoteSessionStore(state.container) } : {})
+      })
+      state.metadata = state.metadata
+        ? { ...state.metadata, customTitle: title, summary: title }
+        : {
+            sessionId: chatId,
+            summary: title,
+            customTitle: title,
+            lastModified: Date.now(),
+            createdAt: state.createdAt,
+            cwd: state.cwd ?? undefined
+          }
+      this.emitUpdate(state)
+      return this.createChatDetail(state)
+    } finally {
+      this.unpinState(state)
+      this.trimIdleStates(state)
+    }
   }
 
   generateOneShot = async (message: string, options?: ProviderOneShotOptions): Promise<string> => {
@@ -1217,25 +1252,31 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options)
-    const targetIndex = state.messages.findIndex(
-      (entry) => entry.type === 'user' && entry.uuid === messageId
-    )
-    if (targetIndex < 0) throw new Error('Message cannot be edited')
-    const previous = state.messages[targetIndex - 1]
-    if (!previous) throw new Error('Claude cannot edit the first message in a session.')
+    this.pinState(state)
+    try {
+      const targetIndex = state.messages.findIndex(
+        (entry) => entry.type === 'user' && entry.uuid === messageId
+      )
+      if (targetIndex < 0) throw new Error('Message cannot be edited')
+      const previous = state.messages[targetIndex - 1]
+      if (!previous) throw new Error('Claude cannot edit the first message in a session.')
 
-    const resumeDropsTurn = (await this.supportsResumeDropsTurn(state)) ? messageId : undefined
+      const resumeDropsTurn = (await this.supportsResumeDropsTurn(state)) ? messageId : undefined
 
-    await this.closeStateQuery(state)
-    state.messages = state.messages.slice(0, targetIndex)
-    state.messageIds = new Set(state.messages.map((entry) => entry.uuid))
-    state.queuedMessagesPaused = false
-    await this.startStateQuery(state, options, {
-      resumeAt: previous.uuid,
-      resumeDropsTurn
-    })
-    this.sendMessageNow(state, message, options)
-    return this.createChatDetail(state)
+      await this.closeStateQuery(state)
+      state.messages = state.messages.slice(0, targetIndex)
+      state.messageIds = new Set(state.messages.map((entry) => entry.uuid))
+      state.queuedMessagesPaused = false
+      await this.startStateQuery(state, options, {
+        resumeAt: previous.uuid,
+        resumeDropsTurn
+      })
+      this.sendMessageNow(state, message, options)
+      return this.createChatDetail(state)
+    } finally {
+      this.unpinState(state)
+      this.trimIdleStates(state)
+    }
   }
 
   resolveApproval = async (
@@ -1292,20 +1333,26 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
-    state.stopped = true
-    state.active = false
-    state.failed = false
-    state.waitingForSessionIdle = false
-    state.queuedMessagesPaused = state.queuedMessages.length > 0
-    this.rejectPendingRequests(state)
-    const interrupt = state.query?.interrupt().catch((error: unknown) => {
-      if (isExpectedClaudeQueryShutdownError(error)) return
-      console.error(`Unable to interrupt Claude session ${state.id} while stopping it.`, error)
-    })
-    if (interrupt) await settleWithin(interrupt, interruptCloseGraceMs)
-    await this.closeStateQuery(state)
-    this.emitUpdate(state, true)
-    return this.createChatDetail(state)
+    this.pinState(state)
+    try {
+      state.stopped = true
+      state.active = false
+      state.failed = false
+      state.waitingForSessionIdle = false
+      state.queuedMessagesPaused = state.queuedMessages.length > 0
+      this.rejectPendingRequests(state)
+      const interrupt = state.query?.interrupt().catch((error: unknown) => {
+        if (isExpectedClaudeQueryShutdownError(error)) return
+        console.error(`Unable to interrupt Claude session ${state.id} while stopping it.`, error)
+      })
+      if (interrupt) await settleWithin(interrupt, interruptCloseGraceMs)
+      await this.closeStateQuery(state)
+      this.emitUpdate(state, true)
+      return this.createChatDetail(state)
+    } finally {
+      this.unpinState(state)
+      this.trimIdleStates(state)
+    }
   }
 
   onChatUpdated = (
@@ -1316,15 +1363,24 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
+    this.disposed = true
+    this.stateGeneration += 1
     this.sessionDiscovery.dispose()
     claudeAccounts.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
+    this.metadataRefreshTimers.forEach((timer) => clearTimeout(timer))
+    this.metadataRefreshTimers.clear()
     this.completionCoordinator.clear()
     this.states.forEach((state) => {
       void this.closeStateQuery(state)
     })
     this.states.clear()
+    this.stateLoads.clear()
+    this.admissionLeases.forEach((timer) => clearTimeout(timer))
+    this.admissionLeases.clear()
+    this.pinnedStates.clear()
+    this.completingStates.clear()
     this.transcriptProjections.clear()
     this.oneShotGenerations.forEach((generation) => {
       generation.input?.close()
@@ -1339,6 +1395,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.controlQueries.dispose()
     this.hiddenSessionIds.clear()
     this.sessionContainers.clear()
+    this.sessionOptions.clear()
   }
 
   private closeControlQueryEntry = (entry: ClaudeControlQueryEntry): void => {
@@ -1517,9 +1574,124 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       contextUsage: null,
       queryReadOnly: null,
       queryModel: null,
+      queryStartupRevision: 0,
       backgroundTaskIds: new Set(),
       subagentTaskStatuses: new Map(),
       waitingForSessionIdle: false
+    }
+  }
+
+  private rememberStateTranscriptSize = (state: ClaudeSessionState): void => {
+    // Walk references once at admission/completion. String length is O(1), including for
+    // large tool results, and no second serialized copy of the transcript is allocated.
+    const visited = new WeakSet<object>()
+    const pending: unknown[] = [state.messages]
+    let bytes = 0
+    while (pending.length > 0) {
+      const value = pending.pop()
+      if (typeof value === 'string') {
+        bytes += value.length * 2
+      } else if (typeof value === 'number' || typeof value === 'bigint') {
+        bytes += 8
+      } else if (typeof value === 'boolean') {
+        bytes += 4
+      } else if (value && typeof value === 'object' && !visited.has(value)) {
+        visited.add(value)
+        bytes += 48
+        if (Array.isArray(value)) {
+          for (let index = 0; index < value.length; index += 1) pending.push(value[index])
+        } else {
+          for (const [key, child] of Object.entries(value)) {
+            bytes += key.length * 2 + 16
+            pending.push(child)
+          }
+        }
+      }
+    }
+    this.stateTranscriptBytes.set(state, bytes)
+  }
+
+  private pinState = (state: ClaudeSessionState): void => {
+    this.pinnedStates.set(state, (this.pinnedStates.get(state) ?? 0) + 1)
+  }
+
+  private unpinState = (state: ClaudeSessionState): void => {
+    const count = this.pinnedStates.get(state)
+    if (!count) return
+    if (count === 1) this.pinnedStates.delete(state)
+    else this.pinnedStates.set(state, count - 1)
+  }
+
+  private leaseStateForAdmission = (state: ClaudeSessionState): void => {
+    const previous = this.admissionLeases.get(state)
+    if (previous) clearTimeout(previous)
+    // Promise callers resume in microtasks. Release on the next task, after they can pin a
+    // query or queue a message, and trim any temporary burst of idle admissions then.
+    const timer = setTimeout(() => {
+      if (this.admissionLeases.get(state) !== timer) return
+      this.admissionLeases.delete(state)
+      this.trimIdleStates()
+    }, 0)
+    this.admissionLeases.set(state, timer)
+  }
+
+  private isStateBusy = (state: ClaudeSessionState): boolean =>
+    this.pinnedStates.has(state) ||
+    this.admissionLeases.has(state) ||
+    this.completingStates.has(state) ||
+    state.query !== null ||
+    state.active ||
+    state.waitingForSessionIdle ||
+    state.queueDrainInProgress ||
+    state.queuedMessages.length > 0 ||
+    state.pendingApprovals.length > 0 ||
+    state.pendingUserInputs.length > 0 ||
+    state.backgroundTaskIds.size > 0 ||
+    this.updateTimers.has(state.id)
+
+  private touchState = (state: ClaudeSessionState): void => {
+    if (this.states.get(state.id) !== state) return
+    this.states.delete(state.id)
+    this.states.set(state.id, state)
+  }
+
+  private trimIdleStates = (retain?: ClaudeSessionState): void => {
+    if (this.disposed) return
+    // Live work is outside the budget. Keep one oversized idle transcript so the currently
+    // viewed chat remains available; the next admission can replace it.
+    const idle = [...this.states.values()].filter((state) => !this.isStateBusy(state))
+    let bytes = idle.reduce(
+      (total, state) => total + (this.stateTranscriptBytes.get(state) ?? 0),
+      0
+    )
+    while (
+      idle.length > maxIdleSessionStates ||
+      (idle.length > 1 && bytes > maxIdleTranscriptBytes)
+    ) {
+      const index = idle.findIndex((state) => state !== retain)
+      if (index < 0) break
+      const [state] = idle.splice(index, 1)
+      if (!state) break
+      bytes -= this.stateTranscriptBytes.get(state) ?? 0
+      if (state.options) {
+        // Keep only the small query configuration needed by a later fork or resume.
+        this.sessionOptions.set(state.id, {
+          ...state.options,
+          files: undefined,
+          images: undefined,
+          skills: undefined,
+          review: undefined
+        })
+      }
+      this.states.delete(state.id)
+      this.transcriptProjections.delete(state)
+      this.completionCoordinator.cancel(state.id)
+      const timer = this.updateTimers.get(state.id)
+      if (timer) clearTimeout(timer)
+      this.updateTimers.delete(state.id)
+      const metadataTimer = this.metadataRefreshTimers.get(state.id)
+      if (metadataTimer) clearTimeout(metadataTimer)
+      this.metadataRefreshTimers.delete(state.id)
     }
   }
 
@@ -1561,30 +1733,61 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions,
     container?: AppContainerTarget | null
   ): Promise<ClaudeSessionState> => {
+    if (this.disposed) throw new Error('Claude provider was disposed.')
     const existing = this.states.get(chatId)
     if (existing) {
       if (options) existing.options = options
+      this.touchState(existing)
+      this.leaseStateForAdmission(existing)
       return existing
+    }
+
+    const loading = this.stateLoads.get(chatId)
+    if (loading) {
+      const state = await loading
+      if (options) state.options = options
+      this.touchState(state)
+      this.leaseStateForAdmission(state)
+      return state
     }
 
     const rememberedContainer =
       container ?? options?.container ?? this.sessionContainers.get(chatId) ?? null
-    const state = this.createState(chatId, options, rememberedContainer)
-    const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
-    const [metadata, messages] = await Promise.all([
-      getSessionInfo(chatId, { sessionStore }),
-      loadClaudeHistory(chatId, sessionStore)
-    ])
-    if (!metadata && messages.length === 0) throw new Error('Claude session was not found.')
-    state.metadata = metadata ?? null
-    state.createdAt = metadata?.createdAt ?? state.createdAt
-    state.updatedAt = metadata?.lastModified ?? state.updatedAt
-    state.cwd = metadata?.cwd ?? options?.cwd ?? null
-    state.messages = messages
-    state.messageIds = new Set(state.messages.map((message) => message.uuid))
-    this.states.set(chatId, state)
-    this.sessionContainers.set(chatId, state.container)
-    return state
+    const rememberedOptions = options ?? this.sessionOptions.get(chatId)
+    const state = this.createState(chatId, rememberedOptions, rememberedContainer)
+    const generation = this.stateGeneration
+    const pending = (async (): Promise<ClaudeSessionState> => {
+      const sessionStore = state.container
+        ? new ClaudeRemoteSessionStore(state.container)
+        : undefined
+      const [metadata, messages] = await Promise.all([
+        getSessionInfo(chatId, { sessionStore }),
+        loadClaudeHistory(chatId, sessionStore)
+      ])
+      if (this.disposed || generation !== this.stateGeneration)
+        throw new Error('Claude provider was disposed.')
+      const current = this.states.get(chatId)
+      if (current) return current
+      if (!metadata && messages.length === 0) throw new Error('Claude session was not found.')
+      state.metadata = metadata ?? null
+      state.createdAt = metadata?.createdAt ?? state.createdAt
+      state.updatedAt = metadata?.lastModified ?? state.updatedAt
+      state.cwd = metadata?.cwd ?? rememberedOptions?.cwd ?? null
+      state.messages = messages
+      state.messageIds = new Set(messages.map((message) => message.uuid))
+      this.rememberStateTranscriptSize(state)
+      this.states.set(chatId, state)
+      this.sessionContainers.set(chatId, state.container)
+      this.leaseStateForAdmission(state)
+      this.trimIdleStates(state)
+      return state
+    })()
+    this.stateLoads.set(chatId, pending)
+    try {
+      return await pending
+    } finally {
+      if (this.stateLoads.get(chatId) === pending) this.stateLoads.delete(chatId)
+    }
   }
 
   private ensureStateQuery = async (
@@ -1600,50 +1803,71 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions,
     startOptions: StartQueryOptions = {}
   ): Promise<void> => {
-    await this.closeStateQuery(state)
-    state.options = options ?? state.options
-    const input = new AsyncMessageQueue<SDKUserMessage>()
-    const runtime = await this.getQueryRuntime(state.container, state.cwd ?? state.options?.cwd)
-    const queryReadOnly = state.options?.sandboxMode === 'read-only'
-    const isNew = state.messages.length === 0 && !startOptions.forkFrom && !startOptions.resumeAt
-    const browserService = getBrowserAutomationService()
-    // Do not connect remote/container or restricted queries to an unrelated host browser.
-    const browser =
-      browserService && !state.container && !queryReadOnly
-        ? createClaudeBrowserIntegration(browserService, {
-            providerId: 'claude',
-            sessionId: state.id,
-            cwd: state.cwd ?? state.options?.cwd ?? '',
-            containerKey: getContainerTargetKey(state.container)
-          })
-        : null
-    let control: Query
+    this.pinState(state)
     try {
-      control = query({
-        prompt: input,
-        options: {
-          ...this.getBaseQueryOptions(state.options, runtime),
-          ...(browser ? { mcpServers: { [claudeBrowserServerName]: browser.server } } : {}),
-          canUseTool: this.createPermissionHandler(state),
-          ...(isNew ? { sessionId: state.id } : { resume: startOptions.forkFrom ?? state.id }),
-          ...(startOptions.forkFrom ? { forkSession: true, sessionId: state.id } : {}),
-          ...(startOptions.resumeAt ? { resumeSessionAt: startOptions.resumeAt } : {}),
-          ...(startOptions.resumeDropsTurn ? { resumeDropsTurn: startOptions.resumeDropsTurn } : {})
-        }
-      })
-    } catch (error) {
-      browser?.close()
-      throw error
+      await this.closeStateQuery(state)
+      state.queryStartupRevision += 1
+      const startupRevision = state.queryStartupRevision
+      const adapterGeneration = this.stateGeneration
+      state.options = options ?? state.options
+      const input = new AsyncMessageQueue<SDKUserMessage>()
+      const runtime = await this.getQueryRuntime(state.container, state.cwd ?? state.options?.cwd)
+      if (
+        this.disposed ||
+        adapterGeneration !== this.stateGeneration ||
+        this.states.get(state.id) !== state ||
+        state.queryStartupRevision !== startupRevision
+      ) {
+        input.close()
+        throw new Error('Claude session startup was canceled.')
+      }
+      const queryReadOnly = state.options?.sandboxMode === 'read-only'
+      const isNew = state.messages.length === 0 && !startOptions.forkFrom && !startOptions.resumeAt
+      const browserService = getBrowserAutomationService()
+      // Do not connect remote/container or restricted queries to an unrelated host browser.
+      const browser =
+        browserService && !state.container && !queryReadOnly
+          ? createClaudeBrowserIntegration(browserService, {
+              providerId: 'claude',
+              sessionId: state.id,
+              cwd: state.cwd ?? state.options?.cwd ?? '',
+              containerKey: getContainerTargetKey(state.container)
+            })
+          : null
+      let control: Query
+      try {
+        control = query({
+          prompt: input,
+          options: {
+            ...this.getBaseQueryOptions(state.options, runtime),
+            ...(browser ? { mcpServers: { [claudeBrowserServerName]: browser.server } } : {}),
+            canUseTool: this.createPermissionHandler(state),
+            ...(isNew ? { sessionId: state.id } : { resume: startOptions.forkFrom ?? state.id }),
+            ...(startOptions.forkFrom ? { forkSession: true, sessionId: state.id } : {}),
+            ...(startOptions.resumeAt ? { resumeSessionAt: startOptions.resumeAt } : {}),
+            ...(startOptions.resumeDropsTurn
+              ? { resumeDropsTurn: startOptions.resumeDropsTurn }
+              : {})
+          }
+        })
+      } catch (error) {
+        browser?.close()
+        throw error
+      }
+      state.browser = browser
+      state.input = input
+      state.query = control
+      state.queryReadOnly = queryReadOnly
+      state.queryModel = getClaudeModel(state.options)
+      void this.consumeStateQuery(state, control)
+    } finally {
+      this.unpinState(state)
+      this.trimIdleStates(state)
     }
-    state.browser = browser
-    state.input = input
-    state.query = control
-    state.queryReadOnly = queryReadOnly
-    state.queryModel = getClaudeModel(state.options)
-    void this.consumeStateQuery(state, control)
   }
 
   private closeStateQuery = async (state: ClaudeSessionState): Promise<void> => {
+    state.queryStartupRevision += 1
     const control = state.query
     state.browser?.close()
     state.browser = null
@@ -1786,6 +2010,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           }
         }
         await this.closeStateQuery(state)
+      }
+      if (this.states.get(state.id) === state) {
+        this.rememberStateTranscriptSize(state)
+        this.trimIdleStates()
       }
     }
   }
@@ -2350,21 +2578,30 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   private scheduleSessionMetadataRefresh = (state: ClaudeSessionState): void => {
-    setTimeout(() => {
+    const previous = this.metadataRefreshTimers.get(state.id)
+    if (previous) clearTimeout(previous)
+    const timer = setTimeout(() => {
+      if (this.metadataRefreshTimers.get(state.id) !== timer) return
+      this.metadataRefreshTimers.delete(state.id)
       if (this.states.get(state.id) !== state) return
       void this.refreshSessionMetadata(state).catch((error: unknown) => {
         if (isExpectedClaudeSessionMetadataAbsenceError(error)) return
         console.error(`Unable to refresh delayed Claude session metadata for ${state.id}.`, error)
       })
-    }, sessionTitleRefreshDelayMs).unref?.()
+    }, sessionTitleRefreshDelayMs)
+    timer.unref?.()
+    this.metadataRefreshTimers.set(state.id, timer)
   }
 
   private queueUpdate = (state: ClaudeSessionState, conversationChanged = true): void => {
+    if (this.disposed || this.states.get(state.id) !== state) return
     if (conversationChanged) state.updatedAt = Date.now()
     if (this.updateTimers.has(state.id)) return
     const timer = setTimeout(() => {
+      if (this.updateTimers.get(state.id) !== timer) return
       this.updateTimers.delete(state.id)
       this.emitUpdate(state, false, false)
+      this.trimIdleStates()
     }, updateDelayMs)
     this.updateTimers.set(state.id, timer)
   }
@@ -2374,17 +2611,27 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     turnCompleted = false,
     conversationChanged = true
   ): void => {
+    if (this.disposed || this.states.get(state.id) !== state) return
     if (turnCompleted) {
       // The ordered SDK result/error event is the lifecycle boundary. Provisional fragments are
       // no longer needed once that event has supplied the completed message collection.
       state.partialMessages.clear()
-      void this.completionCoordinator.complete(state.id, {
-        publish: () => this.publishUpdate(state, true, conversationChanged),
-        isCurrent: () => this.states.get(state.id) === state,
-        onError: (error, phase) => {
-          console.error(`Unable to ${phase} completed Claude session ${state.id}`, error)
-        }
-      })
+      this.completingStates.add(state)
+      void this.completionCoordinator
+        .complete(state.id, {
+          publish: () => this.publishUpdate(state, true, conversationChanged),
+          isCurrent: () => this.states.get(state.id) === state,
+          onError: (error, phase) => {
+            console.error(`Unable to ${phase} completed Claude session ${state.id}`, error)
+          }
+        })
+        .finally(() => {
+          this.completingStates.delete(state)
+          if (this.states.get(state.id) === state) {
+            this.rememberStateTranscriptSize(state)
+            this.trimIdleStates()
+          }
+        })
       return
     }
     this.publishUpdate(state, false, conversationChanged)
@@ -2395,11 +2642,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     turnCompleted: boolean,
     conversationChanged: boolean
   ): void => {
+    if (this.disposed || this.states.get(state.id) !== state) return
     if (conversationChanged) state.updatedAt = Date.now()
     const timer = this.updateTimers.get(state.id)
     if (timer) clearTimeout(timer)
     this.updateTimers.delete(state.id)
-    if (this.hiddenSessionIds.has(state.id) || this.states.get(state.id) !== state) return
+    if (this.hiddenSessionIds.has(state.id)) return
     const detail = this.createChatDetail(state, true)
     this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
   }

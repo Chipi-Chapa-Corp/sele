@@ -26,7 +26,7 @@ const harness = (provider, name, globals, state) => {
     getDrainingMessage: () => null, getPendingMessages: () => [],
     getTitle: () => 'Saved title', getCwd: () => '/tmp', getChatStatus: () => null,
     getPendingApproval: () => null, getPendingUserInput: () => null, getContextUsage: () => null,
-    transcriptProjections: new Map()
+    transcriptProjections: new Map(), eventStores: new WeakMap()
   })
   return instance
 }
@@ -77,7 +77,7 @@ test('codex: actual detail construction reuses an unchanged active turn', () => 
   }, thread)
   Object.assign(adapter, {
     getRenderableTurns: thread => thread.turns, getProviderPendingMessages: () => [], getProviderPendingApproval: () => null,
-    externallyOwnedThreadIds: new Set(), threadRevisions: new Map(), pendingTurnStarts: new Set(), pendingTurnIds: new Map(), threadContainers: new Map(), contextUsageByThread: new Map(), goals: new Map()
+    externallyOwnedThreadIds: new Set(), writeAccessChecks: new Map(), threadRevisions: new Map(), pendingTurnStarts: new Set(), pendingTurnIds: new Map(), threadContainers: new Map(), contextUsageByThread: new Map(), goals: new Map()
   })
   const first = adapter.createChatDetail(thread)
   visits = 0

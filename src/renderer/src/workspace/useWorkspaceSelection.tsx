@@ -1,6 +1,6 @@
-import { refreshSubagentDetail } from '../subagentUi'
-import { chatWorkingItemPageSize, chatWorkingItemWindowSize } from './controllerTypes'
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
+import { getSubagentPageNavigationEpoch, refreshSubagentDetail } from '../subagentUi'
+import { chatWorkingItemPageSize, chatWorkingItemWindowSize } from './controllerTypes'
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import type { ProviderSubagent, ProviderUsageOptions } from '../../../shared/provider'
@@ -308,6 +308,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       timeoutId = window.setTimeout(() => void refresh(), delay)
     }
     const refresh = async (): Promise<void> => {
+      const pageNavigationEpoch = getSubagentPageNavigationEpoch(subagentChatLoadRequestRef)
       try {
         const detail = await providerApi.getSubagent(
           selectedProviderId,
@@ -321,19 +322,36 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         ) {
           return
         }
+        if (pageNavigationEpoch !== getSubagentPageNavigationEpoch(subagentChatLoadRequestRef)) {
+          scheduleRefresh(1_500)
+          return
+        }
 
         setSubagentChatView((currentView) =>
           currentView?.rootChatKey === selectedChatKey &&
           currentView.summary.id === activeSubagentId
             ? {
+                ...currentView,
                 rootChatKey: selectedChatKey,
                 summary: detail,
-                detail: refreshSubagentDetail(
-                  currentView.detail,
-                  detail,
-                  chatWorkingItemPageSize,
-                  chatWorkingItemWindowSize
-                ),
+                detail:
+                  currentView.pageLoading && currentView.detail
+                    ? {
+                        ...currentView.detail,
+                        ...detail,
+                        items: currentView.detail.items,
+                        itemsStartTurnIndex: currentView.detail.itemsStartTurnIndex,
+                        turnCount: Math.max(
+                          currentView.detail.turnCount ?? 0,
+                          detail.turnCount ?? 0
+                        )
+                      }
+                    : refreshSubagentDetail(
+                        currentView.detail,
+                        detail,
+                        chatWorkingItemPageSize,
+                        chatWorkingItemWindowSize
+                      ),
                 loadState: 'ready',
                 error: null
               }

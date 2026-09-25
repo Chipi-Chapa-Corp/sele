@@ -28,11 +28,13 @@ const bundled = await build({
              export const logDiagnostic = (...args) => globalThis.harness.logs.push(args);`
             : `export const providerApi = {
                onChatUpdated: listener => { globalThis.harness.publish = listener },
-               getChat: (...args) => globalThis.harness.getChat(...args)
+               getChat: (...args) => globalThis.harness.getChat(...args),
+               getSubagent: (...args) => globalThis.harness.getSubagent(...args)
              };
              export const getChatUpdateSummary = () => {};
              export const getProviderChatCursorWindow = () => {};
              export const getProviderChatItemWindow = () => {};
+             export const getProviderSubagentItemWindow = (...args) => globalThis.harness.getSubagent(args[0], args[1], args[2]);
              export const getProviderChatWindow = (...args) => globalThis.harness.getChatWindow(...args);`
         }))
       }
@@ -117,6 +119,97 @@ test('first-chat updates and completion arrive normally when acknowledged', () =
   assert.equal(h.timers.size, 0)
   h.expire()
   assert.equal(h.harness.logs.length, 0)
+})
+
+test('subagent IPC bounds a long transcript and serves exact older windows', async () => {
+  const h = setup()
+  const output = 'x'.repeat(10_000)
+  const items = Array.from({ length: 1000 }, (_, turn) => [
+    { type: 'message', id: `user-${turn}`, role: 'user', content: `prompt ${turn}` },
+    {
+      type: 'working',
+      id: `work-${turn}`,
+      status: 'worked',
+      items: [
+        {
+          type: 'tool',
+          id: `tool-${turn}`,
+          toolId: `tool-${turn}`,
+          activity: 'command',
+          status: 'finished',
+          label: 'Run',
+          command: 'true',
+          stdout: output,
+          cwd: null,
+          diffs: [],
+          images: [],
+          rawInput: null,
+          rawOutput: null
+        }
+      ]
+    },
+    { type: 'message', id: `answer-${turn}`, role: 'assistant', content: `answer ${turn}` }
+  ]).flat()
+  items[items.length - 2].items = Array.from({ length: 1000 }, (_, toolIndex) => ({
+    type: 'tool',
+    id: `tool-999-${toolIndex}`,
+    toolId: `tool-999-${toolIndex}`,
+    activity: 'command',
+    status: 'finished',
+    label: 'Run',
+    command: 'true',
+    stdout: output,
+    cwd: null,
+    diffs: [],
+    images: [],
+    rawInput: null,
+    rawOutput: null
+  }))
+  const calls = []
+  h.harness.getSubagent = async (...args) => {
+    calls.push(args)
+    return {
+      id: 'child',
+      parentId: 'parent',
+      title: 'Child',
+      description: null,
+      status: 'completed',
+      createdAt: 1,
+      updatedAt: 2,
+      items
+    }
+  }
+  const read = h.harness.handlers.get(channels.getSubagent)
+  const latest = await read(null, 'claude', 'parent', 'child')
+  assert.equal(latest.turnCount, 1000)
+  assert.equal(latest.itemsStartTurnIndex, 990)
+  assert.equal(latest.items[0].id, 'user-990')
+  assert.equal(latest.items.at(-1).id, 'answer-999')
+  assert.equal(latest.status, 'completed')
+  assert.ok(JSON.stringify(latest).length < 2_500_000)
+  const latestStep = latest.items.find((item) => item.id === 'work-999')
+  assert.equal(latestStep.items[0].toolCount, 1000)
+  const toolPage = await h.harness.handlers.get(channels.getChatWorkingToolPage)(
+    null,
+    'claude',
+    'child',
+    'work-999',
+    latestStep.items[0].id,
+    0,
+    50,
+    'parent'
+  )
+  assert.equal(toolPage.totalCount, 1000)
+  assert.equal(toolPage.tools[0].id, 'tool-999-0')
+  assert.ok(JSON.stringify(toolPage).length < 2_500_000)
+  const older = await read(null, 'claude', 'parent', 'child', { startIndex: 0, limit: 10 })
+  assert.equal(older.itemsStartTurnIndex, 0)
+  assert.equal(older.turnCount, 1000)
+  assert.equal(older.items[0].id, 'user-0')
+  assert.equal(older.items.at(-1).id, 'answer-9')
+  assert.equal(calls.length, 3)
+  assert.equal(calls[1][3], undefined, 'working page uses the complete source on demand')
+  assert.equal(calls[2][3].startIndex, 0)
 })
 
 test('a missing first acknowledgment holds completion and logs delivery state without content', () => {

@@ -97,6 +97,11 @@ type OpenCodeChatState = {
   container: AppContainerTarget | null
   session: Session | GlobalSession | null
   messages: OpenCodeMessageWithParts[]
+  messagesHydrated: boolean
+  messagesDirty: boolean
+  hydratedUpdatedAt: number | null
+  eventRevision: number
+  client: OpencodeClient | null
   active: boolean
   stopped: boolean
   failed: boolean
@@ -306,7 +311,7 @@ const sumBreakdowns = (breakdowns: ProviderTokenUsageBreakdown[]): ProviderToken
   )
 
 const getMessagePreview = (messages: OpenCodeMessageWithParts[]): string => {
-  const items = renderOpenCodeChatItems(messages, { active: false, stopped: false })
+  const items = renderOpenCodeChatItems(messages.slice(-8), { active: false, stopped: false })
   return truncate(
     items.findLast((item) => item.type === 'message')?.content ?? '',
     maxPreviewLength
@@ -361,6 +366,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private clientEntries = new Map<string, OpenCodeClientEntry>()
   private clientEntryPromises = new Map<string, Promise<OpenCodeClientEntry>>()
   private states = new Map<string, OpenCodeChatState>()
+  private sessionDiscoveries = new Map<string, Promise<OpenCodeChatState>>()
+  private refreshes = new WeakMap<OpenCodeChatState, Promise<void>>()
+  private stateChecks = new WeakMap<OpenCodeChatState, Promise<void>>()
   private sessionContainers = new Map<string, AppContainerTarget | null>()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
@@ -603,18 +611,14 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const visibleSessions = sessions.filter((session) => !isOneShotSession(session))
     const chats = await Promise.all(
       visibleSessions.map(async (session) => {
-        this.rememberSession(session, entry.container)
-        const messages = await this.loadMessages(entry.client, session).catch((error) => {
-          console.error('[caught:OpenCodeProviderAdapter:getChats]', error)
-          return []
-        })
-        const state = this.states.get(session.id)
-        if (state) {
-          state.messages = reconcileProviderRecords(state.messages, messages, {
-            authoritative: true,
-            getId: (message) => message.info.id
-          })
-        }
+        const state = this.rememberSession(session, entry.container)
+        const messages =
+          state.messagesHydrated && !state.messagesDirty
+            ? state.messages.slice(-8)
+            : await this.loadMessages(entry.client, session, 8).catch((error) => {
+                console.error('[caught:OpenCodeProviderAdapter:getChats]', error)
+                return []
+              })
         return this.createChat(session, messages, state)
       })
     )
@@ -629,7 +633,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options.container)
-    return this.createChatDetail(state)
+    return this.createChatDetailFromState(state)
   }
 
   getChatWindow = async (
@@ -688,7 +692,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   getSubagent = async (
     chatId: string,
     subagentId: string,
-    options: { container?: AppContainerTarget | null } = {}
+    options: { container?: AppContainerTarget | null } = {},
+    window?: ProviderChatTurnWindow
   ): Promise<ProviderSubagentDetail> => {
     const rootState = await this.ensureState(chatId, options.container)
     const entry = await this.getClientEntry(rootState.container)
@@ -696,9 +701,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const session = sessions.find((candidate) => candidate.id === subagentId)
     if (!session) throw new Error('OpenCode subagent was not found.')
 
-    const state = this.rememberSession(session, entry.container)
-    await this.refreshState(state, entry.client)
-    const detail = await this.createChatDetail(state)
+    this.rememberSession(session, entry.container)
+    const state = await this.ensureState(subagentId, entry.container)
+    const detail = this.createChatDetailFromState(state, window)
     const summary = createOpenCodeSubagentSummary(
       state.session!,
       chatId,
@@ -707,7 +712,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return {
       ...summary,
       status: state.failed ? 'failed' : state.stopped ? 'stopped' : summary.status,
-      items: detail.items
+      items: detail.items,
+      itemsStartTurnIndex: detail.itemsStartTurnIndex,
+      turnCount: detail.turnCount
     }
   }
 
@@ -1179,10 +1186,15 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationTimers.clear()
     void this.disposeClients()
     this.states.clear()
+    this.sessionDiscoveries.clear()
     this.sessionContainers.clear()
   }
 
   private disposeClients = async (): Promise<void> => {
+    this.states.forEach((state) => {
+      state.messagesDirty = true
+      state.client = null
+    })
     const pendingEntries = Array.from(this.clientEntryPromises.values())
     this.clientEntryPromises.clear()
     const settledPendingEntries = await Promise.allSettled(pendingEntries)
@@ -1222,6 +1234,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       console.error('[OpenCodeProviderAdapter:createClientEntry] OpenCode server exited', error)
       const key = getContainerTargetKey(storedContainer)
       if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
+      this.states.forEach((state) => {
+        if (state.client === client) state.messagesDirty = true
+      })
       entry.eventAbortController.abort()
     })
     void this.consumeEvents(entry)
@@ -1264,6 +1279,14 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           : '[OpenCodeProviderAdapter:consumeEvents] Event stream stopped unexpectedly',
         error
       )
+    } finally {
+      if (!entry.eventAbortController.signal.aborted) {
+        const key = getContainerTargetKey(entry.container)
+        if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
+        this.states.forEach((state) => {
+          if (state.client === entry.client) state.messagesDirty = true
+        })
+      }
     }
   }
 
@@ -1286,6 +1309,14 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const directory = event.directory ?? this.states.get(sessionID)?.directory
     if (!directory) return
     const state = this.getOrCreateState(sessionID, directory, entry.container)
+    state.eventRevision += 1
+    state.messagesDirty = true
+    if (type === 'session.deleted') {
+      this.completionCoordinator.cancel(sessionID)
+      this.states.delete(sessionID)
+      this.sessionContainers.delete(sessionID)
+      return
+    }
 
     if (
       type === 'message.updated' ||
@@ -1344,6 +1375,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       container,
       session: null,
       messages: [],
+      messagesHydrated: false,
+      messagesDirty: false,
+      hydratedUpdatedAt: null,
+      eventRevision: 0,
+      client: null,
       active: false,
       stopped: false,
       failed: false,
@@ -1361,6 +1397,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     container: AppContainerTarget | null
   ): OpenCodeChatState => {
     const state = this.getOrCreateState(session.id, session.directory, container)
+    if (
+      state.messagesHydrated &&
+      state.hydratedUpdatedAt !== null &&
+      session.time.updated !== state.hydratedUpdatedAt
+    )
+      state.messagesDirty = true
     state.session = session
     state.directory = session.directory
     state.container = container
@@ -1424,19 +1466,56 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         : normalizeStoredContainer(container)
     const entry = await this.getClientEntry(storedContainer)
     let state = this.states.get(chatId)
-    if (!state)
-      state = this.rememberSession(await this.findSession(entry.client, chatId), entry.container)
-    await this.refreshState(state, entry.client)
+    if (!state) {
+      const key = `${getContainerTargetKey(entry.container)}:${chatId}`
+      let discovery = this.sessionDiscoveries.get(key)
+      if (!discovery) {
+        discovery = this.findSession(entry.client, chatId)
+          .then((session) => this.rememberSession(session, entry.container))
+          .finally(() => this.sessionDiscoveries.delete(key))
+        this.sessionDiscoveries.set(key, discovery)
+      }
+      state = await discovery
+    }
+    if (!state.messagesHydrated || state.messagesDirty || state.client !== entry.client) {
+      await this.refreshState(state, entry.client)
+    } else {
+      const pending = this.stateChecks.get(state)
+      if (pending) await pending
+      else {
+        const check = (async (): Promise<void> => {
+          const session = requireData(
+            await entry.client.session.get(
+              { sessionID: chatId, directory: state.directory },
+              { throwOnError: true }
+            )
+          )
+          if (session.time.updated !== state.hydratedUpdatedAt) {
+            state.messagesDirty = true
+            await this.refreshState(state, entry.client)
+          } else {
+            state.session = session
+          }
+        })()
+        this.stateChecks.set(state, check)
+        try {
+          await check
+        } finally {
+          this.stateChecks.delete(state)
+        }
+      }
+    }
     return state
   }
 
   private loadMessages = async (
     client: OpencodeClient,
-    session: Session | GlobalSession
+    session: Session | GlobalSession,
+    limit?: number
   ): Promise<OpenCodeMessageWithParts[]> =>
     requireData(
       await client.session.messages(
-        { sessionID: session.id, directory: session.directory },
+        { sessionID: session.id, directory: session.directory, ...(limit ? { limit } : {}) },
         { throwOnError: true }
       )
     )
@@ -1446,6 +1525,23 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     client: OpencodeClient,
     preserveActive = false
   ): Promise<void> => {
+    const pending = this.refreshes.get(state)
+    if (pending) return pending
+    const refresh = this.refreshStateNow(state, client, preserveActive)
+    this.refreshes.set(state, refresh)
+    try {
+      await refresh
+    } finally {
+      this.refreshes.delete(state)
+    }
+  }
+
+  private refreshStateNow = async (
+    state: OpenCodeChatState,
+    client: OpencodeClient,
+    preserveActive: boolean
+  ): Promise<void> => {
+    const eventRevision = state.eventRevision
     const [session, messages, statuses, permissions, questions] = await Promise.all([
       client.session
         .get({ sessionID: state.id, directory: state.directory }, { throwOnError: true })
@@ -1475,16 +1571,30 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           return []
         })
     ])
-    state.session = session
+    if (
+      eventRevision === state.eventRevision ||
+      !state.session ||
+      session.time.updated >= state.session.time.updated
+    ) {
+      state.session = session
+    }
     state.messages = reconcileProviderRecords(state.messages, messages, {
       authoritative: true,
       getId: (message) => message.info.id
     })
-    const status = statuses[state.id]
-    if (status?.type === 'busy' || status?.type === 'retry') state.active = true
-    else if (!preserveActive) state.active = false
-    state.pendingApprovals = permissions.filter((request) => request.sessionID === state.id)
-    state.pendingQuestions = questions.filter((request) => request.sessionID === state.id)
+    state.messagesHydrated = true
+    state.messagesDirty = eventRevision !== state.eventRevision
+    state.hydratedUpdatedAt = session.time.updated
+    state.client = client
+    // A live event may have advanced these fields while the snapshot was in flight.
+    // Leave them intact until the dirty state receives its next reconciliation.
+    if (eventRevision === state.eventRevision) {
+      const status = statuses[state.id]
+      if (status?.type === 'busy' || status?.type === 'retry') state.active = true
+      else if (!preserveActive) state.active = false
+      state.pendingApprovals = permissions.filter((request) => request.sessionID === state.id)
+      state.pendingQuestions = questions.filter((request) => request.sessionID === state.id)
+    }
   }
 
   private createChat = (
@@ -1494,7 +1604,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): ProviderChat => ({
     id: session.id,
     providerId: 'opencode',
-    title: getOpenCodeDisplayTitle(session.title, messages),
+    title: state?.messagesHydrated
+      ? getOpenCodeDisplayTitle(session.title, state.messages)
+      : session.title,
     preview: getMessagePreview(messages),
     cwd: session.directory || null,
     cwdKind: 'directory',

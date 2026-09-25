@@ -117,7 +117,11 @@ export const prepareChatItemsForRenderer = (items: ProviderChatItem[]): Provider
   return changed ? preparedItems : items
 }
 
-export const prepareChatDetailForRenderer = (detail: ProviderChatDetail): ProviderChatDetail => {
+export const prepareChatDetailForRenderer = <
+  T extends Pick<ProviderChatDetail, 'items' | 'itemsStartTurnIndex' | 'turnCount'>
+>(
+  detail: T
+): T & { itemsStartTurnIndex: number; turnCount: number } => {
   const detailIsWindowed =
     Number.isSafeInteger(detail.itemsStartTurnIndex) &&
     detail.itemsStartTurnIndex! >= 0 &&

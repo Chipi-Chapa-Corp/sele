@@ -74,9 +74,11 @@ import {
 } from './CopilotItemRenderers'
 import {
   createCopilotSubagentSummaries,
-  createCopilotSubagentTranscriptItems
+  createCopilotSubagentTranscriptItems,
+  renderCopilotSubagentWindow
 } from './CopilotSubagents'
 import { selectCopilotTitleModel } from './CopilotTitleModel'
+import { CopilotEventStore } from './CopilotEventStore.ts'
 
 type PendingPermission = {
   id: string
@@ -583,6 +585,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   private clientEntryPromises = new Map<string, Promise<CopilotClientEntry>>()
   private sessionContainers = new Map<string, AppContainerTarget | null>()
   private states = new Map<string, CopilotSessionState>()
+  private eventStores = new WeakMap<CopilotSessionState, CopilotEventStore<SessionEvent>>()
+  private sessionLoads = new WeakMap<CopilotSessionState, Promise<CopilotSessionState>>()
+  private metadataChecks = new WeakMap<CopilotSessionState, Promise<void>>()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
@@ -868,7 +873,6 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
-    await this.loadEvents(state)
     return this.createChatDetail(state)
   }
 
@@ -878,7 +882,6 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
-    await this.loadEvents(state)
     return this.createChatDetail(state, window)
   }
 
@@ -889,7 +892,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
-    await this.loadEvents(state)
+    this.eventStores.get(state)?.seal()
     const window = findCopilotItemTurnWindow(state.events, itemId, limit)
     if (window) return this.createChatDetail(state, window)
     // Some synthetic message IDs have no native record ID. Preserve that uncommon lookup.
@@ -911,7 +914,6 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderSubagent[]> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
-    await this.loadEvents(state)
     const tasks = await state
       .session!.rpc.tasks.list()
       .then((result) => result.tasks.filter((task) => task.type === 'agent'))
@@ -925,10 +927,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   getSubagent = async (
     chatId: string,
     subagentId: string,
-    options: { container?: AppContainerTarget | null } = {}
+    options: { container?: AppContainerTarget | null } = {},
+    window?: ProviderChatTurnWindow
   ): Promise<ProviderSubagentDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
-    await this.loadEvents(state)
     const tasks = await state
       .session!.rpc.tasks.list()
       .then((result) => result.tasks.filter((task) => task.type === 'agent'))
@@ -941,6 +943,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     )
     if (!summary) throw new Error('Copilot subagent was not found.')
 
+    this.eventStores.get(state)?.seal()
+    if (window) return { ...summary, ...renderCopilotSubagentWindow(summary, state.events, window) }
     return {
       ...summary,
       items: createCopilotSubagentTranscriptItems(
@@ -1620,37 +1624,80 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<CopilotSessionState> => {
     const state = this.createState(sessionId, options, container)
     const client = await this.ensureClient(state.container)
-    state.client = client
     if (options) state.options = options
-    if (state.session) return state
+    const pending = this.sessionLoads.get(state)
+    if (pending) return pending
+    if (state.session && state.client === client) {
+      if (!state.active) await this.checkSessionMetadata(state)
+      return state
+    }
 
-    state.metadata =
-      (await client.getSessionMetadata(sessionId).catch((error) => {
-        console.error('[caught:CopilotProviderAdapter:ensureSession]', error)
-        return undefined
-      })) ?? null
-    if (!state.metadata) throw new Error(`Copilot session was not found: ${sessionId}`)
+    const load = (async (): Promise<CopilotSessionState> => {
+      state.client = client
+      state.session = null
+      state.metadata = (await client.getSessionMetadata(sessionId)) ?? null
+      if (!state.metadata) throw new Error(`Copilot session was not found: ${sessionId}`)
 
-    const reasoningEffort = normalizeReasoningEffort(options?.reasoningEffort)
-    state.session = await client.resumeSession(sessionId, {
-      clientName: 'Sele',
-      workingDirectory: options?.cwd ?? state.metadata.context?.workingDirectory,
-      model: options?.model,
-      ...(reasoningEffort ? { reasoningEffort } : {}),
-      streaming: false,
-      enableConfigDiscovery: true,
-      enableSkills: true,
-      suppressResumeEvent: true,
-      onEvent: (event) => this.handleEvent(sessionId, event),
-      onPermissionRequest: (request) => this.handlePermission(sessionId, request),
-      onUserInputRequest: (request) => this.handleUserInput(sessionId, request)
-    })
-    await this.addAdditionalDirectories(state.session, options)
-    await this.loadSessionTitle(state)
-    await this.loadEvents(state)
-    await this.refreshPendingMessages(state)
-    await this.refreshPlan(state)
-    return state
+      const reasoningEffort = normalizeReasoningEffort(options?.reasoningEffort)
+      const session = await client.resumeSession(sessionId, {
+        clientName: 'Sele',
+        workingDirectory: options?.cwd ?? state.metadata.context?.workingDirectory,
+        model: options?.model,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        streaming: false,
+        enableConfigDiscovery: true,
+        enableSkills: true,
+        suppressResumeEvent: true,
+        onEvent: (event) => this.handleEvent(sessionId, event),
+        onPermissionRequest: (request) => this.handlePermission(sessionId, request),
+        onUserInputRequest: (request) => this.handleUserInput(sessionId, request)
+      })
+      state.session = session
+      await this.addAdditionalDirectories(session, options)
+      await this.loadSessionTitle(state)
+      await this.loadEvents(state)
+      await this.refreshPendingMessages(state)
+      await this.refreshPlan(state)
+      return state
+    })()
+    this.sessionLoads.set(state, load)
+    try {
+      return await load
+    } catch (error) {
+      state.session = null
+      throw error
+    } finally {
+      this.sessionLoads.delete(state)
+    }
+  }
+
+  private checkSessionMetadata = async (state: CopilotSessionState): Promise<void> => {
+    const pending = this.metadataChecks.get(state)
+    if (pending) return pending
+    const check = (async (): Promise<void> => {
+      const metadata = (await state.client!.getSessionMetadata(state.id)) ?? null
+      if (!metadata) {
+        state.session = null
+        throw new Error(`Copilot session was not found: ${state.id}`)
+      }
+      if (
+        toMilliseconds(metadata.modifiedTime) !== toMilliseconds(state.metadata?.modifiedTime ?? 0)
+      ) {
+        await this.loadEvents(state)
+        state.metadata = metadata
+        await Promise.all([
+          this.loadSessionTitle(state),
+          this.refreshPendingMessages(state),
+          this.refreshPlan(state)
+        ])
+      }
+    })()
+    this.metadataChecks.set(state, check)
+    try {
+      await check
+    } finally {
+      this.metadataChecks.delete(state)
+    }
   }
 
   private applyTurnOptions = async (
@@ -1695,8 +1742,17 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { retainLive?: boolean; isCurrent?: () => boolean } = {}
   ): Promise<void> => {
     if (!state.session) return
+    this.eventStores.get(state)?.seal()
+    const before = state.events
     const events = await state.session.getEvents()
     if (options.isCurrent && !options.isCurrent()) return
+    const liveChanges =
+      state.events === before
+        ? []
+        : (() => {
+            const previousObjects = new Set(before)
+            return state.events.filter((event) => !previousObjects.has(event))
+          })()
     state.events = reconcileProviderRecords(state.events, events, {
       authoritative: true,
       getId: (event) => event.id,
@@ -1704,6 +1760,16 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         toMilliseconds(first.timestamp) - toMilliseconds(second.timestamp),
       retainCurrent: (event) => options.retainLive === true || event.ephemeral === true
     })
+    // The RPC snapshot may have started before a live event arrived. Keep those newer
+    // objects, including replacements of an event with the same ID.
+    if (liveChanges.length > 0) {
+      state.events = reconcileProviderRecords(state.events, liveChanges, {
+        authoritative: false,
+        getId: (event) => event.id,
+        compare: (first, second) =>
+          toMilliseconds(first.timestamp) - toMilliseconds(second.timestamp)
+      })
+    }
   }
 
   private startChatTitleGeneration = (
@@ -1775,11 +1841,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   private storeEvent = (state: CopilotSessionState, event: SessionEvent): void => {
-    state.events = reconcileProviderRecords(state.events, [event], {
-      authoritative: false,
-      getId: (candidate) => candidate.id,
-      compare: (first, second) => toMilliseconds(first.timestamp) - toMilliseconds(second.timestamp)
-    })
+    let store = this.eventStores.get(state)
+    if (!store || store.events !== state.events) {
+      // An authoritative reload or history truncation replaces the source array.
+      store = new CopilotEventStore(state.events, (candidate) =>
+        toMilliseconds(candidate.timestamp)
+      )
+      this.eventStores.set(state, store)
+    }
+    state.events = store.add(event)
   }
 
   private handleEvent = (sessionId: string, event: SessionEvent): void => {
@@ -2046,6 +2116,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state: CopilotSessionState,
     window?: ProviderChatTurnWindow
   ): ProviderChatDetail => {
+    this.eventStores.get(state)?.seal()
     state.revision += 1
     return {
       id: state.id,

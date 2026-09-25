@@ -2,6 +2,11 @@ import { CodexCommandStartAnchors } from './CodexCommandStartAnchors.ts'
 import { CodexGoals } from './CodexGoals.ts'
 import { CodexGoalPrompts, getCodexGoalPrompt } from './CodexGoalPrompts.ts'
 import {
+  CodexTranscriptMetadataIndex,
+  localTranscriptSource,
+  type TranscriptSource
+} from './CodexTranscriptMetadataIndex.ts'
+import {
   markTranscriptRecordsChanged,
   getUnchangedTranscriptPrefix,
   indexTranscriptRecords,
@@ -18,6 +23,9 @@ import type {
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { basename } from 'node:path'
+import { isRunningInFlatpak } from '../../hostProcess'
+import { getCurrentContainerHostBridge } from '../../currentContainer'
+import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
 import type { AppContainerTarget } from '../../../shared/app'
 import type {
   ProviderModel,
@@ -127,6 +135,7 @@ import {
   type CodexAgentResponseOverlay
 } from './CodexLiveMerge'
 import { getCodexQueueDrainDecision } from './CodexQueueDrain'
+import { CodexSubagentHistory } from './CodexSubagentHistory'
 import { writeCodexSkillEnabled } from './CodexSkillConfig'
 import {
   createCodexSubagentSummary,
@@ -934,6 +943,15 @@ const titleGenerationPromptLimit = 2_000
 const chatUpdateDebounceMs = 250
 const rendererWorkingItemTailLimit = 50
 const rendererChatUpdateTurnLimit = 10
+
+const isExpectedCodexMetadataCapabilityError = (error: unknown): boolean => {
+  const candidate = error as { code?: unknown; message?: unknown } | null
+  if (candidate?.code === 'ERR_UNSUPPORTED' || candidate?.code === -32601) return true
+  return (
+    typeof candidate?.message === 'string' &&
+    /\b(?:method not found|unknown method|unsupported method)\b/i.test(candidate.message)
+  )
+}
 const titleGenerationOutputSchema = {
   type: 'object',
   properties: {
@@ -1251,8 +1269,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private goals = new CodexGoals()
   private goalPrompts = new CodexGoalPrompts()
   private commandStartAnchors = new CodexCommandStartAnchors()
+  private transcriptMetadataIndex = new CodexTranscriptMetadataIndex()
+  private transcriptRangeSupport = new Map<string, boolean>()
+  private transcriptMetadataStatSupport = new Map<string, boolean>()
+  private transcriptMetadataWarnings = new Set<string>()
+  private transcriptHostBridgeWarningShown = false
+  private transcriptMetadataGeneration = 0
   private agentResponseOverlays = new Map<string, Map<string, CodexAgentResponseOverlay>>()
   private paginatedTurnCatalogs = new Map<string, { threadUpdatedAt: number; turns: CodexTurn[] }>()
+  private subagentHistory = new CodexSubagentHistory()
   private pendingTurnIds = new Map<string, string>()
   private pendingTurnStarts = new Map<
     string,
@@ -1360,6 +1385,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
     const key = getContainerTargetKey(storedContainer)
     this.rejectLoginWaitersForContainer(key, new Error('Codex app-server stopped'))
+    this.transcriptMetadataGeneration++
+    this.transcriptMetadataIndex.clear()
+    this.transcriptRangeSupport.delete(key)
+    this.transcriptMetadataStatSupport.delete(key)
+    this.transcriptMetadataWarnings.delete(key)
+    this.subagentHistory.clearContainer(key)
     const client = this.clients.get(key)
     client?.dispose()
     this.clients.delete(key)
@@ -2358,10 +2389,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.cacheThread(thread)
     }
 
-    await Promise.all([
-      this.loadTranscriptMetadata(thread),
-      this.goals.read(thread.id, (method, params) => this.client.request(method, params))
-    ])
+    if (cacheLatest) {
+      const sourceKey = getContainerTargetKey(this.getThreadContainer(thread.id))
+      void this.loadTranscriptMetadata(thread).then((changed) => {
+        if (
+          changed &&
+          this.threads.get(chatId)?.path === thread.path &&
+          getContainerTargetKey(this.getThreadContainer(chatId)) === sourceKey
+        )
+          this.scheduleChatUpdated(chatId)
+      })
+      await this.goals.read(thread.id, (method, params) => this.client.request(method, params))
+    } else {
+      await Promise.all([
+        this.loadTranscriptMetadata(thread),
+        this.goals.read(thread.id, (method, params) => this.client.request(method, params))
+      ])
+    }
     return this.createChatDetail(cacheLatest ? (this.threads.get(chatId) ?? thread) : thread, {
       cursorPendingMessages: pendingMessages
     })
@@ -2544,15 +2588,28 @@ export class CodexProviderAdapter implements ProviderAdapter {
   getSubagent = (
     chatId: string,
     subagentId: string,
+    options: { container?: AppContainerTarget | null } = {},
+    window?: ProviderChatTurnWindow
+  ): Promise<ProviderSubagentDetail> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
+      this.getSubagentInContext(chatId, subagentId, window)
+    )
+
+  getSubagentWindowForItem = (
+    chatId: string,
+    subagentId: string,
+    itemId: string,
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderSubagentDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId, options), () =>
-      this.getSubagentInContext(chatId, subagentId)
+      this.getSubagentInContext(chatId, subagentId, undefined, itemId)
     )
 
   private getSubagentInContext = async (
     chatId: string,
-    subagentId: string
+    subagentId: string,
+    window?: ProviderChatTurnWindow,
+    itemId?: string
   ): Promise<ProviderSubagentDetail> => {
     const cachedSummary = (await this.getSubagentsInContext(chatId)).find(
       (candidate) => candidate.id === subagentId
@@ -2588,51 +2645,46 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
     }
     assertSupportedCodexHistory(response.thread)
-    const turnCatalog = await loadCodexTurnCatalog(
-      (method, params) => this.client.request(method, params),
+    const parentThread = this.threads.get(chatId)
+    const parentInstruction = getCodexSubagentInstruction(
+      parentThread ? this.getRenderableTurns(parentThread) : [],
       subagentId
     )
-    const [cwd, name, turns] = await Promise.all([
+    const page = await this.subagentHistory.read({
+      request: (method, params) => this.client.request(method, params),
+      key: `${getContainerTargetKey(this.getCurrentContainer())}\0${subagentId}`,
+      threadId: subagentId,
+      createdAt: response.thread.createdAt,
+      updatedAt: response.thread.updatedAt,
+      parentInstruction,
+      filterTurns: (turns) => this.filterRolledBackTurns(subagentId, turns),
+      window,
+      itemId
+    })
+    const [cwd, name] = await Promise.all([
       this.resolveThreadCwd(response.thread),
-      this.resolveThreadName(response.thread),
-      hydrateCodexTurnRange(
-        (method, params) => this.client.request(method, params),
-        subagentId,
-        turnCatalog,
-        0,
-        turnCatalog.length
-      )
+      this.resolveThreadName(response.thread)
     ])
-    await this.loadTranscriptMetadata({ ...response.thread, turns })
+    await this.loadTranscriptMetadata({ ...response.thread, turns: page.turns })
     const thread: CodexThread = {
       ...response.thread,
       name,
       cwd,
-      turns: selectCodexSubagentTurns(
-        this.filterRolledBackTurns(response.thread.id, turns),
-        response.thread.createdAt
-      )
+      turns: page.turns
     }
     this.rememberThreadContainer(thread.id)
-    this.cacheThread(thread)
-
-    // The instruction is delivered out of band. Look for its recorded activity in the
-    // parent page or the child's inherited history before that history is filtered out.
-    const parentThread = this.threads.get(chatId)
-    const instruction = getCodexSubagentInstruction(
-      [...(parentThread ? this.getRenderableTurns(parentThread) : []), ...turns],
-      subagentId
-    )
     const refreshedSummary = createCodexSubagentSummary(thread, chatId, cachedSummary?.afterItemId)
-    if (instruction) refreshedSummary.description = instruction
+    if (page.instruction) refreshedSummary.description = page.instruction
 
     return {
       ...refreshedSummary,
       items: createCodexSubagentTranscriptItems(
         refreshedSummary,
-        this.createChatDetail(thread).items,
-        instruction
-      )
+        getChatItems(this.getRenderableTurns(thread), thread.createdAt),
+        page.itemsStartTurnIndex === 0 ? page.instruction : null
+      ),
+      itemsStartTurnIndex: page.itemsStartTurnIndex,
+      turnCount: page.turnCount
     }
   }
 
@@ -3500,6 +3552,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.transcriptProjection.clear()
     this.goalPrompts.clear()
     this.commandStartAnchors.clear()
+    this.transcriptMetadataGeneration++
+    this.transcriptMetadataIndex.clear()
+    this.transcriptRangeSupport.clear()
+    this.transcriptMetadataStatSupport.clear()
+    this.transcriptMetadataWarnings.clear()
     this.goals.clear()
     this.latestThreadRefreshes.clear()
     this.completionCoordinator.clear()
@@ -3528,6 +3585,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.threadRevisions.clear()
     this.agentResponseOverlays.clear()
     this.paginatedTurnCatalogs.clear()
+    this.subagentHistory.clear()
     this.threadContainers.clear()
   }
 
@@ -4438,16 +4496,227 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private loadTranscriptMetadata = async (thread: CodexThread): Promise<boolean> => {
-    let read: Promise<string> | undefined
-    const readFile = (path: string): Promise<string> =>
-      (read ??= this.client
-        .request<{ dataBase64: string }>('fs/readFile', { path })
-        .then((response) => Buffer.from(response.dataBase64, 'base64').toString('utf8')))
-    const changes = await Promise.all([
-      this.goalPrompts.load(thread, readFile),
-      this.commandStartAnchors.load(thread, readFile)
-    ])
-    return changes.some(Boolean)
+    try {
+      return await this.loadTranscriptMetadataUnchecked(thread)
+    } catch (error) {
+      if (
+        (error as { code?: string }).code !== 'ERR_CANCELED' &&
+        !isExpectedFileAbsenceError(error)
+      )
+        console.warn(
+          `Unable to read optional Codex transcript metadata for thread ${thread.id}`,
+          error
+        )
+      return false
+    }
+  }
+
+  private loadTranscriptMetadataUnchecked = async (thread: CodexThread): Promise<boolean> => {
+    if (!thread.path) return false
+    const generation = this.transcriptMetadataGeneration
+    const anchorEligible = thread.turns.some((turn) => {
+      const finalIndex = turn.items.findIndex(
+        (item) => item.type === 'agentMessage' && item.phase === 'final_answer'
+      )
+      return (
+        finalIndex >= 0 &&
+        turn.items.slice(finalIndex + 1).some((item) => item.type === 'commandExecution')
+      )
+    })
+    const goalEligible = this.goalPrompts.shouldLoad(thread)
+    if (!anchorEligible && !goalEligible) return false
+    const container = this.getThreadContainer(thread.id)
+    const key = getContainerTargetKey(container)
+    const path = thread.path
+    let source: TranscriptSource
+    const canUseLocal =
+      !container && !isRunningInFlatpak()
+        ? await getCurrentContainerHostBridge().then(
+            (bridge) => !bridge,
+            (error) => {
+              if (!this.transcriptHostBridgeWarningShown) {
+                this.transcriptHostBridgeWarningShown = true
+                console.warn('Unable to determine Codex transcript host bridge', error)
+              }
+              return false
+            }
+          )
+        : false
+    if (canUseLocal) {
+      source = localTranscriptSource(key, path, thread.id)
+    } else {
+      const client = this.getClient(container)
+      const fallback: TranscriptSource = {
+        key,
+        threadId: thread.id,
+        path,
+        stat: async () => {
+          // Older app servers may lack fs/getMetadata. In that case a full read is
+          // unavoidable, but the index still parses only new records.
+          if (this.transcriptMetadataStatSupport.get(key) === false) return { modifiedAtMs: 0 }
+          let info: {
+            modifiedAtMs: number
+            createdAtMs: number
+          }
+          try {
+            info = await client.request<typeof info>('fs/getMetadata', { path })
+          } catch (error) {
+            if (isExpectedCodexMetadataCapabilityError(error)) {
+              this.transcriptMetadataStatSupport.set(key, false)
+            } else if (
+              !isExpectedFileAbsenceError(error) &&
+              !this.transcriptMetadataWarnings.has(key)
+            ) {
+              this.transcriptMetadataWarnings.add(key)
+              console.warn('Unable to inspect optional Codex transcript metadata', error)
+            }
+            return { modifiedAtMs: 0 }
+          }
+          return {
+            modifiedAtMs: info.modifiedAtMs,
+            identity: info.createdAtMs ? String(info.createdAtMs) : undefined
+          }
+        },
+        readAll: async () => {
+          const response = await client.request<{ dataBase64: string }>('fs/readFile', { path })
+          return Buffer.from(response.dataBase64, 'base64')
+        }
+      }
+      source = fallback
+      if (process.platform !== 'win32' && this.transcriptRangeSupport.get(key) !== false) {
+        try {
+          const result = await client.request<{
+            exitCode: number
+            stdout: string
+            stderr?: string
+          }>('command/exec', {
+            command: ['stat', '--printf', '%s\n%Y\n%y\n%i\n', '--', path],
+            sandboxPolicy: { type: 'readOnly' },
+            outputBytesCap: 4096,
+            timeoutMs: 10_000
+          })
+          const [sizeText, secondsText, timestamp, inode] = result.stdout.trim().split('\n')
+          const size = Number(sizeText)
+          if (result.exitCode !== 0)
+            throw Object.assign(new Error('Codex transcript is unavailable'), {
+              code: /no such file or directory/i.test(result.stderr ?? '')
+                ? 'ENOENT'
+                : 'ERR_UNSUPPORTED'
+            })
+          if (!Number.isSafeInteger(size) || size < 0)
+            throw new Error('Ranged Codex transcript stat unavailable')
+          const timestampMatch =
+            /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)\.(\d{3})\d* ([+-]\d\d)(\d\d)$/.exec(
+              timestamp ?? ''
+            )
+          const modifiedAtMs = timestampMatch
+            ? Date.parse(
+                `${timestampMatch[1]}T${timestampMatch[2]}.${timestampMatch[3]}${timestampMatch[4]}:${timestampMatch[5]}`
+              )
+            : Number(secondsText) * 1000
+          const info = {
+            size,
+            modifiedAtMs,
+            identity: inode
+          }
+          source = {
+            key,
+            threadId: thread.id,
+            path,
+            stat: async () => info,
+            read: async (offset, length) => {
+              const chunk = await client.request<{ exitCode: number; stdout: string }>(
+                'command/exec',
+                {
+                  command: [
+                    'sh',
+                    '-c',
+                    'dd if="$1" bs=131072 skip="$2" count="$3" iflag=skip_bytes,count_bytes status=none | base64 -w0',
+                    'sele-metadata',
+                    path,
+                    String(offset),
+                    String(length)
+                  ],
+                  sandboxPolicy: { type: 'readOnly' },
+                  outputBytesCap: 256 * 1024,
+                  timeoutMs: 30_000
+                }
+              )
+              const bytes = Buffer.from(chunk.stdout.trim(), 'base64')
+              if (chunk.exitCode !== 0 || (length && !bytes.length))
+                throw Object.assign(new Error('Ranged Codex transcript read unavailable'), {
+                  code: 'ERR_UNSUPPORTED'
+                })
+              return bytes
+            }
+          }
+          this.transcriptRangeSupport.set(key, true)
+        } catch (error) {
+          if (!isExpectedFileAbsenceError(error)) {
+            this.transcriptRangeSupport.set(key, false)
+            if (
+              !isExpectedCodexMetadataCapabilityError(error) &&
+              !this.transcriptMetadataWarnings.has(key)
+            ) {
+              this.transcriptMetadataWarnings.add(key)
+              console.warn('Unable to probe Codex transcript ranged reads', error)
+            }
+          }
+        }
+      }
+      // The fallback remains bound to this exact app-server source. A same-named
+      // path in Sele's own filesystem must never substitute for a remote rollout.
+      try {
+        if (generation !== this.transcriptMetadataGeneration) return false
+        const metadata = await this.transcriptMetadataIndex.load(source)
+        if (generation !== this.transcriptMetadataGeneration) return false
+        const goalChanged = this.goalPrompts.apply(thread, metadata)
+        const anchorsChanged = this.commandStartAnchors.apply(thread, metadata)
+        return goalChanged || anchorsChanged
+      } catch (error) {
+        if (source !== fallback && (error as { code?: string }).code !== 'ERR_CANCELED') {
+          if (!isExpectedFileAbsenceError(error)) {
+            this.transcriptRangeSupport.set(key, false)
+            if (
+              !isExpectedCodexMetadataCapabilityError(error) &&
+              !this.transcriptMetadataWarnings.has(key)
+            ) {
+              this.transcriptMetadataWarnings.add(key)
+              console.warn('Unable to read optional Codex transcript range', error)
+            }
+          }
+          source = fallback
+        } else {
+          if (
+            (error as { code?: string }).code !== 'ERR_CANCELED' &&
+            !isExpectedFileAbsenceError(error)
+          )
+            console.warn(
+              `Unable to read optional Codex transcript metadata for thread ${thread.id}`,
+              error
+            )
+          return false
+        }
+      }
+    }
+    try {
+      if (generation !== this.transcriptMetadataGeneration) return false
+      const metadata = await this.transcriptMetadataIndex.load(source)
+      if (generation !== this.transcriptMetadataGeneration) return false
+      const goalChanged = this.goalPrompts.apply(thread, metadata)
+      const anchorsChanged = this.commandStartAnchors.apply(thread, metadata)
+      return goalChanged || anchorsChanged
+    } catch (error) {
+      if (
+        (error as { code?: string }).code !== 'ERR_CANCELED' &&
+        !isExpectedFileAbsenceError(error)
+      )
+        console.warn(
+          `Unable to read optional Codex transcript metadata for thread ${thread.id}`,
+          error
+        )
+      return false
+    }
   }
 
   private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
@@ -4461,8 +4730,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.chatUpdatedListeners.forEach((listener) => listener(detail, metadata))
     // Enrichment cannot delay live delivery. Publish again when transcript metadata arrives.
+    const sourceKey = getContainerTargetKey(this.getThreadContainer(threadId))
     void this.loadTranscriptMetadata(thread).then((changed) => {
-      if (changed && this.threads.has(threadId)) this.scheduleChatUpdated(threadId)
+      if (
+        changed &&
+        this.threads.get(threadId)?.path === thread.path &&
+        getContainerTargetKey(this.getThreadContainer(threadId)) === sourceKey
+      )
+        this.scheduleChatUpdated(threadId)
     })
   }
 

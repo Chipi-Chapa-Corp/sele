@@ -844,7 +844,12 @@ export type ProviderSubagent = {
 
 export type ProviderSubagentDetail = ProviderSubagent & {
   items: ProviderChatItem[]
+  /** Coordinates of the materialized turn window; omitted by legacy adapter results. */
+  itemsStartTurnIndex?: number
+  turnCount?: number
 }
+
+export const providerSubagentTurnPageSize = 10
 
 export type ProviderChatGoal = {
   threadId: string
@@ -1114,7 +1119,8 @@ export type ProviderApi = {
   getSubagent: (
     providerId: ProviderId,
     chatId: string,
-    subagentId: string
+    subagentId: string,
+    window?: { startIndex: number | null; limit: number }
   ) => Promise<ProviderSubagentDetail>
   cancelSubagent: (providerId: ProviderId, chatId: string, subagentId: string) => Promise<void>
   setChatGoal: (

@@ -1,5 +1,6 @@
 import type { CodexTurn } from './CodexItemRenderers.ts'
 import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
+import type { CodexTranscriptMetadata } from './CodexTranscriptMetadataIndex.ts'
 
 export type CodexGoalPrompt = { id: string; text: string }
 
@@ -98,6 +99,51 @@ export class CodexGoalPrompts {
     const projected = { ...turn, goalPrompt }
     this.projectedTurns.set(turn, projected)
     return projected
+  }
+
+  /** Keep negative active-goal checks on the same one-second cadence as legacy loading. */
+  shouldLoad(thread: { id: string; turns: CodexTurn[] }): boolean {
+    const cache = this.cache(thread.id)
+    const now = Date.now()
+    let needed = false
+    for (const turn of thread.turns) {
+      if (
+        cache.prompts.has(turn.id) ||
+        cache.checked.has(turn.id) ||
+        now < (cache.retryAfter.get(turn.id) ?? 0) ||
+        turn.status === 'queued' ||
+        turn.local ||
+        turn.items.some((item) => item.type === 'userMessage')
+      )
+        continue
+      cache.retryAfter.set(turn.id, now + 1000)
+      needed = true
+    }
+    while (cache.retryAfter.size > 512)
+      cache.retryAfter.delete(cache.retryAfter.keys().next().value!)
+    return needed
+  }
+
+  /** Apply the shared incremental index without a second transcript read or parse. */
+  apply(thread: { id: string; turns: CodexTurn[] }, metadata: CodexTranscriptMetadata): boolean {
+    const cache = this.cache(thread.id)
+    let changed = false
+    for (const turn of thread.turns) {
+      if (
+        turn.local ||
+        turn.status === 'queued' ||
+        turn.items.some((item) => item.type === 'userMessage')
+      )
+        continue
+      const prompt = metadata.prompts.get(turn.id)
+      if (prompt) {
+        if (!cache.prompts.has(turn.id)) changed = this.set(thread.id, turn.id, prompt) || changed
+      } else if (turn.status && !['inProgress', 'queued'].includes(turn.status)) {
+        cache.checked.add(turn.id)
+      }
+    }
+    while (cache.checked.size > 512) cache.checked.delete(cache.checked.keys().next().value!)
+    return changed
   }
 
   async load(

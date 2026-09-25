@@ -539,7 +539,9 @@ const prepareLatestWorkingStep = (step: ProviderWorkingStep): ProviderWorkingSte
   }
 }
 
-export const unloadHistoricalWorkingSteps = (detail: ProviderChatDetail): ProviderChatDetail => {
+export const unloadHistoricalWorkingSteps = <T extends Pick<ProviderChatDetail, 'items'>>(
+  detail: T
+): T => {
   const latestWorkingStepIndex = detail.items.findLastIndex((item) => item.type === 'working')
   if (latestWorkingStepIndex < 0) return detail
 

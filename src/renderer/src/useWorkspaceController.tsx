@@ -5244,6 +5244,7 @@ export const useWorkspaceController = () => {
   })
 
   const {
+    handleNavigateSubagentTurns,
     handleLoadSubagentWorkingStep,
     handleLoadSubagentWorkingItem,
     handleLoadSubagentWorkingToolPage,
@@ -5720,6 +5721,7 @@ export const useWorkspaceController = () => {
       handleNativeChatContentWheel,
       handleReturnFromAiCommitChat,
       handleReturnFromSubagentChat,
+      handleNavigateSubagentTurns,
       loadChatTurnPage,
       renderChatTurn,
       renderSubagentChatTurn,

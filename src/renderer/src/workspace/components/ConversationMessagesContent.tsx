@@ -46,6 +46,7 @@ export function ConversationMessagesContent(
     handleNativeChatContentWheel,
     handleReturnFromAiCommitChat,
     handleReturnFromSubagentChat,
+    handleNavigateSubagentTurns,
     loadChatTurnPage,
     renderChatTurn,
     renderSubagentChatTurn,
@@ -81,7 +82,10 @@ export function ConversationMessagesContent(
   )
   const renderedConversation = displayedTurns.map((turn, index) =>
     activeSubagentChatView
-      ? renderSubagentChatTurn(index, turn)
+      ? renderSubagentChatTurn(
+          (activeSubagentChatView.detail?.itemsStartTurnIndex ?? 0) + index,
+          turn
+        )
       : renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)
   )
   if (workingPlaceholderStep) {
@@ -145,8 +149,41 @@ export function ConversationMessagesContent(
         <div className="chat-detail__messages-layout">
           <div className="chat-detail__messages-header" />
           <div className="chat-detail__messages-inner">
+            {activeSubagentChatView?.detail &&
+              (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) > 0 && (
+                <Button
+                  aria-label="Load older subagent messages"
+                  title="Load older messages"
+                  theme="secondary"
+                  label="Load older messages"
+                  disabled={activeSubagentChatView.pageLoading}
+                  callback={() => void handleNavigateSubagentTurns('older')}
+                />
+              )}
             {/* Transient activity belongs after history but before queued/steering turns. */}
             {renderedConversation}
+            {activeSubagentChatView?.detail &&
+              (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) + displayedTurns.length <
+                (activeSubagentChatView.detail.turnCount ?? displayedTurns.length) && (
+                <div>
+                  <Button
+                    aria-label="Load newer subagent messages"
+                    title="Load newer messages"
+                    theme="secondary"
+                    label="Load newer messages"
+                    disabled={activeSubagentChatView.pageLoading}
+                    callback={() => void handleNavigateSubagentTurns('newer')}
+                  />
+                  <Button
+                    aria-label="Jump to latest subagent messages"
+                    title="Jump to latest messages"
+                    theme="secondary"
+                    label="Jump to latest"
+                    disabled={activeSubagentChatView.pageLoading}
+                    callback={() => void handleNavigateSubagentTurns('latest')}
+                  />
+                </div>
+              )}
           </div>
           <div className="chat-detail__messages-footer" />
         </div>
@@ -176,6 +213,12 @@ export function ConversationMessagesContent(
           label="Unable to load this subagent chat."
           title={activeSubagentChatView.error ?? undefined}
         />
+      )}
+      {activeSubagentChatView?.pageLoading && (
+        <ConversationMessagesState kind="loading" label="Loading subagent messages…" />
+      )}
+      {activeSubagentChatView?.loadState === 'ready' && activeSubagentChatView.error && (
+        <ConversationMessagesState kind="error" label={activeSubagentChatView.error} />
       )}
       {activeSubagentChatView?.loadState === 'ready' && subagentVisibleChatItems.length === 0 && (
         <p className="chat__status chat-detail__messages-status">

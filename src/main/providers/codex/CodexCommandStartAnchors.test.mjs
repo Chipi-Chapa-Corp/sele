@@ -77,6 +77,107 @@ test('actual post-answer work stays after the answer; missing timing never guess
   )
 })
 
+const referenceAnchor = (turn, times) => {
+  const items = [...turn.items]
+  let changed = false
+  for (const item of turn.items) {
+    if (item.type !== 'commandExecution') continue
+    const startedAt = times.get(item.id)
+    if (startedAt === undefined) continue
+    const index = items.indexOf(item)
+    const anchor = items.findIndex(
+      (candidate, position) =>
+        position < index &&
+        candidate.type !== 'userMessage' &&
+        times.has(candidate.id) &&
+        times.get(candidate.id) > startedAt
+    )
+    if (
+      anchor < 0 ||
+      items.slice(anchor, index).some((candidate) => candidate.type === 'userMessage')
+    )
+      continue
+    items.splice(index, 1)
+    items.splice(anchor, 0, item)
+    changed = true
+  }
+  return changed ? { ...turn, items } : turn
+}
+
+test('indexed ordering matches the original algorithm across mixed, incomplete histories', () => {
+  let seed = 0x5e1e2026
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed / 0x100000000
+  }
+  const values = [-Infinity, -3, 0, 0, 1, 2, 9, Infinity, NaN]
+  for (let sample = 0; sample < 3000; sample++) {
+    const items = []
+    const times = new Map()
+    for (let i = 0, length = 1 + Math.floor(random() * 20); i < length; i++) {
+      const id = `${sample}:${i}`
+      const kind = random()
+      items.push(
+        kind < 0.17 ? { id, type: 'userMessage' } : kind < 0.65 ? command(id) : message(id)
+      )
+      if (random() < 0.78) times.set(id, values[Math.floor(random() * values.length)])
+    }
+    const candidate = { id: `turn:${sample}`, items }
+    const expected = referenceAnchor(candidate, times)
+    const actual = anchorCodexCommandsByStart(candidate, times)
+    assert.deepEqual(
+      actual.items.map((item) => item.id),
+      expected.items.map((item) => item.id),
+      `sample ${sample}`
+    )
+    assert.equal(actual === candidate, expected === candidate, `identity for sample ${sample}`)
+    assert.equal(
+      actual.items.every((item) => items.includes(item)),
+      true
+    )
+  }
+})
+
+test('an earlier timestamp anchor still blocks a move across steering', () => {
+  const history = {
+    id: 'barrier',
+    items: [message('early'), { id: 'steer', type: 'userMessage' }, message('late'), command('run')]
+  }
+  const starts = new Map([
+    ['early', 30],
+    ['late', 20],
+    ['run', 10]
+  ])
+  assert.equal(anchorCodexCommandsByStart(history, starts), history)
+})
+
+test('timestamp work stays linear for large unchanged and repeatedly moved histories', () => {
+  class CountingMap extends Map {
+    reads = 0
+    get(key) {
+      this.reads++
+      return super.get(key)
+    }
+    has(key) {
+      this.reads++
+      return super.has(key)
+    }
+  }
+  const count = 12_000
+  for (const reverse of [false, true]) {
+    const items = Array.from({ length: count }, (_, i) => command(`command:${i}`))
+    const times = new CountingMap(items.map((item, i) => [item.id, reverse ? count - i : i]))
+    const turn = { id: 'large', items }
+    const result = anchorCodexCommandsByStart(turn, times)
+    assert.ok(times.reads <= 4 * count, `${reverse ? 'moved' : 'unchanged'}: ${times.reads} reads`)
+    if (reverse) {
+      assert.deepEqual(result.items, [...items].reverse())
+    } else {
+      assert.equal(result, turn)
+    }
+  }
+})
+
 test('optional metadata is read once for the same snapshot and does not touch ordinary turns', async () => {
   const store = new CodexCommandStartAnchors()
   let reads = 0

@@ -114,6 +114,7 @@ export type SubagentChatView = {
   detail: ProviderSubagentDetail | null
   loadState: LoadState
   error: string | null
+  pageLoading?: boolean
 }
 
 export type DirectCommitActivity = {

@@ -10,6 +10,7 @@ import type {
   ProviderWorkingStep,
   ProviderSubagent
 } from '../../../shared/provider'
+import { providerSubagentTurnPageSize } from '../../../shared/provider'
 import { providerApi } from '../providerApi'
 import {
   ChatCommitMarkerItem,
@@ -18,6 +19,9 @@ import {
 } from '../components/AppStatusStates'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
 import type { SubagentControllerDependencies } from './controllerDependencies'
+import { beginSubagentPageNavigation } from '../subagentUi'
+
+const subagentPageRequests = new WeakMap<object, number>()
 
 // Return shape is inferred from the controller declarations below.
 export function useSubagentController(dependencies: SubagentControllerDependencies) {
@@ -160,6 +164,80 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
     updateWorkingStep(requestId, subagentId, workingStepId, (current) =>
       mergeWorkingStepPage(current, page, chatWorkingItemPageSize, chatWorkingItemWindowSize)
     )
+  }
+  const handleNavigateSubagentTurns = async (
+    direction: 'older' | 'newer' | 'latest'
+  ): Promise<void> => {
+    if (!selectedProviderId || !selectedChatId || !activeSubagentChatView?.detail) return
+    const requestId = subagentChatLoadRequestRef.current
+    if (subagentPageRequests.get(subagentChatLoadRequestRef) === requestId) return
+    const detail = activeSubagentChatView.detail
+    const start = detail.itemsStartTurnIndex ?? 0
+    const pageSize = providerSubagentTurnPageSize
+    const nextStart =
+      direction === 'latest'
+        ? null
+        : direction === 'older'
+          ? Math.max(0, start - pageSize)
+          : Math.min(Math.max(0, (detail.turnCount ?? 0) - pageSize), start + pageSize)
+    if (nextStart === start) return
+    const subagentId = activeSubagentChatView.summary.id
+    beginSubagentPageNavigation(subagentChatLoadRequestRef)
+    subagentPageRequests.set(subagentChatLoadRequestRef, requestId)
+    setSubagentChatView((view) =>
+      view?.summary.id === subagentId && view.rootChatKey === selectedChatKey
+        ? { ...view, pageLoading: true, error: null }
+        : view
+    )
+    try {
+      const page = await providerApi.getSubagent(selectedProviderId, selectedChatId, subagentId, {
+        startIndex: nextStart,
+        limit: pageSize
+      })
+      if (
+        requestId !== subagentChatLoadRequestRef.current ||
+        selectedChatKeyRef.current !== selectedChatKey
+      )
+        return
+      setSubagentChatView((view) =>
+        view?.summary.id === subagentId && view.rootChatKey === selectedChatKey
+          ? {
+              ...view,
+              summary: page,
+              detail: page,
+              pageLoading: false,
+              loadState: 'ready',
+              error: null
+            }
+          : view
+      )
+      window.requestAnimationFrame(() => {
+        const element = subagentContentRef.current
+        if (element) element.scrollTop = direction === 'older' ? element.scrollHeight : 0
+      })
+    } catch (error) {
+      console.error('[caught:useSubagentController:handleNavigateSubagentTurns]', error)
+      if (
+        requestId !== subagentChatLoadRequestRef.current ||
+        selectedChatKeyRef.current !== selectedChatKey
+      )
+        return
+      setSubagentChatView((view) =>
+        view?.summary.id === subagentId && view.rootChatKey === selectedChatKey
+          ? {
+              ...view,
+              pageLoading: false,
+              error: getErrorMessage(error, 'Unable to load subagent messages.')
+            }
+          : view
+      )
+    } finally {
+      if (subagentPageRequests.get(subagentChatLoadRequestRef) === requestId) {
+        // Polls that started during navigation must not replace the newly loaded page either.
+        beginSubagentPageNavigation(subagentChatLoadRequestRef)
+        subagentPageRequests.delete(subagentChatLoadRequestRef)
+      }
+    }
   }
   const handleLoadSubagentWorkingToolPage = async (
     workingStepId: string,
@@ -312,6 +390,7 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
   )
 
   return {
+    handleNavigateSubagentTurns,
     handleLoadSubagentWorkingStep,
     handleLoadSubagentWorkingItem,
     handleLoadSubagentWorkingToolPage,

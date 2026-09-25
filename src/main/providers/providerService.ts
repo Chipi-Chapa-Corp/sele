@@ -338,6 +338,21 @@ export const getProviderChatItemWindow = async (
   return applyMetadataToDetail(sliceChatDetailToTurnWindow(detail, { startIndex, limit }))
 }
 
+export const getProviderSubagentItemWindow = async (
+  providerId: ProviderId,
+  rootChatId: string,
+  subagentId: string,
+  itemId: string
+): Promise<ProviderSubagentDetail> => {
+  const metadata = await getChatMetadata(rootChatId)
+  const adapter = adapters[providerId]
+  return adapter.getSubagentWindowForItem
+    ? adapter.getSubagentWindowForItem(rootChatId, subagentId, itemId, {
+        container: metadata.container
+      })
+    : adapter.getSubagent(rootChatId, subagentId, { container: metadata.container })
+}
+
 const runWithStoredReview = async (
   chatId: string,
   serializedContent: string,
@@ -631,11 +646,21 @@ export const providerApi: ProviderApi = {
     const metadata = await getChatMetadata(chatId)
     return adapters[providerId].getSubagents(chatId, { container: metadata.container })
   },
-  getSubagent: async (providerId, chatId, subagentId): Promise<ProviderSubagentDetail> => {
+  getSubagent: async (
+    providerId,
+    chatId,
+    subagentId,
+    window?: ProviderChatTurnWindow
+  ): Promise<ProviderSubagentDetail> => {
     const metadata = await getChatMetadata(chatId)
-    return adapters[providerId].getSubagent(chatId, subagentId, {
-      container: metadata.container
-    })
+    return adapters[providerId].getSubagent(
+      chatId,
+      subagentId,
+      {
+        container: metadata.container
+      },
+      window
+    )
   },
   cancelSubagent: async (providerId, chatId, subagentId): Promise<void> => {
     const metadata = await getChatMetadata(chatId)

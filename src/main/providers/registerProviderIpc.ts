@@ -49,12 +49,14 @@ import {
   isProviderServiceTier,
   providerIpcChannels
 } from '../../shared/provider'
+import { providerSubagentTurnPageSize } from '../../shared/provider'
 import { requireContainerTarget } from '../containerTarget'
-import { getProviderChatTurnCount } from '../../shared/chatTurns'
+import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
 import {
   getChatUpdateSummary,
   getProviderChatCursorWindow,
   getProviderChatItemWindow,
+  getProviderSubagentItemWindow,
   getProviderChatWindow,
   providerApi
 } from './providerService'
@@ -206,7 +208,8 @@ const getChatDetailContainingWorkingStep = async (
   workingStepId: string,
   rootChatId?: string
 ): Promise<Pick<ProviderChatDetail, 'items'>> => {
-  if (rootChatId) return providerApi.getSubagent(providerId, rootChatId, chatId)
+  if (rootChatId)
+    return getProviderSubagentItemWindow(providerId, rootChatId, chatId, workingStepId)
   return getProviderChatItemWindow(providerId, chatId, workingStepId, 1)
 }
 
@@ -1372,16 +1375,55 @@ export const registerProviderIpc = (): void => {
       _,
       providerId: unknown,
       chatId: unknown,
-      subagentId: unknown
+      subagentId: unknown,
+      requestedWindow?: unknown
     ): Promise<ProviderSubagentDetail> => {
+      const requested =
+        requestedWindow && typeof requestedWindow === 'object'
+          ? (requestedWindow as Record<string, unknown>)
+          : {}
+      const window = {
+        startIndex:
+          requested.startIndex === undefined || requested.startIndex === null
+            ? null
+            : requireChatTurnStartIndex(requested.startIndex),
+        limit:
+          requested.limit === undefined
+            ? providerSubagentTurnPageSize
+            : requireChatTurnLimit(requested.limit)
+      }
       const detail = await providerApi.getSubagent(
         requireProviderId(providerId),
         requireChatId(chatId),
-        requireChatId(subagentId)
+        requireChatId(subagentId),
+        window
       )
+      const windowed = detail.turnCount !== undefined && detail.itemsStartTurnIndex !== undefined
+      if (!windowed) {
+        const totalCount = getProviderChatTurnCount(detail.items)
+        const boundedStart =
+          window.startIndex === null
+            ? Math.max(0, totalCount - window.limit)
+            : Math.min(window.startIndex, totalCount)
+        const page = prepareChatDetailForRenderer({
+          ...detail,
+          items: sliceProviderChatTurns(detail.items, boundedStart, boundedStart + window.limit),
+          itemsStartTurnIndex: boundedStart,
+          turnCount: totalCount
+        })
+        return {
+          ...detail,
+          items: page.items,
+          itemsStartTurnIndex: boundedStart,
+          turnCount: totalCount
+        }
+      }
+      const prepared = prepareChatDetailForRenderer(detail)
       return {
         ...detail,
-        items: prepareChatItemsForRenderer(detail.items)
+        items: prepared.items,
+        itemsStartTurnIndex: prepared.itemsStartTurnIndex,
+        turnCount: prepared.turnCount
       }
     }
   )

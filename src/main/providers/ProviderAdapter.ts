@@ -114,6 +114,13 @@ export type ProviderAdapter = {
   getSubagent: (
     chatId: string,
     subagentId: string,
+    options?: { container?: AppContainerTarget | null },
+    window?: ProviderChatTurnWindow
+  ) => Promise<ProviderSubagentDetail>
+  getSubagentWindowForItem?: (
+    chatId: string,
+    subagentId: string,
+    itemId: string,
     options?: { container?: AppContainerTarget | null }
   ) => Promise<ProviderSubagentDetail>
   cancelSubagent: (
