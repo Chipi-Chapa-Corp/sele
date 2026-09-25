@@ -153,7 +153,7 @@ test('goal boundaries survive live checkpoints and final-only continuation turns
   assert.equal(finalOnly[0].startsTurn, true)
 })
 
-test('only the last final-tagged response is promoted at the terminal turn boundary', () => {
+test('promotes the live final tail and restores activity if more work follows', () => {
   const projection = new CodexTranscriptProjection()
   let turn = { id: 'turn', status: 'inProgress', items: [user('u')] }
   for (const item of [
@@ -167,13 +167,15 @@ test('only the last final-tagged response is promoted at the terminal turn bound
     const items = getChatItems([turn], null, options, projection)
     assert.equal(
       items.filter((item) => item.type === 'message' && item.role === 'assistant').length,
-      0
+      item.phase === 'final_answer' ? 1 : 0
     )
     const workingMessages = items
       .filter((item) => item.type === 'working')
       .flatMap((item) => item.items)
       .filter((item) => item.type === 'message')
-    assert.ok(workingMessages.some((item) => item.content === 'Please run the audit.'))
+    if (item.id !== 'first') {
+      assert.ok(workingMessages.some((item) => item.content === 'Please run the audit.'))
+    }
   }
   const completed = { ...turn, status: 'completed', completedAt: 10 }
   const items = getChatItems([completed], null, options, projection)
@@ -206,4 +208,36 @@ test('only the last final-tagged response is promoted at the terminal turn bound
     afterLate.filter((item) => item.type === 'message' && item.role === 'assistant').length,
     1
   )
+})
+
+test('final start and text deltas reuse a bounded checkpoint in huge working turns', () => {
+  for (const count of [100, 10000]) {
+    const projection = new CodexTranscriptProjection()
+    let turn = {
+      id: 'turn',
+      status: 'inProgress',
+      items: [
+        user('u'),
+        ...Array.from({ length: count }, (_, i) => answer(`r${i}`, 'Thinking', 'commentary'))
+      ]
+    }
+    compare(projection, turn)
+    let before = projection.processedRecordCount
+    turn = update(turn, turn.items.length, answer('final', '', 'final_answer'))
+    compare(projection, turn)
+    assert.equal(projection.processedRecordCount - before, 4)
+    for (const text of ['', 'First token', 'First token and more']) {
+      before = projection.processedRecordCount
+      turn = update(turn, turn.items.length - 1, answer('final', text, 'final_answer'))
+      compare(projection, turn)
+      assert.equal(projection.processedRecordCount - before, 2)
+      const items = getChatItems([turn], null, options, projection)
+      const working = items.find((item) => item.type === 'working')
+      assert.equal(working.status, 'worked')
+      assert.equal(working.items.length, 50)
+      assert.equal(working.itemCount, count)
+      assert.equal(items.at(-1).content, text)
+      assert.equal(turn.status, 'inProgress')
+    }
+  }
 })

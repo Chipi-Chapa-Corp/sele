@@ -25,6 +25,7 @@ const createPartialMessage = (
       : getStreamKey(streamMessage)
   return {
     type: 'assistant',
+    timestamp: new Date().toISOString(),
     uuid: `${messageId}:partial`,
     session_id: streamMessage.session_id,
     message: {
@@ -59,7 +60,7 @@ export const applyClaudeStreamEvent = (
   const content = getContent(partial)
 
   if (event.type === 'content_block_start') {
-    content[event.index] = { ...event.content_block }
+    content[event.index] = { ...event.content_block, startedAtMs: Date.now() }
     return true
   }
   if (event.type !== 'content_block_delta') return false
@@ -88,6 +89,37 @@ export const applyClaudeStreamEvent = (
     return true
   }
   return false
+}
+
+/** The SDK can emit one completed block at a time, so its indexes need not match the stream. */
+export const retainClaudeStreamTiming = (
+  partialMessages: Map<string, ClaudeTranscriptMessage>,
+  message: ClaudeTranscriptMessage
+): ClaudeTranscriptMessage => {
+  const partial = partialMessages.get(getStreamKey(message))
+  if (!partial || !isRecord(message.message) || !Array.isArray(message.message.content))
+    return message
+  const blocks = getContent(partial)
+  return {
+    ...message,
+    timestamp: partial.timestamp ?? message.timestamp,
+    message: {
+      ...message.message,
+      content: message.message.content.map((block) => {
+        if (!isRecord(block)) return block
+        const streamed = blocks.findLast(
+          (candidate) =>
+            candidate &&
+            candidate.type === block.type &&
+            (block.id == null || candidate.id === block.id) &&
+            (block.type !== 'text' || candidate.text === block.text)
+        )
+        return streamed?.startedAtMs != null
+          ? { ...block, startedAtMs: streamed.startedAtMs }
+          : block
+      })
+    }
+  }
 }
 
 export const clearClaudeStreamMessages = (

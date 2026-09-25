@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyClaudeStreamEvent } from './ClaudeStreaming.ts'
+import { applyClaudeStreamEvent, retainClaudeStreamTiming } from './ClaudeStreaming.ts'
 import { renderClaudeChatItems } from './ClaudeItemRenderers.ts'
 
 const userPrompt = {
@@ -149,4 +149,37 @@ test('streamed tool ids match the ids of their persisted transcript records', ()
     { active: true, stopped: false }
   )[1]
   assert.equal(streamedStep.items[0].id, persistedStep.items[0].id)
+})
+
+test('completed text retains its streamed start even when the SDK emits a single block', () => {
+  const partials = new Map([
+    [
+      'session:root',
+      {
+        type: 'assistant',
+        uuid: 'partial',
+        session_id: 'session',
+        parent_tool_use_id: null,
+        timestamp: new Date(1000).toISOString(),
+        message: {
+          content: [
+            { type: 'thinking', thinking: 'Thinking', startedAtMs: 1000 },
+            { type: 'text', text: 'Done', startedAtMs: 12000 }
+          ]
+        }
+      }
+    ]
+  ])
+  const completed = {
+    type: 'assistant',
+    uuid: 'done',
+    session_id: 'session',
+    parent_tool_use_id: null,
+    timestamp: new Date(20000).toISOString(),
+    message: { content: [{ type: 'text', text: 'Done' }] }
+  }
+  const retained = retainClaudeStreamTiming(partials, completed)
+  assert.equal(retained.message.content[0].startedAtMs, 12000)
+  assert.equal(retained.timestamp, new Date(1000).toISOString())
+  assert.equal(completed.message.content[0].startedAtMs, undefined)
 })

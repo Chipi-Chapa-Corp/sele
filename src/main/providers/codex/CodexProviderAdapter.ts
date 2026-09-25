@@ -5575,6 +5575,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     ...next,
     content:
       next.content && next.content.length > 0 ? next.content : (previous.content ?? next.content),
+    startedAtMs: previous.startedAtMs ?? next.startedAtMs,
     text: mergeCodexStreamedText(previous.text, next.text),
     command: next.command ?? previous.command,
     processId: next.processId ?? previous.processId,
@@ -6026,7 +6027,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const status = notification.method === 'item/started' ? 'running' : 'finished'
     const items = this.normalizeLiveItem(params.item as CodexThreadItem).map((item) =>
-      this.applyLiveItemStatus(item, status)
+      this.applyLiveItemStatus({ ...item, startedAtMs: item.startedAtMs ?? Date.now() }, status)
     )
 
     if (notification.method === 'item/completed') {
@@ -6056,6 +6057,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.updateItem(threadId, turnId, itemId, (item) => ({
       ...(item?.type === 'agentMessage' ? item : { type: 'agentMessage', id: itemId }),
+      startedAtMs: item?.startedAtMs ?? Date.now(),
       text: `${item?.type === 'agentMessage' ? (item.text ?? '') : ''}${delta}`,
       phase: item?.type === 'agentMessage' ? (item.phase ?? null) : null
     }))

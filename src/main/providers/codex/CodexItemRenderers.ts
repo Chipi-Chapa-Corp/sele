@@ -30,6 +30,7 @@ export type CodexUserInput =
   | { type: 'skill' | 'mention'; name: string; path?: string }
 
 export type CodexThreadItem = {
+  startedAtMs?: number
   type: string
   id: string
   local?: boolean
@@ -1676,7 +1677,7 @@ const createAssistantMessage = (
   id: `${turn.id}:${item.id}`,
   role: 'assistant',
   content: item.text?.trim() ?? '',
-  createdAt: toMilliseconds(completedAt),
+  createdAt: item.startedAtMs ?? (isFinishedTurn(turn) ? toMilliseconds(completedAt) : null),
   model: turn.model ?? null
 })
 
@@ -1694,6 +1695,7 @@ type CodexProjectionCheckpoint = {
   hasSeenInitialUserMessage: boolean
   renderedContextCompactionItemIds: Set<string>
   workingStepCount: number
+  workingStartedAt: number | null
   scan: CodexProjectionScan
 }
 type CodexProjectionCache = {
@@ -1762,9 +1764,15 @@ const renderChatItems = (
       scanProjectionItem(scan, turn.items[index])
       if (projection) projection.processedRecordCount += 1
     }
-    // Message phase describes content, not turn completion. Promote only once the
-    // provider ends the turn; live final-tagged messages remain chronological activity.
-    const finalMessageIndex = isFinishedTurn(turn) ? getFinalMessageIndex(turn.items) : -1
+    // The live tail can identify a final answer before the terminal turn event, even at
+    // item/started before any text arrives. If more work follows, it becomes activity again.
+    // Inspect only the tail so streaming never scans or reloads historical chat details.
+    const tail = turn.items.at(-1)
+    const finalMessageIndex = isFinishedTurn(turn)
+      ? getFinalMessageIndex(turn.items)
+      : tail?.type === 'agentMessage' && tail.phase === 'final_answer'
+        ? turn.items.length - 1
+        : -1
     const resume = reusable
     const workingStatus = getWorkingStatus(turn, projection ? scan.aborted : undefined)
     if (resume) chatItems = resume.chatItems.slice()
@@ -1783,10 +1791,12 @@ const renderChatItems = (
     let hasSeenInitialUserMessage = resume?.hasSeenInitialUserMessage ?? false
     const renderedContextCompactionItemIds = new Set(resume?.renderedContextCompactionItemIds)
     let workingStepCount = resume?.workingStepCount ?? 0
+    let workingStartedAt = resume?.workingStartedAt ?? toMilliseconds(startedAt)
     let checkpoint: CodexProjectionCheckpoint | null = null
     const pushWorkingStep = (
       status: ProviderWorkingStep['status'],
-      segmentFinalMessage: ProviderMessage | null = null
+      segmentFinalMessage: ProviderMessage | null = null,
+      boundaryAt: number | null = null
     ): void => {
       const omitBeforeInitialUser =
         !hasSeenInitialUserMessage &&
@@ -1812,6 +1822,18 @@ const renderChatItems = (
         entries,
         finalMessageIndex: segmentFinalMessage ? entries.length - 1 : -1,
         lifecycle: getProviderLifecycleForWorkingStatus(status),
+        ...(workingStartedAt != null
+          ? {
+              timing: {
+                startedAt: workingStartedAt,
+                completedAt:
+                  boundaryAt ??
+                  segmentFinalMessage?.createdAt ??
+                  toMilliseconds(turn.completedAt) ??
+                  undefined
+              }
+            }
+          : {}),
         failureReason: status === 'failed' && isRateLimitFailure(turn) ? 'rateLimit' : undefined,
         showWorking,
         betweenWorkingAndFinal: pendingTimelineAnchors,
@@ -1827,6 +1849,7 @@ const renderChatItems = (
       workingItems.length = 0
       workingItemCount = 0
       if (showWorking) workingStepCount += 1
+      workingStartedAt = boundaryAt ?? segmentFinalMessage?.createdAt ?? workingStartedAt
       pendingTimelineAnchors.length = 0
     }
     const appendWorkingItems = (items: ProviderWorkingItem[]): void => {
@@ -1895,6 +1918,7 @@ const renderChatItems = (
           hasSeenInitialUserMessage,
           renderedContextCompactionItemIds: new Set(renderedContextCompactionItemIds),
           workingStepCount,
+          workingStartedAt,
           scan: checkpointScan
         }
       }
@@ -1906,7 +1930,8 @@ const renderChatItems = (
           !renderedContextCompactionItemIds.has(itemId)
         ) {
           renderedContextCompactionItemIds.add(itemId)
-          if (!flushBufferedFinalMessage()) pushWorkingStep('worked')
+          if (!flushBufferedFinalMessage())
+            pushWorkingStep('worked', null, item.startedAtMs ?? null)
           chatItems.push({
             type: 'contextCompaction',
             id: itemId
@@ -1923,7 +1948,7 @@ const renderChatItems = (
           const itemId = `${turn.id}:${item.id}`
 
           if (hasSeenInitialUserMessage) {
-            pushWorkingStep('worked')
+            pushWorkingStep('worked', null, item.startedAtMs ?? null)
 
             chatItems.push({
               type: 'message',
@@ -1966,7 +1991,7 @@ const renderChatItems = (
         continue
       }
 
-      if (itemIndex === finalMessageIndex && item.text?.trim()) {
+      if (itemIndex === finalMessageIndex && (item.text?.trim() || !isFinishedTurn(turn))) {
         finalMessage = createAssistantMessage(turn, item, completedAt)
         continue
       }

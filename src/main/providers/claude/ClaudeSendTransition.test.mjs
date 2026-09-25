@@ -55,6 +55,8 @@ const setup = () => {
     contextUsage: { usedTokens: 42000, maxTokens: 200000 }
   }
   const updates = []
+  const transcript = []
+  instance.addTranscriptMessage = (_state, message) => transcript.push(message)
   instance.emitUpdate = () => {
     const draining = instance.getDrainingMessage(state)
     updates.push({
@@ -121,6 +123,8 @@ test('a preceding result keeps SDK-queued steering alive until its own result', 
     pendingUserInputs: []
   }
   const updates = []
+  const transcript = []
+  instance.addTranscriptMessage = (_state, message) => transcript.push(message)
   instance.emitUpdate = (state, completed = false) =>
     updates.push({ active: state.active, completed })
   instance.queueUpdate = () => {}
@@ -129,6 +133,7 @@ test('a preceding result keeps SDK-queued steering alive until its own result', 
     type: 'result',
     subtype: 'success',
     terminal_reason: 'completed',
+    duration_ms: 12500,
     usage: {
       input_tokens: 1,
       cache_creation_input_tokens: 0,
@@ -142,6 +147,8 @@ test('a preceding result keeps SDK-queued steering alive until its own result', 
   )
   assert.equal(state.active, true)
   assert.equal(state.waitingForSessionIdle, false)
+  assert.equal(transcript[0].message.duration_ms, 12500)
+  assert.ok(Number.isFinite(Date.parse(transcript[0].timestamp)))
   assert.deepEqual(updates, [{ active: true, completed: false }])
   assert.equal(
     await instance.handleQueryEvent(state, control, { ...result, queued_turn_count: 0 }),

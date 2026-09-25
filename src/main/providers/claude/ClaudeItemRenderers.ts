@@ -1,3 +1,4 @@
+import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -48,6 +49,7 @@ export type ClaudeTranscriptMessage = {
 }
 
 type ClaudeContentBlock = {
+  startedAtMs?: unknown
   type?: unknown
   id?: unknown
   name?: unknown
@@ -68,6 +70,7 @@ type RenderOptions = TranscriptRenderWindow & {
 }
 
 type Segment = {
+  timing?: ConversationTiming
   id: string
   entries: ProviderConversationEntry[]
   failed: boolean
@@ -82,6 +85,26 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const getString = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null
+
+const includeClaudeMessageTime = (
+  timing: ConversationTiming | undefined,
+  message: ClaudeTranscriptMessage
+): ConversationTiming => {
+  const end = toTimestamp(message.timestamp)
+  const record = getMessageRecord(message.message)
+  const duration = record?.duration_ms ?? record?.durationMs
+  const start =
+    message.type === 'system' &&
+    (record?.subtype === 'turn_duration' || record?.subtype === 'sele_turn_timing') &&
+    end != null &&
+    typeof duration === 'number' &&
+    Number.isFinite(duration) &&
+    duration >= 0
+      ? end - duration
+      : end
+  // A result duration covers a whole SDK turn; a steered section may start later.
+  return includeConversationTime(timing, timing?.startedAt ?? start, end)
+}
 
 const getMessageRecord = (value: unknown): Record<string, unknown> | null =>
   isRecord(value) ? value : null
@@ -445,6 +468,7 @@ export const renderClaudeChatItems = (
     appendProviderConversationSegment(items, {
       preserveRawWorkingItems: true,
       id: current.id,
+      timing: current.timing,
       entries: current.entries,
       finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
       lifecycle: {
@@ -480,12 +504,20 @@ export const renderClaudeChatItems = (
         kind: message.kind,
         label: message.label ?? null
       })
-      segment = { id: `${message.uuid}:working`, entries: [], failed: false }
+      segment = {
+        id: `${message.uuid}:working`,
+        entries: [],
+        failed: false,
+        timing: includeConversationTime(undefined, toTimestamp(message.timestamp))
+      }
       continue
     }
 
+    if (segment) segment.timing = includeClaudeMessageTime(segment.timing, message)
+
     if (message.type === 'assistant') {
       const current = ensureSegment(message.uuid)
+      current.timing = includeClaudeMessageTime(current.timing, message)
       const blockBaseId = getClaudeBlockBaseId(message)
       blocks.forEach((block) => {
         if (
@@ -525,7 +557,10 @@ export const renderClaudeChatItems = (
                 id: nextBlockId(message, 'text'),
                 role: 'assistant',
                 content: block.text.trim(),
-                createdAt: toTimestamp(message.timestamp),
+                createdAt:
+                  typeof block.startedAtMs === 'number'
+                    ? block.startedAtMs
+                    : toTimestamp(message.timestamp),
                 model: getModel(message.message)
               }
             })
@@ -591,6 +626,7 @@ export const renderClaudeChatItems = (
 // This cache owns derived state only. Replacing/reverting committed history resets it; partial
 // SDK records are replayed in a rollback journal because the SDK mutates them in place.
 type ProjectedClaudeSegment = {
+  timing?: ConversationTiming
   id: string
   failed: boolean
   groups: ProviderWorkingItem[]
@@ -742,11 +778,23 @@ export class ClaudeTranscriptProjection {
         kind: message.kind,
         label: message.label ?? null
       })
-      this.ensureSegment(message.uuid)
+      const segment = this.ensureSegment(message.uuid)
+      this.journal.set(
+        segment,
+        'timing',
+        includeConversationTime(undefined, toTimestamp(message.timestamp))
+      )
       return
     }
+    if (this.state.current)
+      this.journal.set(
+        this.state.current,
+        'timing',
+        includeClaudeMessageTime(this.state.current.timing, message)
+      )
     if (message.type === 'assistant') {
       const segment = this.ensureSegment(message.uuid)
+      this.journal.set(segment, 'timing', includeClaudeMessageTime(segment.timing, message))
       for (const block of blocks) {
         if (
           block.type === 'thinking' &&
@@ -784,7 +832,10 @@ export class ClaudeTranscriptProjection {
               id: this.blockId(message, 'text'),
               role: 'assistant',
               content: block.text.trim(),
-              createdAt: toTimestamp(message.timestamp),
+              createdAt:
+                typeof block.startedAtMs === 'number'
+                  ? block.startedAtMs
+                  : toTimestamp(message.timestamp),
               model: getModel(message.message)
             })
         }
@@ -793,6 +844,7 @@ export class ClaudeTranscriptProjection {
     }
     if (message.type === 'user' && hasToolResults(blocks)) {
       const segment = this.ensureSegment(message.uuid)
+      this.journal.set(segment, 'timing', includeClaudeMessageTime(segment.timing, message))
       for (const block of blocks) {
         if (block.type !== 'tool_result') continue
         const toolId = getString(block.tool_use_id)
@@ -891,6 +943,7 @@ export class ClaudeTranscriptProjection {
           const failed = node.failed || (last && options.failed === true)
           appendProviderConversationSegment(items, {
             id: node.id,
+            timing: node.timing,
             entries: [
               ...node.groups.map((item, groupOffset) => {
                 const projectedItem = { ...item }

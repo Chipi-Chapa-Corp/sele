@@ -50,7 +50,7 @@ test('projects provider-neutral entries into one working step and one final resp
   assert.equal(items[0].status, 'worked')
 })
 
-test('keeps a tail step active while a provisional final response is visible', () => {
+test('finishes the working UI while a final response streams', () => {
   const items = []
   appendProviderConversationSegment(items, {
     id: 'turn:working',
@@ -64,7 +64,7 @@ test('keeps a tail step active while a provisional final response is visible', (
   })
 
   assert.equal(items[0].type, 'working')
-  assert.equal(items[0].status, 'working')
+  assert.equal(items[0].status, 'worked')
   assert.equal(items[1].id, 'final')
 })
 

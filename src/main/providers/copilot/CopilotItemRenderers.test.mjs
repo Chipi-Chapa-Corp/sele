@@ -193,7 +193,7 @@ test('keeps tool-preface text inside the working timeline before execution start
   )
 })
 
-test('finds the live Copilot step for a tail placeholder after a final response', () => {
+test('hides the Copilot tail placeholder while a final response streams', () => {
   const items = renderCopilotChatItems(
     [userMessage('prompt', 'Answer the question'), assistantMessage('answer', 'The answer.')],
     { active: true, stopped: false }
@@ -203,7 +203,8 @@ test('finds the live Copilot step for a tail placeholder after a final response'
     items.map((item) => `${item.type}:${item.id}`),
     ['message:prompt', 'working:prompt:working', 'message:answer']
   )
-  assert.equal(getConversationTailWorkingStep(items)?.id, 'prompt:working')
+  assert.equal(items[1].status, 'worked')
+  assert.equal(getConversationTailWorkingStep(items), null)
 })
 
 test('does not render a tail placeholder after Copilot becomes idle', () => {

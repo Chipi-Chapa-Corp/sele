@@ -103,7 +103,11 @@ import {
 } from './ClaudeQueryLifecycle'
 import { getClaudeQueueDrainDecision } from './ClaudeQueueDrain'
 import { discoverClaudeSkills } from './ClaudeSkillDiscovery'
-import { applyClaudeStreamEvent, clearClaudeStreamMessages } from './ClaudeStreaming'
+import {
+  applyClaudeStreamEvent,
+  clearClaudeStreamMessages,
+  retainClaudeStreamTiming
+} from './ClaudeStreaming'
 import { createClaudeSubagentSummary } from './ClaudeSubagents'
 import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import { mapClaudeRateLimits } from './ClaudeUsage'
@@ -2028,8 +2032,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return false
     }
     if (event.type === 'user' || event.type === 'assistant') {
-      if (event.type === 'assistant') clearClaudeStreamMessages(state.partialMessages, event)
-      this.addTranscriptMessage(state, toTranscriptMessage(event))
+      let message = toTranscriptMessage(event)
+      message.timestamp ??= new Date().toISOString()
+      if (event.type === 'assistant') {
+        message = retainClaudeStreamTiming(state.partialMessages, message)
+        clearClaudeStreamMessages(state.partialMessages, event)
+      }
+      this.addTranscriptMessage(state, message)
       this.queueUpdate(state)
       return false
     }
@@ -2084,6 +2093,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     }
     if (event.type !== 'result') return false
 
+    // Keep elapsed wall time on the existing transcript path. API duration excludes tool/wait time.
+    this.addTranscriptMessage(state, {
+      type: 'system',
+      uuid: `${event.uuid}:timing`,
+      session_id: event.session_id,
+      parent_tool_use_id: null,
+      timestamp: new Date().toISOString(),
+      message: { subtype: 'sele_turn_timing', duration_ms: event.duration_ms }
+    })
     state.partialMessages.clear()
 
     const wasStopped = state.stopped

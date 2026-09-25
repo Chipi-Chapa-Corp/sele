@@ -277,7 +277,7 @@ test('marks an inline follow-up as a steering message', () => {
   assert.equal(steeringMessage?.editTargetId, 'steered-turn:steering-message')
 })
 
-test('promotes the final response only after the turn finishes', () => {
+test('promotes the final response as soon as it starts streaming', () => {
   const createTurn = (status) => ({
     id: 'answer-turn',
     status,
@@ -288,9 +288,10 @@ test('promotes the final response only after the turn finishes', () => {
         content: [{ type: 'text', text: 'Answer this' }]
       },
       {
-        type: 'reasoning',
+        type: 'agentMessage',
         id: 'reasoning',
-        summary: ['Checking the details']
+        phase: 'commentary',
+        text: 'Checking the details'
       },
       {
         type: 'agentMessage',
@@ -306,18 +307,10 @@ test('promotes the final response only after the turn finishes', () => {
     const working = items.find((item) => item.type === 'working')
     const finalMessage = items.find((item) => item.type === 'message' && item.role === 'assistant')
 
-    if (status === 'inProgress') {
-      assert.equal(finalMessage, undefined)
-      assert.equal(working?.status, 'working')
-      assert.ok(
-        working.items.some(
-          (item) => item.type === 'message' && item.content === 'Here is the answer.'
-        )
-      )
-    } else {
-      assert.equal(finalMessage?.id, 'answer-turn:answer')
-      assert.equal(finalMessage?.content, 'Here is the answer.')
-    }
+    assert.equal(working?.status, 'worked')
+    assert.equal(finalMessage?.id, 'answer-turn:answer')
+    assert.equal(finalMessage?.content, 'Here is the answer.')
+    assert.ok(working.items.every((item) => item.id !== finalMessage.id))
   }
 })
 

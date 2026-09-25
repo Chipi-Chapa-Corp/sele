@@ -1,3 +1,4 @@
+import type { ConversationTiming } from './conversationTiming.ts'
 import { markTranscriptRecordsChanged } from './transcriptProjection/recordChanges.ts'
 import { groupWorkingItemsForRenderer } from './workingStepLazy.ts'
 import type {
@@ -20,6 +21,7 @@ export type ProviderConversationLifecycle = {
 }
 
 export type ProviderConversationSegment = {
+  timing?: ConversationTiming
   id: string
   entries: readonly ProviderConversationEntry[]
   finalMessageIndex?: number | null
@@ -86,13 +88,14 @@ export const appendProviderConversationSegment = (
     segment.workingItemWindow || segment.preserveRawWorkingItems
       ? ungroupedWorkingItems
       : groupWorkingItemsForRenderer(ungroupedWorkingItems)
-  // A renderable assistant message is content, not a lifecycle boundary. Providers may stream
-  // final-answer text before their terminal event, so only the explicit lifecycle controls status.
-  const status = getProviderWorkingStatus(segment.lifecycle)
+  // Final-answer streaming finishes the working UI, while the provider's turn stays active.
+  // Preserve queued/stopped/failed states and their associated actions.
+  const lifecycleStatus = getProviderWorkingStatus(segment.lifecycle)
+  const status = lifecycleStatus === 'working' && finalMessage ? 'worked' : lifecycleStatus
   const showWorking =
     segment.showWorking ??
     (workingItems.length > 0 ||
-      status === 'working' ||
+      lifecycleStatus === 'working' ||
       status === 'queued' ||
       status === 'stopped' ||
       status === 'failed')
@@ -102,6 +105,15 @@ export const appendProviderConversationSegment = (
       type: 'working',
       id: segment.id,
       status,
+      ...(segment.timing?.startedAt != null ? { startedAt: segment.timing.startedAt } : {}),
+      ...(status !== 'working' && status !== 'queued' && segment.timing?.startedAt != null
+        ? {
+            completedAt: Math.max(
+              segment.timing.startedAt,
+              finalMessage?.createdAt ?? segment.timing.completedAt ?? segment.timing.startedAt
+            )
+          }
+        : {}),
       ...(segment.failureReason ? { failureReason: segment.failureReason } : {}),
       items: workingItems,
       ...(segment.workingItemWindow

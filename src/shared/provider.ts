@@ -766,6 +766,9 @@ export type ProviderWorkingItemSegment = {
 }
 
 export type ProviderWorkingStep = {
+  /** Section wall-clock boundaries in milliseconds since epoch. */
+  startedAt?: number
+  completedAt?: number
   type: 'working'
   id: string
   status: 'working' | 'worked' | 'stopped' | 'failed' | 'queued'

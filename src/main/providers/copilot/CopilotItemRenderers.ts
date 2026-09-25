@@ -1,3 +1,4 @@
+import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { getTranscriptRecordChange } from '../transcriptProjection/recordChanges.ts'
 import {
   findNativeItemTurnWindow,
@@ -48,6 +49,7 @@ type RenderOptions = TranscriptRenderWindow & {
 }
 
 type Segment = {
+  timing?: ConversationTiming
   id: string
   entries: ProviderConversationEntry[]
   failed: boolean
@@ -484,6 +486,7 @@ export const renderCopilotChatItems = (
   const binaryAssets = new Map<string, CopilotBinaryAsset>(options.binaryAssets)
   const finalMessageEvents = getFinalMessageEvents(events, options.agentId)
   let segment: Segment | null = null
+  let eventTimestamp: number | null = null
 
   events.forEach((event) => {
     if (event.type === 'session.binary_asset') binaryAssets.set(event.data.assetId, event.data)
@@ -493,6 +496,7 @@ export const renderCopilotChatItems = (
     if (!segment) {
       segment = {
         id: `${eventId}:working`,
+        timing: includeConversationTime(undefined, eventTimestamp),
         entries: [],
         failed: false
       }
@@ -535,6 +539,7 @@ export const renderCopilotChatItems = (
     appendProviderConversationSegment(items, {
       preserveRawWorkingItems: true,
       id: currentSegment.id,
+      timing: currentSegment.timing,
       entries: currentSegment.entries,
       finalMessageIndex,
       lifecycle: {
@@ -552,6 +557,7 @@ export const renderCopilotChatItems = (
 
   for (const event of events) {
     if (!isScopedEvent(event, options.agentId)) continue
+    eventTimestamp = toTimestamp(event.timestamp)
 
     if (event.type === 'user.message') {
       if (isCopilotSystemContextMessage(event)) continue
@@ -569,11 +575,14 @@ export const renderCopilotChatItems = (
       })
       segment = {
         id: `${event.id}:working`,
+        timing: includeConversationTime(undefined, toTimestamp(event.timestamp)),
         entries: [],
         failed: false
       }
       continue
     }
+
+    if (segment) segment.timing = includeConversationTime(segment.timing, eventTimestamp)
 
     if (event.type === 'assistant.reasoning') {
       const content = event.data.content.trim()

@@ -1,3 +1,4 @@
+import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -33,6 +34,7 @@ type RenderOptions = TranscriptRenderWindow & {
 }
 
 type Segment = {
+  timing?: ConversationTiming
   id: string
   entries: ProviderConversationEntry[]
   failed: boolean
@@ -304,6 +306,7 @@ export const renderOpenCodeChatItems = (
     const failed = current.failed || (isLast && options.failed === true)
     appendProviderConversationSegment(items, {
       id: current.id,
+      timing: current.timing,
       entries: current.entries,
       finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
       lifecycle: {
@@ -333,6 +336,7 @@ export const renderOpenCodeChatItems = (
       }
       segment = {
         id: `${message.info.id}:working`,
+        timing: includeConversationTime(undefined, message.info.time.created),
         entries: [],
         failed: false,
         rateLimited: false
@@ -341,7 +345,26 @@ export const renderOpenCodeChatItems = (
     }
 
     const current = ensureSegment(message.info.id)
+    current.timing = includeConversationTime(
+      current.timing,
+      message.info.time.created,
+      message.info.time.completed ?? message.info.time.created
+    )
     message.parts.forEach((part) => {
+      const time =
+        part.type === 'tool'
+          ? 'time' in part.state
+            ? part.state.time
+            : undefined
+          : 'time' in part
+            ? part.time
+            : undefined
+      if (time && 'start' in time)
+        current.timing = includeConversationTime(
+          current.timing,
+          time.start,
+          'end' in time && typeof time.end === 'number' ? time.end : time.start
+        )
       if (part.type === 'reasoning' && part.text.trim()) {
         current.entries.push({
           kind: 'working',

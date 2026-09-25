@@ -1,3 +1,4 @@
+import { WorkingElapsedTime } from './WorkingElapsedTime'
 import { useWorkingToolMotion } from '../motion/useWorkingToolMotion'
 import { useStreamReveal } from '../motion/useStreamReveal'
 import { useMessageArrival } from '../motion/messageFlight'
@@ -364,7 +365,6 @@ const placeholderOptions = [
   'Pretending this is deterministic'
 ]
 const longRunningActivities = new Set<ProviderToolActivity>(['npm', 'npx', 'script', 'command'])
-const silencePlaceholderDelayMs = 600
 const streamRenderMaxDelayMs = 180
 
 const escapeHtml = (value: string): string =>
@@ -1684,7 +1684,7 @@ const ToolSequence: React.FC<{
   )
 }
 
-const RandomWorkingPlaceholder: React.FC = () => {
+const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
   const [placeholder] = useState(getRandomPlaceholderOption)
 
   return (
@@ -1692,44 +1692,17 @@ const RandomWorkingPlaceholder: React.FC = () => {
       <span className="chat-detail__tool-icon">
         <WorkingMark />
       </span>
-      <span className="chat-detail__tool-label">{placeholder}</span>
+      <span className="chat-detail__tool-label">
+        {placeholder}
+        <WorkingElapsedTime item={item} />
+      </span>
     </div>
   )
 }
 
-const WorkingPlaceholder: React.FC<{ id: string }> = ({ id }) => (
-  <RandomWorkingPlaceholder key={id} />
+const WorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => (
+  <RandomWorkingPlaceholder key={item.id} item={item} />
 )
-
-type PlaceholderState = {
-  signature: string
-  visible: boolean
-}
-
-const getToolSignature = (tool: ProviderWorkingTool): string =>
-  [
-    tool.id,
-    tool.icon,
-    tool.label,
-    tool.status,
-    tool.command?.length ?? 0,
-    tool.stdout?.length ?? 0,
-    tool.diffs.map((diff) => `${diff.path}:${diff.diff.length}`).join(','),
-    tool.backgroundSessionId,
-    tool.finishedBackgroundSessionId,
-    tool.images
-      .map((image) => `${image.path ?? ''}:${image.dataUrl?.length ?? 0}:${image.name ?? ''}`)
-      .join(',')
-  ].join(':')
-
-const getWorkingItemSignature = (item: ProviderWorkingItem): string => {
-  if (item.type === 'message') return `message:${item.id}:${item.content.length}`
-  if (item.type === 'toolGroup') {
-    return `toolGroup:${item.id}:${item.tools.map(getToolSignature).join('|')}`
-  }
-
-  return `tool:${getToolSignature(item)}`
-}
 
 const getActiveToolIds = (item: ProviderWorkingStep): Set<string> => {
   const activeToolIds = new Set<string>()
@@ -1769,40 +1742,8 @@ const getActiveToolIds = (item: ProviderWorkingStep): Set<string> => {
   return activeToolIds
 }
 
-const useSilencePlaceholder = (signature: string, active: boolean, immediate: boolean): boolean => {
-  const [placeholderState, setPlaceholderState] = useState<PlaceholderState>(() => ({
-    signature,
-    visible: active && immediate
-  }))
-
-  useEffect(() => {
-    if (!active) return undefined
-
-    const timeout = window.setTimeout(
-      () => setPlaceholderState({ signature, visible: true }),
-      immediate ? 0 : silencePlaceholderDelayMs
-    )
-
-    return () => window.clearTimeout(timeout)
-  }, [active, immediate, signature])
-
-  return active && placeholderState.signature === signature && placeholderState.visible
-}
-
-export const ChatWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
-  const signature = useMemo(
-    () => `${item.status}:${item.items.map(getWorkingItemSignature).join('|')}`,
-    [item.items, item.status]
-  )
-  const activeToolIds = useMemo(() => getActiveToolIds(item), [item])
-  const showPlaceholder = useSilencePlaceholder(
-    signature,
-    item.status === 'working' && activeToolIds.size === 0,
-    item.items.length === 0
-  )
-
-  return showPlaceholder ? <WorkingPlaceholder id={`${item.id}:${item.items.length}`} /> : null
-}
+export const ChatWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) =>
+  item.status === 'working' ? <WorkingPlaceholder item={item} /> : null
 
 // Page offsets are canonical display-row offsets. Never merge rows after slicing a page:
 // that makes the hidden counts disagree and can merge across extracted image rows.
@@ -1966,7 +1907,10 @@ const WorkingStep: React.FC<{
           aria-hidden="true"
         />
       )}
-      <span>{label}</span>
+      <span>
+        {label}
+        {item.status === 'worked' && <WorkingElapsedTime item={item} />}
+      </span>
     </span>
   )
   const renderedGeneratedImages = generatedImages.map((imageItem) => (

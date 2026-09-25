@@ -655,6 +655,7 @@ export const getOptimisticItems = (
       type: 'working',
       id: `${id}:working`,
       status: 'working',
+      startedAt: createdAt,
       items: []
     }
   ]
