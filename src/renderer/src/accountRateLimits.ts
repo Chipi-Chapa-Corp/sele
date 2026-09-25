@@ -11,6 +11,15 @@ const clampPercent = (value: number): number => Math.min(Math.max(value, 0), 100
 const toTimestampMilliseconds = (timestamp: number): number =>
   timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1_000
 
+export const sortRateLimitsForDisplay = (
+  rateLimits: readonly ProviderAccountRateLimit[]
+): ProviderAccountRateLimit[] =>
+  [...rateLimits].sort(
+    (first, second) =>
+      (first.windowMinutes ?? Number.POSITIVE_INFINITY) -
+      (second.windowMinutes ?? Number.POSITIVE_INFINITY)
+  )
+
 export const shouldDisableRateLimitReset = (
   rateLimits: readonly ProviderAccountRateLimit[],
   resetCredits: readonly ProviderAccountRateLimitResetCredit[] | null = null,

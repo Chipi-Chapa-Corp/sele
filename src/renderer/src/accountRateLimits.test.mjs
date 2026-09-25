@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { shouldDisableRateLimitReset } from './accountRateLimits.ts'
+import { shouldDisableRateLimitReset, sortRateLimitsForDisplay } from './accountRateLimits.ts'
 
 // Test fixtures intentionally omit fields that are irrelevant to reset eligibility.
 const rateLimit = (usedPercent) => ({
@@ -13,6 +13,24 @@ const rateLimit = (usedPercent) => ({
 })
 
 const resetCredit = (expiresAt) => ({ id: 'reset-credit', expiresAt })
+
+test('shows the five-hour limit before a more-used weekly limit without changing usage priority', () => {
+  const weekly = { ...rateLimit(90), kind: 'secondary', windowMinutes: 10_080 }
+  const fiveHour = rateLimit(20)
+  const limits = Object.freeze([weekly, fiveHour])
+
+  assert.deepEqual(sortRateLimitsForDisplay(limits), [fiveHour, weekly])
+  assert.deepEqual(limits, [weekly, fiveHour])
+})
+
+test('keeps equal windows stable and places unspecified windows last', () => {
+  const unknown = { ...rateLimit(80), windowMinutes: null }
+  const first = rateLimit(20)
+  const second = rateLimit(50)
+
+  assert.deepEqual(sortRateLimitsForDisplay([unknown, first, second]), [first, second, unknown])
+  assert.deepEqual(sortRateLimitsForDisplay([]), [])
+})
 
 test('disables rate-limit resets when every limit has more than 5% left', () => {
   assert.equal(shouldDisableRateLimitReset([rateLimit(94)]), true)

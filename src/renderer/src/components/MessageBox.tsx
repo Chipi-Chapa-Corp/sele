@@ -70,7 +70,11 @@ import type {
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import type { AppAction } from '../actions'
-import { groupAccountRateLimits, shouldDisableRateLimitReset } from '../accountRateLimits'
+import {
+  groupAccountRateLimits,
+  shouldDisableRateLimitReset,
+  sortRateLimitsForDisplay
+} from '../accountRateLimits'
 import {
   addPromptDraft,
   appendPromptDraft,
@@ -2709,9 +2713,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     const roundedUsedPercent = Math.round(usedPercent)
     const resetTime = formatResetTime(limit.resetsAt)
     const windowLabel = formatWindowLabel(limit.windowMinutes)
-    const limitLabel =
-      limit.displayLabel ??
-      `${limit.label} ${windowLabel}${limit.kind === 'secondary' ? ' secondary' : ''}`
+    const limitLabel = limit.displayLabel ?? `${limit.label} ${windowLabel}`
 
     return (
       <div className="message-box__limit" key={key}>
@@ -3172,7 +3174,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                             {accountUsageError ?? 'Usage unavailable.'}
                           </p>
                         )}
-                        {visibleRateLimits.map((limit, index) =>
+                        {sortRateLimitsForDisplay(visibleRateLimits).map((limit, index) =>
                           renderRateLimit(
                             limit,
                             `${limit.id ?? limit.label}:${limit.kind}:${index}`
