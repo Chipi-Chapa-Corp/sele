@@ -1,3 +1,5 @@
+import { ClaudeSessionDiscovery } from './ClaudeSessionDiscovery'
+import { ClaudeRemoteSessionStore as RemoteSessionStore } from './ClaudeRemoteSessionStore'
 import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
 import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { getBrowserAutomationService } from '../../browser/BrowserAutomation'
@@ -8,7 +10,6 @@ import { basename } from 'node:path'
 import {
   getSessionInfo,
   getSubagentMessages,
-  listSessions,
   listSubagents,
   query,
   renameSession,
@@ -20,10 +21,7 @@ import {
   type SDKMessage,
   type SDKSessionInfo,
   type SDKUserMessage,
-  type SessionKey,
-  type SessionMessage,
-  type SessionStore,
-  type SessionStoreEntry
+  type SessionMessage
 } from '@anthropic-ai/claude-agent-sdk'
 import type { AppContainerTarget } from '../../../shared/app'
 import {
@@ -360,103 +358,12 @@ const settleWithin = (promise: Promise<unknown>, timeoutMs: number): Promise<voi
     void promise.then(finish, finish)
   })
 
-/** Lets the SDK's own session parser operate on transcripts in a selected container. */
-class ClaudeRemoteSessionStore implements SessionStore {
-  constructor(private readonly container: StoredClaudeContainer) {}
-
-  private run = async (script: string, args: string[] = []): Promise<string> => {
-    const command = await getHostCommand(
-      'sh',
-      ['-lc', script, 'sele-claude-session-store', ...args],
-      { container: this.container, env: process.env }
-    )
-    return runHostCommand(command)
-  }
-
-  listSessions = async (): Promise<Array<{ sessionId: string; mtime: number }>> => {
-    const output = await this.run(`
-root=\${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}/projects
-for path in "$root"/*/*.jsonl; do
-  [ -f "$path" ] || continue
-  file=\${path##*/}
-  session=\${file%.jsonl}
-  modified=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null || echo 0)
-  printf '%s\\t%s\\n' "$session" "$modified"
-done
-`)
-    return output.split('\n').flatMap((line) => {
-      const [sessionId, seconds] = line.split('\t')
-      const mtime = Number.parseInt(seconds ?? '', 10) * 1_000
-      return sessionId && Number.isFinite(mtime) ? [{ sessionId, mtime }] : []
-    })
-  }
-
-  load = async (key: SessionKey): Promise<SessionStoreEntry[] | null> => {
-    const output = await this.run(
-      `
-root=\${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}/projects
-if [ -n "$2" ]; then
-  suffix="$1/$2.jsonl"
-else
-  suffix="$1.jsonl"
-fi
-for path in "$root"/*/"$suffix"; do
-  [ -f "$path" ] || continue
-  cat "$path"
-  exit 0
-done
-exit 4
-`,
-      [key.sessionId, key.subpath ?? '']
-    ).catch((error: unknown) => {
-      if (isExpectedCommandAbsenceError(error, [4])) return null
-      throw error
-    })
-    if (output === null) return null
-    return output.split('\n').flatMap((line): SessionStoreEntry[] => {
-      if (!line.trim()) return []
-      try {
-        const entry: unknown = JSON.parse(line)
-        return isRecord(entry) && typeof entry.type === 'string' ? [entry as SessionStoreEntry] : []
-      } catch (error) {
-        console.error('Unable to parse a Claude remote transcript entry.', error)
-        return []
-      }
-    })
-  }
-
-  listSubkeys = async (key: { projectKey: string; sessionId: string }): Promise<string[]> => {
-    const output = await this.run(
-      `
-root=\${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}/projects
-for path in "$root"/*/"$1"/subagents/*.jsonl; do
-  [ -f "$path" ] || continue
-  file=\${path##*/}
-  printf 'subagents/%s\n' "\${file%.jsonl}"
-done
-`,
-      [key.sessionId]
-    )
-    return output
-      .split('\n')
-      .map((subpath) => subpath.trim())
-      .filter(Boolean)
-  }
-
-  append = async (key: SessionKey, entries: SessionStoreEntry[]): Promise<void> => {
-    if (key.subpath) throw new Error('Claude subagent session writes are unavailable remotely.')
-    const payload = entries.map((entry) => JSON.stringify(entry)).join('\n')
-    await this.run(
-      `
-root=\${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}/projects
-for path in "$root"/*/"$1.jsonl"; do
-  [ -f "$path" ] || continue
-  printf '%s\\n' "$2" >> "$path"
-  exit 0
-done
-exit 4
-`,
-      [key.sessionId, payload]
+class ClaudeRemoteSessionStore extends RemoteSessionStore {
+  constructor(container: StoredClaudeContainer) {
+    super(async (script, args = []) =>
+      runHostCommand(await getHostCommand(
+        'sh', ['-lc', script, 'sele-claude-session-store', ...args], { container, env: process.env }
+      ))
     )
   }
 }
@@ -613,6 +520,7 @@ const getTokenBreakdown = (
 })
 
 export class ClaudeProviderAdapter implements ProviderAdapter {
+  private readonly sessionDiscovery = new ClaudeSessionDiscovery()
   id = 'claude' as const
 
   private states = new Map<string, ClaudeSessionState>()
@@ -913,8 +821,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0)
     const limit = Math.max(1, Math.min(options.limit ?? 50, 100))
 
-    const sessionStore = container ? new ClaudeRemoteSessionStore(container) : undefined
-    const sessions = (await listSessions({ includeProgrammatic: true, sessionStore }))
+    const sessions = (await this.sessionDiscovery.list(container, offset > 0))
       .filter((session) => !this.hiddenSessionIds.has(session.sessionId))
       .sort((first, second) => second.lastModified - first.lastModified)
     const page = sessions.slice(offset, offset + limit)
@@ -1409,6 +1316,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
+    this.sessionDiscovery.dispose()
     claudeAccounts.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()

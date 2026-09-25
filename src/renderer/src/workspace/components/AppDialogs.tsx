@@ -1,10 +1,18 @@
-import type { ReactElement } from 'react'
+import { lazy, Suspense, type ReactElement } from 'react'
+import { X } from 'lucide-react'
+import { Button } from '../../components/Button'
+import '../../components/FileEditorDialog.css'
 import { AccountDialog } from '../../components/AccountDialog'
-import { FileEditorDialog } from '../../components/FileEditorDialog'
 import { ProjectDialog } from '../../components/ProjectDialog'
 import { SettingsDialog } from '../../components/SettingsDialog'
 import { SshEnvironmentDialog } from '../../components/SshEnvironmentDialog'
 import type { WorkspaceController } from '../../useWorkspaceController'
+
+const FileEditorDialog = lazy(() =>
+  import('../../components/FileEditorDialog').then((module) => ({
+    default: module.FileEditorDialog
+  }))
+)
 
 type AppDialogsProps = WorkspaceController['dialogs']
 
@@ -89,15 +97,40 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
         />
       )}
       {fileEditorTarget && (
-        <FileEditorDialog
-          diffTargets={fileEditorDiffTargets}
-          initialReviewComments={reviewCommentsDraft}
-          target={fileEditorTarget}
-          onClose={handleCloseFileEditor}
-          onContinueReview={handleContinueReview}
-          onReviewCommentsChange={handleReviewCommentsChange}
-          onSelectTarget={handleSelectFileEditorTarget}
-        />
+        <Suspense
+          fallback={
+            <div className="file-editor-overlay">
+              <section
+                className="file-editor-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-label="File editor"
+              >
+                <header className="file-editor-dialog__header">
+                  <span role="status">Loading editor…</span>
+                  <span />
+                  <Button
+                    autoFocus
+                    aria-label="Close editor"
+                    callback={handleCloseFileEditor}
+                    icon={<X aria-hidden="true" />}
+                    theme="transparent"
+                  />
+                </header>
+              </section>
+            </div>
+          }
+        >
+          <FileEditorDialog
+            diffTargets={fileEditorDiffTargets}
+            initialReviewComments={reviewCommentsDraft}
+            target={fileEditorTarget}
+            onClose={handleCloseFileEditor}
+            onContinueReview={handleContinueReview}
+            onReviewCommentsChange={handleReviewCommentsChange}
+            onSelectTarget={handleSelectFileEditorTarget}
+          />
+        </Suspense>
       )}
     </>
   )

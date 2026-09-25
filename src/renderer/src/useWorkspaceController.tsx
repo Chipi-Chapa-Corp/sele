@@ -3168,26 +3168,43 @@ export const useWorkspaceController = () => {
     fileTreeLoadRequest
   })
 
-  const searchTerms = searchQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  const matchesChatSearch = (chat: ProviderChat): boolean => {
-    const title = chat.title.toLocaleLowerCase()
-    const cwd = chat.cwd?.toLocaleLowerCase() ?? ''
-    const cwdLabel = getChatCwdLabel(chat.cwd).toLocaleLowerCase()
-    return searchTerms.every(
-      (term) => title.includes(term) || cwd.includes(term) || cwdLabel.includes(term)
-    )
-  }
-  const filteredChats = searchTerms.length === 0 ? chats : chats.filter(matchesChatSearch)
-  const projectRecordsByCwd = new Map(projects.map((project) => [project.cwd, project]))
-  const projectNamesByCwd = new Map(
-    projects.map((project) => [project.cwd, getProjectDisplayName(project)])
+  const searchTerms = useMemo(
+    () => searchQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean),
+    [searchQuery]
   )
-  const chatGroups = groupChatsForSidebar(filteredChats, projectRecordsByCwd).map((group) => {
-    if (group.kind !== 'cwd' || !group.cwd) return group
+  const matchesChatSearch = useCallback(
+    (chat: ProviderChat): boolean => {
+      const title = chat.title.toLocaleLowerCase()
+      const cwd = chat.cwd?.toLocaleLowerCase() ?? ''
+      const cwdLabel = getChatCwdLabel(chat.cwd).toLocaleLowerCase()
+      return searchTerms.every(
+        (term) => title.includes(term) || cwd.includes(term) || cwdLabel.includes(term)
+      )
+    },
+    [searchTerms]
+  )
+  const filteredChats = useMemo(
+    () => (searchTerms.length === 0 ? chats : chats.filter(matchesChatSearch)),
+    [chats, matchesChatSearch, searchTerms]
+  )
+  const projectRecordsByCwd = useMemo(
+    () => new Map(projects.map((project) => [project.cwd, project])),
+    [projects]
+  )
+  const projectNamesByCwd = useMemo(
+    () => new Map(projects.map((project) => [project.cwd, getProjectDisplayName(project)])),
+    [projects]
+  )
+  const chatGroups = useMemo(
+    () =>
+      groupChatsForSidebar(filteredChats, projectRecordsByCwd).map((group) => {
+        if (group.kind !== 'cwd' || !group.cwd) return group
 
-    const project = projectRecordsByCwd.get(group.cwd)
-    return project ? { ...group, projectName: getProjectDisplayName(project) } : group
-  })
+        const project = projectRecordsByCwd.get(group.cwd)
+        return project ? { ...group, projectName: getProjectDisplayName(project) } : group
+      }),
+    [filteredChats, projectRecordsByCwd]
+  )
   const pinnedChatGroup = chatGroups.find((group) => group.kind === 'pinned') ?? null
   const activeChatGroups = chatGroups.filter((group) => group.kind === 'cwd')
   const displayedActiveChatGroups =

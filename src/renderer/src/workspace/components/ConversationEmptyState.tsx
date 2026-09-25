@@ -1,10 +1,10 @@
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import { VegvisirArt } from '../../components/VegvisirArt'
 import type { WorkspaceController } from '../../useWorkspaceController'
 
 type ConversationEmptyStateProps = WorkspaceController['conversationEmptyState']
 
-export function ConversationEmptyState({
+export const ConversationEmptyState = memo(function ConversationEmptyState({
   visible
 }: ConversationEmptyStateProps): ReactElement | null {
   if (!visible) return null
@@ -14,4 +14,4 @@ export function ConversationEmptyState({
       <VegvisirArt />
     </div>
   )
-}
+})

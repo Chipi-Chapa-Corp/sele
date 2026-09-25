@@ -29,19 +29,23 @@ const getLocalCalendarDayNumber = (date: Date): number =>
 const getCalendarDayDifference = (date: Date, now: Date): number =>
   getLocalCalendarDayNumber(date) - getLocalCalendarDayNumber(now)
 
-const formatClockTime = (date: Date): string =>
-  date.toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    hourCycle: 'h23',
-    minute: '2-digit'
-  })
+// Intl formatter construction is expensive; every visible chat uses these on refresh.
+const clockFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  hourCycle: 'h23',
+  minute: '2-digit'
+})
+const dateFormatter = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' })
+const dateWithYearFormatter = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric'
+})
+
+const formatClockTime = (date: Date): string => clockFormatter.format(date)
 
 const formatDate = (date: Date, includeYear: boolean): string =>
-  date.toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    ...(includeYear ? { year: 'numeric' } : {})
-  })
+  (includeYear ? dateWithYearFormatter : dateFormatter).format(date)
 
 const formatAbsoluteDateTime = (date: Date): string =>
   `${formatDate(date, true)} ${formatClockTime(date)}`

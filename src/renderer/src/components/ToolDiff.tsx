@@ -1,6 +1,8 @@
-import { memo } from 'react'
+import { lazy, memo, Suspense } from 'react'
 import type { ProviderFileDiff } from '../../../shared/provider'
-import { UnifiedDiff } from './UnifiedDiff'
+const UnifiedDiff = lazy(() =>
+  import('./UnifiedDiff').then((module) => ({ default: module.UnifiedDiff }))
+)
 
 const getDisplayPath = (path: string, projectCwd: string | null | undefined): string => {
   const normalizedPath = path.replace(/\\/g, '/')
@@ -42,7 +44,9 @@ const ToolDiffComponent = ({ fileDiff, projectCwd }: ToolDiffProps): React.JSX.E
     <section className="chat-detail__diff-section">
       <div className="chat-detail__diff-path">{displayPath}</div>
       <div className="chat-detail__diff-scroll">
-        <UnifiedDiff className="chat-detail__diff" fileDiff={fileDiff} />
+        <Suspense fallback={<div role="status">Loading diff…</div>}>
+          <UnifiedDiff className="chat-detail__diff" fileDiff={fileDiff} />
+        </Suspense>
       </div>
     </section>
   )

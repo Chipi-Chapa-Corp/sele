@@ -16,6 +16,7 @@ import {
 import {
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type FocusEvent,
@@ -131,7 +132,10 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   const detailCardRef = useRef<HTMLDivElement>(null)
   const detailCardId = useId()
   const now = useSemanticDateNow()
-  const updatedAt = formatSemanticLexicalDateDifference(chat.updatedAt, { now })
+  const updatedAt = useMemo(
+    () => formatSemanticLexicalDateDifference(chat.updatedAt, { now }),
+    [chat.updatedAt, now]
+  )
   const isGitWorktree = chat.cwdKind === 'gitWorktree'
   const branchName = getRenderableText(
     isGitWorktree ? chat.worktreeBaseBranchName : chat.branchName,

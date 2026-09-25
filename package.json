@@ -35,6 +35,8 @@
     "test:browser-use": "node scripts/test-browser-use.cjs",
     "test:chat-goal": "node scripts/test-chat-goal.cjs",
     "test:codex-final-ui": "node scripts/test-codex-final-response.cjs",
+    "test:claude-discovery": "node --test src/main/providers/claude/ClaudeSessionDiscovery.test.mjs && node scripts/test-claude-discovery.mjs",
+    "test:ui-responsiveness": "node scripts/test-ui-responsiveness.cjs",
     "test:input-focus": "node scripts/test-input-focus.cjs",
     "test:visualization": "node scripts/test-visualization.cjs",
     "lint:fix": "biome lint --write ."

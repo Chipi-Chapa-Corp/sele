@@ -1182,9 +1182,11 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       .getGitBranches({ container: changesContainerRef.current, cwd: changesCwd })
       .then((result) => {
         if (!active || gitBranchRequestIdRef.current !== requestId) return
-        setGitBranches(result)
-        setGitBranchesScope(scope)
-        setGitBranchLoadState('ready')
+        startTransition(() => {
+          setGitBranches(result)
+          setGitBranchesScope(scope)
+          setGitBranchLoadState('ready')
+        })
       })
       .catch((error) => {
         console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
@@ -1255,12 +1257,14 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       })
       .then((result) => {
         if (!active) return
-        setGitChanges(result)
-        setGitChangesScope(gitChangeScope)
-        setGitChangeLoadScope(gitChangeScope)
-        setGitChangeLoadErrorDismissed(false)
-        setGitChangeLoadError(null)
-        if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('ready')
+        startTransition(() => {
+          setGitChanges(result)
+          setGitChangesScope(gitChangeScope)
+          setGitChangeLoadScope(gitChangeScope)
+          setGitChangeLoadErrorDismissed(false)
+          setGitChangeLoadError(null)
+          if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('ready')
+        })
       })
       .catch((error) => {
         console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
@@ -1344,10 +1348,12 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       .then((result) => {
         if (!active) return
 
-        setUncommittedPatchFilter({ scope, patches: result.patches })
-        setGitChangeLoadErrorDismissed(false)
-        setUncommittedPatchFilterError(null)
-        setUncommittedPatchFilterState('ready')
+        startTransition(() => {
+          setUncommittedPatchFilter({ scope, patches: result.patches })
+          setGitChangeLoadErrorDismissed(false)
+          setUncommittedPatchFilterError(null)
+          setUncommittedPatchFilterState('ready')
+        })
       })
       .catch((error) => {
         console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
