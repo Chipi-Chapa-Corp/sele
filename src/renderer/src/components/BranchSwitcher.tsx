@@ -1,3 +1,5 @@
+import { AnimatePresence } from 'motion/react'
+import { MotionSurface } from '../motion/MotionSurface'
 import { Check, ChevronDown, GitBranch, Plus, X } from 'lucide-react'
 import {
   type CSSProperties,
@@ -136,11 +138,13 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   ).slice(0, maxVisibleBranches)
   const canCreate =
     isValidBranchName(queryName) && !availableBranches.some((branch) => branch === queryName)
-  const menuItems = filteredBranches.map((name): BranchMenuItem => ({
-    key: `branch:${name}`,
-    kind: 'branch',
-    name
-  }))
+  const menuItems = filteredBranches.map(
+    (name): BranchMenuItem => ({
+      key: `branch:${name}`,
+      kind: 'branch',
+      name
+    })
+  )
   if (canCreate) {
     menuItems.push({
       key: 'create',
@@ -294,7 +298,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   }
 
   const menu = open ? (
-    <div
+    <MotionSurface
       ref={menuRef}
       className="branch-switcher__menu"
       style={menuStyle ?? undefined}
@@ -448,7 +452,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
           {errorActions}
         </div>
       )}
-    </div>
+    </MotionSurface>
   ) : null
 
   return (
@@ -483,7 +487,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
         </span>
         <ChevronDown className="branch-switcher__chevron" aria-hidden="true" />
       </button>
-      {menu && createPortal(menu, document.body)}
+      {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
     </div>
   )
 }

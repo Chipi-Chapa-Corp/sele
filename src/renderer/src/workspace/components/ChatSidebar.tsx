@@ -1,3 +1,5 @@
+import { AnimatePresence } from 'motion/react'
+import { MotionListItem } from '../../motion/MotionListItem'
 import { AppUpdatePrompt } from './AppUpdatePrompt'
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
@@ -33,6 +35,16 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
   const hasVisibleGroups = Boolean(
     pinnedChatGroup || displayedActiveChatGroups.length > 0 || doneChatGroup
   )
+
+  const groups = [pinnedChatGroup, ...displayedActiveChatGroups, doneChatGroup].filter(
+    (group) => group !== null && group !== undefined
+  )
+  const groupOrder = groups
+    .map(
+      (group) =>
+        `${group.key}:${group.chats.map((chat) => `${chat.providerId}:${chat.id}`).join(',')}`
+    )
+    .join('\n')
 
   return (
     <aside className="chat-sidebar" aria-label="Recent conversations">
@@ -102,19 +114,19 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
         {loadState === 'ready' && chats.length > 0 && !hasVisibleGroups && (
           <p className="chat__status">No matching chats.</p>
         )}
-        {hasVisibleGroups && (
-          <div
-            className="chat-list-stack"
-            onDragOver={handleProjectStackDragOver}
-            onDrop={handleProjectDrop}
-          >
-            {pinnedChatGroup && renderChatGroup(pinnedChatGroup, 'pinned-chats-list')}
-            {displayedActiveChatGroups.map((group, groupIndex) =>
-              renderChatGroup(group, `cwd-chats-list-${groupIndex}`)
-            )}
-            {doneChatGroup && renderChatGroup(doneChatGroup, 'cwd-chats-list-done')}
-          </div>
-        )}
+        <div
+          className="chat-list-stack"
+          onDragOver={handleProjectStackDragOver}
+          onDrop={handleProjectDrop}
+        >
+          <AnimatePresence initial={false} mode="popLayout">
+            {groups.map((group) => (
+              <MotionListItem key={group.key} order={groupOrder}>
+                {renderChatGroup(group, `chat-group-${encodeURIComponent(group.key)}`)}
+              </MotionListItem>
+            ))}
+          </AnimatePresence>
+        </div>
       </div>
       <AppUpdatePrompt />
     </aside>

@@ -1,3 +1,6 @@
+import { useFeedbackMotion } from '../motion/useFeedbackMotion'
+import { AnimatePresence } from 'motion/react'
+import { MotionSurface } from '../motion/MotionSurface'
 import { Plus, StickyNote, X } from 'lucide-react'
 import {
   type CSSProperties,
@@ -58,6 +61,8 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
   const [draft, setDraft] = useState('')
+  const feedbackRef = useRef<HTMLSpanElement>(null)
+  useFeedbackMotion(feedbackRef, notes.map((note) => `${note.id}:${note.text}`).join('\n'))
   const menuId = `cwd-notes-menu-${reactId}`
 
   const closeMenu = useCallback((): void => {
@@ -151,11 +156,10 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
     onNotesChange(notes.filter((note) => note.id !== noteId))
   }
 
-  const menu = (
-    <div
+  const menu = open ? (
+    <MotionSurface
       ref={menuRef}
       className="cwd-notes-menu"
-      hidden={!open}
       id={menuId}
       role="dialog"
       aria-label={`${label} notes`}
@@ -209,24 +213,26 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
           icon={<Plus aria-hidden="true" />}
         />
       </form>
-    </div>
-  )
+    </MotionSurface>
+  ) : null
 
   return (
     <span className="cwd-notes" ref={rootRef}>
-      <Button
-        theme="secondary"
-        aria-controls={open ? menuId : undefined}
-        aria-expanded={open}
-        aria-label={`${label} notes`}
-        title={notes.length > 0 ? `${notes.length} notes` : 'Notes'}
-        callback={() => {
-          if (open) closeMenu()
-          else openMenu()
-        }}
-        icon={<StickyNote aria-hidden="true" />}
-      />
-      {createPortal(menu, document.body)}
+      <span ref={feedbackRef} style={{ display: 'inline-flex' }}>
+        <Button
+          theme="secondary"
+          aria-controls={open ? menuId : undefined}
+          aria-expanded={open}
+          aria-label={`${label} notes`}
+          title={notes.length > 0 ? `${notes.length} notes` : 'Notes'}
+          callback={() => {
+            if (open) closeMenu()
+            else openMenu()
+          }}
+          icon={<StickyNote aria-hidden="true" />}
+        />
+      </span>
+      {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
     </span>
   )
 }

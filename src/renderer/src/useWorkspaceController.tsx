@@ -5487,6 +5487,7 @@ export const useWorkspaceController = () => {
               {item.id === firstPendingChatItemId &&
                 trailingChatCommitMarkers.map(renderChatCommitMarker)}
               <ChatDetailItem
+                motionChatKey={selectedChatKey}
                 availableRateLimitResets={
                   item.type === 'working' && item.failureReason === 'rateLimit'
                     ? (accountUsage?.rateLimitResetCredits?.availableCount ?? 0)

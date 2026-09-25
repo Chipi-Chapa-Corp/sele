@@ -1,3 +1,5 @@
+import { useRef } from 'react'
+import { useFeedbackMotion } from '../../motion/useFeedbackMotion'
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { X } from 'lucide-react'
@@ -55,8 +57,12 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
     visibleGitChangeLoadError
   } = props
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  useFeedbackMotion(panelRef, changesPaneView, 'panel')
+
   return (
     <div
+      ref={panelRef}
       className={`changes-sidebar__body${
         changesPaneView === 'terminal' || changesPaneView === 'browser'
           ? ' changes-sidebar__body--utility'

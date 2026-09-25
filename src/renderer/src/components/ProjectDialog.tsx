@@ -1,3 +1,4 @@
+import { MotionSurface } from '../motion/MotionSurface'
 import { Check, ImagePlus, Plus, X } from 'lucide-react'
 import { type FormEvent, type ReactElement, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -191,7 +192,8 @@ export const ProjectDialog = ({
   const iconTitle = icon === 'image' ? 'Project image' : projectGlyphLabels[icon as AppProjectGlyph]
 
   const dialog = (
-    <div
+    <MotionSurface
+      motionKind="overlay"
       className="project-dialog-overlay"
       role="presentation"
       onPointerDown={(event) => {
@@ -337,7 +339,7 @@ export const ProjectDialog = ({
           />
         </footer>
       </form>
-    </div>
+    </MotionSurface>
   )
 
   return createPortal(dialog, document.body)

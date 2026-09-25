@@ -1,3 +1,4 @@
+import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
@@ -828,8 +829,11 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     })
   }
 
+  const motionPanelRef = useRef<HTMLElement>(null)
+  useFeedbackMotion(motionPanelRef, activeTabId, 'panel')
+
   return (
-    <section className="browser-panel" aria-label="Browser">
+    <section ref={motionPanelRef} className="browser-panel" aria-label="Browser">
       <div className="browser-panel__tab-toolbar">
         <SegmentedControl
           aria-label="Browser tabs"

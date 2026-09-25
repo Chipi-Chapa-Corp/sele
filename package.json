@@ -36,6 +36,7 @@
     "test:chat-goal": "node scripts/tests/test-chat-goal.cjs",
     "test:codex-final-ui": "node scripts/tests/test-codex-final-response.cjs",
     "test:claude-discovery": "node --test src/main/providers/claude/ClaudeSessionDiscovery.test.mjs && node scripts/tests/test-claude-discovery.mjs",
+    "test:ui-motion": "node scripts/tests/test-ui-motion.cjs",
     "test:ui-responsiveness": "node scripts/tests/test-ui-responsiveness.cjs",
     "test:input-focus": "node scripts/tests/test-input-focus.cjs",
     "test:visualization": "node scripts/tests/test-visualization.cjs",
@@ -65,6 +66,7 @@
     "marked": "^18.0.7",
     "mermaid": "^11.17.2",
     "monaco-editor": "^0.56.0",
+    "motion": "^13.4.4",
     "react-diff-view": "^3.3.3",
     "refractor": "^5.0.0",
     "zod": "^4.4.3"

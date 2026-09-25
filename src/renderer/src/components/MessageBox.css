@@ -973,3 +973,20 @@
     flex-wrap: wrap;
   }
 }
+
+.composer-placeholder {
+  position: absolute;
+  inset: 0.25rem 0.4rem auto 0;
+  pointer-events: none;
+  color: var(--quiet);
+  font-family: var(--chat-font-family);
+  font-size: var(--chat-font-size);
+  line-height: 1.5;
+}
+.message-box__textarea-wrap:has(.composer-placeholder) textarea::placeholder {
+  color: transparent;
+}
+
+.menu-page-transition {
+  overflow: clip;
+}

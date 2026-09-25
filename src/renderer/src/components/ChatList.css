@@ -1,10 +1,12 @@
 .chat-list {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
 .chat-list-stack {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.7rem;

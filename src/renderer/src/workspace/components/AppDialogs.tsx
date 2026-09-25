@@ -1,3 +1,4 @@
+import { AnimatePresence } from 'motion/react'
 import { lazy, Suspense, type ReactElement } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -53,25 +54,29 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
   } = props
 
   return (
-    <>
-      <SettingsDialog
-        closeButtonRef={settingsCloseButtonRef}
-        open={settingsOpen}
-        panelProps={settingsPanelProps}
-        projectCwd={settingsProjectCwd}
-        projectLabel={settingsProjectLabel}
-        tab={settingsTab}
-        viewIsProject={settingsViewIsProject}
-        onClose={() => setSettingsOpen(false)}
-        onScopeChange={(scope) => {
-          setAppearanceZoomLevelInputDraft(null)
-          setAppearanceFontSizeInputDraft(null)
-          setSettingsScope(scope)
-        }}
-        onTabChange={setSettingsTab}
-      />
+    <AnimatePresence>
+      {settingsOpen && (
+        <SettingsDialog
+          key="settings"
+          closeButtonRef={settingsCloseButtonRef}
+          open={settingsOpen}
+          panelProps={settingsPanelProps}
+          projectCwd={settingsProjectCwd}
+          projectLabel={settingsProjectLabel}
+          tab={settingsTab}
+          viewIsProject={settingsViewIsProject}
+          onClose={() => setSettingsOpen(false)}
+          onScopeChange={(scope) => {
+            setAppearanceZoomLevelInputDraft(null)
+            setAppearanceFontSizeInputDraft(null)
+            setSettingsScope(scope)
+          }}
+          onTabChange={setSettingsTab}
+        />
+      )}
       {accountDialogOpen && (
         <AccountDialog
+          key="accounts"
           providerLabel={settingsPanelProps.newSessionProvider === 'claude' ? 'Claude' : 'Codex'}
           onClose={() => setAccountDialogOpen(false)}
           onLogin={handleCreateProviderAccount}
@@ -79,6 +84,7 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
       )}
       {projectDialogOpen && (
         <ProjectDialog
+          key="project"
           defaultPath={newSessionCwd}
           projects={projects}
           onClose={() => setProjectDialogOpen(false)}
@@ -87,6 +93,7 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
       )}
       {sshEnvironmentDialogOpen && (
         <SshEnvironmentDialog
+          key="ssh"
           environment={editingSshEnvironment}
           open
           onClose={() => {
@@ -98,6 +105,7 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
       )}
       {fileEditorTarget && (
         <Suspense
+          key="editor"
           fallback={
             <div className="file-editor-overlay">
               <section
@@ -132,6 +140,6 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
           />
         </Suspense>
       )}
-    </>
+    </AnimatePresence>
   )
 }

@@ -1,3 +1,4 @@
+import { AnimatePresence } from 'motion/react'
 import { Check, ChevronDown } from 'lucide-react'
 import {
   Fragment,
@@ -849,7 +850,7 @@ export const Dropdown = <TValue extends string>({
         </span>
         <ChevronDown className="ui-dropdown__chevron" aria-hidden="true" />
       </button>
-      {menu && createPortal(menu, document.body)}
+      {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
     </div>
   )
 }

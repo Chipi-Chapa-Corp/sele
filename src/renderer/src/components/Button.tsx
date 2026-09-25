@@ -1,3 +1,5 @@
+import { AnimatePresence } from 'motion/react'
+import { MotionSurface } from '../motion/MotionSurface'
 import { ChevronDown } from 'lucide-react'
 import type {
   ButtonHTMLAttributes,
@@ -412,7 +414,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           className={getMenuRootClassName(theme, size, dropdownPlacement, dropdownMenuAlign)}
           style={menuStyle ?? undefined}
         >
-          <div
+          <MotionSurface
             className="ui-button-menu"
             id={menuId}
             role="menu"
@@ -469,7 +471,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
                 </button>
               )
             )}
-          </div>
+          </MotionSurface>
         </div>
       ) : null
 
@@ -514,7 +516,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         >
           {renderIcon(<ChevronDown aria-hidden="true" />, 'ui-button__icon')}
         </button>
-        {menu && createPortal(menu, document.body)}
+        {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
       </span>
     )
   }

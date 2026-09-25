@@ -1,3 +1,5 @@
+import { useRef } from 'react'
+import { useFeedbackMotion } from '../../motion/useFeedbackMotion'
 import type { ReactElement, ReactNode } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 
@@ -25,8 +27,15 @@ export function ConversationPanel(props: ConversationPanelProps): ReactElement {
     selectedChat
   } = props
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  useFeedbackMotion(
+    panelRef,
+    `${selectedChat?.providerId}:${selectedChat?.id}:${activeSubagentChatView?.summary.id}:${newChatOpen}`,
+    'panel'
+  )
+
   return (
-    <div className="chat__detail-panel" data-panel="true" id="detail">
+    <div ref={panelRef} className="chat__detail-panel" data-panel="true" id="detail">
       {header}
       <section
         className={`chat-panel${selectedChat ? ' chat-panel--selected' : ' chat-panel--empty'}${newChatOpen ? ' chat-panel--new' : ''}`}

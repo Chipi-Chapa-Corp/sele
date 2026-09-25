@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { AnimatePresence } from 'motion/react'
+import { MotionListItem } from '../motion/MotionListItem'
+import { memo, useState } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { ChatListItem } from './ChatListItem'
 import './ChatList.css'
@@ -25,7 +27,7 @@ type ChatListProps = {
 const getChatKey = (chat: Pick<ProviderChat, 'providerId' | 'id'>): string =>
   `${chat.providerId}:${chat.id}`
 
-export const ChatList: React.FC<ChatListProps> = ({
+export const ChatList = memo(function ChatList({
   ariaLabel = 'Chats',
   chats,
   selectedChatKey,
@@ -42,7 +44,7 @@ export const ChatList: React.FC<ChatListProps> = ({
   onReorder,
   onTogglePinned,
   resolvingApprovalId = null
-}) => {
+}: ChatListProps) {
   const [draggedChatKey, setDraggedChatKey] = useState<string | null>(null)
   const [dropInsertionIndex, setDropInsertionIndex] = useState<number | null>(null)
 
@@ -99,6 +101,8 @@ export const ChatList: React.FC<ChatListProps> = ({
     resetDrag()
   }
 
+  const order = chats.map(getChatKey).join('\n')
+
   return (
     <section
       className={`chat-list${draggedChatKey ? ' chat-list--dragging' : ''}`}
@@ -110,44 +114,47 @@ export const ChatList: React.FC<ChatListProps> = ({
       }}
       onDrop={handleDrop}
     >
-      {chats.map((chat, index) => {
-        const chatKey = getChatKey(chat)
-        const dropPosition =
-          dropInsertionIndex === index
-            ? 'before'
-            : index === chats.length - 1 && dropInsertionIndex === chats.length
-              ? 'after'
-              : null
-
-        return (
-          <ChatListItem
-            key={chatKey}
-            chat={chat}
-            projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
-            selected={chatKey === selectedChatKey}
-            committing={committingChatKeys?.has(chatKey)}
-            latestCommitFinishedAt={latestCommitFinishedAtByChatKey?.get(chatKey)}
-            canMarkDone={canMarkDone}
-            canMarkUndone={canMarkUndone}
-            draggable={reorderable}
-            dragging={chatKey === draggedChatKey}
-            dropPosition={dropPosition}
-            approvalDecisionInFlight={
-              chat.pendingApproval && chat.pendingApproval.id === resolvingApprovalId
-                ? 'allow'
+      <AnimatePresence initial={false} mode="popLayout">
+        {chats.map((chat, index) => {
+          const chatKey = getChatKey(chat)
+          const dropPosition =
+            dropInsertionIndex === index
+              ? 'before'
+              : index === chats.length - 1 && dropInsertionIndex === chats.length
+                ? 'after'
                 : null
-            }
-            onMarkDone={(done) => onMarkDone(chat, done)}
-            onRename={(title) => onRename(chat, title)}
-            onClick={() => onSelect(chat)}
-            onDragEnd={resetDrag}
-            onDragOver={(event) => handleDragOver(event, chat)}
-            onDragStart={(event) => handleDragStart(event, chat)}
-            onResolveApproval={(decision) => onResolveApproval(chat, decision)}
-            onTogglePinned={() => onTogglePinned(chat)}
-          />
-        )
-      })}
+
+          return (
+            <MotionListItem key={chatKey} order={order} disabled={Boolean(draggedChatKey)}>
+              <ChatListItem
+                chat={chat}
+                projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
+                selected={chatKey === selectedChatKey}
+                committing={committingChatKeys?.has(chatKey)}
+                latestCommitFinishedAt={latestCommitFinishedAtByChatKey?.get(chatKey)}
+                canMarkDone={canMarkDone}
+                canMarkUndone={canMarkUndone}
+                draggable={reorderable}
+                dragging={chatKey === draggedChatKey}
+                dropPosition={dropPosition}
+                approvalDecisionInFlight={
+                  chat.pendingApproval && chat.pendingApproval.id === resolvingApprovalId
+                    ? 'allow'
+                    : null
+                }
+                onMarkDone={(done) => onMarkDone(chat, done)}
+                onRename={(title) => onRename(chat, title)}
+                onClick={() => onSelect(chat)}
+                onDragEnd={resetDrag}
+                onDragOver={(event) => handleDragOver(event, chat)}
+                onDragStart={(event) => handleDragStart(event, chat)}
+                onResolveApproval={(decision) => onResolveApproval(chat, decision)}
+                onTogglePinned={() => onTogglePinned(chat)}
+              />
+            </MotionListItem>
+          )
+        })}
+      </AnimatePresence>
     </section>
   )
-}
+})

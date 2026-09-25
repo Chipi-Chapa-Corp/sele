@@ -512,6 +512,11 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   padding: 0;
 }
 
+.chat-detail__step-content [data-working-motion-id] {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .chat-detail__working-message {
   width: 100%;
   margin: 0;

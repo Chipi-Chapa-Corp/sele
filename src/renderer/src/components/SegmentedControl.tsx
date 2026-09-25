@@ -1,4 +1,6 @@
-import { type CSSProperties, type ReactNode } from 'react'
+import { useReducedMotionPreference } from '../motion/useReducedMotionPreference'
+import { motion } from 'motion/react'
+import { useId, type CSSProperties, type ReactNode } from 'react'
 import './SegmentedControl.css'
 
 export type SegmentedControlOption<TValue extends string = string> = {
@@ -33,6 +35,8 @@ export const SegmentedControl = <TValue extends string>({
   value,
   onChange
 }: SegmentedControlProps<TValue>): React.ReactElement => {
+  const indicatorId = useId()
+  const reduced = useReducedMotionPreference()
   const style = {
     '--ui-segmented-control-count': Math.max(options.length, 1)
   } as CSSProperties
@@ -66,6 +70,14 @@ export const SegmentedControl = <TValue extends string>({
               void option.actionCallback?.()
             }}
           >
+            {selected && (
+              <motion.span
+                className="ui-segmented-control__indicator"
+                layoutId={indicatorId}
+                transition={{ duration: reduced ? 0 : 0.18, ease: 'easeOut' }}
+                aria-hidden="true"
+              />
+            )}
             <button
               className={[
                 'ui-segmented-control__option',

@@ -1,3 +1,4 @@
+import { MotionSurface } from '../motion/MotionSurface'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -1265,7 +1266,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   }, [downloadState, fileContainer, target.cwd, target.path])
 
   return (
-    <div
+    <MotionSurface
+      motionKind="overlay"
       className={`file-editor-overlay${expanded ? ' file-editor-overlay--expanded' : ''}`}
       role="presentation"
       onPointerDown={(event) => {
@@ -1705,6 +1707,6 @@ export const FileEditorDialog = memo(function FileEditorDialog({
           </div>
         </div>
       </section>
-    </div>
+    </MotionSurface>
   )
 })

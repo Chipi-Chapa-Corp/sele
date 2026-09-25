@@ -1,3 +1,6 @@
+import { useRef } from 'react'
+import { useFeedbackMotion } from '../motion/useFeedbackMotion'
+import { MotionSurface } from '../motion/MotionSurface'
 import type { RefObject } from 'react'
 import { appApi } from '../appApi'
 import { Blocks, Download, Gauge, GitBranch, Globe2, MessageSquare, Sun, X } from 'lucide-react'
@@ -70,10 +73,14 @@ export const SettingsDialog = ({
   onScopeChange,
   onTabChange
 }: SettingsDialogProps): React.ReactElement | null => {
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useFeedbackMotion(bodyRef, tab, 'panel')
+
   if (!open) return null
 
   return (
-    <div
+    <MotionSurface
+      motionKind="overlay"
       className="settings-overlay"
       role="presentation"
       onPointerDown={(event) => {
@@ -182,8 +189,10 @@ export const SettingsDialog = ({
           />
           <p className="settings-dialog__version">Sele v{appVersion}</p>
         </aside>
-        <div className="settings-dialog__body">{renderSettingsPanel(panelProps)}</div>
+        <div ref={bodyRef} className="settings-dialog__body">
+          {renderSettingsPanel(panelProps)}
+        </div>
       </section>
-    </div>
+    </MotionSurface>
   )
 }

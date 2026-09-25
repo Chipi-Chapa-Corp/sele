@@ -1,5 +1,6 @@
 import './assets/main.css'
 
+import { MotionConfig } from 'motion/react'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
@@ -29,7 +30,9 @@ watchSystemColorScheme()
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <RendererErrorBoundary>
-      <App />
+      <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: 'easeOut' }}>
+        <App />
+      </MotionConfig>
     </RendererErrorBoundary>
   </StrictMode>
 )

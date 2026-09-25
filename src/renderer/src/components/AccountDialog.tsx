@@ -1,3 +1,4 @@
+import { MotionSurface } from '../motion/MotionSurface'
 import { Copy, ExternalLink, LogIn, X } from 'lucide-react'
 import { type FormEvent, type ReactElement, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -153,7 +154,8 @@ export const AccountDialog = ({
   }
 
   return createPortal(
-    <div
+    <MotionSurface
+      motionKind="overlay"
       className="account-dialog-overlay"
       role="presentation"
       onPointerDown={(event) => {
@@ -280,7 +282,7 @@ export const AccountDialog = ({
           )}
         </div>
       </form>
-    </div>,
+    </MotionSurface>,
     document.body
   )
 }

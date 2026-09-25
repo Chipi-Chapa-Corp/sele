@@ -1,3 +1,5 @@
+import { AnimatePresence } from 'motion/react'
+import { MotionSurface } from '../motion/MotionSurface'
 import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
 import { MessageSquare } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -187,7 +189,7 @@ export const ReviewCommentsButton: React.FC<ReviewCommentsButtonProps> = ({
   }
 
   const menu = open ? (
-    <div
+    <MotionSurface
       ref={menuRef}
       className="review-comments-menu"
       id={menuId}
@@ -290,7 +292,7 @@ export const ReviewCommentsButton: React.FC<ReviewCommentsButtonProps> = ({
           )
         })}
       </div>
-    </div>
+    </MotionSurface>
   ) : null
   const handleTriggerClick = (): void => {
     if (open) closeMenu()
@@ -339,7 +341,7 @@ export const ReviewCommentsButton: React.FC<ReviewCommentsButtonProps> = ({
           </span>
         </button>
       )}
-      {menu && createPortal(menu, document.body)}
+      {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
     </>
   )
 }

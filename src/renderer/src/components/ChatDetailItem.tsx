@@ -1,3 +1,6 @@
+import { useWorkingToolMotion } from '../motion/useWorkingToolMotion'
+import { useStreamReveal } from '../motion/useStreamReveal'
+import { useMessageArrival } from '../motion/messageFlight'
 import { getMessageModelLabel } from '../messageModelLabel'
 import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplayLabel'
 import { createPortal } from 'react-dom'
@@ -28,7 +31,6 @@ import {
   FileTextIcon as AnimatedFileTextIcon,
   GitBranchIcon as AnimatedGitBranchIcon,
   ListIcon as AnimatedListIcon,
-  PenToolIcon as AnimatedPenToolIcon,
   SearchIcon as AnimatedSearchIcon,
   SparklesIcon as AnimatedSparklesIcon,
   TerminalIcon as AnimatedTerminalIcon,
@@ -118,6 +120,7 @@ const workingItemPageSize = 50
 const workingToolPageSize = 50
 
 type ChatDetailItemProps = {
+  motionChatKey?: string | null
   availableRateLimitResets?: number
   canEditOwnMessages?: boolean
   container?: AppContainerTarget | null
@@ -193,6 +196,7 @@ const areChatDetailItemPropsEqual = (
   first: ChatDetailItemProps,
   second: ChatDetailItemProps
 ): boolean =>
+  first.motionChatKey === second.motionChatKey &&
   first.canEditOwnMessages === second.canEditOwnMessages &&
   first.availableRateLimitResets === second.availableRateLimitResets &&
   first.container === second.container &&
@@ -259,7 +263,7 @@ type AnimatedIconComponent = ForwardRefExoticComponent<
   } & RefAttributes<AnimatedIconHandle>
 >
 
-const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent> = {
+const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent | null> = {
   read: AnimatedFileTextIcon,
   search: AnimatedSearchIcon,
   git: AnimatedGitBranchIcon,
@@ -268,7 +272,7 @@ const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent>
   delete: AnimatedDeleteIcon,
   npm: AnimatedBoxIcon,
   npx: AnimatedBoxIcon,
-  script: AnimatedPenToolIcon,
+  script: null,
   command: AnimatedTerminalIcon,
   other: AnimatedWrenchIcon
 }
@@ -638,7 +642,7 @@ const ToolStatusIcon: React.FC<{
 }> = ({ activity, active, icon }) => {
   if (active) {
     const Icon = icon ? animatedToolIcons[icon] : animatedActivityIcons[activity]
-    return <ActiveAnimatedIcon Icon={Icon} active={active} />
+    if (Icon) return <ActiveAnimatedIcon Icon={Icon} active={active} />
   }
 
   return <ToolTypeIcon activity={activity} icon={icon} />
@@ -1314,6 +1318,7 @@ const MarkdownMessageComponent: React.FC<{
       ),
     [markdownRenderer, preserveLineBreaks, visibleContent, visualizationMarkdown]
   )
+  useStreamReveal(containerRef, renderedMarkdown, streaming)
   // React must not replace this DOM when portal or preview state changes:
   // the visualization portals and hydrated images live inside it.
   const markdownHtml = useMemo(() => ({ __html: renderedMarkdown }), [renderedMarkdown])
@@ -1646,15 +1651,17 @@ const ToolSequence: React.FC<{
             </button>
           )}
           {tools.map((item) => (
-            <ToolItem
-              item={item}
-              activeToolIds={activeToolIds}
-              expanded={expanded && item === tools.at(-1) && hiddenAfter === 0}
-              key={item.id}
-              onLoad={onLoadItem ? () => onLoadItem(item.id) : undefined}
-              onDisclosureToggle={onDisclosureToggle}
-              projectCwd={projectCwd}
-            />
+            <div key={item.id} data-working-motion-id={item.id}>
+              <ToolItem
+                item={item}
+                activeToolIds={activeToolIds}
+                expanded={expanded && item === tools.at(-1) && hiddenAfter === 0}
+                key={item.id}
+                onLoad={onLoadItem ? () => onLoadItem(item.id) : undefined}
+                onDisclosureToggle={onDisclosureToggle}
+                projectCwd={projectCwd}
+              />
+            </div>
           ))}
           {hiddenAfter > 0 && (
             <button
@@ -1939,6 +1946,8 @@ const WorkingStep: React.FC<{
   const [openState, setOpenState] = useState({ key: disclosureKey, open: defaultOpen })
   const preferredOpen = resolveWorkingStepOpen(openState, disclosureKey, defaultOpen)
   const open = openAfterLoad ? true : preferredOpen
+  const workingContentRef = useRef<HTMLDivElement>(null)
+  useWorkingToolMotion(workingContentRef, item, itemSegments, open && active && !unloaded)
   const label =
     item.status === 'queued'
       ? 'Queued'
@@ -2139,7 +2148,7 @@ const WorkingStep: React.FC<{
           <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
         </summary>
         {open && (
-          <div className="chat-detail__step-content">
+          <div ref={workingContentRef} className="chat-detail__step-content">
             {renderedSegments.map((segment, segmentIndex) => {
               const previousSegment = renderedSegments[segmentIndex - 1]
               const previousEndIndex = previousSegment
@@ -2165,35 +2174,37 @@ const WorkingStep: React.FC<{
                   )}
                   {segment.blocks.map((block) => {
                     return block.type === 'tools' ? (
-                      block.items.length > 1 ||
-                      block.items.some(
-                        (toolItem) =>
-                          toolItem.type === 'toolGroup' &&
-                          Math.max(toolItem.toolCount ?? 0, toolItem.tools.length) > 1
-                      ) ? (
-                        <ToolSequence
-                          items={block.items}
-                          activeToolIds={activeToolIds}
-                          expanded={active && block.items.at(-1) === lastWorkingItem}
-                          key={block.items[0]?.id}
-                          onLoadItem={onLoadItem}
-                          onLoadPage={onLoadToolPage}
-                          onDisclosureToggle={onDisclosureToggle}
-                          projectCwd={projectCwd}
-                        />
-                      ) : (
-                        block.items.map((toolItem) => (
-                          <ToolItem
-                            item={toolItem}
+                      <div key={block.items[0]?.id} data-working-motion-id={block.items[0]?.id}>
+                        {block.items.length > 1 ||
+                        block.items.some(
+                          (toolItem) =>
+                            toolItem.type === 'toolGroup' &&
+                            Math.max(toolItem.toolCount ?? 0, toolItem.tools.length) > 1
+                        ) ? (
+                          <ToolSequence
+                            items={block.items}
                             activeToolIds={activeToolIds}
-                            expanded={active && toolItem === lastWorkingItem}
-                            key={toolItem.id}
-                            onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
+                            expanded={active && block.items.at(-1) === lastWorkingItem}
+                            key={block.items[0]?.id}
+                            onLoadItem={onLoadItem}
+                            onLoadPage={onLoadToolPage}
                             onDisclosureToggle={onDisclosureToggle}
                             projectCwd={projectCwd}
                           />
-                        ))
-                      )
+                        ) : (
+                          block.items.map((toolItem) => (
+                            <ToolItem
+                              item={toolItem}
+                              activeToolIds={activeToolIds}
+                              expanded={active && toolItem === lastWorkingItem}
+                              key={toolItem.id}
+                              onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
+                              onDisclosureToggle={onDisclosureToggle}
+                              projectCwd={projectCwd}
+                            />
+                          ))
+                        )}
+                      </div>
                     ) : !isWorkingItemPayloadLoaded(block.item) ? (
                       <button
                         className="chat-detail__working-load"
@@ -2265,6 +2276,7 @@ const getPendingMessageActionLabel = (message: ProviderPendingMessage): string =
   message.kind === 'steering' ? 'steering' : 'queued'
 
 const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
+  motionChatKey,
   availableRateLimitResets = 0,
   canEditOwnMessages = false,
   container,
@@ -2307,6 +2319,14 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   turnIndex = -1,
   workingStepContent
 }) => {
+  const messageRef = useRef<HTMLDivElement>(null)
+  useMessageArrival(
+    messageRef,
+    item.type === 'pendingMessage' || (item.type === 'message' && item.role === 'user')
+      ? item
+      : null,
+    motionChatKey
+  )
   const [copied, setCopied] = useState(false)
   const resolvedProgressSettings = getProgressSettings(progressSettings)
 
@@ -2359,7 +2379,9 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       (role === 'user' || !streaming)
     const canForkMessage = !pending && role === 'assistant' && !streaming && Boolean(onForkMessage)
     const timestamp = item.createdAt
-    const modelLabel = pending ? null : getMessageModelLabel(item, selectedModelId, modelLabelsById, resolvedModelIdsById)
+    const modelLabel = pending
+      ? null
+      : getMessageModelLabel(item, selectedModelId, modelLabelsById, resolvedModelIdsById)
     const attachments = item.attachments ?? []
     const messagePresentation =
       role === 'user'
@@ -2485,7 +2507,12 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       .join(' ')
 
     return (
-      <div className={messageBlockClassName} data-chat-message-id={!pending ? item.id : undefined}>
+      <div
+        ref={messageRef}
+        className={messageBlockClassName}
+        data-motion-message-id={item.id}
+        data-chat-message-id={!pending ? item.id : undefined}
+      >
         {messageLabel && <span className="chat-detail__pending-message-label">{messageLabel}</span>}
         {(attachments.length > 0 || messagePresentation.resources.length > 0) && (
           <MessageAttachments

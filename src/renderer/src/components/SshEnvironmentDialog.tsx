@@ -1,3 +1,4 @@
+import { MotionSurface } from '../motion/MotionSurface'
 import { type FormEvent, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, FolderOpen, X } from 'lucide-react'
@@ -145,7 +146,8 @@ export const SshEnvironmentDialog = ({
   if (!open) return null
 
   const dialog = (
-    <div
+    <MotionSurface
+      motionKind="overlay"
       className="ssh-environment-dialog-overlay"
       role="presentation"
       onPointerDown={(event) => {
@@ -275,7 +277,7 @@ export const SshEnvironmentDialog = ({
           />
         </footer>
       </form>
-    </div>
+    </MotionSurface>
   )
 
   return createPortal(dialog, document.body)

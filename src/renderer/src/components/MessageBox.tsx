@@ -1,3 +1,9 @@
+import { MenuPageTransition } from '../motion/MenuPageTransition'
+import { MotionSurface } from '../motion/MotionSurface'
+import { captureMessageFlight } from '../motion/messageFlight'
+import { ComposerPlaceholder } from './ComposerPlaceholder'
+import { useFeedbackMotion } from '../motion/useFeedbackMotion'
+import { AnimatePresence } from 'motion/react'
 import {
   type CSSProperties,
   type Dispatch,
@@ -393,6 +399,8 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
   const [activeSectionId, setActiveSectionId] = useState<ChatConfigSectionId | null>(null)
   const [modelSearchQuery, setModelSearchQuery] = useState('')
+  const labelRef = useRef<HTMLSpanElement>(null)
+  useFeedbackMotion(labelRef, `${modelLabel}:${reasoningLabel}`)
   const menuId = `${id}-${reactId}-menu`
   const menuOpen = open && sections.length > 0
   const activeSection = sections.find((section) => section.id === activeSectionId) ?? null
@@ -422,12 +430,14 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
 
   const focusFirstMenuButton = useCallback((): void => {
     window.requestAnimationFrame(() => {
-      menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+      menuRef.current
+        ?.querySelector<HTMLButtonElement>('button:not(:disabled)')
+        ?.focus({ preventScroll: true })
     })
   }, [])
 
   const focusModelSearchInput = useCallback((): void => {
-    window.requestAnimationFrame(() => modelSearchInputRef.current?.focus())
+    window.requestAnimationFrame(() => modelSearchInputRef.current?.focus({ preventScroll: true }))
   }, [])
 
   const updateMenuPosition = useCallback((): void => {
@@ -662,7 +672,9 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
         role="dialog"
         aria-label="Chat settings"
       >
-        {activeSection ? renderSectionOptions(activeSection) : renderSectionRoot()}
+        <MenuPageTransition page={activeSection?.id ?? 'root'}>
+          {activeSection ? renderSectionOptions(activeSection) : renderSectionRoot()}
+        </MenuPageTransition>
       </MenuSurface>
     </div>
   ) : null
@@ -700,7 +712,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           <span className="message-box__chat-config-provider-icon" aria-hidden="true">
             {providerIcon}
           </span>
-          <span className="message-box__chat-config-label">
+          <span ref={labelRef} className="message-box__chat-config-label">
             <span className="message-box__chat-config-label-part">{modelLabel}</span>
             {reasoningLabel && (
               <>
@@ -712,7 +724,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
         </span>
         <ChevronDown className="message-box__chat-config-trigger-chevron" aria-hidden="true" />
       </button>
-      {menu && createPortal(menu, document.body)}
+      {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
     </span>
   )
 }
@@ -2089,6 +2101,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       return
     }
 
+    const cancelFlight = captureMessageFlight(textareaRef.current, nextMessage, draftScopeKey)
     setMessage('')
     setSelectedAttachments([])
     setSelectedSkills([])
@@ -2106,13 +2119,16 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       )
     )
       .then((sent) => {
-        if (sent || !nextMessage) return
+        if (sent) return
+        cancelFlight()
+        if (!nextMessage) return
 
         setComposerDrafts((drafts) =>
           restoreFailedComposerMessage(drafts, draftScopeKey, nextMessage)
         )
       })
       .catch((error: unknown) => {
+        cancelFlight()
         console.error('Unable to send the composer message.', error)
         if (!nextMessage) return
 
@@ -2933,6 +2949,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           </div>
         )}
         <div ref={textareaWrapRef} className="message-box__textarea-wrap">
+          {autoFocus && draftScopeKey.startsWith('new-chat:') && (
+            <ComposerPlaceholder scope={draftScopeKey} empty={!message} />
+          )}
           {mentionMenuOpen &&
             mentionMenuStyle &&
             createPortal(
@@ -3091,240 +3110,246 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 theme="transparent"
                 title={usageButtonLabel}
               />
-              {usageMenuOpen && (
-                <div
-                  className="message-box__usage-popover"
-                  id={`message-usage-${usagePopoverId}`}
-                  role="dialog"
-                  aria-label="Usage"
-                >
-                  {statisticsSupported && (
-                    <SegmentedControl
-                      aria-label="Usage views"
-                      className="message-box__usage-tabs"
-                      options={[
-                        { value: 'usage', label: 'Usage' },
-                        {
-                          value: 'statistics',
-                          label: statisticsLoading
-                            ? 'Statistics'
-                            : statisticsReported
+              <AnimatePresence>
+                {usageMenuOpen && (
+                  <MotionSurface
+                    className="message-box__usage-popover"
+                    id={`message-usage-${usagePopoverId}`}
+                    role="dialog"
+                    aria-label="Usage"
+                  >
+                    {statisticsSupported && (
+                      <SegmentedControl
+                        aria-label="Usage views"
+                        className="message-box__usage-tabs"
+                        options={[
+                          { value: 'usage', label: 'Usage' },
+                          {
+                            value: 'statistics',
+                            label: statisticsLoading
                               ? 'Statistics'
-                              : 'No statistics',
-                          ariaLabel: statisticsLoading
-                            ? 'Statistics loading'
-                            : statisticsReported
-                              ? 'Statistics'
-                              : 'No statistics available',
-                          disabled: !statisticsReported,
-                          icon: statisticsLoading ? (
-                            <LoaderCircle className="app-loading-spinner message-box__usage-loading-icon" />
-                          ) : undefined
-                        }
-                      ]}
-                      size="small"
-                      value={visibleUsageView}
-                      onChange={handleUsageViewChange}
-                    />
-                  )}
+                              : statisticsReported
+                                ? 'Statistics'
+                                : 'No statistics',
+                            ariaLabel: statisticsLoading
+                              ? 'Statistics loading'
+                              : statisticsReported
+                                ? 'Statistics'
+                                : 'No statistics available',
+                            disabled: !statisticsReported,
+                            icon: statisticsLoading ? (
+                              <LoaderCircle className="app-loading-spinner message-box__usage-loading-icon" />
+                            ) : undefined
+                          }
+                        ]}
+                        size="small"
+                        value={visibleUsageView}
+                        onChange={handleUsageViewChange}
+                      />
+                    )}
 
-                  {visibleUsageView === 'usage' ? (
-                    <div className="message-box__usage-page" role="tabpanel">
-                      <section className="message-box__usage-section">
-                        <div className="message-box__usage-row">
-                          <span>Context</span>
-                          <div className="message-box__context-actions">
-                            <strong>
-                              {contextUsage.usedTokens == null || contextUsage.usedTokens === 0
-                                ? '0'
-                                : contextUsage.maxTokens
-                                  ? `${formatTokenCount(
-                                      contextUsage.usedTokens
-                                    )} / ${formatTokenCount(contextUsage.maxTokens)}`
-                                  : `${formatTokenCount(contextUsage.usedTokens)} ${
-                                      contextUsage.source === 'estimated' ? 'estimated' : 'used'
-                                    }`}
-                            </strong>
-                            {onCompact && (
-                              <Button
-                                callback={onCompact}
-                                disabled={disabled || operationsDisabled || active || pending}
-                                icon={<Shrink />}
-                                aria-label="Compact chat context"
-                                title="Compact chat context"
-                                size="small"
-                                theme="transparent"
-                              />
-                            )}
-                          </div>
-                        </div>
-                        {contextPercentLabel && (
-                          <div className="message-box__usage-meter" aria-hidden="true">
-                            <span style={{ width: contextPercentLabel }} />
-                          </div>
-                        )}
-                      </section>
-
-                      <section className="message-box__usage-section">
-                        {accountUsageState === 'loading' && !accountUsage && (
-                          <p className="message-box__usage-status">Loading usage...</p>
-                        )}
-                        {accountUsageState === 'error' && !accountUsage && (
-                          <p className="message-box__usage-status">
-                            {accountUsageError ?? 'Usage unavailable.'}
-                          </p>
-                        )}
-                        {sortRateLimitsForDisplay(visibleRateLimits).map((limit, index) =>
-                          renderRateLimit(
-                            limit,
-                            `${limit.id ?? limit.label}:${limit.kind}:${index}`
-                          )
-                        )}
-                        {detailedRateLimits.length > 0 && (
-                          <div className="message-box__limits-details">
-                            <DisclosureToggle
-                              className="message-box__limits-toggle"
-                              open={otherLimitsOpen}
-                              aria-controls={`message-other-limits-${usagePopoverId}`}
-                              onClick={() => setOtherLimitsOpen((currentOpen) => !currentOpen)}
-                            >
-                              Other limits
-                            </DisclosureToggle>
-                            {otherLimitsOpen && (
-                              <div
-                                className="message-box__limits-details-body"
-                                id={`message-other-limits-${usagePopoverId}`}
-                              >
-                                {detailedRateLimits.map((limit, index) =>
-                                  renderRateLimit(
-                                    limit,
-                                    `detail:${limit.id ?? limit.label}:${limit.kind}:${index}`
-                                  )
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {availableRateLimitResets > 0 && onUsageReset && (
-                          <>
-                            <div className="message-box__usage-reset">
-                              <span>
-                                {numberFormatter.format(availableRateLimitResets)}{' '}
-                                {availableRateLimitResets === 1 ? 'reset' : 'resets'} left
-                              </span>
-                              <RateLimitResetButton
-                                availableCount={availableRateLimitResets}
-                                disabled={rateLimitResetDisabled}
-                                onReset={handleRateLimitReset}
-                                onResetError={setRateLimitResetMessage}
-                                onResetResult={handleRateLimitResetResult}
-                                onResetStart={() => setRateLimitResetMessage(null)}
-                              />
+                    {visibleUsageView === 'usage' ? (
+                      <div className="message-box__usage-page" role="tabpanel">
+                        <section className="message-box__usage-section">
+                          <div className="message-box__usage-row">
+                            <span>Context</span>
+                            <div className="message-box__context-actions">
+                              <strong>
+                                {contextUsage.usedTokens == null || contextUsage.usedTokens === 0
+                                  ? '0'
+                                  : contextUsage.maxTokens
+                                    ? `${formatTokenCount(
+                                        contextUsage.usedTokens
+                                      )} / ${formatTokenCount(contextUsage.maxTokens)}`
+                                    : `${formatTokenCount(contextUsage.usedTokens)} ${
+                                        contextUsage.source === 'estimated' ? 'estimated' : 'used'
+                                      }`}
+                              </strong>
+                              {onCompact && (
+                                <Button
+                                  callback={onCompact}
+                                  disabled={disabled || operationsDisabled || active || pending}
+                                  icon={<Shrink />}
+                                  aria-label="Compact chat context"
+                                  title="Compact chat context"
+                                  size="small"
+                                  theme="transparent"
+                                />
+                              )}
                             </div>
-                            {resetExpirationGroups.length > 0 && (
-                              <div className="message-box__limits-details">
-                                <DisclosureToggle
-                                  className="message-box__limits-toggle"
-                                  open={resetDetailsOpen}
-                                  aria-controls={`message-reset-details-${usagePopoverId}`}
-                                  onClick={() => setResetDetailsOpen((currentOpen) => !currentOpen)}
-                                >
-                                  Reset details
-                                </DisclosureToggle>
-                                {resetDetailsOpen && (
-                                  <div
-                                    className="message-box__limits-details-body"
-                                    id={`message-reset-details-${usagePopoverId}`}
-                                  >
-                                    {resetExpirationGroups.map((group) => (
-                                      <div
-                                        className="message-box__usage-row message-box__usage-row--muted"
-                                        key={group.expiresAt ?? 'none'}
-                                      >
-                                        <span>
-                                          {group.expiresAt == null
-                                            ? 'No expiration'
-                                            : `Expires ${formatRateLimitResetExpirationDate(group.expiresAt)}`}
-                                        </span>
-                                        <strong>
-                                          {numberFormatter.format(group.count)}{' '}
-                                          {group.count === 1 ? 'reset' : 'resets'}
-                                        </strong>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </>
-                        )}
-                        {rateLimitResetMessage && (
-                          <p className="message-box__usage-status" role="status">
-                            {rateLimitResetMessage}
-                          </p>
-                        )}
-                        {accountUsage &&
-                          accountUsage.rateLimits.length === 0 &&
-                          accountUsageErrors.length === 0 && (
-                            <p className="message-box__usage-status">Usage unavailable.</p>
+                          </div>
+                          {contextPercentLabel && (
+                            <div className="message-box__usage-meter" aria-hidden="true">
+                              <span style={{ width: contextPercentLabel }} />
+                            </div>
                           )}
-                        {accountUsageErrors.map((usageError, index) => (
-                          <p className="message-box__usage-status" key={`${usageError}:${index}`}>
-                            {usageError}
-                          </p>
-                        ))}
-                      </section>
-                    </div>
-                  ) : (
-                    <div className="message-box__usage-page" role="tabpanel">
-                      <section className="message-box__usage-section">
-                        {accountUsage?.statisticsLoaded && accountUsage.summary && (
-                          <>
-                            <div className="message-box__usage-row">
-                              <span>Lifetime tokens</span>
-                              <strong>
-                                {formatTokenCount(accountUsage.summary.lifetimeTokens)}
-                              </strong>
+                        </section>
+
+                        <section className="message-box__usage-section">
+                          {accountUsageState === 'loading' && !accountUsage && (
+                            <p className="message-box__usage-status">Loading usage...</p>
+                          )}
+                          {accountUsageState === 'error' && !accountUsage && (
+                            <p className="message-box__usage-status">
+                              {accountUsageError ?? 'Usage unavailable.'}
+                            </p>
+                          )}
+                          {sortRateLimitsForDisplay(visibleRateLimits).map((limit, index) =>
+                            renderRateLimit(
+                              limit,
+                              `${limit.id ?? limit.label}:${limit.kind}:${index}`
+                            )
+                          )}
+                          {detailedRateLimits.length > 0 && (
+                            <div className="message-box__limits-details">
+                              <DisclosureToggle
+                                className="message-box__limits-toggle"
+                                open={otherLimitsOpen}
+                                aria-controls={`message-other-limits-${usagePopoverId}`}
+                                onClick={() => setOtherLimitsOpen((currentOpen) => !currentOpen)}
+                              >
+                                Other limits
+                              </DisclosureToggle>
+                              {otherLimitsOpen && (
+                                <div
+                                  className="message-box__limits-details-body"
+                                  id={`message-other-limits-${usagePopoverId}`}
+                                >
+                                  {detailedRateLimits.map((limit, index) =>
+                                    renderRateLimit(
+                                      limit,
+                                      `detail:${limit.id ?? limit.label}:${limit.kind}:${index}`
+                                    )
+                                  )}
+                                </div>
+                              )}
                             </div>
-                            <div className="message-box__usage-row">
-                              <span>Peak day</span>
-                              <strong>
-                                {formatTokenCount(accountUsage.summary.peakDailyTokens)}
-                              </strong>
-                            </div>
-                            <div className="message-box__usage-row">
-                              <span>Longest turn</span>
-                              <strong>
-                                {formatDurationSeconds(accountUsage.summary.longestRunningTurnSec)}
-                              </strong>
-                            </div>
-                            <div className="message-box__usage-row">
-                              <span>Current streak</span>
-                              <strong>
-                                {formatDayCount(accountUsage.summary.currentStreakDays)}
-                              </strong>
-                            </div>
-                            <div className="message-box__usage-row">
-                              <span>Longest streak</span>
-                              <strong>
-                                {formatDayCount(accountUsage.summary.longestStreakDays)}
-                              </strong>
-                            </div>
-                          </>
-                        )}
-                        {accountUsage?.statisticsLoaded && !accountUsage.summary && (
-                          <p className="message-box__usage-status">Statistics unavailable.</p>
-                        )}
-                        {accountUsageErrors.map((usageError, index) => (
-                          <p className="message-box__usage-status" key={`${usageError}:${index}`}>
-                            {usageError}
-                          </p>
-                        ))}
-                      </section>
-                    </div>
-                  )}
-                </div>
-              )}
+                          )}
+                          {availableRateLimitResets > 0 && onUsageReset && (
+                            <>
+                              <div className="message-box__usage-reset">
+                                <span>
+                                  {numberFormatter.format(availableRateLimitResets)}{' '}
+                                  {availableRateLimitResets === 1 ? 'reset' : 'resets'} left
+                                </span>
+                                <RateLimitResetButton
+                                  availableCount={availableRateLimitResets}
+                                  disabled={rateLimitResetDisabled}
+                                  onReset={handleRateLimitReset}
+                                  onResetError={setRateLimitResetMessage}
+                                  onResetResult={handleRateLimitResetResult}
+                                  onResetStart={() => setRateLimitResetMessage(null)}
+                                />
+                              </div>
+                              {resetExpirationGroups.length > 0 && (
+                                <div className="message-box__limits-details">
+                                  <DisclosureToggle
+                                    className="message-box__limits-toggle"
+                                    open={resetDetailsOpen}
+                                    aria-controls={`message-reset-details-${usagePopoverId}`}
+                                    onClick={() =>
+                                      setResetDetailsOpen((currentOpen) => !currentOpen)
+                                    }
+                                  >
+                                    Reset details
+                                  </DisclosureToggle>
+                                  {resetDetailsOpen && (
+                                    <div
+                                      className="message-box__limits-details-body"
+                                      id={`message-reset-details-${usagePopoverId}`}
+                                    >
+                                      {resetExpirationGroups.map((group) => (
+                                        <div
+                                          className="message-box__usage-row message-box__usage-row--muted"
+                                          key={group.expiresAt ?? 'none'}
+                                        >
+                                          <span>
+                                            {group.expiresAt == null
+                                              ? 'No expiration'
+                                              : `Expires ${formatRateLimitResetExpirationDate(group.expiresAt)}`}
+                                          </span>
+                                          <strong>
+                                            {numberFormatter.format(group.count)}{' '}
+                                            {group.count === 1 ? 'reset' : 'resets'}
+                                          </strong>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {rateLimitResetMessage && (
+                            <p className="message-box__usage-status" role="status">
+                              {rateLimitResetMessage}
+                            </p>
+                          )}
+                          {accountUsage &&
+                            accountUsage.rateLimits.length === 0 &&
+                            accountUsageErrors.length === 0 && (
+                              <p className="message-box__usage-status">Usage unavailable.</p>
+                            )}
+                          {accountUsageErrors.map((usageError, index) => (
+                            <p className="message-box__usage-status" key={`${usageError}:${index}`}>
+                              {usageError}
+                            </p>
+                          ))}
+                        </section>
+                      </div>
+                    ) : (
+                      <div className="message-box__usage-page" role="tabpanel">
+                        <section className="message-box__usage-section">
+                          {accountUsage?.statisticsLoaded && accountUsage.summary && (
+                            <>
+                              <div className="message-box__usage-row">
+                                <span>Lifetime tokens</span>
+                                <strong>
+                                  {formatTokenCount(accountUsage.summary.lifetimeTokens)}
+                                </strong>
+                              </div>
+                              <div className="message-box__usage-row">
+                                <span>Peak day</span>
+                                <strong>
+                                  {formatTokenCount(accountUsage.summary.peakDailyTokens)}
+                                </strong>
+                              </div>
+                              <div className="message-box__usage-row">
+                                <span>Longest turn</span>
+                                <strong>
+                                  {formatDurationSeconds(
+                                    accountUsage.summary.longestRunningTurnSec
+                                  )}
+                                </strong>
+                              </div>
+                              <div className="message-box__usage-row">
+                                <span>Current streak</span>
+                                <strong>
+                                  {formatDayCount(accountUsage.summary.currentStreakDays)}
+                                </strong>
+                              </div>
+                              <div className="message-box__usage-row">
+                                <span>Longest streak</span>
+                                <strong>
+                                  {formatDayCount(accountUsage.summary.longestStreakDays)}
+                                </strong>
+                              </div>
+                            </>
+                          )}
+                          {accountUsage?.statisticsLoaded && !accountUsage.summary && (
+                            <p className="message-box__usage-status">Statistics unavailable.</p>
+                          )}
+                          {accountUsageErrors.map((usageError, index) => (
+                            <p className="message-box__usage-status" key={`${usageError}:${index}`}>
+                              {usageError}
+                            </p>
+                          ))}
+                        </section>
+                      </div>
+                    )}
+                  </MotionSurface>
+                )}
+              </AnimatePresence>
             </div>
             <Button
               aria-label={buttonLabel}
