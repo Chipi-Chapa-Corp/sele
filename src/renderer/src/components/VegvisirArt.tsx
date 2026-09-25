@@ -33,6 +33,25 @@ export function VegvisirArt(): ReactElement {
 
   useEffect(() => {
     const host = hostRef.current
+    if (!host || reducedMotion) return
+
+    const setAngle = (length: number): void => {
+      host.style.setProperty('--vegvisir-angle', `${length * 6}deg`)
+    }
+    const input = document.getElementById('message-input')
+    if (input instanceof HTMLTextAreaElement) setAngle(input.value.length)
+
+    const onInput = (event: Event): void => {
+      if (event.target instanceof HTMLTextAreaElement && event.target.id === 'message-input') {
+        setAngle(event.target.value.length)
+      }
+    }
+    document.addEventListener('input', onInput)
+    return () => document.removeEventListener('input', onInput)
+  }, [reducedMotion])
+
+  useEffect(() => {
+    const host = hostRef.current
     if (!host || staticArt) return
 
     // A transferred canvas cannot be reused, including on Strict Mode's effect replay.

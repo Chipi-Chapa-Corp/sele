@@ -8,7 +8,7 @@ import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplay
 import { createPortal } from 'react-dom'
 import { Marked } from 'marked'
 import { Visualization } from './Visualization'
-import { WorkingMark } from './WorkingMark'
+import { WorkingMark, type WorkingMarkAnimation } from './WorkingMark'
 import { visualizationExtension, decodeVisualizationReference } from '../visualizationReference'
 import {
   Fragment,
@@ -474,6 +474,10 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
 
 const getRandomPlaceholderOption = (): (typeof placeholderOptions)[number] =>
   placeholderOptions[Math.floor(Math.random() * placeholderOptions.length)]
+
+const workingMarkAnimations: WorkingMarkAnimation[] = ['swap', 'spin', 'depth']
+const getRandomWorkingMarkAnimation = (): WorkingMarkAnimation =>
+  workingMarkAnimations[Math.floor(Math.random() * workingMarkAnimations.length)]
 
 const DiffContent: React.FC<{
   tools: ProviderWorkingTool[]
@@ -1687,6 +1691,7 @@ const ToolSequence: React.FC<{
 
 const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
   const [placeholder] = useState(getRandomPlaceholderOption)
+  const [animation] = useState(getRandomWorkingMarkAnimation)
   const labelRef = useRef<HTMLSpanElement>(null)
   const reduced = useReducedMotionPreference()
 
@@ -1711,7 +1716,7 @@ const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ ite
   return (
     <div className="chat-detail__tool-read chat-detail__tool-read--active chat-detail__tool-placeholder">
       <span className="chat-detail__tool-icon">
-        <WorkingMark />
+        <WorkingMark animation={animation} />
       </span>
       <span className="chat-detail__tool-label">
         <span ref={labelRef}>{placeholder}</span>

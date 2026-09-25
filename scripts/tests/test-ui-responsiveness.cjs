@@ -202,6 +202,23 @@ if (!process.versions.electron) {
       assert.ok(await run('window.updates > 0'), 'the workspace refreshed during the typing check')
       assert.equal(await run(`document.querySelector('textarea').value`), message)
       assert.equal(await run(`document.activeElement === document.querySelector('textarea')`), true)
+      if (!process.argv.includes('--baseline')) {
+        assert.equal(
+          await run(`window.art.style.getPropertyValue('--vegvisir-angle')`),
+          `${message.length * 6}deg`,
+          'typing turns the artwork forward'
+        )
+        assert.equal(
+          await run(`(() => {
+            const input = document.querySelector('textarea');
+            input.value = input.value.slice(0, -1);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            return window.art.style.getPropertyValue('--vegvisir-angle');
+          })()`),
+          `${(message.length - 1) * 6}deg`,
+          'removing text turns the artwork backward'
+        )
+      }
       assert.equal(
         await run(`window.art === document.querySelector('.chat-panel__new-chat-vegvisir')`),
         true,
@@ -230,6 +247,10 @@ if (!process.versions.electron) {
       // Compare the completed worker drawing against the original vector geometry.
       await run('new Promise(resolve => setTimeout(resolve, 350))')
       await run(`document.documentElement.dataset.colorScheme = 'light'; window.art.style.width = '65%';
+        window.art.style.setProperty('--vegvisir-angle', '0deg');
+        window.art.querySelector('canvas').style.animation = 'none';
+        window.art.querySelector('canvas').style.transform = 'none';
+        window.art.querySelector('canvas').style.transition = 'none';
         new Promise(resolve => setTimeout(resolve, 120))`)
       const artBounds = await run(`(() => {
         const rect = window.art.getBoundingClientRect()

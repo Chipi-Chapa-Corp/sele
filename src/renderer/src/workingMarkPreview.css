@@ -1,0 +1,60 @@
+.working-mark-preview {
+  width: min(36rem, calc(100vw - 3rem));
+  margin: 4rem auto;
+  color: var(--ink);
+  font-family: var(--chat-font-family);
+}
+
+.working-mark-preview h1 {
+  margin-bottom: 2.5rem;
+  font-size: 1.5rem;
+}
+
+.working-mark-preview__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid var(--control-border);
+  border-radius: 0.5rem;
+  background: var(--control-bg);
+}
+
+.working-mark-preview__slider,
+.working-mark-preview__toggle {
+  display: inline-flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.working-mark-preview__slider input {
+  width: 8rem;
+}
+
+.working-mark-preview__slider output {
+  min-width: 2.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.working-mark-preview__hint {
+  width: 100%;
+  margin: 0;
+  color: var(--quiet);
+  font-size: 0.82rem;
+}
+
+.working-mark-preview__controls input {
+  accent-color: var(--accent);
+}
+
+.working-mark-preview__row {
+  margin-top: 2rem;
+}
+
+.working-mark-preview__row h2 {
+  margin: 0 0 0.75rem;
+  color: var(--quiet);
+  font-size: 1rem;
+  font-weight: 400;
+}
