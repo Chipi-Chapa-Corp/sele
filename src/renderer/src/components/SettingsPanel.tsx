@@ -294,11 +294,15 @@ const appearanceControlStyleOptions = [
 const chatUsageDisplayOptions = [
   {
     value: 'chatContext',
-    label: 'Chat context'
+    label: 'Context'
   },
   {
-    value: 'global',
-    label: 'Global'
+    value: 'short',
+    label: 'Short'
+  },
+  {
+    value: 'weekly',
+    label: 'Weekly'
   }
 ] satisfies readonly {
   value: AppChatUsageDisplay
@@ -594,7 +598,12 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
       settingsProviderSkills,
       settingsProviderApps
     )
-    const unparentedSkillsEnabled = areAnySettingsProviderSkillsEnabled(unparentedSkills)
+    const standaloneToggleSkills = unparentedSkills.filter(
+      (resource) =>
+        resource.providerId !== 'claude' ||
+        !resource.skill.path.replace(/\\/g, '/').includes('/plugins/marketplaces/')
+    )
+    const unparentedSkillsEnabled = areAnySettingsProviderSkillsEnabled(standaloneToggleSkills)
 
     return (
       <section
@@ -933,7 +942,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 <div className="settings-dialog__field">
                   <div className="settings-dialog__field-header">
                     <h3 id="settings-provider-unparented-skills">All standalone skills</h3>
-                    <p>Enable or disable skills that are not part of an app.</p>
+                    <p>Enable or disable standalone skills. Plugin skills are controlled individually.</p>
                   </div>
                   <Switch
                     className="settings-switch"
@@ -941,12 +950,12 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                     checked={unparentedSkillsEnabled}
                     disabled={
                       providerResourcesLoading ||
-                      unparentedSkills.length === 0 ||
+                      standaloneToggleSkills.length === 0 ||
                       Boolean(providerResourceUpdatingKey)
                     }
                     onChange={(event) =>
                       void handleProviderSkillsEnabledChange(
-                        unparentedSkills,
+                        standaloneToggleSkills,
                         event.currentTarget.checked
                       )
                     }
@@ -976,7 +985,17 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                             <h3 id={toggleId}>{resource.skill.name}</h3>
                             <SettingsSkillPathAction path={resource.skill.path} />
                           </div>
-                          <p>{getSettingsSkillDescription(resource.skill)}</p>
+                          <p>
+                            {getSettingsSkillDescription(resource.skill)}
+                            {resource.providerId === 'claude' &&
+                            resource.skill.path
+                              .replace(/\\/g, '/')
+                              .includes('/plugins/marketplaces/')
+                              ? resource.skill.enabled
+                                ? ' Start a new Claude session after changing this plugin.'
+                                : ' Turn on to install or enable its plugin. Start a new Claude session to use it.'
+                              : ''}
+                          </p>
                         </div>
                         <Switch
                           className="settings-switch"

@@ -561,6 +561,100 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   padding-left: 0.15em;
 }
 
+.chat-detail__message li::marker,
+.chat-detail__working-message li::marker {
+  color: var(--muted);
+}
+
+.chat-detail__message hr,
+.chat-detail__working-message hr {
+  margin: 1.2em 0;
+  border: 0;
+  border-top: 0.0625rem solid color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+.chat-detail__message input[type='checkbox'],
+.chat-detail__working-message input[type='checkbox'] {
+  position: relative;
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0 0.35em 0 0;
+  vertical-align: -0.12em;
+  appearance: none;
+  border: 0.125em solid var(--accent);
+  border-radius: 0.2em;
+  background: transparent;
+  opacity: 1;
+}
+
+.chat-detail__message input[type='checkbox']:checked,
+.chat-detail__working-message input[type='checkbox']:checked {
+  background: var(--accent);
+}
+
+.chat-detail__message input[type='checkbox']:checked::after,
+.chat-detail__working-message input[type='checkbox']:checked::after {
+  position: absolute;
+  top: 0.08em;
+  left: 0.22em;
+  width: 0.25em;
+  height: 0.46em;
+  border: solid var(--accent-ink);
+  border-width: 0 0.13em 0.13em 0;
+  transform: rotate(45deg);
+  content: '';
+}
+
+.chat-detail__message details,
+.chat-detail__working-message details {
+  margin: 0.8em 0;
+}
+
+.chat-detail__message details > summary,
+.chat-detail__working-message details > summary {
+  cursor: pointer;
+}
+
+.chat-detail__message details > summary::marker,
+.chat-detail__working-message details > summary::marker {
+  color: var(--muted);
+}
+
+.chat-detail__message kbd,
+.chat-detail__working-message kbd {
+  display: inline-block;
+  padding: 0.08em 0.35em;
+  border: 0.0625rem solid var(--glass-edge);
+  border-radius: 0.3em;
+  background: var(--activity-bg);
+  color: var(--lead);
+  font-family: var(--code-font-family);
+  font-size: 0.85em;
+  line-height: 1.35;
+  white-space: nowrap;
+  box-shadow: 0 0.1em 0 var(--glass-line);
+}
+
+.chat-detail__message .footnotes,
+.chat-detail__working-message .footnotes {
+  margin-top: 1.2em;
+  border-top: 0.0625rem solid color-mix(in srgb, var(--muted) 45%, transparent);
+  color: var(--muted);
+  font-size: 0.88em;
+}
+
+.chat-detail__message .footnotes .sr-only,
+.chat-detail__working-message .footnotes .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 .chat-detail__message blockquote,
 .chat-detail__working-message blockquote {
   margin: 0.85em 0;
@@ -1296,4 +1390,19 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   .chat-detail__pending-message-label {
     max-width: 90%;
   }
+}
+
+.chat-detail__message .language-diff .token.inserted,
+.chat-detail__working-message .language-diff .token.inserted {
+  color: var(--success);
+}
+
+.chat-detail__message .language-diff .token.deleted,
+.chat-detail__working-message .language-diff .token.deleted {
+  color: var(--error);
+}
+
+.chat-detail__message .language-diff .token.coord,
+.chat-detail__working-message .language-diff .token.coord {
+  color: var(--muted);
 }

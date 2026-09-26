@@ -68,7 +68,7 @@ export type AppThemePreference = 'system' | 'light' | 'dark'
 export type AppAppearancePositionPreference = 'system' | 'left' | 'right' | 'hidden'
 export type AppAppearanceStylePreference = 'system' | 'sele' | 'macos'
 export type AppAppearanceControlStylePreference = 'bordered' | 'transparent'
-export type AppChatUsageDisplay = 'chatContext' | 'global'
+export type AppChatUsageDisplay = 'chatContext' | 'short' | 'weekly'
 
 export type AppFontSetting = {
   family: string
@@ -443,8 +443,10 @@ const isAppExternalLinkBehavior = (value: unknown): value is AppExternalLinkBeha
 const isAppBrowserView = (value: unknown): value is AppBrowserView =>
   value === 'chat' || value === 'project' || value === 'global'
 
-const isAppChatUsageDisplay = (value: unknown): value is AppChatUsageDisplay =>
-  value === 'chatContext' || value === 'global'
+const getStoredChatUsageDisplay = (value: unknown): AppChatUsageDisplay | null => {
+  if (value === 'global') return 'short'
+  return value === 'chatContext' || value === 'short' || value === 'weekly' ? value : null
+}
 
 const isStoredModel = (value: unknown): value is ProviderModelId =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 128
@@ -590,8 +592,9 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
   if (hasOwnProperty(chat, 'recentChatCacheLimit')) {
     overrides.recentChatCacheLimit = getStoredRecentChatCacheLimit(chat.recentChatCacheLimit)
   }
-  if (hasOwnProperty(chat, 'displayUsage') && isAppChatUsageDisplay(chat.displayUsage)) {
-    overrides.displayUsage = chat.displayUsage
+  const displayUsage = getStoredChatUsageDisplay(chat.displayUsage)
+  if (hasOwnProperty(chat, 'displayUsage') && displayUsage) {
+    overrides.displayUsage = displayUsage
   }
 
   const booleanKeys = [
@@ -1085,9 +1088,8 @@ export const readStoredAppSettings = (): AppSettings => {
             ? chat.continuePrompt
             : defaultAppSettings.chat.continuePrompt,
         recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
-        displayUsage: isAppChatUsageDisplay(chat.displayUsage)
-          ? chat.displayUsage
-          : defaultAppSettings.chat.displayUsage,
+        displayUsage:
+          getStoredChatUsageDisplay(chat.displayUsage) ?? defaultAppSettings.chat.displayUsage,
         hidePlans: getStoredChatBoolean(chat, 'hidePlans'),
         enableActions: getStoredChatBoolean(chat, 'enableActions'),
         enableNotesButton: getStoredChatBoolean(chat, 'enableNotesButton'),

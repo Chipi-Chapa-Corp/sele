@@ -7,6 +7,7 @@ import { getMessageModelLabel } from '../messageModelLabel'
 import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplayLabel'
 import { createPortal } from 'react-dom'
 import { Marked } from 'marked'
+import markedFootnote from 'marked-footnote'
 import { Visualization } from './Visualization'
 import { WorkingMark, type WorkingMarkAnimation } from './WorkingMark'
 import { visualizationExtension, decodeVisualizationReference } from '../visualizationReference'
@@ -16,6 +17,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState
@@ -399,7 +401,15 @@ const expandTableIconMarkup = renderToStaticMarkup(<Maximize2 aria-hidden="true"
 const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => {
   const renderer = new Renderer()
 
-  renderer.html = ({ text }) => escapeHtml(text)
+  renderer.html = ({ text }) =>
+    text
+      .split(/(<\/?(?:details|summary)(?:\s+open)?\s*>|<\/?kbd\s*>)/gi)
+      .map((part) =>
+        /^(?:<\/?(?:details|summary)(?:\s+open)?\s*>|<\/?kbd\s*>)$/i.test(part)
+          ? part
+          : escapeHtml(part)
+      )
+      .join('')
   renderer.code = ({ lang, text }) => renderMarkdownCodeBlock(text, lang)
   renderer.link = function (token: Tokens.Link): string {
     const fileTarget = getMarkdownFileTarget(token.href)
@@ -1292,6 +1302,7 @@ const MarkdownMessageComponent: React.FC<{
   streaming = false
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
+  const footnotePrefix = `chat-${useId().replace(/:/g, '')}-footnote-`
   const [localImagePreview, setLocalImagePreview] = useState<{
     imageUrl: string
     name: string
@@ -1304,8 +1315,11 @@ const MarkdownMessageComponent: React.FC<{
     [onOpenFileLink]
   )
   const visualizationMarkdown = useMemo(
-    () => new Marked({ extensions: [visualizationExtension] }),
-    []
+    () =>
+      new Marked({ extensions: [visualizationExtension] }).use(
+        markedFootnote({ prefixId: footnotePrefix })
+      ),
+    [footnotePrefix]
   )
   const [visualizationHosts, setVisualizationHosts] = useState<HTMLElement[]>([])
   const renderedMarkdown = useMemo(

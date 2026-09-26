@@ -77,6 +77,7 @@ import type {
 import { appApi } from '../appApi'
 import type { AppAction } from '../actions'
 import {
+  getUsageBadgeRateLimit,
   groupAccountRateLimits,
   shouldDisableRateLimitReset,
   sortRateLimitsForDisplay
@@ -2686,18 +2687,21 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     rateLimits,
     selectedModel?.usageScope
   )
-  const globalRateLimit = visibleRateLimits[0] ?? null
   const contextPercent = getContextPercent(contextUsage)
   const contextPercentLabel = contextPercent == null ? null : formatPercent(contextPercent)
-  const globalPercent = globalRateLimit ? clampPercent(globalRateLimit.usedPercent) : null
-  const displayedUsagePercent = displayUsage === 'global' ? globalPercent : contextPercent
+  const badgeRateLimit =
+    displayUsage === 'chatContext' ? null : getUsageBadgeRateLimit(rateLimits, displayUsage)
+  const badgePercent = badgeRateLimit ? clampPercent(badgeRateLimit.usedPercent) : null
+  const badgeUsageLabel =
+    badgeRateLimit?.windowMinutes === 10_080 || displayUsage === 'weekly' ? 'Weekly' : 'Short'
+  const displayedUsagePercent = displayUsage === 'chatContext' ? contextPercent : badgePercent
   const usageButtonLabel =
-    displayUsage === 'global'
-      ? globalPercent == null
+    displayUsage !== 'chatContext'
+      ? badgePercent == null
         ? accountUsageState === 'loading'
-          ? 'Global usage loading'
-          : 'Global usage unavailable'
-        : `Global usage ${formatPercent(globalPercent)} used`
+          ? `${badgeUsageLabel} usage loading`
+          : `${badgeUsageLabel} usage unavailable`
+        : `${badgeUsageLabel} usage ${formatPercent(badgePercent)} used`
       : contextPercentLabel
         ? `Chat context ${contextPercentLabel} used`
         : contextUsage.usedTokens

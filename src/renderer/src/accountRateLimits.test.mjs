@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { shouldDisableRateLimitReset, sortRateLimitsForDisplay } from './accountRateLimits.ts'
+import {
+  getUsageBadgeRateLimit,
+  shouldDisableRateLimitReset,
+  sortRateLimitsForDisplay
+} from './accountRateLimits.ts'
 
 // Test fixtures intentionally omit fields that are irrelevant to reset eligibility.
 const rateLimit = (usedPercent) => ({
@@ -30,6 +34,30 @@ test('keeps equal windows stable and places unspecified windows last', () => {
 
   assert.deepEqual(sortRateLimitsForDisplay([unknown, first, second]), [first, second, unknown])
   assert.deepEqual(sortRateLimitsForDisplay([]), [])
+})
+
+test('short badge uses five-hour usage and falls back to weekly', () => {
+  const weekly = { ...rateLimit(70), id: 'seven_day', windowMinutes: 10_080 }
+  const short = rateLimit(20)
+
+  assert.equal(getUsageBadgeRateLimit([weekly, short], 'short'), short)
+  assert.equal(getUsageBadgeRateLimit([weekly], 'short'), weekly)
+  assert.equal(getUsageBadgeRateLimit([], 'short'), null)
+})
+
+test('weekly badge prefers the main weekly limit over secondary weekly limits', () => {
+  const secondary = {
+    ...rateLimit(90),
+    id: 'seven_day_opus',
+    kind: 'secondary',
+    windowMinutes: 10_080
+  }
+  const weekly = { ...rateLimit(30), id: 'seven_day', kind: 'secondary', windowMinutes: 10_080 }
+
+  assert.equal(getUsageBadgeRateLimit([secondary, weekly], 'weekly'), weekly)
+  const primary = { ...weekly, kind: 'primary', usedPercent: 20 }
+  assert.equal(getUsageBadgeRateLimit([weekly, primary], 'weekly'), primary)
+  assert.equal(getUsageBadgeRateLimit([rateLimit(20)], 'weekly'), null)
 })
 
 test('disables rate-limit resets when every limit has more than 5% left', () => {

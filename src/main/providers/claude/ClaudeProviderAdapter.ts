@@ -102,7 +102,8 @@ import {
   getClaudeSessionStateLifecycleDecision
 } from './ClaudeQueryLifecycle'
 import { getClaudeQueueDrainDecision } from './ClaudeQueueDrain'
-import { discoverClaudeSkills } from './ClaudeSkillDiscovery'
+import { discoverClaudeSkills, setClaudePluginEnabled } from './ClaudeSkillDiscovery'
+import { getClaudePluginIdForSkillPath, getClaudeSkillInvocation } from './ClaudePluginSkills'
 import {
   applyClaudeStreamEvent,
   clearClaudeStreamMessages,
@@ -481,8 +482,10 @@ const getPrompt = (
     })
     const invocation =
       skills.length === 1
-        ? `/${skills[0]!.name}`
-        : `Use each of these skills before proceeding: ${skills.map((skill) => skill.name).join(', ')}.`
+        ? getClaudeSkillInvocation(skills[0]!.name, skills[0]!.path)
+        : `Use each of these skills before proceeding: ${skills
+            .map((skill) => getClaudeSkillInvocation(skill.name, skill.path))
+            .join(', ')}.`
     prompt = `${invocation}${prompt ? `\n${prompt}` : ''}`
   }
   const files = [...(options?.files ?? []), ...(options?.images ?? [])]
@@ -750,8 +753,21 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       })
       .filter((skill) => skill.enabled !== enabled)
 
+    const pluginUpdates = new Map<string, Promise<void>>()
     const results = await Promise.allSettled(
       changedSkills.map(async (skill) => {
+        const pluginId = getClaudePluginIdForSkillPath(skill.path)
+        if (pluginId) {
+          if (enabled) {
+            await restoreProviderSkill(skill.path, options.container, { skipIfOccupied: true })
+          }
+          let update = pluginUpdates.get(pluginId)
+          if (!update) {
+            update = setClaudePluginEnabled(pluginId, enabled, options.container)
+            pluginUpdates.set(pluginId, update)
+          }
+          return update
+        }
         if (!enabled) return disableProviderSkill('claude', skill, options.container)
         const restored = await restoreProviderSkill(skill.path, options.container)
         if (!restored) throw new Error('Skill was not disabled by Sele')

@@ -20,6 +20,32 @@ export const sortRateLimitsForDisplay = (
       (second.windowMinutes ?? Number.POSITIVE_INFINITY)
   )
 
+export const getUsageBadgeRateLimit = (
+  rateLimits: readonly ProviderAccountRateLimit[],
+  window: 'short' | 'weekly'
+): ProviderAccountRateLimit | null => {
+  const weekly = rateLimits
+    .filter((limit) => limit.windowMinutes === 10_080)
+    .sort((first, second) => {
+      const priority = (limit: ProviderAccountRateLimit): number =>
+        (limit.id === 'seven_day' || limit.id === 'weekly' ? 0 : 4) +
+        (limit.usageScope == null ? 0 : 2) +
+        (limit.kind === 'primary' ? 0 : 1)
+      return priority(first) - priority(second)
+    })[0]
+
+  if (window === 'weekly') return weekly ?? null
+  return (
+    rateLimits.find(
+      (limit) => limit.windowMinutes === 300 && limit.usageScope == null && limit.kind === 'primary'
+    ) ??
+    rateLimits.find((limit) => limit.windowMinutes === 300 && limit.usageScope == null) ??
+    rateLimits.find((limit) => limit.windowMinutes === 300) ??
+    weekly ??
+    null
+  )
+}
+
 export const shouldDisableRateLimitReset = (
   rateLimits: readonly ProviderAccountRateLimit[],
   resetCredits: readonly ProviderAccountRateLimitResetCredit[] | null = null,
