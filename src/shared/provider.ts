@@ -911,6 +911,7 @@ export type ProviderChatActivitySummary = {
 }
 
 export type ProviderChatUpdateSummary = Omit<ProviderChat, 'providerId'> & {
+  revision: number
   currentActivity: ProviderChatActivitySummary | null
   previewLength: number
 }

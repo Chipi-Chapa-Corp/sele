@@ -1,4 +1,5 @@
 import { ClaudeSessionDiscovery } from './ClaudeSessionDiscovery'
+import { getClaudeSessionTitle } from './ClaudeSessionTitle'
 import { ClaudeRemoteSessionStore as RemoteSessionStore } from './ClaudeRemoteSessionStore'
 import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
 import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
@@ -288,7 +289,6 @@ const updateDelayMs = 35
 const contextUsageCloseGraceMs = 1_000
 const interruptCloseGraceMs = 500
 const oneShotCancellationRetentionMs = 60_000
-const maxFallbackTitleLength = 80
 const sessionTitleRefreshDelayMs = 5_000
 const maxIdleSessionStates = 8
 const maxIdleTranscriptBytes = 32 * 1024 * 1024
@@ -2399,15 +2399,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   private getTitle = (state: ClaudeSessionState): string => {
-    const metadataTitle = state.metadata?.customTitle || state.metadata?.summary
-    if (metadataTitle?.trim()) return metadataTitle.trim()
     const firstUserMessage = state.messages.find(
       (message) => message.type === 'user' && !isClaudeInternalUserMessage(message)
     )
     const firstPrompt = firstUserMessage
       ? getTextFromContent(getMessageContent(firstUserMessage.message))
       : ''
-    return firstPrompt ? truncate(firstPrompt, maxFallbackTitleLength) : 'Claude session'
+    return getClaudeSessionTitle(state.metadata, firstPrompt)
   }
 
   private getPendingApproval = (state: ClaudeSessionState): ProviderPendingApproval | null => {
@@ -2565,10 +2563,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       this.applySessionMetadata(state, metadata)
       return this.createChatFromState(state)
     }
-    const metadataTitle = metadata.customTitle || metadata.summary
-    const title = metadataTitle?.trim()
-      ? metadataTitle.trim()
-      : truncate(metadata.firstPrompt || 'Claude session', maxFallbackTitleLength)
+    const title = getClaudeSessionTitle(metadata)
     return {
       id: metadata.sessionId,
       providerId: this.id,

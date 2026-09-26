@@ -408,6 +408,7 @@ export const getChatUpdateSummary = (
   const preview = detail.items.findLast((item) => item.type === 'message')?.content.trim() ?? ''
   return {
     id: detail.id,
+    revision: detail.revision,
     createdAt: detail.createdAt,
     title: detail.title,
     preview: truncateChatUpdateText(preview, chatUpdatePreviewLimit),

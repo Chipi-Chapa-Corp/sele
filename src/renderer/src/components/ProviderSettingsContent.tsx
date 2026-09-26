@@ -19,11 +19,12 @@ import { configObject, configFieldLabel } from '../providerConfig'
 type Props = {
   providerId: ProviderId
   container: AppContainerTarget
-  children: [ReactNode, ReactNode]
+  children: [ReactNode, (query: string) => ReactNode]
 }
 
 export function ProviderSettingsContent({ providerId, container, children }: Props): ReactNode {
   const [tab, setTab] = useState('General')
+  const [skillsQuery, setSkillsQuery] = useState('')
   return (
     <>
       <div className="settings-dialog__provider-configuration">
@@ -41,7 +42,17 @@ export function ProviderSettingsContent({ providerId, container, children }: Pro
       {tab === 'General' ? (
         children[0]
       ) : tab === 'Skills' ? (
-        children[1]
+        <>
+          <Input
+            type="search"
+            className="settings-dialog__skills-search"
+            aria-label="Search skills"
+            placeholder="Search skills…"
+            value={skillsQuery}
+            onChange={(event) => setSkillsQuery(event.target.value)}
+          />
+          {children[1](skillsQuery)}
+        </>
       ) : (
         <ProviderConfigPanel
           key={`${providerId}:${JSON.stringify(container)}`}

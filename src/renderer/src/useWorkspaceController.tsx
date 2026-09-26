@@ -2588,9 +2588,16 @@ export const useWorkspaceController = () => {
 
   const applyChatSummary = useCallback(
     (providerId: ProviderId, summary: ProviderChatUpdateSummary, turnCompleted: boolean): void => {
-      removeRecentChatCacheEntry(providerId, summary.id)
-
       const summaryKey = getProviderChatKey(providerId, summary.id)
+      // The send IPC can resolve after a newer completion event has already updated this chat.
+      if (
+        selectedChatKeyRef.current === summaryKey &&
+        chatDetailRef.current?.id === summary.id &&
+        summary.revision < chatDetailRef.current.revision
+      ) {
+        return
+      }
+      removeRecentChatCacheEntry(providerId, summary.id)
       const hiddenCommit = summary.purpose === 'commit'
       if (hiddenCommit) {
         setChats((currentChats) =>
