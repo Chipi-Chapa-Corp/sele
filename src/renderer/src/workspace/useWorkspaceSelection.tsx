@@ -821,6 +821,46 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     usageProviderId,
     providerAccountRevision
   ])
+  const latestAssistantMessage =
+    chatDetail && chatDetail.id === selectedChatId
+      ? chatDetail.items.findLast((item) => item.type === 'message' && item.role === 'assistant')
+      : undefined
+  const latestAssistantMessageFingerprint =
+    latestAssistantMessage?.type === 'message'
+      ? `${latestAssistantMessage.id}:${latestAssistantMessage.content.length}`
+      : null
+  const observedAssistantMessageRef = useRef<{
+    chatKey: string | null
+    fingerprint: string | null
+  } | null>(null)
+  useEffect(() => {
+    const previous = observedAssistantMessageRef.current
+    observedAssistantMessageRef.current = {
+      chatKey: selectedChatKey,
+      fingerprint: latestAssistantMessageFingerprint
+    }
+    if (
+      !selectedChatKey ||
+      !usageProviderAvailable ||
+      !previous ||
+      previous.chatKey !== selectedChatKey ||
+      previous.fingerprint === latestAssistantMessageFingerprint ||
+      latestAssistantMessageFingerprint === null
+    ) {
+      return
+    }
+
+    // Wait for streaming text to settle so the provider has recorded the message's usage.
+    const timeout = window.setTimeout(() => {
+      void refreshAccountUsage()
+    }, 750)
+    return () => window.clearTimeout(timeout)
+  }, [
+    latestAssistantMessageFingerprint,
+    refreshAccountUsage,
+    selectedChatKey,
+    usageProviderAvailable
+  ])
   useEffect(() => {
     if (!selectedProviderId || !selectedChatId) return
 
