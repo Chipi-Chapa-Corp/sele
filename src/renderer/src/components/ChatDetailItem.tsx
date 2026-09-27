@@ -1,3 +1,5 @@
+import { getVideoMimeType } from '../../../shared/video'
+import { useMarkdownImages } from '../useMarkdownImages'
 import { WorkingElapsedTime } from './WorkingElapsedTime'
 import { useReducedMotionPreference } from '../motion/useReducedMotionPreference'
 import { useWorkingToolMotion } from '../motion/useWorkingToolMotion'
@@ -398,6 +400,19 @@ const loadingImageIconMarkup = renderToStaticMarkup(<ImageIcon aria-hidden="true
 const brokenImageIconMarkup = renderToStaticMarkup(<ImageOff aria-hidden="true" />)
 const expandTableIconMarkup = renderToStaticMarkup(<Maximize2 aria-hidden="true" />)
 
+const renderLocalMediaButton = (path: string, displayPath: string, name: string): string => {
+  const video = Boolean(getVideoMimeType(path))
+  return `<button${renderHtmlAttributes({
+    class: `chat-detail__markdown-image${video ? ' chat-detail__markdown-video' : ''}`,
+    type: 'button',
+    title: `Open ${displayPath}`,
+    'aria-label': `${video ? 'Play' : 'Open'} ${name}`,
+    'data-local-image-path': path,
+    'data-local-image-name': name,
+    'data-media-type': video ? 'video' : 'image'
+  })}><span class="chat-detail__markdown-image-loading" aria-label="Loading ${escapeHtml(name)}">${loadingImageIconMarkup}</span></button>`
+}
+
 const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => {
   const renderer = new Renderer()
 
@@ -413,6 +428,13 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
   renderer.code = ({ lang, text }) => renderMarkdownCodeBlock(text, lang)
   renderer.link = function (token: Tokens.Link): string {
     const fileTarget = getMarkdownFileTarget(token.href)
+    if (fileTarget && getVideoMimeType(fileTarget.path)) {
+      return renderLocalMediaButton(
+        fileTarget.path,
+        fileTarget.displayPath,
+        getMarkdownFileLinkLabel(token, fileTarget.line)
+      )
+    }
     if (fileTarget && interactiveFileLinks) {
       const label = getMarkdownFileLinkLabel(token, fileTarget.line)
       const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
@@ -464,14 +486,7 @@ const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => 
     const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
     const name = token.text.trim() || fileName
 
-    return `<button${renderHtmlAttributes({
-      class: 'chat-detail__markdown-image',
-      type: 'button',
-      title: `Open ${fileTarget.displayPath}`,
-      'aria-label': `Open ${name}`,
-      'data-local-image-path': fileTarget.path,
-      'data-local-image-name': name
-    })}><span class="chat-detail__markdown-image-loading" aria-label="Loading ${escapeHtml(name)}">${loadingImageIconMarkup}</span></button>`
+    return renderLocalMediaButton(fileTarget.path, fileTarget.displayPath, name)
   }
   renderer.table = function (token: Tokens.Table): string {
     const tableMarkup = defaultChatMarkdownRenderer.table.call(this, token)
@@ -778,7 +793,7 @@ const GeneratedImageThumbnail: React.FC<{
       current = false
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [initialDataUrl, path])
+  }, [path])
 
   if (failed) {
     return (
@@ -1307,6 +1322,7 @@ const MarkdownMessageComponent: React.FC<{
     imageUrl: string
     name: string
     path: string
+    mediaType: 'image' | 'video'
   } | null>(null)
   const [expandedTableHtml, setExpandedTableHtml] = useState<string | null>(null)
   const { visibleContent } = useStreamRenderedContent(content, streaming)
@@ -1337,76 +1353,23 @@ const MarkdownMessageComponent: React.FC<{
       ),
     [markdownRenderer, preserveLineBreaks, visibleContent, visualizationMarkdown]
   )
+  useMarkdownImages(
+    containerRef,
+    renderedMarkdown,
+    localImageContainer,
+    localImageCwd,
+    brokenImageIconMarkup
+  )
   useStreamReveal(containerRef, renderedMarkdown, streaming)
   // React must not replace this DOM when portal or preview state changes:
   // the visualization portals and hydrated images live inside it.
   const markdownHtml = useMemo(() => ({ __html: renderedMarkdown }), [renderedMarkdown])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: HTML signals replacement of visualization hosts.
   useEffect(() => {
     setVisualizationHosts(
       Array.from(containerRef.current?.querySelectorAll<HTMLElement>('[data-visualization]') ?? [])
     )
   }, [renderedMarkdown])
-  useEffect(() => {
-    const markdownContainer = containerRef.current
-    if (!markdownContainer) return undefined
-
-    let current = true
-    const objectUrls: string[] = []
-    const imageButtons = markdownContainer.querySelectorAll<HTMLButtonElement>(
-      '.chat-detail__markdown-image[data-local-image-path]'
-    )
-    const faviconImages = markdownContainer.querySelectorAll<HTMLImageElement>(
-      '.chat-detail__link-favicon'
-    )
-
-    const handleFaviconError = (event: Event): void => {
-      if (event.currentTarget instanceof HTMLImageElement) event.currentTarget.hidden = true
-    }
-    faviconImages.forEach((image) => image.addEventListener('error', handleFaviconError))
-
-    imageButtons.forEach((button) => {
-      const path = button.dataset.localImagePath
-      const name = button.dataset.localImageName ?? 'Image'
-      if (!path) return
-
-      void appApi
-        .getLocalImage({
-          container: localImageContainer,
-          cwd: localImageCwd,
-          path,
-          relativeTo: 'cwd'
-        })
-        .then((image) => {
-          if (!current || !markdownContainer.contains(button)) return
-
-          const objectUrl = createLocalImageUrl(image)
-          objectUrls.push(objectUrl)
-          const imageElement = document.createElement('img')
-          imageElement.src = objectUrl
-          imageElement.alt = name
-          button.replaceChildren(imageElement)
-        })
-        .catch((loadError) => {
-          console.error('[caught:ChatDetailItem:MarkdownMessageComponent]', loadError)
-
-          if (!current || !markdownContainer.contains(button)) return
-
-          const error = document.createElement('span')
-          error.className = 'chat-detail__markdown-image-error'
-          error.innerHTML = brokenImageIconMarkup
-          button.replaceChildren(error)
-          button.setAttribute('aria-disabled', 'true')
-          button.setAttribute('aria-label', `${name} unavailable`)
-          button.title = `${path} unavailable`
-        })
-    })
-
-    return () => {
-      current = false
-      faviconImages.forEach((image) => image.removeEventListener('error', handleFaviconError))
-      objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl))
-    }
-  }, [localImageContainer, localImageCwd, renderedMarkdown])
   useEffect(() => {
     if (streaming) return undefined
 
@@ -1439,10 +1402,13 @@ const MarkdownMessageComponent: React.FC<{
       if (imageButton && containerRef.current?.contains(imageButton)) {
         const path = imageButton.dataset.localImagePath
         const name = imageButton.dataset.localImageName ?? 'Image'
-        const imageUrl = imageButton.querySelector('img')?.src
+        const imageUrl = imageButton.querySelector<HTMLImageElement | HTMLVideoElement>(
+          'img, video'
+        )?.src
+        const mediaType = imageButton.dataset.mediaType === 'video' ? 'video' : 'image'
         if (path && imageUrl) {
           event.preventDefault()
-          setLocalImagePreview({ imageUrl, name, path })
+          setLocalImagePreview({ imageUrl, name, path, mediaType })
         }
         return
       }
@@ -1498,6 +1464,7 @@ const MarkdownMessageComponent: React.FC<{
       </div>
       {localImagePreview && (
         <ImageLightbox
+          mediaType={localImagePreview.mediaType}
           imageUrl={localImagePreview.imageUrl}
           localImageOptions={localImageOptions}
           name={localImagePreview.name}

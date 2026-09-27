@@ -1406,3 +1406,30 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 .chat-detail__working-message .language-diff .token.coord {
   color: var(--muted);
 }
+
+.chat-detail__markdown-video {
+  position: relative;
+  width: 11rem;
+  height: 7rem;
+  cursor: pointer;
+}
+
+.chat-detail__markdown-video > video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.chat-detail__markdown-video-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: rgb(0 0 0 / 20%);
+  text-shadow: 0 1px 5px black;
+  font-size: 1.8rem;
+  pointer-events: none;
+}

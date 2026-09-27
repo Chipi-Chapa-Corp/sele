@@ -55,7 +55,7 @@ if (!process.versions.electron) {
                       <CwdNotesButton label="Project" notes={s.notes} onNotesChange={notes=>window.renderFixture({notes})}/>
                     </div>
                     <div className="chat-detail__messages" style={{height:320,flex:'none',overflow:'auto'}}>
-                      <MarkdownMessage className="chat-detail__message" content={s.content} streaming={s.streaming}/>
+                      <MarkdownMessage className="chat-detail__message" content={s.content} streaming={s.streaming} localImageContainer={s.imageContainer}/>
                       {s.working && <ChatDetailItem key={s.working.id} item={s.working}/>}
                       {s.users.map(item=><ChatDetailItem key={item.id} item={item} motionChatKey="codex:chat"/>)}
                     </div>
@@ -117,8 +117,24 @@ if (!process.versions.electron) {
         ]
       })
       await fs.writeFile(
+        path.join(directory, 'image-api.js'),
+        `
+        window.imageReads = [];
+        window.revokedImageUrls = [];
+        const revoke = URL.revokeObjectURL.bind(URL);
+        URL.revokeObjectURL = url => { window.revokedImageUrls.push(url); revoke(url) };
+        window.appApi = { getLocalImage: async options => {
+          window.imageReads.push(options);
+          await new Promise(resolve => setTimeout(resolve, 75));
+          return {mimeType:'image/png',updatedAt:1,data:Uint8Array.from(atob(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII='
+          ), c => c.charCodeAt(0)).buffer};
+        }};
+      `
+      )
+      await fs.writeFile(
         path.join(directory, 'index.html'),
-        `<!doctype html><html data-color-scheme="dark"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script></html>`
+        `<!doctype html><html data-color-scheme="dark"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="image-api.js"></script><script src="fixture.js"></script></html>`
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
@@ -327,7 +343,112 @@ if (!process.versions.electron) {
           'finishing a reveal never changes message height or scroll position: ' + before
         )
       }
+      await run(`window.renderFixture({content:'![Existing image](/tmp/existing.png)',streaming:false,
+        imageContainer:{kind:'container',tool:'ssh',name:'images',runtime:{kind:'host'}}})`)
+      await wait(200)
+      await run(
+        `window.loadedImage = document.querySelector('.chat-detail__markdown-image img'); window.loadedImageUrl = window.loadedImage.src; window.imageReads = []`
+      )
+      await run(
+        `window.renderFixture({imageContainer:{kind:'container',tool:'ssh',name:'images',runtime:{kind:'host'}}})`
+      )
+      await wait(100)
+      assert.equal(
+        await run(`window.imageReads.length`),
+        0,
+        'equivalent container props do not reload images'
+      )
+      await run(
+        `window.renderFixture({content:'![Existing image](/tmp/existing.png)\\n\\nAppended text.',streaming:true})`
+      )
+      await wait(250)
+      assert.equal(
+        await run(
+          `document.querySelector('.chat-detail__markdown-image img') === window.loadedImage`
+        ),
+        true,
+        'appending Markdown retains the decoded image node'
+      )
+      assert.equal(await run(`window.loadedImage.src`), await run(`window.loadedImageUrl`))
+      assert.equal(
+        await run(`window.imageReads.length`),
+        0,
+        'appending text does not reread existing images'
+      )
+      assert.equal(await run(`window.revokedImageUrls.includes(window.loadedImageUrl)`), false)
+      await run(
+        `window.renderFixture({imageContainer:{kind:'container',tool:'ssh',name:'different-host'}})`
+      )
+      await wait(100)
+      assert.equal(
+        await run(`window.imageReads.length`),
+        1,
+        'a different file source reloads the image'
+      )
+      assert.equal(await run(`window.revokedImageUrls.includes(window.loadedImageUrl)`), true)
+      await run(
+        `window.loadedImageUrl = document.querySelector('.chat-detail__markdown-image img').src`
+      )
       await run(`window.renderFixture({content:'Replacement text',streaming:false})`)
+      await frames()
+      assert.equal(
+        await run(`window.revokedImageUrls.includes(window.loadedImageUrl)`),
+        true,
+        'removing an image releases its object URL'
+      )
+      // A chunk received during a file read must reuse the pending read, too.
+      await run(
+        `window.imageReads = []; window.renderFixture({content:'![Pending](/tmp/pending.png)'})`
+      )
+      await frames()
+      await run(`window.renderFixture({content:'![Pending](/tmp/pending.png)\\n\\nNew text.'})`)
+      await wait(150)
+      assert.equal(
+        await run(`window.imageReads.length`),
+        1,
+        'pending image reads survive text updates'
+      )
+      assert.equal(
+        await run(`document.querySelector('.chat-detail__markdown-image img').complete`),
+        true
+      )
+      // Browser-loaded images also retain their decoded DOM node across chunks.
+      await run(`window.remoteContent = '![Remote](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=)';
+        window.renderFixture({content:window.remoteContent})`)
+      await frames()
+      await run(
+        `window.remoteImage = document.querySelector('.chat-detail__message-markdown img'); window.remoteImage.decode()`
+      )
+      await run(`window.renderFixture({content:window.remoteContent + '\\n\\nAdditional text.'})`)
+      await frames()
+      assert.equal(
+        await run(
+          `document.querySelector('.chat-detail__message-markdown img') === window.remoteImage`
+        ),
+        true,
+        'browser-loaded images survive Markdown updates'
+      )
+      // Generated thumbnails use the file path even when provider metadata changes.
+      await run(`window.imageReads = []; window.renderFixture({content:'Replacement text',working:{
+        type:'working',id:'image-working',status:'working',items:[{...window.tool(0),
+          icon:'image-generation',images:[{path:'/tmp/generated.png',dataUrl:null,name:'Generated'}]}]}})`)
+      await wait(150)
+      await run(`window.generatedImage = document.querySelector('.chat-detail__generated-image-thumbnail img');
+        window.imageReads = []; window.renderFixture({working:{...window.state.working,
+          items:[{...window.state.working.items[0],images:[{path:'/tmp/generated.png',dataUrl:'updated metadata',name:'Generated'}]}]}})`)
+      await wait(100)
+      assert.equal(
+        await run(`window.imageReads.length`),
+        0,
+        'thumbnail metadata does not reload an unchanged path'
+      )
+      assert.equal(
+        await run(
+          `document.querySelector('.chat-detail__generated-image-thumbnail img') === window.generatedImage`
+        ),
+        true
+      )
+      await run(`window.renderFixture({working:null})`)
       await frames()
       for (const [id, kind] of [
         ['send', null],
@@ -373,9 +494,20 @@ if (!process.versions.electron) {
           '/tmp/sele-motion-send.png',
           (await win.webContents.capturePage()).toPNG()
         )
-      await run(
-        `window.renderFixture({users:[{...window.state.users[0],id:'provider-confirmed'}]})`
-      )
+      // Compare against an uninterrupted flight through a provider handoff.
+      // Keeping the same DOM copy is insufficient if its easing restarts halfway.
+      await wait(65)
+      await run(`(() => {
+        const ghost = document.querySelector('.message-flight');
+        const animation = ghost.getAnimations()[0];
+        window.flightReference = ghost.cloneNode(true);
+        window.flightReference.classList.remove('message-flight');
+        document.body.append(window.flightReference);
+        window.referenceAnimation = window.flightReference.animate(
+          animation.effect.getKeyframes(), animation.effect.getTiming());
+        window.referenceAnimation.startTime = animation.startTime;
+        window.renderFixture({users:[{...window.state.users[0],id:'provider-confirmed'}]});
+      })()`)
       await frames()
       assert.equal(
         await run(`document.querySelector('.message-flight')===window.flightNode`),
@@ -389,6 +521,23 @@ if (!process.versions.electron) {
         '0',
         'confirmed row stays hidden until landing'
       )
+      const handoffDrift = await run(`new Promise(resolve => {
+        let worst = 0;
+        let frames = 0;
+        const sample = () => {
+          const actual = document.querySelector('.message-flight').getBoundingClientRect();
+          const expected = window.flightReference.getBoundingClientRect();
+          worst = Math.max(worst, Math.hypot(actual.x - expected.x, actual.y - expected.y));
+          if (++frames < 5) requestAnimationFrame(sample);
+          else {
+            window.referenceAnimation.cancel();
+            window.flightReference.remove();
+            resolve(worst);
+          }
+        };
+        requestAnimationFrame(sample);
+      })`)
+      assert.ok(handoffDrift < 0.5, 'provider handoff preserves trajectory; drift: ' + handoffDrift)
       await wait(450)
       assert.equal(await run(`document.querySelector('.message-flight')`), null)
       assert.equal(
@@ -397,7 +546,49 @@ if (!process.versions.electron) {
         ),
         '1'
       )
-      await run(`window.renderFixture({users:[],realComposer:true})`)
+      // Retarget an actual scroll at a fixed animation time: it must preserve
+      // the current position and clock, then land at the updated destination.
+      await run(`(() => {
+        window.renderFixture({users:[],content:'Earlier message\\n\\n'.repeat(40)});
+        window.sendFixture('scrolling', 'Send while the viewport adjusts');
+        const viewport = document.querySelector('.chat-detail__messages');
+        viewport.scrollTop = viewport.scrollHeight;
+      })()`)
+      await frames()
+      const beforeScroll = await run(`(() => {
+        const ghost = document.querySelector('.message-flight');
+        const animation = ghost.getAnimations()[0];
+        animation.pause();
+        animation.currentTime = 180;
+        const bounds = ghost.getBoundingClientRect();
+        const viewport = document.querySelector('.chat-detail__messages');
+        const top = viewport.scrollTop;
+        viewport.scrollTop -= 24;
+        return {x:bounds.x,y:bounds.y,scrolled:top - viewport.scrollTop};
+      })()`)
+      assert.equal(beforeScroll.scrolled, 24, 'the fixture actually scrolls')
+      await frames()
+      const afterScroll = await run(`(() => {
+        const ghost = document.querySelector('.message-flight');
+        const animation = ghost.getAnimations()[0];
+        const bounds = ghost.getBoundingClientRect();
+        const time = animation.currentTime;
+        animation.pause();
+        animation.currentTime = 360;
+        const landing = ghost.getBoundingClientRect();
+        const target = document.querySelector('[data-motion-message-id="scrolling"] .chat-detail__message--user').getBoundingClientRect();
+        animation.play();
+        return {x:bounds.x,y:bounds.y,time,landingError:Math.hypot(landing.x-target.x,landing.y-target.y)};
+      })()`)
+      assert.equal(afterScroll.time, 180, 'scrolling preserves the animation clock')
+      assert.ok(
+        Math.hypot(afterScroll.x - beforeScroll.x, afterScroll.y - beforeScroll.y) < 0.5,
+        'retargeting does not jump from the current visual position'
+      )
+      assert.ok(afterScroll.landingError < 0.5, 'the flight lands at the scrolled destination')
+      await wait(450)
+      assert.equal(await run(`document.querySelector('.message-flight')`), null)
+      await run(`window.renderFixture({users:[],content:'Replacement text',realComposer:true})`)
       await frames()
       await run(`document.querySelector('textarea').focus()`)
       await win.webContents.debugger.sendCommand('Input.insertText', {
@@ -582,7 +773,7 @@ if (!process.versions.electron) {
       assert.equal(await allRowsOpaque(), true, 'new tools respect reduced motion')
       assert.deepEqual(errors, [], 'no React or renderer errors')
       console.log(
-        'Motion checks passed: list exits, tabs, portal reopen, notes focus, streaming, send/queue/steer, provider handoff, nested selector navigation, bounded Working rows, cancellation, reduced motion'
+        'Motion checks passed: list exits, tabs, portal reopen, notes focus, streaming, image retention and cleanup, send/queue/steer, provider handoff, nested selector navigation, bounded Working rows, cancellation, reduced motion'
       )
       win.destroy()
     } catch (error) {

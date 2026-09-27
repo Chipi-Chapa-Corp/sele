@@ -7,6 +7,7 @@ import { Button } from './Button'
 import './ImageLightbox.css'
 
 type ImageLightboxProps = {
+  mediaType?: 'image' | 'video'
   imageUrl: string
   name: string
   path?: string | null
@@ -18,6 +19,7 @@ type CopyState = 'idle' | 'copying' | 'copied' | 'error'
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 export const ImageLightbox = ({
+  mediaType = 'image',
   imageUrl,
   name,
   path,
@@ -59,7 +61,10 @@ export const ImageLightbox = ({
     }
     setCopyState('copying')
     try {
-      await appApi.copyLocalImage({ ...localImageOptions, path })
+      await (mediaType === 'video' ? appApi.copyLocalVideo : appApi.copyLocalImage)({
+        ...localImageOptions,
+        path
+      })
       setCopyState('copied')
       copyFeedbackTimerRef.current = window.setTimeout(() => {
         copyFeedbackTimerRef.current = null
@@ -80,7 +85,9 @@ export const ImageLightbox = ({
     }
     setSaveState('saving')
     try {
-      const savedPath = await appApi.saveLocalImage({ ...localImageOptions, path })
+      const savedPath = await (mediaType === 'video'
+        ? appApi.saveLocalVideo
+        : appApi.saveLocalImage)({ ...localImageOptions, path })
       if (!savedPath) {
         setSaveState('idle')
         return
@@ -114,7 +121,11 @@ export const ImageLightbox = ({
         }}
       >
         <div className="image-lightbox__frame">
-          <img src={imageUrl} alt={`${name} preview`} />
+          {mediaType === 'video' ? (
+            <video src={imageUrl} aria-label={`${name} preview`} controls autoPlay playsInline />
+          ) : (
+            <img src={imageUrl} alt={`${name} preview`} />
+          )}
           <div className="image-lightbox__actions">
             {path && (
               <>
@@ -131,7 +142,9 @@ export const ImageLightbox = ({
                   }
                   size="small"
                   theme="secondary"
-                  title={copyState === 'error' ? 'Unable to copy image' : 'Copy image'}
+                  title={
+                    copyState === 'error' ? `Unable to copy ${mediaType}` : `Copy ${mediaType}`
+                  }
                 />
                 <Button
                   disabled={saveState === 'saving'}
@@ -146,12 +159,14 @@ export const ImageLightbox = ({
                   }
                   size="small"
                   theme="secondary"
-                  title={saveState === 'error' ? 'Unable to save image' : 'Save image'}
+                  title={
+                    saveState === 'error' ? `Unable to save ${mediaType}` : `Save ${mediaType}`
+                  }
                 />
               </>
             )}
             <Button
-              aria-label="Close image preview"
+              aria-label={`Close ${mediaType} preview`}
               callback={onClose}
               icon={<X aria-hidden="true" />}
               size="small"

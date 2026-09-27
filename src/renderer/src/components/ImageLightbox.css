@@ -28,7 +28,8 @@
   cursor: default;
 }
 
-.image-lightbox__frame > img {
+.image-lightbox__frame > img,
+.image-lightbox__frame > video {
   display: block;
   width: auto;
   height: auto;
@@ -81,7 +82,8 @@
     max-height: calc(100vh - 1.4rem);
   }
 
-  .image-lightbox__frame > img {
+  .image-lightbox__frame > img,
+  .image-lightbox__frame > video {
     max-height: calc(100vh - 1.4rem);
   }
 }

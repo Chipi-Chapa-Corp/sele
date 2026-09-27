@@ -40,6 +40,7 @@
     "test:ui-motion": "node scripts/tests/test-ui-motion.cjs",
     "test:ui-responsiveness": "node scripts/tests/test-ui-responsiveness.cjs",
     "test:input-focus": "node scripts/tests/test-input-focus.cjs",
+    "test:video-preview": "node scripts/tests/test-video-preview.cjs",
     "test:visualization": "node scripts/tests/test-visualization.cjs",
     "lint:fix": "biome lint --write .",
     "benchmark:performance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/benchmarks/benchmark-performance-hotpaths.mjs",

@@ -14,7 +14,6 @@ type Flight = {
   restore: () => void
   ghost: HTMLDivElement | null
   animation: Animation | null
-  landsAt: number | null
   stopListening: () => void
 }
 const flights = new Set<Flight>()
@@ -59,7 +58,6 @@ export function captureMessageFlight(
     restore: () => {},
     ghost: null,
     animation: null,
-    landsAt: null,
     stopListening: () => {}
   }
   const cancel = (): void => finishFlight(flight)
@@ -111,7 +109,6 @@ function flyToTarget(flight: Flight): void {
     })
     document.body.append(ghost)
     flight.ghost = ghost
-    flight.landsAt = performance.now() + duration
     window.clearTimeout(flight.timer)
     flight.timer = window.setTimeout(() => finishFlight(flight), duration + 80)
     const cancel = (): void => finishFlight(flight)
@@ -133,21 +130,37 @@ function flyToTarget(flight: Flight): void {
       window.removeEventListener('resize', cancel)
     }
   }
-  flight.animation?.cancel()
+  const effect = flight.animation?.effect as KeyframeEffect | undefined
+  const progress = effect?.getComputedTiming().progress ?? 0
+  if (progress >= 1) {
+    finishFlight(flight)
+    return
+  }
   Object.assign(ghost.style, {
     left: `${bounds.left}px`,
     top: `${bounds.top}px`,
     width: `${bounds.width}px`,
     maxHeight: `${Math.min(bounds.height, viewBounds.height)}px`
   })
-  const remaining = Math.max(0, (flight.landsAt ?? performance.now()) - performance.now())
-  flight.animation = ghost.animate(
-    [
-      { transform: `translate(${from.left - bounds.left}px, ${from.top - bounds.top}px)` },
-      { transform: 'translate(0, 0)' }
-    ],
-    { duration: remaining, easing: 'cubic-bezier(0.25, 0.65, 0.3, 1)', fill: 'both' }
-  )
+  // Keep the original clock and easing through provider handoffs and scrolling.
+  // Restarting the curve from the current position abruptly changes speed. Its
+  // eased progress lets us retarget without changing the current visual position.
+  const remaining = 1 - progress
+  const keyframes = [
+    {
+      transform: `translate(${(from.left - bounds.left) / remaining}px, ${(from.top - bounds.top) / remaining}px)`
+    },
+    { transform: 'translate(0, 0)' }
+  ]
+  if (effect) {
+    effect.setKeyframes(keyframes)
+    return
+  }
+  flight.animation = ghost.animate(keyframes, {
+    duration,
+    easing: 'cubic-bezier(0.25, 0.65, 0.3, 1)',
+    fill: 'both'
+  })
   // No crossfade: swap identical visuals at the destination in one frame.
   flight.animation.onfinish = () => finishFlight(flight)
 }

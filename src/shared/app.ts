@@ -94,18 +94,22 @@ export type AppAddProjectOptions = {
   additionalCwds?: string[]
 }
 
-export type AppLocalImageOptions = {
+export type AppLocalMediaOptions = {
   container?: AppContainerTarget | null
   cwd?: string | null
   path: string
   relativeTo?: 'cwd' | 'repository'
 }
 
-export type AppLocalImage = {
+export type AppLocalImageOptions = AppLocalMediaOptions
+
+export type AppLocalMedia = {
   data: ArrayBuffer
   mimeType: string
   updatedAt: number
 }
+
+export type AppLocalImage = AppLocalMedia
 
 export type AppSelectedImage = {
   kind: 'image'
@@ -599,6 +603,9 @@ export type AppApi = {
   readClipboardText: () => Promise<string>
   writeClipboardText: (text: string) => Promise<void>
   getClipboardImage: () => Promise<AppSelectedImage | null>
+  getLocalVideo: (options: AppLocalMediaOptions) => Promise<AppLocalMedia>
+  copyLocalVideo: (options: AppLocalMediaOptions) => Promise<void>
+  saveLocalVideo: (options: AppLocalMediaOptions) => Promise<string | null>
   getLocalImage: (options: AppLocalImageOptions) => Promise<AppLocalImage>
   copyLocalImage: (options: AppLocalImageOptions) => Promise<void>
   saveLocalImage: (options: AppLocalImageOptions) => Promise<string | null>
@@ -661,6 +668,9 @@ export const appIpcChannels = {
   readClipboardText: 'app:read-clipboard-text',
   writeClipboardText: 'app:write-clipboard-text',
   getClipboardImage: 'app:get-clipboard-image',
+  getLocalVideo: 'app:get-local-video',
+  copyLocalVideo: 'app:copy-local-video',
+  saveLocalVideo: 'app:save-local-video',
   getLocalImage: 'app:get-local-image',
   copyLocalImage: 'app:copy-local-image',
   saveLocalImage: 'app:save-local-image'

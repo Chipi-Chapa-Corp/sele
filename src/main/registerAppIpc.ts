@@ -1,3 +1,5 @@
+import { getVideoMimeType } from '../shared/video'
+import { copyVideoFile } from './videoClipboard'
 import { diagnosticLog, handleLoggedIpc } from './logging'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile, spawn } from 'node:child_process'
@@ -212,6 +214,7 @@ const imageMimeTypes = {
 } satisfies Record<string, string>
 const maxProjectIconBytes = 8 * 1024 * 1024
 const maxLocalImageBytes = 32 * 1024 * 1024
+const maxLocalVideoBytes = 128 * 1024 * 1024
 const maxMessageAttachmentCount = 10
 const messageImageExtensions = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const automaticProjectIconPaths = [
@@ -427,9 +430,9 @@ const validateSshIdentityFile = async (identityFile?: string | null): Promise<vo
   if (!identityStat?.isFile()) throw new Error('SSH identity file does not exist')
 }
 
-const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
+const getLocalMediaOptions = (value: unknown): AppLocalImageOptions => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid local image options')
+    throw new Error('Invalid local media options')
   }
 
   const options = value as {
@@ -443,18 +446,18 @@ const getLocalImageOptions = (value: unknown): AppLocalImageOptions => {
     options.path.length === 0 ||
     options.path.includes('\0')
   ) {
-    throw new Error('Invalid local image path')
+    throw new Error('Invalid local media path')
   }
 
   const cwd = getOptionalCwd(options.cwd)
   if (!isAbsolute(options.path) && !cwd)
-    throw new Error('A cwd is required for relative image paths')
+    throw new Error('A cwd is required for relative media paths')
   if (
     options.relativeTo !== undefined &&
     options.relativeTo !== 'cwd' &&
     options.relativeTo !== 'repository'
   ) {
-    throw new Error('Invalid local image path base')
+    throw new Error('Invalid local media path base')
   }
 
   return {
@@ -478,12 +481,17 @@ const getLocalImageMimeType = (imagePath: string, file: Buffer): string | null =
   return file.subarray(0, pngSignature.length).equals(pngSignature) ? 'image/png' : null
 }
 
-const getImageFile = async (imagePath: string, maxBytes: number): Promise<AppLocalImage | null> => {
+const getImageFile = async (
+  imagePath: string,
+  maxBytes: number,
+  kind: 'image' | 'video' = 'image'
+): Promise<AppLocalImage | null> => {
   const imageStat = await stat(imagePath)
   if (!imageStat.isFile() || imageStat.size > maxBytes) return null
 
   const file = await readFile(imagePath)
-  const mimeType = getLocalImageMimeType(imagePath, file)
+  const mimeType =
+    kind === 'video' ? getVideoMimeType(imagePath) : getLocalImageMimeType(imagePath, file)
   if (!mimeType) return null
   return {
     data: file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer,
@@ -531,7 +539,7 @@ const getProjectIconFile = async (
   return image ? { dataUrl: getImageDataUrl(image), updatedAt: image.updatedAt } : null
 }
 
-const resolveLocalImagePath = async (
+const resolveLocalMediaPath = async (
   cwd: string | null,
   path: string,
   relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
@@ -553,19 +561,24 @@ const resolveLocalImagePath = async (
   return imagePath
 }
 
-const getLocalImage = async (
+const getLocalMedia = async (
   cwd: string | null,
   path: string,
-  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
+  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository',
+  kind: 'image' | 'video' = 'image'
 ): Promise<AppLocalImage> => {
   const container = gitCommandContext.getStore()?.container
   if (await shouldReadImageThroughTarget(container)) {
-    return getTargetLocalImage(container, cwd, path, relativeTo)
+    return getTargetLocalMedia(container, cwd, path, relativeTo, kind)
   }
 
-  const imagePath = await resolveLocalImagePath(cwd, path, relativeTo)
-  const image = await getImageFile(imagePath, maxLocalImageBytes)
-  if (!image) throw new Error('Unable to load this image.')
+  const imagePath = await resolveLocalMediaPath(cwd, path, relativeTo)
+  const image = await getImageFile(
+    imagePath,
+    kind === 'video' ? maxLocalVideoBytes : maxLocalImageBytes,
+    kind
+  )
+  if (!image) throw new Error(`Unable to load this ${kind}.`)
   return {
     data: image.data,
     mimeType: image.mimeType,
@@ -2186,16 +2199,17 @@ const writeSshFileContents = async (
   return { version: getFileVersion(contents) }
 }
 
-const getTargetLocalImage = async (
+const getTargetLocalMedia = async (
   container: AppContainerTarget | null | undefined,
   cwd: string | null,
   path: string,
-  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
+  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository',
+  kind: 'image' | 'video' = 'image'
 ): Promise<AppLocalImage> => {
   let commandCwd = cwd ?? '/'
   let imagePath = path
   if (!isAbsolute(imagePath)) {
-    if (!cwd) throw new Error('A cwd is required for relative image paths')
+    if (!cwd) throw new Error('A cwd is required for relative media paths')
     if (relativeTo === 'repository') {
       const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
       if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
@@ -2204,11 +2218,12 @@ const getTargetLocalImage = async (
     }
   }
 
+  const maxBytes = kind === 'video' ? maxLocalVideoBytes : maxLocalImageBytes
   const script = [
     'set -eu',
-    '[ -f "$1" ] || { echo "Choose a regular image file." >&2; exit 1; }',
+    '[ -f "$1" ] || { echo "Choose a regular media file." >&2; exit 1; }',
     'size=$(wc -c < "$1")',
-    `[ "$size" -le ${maxLocalImageBytes} ] || { echo "Choose an image smaller than 32 MB." >&2; exit 1; }`,
+    `[ "$size" -le ${maxBytes} ] || { echo "Choose a ${kind} smaller than ${maxBytes / 1024 / 1024} MB." >&2; exit 1; }`,
     'printf "%s\\0" "$size"',
     'cat -- "$1"'
   ].join('\n')
@@ -2216,7 +2231,7 @@ const getTargetLocalImage = async (
     container,
     commandCwd,
     ['-lc', script, 'sele-read-image', imagePath],
-    { maxBuffer: maxLocalImageBytes + remoteFileMetadataBufferBytes }
+    { maxBuffer: maxBytes + remoteFileMetadataBufferBytes }
   )
   const sizeSeparator = output.indexOf(0)
   if (sizeSeparator < 0) throw new Error('Invalid remote image response')
@@ -2225,8 +2240,8 @@ const getTargetLocalImage = async (
   if (!Number.isSafeInteger(size) || size < 0 || file.byteLength !== size) {
     throw new Error('Invalid remote image response')
   }
-  const mimeType = getLocalImageMimeType(path, file)
-  if (!mimeType) throw new Error('Unable to load this image.')
+  const mimeType = kind === 'video' ? getVideoMimeType(path) : getLocalImageMimeType(path, file)
+  if (!mimeType) throw new Error(`Unable to load this ${kind}.`)
 
   return {
     data: file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer,
@@ -3572,40 +3587,62 @@ export const registerAppIpc = (): void => {
     } satisfies AppSelectedImage
   })
 
-  handleLoggedIpc(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
-    const options = getLocalImageOptions(value)
+  handleLoggedIpc(appIpcChannels.getLocalVideo, async (_event, value: unknown) => {
+    const options = getLocalMediaOptions(value)
     return runWithGitContainer(options.container, () =>
-      getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
+      getLocalMedia(options.cwd ?? null, options.path, options.relativeTo, 'video')
+    )
+  })
+
+  handleLoggedIpc(appIpcChannels.copyLocalVideo, async (_event, value: unknown) => {
+    const options = getLocalMediaOptions(value)
+    const video = await runWithGitContainer(options.container, () =>
+      getLocalMedia(options.cwd ?? null, options.path, options.relativeTo, 'video')
+    )
+    await copyVideoFile(basename(options.path), Buffer.from(video.data))
+  })
+
+  handleLoggedIpc(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
+    const options = getLocalMediaOptions(value)
+    return runWithGitContainer(options.container, () =>
+      getLocalMedia(options.cwd ?? null, options.path, options.relativeTo)
     )
   })
 
   handleLoggedIpc(appIpcChannels.copyLocalImage, async (_event, value: unknown) => {
-    const options = getLocalImageOptions(value)
+    const options = getLocalMediaOptions(value)
     const image = await runWithGitContainer(options.container, () =>
-      getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
+      getLocalMedia(options.cwd ?? null, options.path, options.relativeTo)
     )
     const clipboardImage = nativeImage.createFromBuffer(Buffer.from(image.data))
     if (clipboardImage.isEmpty()) throw new Error('Unable to copy this image.')
     clipboard.writeImage(clipboardImage)
   })
 
-  handleLoggedIpc(appIpcChannels.saveLocalImage, async (event, value: unknown) => {
-    const options = getLocalImageOptions(value)
-    const image = await runWithGitContainer(options.container, () =>
-      getLocalImage(options.cwd ?? null, options.path, options.relativeTo)
-    )
-    const extension = extname(options.path).slice(1)
-    const dialogOptions = {
-      defaultPath: join(app.getPath('downloads'), basename(options.path)),
-      filters: extension ? [{ name: 'Image', extensions: [extension] }] : undefined
-    } satisfies Electron.SaveDialogOptions
-    const browserWindow = BrowserWindow.fromWebContents(event.sender)
-    const result = browserWindow
-      ? await dialog.showSaveDialog(browserWindow, dialogOptions)
-      : await dialog.showSaveDialog(dialogOptions)
+  for (const kind of ['image', 'video'] as const) {
+    handleLoggedIpc(
+      kind === 'video' ? appIpcChannels.saveLocalVideo : appIpcChannels.saveLocalImage,
+      async (event, value: unknown) => {
+        const options = getLocalMediaOptions(value)
+        const image = await runWithGitContainer(options.container, () =>
+          getLocalMedia(options.cwd ?? null, options.path, options.relativeTo, kind)
+        )
+        const extension = extname(options.path).slice(1)
+        const dialogOptions = {
+          defaultPath: join(app.getPath('downloads'), basename(options.path)),
+          filters: extension
+            ? [{ name: kind === 'video' ? 'Video' : 'Image', extensions: [extension] }]
+            : undefined
+        } satisfies Electron.SaveDialogOptions
+        const browserWindow = BrowserWindow.fromWebContents(event.sender)
+        const result = browserWindow
+          ? await dialog.showSaveDialog(browserWindow, dialogOptions)
+          : await dialog.showSaveDialog(dialogOptions)
 
-    if (result.canceled || !result.filePath) return null
-    await writeFile(result.filePath, Buffer.from(image.data))
-    return result.filePath
-  })
+        if (result.canceled || !result.filePath) return null
+        await writeFile(result.filePath, Buffer.from(image.data))
+        return result.filePath
+      }
+    )
+  }
 }
