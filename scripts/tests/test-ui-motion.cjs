@@ -61,7 +61,7 @@ if (!process.versions.electron) {
                     <div className="chat-detail__messages" style={{height:320,flex:'none',overflow:'auto'}}>
                       <div className={s.bottomAligned ? 'chat-detail__messages-layout' : undefined}>
                         {s.bottomAligned && <div className="chat-detail__messages-header"/>}
-                        <div className={s.bottomAligned ? 'chat-detail__messages-inner' : undefined}>
+                        <div className={s.bottomAligned ? 'chat-detail__messages-inner' : undefined} style={{paddingRight:s.messageInset}}>
                       <MarkdownMessage className="chat-detail__message" content={s.content} streaming={s.streaming} localImageContainer={s.imageContainer}/>
                       {s.working && <ChatDetailItem key={s.working.id} item={s.working}/>}
                       {s.users.map(item=><ChatDetailItem key={item.id} item={item} motionChatKey="codex:chat"/>)}
@@ -567,22 +567,25 @@ if (!process.versions.electron) {
       await frames()
       const layoutHandoff = await run(`new Promise(resolve => {
         const samples = [];
+        const source = document.getElementById('source').getBoundingClientRect();
+        const destination = document.querySelector('[data-motion-message-id] .chat-detail__message--user').getBoundingClientRect();
         let replaced = false;
         let restored = false;
         const sample = () => {
           const target = document.querySelector('[data-motion-message-id] .chat-detail__message--user').getBoundingClientRect();
           const ghost = document.querySelector('.message-flight');
-          if (!ghost) { resolve({samples,landing:target.y}); return; }
+          if (!ghost) { resolve({samples,source:{x:source.x,y:source.y},destination:{x:destination.x,y:destination.y},
+            targetVisible:getComputedStyle(document.querySelector('[data-motion-message-id]')).opacity}); return; }
           const animation = ghost.getAnimations()[0];
           const bounds = ghost.getBoundingClientRect();
-          samples.push({y:bounds.y,target:target.y});
+          samples.push({x:bounds.x,y:bounds.y,width:bounds.width});
           if (!replaced && animation.currentTime > 110) {
             replaced = true;
             window.renderFixture({tailWorking:null,users:[{...window.state.users[0],id:'confirmed-layout-handoff'}]});
           }
           if (!restored && animation.currentTime > 200) {
             restored = true;
-            window.renderFixture({tailHeight:24,tailWorking:{type:'working',id:'provider-working',status:'working',items:[]}});
+            window.renderFixture({messageInset:60,tailHeight:24,tailWorking:{type:'working',id:'provider-working',status:'working',items:[]}});
           }
           requestAnimationFrame(sample);
         };
@@ -595,15 +598,32 @@ if (!process.versions.electron) {
         backwards < 0.5,
         'provider handoff must not reverse the flight; backwards pixels: ' + backwards
       )
+      const dx = layoutHandoff.destination.x - layoutHandoff.source.x
+      const dy = layoutHandoff.destination.y - layoutHandoff.source.y
+      const bend = Math.max(
+        ...layoutHandoff.samples.map(
+          (point) =>
+            Math.abs(
+              dx * (point.y - layoutHandoff.source.y) - dy * (point.x - layoutHandoff.source.x)
+            ) / Math.hypot(dx, dy)
+        )
+      )
       assert.ok(
-        Math.abs(layoutHandoff.samples.at(-1).y - layoutHandoff.landing) < 1,
-        'the flight meets the actual destination without a landing snap'
+        bend < 0.5,
+        'the whole flight stays on its original straight line; deviation: ' + bend
       )
+      assert.ok(
+        layoutHandoff.samples.every(
+          (point) => Math.abs(point.width - layoutHandoff.samples[0].width) < 0.5
+        ),
+        'destination changes do not resize the travelling copy'
+      )
+      assert.equal(layoutHandoff.targetVisible, '1', 'the real row is visible after handover')
       await run(
-        `window.renderFixture({bottomAligned:false,conversationActive:false,tailWorking:null,tailHeight:0})`
+        `window.renderFixture({bottomAligned:false,conversationActive:false,tailWorking:null,tailHeight:0,messageInset:undefined})`
       )
-      // Retarget an actual scroll at a fixed animation time: it must preserve
-      // the current position and clock, then land at the updated destination.
+      // Scrolling preserves the path and clock. A moved row is revealed by
+      // opacity at landing, including replacement during that handover.
       await run(`(() => {
         window.renderFixture({users:[],content:'Earlier message\\n\\n'.repeat(40)});
         window.sendFixture('scrolling', 'Send while the viewport adjusts');
@@ -619,8 +639,9 @@ if (!process.versions.electron) {
         const bounds = ghost.getBoundingClientRect();
         const viewport = document.querySelector('.chat-detail__messages');
         const top = viewport.scrollTop;
+        const target = document.querySelector('[data-motion-message-id="scrolling"] .chat-detail__message--user').getBoundingClientRect();
         viewport.scrollTop -= 24;
-        return {x:bounds.x,y:bounds.y,scrolled:top - viewport.scrollTop};
+        return {x:bounds.x,y:bounds.y,destinationX:target.x,destinationY:target.y,scrolled:top - viewport.scrollTop};
       })()`)
       assert.equal(beforeScroll.scrolled, 24, 'the fixture actually scrolls')
       await frames()
@@ -633,16 +654,54 @@ if (!process.versions.electron) {
         animation.currentTime = 360;
         const landing = ghost.getBoundingClientRect();
         const target = document.querySelector('[data-motion-message-id="scrolling"] .chat-detail__message--user').getBoundingClientRect();
-        animation.play();
-        return {x:bounds.x,y:bounds.y,time,landingError:Math.hypot(landing.x-target.x,landing.y-target.y)};
+        animation.finish();
+        return {x:bounds.x,y:bounds.y,time,landingX:landing.x,landingY:landing.y,targetY:target.y};
       })()`)
       assert.equal(afterScroll.time, 180, 'scrolling preserves the animation clock')
       assert.ok(
         Math.hypot(afterScroll.x - beforeScroll.x, afterScroll.y - beforeScroll.y) < 0.5,
-        'retargeting does not jump from the current visual position'
+        'scrolling does not change the current visual position'
       )
-      assert.ok(afterScroll.landingError < 0.5, 'the flight lands at the scrolled destination')
+      assert.ok(
+        Math.hypot(
+          afterScroll.landingX - beforeScroll.destinationX,
+          afterScroll.landingY - beforeScroll.destinationY
+        ) < 0.5,
+        'the travel endpoint stays fixed'
+      )
+      assert.ok(
+        Math.abs(afterScroll.landingY - afterScroll.targetY) > 20,
+        'the fixture requires a handover to a different position'
+      )
+      const duringHandover = await run(`new Promise((resolve, reject) => {
+        let frames = 0;
+        const sample = () => {
+          const ghost = document.querySelector('.message-flight');
+          if (!ghost || ++frames > 10) { reject(new Error('No visible landing fade')); return; }
+          const copyOpacity = Number(getComputedStyle(ghost).opacity);
+          if (copyOpacity > 0 && copyOpacity < 1) {
+            window.renderFixture({users:[{...window.state.users[0],id:'confirmed-during-handover'}]});
+            const target = document.querySelector('[data-motion-message-id="confirmed-during-handover"]');
+            resolve({copyOpacity,rowOpacity:Number(getComputedStyle(target).opacity)});
+          } else requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      })`)
+      assert.ok(
+        duringHandover.copyOpacity > 0 && duringHandover.copyOpacity < 1,
+        'the copy dissolves instead of jumping to the moved destination'
+      )
+      assert.ok(
+        Math.abs(duringHandover.copyOpacity + duringHandover.rowOpacity - 1) < 0.05,
+        'a replacement row continues the same fade without a flash'
+      )
       await wait(450)
+      assert.equal(
+        await run(
+          `getComputedStyle(document.querySelector('[data-motion-message-id="confirmed-during-handover"]')).opacity`
+        ),
+        '1'
+      )
       assert.equal(await run(`document.querySelector('.message-flight')`), null)
       await run(`window.renderFixture({users:[],content:'Replacement text',realComposer:true})`)
       await frames()

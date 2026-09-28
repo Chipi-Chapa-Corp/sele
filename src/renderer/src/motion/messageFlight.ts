@@ -15,10 +15,13 @@ type Flight = {
   ghost: HTMLDivElement | null
   animation: Animation | null
   destination: DOMRect | null
+  landingAnimation: Animation | null
+  arrivalAnimation: Animation | null
   stopListening: () => void
 }
 const flights = new Set<Flight>()
 const duration = 360
+const landingDuration = 80
 const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const finishFlight = (flight: Flight): void => {
@@ -27,6 +30,7 @@ const finishFlight = (flight: Flight): void => {
   flight.stopListening()
   flight.restore()
   flight.animation?.cancel()
+  flight.landingAnimation?.cancel()
   flight.ghost?.remove()
   flights.delete(flight)
   flight.target = null
@@ -60,6 +64,8 @@ export function captureMessageFlight(
     ghost: null,
     animation: null,
     destination: null,
+    landingAnimation: null,
+    arrivalAnimation: null,
     stopListening: () => {}
   }
   const cancel = (): void => finishFlight(flight)
@@ -67,6 +73,53 @@ export function captureMessageFlight(
   if (flights.size >= 4) finishFlight(flights.values().next().value!)
   flights.add(flight)
   return cancel
+}
+
+function revealLandingTarget(flight: Flight): void {
+  if (!flight.target || !flight.landingAnimation) return
+  flight.arrivalAnimation?.cancel()
+  flight.arrivalAnimation = flight.target.animate([{ opacity: 0 }, { opacity: 1 }], {
+    duration: landingDuration,
+    fill: 'both'
+  })
+  // A provider can replace the row during the handover, too. Continue its fade
+  // at the same age instead of briefly exposing or hiding the replacement.
+  if (flight.landingAnimation.startTime !== null) {
+    flight.arrivalAnimation.startTime = flight.landingAnimation.startTime
+  } else {
+    flight.arrivalAnimation.currentTime = flight.landingAnimation.currentTime
+  }
+}
+
+function landFlight(flight: Flight): void {
+  if (!flights.has(flight)) return
+  const bubble = flight.target?.querySelector<HTMLElement>('.chat-detail__message--user')
+  const bounds = bubble?.getBoundingClientRect()
+  const destination = flight.destination
+  if (
+    !flight.target?.isConnected ||
+    !bounds ||
+    !destination ||
+    !flight.ghost ||
+    reducedMotion() ||
+    (Math.abs(bounds.left - destination.left) < 1 &&
+      Math.abs(bounds.top - destination.top) < 1 &&
+      Math.abs(bounds.width - destination.width) < 1 &&
+      Math.abs(bounds.height - destination.height) < 1)
+  ) {
+    finishFlight(flight)
+    return
+  }
+  // A moving destination cannot be followed while keeping a straight path.
+  // Finish the original flight, then dissolve into the row at its current
+  // position. Never steer, resize or jump the travelling copy mid-flight.
+  flight.landingAnimation = flight.ghost.animate([{ opacity: 1 }, { opacity: 0 }], {
+    duration: landingDuration,
+    fill: 'both'
+  })
+  flight.landingAnimation.startTime = document.timeline.currentTime
+  revealLandingTarget(flight)
+  flight.landingAnimation.onfinish = () => finishFlight(flight)
 }
 
 function flyToTarget(flight: Flight): void {
@@ -77,104 +130,64 @@ function flyToTarget(flight: Flight): void {
     finishFlight(flight)
     return
   }
+  // Provider reconciliation rebinds the hidden row, not the trajectory.
+  if (flight.ghost) {
+    revealLandingTarget(flight)
+    return
+  }
   const bounds = bubble.getBoundingClientRect()
   const viewBounds = viewport.getBoundingClientRect()
   if (!bounds.width || bounds.bottom <= viewBounds.top || bounds.top >= viewBounds.bottom) {
     finishFlight(flight)
     return
   }
-  const previous = flight.destination
-  if (
-    previous &&
-    bounds.left === previous.left &&
-    bounds.top === previous.top &&
-    bounds.width === previous.width &&
-    bounds.height === previous.height
-  )
-    return
   flight.destination = bounds
-  // On a provider replacement, continue from the copy's current position rather
-  // than replaying from the composer or removing it with the old row.
-  const from = flight.ghost?.getBoundingClientRect() ?? flight.source
-  let ghost = flight.ghost
-  if (!ghost) {
-    ghost = document.createElement('div')
-    ghost.className = `${target.className} message-flight`
-    const copy = bubble.cloneNode(true) as HTMLElement
-    copy.style.maxWidth = 'none'
-    copy.style.width = '100%'
-    ghost.append(copy)
-    ghost.querySelectorAll('[id]').forEach((element) => element.removeAttribute('id'))
-    ghost.setAttribute('aria-hidden', 'true')
-    ghost.inert = true
-    const computed = getComputedStyle(target)
-    for (const property of ['--lead', '--quiet', '--glass', '--control-bg']) {
-      ghost.style.setProperty(property, computed.getPropertyValue(property))
-    }
-    Object.assign(ghost.style, {
-      position: 'fixed',
-      margin: '0',
-      overflow: 'hidden',
-      pointerEvents: 'none',
-      zIndex: '1000',
-      transformOrigin: 'top left'
-    })
-    document.body.append(ghost)
-    flight.ghost = ghost
-    window.clearTimeout(flight.timer)
-    flight.timer = window.setTimeout(() => finishFlight(flight), duration + 80)
-    const cancel = (): void => finishFlight(flight)
-    // Bottom-aligned rows can move when the composer or activity changes height
-    // without producing a scroll event. Track geometry for this short flight;
-    // unchanged bounds leave the compositor animation entirely untouched.
-    let layoutFrame = 0
-    const followLayout = (): void => {
-      if (!flights.has(flight)) return
-      if (flight.target) flyToTarget(flight)
-      if (flights.has(flight)) layoutFrame = window.requestAnimationFrame(followLayout)
-    }
-    layoutFrame = window.requestAnimationFrame(followLayout)
-    window.addEventListener('wheel', cancel, { passive: true, capture: true })
-    window.addEventListener('resize', cancel)
-    flight.stopListening = () => {
-      window.cancelAnimationFrame(layoutFrame)
-      window.removeEventListener('wheel', cancel, true)
-      window.removeEventListener('resize', cancel)
-    }
-  }
-  const effect = flight.animation?.effect as KeyframeEffect | undefined
-  const progress = effect?.getComputedTiming().progress ?? 0
-  if (progress >= 1) {
-    finishFlight(flight)
-    return
+  const ghost = document.createElement('div')
+  ghost.className = `${target.className} message-flight`
+  const copy = bubble.cloneNode(true) as HTMLElement
+  copy.style.maxWidth = 'none'
+  copy.style.width = '100%'
+  ghost.append(copy)
+  ghost.querySelectorAll('[id]').forEach((element) => element.removeAttribute('id'))
+  ghost.setAttribute('aria-hidden', 'true')
+  ghost.inert = true
+  const computed = getComputedStyle(target)
+  for (const property of ['--lead', '--quiet', '--glass', '--control-bg']) {
+    ghost.style.setProperty(property, computed.getPropertyValue(property))
   }
   Object.assign(ghost.style, {
+    position: 'fixed',
+    margin: '0',
+    overflow: 'hidden',
+    pointerEvents: 'none',
+    zIndex: '1000',
+    transformOrigin: 'top left',
     left: `${bounds.left}px`,
     top: `${bounds.top}px`,
     width: `${bounds.width}px`,
     maxHeight: `${Math.min(bounds.height, viewBounds.height)}px`
   })
-  // Keep the original clock and easing through provider handoffs and scrolling.
-  // Restarting the curve from the current position abruptly changes speed. Its
-  // eased progress lets us retarget without changing the current visual position.
-  const remaining = 1 - progress
-  const keyframes = [
-    {
-      transform: `translate(${(from.left - bounds.left) / remaining}px, ${(from.top - bounds.top) / remaining}px)`
-    },
-    { transform: 'translate(0, 0)' }
-  ]
-  if (effect) {
-    effect.setKeyframes(keyframes)
-    return
+  document.body.append(ghost)
+  flight.ghost = ghost
+  window.clearTimeout(flight.timer)
+  flight.timer = window.setTimeout(() => finishFlight(flight), duration + landingDuration + 80)
+  const cancel = (): void => finishFlight(flight)
+  window.addEventListener('wheel', cancel, { passive: true, capture: true })
+  window.addEventListener('resize', cancel)
+  flight.stopListening = () => {
+    window.removeEventListener('wheel', cancel, true)
+    window.removeEventListener('resize', cancel)
   }
-  flight.animation = ghost.animate(keyframes, {
-    duration,
-    easing: 'cubic-bezier(0.25, 0.65, 0.3, 1)',
-    fill: 'both'
-  })
-  // No crossfade: swap identical visuals at the destination in one frame.
-  flight.animation.onfinish = () => finishFlight(flight)
+  flight.animation = ghost.animate(
+    [
+      {
+        transform: `translate(${flight.source.left - bounds.left}px, ${flight.source.top - bounds.top}px)`
+      },
+      { transform: 'translate(0, 0)' }
+    ],
+    { duration, easing: 'cubic-bezier(0.25, 0.65, 0.3, 1)', fill: 'both' }
+  )
+  flight.animation.onfinish = () => landFlight(flight)
 }
 
 export function useMessageArrival(
@@ -209,8 +222,11 @@ export function useMessageArrival(
     const originalOpacity = target.style.opacity
     target.style.opacity = '0'
     flight.restore = () => {
+      flight.arrivalAnimation?.cancel()
+      flight.arrivalAnimation = null
       target.style.opacity = originalOpacity
     }
+    revealLandingTarget(flight)
     // Existing scroll-to-latest and composer resizing get their normal commit.
     let frame = window.requestAnimationFrame(() => {
       frame = window.requestAnimationFrame(() => {
