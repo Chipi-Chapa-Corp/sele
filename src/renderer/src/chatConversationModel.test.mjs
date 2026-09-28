@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildChatConversationModel, markChatItemsChanged } from './chatConversationModel.ts'
+import {
+  buildChatConversationModel,
+  getConversationTailWorkingStep,
+  markChatItemsChanged
+} from './chatConversationModel.ts'
 import { assertUniqueProviderChatItemIds } from '../../shared/chatTurns.ts'
 
 // Test fixtures intentionally omit optional presentation fields.
@@ -85,4 +89,36 @@ test('incremental goal continuations start turns without inheriting the previous
     ['user', 'goal:working']
   )
   assert.equal(incremental.stoppedTurnRetryMessages.has(goalStep.id), false)
+})
+
+test('active confirmation keeps a placeholder until the provider working step arrives', () => {
+  const user = { ...message('confirmed', 'user', 'Question'), createdAt: 1234 }
+  const fallback = getConversationTailWorkingStep([user], true)
+  assert.equal(fallback.status, 'working')
+  assert.equal(fallback.startedAt, 1234)
+  assert.deepEqual(fallback.items, [])
+  assert.equal(getConversationTailWorkingStep([user]), null, 'idle history has no placeholder')
+  const pending = { type: 'pendingMessage', id: 'queued', kind: 'queued', content: 'Next' }
+  assert.deepEqual(getConversationTailWorkingStep([user, pending], true), fallback)
+  const working = { type: 'working', id: 'working', status: 'working', items: [] }
+  assert.equal(getConversationTailWorkingStep([user, working, pending], true), working)
+  assert.equal(
+    getConversationTailWorkingStep(
+      [user, working, message('streaming', 'assistant', 'Partial')],
+      true
+    ),
+    working
+  )
+  for (const finished of [
+    message('answer', 'assistant', 'Done'),
+    { ...working, status: 'worked' },
+    { ...working, status: 'stopped' },
+    { ...working, status: 'failed' }
+  ]) {
+    assert.equal(
+      getConversationTailWorkingStep([user, finished, pending], true),
+      null,
+      'finished turns must not acquire a synthetic working placeholder'
+    )
+  }
 })

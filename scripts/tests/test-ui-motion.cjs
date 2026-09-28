@@ -17,10 +17,11 @@ if (!process.versions.electron) {
             import { Dropdown } from './src/renderer/src/components/Dropdown'
             import { SegmentedControl } from './src/renderer/src/components/SegmentedControl'
             import { CwdNotesButton } from './src/renderer/src/components/CwdNotesButton'
-            import { ChatDetailItem, MarkdownMessage } from './src/renderer/src/components/ChatDetailItem'
+            import { ChatDetailItem, ChatWorkingPlaceholder, MarkdownMessage } from './src/renderer/src/components/ChatDetailItem'
             import { MessageBox } from './src/renderer/src/components/MessageBox'
             import { ComposerPlaceholder } from './src/renderer/src/components/ComposerPlaceholder'
             import { MotionSurface } from './src/renderer/src/motion/MotionSurface'
+            import { getConversationTailWorkingStep } from './src/renderer/src/chatConversationModel'
             import { captureMessageFlight } from './src/renderer/src/motion/messageFlight'
             import './src/renderer/src/App.css'
             import './src/renderer/src/assets/main.css'
@@ -42,6 +43,9 @@ if (!process.versions.electron) {
             window.renderFixture = (patch = {}) => {
               Object.assign(window.state, patch)
               const s = window.state
+              const tailWorking = s.conversationActive
+                ? getConversationTailWorkingStep([...s.users, ...(s.tailWorking ? [s.tailWorking] : [])], true)
+                : null
               flushSync(() => root.render(<React.StrictMode><MotionConfig reducedMotion="user">
                 <main style={{display:'grid',gridTemplateColumns:'260px 1fr',gap:24,padding:24,height:600}}>
                   <aside><ChatList chats={s.ids.map(id => chats.find(c => c.id === id))}
@@ -55,9 +59,17 @@ if (!process.versions.electron) {
                       <CwdNotesButton label="Project" notes={s.notes} onNotesChange={notes=>window.renderFixture({notes})}/>
                     </div>
                     <div className="chat-detail__messages" style={{height:320,flex:'none',overflow:'auto'}}>
+                      <div className={s.bottomAligned ? 'chat-detail__messages-layout' : undefined}>
+                        {s.bottomAligned && <div className="chat-detail__messages-header"/>}
+                        <div className={s.bottomAligned ? 'chat-detail__messages-inner' : undefined}>
                       <MarkdownMessage className="chat-detail__message" content={s.content} streaming={s.streaming} localImageContainer={s.imageContainer}/>
                       {s.working && <ChatDetailItem key={s.working.id} item={s.working}/>}
                       {s.users.map(item=><ChatDetailItem key={item.id} item={item} motionChatKey="codex:chat"/>)}
+                        {tailWorking && <ChatWorkingPlaceholder item={tailWorking}/>}
+                        {s.tailHeight > 0 && <div style={{height:s.tailHeight}}/>}
+                        </div>
+                        {s.bottomAligned && <div className="chat-detail__messages-footer"/>}
+                      </div>
                     </div>
                     {s.realComposer ? <MessageBox draftScopeKey="codex:chat" draftProjectKey="project"
                       providerId="codex" model="test" models={[{id:'test', label:'Test', description:'Test model', isDefault:true,
@@ -545,6 +557,50 @@ if (!process.versions.electron) {
           `getComputedStyle(document.querySelector('[data-motion-message-id="provider-confirmed"]')).opacity`
         ),
         '1'
+      )
+      // Use the real bottom-aligned layout and working placeholder. Provider
+      // confirmation may precede its first working step by several frames. Then
+      // growing activity moves the destination again without any scroll event.
+      await run(`window.renderFixture({bottomAligned:true,conversationActive:true,users:[],content:'',
+        tailWorking:{type:'working',id:'optimistic-working',status:'working',items:[]}});
+        window.sendFixture('layout-handoff','Stable handoff')`)
+      await frames()
+      const layoutHandoff = await run(`new Promise(resolve => {
+        const samples = [];
+        let replaced = false;
+        let restored = false;
+        const sample = () => {
+          const target = document.querySelector('[data-motion-message-id] .chat-detail__message--user').getBoundingClientRect();
+          const ghost = document.querySelector('.message-flight');
+          if (!ghost) { resolve({samples,landing:target.y}); return; }
+          const animation = ghost.getAnimations()[0];
+          const bounds = ghost.getBoundingClientRect();
+          samples.push({y:bounds.y,target:target.y});
+          if (!replaced && animation.currentTime > 110) {
+            replaced = true;
+            window.renderFixture({tailWorking:null,users:[{...window.state.users[0],id:'confirmed-layout-handoff'}]});
+          }
+          if (!restored && animation.currentTime > 200) {
+            restored = true;
+            window.renderFixture({tailHeight:24,tailWorking:{type:'working',id:'provider-working',status:'working',items:[]}});
+          }
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      })`)
+      const backwards = Math.max(
+        ...layoutHandoff.samples.slice(1).map((sample, i) => sample.y - layoutHandoff.samples[i].y)
+      )
+      assert.ok(
+        backwards < 0.5,
+        'provider handoff must not reverse the flight; backwards pixels: ' + backwards
+      )
+      assert.ok(
+        Math.abs(layoutHandoff.samples.at(-1).y - layoutHandoff.landing) < 1,
+        'the flight meets the actual destination without a landing snap'
+      )
+      await run(
+        `window.renderFixture({bottomAligned:false,conversationActive:false,tailWorking:null,tailHeight:0})`
       )
       // Retarget an actual scroll at a fixed animation time: it must preserve
       // the current position and clock, then land at the updated destination.

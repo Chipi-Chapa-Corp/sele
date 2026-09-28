@@ -34,11 +34,26 @@ const modelsByItems = new WeakMap<readonly ProviderChatItem[], ChatConversationM
 const modelInternals = new WeakMap<ChatConversationModel, ChatConversationModelInternals>()
 
 export const getConversationTailWorkingStep = (
-  items: readonly ProviderChatItem[]
+  items: readonly ProviderChatItem[],
+  awaitingResponse = false
 ): ProviderWorkingStep | null => {
+  let lastItem: ProviderChatItem | undefined
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]
+    if (!lastItem && item.type !== 'pendingMessage') lastItem = item
     if (item.type === 'working' && item.status === 'working') return item
+  }
+  // Confirmation can replace the optimistic user + working pair before the
+  // provider emits its first working step. Keep the activity row's space so
+  // bottom-aligned messages do not move down and then back up during the send.
+  if (awaitingResponse && lastItem?.type === 'message' && lastItem.role === 'user') {
+    return {
+      type: 'working',
+      id: `awaiting-response:${lastItem.id}`,
+      status: 'working',
+      startedAt: lastItem.createdAt ?? undefined,
+      items: []
+    }
   }
 
   return null

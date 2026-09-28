@@ -14,6 +14,7 @@ type Flight = {
   restore: () => void
   ghost: HTMLDivElement | null
   animation: Animation | null
+  destination: DOMRect | null
   stopListening: () => void
 }
 const flights = new Set<Flight>()
@@ -58,6 +59,7 @@ export function captureMessageFlight(
     restore: () => {},
     ghost: null,
     animation: null,
+    destination: null,
     stopListening: () => {}
   }
   const cancel = (): void => finishFlight(flight)
@@ -81,6 +83,16 @@ function flyToTarget(flight: Flight): void {
     finishFlight(flight)
     return
   }
+  const previous = flight.destination
+  if (
+    previous &&
+    bounds.left === previous.left &&
+    bounds.top === previous.top &&
+    bounds.width === previous.width &&
+    bounds.height === previous.height
+  )
+    return
+  flight.destination = bounds
   // On a provider replacement, continue from the copy's current position rather
   // than replaying from the composer or removing it with the old row.
   const from = flight.ghost?.getBoundingClientRect() ?? flight.source
@@ -112,20 +124,20 @@ function flyToTarget(flight: Flight): void {
     window.clearTimeout(flight.timer)
     flight.timer = window.setTimeout(() => finishFlight(flight), duration + 80)
     const cancel = (): void => finishFlight(flight)
-    let scrollFrame = 0
-    const followScroll = (): void => {
-      if (scrollFrame) return
-      scrollFrame = window.requestAnimationFrame(() => {
-        scrollFrame = 0
-        if (flights.has(flight) && flight.target) flyToTarget(flight)
-      })
+    // Bottom-aligned rows can move when the composer or activity changes height
+    // without producing a scroll event. Track geometry for this short flight;
+    // unchanged bounds leave the compositor animation entirely untouched.
+    let layoutFrame = 0
+    const followLayout = (): void => {
+      if (!flights.has(flight)) return
+      if (flight.target) flyToTarget(flight)
+      if (flights.has(flight)) layoutFrame = window.requestAnimationFrame(followLayout)
     }
-    viewport.addEventListener('scroll', followScroll, { passive: true })
+    layoutFrame = window.requestAnimationFrame(followLayout)
     window.addEventListener('wheel', cancel, { passive: true, capture: true })
     window.addEventListener('resize', cancel)
     flight.stopListening = () => {
-      window.cancelAnimationFrame(scrollFrame)
-      viewport.removeEventListener('scroll', followScroll)
+      window.cancelAnimationFrame(layoutFrame)
       window.removeEventListener('wheel', cancel, true)
       window.removeEventListener('resize', cancel)
     }

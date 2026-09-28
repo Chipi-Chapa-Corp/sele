@@ -71,7 +71,8 @@ export function ConversationMessagesContent(
     : chatHasActiveTurn
   const workingPlaceholderStep = conversationHasActiveTurn
     ? getConversationTailWorkingStep(
-        activeSubagentChatView ? subagentVisibleChatItems : visibleChatItems
+        activeSubagentChatView ? subagentVisibleChatItems : visibleChatItems,
+        true
       )
     : null
   const displayedTurns = activeSubagentChatView
