@@ -2,6 +2,7 @@ import { AnimatePresence } from 'motion/react'
 import { lazy, Suspense, type ReactElement } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '../../components/Button'
+import { PopupWindow } from '../../components/PopupWindow'
 import '../../components/FileEditorDialog.css'
 import { AccountDialog } from '../../components/AccountDialog'
 import { ProjectDialog } from '../../components/ProjectDialog'
@@ -108,24 +109,26 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
           key="editor"
           fallback={
             <div className="file-editor-overlay">
-              <section
-                className="file-editor-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-label="File editor"
-              >
-                <header className="file-editor-dialog__header">
-                  <span role="status">Loading editor…</span>
-                  <span />
-                  <Button
-                    autoFocus
-                    aria-label="Close editor"
-                    callback={handleCloseFileEditor}
-                    icon={<X aria-hidden="true" />}
-                    theme="transparent"
-                  />
-                </header>
-              </section>
+              <PopupWindow>
+                <section
+                  className="file-editor-dialog"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="File editor"
+                >
+                  <header className="file-editor-dialog__header">
+                    <span role="status">Loading editor…</span>
+                    <span />
+                    <Button
+                      autoFocus
+                      aria-label="Close editor"
+                      callback={handleCloseFileEditor}
+                      icon={<X aria-hidden="true" />}
+                      theme="transparent"
+                    />
+                  </header>
+                </section>
+              </PopupWindow>
             </div>
           }
         >

@@ -1,0 +1,15 @@
+.popup-window {
+  box-sizing: border-box;
+  min-width: min(16rem, calc(100vw - 1.4rem));
+  min-height: min(8rem, calc(100vh - 1.4rem));
+  max-width: calc(100vw - 1.4rem);
+  max-height: calc(100vh - 1.4rem);
+  overflow: auto;
+  resize: both;
+}
+
+.popup-window.file-editor-dialog--expanded {
+  max-width: none;
+  max-height: none;
+  resize: none;
+}

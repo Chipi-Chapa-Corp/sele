@@ -14,6 +14,7 @@ import {
   X,
   Zap
 } from 'lucide-react'
+import { PopupWindow } from './PopupWindow'
 import {
   type ElementType,
   type FormEvent,
@@ -376,154 +377,156 @@ export const ActionsButton = ({
         if (event.target === event.currentTarget) closeDraftDialog()
       }}
     >
-      <form
-        className="cwd-actions-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={editing ? 'Edit action' : 'Create action'}
-        onSubmit={handleDraftSubmit}
-        onKeyDown={(event) => {
-          if (event.key !== 'Escape') return
+      <PopupWindow>
+        <form
+          className="cwd-actions-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label={editing ? 'Edit action' : 'Create action'}
+          onSubmit={handleDraftSubmit}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return
 
-          event.preventDefault()
-          closeDraftDialog()
-        }}
-      >
-        <div className="cwd-actions-dialog__body">
-          <div className="cwd-actions-dialog__field">
-            <div className="cwd-actions-dialog__label-row">
-              <label htmlFor={nameInputId}>Name</label>
-              <Button
-                theme="transparent"
+            event.preventDefault()
+            closeDraftDialog()
+          }}
+        >
+          <div className="cwd-actions-dialog__body">
+            <div className="cwd-actions-dialog__field">
+              <div className="cwd-actions-dialog__label-row">
+                <label htmlFor={nameInputId}>Name</label>
+                <Button
+                  theme="transparent"
+                  size="small"
+                  aria-label="Close action window"
+                  title="Close"
+                  callback={closeDraftDialog}
+                  icon={<X aria-hidden="true" />}
+                />
+              </div>
+              <div className="cwd-actions-dialog__name-row">
+                <Dropdown
+                  className="cwd-actions-dialog__icon-picker"
+                  aria-label="Action icon"
+                  menuAlign="start"
+                  options={actionIconOptions}
+                  title={`Icon: ${actionIconLabels[draft.icon]}`}
+                  value={draft.icon}
+                  onChange={(icon) => updateDraft({ icon })}
+                />
+                <Input
+                  id={nameInputId}
+                  ref={nameInputRef}
+                  value={draft.name}
+                  maxLength={80}
+                  onChange={(event) => updateDraft({ name: event.currentTarget.value })}
+                />
+              </div>
+            </div>
+            <div className="cwd-actions-dialog__field">
+              <span>Create for</span>
+              <SegmentedControl<AppActionScope>
+                aria-label="Create for"
+                className="cwd-actions-dialog__scope"
+                options={[
+                  { value: 'global', label: 'Global' },
+                  {
+                    value: 'project',
+                    label,
+                    disabled: !normalizedProjectCwd,
+                    title: normalizedProjectCwd ?? 'No project selected'
+                  }
+                ]}
                 size="small"
-                aria-label="Close action window"
-                title="Close"
-                callback={closeDraftDialog}
-                icon={<X aria-hidden="true" />}
+                value={draft.scope}
+                onChange={(scope) => updateDraft({ scope })}
               />
             </div>
-            <div className="cwd-actions-dialog__name-row">
-              <Dropdown
-                className="cwd-actions-dialog__icon-picker"
-                aria-label="Action icon"
-                menuAlign="start"
-                options={actionIconOptions}
-                title={`Icon: ${actionIconLabels[draft.icon]}`}
-                value={draft.icon}
-                onChange={(icon) => updateDraft({ icon })}
-              />
-              <Input
-                id={nameInputId}
-                ref={nameInputRef}
-                value={draft.name}
-                maxLength={80}
-                onChange={(event) => updateDraft({ name: event.currentTarget.value })}
-              />
-            </div>
-          </div>
-          <div className="cwd-actions-dialog__field">
-            <span>Create for</span>
-            <SegmentedControl<AppActionScope>
-              aria-label="Create for"
-              className="cwd-actions-dialog__scope"
-              options={[
-                { value: 'global', label: 'Global' },
-                {
-                  value: 'project',
-                  label,
-                  disabled: !normalizedProjectCwd,
-                  title: normalizedProjectCwd ?? 'No project selected'
-                }
-              ]}
-              size="small"
-              value={draft.scope}
-              onChange={(scope) => updateDraft({ scope })}
-            />
-          </div>
-          <label className="cwd-actions-dialog__field">
-            <span>Keybinding</span>
-            <button
-              className="cwd-actions-dialog__keybinding"
-              type="button"
-              aria-describedby={keybindingDescriptionId}
-              onBlur={() => setKeybindingFocused(false)}
-              onFocus={() => setKeybindingFocused(true)}
-              onKeyDown={handleKeybindingKeyDown}
-            >
-              {draft.keybinding ? (
-                <kbd>{draft.keybinding}</kbd>
-              ) : (
-                <span>{keybindingFocused ? 'Recording' : 'Optional'}</span>
-              )}
-            </button>
-            <span className="sr-only" id={keybindingDescriptionId}>
-              Press a key combination. Press Backspace to remove the keybinding.
-            </span>
-          </label>
-          <div className="cwd-actions-dialog__field">
-            <SegmentedControl
-              aria-label="Action type"
-              className="cwd-actions-dialog__type"
-              options={actionTypeOptions}
-              size="small"
-              value={draft.type}
-              onChange={(type) => updateDraft({ type })}
-            />
-            <label className="sr-only" htmlFor={contentInputId}>
-              {draft.type === 'prompt' ? 'Prompt' : 'Command'}
+            <label className="cwd-actions-dialog__field">
+              <span>Keybinding</span>
+              <button
+                className="cwd-actions-dialog__keybinding"
+                type="button"
+                aria-describedby={keybindingDescriptionId}
+                onBlur={() => setKeybindingFocused(false)}
+                onFocus={() => setKeybindingFocused(true)}
+                onKeyDown={handleKeybindingKeyDown}
+              >
+                {draft.keybinding ? (
+                  <kbd>{draft.keybinding}</kbd>
+                ) : (
+                  <span>{keybindingFocused ? 'Recording' : 'Optional'}</span>
+                )}
+              </button>
+              <span className="sr-only" id={keybindingDescriptionId}>
+                Press a key combination. Press Backspace to remove the keybinding.
+              </span>
             </label>
-            <Textarea
-              id={contentInputId}
-              className="cwd-actions-dialog__command"
-              value={draft.content}
-              rows={4}
-              spellCheck={draft.type === 'prompt'}
-              onChange={(event) => updateDraft({ content: event.currentTarget.value })}
-            />
+            <div className="cwd-actions-dialog__field">
+              <SegmentedControl
+                aria-label="Action type"
+                className="cwd-actions-dialog__type"
+                options={actionTypeOptions}
+                size="small"
+                value={draft.type}
+                onChange={(type) => updateDraft({ type })}
+              />
+              <label className="sr-only" htmlFor={contentInputId}>
+                {draft.type === 'prompt' ? 'Prompt' : 'Command'}
+              </label>
+              <Textarea
+                id={contentInputId}
+                className="cwd-actions-dialog__command"
+                value={draft.content}
+                rows={4}
+                spellCheck={draft.type === 'prompt'}
+                onChange={(event) => updateDraft({ content: event.currentTarget.value })}
+              />
+            </div>
+            {draft.type === 'prompt' ? (
+              <Switch
+                className="cwd-actions-dialog__switch-row"
+                label="Send in a new chat"
+                checked={draft.sendInNewChat}
+                onChange={(event) => updateDraft({ sendInNewChat: event.currentTarget.checked })}
+              />
+            ) : (
+              <>
+                <Switch
+                  className="cwd-actions-dialog__switch-row"
+                  label="Open in terminal"
+                  checked={draft.openInTerminal}
+                  onChange={(event) =>
+                    updateDraft({
+                      openInTerminal: event.currentTarget.checked,
+                      closeTerminalOnFinish:
+                        event.currentTarget.checked && draft.closeTerminalOnFinish
+                    })
+                  }
+                />
+                <Switch
+                  className="cwd-actions-dialog__switch-row"
+                  label="Close terminal on finish"
+                  disabled={!draft.openInTerminal}
+                  checked={draft.openInTerminal && draft.closeTerminalOnFinish}
+                  onChange={(event) =>
+                    updateDraft({ closeTerminalOnFinish: event.currentTarget.checked })
+                  }
+                />
+              </>
+            )}
+            {dialogError && (
+              <p className="cwd-actions-dialog__error" role="alert">
+                {dialogError}
+              </p>
+            )}
           </div>
-          {draft.type === 'prompt' ? (
-            <Switch
-              className="cwd-actions-dialog__switch-row"
-              label="Send in a new chat"
-              checked={draft.sendInNewChat}
-              onChange={(event) => updateDraft({ sendInNewChat: event.currentTarget.checked })}
-            />
-          ) : (
-            <>
-              <Switch
-                className="cwd-actions-dialog__switch-row"
-                label="Open in terminal"
-                checked={draft.openInTerminal}
-                onChange={(event) =>
-                  updateDraft({
-                    openInTerminal: event.currentTarget.checked,
-                    closeTerminalOnFinish:
-                      event.currentTarget.checked && draft.closeTerminalOnFinish
-                  })
-                }
-              />
-              <Switch
-                className="cwd-actions-dialog__switch-row"
-                label="Close terminal on finish"
-                disabled={!draft.openInTerminal}
-                checked={draft.openInTerminal && draft.closeTerminalOnFinish}
-                onChange={(event) =>
-                  updateDraft({ closeTerminalOnFinish: event.currentTarget.checked })
-                }
-              />
-            </>
-          )}
-          {dialogError && (
-            <p className="cwd-actions-dialog__error" role="alert">
-              {dialogError}
-            </p>
-          )}
-        </div>
-        <footer className="cwd-actions-dialog__footer">
-          <Button theme="secondary" label="Cancel" callback={closeDraftDialog} />
-          <Button theme="primary" label="Save" callback={handleSaveDraft} icon={<Check />} />
-        </footer>
-      </form>
+          <footer className="cwd-actions-dialog__footer">
+            <Button theme="secondary" label="Cancel" callback={closeDraftDialog} />
+            <Button theme="primary" label="Save" callback={handleSaveDraft} icon={<Check />} />
+          </footer>
+        </form>
+      </PopupWindow>
     </div>
   ) : null
 

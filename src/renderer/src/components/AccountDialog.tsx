@@ -3,6 +3,7 @@ import { Copy, ExternalLink, LogIn, X } from 'lucide-react'
 import { type FormEvent, type ReactElement, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from './Button'
+import { PopupWindow } from './PopupWindow'
 import { Input } from './Input'
 import './AccountDialog.css'
 
@@ -162,126 +163,131 @@ export const AccountDialog = ({
         if (event.target === event.currentTarget && phase === 'idle') onClose()
       }}
     >
-      <form
-        className="account-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={
-          phase === 'authorizing' || phase === 'canceling'
-            ? `Authorize ${providerLabel} account`
-            : `Create ${providerLabel} account`
-        }
-        onSubmit={handleSubmit}
-        onKeyDown={(event) => {
-          event.stopPropagation()
-          if (event.key !== 'Escape' || phase !== 'idle') return
-          event.preventDefault()
-          onClose()
-        }}
-      >
-        <div className="account-dialog__header">
-          {phase === 'authorizing' || phase === 'canceling' ? (
-            <span>Authorize account</span>
-          ) : (
-            <label htmlFor="account-dialog-name">Name</label>
-          )}
-          {phase === 'idle' && (
-            <Button
-              aria-label="Close account window"
-              callback={onClose}
-              icon={<X aria-hidden="true" />}
-              size="small"
-              theme="transparent"
-              title="Close"
-            />
-          )}
-        </div>
-        {phase === 'authorizing' || phase === 'canceling' ? (
-          <div className="account-dialog__authorization">
-            <p>
-              {userCode
-                ? 'Copy the one-time code and complete authorization in your browser.'
-                : 'Open the authorization page in your browser.'}{' '}
-              The account will be added only after {providerLabel} confirms that sign-in succeeded.
-            </p>
-            {authorization?.submitCode && (
-              <>
-                <label htmlFor="account-dialog-code">
-                  If the browser gives you a code, paste it here
-                </label>
-                <Input
-                  id="account-dialog-code"
-                  type="password"
-                  autoComplete="off"
-                  value={code}
-                  maxLength={4096}
-                  disabled={phase !== 'authorizing' || codePending}
-                  onChange={(event) => setCode(event.currentTarget.value)}
-                />
-                <Button
-                  callback={handleSubmitCode}
-                  label={codePending ? 'Submitting…' : 'Submit code'}
-                  disabled={phase !== 'authorizing' || !code.trim() || codePending}
-                  theme="secondary"
-                />
-              </>
+      <PopupWindow>
+        <form
+          className="account-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label={
+            phase === 'authorizing' || phase === 'canceling'
+              ? `Authorize ${providerLabel} account`
+              : `Create ${providerLabel} account`
+          }
+          onSubmit={handleSubmit}
+          onKeyDown={(event) => {
+            event.stopPropagation()
+            if (event.key !== 'Escape' || phase !== 'idle') return
+            event.preventDefault()
+            onClose()
+          }}
+        >
+          <div className="account-dialog__header">
+            {phase === 'authorizing' || phase === 'canceling' ? (
+              <span>Authorize account</span>
+            ) : (
+              <label htmlFor="account-dialog-name">Name</label>
+            )}
+            {phase === 'idle' && (
+              <Button
+                aria-label="Close account window"
+                callback={onClose}
+                icon={<X aria-hidden="true" />}
+                size="small"
+                theme="transparent"
+                title="Close"
+              />
             )}
           </div>
-        ) : (
-          <Input
-            id="account-dialog-name"
-            ref={inputRef}
-            value={name}
-            disabled={phase !== 'idle'}
-            maxLength={80}
-            placeholder="Account name"
-            onChange={(event) => {
-              setName(event.currentTarget.value)
-              setError(null)
-            }}
-          />
-        )}
-        {error && (
-          <p className="account-dialog__error" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="account-dialog__footer">
           {phase === 'authorizing' || phase === 'canceling' ? (
-            <>
-              <Button
-                callback={handleCancel}
-                disabled={phase === 'canceling'}
-                label={phase === 'canceling' ? 'Canceling…' : 'Cancel'}
-                theme="secondary"
-              />
-              <Button
-                callback={handleAuthorize}
-                disabled={phase === 'canceling' || authorizationActionPending}
-                icon={userCode ? <Copy aria-hidden="true" /> : <ExternalLink aria-hidden="true" />}
-                label={
-                  authorizationActionPending
-                    ? userCode
-                      ? 'Copying…'
-                      : 'Opening…'
-                    : userCode
-                      ? `Copy ${userCode}`
-                      : 'Open'
-                }
-                theme="primary"
-              />
-            </>
+            <div className="account-dialog__authorization">
+              <p>
+                {userCode
+                  ? 'Copy the one-time code and complete authorization in your browser.'
+                  : 'Open the authorization page in your browser.'}{' '}
+                The account will be added only after {providerLabel} confirms that sign-in
+                succeeded.
+              </p>
+              {authorization?.submitCode && (
+                <>
+                  <label htmlFor="account-dialog-code">
+                    If the browser gives you a code, paste it here
+                  </label>
+                  <Input
+                    id="account-dialog-code"
+                    type="password"
+                    autoComplete="off"
+                    value={code}
+                    maxLength={4096}
+                    disabled={phase !== 'authorizing' || codePending}
+                    onChange={(event) => setCode(event.currentTarget.value)}
+                  />
+                  <Button
+                    callback={handleSubmitCode}
+                    label={codePending ? 'Submitting…' : 'Submit code'}
+                    disabled={phase !== 'authorizing' || !code.trim() || codePending}
+                    theme="secondary"
+                  />
+                </>
+              )}
+            </div>
           ) : (
-            <Button
-              callback={handleLogin}
-              disabled={phase !== 'idle' || !name.trim()}
-              icon={<LogIn aria-hidden="true" />}
-              label={phase === 'starting' ? 'Starting…' : 'Log In'}
-              theme="primary"
+            <Input
+              id="account-dialog-name"
+              ref={inputRef}
+              value={name}
+              disabled={phase !== 'idle'}
+              maxLength={80}
+              placeholder="Account name"
+              onChange={(event) => {
+                setName(event.currentTarget.value)
+                setError(null)
+              }}
             />
           )}
-        </div>
-      </form>
+          {error && (
+            <p className="account-dialog__error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="account-dialog__footer">
+            {phase === 'authorizing' || phase === 'canceling' ? (
+              <>
+                <Button
+                  callback={handleCancel}
+                  disabled={phase === 'canceling'}
+                  label={phase === 'canceling' ? 'Canceling…' : 'Cancel'}
+                  theme="secondary"
+                />
+                <Button
+                  callback={handleAuthorize}
+                  disabled={phase === 'canceling' || authorizationActionPending}
+                  icon={
+                    userCode ? <Copy aria-hidden="true" /> : <ExternalLink aria-hidden="true" />
+                  }
+                  label={
+                    authorizationActionPending
+                      ? userCode
+                        ? 'Copying…'
+                        : 'Opening…'
+                      : userCode
+                        ? `Copy ${userCode}`
+                        : 'Open'
+                  }
+                  theme="primary"
+                />
+              </>
+            ) : (
+              <Button
+                callback={handleLogin}
+                disabled={phase !== 'idle' || !name.trim()}
+                icon={<LogIn aria-hidden="true" />}
+                label={phase === 'starting' ? 'Starting…' : 'Log In'}
+                theme="primary"
+              />
+            )}
+          </div>
+        </form>
+      </PopupWindow>
     </MotionSurface>,
     document.body
   )

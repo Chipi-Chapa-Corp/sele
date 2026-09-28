@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { Button } from './Button'
+import { PopupWindow } from './PopupWindow'
 import './ResizableLightbox.css'
 
 type ResizableLightboxProps = {
@@ -9,6 +10,8 @@ type ResizableLightboxProps = {
   onClose: () => void
   children: ReactNode
   actions?: ReactNode
+  flushContent?: boolean
+  overlayActions?: boolean
 }
 
 // Keep children in the same DOM position so interactive iframes retain their state.
@@ -18,7 +21,9 @@ export function ResizableLightbox({
   label,
   onClose,
   children,
-  actions
+  actions,
+  flushContent = false,
+  overlayActions = false
 }: ResizableLightboxProps): React.JSX.Element {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
@@ -43,42 +48,44 @@ export function ResizableLightbox({
   }, [open])
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="resizable-lightbox"
-      aria-label={label}
-      aria-modal={open ? true : undefined}
-      onCancel={(event) => {
-        event.preventDefault()
-        onClose()
-      }}
-      onPointerDown={(event) => {
-        if (event.target !== event.currentTarget) return
-        const bounds = event.currentTarget.getBoundingClientRect()
-        if (
-          event.clientX < bounds.left ||
-          event.clientX > bounds.right ||
-          event.clientY < bounds.top ||
-          event.clientY > bounds.bottom
-        )
+    <PopupWindow>
+      <dialog
+        ref={dialogRef}
+        className={`resizable-lightbox${flushContent ? ' resizable-lightbox--flush-content' : ''}${overlayActions ? ' resizable-lightbox--overlay-actions' : ''}`}
+        aria-label={label}
+        aria-modal={open ? true : undefined}
+        onCancel={(event) => {
+          event.preventDefault()
           onClose()
-      }}
-    >
-      <div className="resizable-lightbox__content">{children}</div>
-      {open && (
-        <div className="resizable-lightbox__actions">
-          {actions}
-          <Button
-            ref={closeButtonRef}
-            aria-label={`Close ${label.toLowerCase()}`}
-            callback={onClose}
-            icon={<X aria-hidden="true" />}
-            size="small"
-            theme="transparent"
-            title="Close"
-          />
-        </div>
-      )}
-    </dialog>
+        }}
+        onPointerDown={(event) => {
+          if (event.target !== event.currentTarget) return
+          const bounds = event.currentTarget.getBoundingClientRect()
+          if (
+            event.clientX < bounds.left ||
+            event.clientX > bounds.right ||
+            event.clientY < bounds.top ||
+            event.clientY > bounds.bottom
+          )
+            onClose()
+        }}
+      >
+        <div className="resizable-lightbox__content">{children}</div>
+        {open && (
+          <div className="resizable-lightbox__actions">
+            {actions}
+            <Button
+              ref={closeButtonRef}
+              aria-label={`Close ${label.toLowerCase()}`}
+              callback={onClose}
+              icon={<X aria-hidden="true" />}
+              size="small"
+              theme="transparent"
+              title="Close"
+            />
+          </div>
+        )}
+      </dialog>
+    </PopupWindow>
   )
 }

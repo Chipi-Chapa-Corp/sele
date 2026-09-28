@@ -1,4 +1,5 @@
 import { MotionSurface } from '../motion/MotionSurface'
+import { PopupWindow } from './PopupWindow'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -1274,252 +1275,399 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         if (event.target === event.currentTarget) requestClose()
       }}
     >
-      <section
-        className={`file-editor-dialog${expanded ? ' file-editor-dialog--expanded' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={`${canEdit ? 'Edit' : showFileDiff ? 'View changes to' : 'View'} ${displayPath}${
-          target.line
-            ? target.endLine && target.endLine > target.line
-              ? ` at lines ${target.line}-${target.endLine}`
-              : ` at line ${target.line}`
-            : ''
-        }`}
-      >
-        <header className="file-editor-dialog__header">
-          <div className="file-editor-dialog__header-leading">
-            {hasGitDiff && (
+      <PopupWindow>
+        <section
+          className={`file-editor-dialog${expanded ? ' file-editor-dialog--expanded' : ''}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${canEdit ? 'Edit' : showFileDiff ? 'View changes to' : 'View'} ${displayPath}${
+            target.line
+              ? target.endLine && target.endLine > target.line
+                ? ` at lines ${target.line}-${target.endLine}`
+                : ` at line ${target.line}`
+              : ''
+          }`}
+        >
+          <header className="file-editor-dialog__header">
+            <div className="file-editor-dialog__header-leading">
+              {hasGitDiff && (
+                <Button
+                  aria-controls="file-editor-tree"
+                  aria-expanded={!diffTreeCollapsed}
+                  aria-label={diffTreeCollapsed ? 'Expand file sidebar' : 'Collapse file sidebar'}
+                  callback={() => setDiffTreeCollapsed((collapsed) => !collapsed)}
+                  icon={diffTreeCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                  size="small"
+                  theme="transparent"
+                  title={diffTreeCollapsed ? 'Expand file sidebar' : 'Collapse file sidebar'}
+                />
+              )}
+              {showFileViewSwitch && (
+                <span className="file-editor-dialog__file-view-switch-slot">
+                  <SegmentedControl
+                    aria-label="File view"
+                    className="file-editor-dialog__file-view-switch"
+                    disabled={!canShowDiff}
+                    options={fileViewOptions}
+                    size="small"
+                    value={fileView}
+                    onChange={setFileView}
+                  />
+                </span>
+              )}
+              <span className="file-editor-dialog__file-icon" aria-hidden="true">
+                <SymbolsFileIcon fileName={fileName} autoAssign />
+              </span>
+            </div>
+            <div className="file-editor-dialog__title">
+              <strong title={fileName}>{fileName}</strong>
+              <span title={directoryName}>{directoryName}</span>
+            </div>
+            <div className="file-editor-dialog__actions">
+              {showDownload && (
+                <Button
+                  aria-label={`Download ${displayPath}`}
+                  callback={handleDownload}
+                  disabled={downloadState === 'downloading'}
+                  icon={downloadState === 'downloaded' ? <Check /> : <Download />}
+                  size="small"
+                  theme="secondary"
+                  title={downloadState === 'downloaded' ? 'Downloaded' : 'Download'}
+                />
+              )}
+              {isMarkdown && canShowContents && (
+                <SegmentedControl
+                  aria-label="Markdown view"
+                  className="file-editor-dialog__markdown-view-switch"
+                  disabled={visibleLoadState !== 'ready'}
+                  options={markdownViewOptions}
+                  size="small"
+                  value={markdownView}
+                  onChange={setMarkdownView}
+                />
+              )}
+              {isFileDiff && reviewComments.length > 0 && onContinueReview && (
+                <Button
+                  callback={continueReview}
+                  icon={<MessageSquare aria-hidden="true" />}
+                  label={
+                    <span>
+                      Continue <span aria-hidden="true">·</span> {reviewComments.length}
+                    </span>
+                  }
+                  size="small"
+                  theme="primary"
+                  title={`Continue with ${reviewComments.length} review comment${reviewComments.length === 1 ? '' : 's'}`}
+                />
+              )}
+              {canShowImage && visibleLoadState === 'ready' && (
+                <Button
+                  aria-label={`Copy ${displayPath}`}
+                  callback={handleCopyImage}
+                  disabled={copyState === 'copying'}
+                  icon={copyState === 'copied' ? <Check /> : <Copy />}
+                  label={copyState === 'copied' ? 'Copied' : 'Copy'}
+                  size="small"
+                  theme="secondary"
+                  title="Copy image"
+                />
+              )}
+              {canShowContents && (
+                <Button
+                  aria-label={`Save ${displayPath}`}
+                  callback={handleSave}
+                  disabled={!canEdit || !dirty || saveState === 'saving'}
+                  icon={
+                    saveState === 'saving' ? (
+                      <LoaderCircle className="app-loading-spinner file-editor-dialog__spinner" />
+                    ) : (
+                      <Save />
+                    )
+                  }
+                  size="small"
+                  theme="secondary"
+                  title="Save (Ctrl/Cmd+S)"
+                />
+              )}
+              {canShowContents && (!isMarkdown || markdownView !== 'preview') && (
+                <Button
+                  aria-label={wordWrap ? 'Disable word wrap' : 'Enable word wrap'}
+                  aria-pressed={wordWrap}
+                  callback={toggleWordWrap}
+                  data-pressed={wordWrap ? 'true' : undefined}
+                  icon={<WrapText />}
+                  size="small"
+                  theme="secondary"
+                  title={wordWrap ? 'Disable word wrap (Alt+Z)' : 'Enable word wrap (Alt+Z)'}
+                />
+              )}
               <Button
-                aria-controls="file-editor-tree"
-                aria-expanded={!diffTreeCollapsed}
-                aria-label={diffTreeCollapsed ? 'Expand file sidebar' : 'Collapse file sidebar'}
-                callback={() => setDiffTreeCollapsed((collapsed) => !collapsed)}
-                icon={diffTreeCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                callback={() => setExpanded((currentExpanded) => !currentExpanded)}
+                icon={
+                  expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />
+                }
+                size="small"
+                theme="secondary"
+                aria-label={expanded ? 'Collapse file editor' : 'Expand file editor'}
+                title={expanded ? 'Collapse' : 'Expand'}
+              />
+              <Button
+                aria-label="Close file editor"
+                callback={requestClose}
+                icon={<X aria-hidden="true" />}
                 size="small"
                 theme="transparent"
-                title={diffTreeCollapsed ? 'Expand file sidebar' : 'Collapse file sidebar'}
+                title="Close"
               />
-            )}
-            {showFileViewSwitch && (
-              <span className="file-editor-dialog__file-view-switch-slot">
-                <SegmentedControl
-                  aria-label="File view"
-                  className="file-editor-dialog__file-view-switch"
-                  disabled={!canShowDiff}
-                  options={fileViewOptions}
-                  size="small"
-                  value={fileView}
-                  onChange={setFileView}
-                />
-              </span>
-            )}
-            <span className="file-editor-dialog__file-icon" aria-hidden="true">
-              <SymbolsFileIcon fileName={fileName} autoAssign />
-            </span>
-          </div>
-          <div className="file-editor-dialog__title">
-            <strong title={fileName}>{fileName}</strong>
-            <span title={directoryName}>{directoryName}</span>
-          </div>
-          <div className="file-editor-dialog__actions">
-            {showDownload && (
-              <Button
-                aria-label={`Download ${displayPath}`}
-                callback={handleDownload}
-                disabled={downloadState === 'downloading'}
-                icon={downloadState === 'downloaded' ? <Check /> : <Download />}
-                size="small"
-                theme="secondary"
-                title={downloadState === 'downloaded' ? 'Downloaded' : 'Download'}
-              />
-            )}
-            {isMarkdown && canShowContents && (
-              <SegmentedControl
-                aria-label="Markdown view"
-                className="file-editor-dialog__markdown-view-switch"
-                disabled={visibleLoadState !== 'ready'}
-                options={markdownViewOptions}
-                size="small"
-                value={markdownView}
-                onChange={setMarkdownView}
-              />
-            )}
-            {isFileDiff && reviewComments.length > 0 && onContinueReview && (
-              <Button
-                callback={continueReview}
-                icon={<MessageSquare aria-hidden="true" />}
-                label={
-                  <span>
-                    Continue <span aria-hidden="true">·</span> {reviewComments.length}
-                  </span>
-                }
-                size="small"
-                theme="primary"
-                title={`Continue with ${reviewComments.length} review comment${reviewComments.length === 1 ? '' : 's'}`}
-              />
-            )}
-            {canShowImage && visibleLoadState === 'ready' && (
-              <Button
-                aria-label={`Copy ${displayPath}`}
-                callback={handleCopyImage}
-                disabled={copyState === 'copying'}
-                icon={copyState === 'copied' ? <Check /> : <Copy />}
-                label={copyState === 'copied' ? 'Copied' : 'Copy'}
-                size="small"
-                theme="secondary"
-                title="Copy image"
-              />
-            )}
-            {canShowContents && (
-              <Button
-                aria-label={`Save ${displayPath}`}
-                callback={handleSave}
-                disabled={!canEdit || !dirty || saveState === 'saving'}
-                icon={
-                  saveState === 'saving' ? (
-                    <LoaderCircle className="app-loading-spinner file-editor-dialog__spinner" />
-                  ) : (
-                    <Save />
-                  )
-                }
-                size="small"
-                theme="secondary"
-                title="Save (Ctrl/Cmd+S)"
-              />
-            )}
-            {canShowContents && (!isMarkdown || markdownView !== 'preview') && (
-              <Button
-                aria-label={wordWrap ? 'Disable word wrap' : 'Enable word wrap'}
-                aria-pressed={wordWrap}
-                callback={toggleWordWrap}
-                data-pressed={wordWrap ? 'true' : undefined}
-                icon={<WrapText />}
-                size="small"
-                theme="secondary"
-                title={wordWrap ? 'Disable word wrap (Alt+Z)' : 'Enable word wrap (Alt+Z)'}
-              />
-            )}
-            <Button
-              callback={() => setExpanded((currentExpanded) => !currentExpanded)}
-              icon={expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-              size="small"
-              theme="secondary"
-              aria-label={expanded ? 'Collapse file editor' : 'Expand file editor'}
-              title={expanded ? 'Collapse' : 'Expand'}
-            />
-            <Button
-              aria-label="Close file editor"
-              callback={requestClose}
-              icon={<X aria-hidden="true" />}
-              size="small"
-              theme="transparent"
-              title="Close"
-            />
-          </div>
-        </header>
-
-        <div
-          className={`file-editor-dialog__body${showTreeSidebar ? ' file-editor-dialog__body--with-diff-tree' : ''}`}
-          ref={bodyRef}
-          style={
-            showTreeSidebar
-              ? ({ '--file-diff-tree-width': toCssRem(diffTreeWidth) } as CSSProperties)
-              : undefined
-          }
-        >
-          <aside
-            className="file-editor-dialog__tree-sidebar"
-            id="file-editor-tree"
-            aria-label={useDiffTree ? 'Changed files' : 'Files'}
-            hidden={!showTreeSidebar}
-          >
-            <div className="file-editor-dialog__tree-scroll">
-              {!useDiffTree && fileTreeLoadState === 'loading' && (
-                <div className="file-editor-dialog__tree-state" role="status">
-                  <LoaderCircle
-                    className="app-loading-spinner file-editor-dialog__spinner"
-                    aria-hidden="true"
-                  />
-                  <span>Loading files…</span>
-                </div>
-              )}
-              {!useDiffTree && fileTreeLoadState === 'error' && (
-                <div className="file-editor-dialog__tree-state" role="alert">
-                  <FileCode2 aria-hidden="true" />
-                  <span>{fileTreeError ?? 'Unable to load the file tree.'}</span>
-                </div>
-              )}
-              {(useDiffTree || fileTreeLoadState === 'ready') && visibleTree.length > 0 && (
-                <ul className="file-editor-dialog__tree" role="tree">
-                  {visibleTree.map((node) => renderFileTreeNode(node, 0))}
-                </ul>
-              )}
-              {(useDiffTree || fileTreeLoadState === 'ready') && visibleTree.length === 0 && (
-                <div className="file-editor-dialog__tree-state">
-                  <FileCode2 aria-hidden="true" />
-                  <span>{useDiffTree ? 'No changed files.' : 'No files.'}</span>
-                </div>
-              )}
             </div>
-          </aside>
-          {showTreeSidebar && (
-            <div
-              className="file-editor-dialog__tree-resize-handle"
-              role="separator"
-              aria-label="Resize file sidebar"
-              aria-orientation="vertical"
-              aria-valuemax={diffTreeMaxWidth}
-              aria-valuemin={diffTreeMinWidth}
-              aria-valuenow={Math.round(diffTreeWidth)}
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-                event.preventDefault()
-                resizeDiffTreeBy(event.key === 'ArrowLeft' ? -12.8 : 12.8)
-              }}
-              onPointerDown={startDiffTreeResize}
-            />
-          )}
+          </header>
 
-          <div className="file-editor-dialog__content">
-            {canShowImage && visibleLoadState === 'ready' && editorError && (
-              <div className="file-editor-dialog__error" role="alert">
-                {editorError}
+          <div
+            className={`file-editor-dialog__body${showTreeSidebar ? ' file-editor-dialog__body--with-diff-tree' : ''}`}
+            ref={bodyRef}
+            style={
+              showTreeSidebar
+                ? ({ '--file-diff-tree-width': toCssRem(diffTreeWidth) } as CSSProperties)
+                : undefined
+            }
+          >
+            <aside
+              className="file-editor-dialog__tree-sidebar"
+              id="file-editor-tree"
+              aria-label={useDiffTree ? 'Changed files' : 'Files'}
+              hidden={!showTreeSidebar}
+            >
+              <div className="file-editor-dialog__tree-scroll">
+                {!useDiffTree && fileTreeLoadState === 'loading' && (
+                  <div className="file-editor-dialog__tree-state" role="status">
+                    <LoaderCircle
+                      className="app-loading-spinner file-editor-dialog__spinner"
+                      aria-hidden="true"
+                    />
+                    <span>Loading files…</span>
+                  </div>
+                )}
+                {!useDiffTree && fileTreeLoadState === 'error' && (
+                  <div className="file-editor-dialog__tree-state" role="alert">
+                    <FileCode2 aria-hidden="true" />
+                    <span>{fileTreeError ?? 'Unable to load the file tree.'}</span>
+                  </div>
+                )}
+                {(useDiffTree || fileTreeLoadState === 'ready') && visibleTree.length > 0 && (
+                  <ul className="file-editor-dialog__tree" role="tree">
+                    {visibleTree.map((node) => renderFileTreeNode(node, 0))}
+                  </ul>
+                )}
+                {(useDiffTree || fileTreeLoadState === 'ready') && visibleTree.length === 0 && (
+                  <div className="file-editor-dialog__tree-state">
+                    <FileCode2 aria-hidden="true" />
+                    <span>{useDiffTree ? 'No changed files.' : 'No files.'}</span>
+                  </div>
+                )}
               </div>
+            </aside>
+            {showTreeSidebar && (
+              <div
+                className="file-editor-dialog__tree-resize-handle"
+                role="separator"
+                aria-label="Resize file sidebar"
+                aria-orientation="vertical"
+                aria-valuemax={diffTreeMaxWidth}
+                aria-valuemin={diffTreeMinWidth}
+                aria-valuenow={Math.round(diffTreeWidth)}
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+                  event.preventDefault()
+                  resizeDiffTreeBy(event.key === 'ArrowLeft' ? -12.8 : 12.8)
+                }}
+                onPointerDown={startDiffTreeResize}
+              />
             )}
-            {showFileDiff && !canEdit && (
-              <div className="file-editor-dialog__diff-view">
-                {visibleDiffLoadState === 'loading' && (
+
+            <div className="file-editor-dialog__content">
+              {canShowImage && visibleLoadState === 'ready' && editorError && (
+                <div className="file-editor-dialog__error" role="alert">
+                  {editorError}
+                </div>
+              )}
+              {showFileDiff && !canEdit && (
+                <div className="file-editor-dialog__diff-view">
+                  {visibleDiffLoadState === 'loading' && (
+                    <div className="file-editor-dialog__state" role="status">
+                      <LoaderCircle
+                        className="app-loading-spinner file-editor-dialog__spinner"
+                        aria-hidden="true"
+                      />
+                      <span>Loading diff…</span>
+                    </div>
+                  )}
+                  {visibleDiffLoadState === 'error' && (
+                    <div className="file-editor-dialog__state" role="alert">
+                      <FileDiff aria-hidden="true" />
+                      <p>{diffError}</p>
+                      <Button
+                        callback={loadDiff}
+                        icon={<RefreshCw />}
+                        label="Try again"
+                        size="small"
+                        theme="secondary"
+                      />
+                    </div>
+                  )}
+                  {visibleDiffLoadState === 'ready' &&
+                    (diff && renderedFileDiff ? (
+                      <div className="file-editor-dialog__diff-scroll">
+                        <UnifiedDiff
+                          className="file-editor-dialog__diff"
+                          comments={currentReviewComments}
+                          endLine={target.endLine}
+                          fileDiff={renderedFileDiff}
+                          line={target.line}
+                          onAddComment={
+                            isFileDiff && onContinueReview ? addReviewComment : undefined
+                          }
+                          onChangeComment={
+                            isFileDiff && onContinueReview ? changeReviewComment : undefined
+                          }
+                          onDeleteComment={
+                            isFileDiff && onContinueReview ? deleteReviewComment : undefined
+                          }
+                        />
+                      </div>
+                    ) : (
+                      <div className="file-editor-dialog__state">
+                        <FileDiff aria-hidden="true" />
+                        <p>No changes to display.</p>
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {canOpenFile &&
+                (visibleLoadState === 'loading' ||
+                  (showFileDiff && visibleDiffLoadState === 'loading')) && (
                   <div className="file-editor-dialog__state" role="status">
                     <LoaderCircle
                       className="app-loading-spinner file-editor-dialog__spinner"
                       aria-hidden="true"
                     />
-                    <span>Loading diff…</span>
+                    <span>
+                      {canShowImage
+                        ? 'Opening image…'
+                        : showFileDiff
+                          ? 'Opening editable diff…'
+                          : 'Opening file…'}
+                    </span>
                   </div>
                 )}
-                {visibleDiffLoadState === 'error' && (
+
+              {canOpenFile &&
+                (visibleLoadState === 'error' ||
+                  (showFileDiff && visibleDiffLoadState === 'error')) && (
                   <div className="file-editor-dialog__state" role="alert">
-                    <FileDiff aria-hidden="true" />
-                    <p>{diffError}</p>
-                    <Button
-                      callback={loadDiff}
-                      icon={<RefreshCw />}
-                      label="Try again"
-                      size="small"
-                      theme="secondary"
-                    />
+                    {canShowImage ? (
+                      <ImageIcon aria-hidden="true" />
+                    ) : showFileDiff ? (
+                      <FileDiff aria-hidden="true" />
+                    ) : (
+                      <FileCode2 aria-hidden="true" />
+                    )}
+                    <p>{editorError ?? diffError}</p>
+                    <div className="file-editor-dialog__state-actions">
+                      {showOpenRetry && (
+                        <Button
+                          callback={() => {
+                            if (canShowImage) void loadImage()
+                            else {
+                              void loadFile()
+                              if (showFileDiff) void loadDiff()
+                            }
+                          }}
+                          icon={<RefreshCw />}
+                          label="Try again"
+                          size="small"
+                          theme="secondary"
+                        />
+                      )}
+                      <Button
+                        callback={handleOpenInApp}
+                        icon={<ExternalLink />}
+                        label="Open in app"
+                        size="small"
+                        theme="secondary"
+                      />
+                      {showEnvironmentRecovery && (
+                        <Dropdown
+                          aria-label="Try reading from another environment"
+                          appearance="inline"
+                          disabled={environmentSuggestionsState === 'loading'}
+                          emptyContent="No other environments found."
+                          icon={<Monitor aria-hidden="true" />}
+                          options={environmentOptions}
+                          size="small"
+                          value={fileEnvironmentKey}
+                          valueContent={
+                            environmentSuggestionsState === 'loading'
+                              ? 'Checking environments…'
+                              : 'Try another environment'
+                          }
+                          onChange={tryFileEnvironment}
+                        />
+                      )}
+                    </div>
                   </div>
                 )}
-                {visibleDiffLoadState === 'ready' &&
-                  (diff && renderedFileDiff ? (
-                    <div className="file-editor-dialog__diff-scroll">
-                      <UnifiedDiff
+
+              {canShowImage && visibleLoadState === 'ready' && imageDataUrl && (
+                <div className="file-editor-dialog__image-preview">
+                  <img src={imageDataUrl} alt={fileName} draggable={false} />
+                </div>
+              )}
+
+              {canShowContents &&
+                visibleLoadState === 'ready' &&
+                (!showFileDiff || visibleDiffLoadState === 'ready') && (
+                  <div
+                    className={[
+                      'file-editor-dialog__inline-diff',
+                      isMarkdown ? 'file-editor-dialog__inline-diff--markdown' : null,
+                      isMarkdown
+                        ? `file-editor-dialog__inline-diff--markdown-${markdownView}`
+                        : null
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    ref={markdownSplitRef}
+                    style={
+                      isMarkdown && markdownView === 'split'
+                        ? ({
+                            '--markdown-split-percentage': `${markdownSplitPercentage}%`
+                          } as CSSProperties)
+                        : undefined
+                    }
+                  >
+                    {editorError && (
+                      <div className="file-editor-dialog__error" role="alert">
+                        {editorError}
+                      </div>
+                    )}
+                    <div className="file-editor-dialog__editor-pane">
+                      <EditableUnifiedDiff
+                        key={target.path}
+                        ariaLabel={`Contents of ${target.displayPath}`}
+                        baselineContents={showFileDiff ? savedContents : contents}
                         className="file-editor-dialog__diff"
                         comments={currentReviewComments}
+                        contents={contents}
                         endLine={target.endLine}
-                        fileDiff={renderedFileDiff}
+                        fileDiff={displayedFileDiff}
                         line={target.line}
+                        onChange={(nextContents) => {
+                          setContents(nextContents)
+                          setSaveState('idle')
+                          setEditorError(null)
+                        }}
                         onAddComment={isFileDiff && onContinueReview ? addReviewComment : undefined}
                         onChangeComment={
                           isFileDiff && onContinueReview ? changeReviewComment : undefined
@@ -1527,186 +1675,47 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                         onDeleteComment={
                           isFileDiff && onContinueReview ? deleteReviewComment : undefined
                         }
+                        onSave={() => void handleSave()}
+                        onToggleWordWrap={toggleWordWrap}
+                        readOnly={!canEdit}
+                        showOriginalLineNumbers={showFileDiff}
+                        wordWrap={wordWrap}
                       />
                     </div>
-                  ) : (
-                    <div className="file-editor-dialog__state">
-                      <FileDiff aria-hidden="true" />
-                      <p>No changes to display.</p>
-                    </div>
-                  ))}
-              </div>
-            )}
-
-            {canOpenFile &&
-              (visibleLoadState === 'loading' ||
-                (showFileDiff && visibleDiffLoadState === 'loading')) && (
-                <div className="file-editor-dialog__state" role="status">
-                  <LoaderCircle
-                    className="app-loading-spinner file-editor-dialog__spinner"
-                    aria-hidden="true"
-                  />
-                  <span>
-                    {canShowImage
-                      ? 'Opening image…'
-                      : showFileDiff
-                        ? 'Opening editable diff…'
-                        : 'Opening file…'}
-                  </span>
-                </div>
-              )}
-
-            {canOpenFile &&
-              (visibleLoadState === 'error' ||
-                (showFileDiff && visibleDiffLoadState === 'error')) && (
-                <div className="file-editor-dialog__state" role="alert">
-                  {canShowImage ? (
-                    <ImageIcon aria-hidden="true" />
-                  ) : showFileDiff ? (
-                    <FileDiff aria-hidden="true" />
-                  ) : (
-                    <FileCode2 aria-hidden="true" />
-                  )}
-                  <p>{editorError ?? diffError}</p>
-                  <div className="file-editor-dialog__state-actions">
-                    {showOpenRetry && (
-                      <Button
-                        callback={() => {
-                          if (canShowImage) void loadImage()
-                          else {
-                            void loadFile()
-                            if (showFileDiff) void loadDiff()
-                          }
+                    {isMarkdown && markdownView === 'split' && (
+                      <div
+                        className="file-editor-dialog__markdown-resize-handle"
+                        role="separator"
+                        aria-label="Resize Markdown editor and preview"
+                        aria-orientation={markdownSplitStacked ? 'horizontal' : 'vertical'}
+                        aria-valuemax={markdownSplitMaxPercentage}
+                        aria-valuemin={markdownSplitMinPercentage}
+                        aria-valuenow={Math.round(markdownSplitPercentage)}
+                        tabIndex={0}
+                        onKeyDown={(event) => {
+                          const decreaseKey = markdownSplitStacked ? 'ArrowUp' : 'ArrowLeft'
+                          const increaseKey = markdownSplitStacked ? 'ArrowDown' : 'ArrowRight'
+                          if (event.key !== decreaseKey && event.key !== increaseKey) return
+                          event.preventDefault()
+                          resizeMarkdownSplitBy(event.key === decreaseKey ? -2 : 2)
                         }}
-                        icon={<RefreshCw />}
-                        label="Try again"
-                        size="small"
-                        theme="secondary"
+                        onPointerDown={startMarkdownSplitResize}
                       />
                     )}
-                    <Button
-                      callback={handleOpenInApp}
-                      icon={<ExternalLink />}
-                      label="Open in app"
-                      size="small"
-                      theme="secondary"
-                    />
-                    {showEnvironmentRecovery && (
-                      <Dropdown
-                        aria-label="Try reading from another environment"
-                        appearance="inline"
-                        disabled={environmentSuggestionsState === 'loading'}
-                        emptyContent="No other environments found."
-                        icon={<Monitor aria-hidden="true" />}
-                        options={environmentOptions}
-                        size="small"
-                        value={fileEnvironmentKey}
-                        valueContent={
-                          environmentSuggestionsState === 'loading'
-                            ? 'Checking environments…'
-                            : 'Try another environment'
-                        }
-                        onChange={tryFileEnvironment}
+                    {isMarkdown && markdownView !== 'code' && (
+                      <article
+                        className="file-editor-dialog__markdown-preview"
+                        ref={markdownPreviewRef}
+                        aria-label={`Preview of ${target.displayPath}`}
+                        dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
                       />
                     )}
                   </div>
-                </div>
-              )}
-
-            {canShowImage && visibleLoadState === 'ready' && imageDataUrl && (
-              <div className="file-editor-dialog__image-preview">
-                <img src={imageDataUrl} alt={fileName} draggable={false} />
-              </div>
-            )}
-
-            {canShowContents &&
-              visibleLoadState === 'ready' &&
-              (!showFileDiff || visibleDiffLoadState === 'ready') && (
-                <div
-                  className={[
-                    'file-editor-dialog__inline-diff',
-                    isMarkdown ? 'file-editor-dialog__inline-diff--markdown' : null,
-                    isMarkdown ? `file-editor-dialog__inline-diff--markdown-${markdownView}` : null
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  ref={markdownSplitRef}
-                  style={
-                    isMarkdown && markdownView === 'split'
-                      ? ({
-                          '--markdown-split-percentage': `${markdownSplitPercentage}%`
-                        } as CSSProperties)
-                      : undefined
-                  }
-                >
-                  {editorError && (
-                    <div className="file-editor-dialog__error" role="alert">
-                      {editorError}
-                    </div>
-                  )}
-                  <div className="file-editor-dialog__editor-pane">
-                    <EditableUnifiedDiff
-                      key={target.path}
-                      ariaLabel={`Contents of ${target.displayPath}`}
-                      baselineContents={showFileDiff ? savedContents : contents}
-                      className="file-editor-dialog__diff"
-                      comments={currentReviewComments}
-                      contents={contents}
-                      endLine={target.endLine}
-                      fileDiff={displayedFileDiff}
-                      line={target.line}
-                      onChange={(nextContents) => {
-                        setContents(nextContents)
-                        setSaveState('idle')
-                        setEditorError(null)
-                      }}
-                      onAddComment={isFileDiff && onContinueReview ? addReviewComment : undefined}
-                      onChangeComment={
-                        isFileDiff && onContinueReview ? changeReviewComment : undefined
-                      }
-                      onDeleteComment={
-                        isFileDiff && onContinueReview ? deleteReviewComment : undefined
-                      }
-                      onSave={() => void handleSave()}
-                      onToggleWordWrap={toggleWordWrap}
-                      readOnly={!canEdit}
-                      showOriginalLineNumbers={showFileDiff}
-                      wordWrap={wordWrap}
-                    />
-                  </div>
-                  {isMarkdown && markdownView === 'split' && (
-                    <div
-                      className="file-editor-dialog__markdown-resize-handle"
-                      role="separator"
-                      aria-label="Resize Markdown editor and preview"
-                      aria-orientation={markdownSplitStacked ? 'horizontal' : 'vertical'}
-                      aria-valuemax={markdownSplitMaxPercentage}
-                      aria-valuemin={markdownSplitMinPercentage}
-                      aria-valuenow={Math.round(markdownSplitPercentage)}
-                      tabIndex={0}
-                      onKeyDown={(event) => {
-                        const decreaseKey = markdownSplitStacked ? 'ArrowUp' : 'ArrowLeft'
-                        const increaseKey = markdownSplitStacked ? 'ArrowDown' : 'ArrowRight'
-                        if (event.key !== decreaseKey && event.key !== increaseKey) return
-                        event.preventDefault()
-                        resizeMarkdownSplitBy(event.key === decreaseKey ? -2 : 2)
-                      }}
-                      onPointerDown={startMarkdownSplitResize}
-                    />
-                  )}
-                  {isMarkdown && markdownView !== 'code' && (
-                    <article
-                      className="file-editor-dialog__markdown-preview"
-                      ref={markdownPreviewRef}
-                      aria-label={`Preview of ${target.displayPath}`}
-                      dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
-                    />
-                  )}
-                </div>
-              )}
+                )}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      </PopupWindow>
     </MotionSurface>
   )
 })

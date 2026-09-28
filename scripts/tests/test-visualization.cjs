@@ -353,6 +353,26 @@ if (!process.versions.electron) {
         true
       )
       assert.equal(
+        await window.webContents.executeJavaScript(`(() => {
+          const content = document.querySelector('.resizable-lightbox[open] > .resizable-lightbox__content')
+          const table = content.querySelector('.chat-detail__table')
+          const dialog = content.closest('dialog')
+          const actions = dialog.querySelector('.resizable-lightbox__actions')
+          const contentBounds = content.getBoundingClientRect()
+          const tableBounds = table.getBoundingClientRect()
+          const dialogBounds = dialog.getBoundingClientRect()
+          const actionsBounds = actions.getBoundingClientRect()
+          return getComputedStyle(content).padding === '0px' &&
+            Math.abs(tableBounds.left - contentBounds.left) < 1 &&
+            Math.abs(tableBounds.top - contentBounds.top) < 1 &&
+            Math.abs(contentBounds.top - dialogBounds.top) < 2 &&
+            actionsBounds.top >= tableBounds.top &&
+            actionsBounds.top < tableBounds.bottom
+        })()`),
+        true,
+        'Expanded tables meet the popup edges with the close button over the table'
+      )
+      assert.equal(
         await window.webContents.executeJavaScript(
           `originalFrame.isConnected && document.querySelector('.test-message iframe')===originalFrame`
         ),

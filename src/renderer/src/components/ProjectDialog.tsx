@@ -17,6 +17,7 @@ import {
   renderProjectGlyph
 } from '../projectPresentation'
 import { Button } from './Button'
+import { PopupWindow } from './PopupWindow'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { Input } from './Input'
 import './ProjectDialog.css'
@@ -200,145 +201,151 @@ export const ProjectDialog = ({
         if (event.target === event.currentTarget && !saving) onClose()
       }}
     >
-      <form
-        className="project-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Add project"
-        onSubmit={handleSubmit}
-        onKeyDown={(event) => {
-          if (event.key !== 'Escape' || saving) return
-          event.preventDefault()
-          onClose()
-        }}
-      >
-        <div className="project-dialog__body">
-          <div className="project-dialog__field">
-            <div className="project-dialog__label-row">
-              <label htmlFor="project-dialog-name">Name</label>
-              <Button
-                theme="transparent"
-                size="small"
-                aria-label="Close project window"
-                title="Close"
-                disabled={saving}
-                callback={onClose}
-                icon={<X aria-hidden="true" />}
-              />
-            </div>
-            <div className="project-dialog__name-row">
-              <Dropdown<ProjectIconValue>
-                className="project-dialog__icon-picker"
-                aria-label="Project icon"
-                menuAlign="start"
-                menuActions={[
-                  {
-                    id: 'choose-project-image',
-                    label: 'Choose image…',
-                    icon: <ImagePlus aria-hidden="true" />,
-                    callback: handleSelectImage
+      <PopupWindow>
+        <form
+          className="project-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add project"
+          onSubmit={handleSubmit}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape' || saving) return
+            event.preventDefault()
+            onClose()
+          }}
+        >
+          <div className="project-dialog__body">
+            <div className="project-dialog__field">
+              <div className="project-dialog__label-row">
+                <label htmlFor="project-dialog-name">Name</label>
+                <Button
+                  theme="transparent"
+                  size="small"
+                  aria-label="Close project window"
+                  title="Close"
+                  disabled={saving}
+                  callback={onClose}
+                  icon={<X aria-hidden="true" />}
+                />
+              </div>
+              <div className="project-dialog__name-row">
+                <Dropdown<ProjectIconValue>
+                  className="project-dialog__icon-picker"
+                  aria-label="Project icon"
+                  menuAlign="start"
+                  menuActions={[
+                    {
+                      id: 'choose-project-image',
+                      label: 'Choose image…',
+                      icon: <ImagePlus aria-hidden="true" />,
+                      callback: handleSelectImage
+                    }
+                  ]}
+                  searchable
+                  searchPlaceholder="Search icons"
+                  options={iconOptions}
+                  title={`Icon: ${iconTitle}`}
+                  value={icon}
+                  valueContent={
+                    icon === 'image' && projectImage ? (
+                      <img
+                        className="project-dialog__icon-image"
+                        src={projectImage.dataUrl}
+                        alt=""
+                      />
+                    ) : (
+                      renderProjectGlyph(icon as AppProjectGlyph)
+                    )
                   }
-                ]}
-                searchable
-                searchPlaceholder="Search icons"
-                options={iconOptions}
-                title={`Icon: ${iconTitle}`}
-                value={icon}
-                valueContent={
-                  icon === 'image' && projectImage ? (
-                    <img className="project-dialog__icon-image" src={projectImage.dataUrl} alt="" />
-                  ) : (
-                    renderProjectGlyph(icon as AppProjectGlyph)
-                  )
-                }
-                onChange={handleIconChange}
-              />
+                  onChange={handleIconChange}
+                />
+                <Input
+                  id="project-dialog-name"
+                  ref={nameInputRef}
+                  value={name}
+                  maxLength={80}
+                  placeholder="Project name"
+                  disabled={saving}
+                  onChange={(event) => {
+                    setName(event.currentTarget.value)
+                    setError(null)
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="project-dialog__field">
+              <span>Main folder</span>
               <Input
-                id="project-dialog-name"
-                ref={nameInputRef}
-                value={name}
-                maxLength={80}
-                placeholder="Project name"
+                className="project-dialog__folder-input"
+                value={cwd}
+                readOnly
+                placeholder="Choose a folder"
+                title={cwd || 'Choose a folder'}
+                aria-label="Choose main folder"
                 disabled={saving}
-                onChange={(event) => {
-                  setName(event.currentTarget.value)
-                  setError(null)
+                onClick={() => void handleSelectMainFolder()}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault()
+                  void handleSelectMainFolder()
                 }}
               />
             </div>
-          </div>
 
-          <div className="project-dialog__field">
-            <span>Main folder</span>
-            <Input
-              className="project-dialog__folder-input"
-              value={cwd}
-              readOnly
-              placeholder="Choose a folder"
-              title={cwd || 'Choose a folder'}
-              aria-label="Choose main folder"
-              disabled={saving}
-              onClick={() => void handleSelectMainFolder()}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' && event.key !== ' ') return
-                event.preventDefault()
-                void handleSelectMainFolder()
-              }}
-            />
-          </div>
+            <div className="project-dialog__field">
+              <span>Additional folders</span>
+              {additionalCwds.length > 0 && (
+                <div className="project-dialog__folder-list">
+                  {additionalCwds.map((folder) => (
+                    <div className="project-dialog__additional-folder" key={folder}>
+                      <span title={folder}>{folder}</span>
+                      <Button
+                        theme="transparent"
+                        size="small"
+                        aria-label={`Remove ${folder}`}
+                        title="Remove folder"
+                        disabled={saving}
+                        callback={() =>
+                          setAdditionalCwds((currentCwds) =>
+                            currentCwds.filter((currentCwd) => currentCwd !== folder)
+                          )
+                        }
+                        icon={<X aria-hidden="true" />}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button
+                className="project-dialog__add-folder"
+                type="button"
+                disabled={saving}
+                onClick={() => void handleAddFolder()}
+              >
+                <Plus aria-hidden="true" />
+                <span>Add additional folder…</span>
+              </button>
+            </div>
 
-          <div className="project-dialog__field">
-            <span>Additional folders</span>
-            {additionalCwds.length > 0 && (
-              <div className="project-dialog__folder-list">
-                {additionalCwds.map((folder) => (
-                  <div className="project-dialog__additional-folder" key={folder}>
-                    <span title={folder}>{folder}</span>
-                    <Button
-                      theme="transparent"
-                      size="small"
-                      aria-label={`Remove ${folder}`}
-                      title="Remove folder"
-                      disabled={saving}
-                      callback={() =>
-                        setAdditionalCwds((currentCwds) =>
-                          currentCwds.filter((currentCwd) => currentCwd !== folder)
-                        )
-                      }
-                      icon={<X aria-hidden="true" />}
-                    />
-                  </div>
-                ))}
-              </div>
+            {error && (
+              <p className="project-dialog__error" role="alert">
+                {error}
+              </p>
             )}
-            <button
-              className="project-dialog__add-folder"
-              type="button"
-              disabled={saving}
-              onClick={() => void handleAddFolder()}
-            >
-              <Plus aria-hidden="true" />
-              <span>Add additional folder…</span>
-            </button>
           </div>
-
-          {error && (
-            <p className="project-dialog__error" role="alert">
-              {error}
-            </p>
-          )}
-        </div>
-        <footer className="project-dialog__footer">
-          <Button theme="secondary" label="Cancel" disabled={saving} callback={onClose} />
-          <Button
-            theme="primary"
-            label={saving ? 'Saving' : 'Add project'}
-            disabled={saving}
-            callback={() => void handleSave()}
-            icon={<Check aria-hidden="true" />}
-          />
-        </footer>
-      </form>
+          <footer className="project-dialog__footer">
+            <Button theme="secondary" label="Cancel" disabled={saving} callback={onClose} />
+            <Button
+              theme="primary"
+              label={saving ? 'Saving' : 'Add project'}
+              disabled={saving}
+              callback={() => void handleSave()}
+              icon={<Check aria-hidden="true" />}
+            />
+          </footer>
+        </form>
+      </PopupWindow>
     </MotionSurface>
   )
 

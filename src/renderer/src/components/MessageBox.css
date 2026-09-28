@@ -714,6 +714,7 @@
 
 .message-box__usage-percent {
   position: relative;
+  font-weight: 400;
 }
 
 .message-box__usage-control > .ui-button:not(:disabled):hover .message-box__usage-track,

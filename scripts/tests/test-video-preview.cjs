@@ -145,6 +145,21 @@ if (!process.versions.electron) {
         await js("document.querySelector('.chat-detail__markdown-video').click()", true)
         await waitFor("document.querySelector('.image-lightbox video')?.currentTime > 0")
         assert.equal(await js("document.querySelector('.image-lightbox video').controls"), true)
+        assert.equal(
+          await js("getComputedStyle(document.querySelector('.image-lightbox__frame')).resize"),
+          'both'
+        )
+        assert.equal(
+          await js(`(() => {
+            const frame = document.querySelector('.image-lightbox__frame')
+            frame.style.width = '300px'
+            frame.style.height = '160px'
+            const frameBounds = frame.getBoundingClientRect()
+            const videoBounds = frame.querySelector('video').getBoundingClientRect()
+            return videoBounds.width <= frameBounds.width && videoBounds.height <= frameBounds.height
+          })()`),
+          true
+        )
         if (close === 'button') {
           await js('document.querySelector(\'[aria-label="Copy Demo"]\').click()')
           await js('document.querySelector(\'[aria-label="Save Demo"]\').click()')

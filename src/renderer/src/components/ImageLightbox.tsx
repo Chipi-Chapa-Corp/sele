@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import type { AppLocalImageOptions } from '../../../shared/app'
 import { appApi } from '../appApi'
 import { Button } from './Button'
+import { PopupWindow } from './PopupWindow'
 import './ImageLightbox.css'
 
 type ImageLightboxProps = {
@@ -120,61 +121,63 @@ export const ImageLightbox = ({
           if (event.target === event.currentTarget) onClose()
         }}
       >
-        <div className="image-lightbox__frame">
-          {mediaType === 'video' ? (
-            <video src={imageUrl} aria-label={`${name} preview`} controls autoPlay playsInline />
-          ) : (
-            <img src={imageUrl} alt={`${name} preview`} />
-          )}
-          <div className="image-lightbox__actions">
-            {path && (
-              <>
-                <Button
-                  disabled={copyState === 'copying'}
-                  aria-label={`Copy ${name}`}
-                  callback={handleCopy}
-                  icon={
-                    copyState === 'copied' ? (
-                      <Check aria-hidden="true" />
-                    ) : (
-                      <Copy aria-hidden="true" />
-                    )
-                  }
-                  size="small"
-                  theme="secondary"
-                  title={
-                    copyState === 'error' ? `Unable to copy ${mediaType}` : `Copy ${mediaType}`
-                  }
-                />
-                <Button
-                  disabled={saveState === 'saving'}
-                  aria-label={`Save ${name}`}
-                  callback={handleSave}
-                  icon={
-                    saveState === 'saved' ? (
-                      <Check aria-hidden="true" />
-                    ) : (
-                      <Download aria-hidden="true" />
-                    )
-                  }
-                  size="small"
-                  theme="secondary"
-                  title={
-                    saveState === 'error' ? `Unable to save ${mediaType}` : `Save ${mediaType}`
-                  }
-                />
-              </>
+        <PopupWindow>
+          <div className="image-lightbox__frame">
+            {mediaType === 'video' ? (
+              <video src={imageUrl} aria-label={`${name} preview`} controls autoPlay playsInline />
+            ) : (
+              <img src={imageUrl} alt={`${name} preview`} />
             )}
-            <Button
-              aria-label={`Close ${mediaType} preview`}
-              callback={onClose}
-              icon={<X aria-hidden="true" />}
-              size="small"
-              theme="secondary"
-              title="Close"
-            />
+            <div className="image-lightbox__actions">
+              {path && (
+                <>
+                  <Button
+                    disabled={copyState === 'copying'}
+                    aria-label={`Copy ${name}`}
+                    callback={handleCopy}
+                    icon={
+                      copyState === 'copied' ? (
+                        <Check aria-hidden="true" />
+                      ) : (
+                        <Copy aria-hidden="true" />
+                      )
+                    }
+                    size="small"
+                    theme="secondary"
+                    title={
+                      copyState === 'error' ? `Unable to copy ${mediaType}` : `Copy ${mediaType}`
+                    }
+                  />
+                  <Button
+                    disabled={saveState === 'saving'}
+                    aria-label={`Save ${name}`}
+                    callback={handleSave}
+                    icon={
+                      saveState === 'saved' ? (
+                        <Check aria-hidden="true" />
+                      ) : (
+                        <Download aria-hidden="true" />
+                      )
+                    }
+                    size="small"
+                    theme="secondary"
+                    title={
+                      saveState === 'error' ? `Unable to save ${mediaType}` : `Save ${mediaType}`
+                    }
+                  />
+                </>
+              )}
+              <Button
+                aria-label={`Close ${mediaType} preview`}
+                callback={onClose}
+                icon={<X aria-hidden="true" />}
+                size="small"
+                theme="secondary"
+                title="Close"
+              />
+            </div>
           </div>
-        </div>
+        </PopupWindow>
       </div>
     </div>,
     document.body

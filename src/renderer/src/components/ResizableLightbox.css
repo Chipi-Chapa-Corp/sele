@@ -23,7 +23,6 @@
   max-width: calc(100vw - 1.4rem);
   max-height: calc(100vh - 1.4rem);
   overflow: hidden;
-  resize: both;
   border: 0.0625rem solid var(--panel-border);
   border-radius: 0.8rem;
   color: var(--lead);
@@ -46,6 +45,18 @@
   scrollbar-color: var(--glass-edge) transparent;
 }
 
+.resizable-lightbox[open].resizable-lightbox--flush-content > .resizable-lightbox__content {
+  padding: 0;
+}
+
+.resizable-lightbox[open].resizable-lightbox--overlay-actions > .resizable-lightbox__content {
+  grid-row: 1;
+}
+
+.resizable-lightbox[open].resizable-lightbox--overlay-actions {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .resizable-lightbox[open] > .resizable-lightbox__content .chat-detail__table {
   min-width: 100%;
 }
@@ -57,6 +68,16 @@
   justify-content: flex-end;
   gap: 0.35rem;
   padding: 0.45rem 0.45rem 0;
+}
+
+.resizable-lightbox[open].resizable-lightbox--overlay-actions > .resizable-lightbox__actions {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  z-index: 1;
+  padding: 0;
+  border-radius: 0.42rem;
+  background: var(--floating-bg);
 }
 
 @media (max-width: 37.5rem) {
