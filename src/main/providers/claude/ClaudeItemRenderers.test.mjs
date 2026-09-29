@@ -31,6 +31,27 @@ const renderUserPresentations = (message) => {
   ]
 }
 
+test('keeps Claude failure details in full and projected history', () => {
+  const error = {
+    type: 'system',
+    uuid: 'error',
+    session_id: 'session',
+    message: { content: 'Provider connection lost' },
+    parent_tool_use_id: null,
+    failed: true
+  }
+  const source = [userPrompt, error]
+  const options = { active: false, stopped: false }
+  const full = renderClaudeChatItems(source, options)
+  const projected = new ClaudeTranscriptProjection().read(source, [], options).items
+  for (const items of [full, projected]) {
+    assert.equal(
+      items.find((item) => item.type === 'working')?.failureMessage,
+      'Provider connection lost'
+    )
+  }
+})
+
 test('restores pasted images from persisted Claude prompts without in-memory metadata', () => {
   const path = '/tmp/sele-message-images/pasted-image-2a6b8ab1-e339-4e6f-82f7-dfae3f7d29d4.png'
   for (const text of ['Check this image', '']) {

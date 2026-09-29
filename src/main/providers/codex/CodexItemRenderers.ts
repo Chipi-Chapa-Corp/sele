@@ -1835,6 +1835,7 @@ const renderChatItems = (
             }
           : {}),
         failureReason: status === 'failed' && isRateLimitFailure(turn) ? 'rateLimit' : undefined,
+        failureMessage: status === 'failed' ? (getTurnErrorText(turn) ?? undefined) : undefined,
         showWorking,
         betweenWorkingAndFinal: pendingTimelineAnchors,
         ...(workingItemTailLimit < Number.MAX_SAFE_INTEGER

@@ -2125,17 +2125,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (state.failed) {
       const errors = 'errors' in event ? event.errors : []
       console.error(`Claude session ${state.id} returned ${event.subtype}.`, { errors })
-      const content = errors.join('\n').trim()
-      if (content) {
-        this.addTranscriptMessage(state, {
-          type: 'system',
-          uuid: event.uuid,
-          session_id: event.session_id,
-          message: { content },
-          parent_tool_use_id: null,
-          failed: true
-        })
-      }
+      const content = errors.join('\n').trim() || `Claude reported ${event.subtype}.`
+      this.addTranscriptMessage(state, {
+        type: 'system',
+        uuid: event.uuid,
+        session_id: event.session_id,
+        message: { content },
+        parent_tool_use_id: null,
+        failed: true
+      })
     }
 
     const inputTokens = event.usage.input_tokens + event.usage.cache_creation_input_tokens

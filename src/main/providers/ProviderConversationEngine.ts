@@ -27,6 +27,7 @@ export type ProviderConversationSegment = {
   finalMessageIndex?: number | null
   lifecycle: ProviderConversationLifecycle
   failureReason?: ProviderWorkingStep['failureReason']
+  failureMessage?: string
   showWorking?: boolean
   betweenWorkingAndFinal?: readonly ProviderChatItem[]
   /** Full native-tool consumers can request ungrouped content; never attach row coordinates. */
@@ -115,6 +116,9 @@ export const appendProviderConversationSegment = (
           }
         : {}),
       ...(segment.failureReason ? { failureReason: segment.failureReason } : {}),
+      ...(status === 'failed' && segment.failureMessage
+        ? { failureMessage: segment.failureMessage }
+        : {}),
       items: workingItems,
       ...(segment.workingItemWindow
         ? {

@@ -59,6 +59,23 @@ const render = (events) =>
     stopped: false
   })
 
+test('keeps Copilot session errors on the failed step', () => {
+  const items = render([
+    userMessage('prompt', 'Help'),
+    {
+      type: 'session.error',
+      id: 'error',
+      parentId: null,
+      timestamp: '2026-01-01T00:00:01.000Z',
+      data: { message: 'Provider connection lost' }
+    }
+  ])
+  assert.equal(
+    items.find((item) => item.type === 'working')?.failureMessage,
+    'Provider connection lost'
+  )
+})
+
 test('hides Copilot skill context user-message events', () => {
   const items = render([
     userMessage(

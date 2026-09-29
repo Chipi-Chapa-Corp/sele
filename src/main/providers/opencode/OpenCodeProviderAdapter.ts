@@ -105,6 +105,7 @@ type OpenCodeChatState = {
   active: boolean
   stopped: boolean
   failed: boolean
+  failureMessage: string | null
   pendingApprovals: PermissionRequest[]
   pendingQuestions: QuestionRequest[]
   queuedMessages: QueuedOpenCodeMessage[]
@@ -1329,6 +1330,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         state.active = true
         state.stopped = false
         state.failed = false
+        state.failureMessage = null
       }
     }
     if (type === 'session.updated' && isRecord(properties.info)) {
@@ -1348,6 +1350,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
       state.active = false
       state.failed = true
+      state.failureMessage = getOpenCodeErrorMessage(properties.error)
     }
     if (type === 'session.idle') {
       state.active = false
@@ -1383,6 +1386,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       active: false,
       stopped: false,
       failed: false,
+      failureMessage: null,
       pendingApprovals: [],
       pendingQuestions: [],
       queuedMessages: []
@@ -1708,6 +1712,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           active: state.active,
           stopped: state.stopped,
           failed: state.failed,
+          failureMessage: state.failureMessage ?? undefined,
           pendingItems
         }
         return window
@@ -1739,6 +1744,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     state.active = true
     state.stopped = false
     state.failed = false
+    state.failureMessage = null
     await client.session.promptAsync(
       {
         sessionID: state.id,
@@ -1815,6 +1821,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       await this.sendPrompt(state, pending.content, pending.options)
     } catch (error) {
       state.failed = true
+      state.failureMessage = getOpenCodeErrorMessage(error)
       state.queuedMessages.unshift(pending)
       void this.completeTurn(state)
       console.error('Unable to send queued OpenCode message', error)

@@ -74,6 +74,7 @@ type Segment = {
   id: string
   entries: ProviderConversationEntry[]
   failed: boolean
+  failureMessage?: string
 }
 
 const maxToolOutputLength = 160_000
@@ -476,7 +477,8 @@ export const renderClaudeChatItems = (
         completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
         failed,
         stopped: isLast && options.stopped
-      }
+      },
+      ...(failed && current.failureMessage ? { failureMessage: current.failureMessage } : {})
     })
   }
 
@@ -603,7 +605,11 @@ export const renderClaudeChatItems = (
         items.push({ type: 'contextCompaction', id: message.uuid })
       } else {
         const content = getString(record?.content) ?? getString(message.message)
-        if (message.failed) ensureSegment(message.uuid).failed = true
+        if (message.failed) {
+          const current = ensureSegment(message.uuid)
+          current.failed = true
+          if (content) current.failureMessage = content
+        }
         if (content) {
           ensureSegment(message.uuid).entries.push({
             kind: 'working',
@@ -629,6 +635,7 @@ type ProjectedClaudeSegment = {
   timing?: ConversationTiming
   id: string
   failed: boolean
+  failureMessage?: string
   groups: ProviderWorkingItem[]
   groupCount: number
   payloadCounts: Map<number, number>
@@ -901,7 +908,11 @@ export class ClaudeTranscriptProjection {
         this.journal.push(this.nodes, { type: 'contextCompaction', id: message.uuid })
       } else {
         const content = getString(record?.content) ?? getString(message.message)
-        if (message.failed) this.journal.set(this.ensureSegment(message.uuid), 'failed', true)
+        if (message.failed) {
+          const segment = this.ensureSegment(message.uuid)
+          this.journal.set(segment, 'failed', true)
+          if (content) this.journal.set(segment, 'failureMessage', content)
+        }
         if (content) {
           const segment = this.ensureSegment(message.uuid)
           this.demoteFinal(segment)
@@ -963,6 +974,7 @@ export class ClaudeTranscriptProjection {
               failed,
               stopped: last && options.stopped
             },
+            ...(failed && node.failureMessage ? { failureMessage: node.failureMessage } : {}),
             workingItemWindow: {
               itemCount: node.groupCount,
               itemsStartIndex: node.groupCount - node.groups.length

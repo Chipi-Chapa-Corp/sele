@@ -484,8 +484,20 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 .chat-detail__working-label {
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
   gap: 0.4rem;
   align-items: center;
+}
+
+.chat-detail__failure-summary {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--error);
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .chat-detail__working-spinner {

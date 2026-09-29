@@ -178,6 +178,27 @@ test('structured 429 errors render as rate limits without matching unrelated req
     { active: false, stopped: false }
   )
   assert.equal(items[0].failureReason, 'rateLimit')
+  assert.equal(items[0].failureMessage, 'Too Many Requests')
+})
+
+test('keeps an OpenCode session error when no assistant error record arrives', () => {
+  const items = renderOpenCodeChatItems(
+    [
+      {
+        info: { id: 'u', role: 'user', time: { created: 1 } },
+        parts: [{ type: 'text', text: 'Help' }]
+      }
+    ],
+    { active: false, stopped: false, failed: true, failureMessage: 'Provider connection lost' }
+  )
+  assert.equal(
+    items.find((item) => item.type === 'working')?.failureMessage,
+    'Provider connection lost'
+  )
+  assert.equal(
+    items.find((item) => item.type === 'working')?.items[0]?.content,
+    'Provider connection lost'
+  )
 })
 
 test('unexpected forbidden and malformed responses remain visible errors', async () => {

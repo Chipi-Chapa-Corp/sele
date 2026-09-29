@@ -53,6 +53,7 @@ type Segment = {
   id: string
   entries: ProviderConversationEntry[]
   failed: boolean
+  failureMessage?: string
 }
 
 const maxToolOutputLength = 160_000
@@ -551,7 +552,10 @@ export const renderCopilotChatItems = (
       showWorking:
         currentSegment.entries.some((entry) => entry.kind === 'working') ||
         (isLast && options.active) ||
-        failed
+        failed,
+      ...(failed && currentSegment.failureMessage
+        ? { failureMessage: currentSegment.failureMessage }
+        : {})
     })
   }
 
@@ -692,6 +696,7 @@ export const renderCopilotChatItems = (
     if (event.type === 'session.error') {
       const currentSegment = ensureSegment(event.id)
       currentSegment.failed = true
+      currentSegment.failureMessage = event.data.message
       appendWorkingItem(currentSegment, {
         type: 'message',
         id: event.id,

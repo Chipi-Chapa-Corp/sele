@@ -30,6 +30,7 @@ type RenderOptions = TranscriptRenderWindow & {
   active: boolean
   stopped: boolean
   failed?: boolean
+  failureMessage?: string
   pendingItems?: ProviderChatItem[]
 }
 
@@ -39,6 +40,7 @@ type Segment = {
   entries: ProviderConversationEntry[]
   failed: boolean
   rateLimited: boolean
+  failureMessage?: string
 }
 
 const maxToolOutputLength = 160_000
@@ -304,6 +306,16 @@ export const renderOpenCodeChatItems = (
     const current = segment
     segment = null
     const failed = current.failed || (isLast && options.failed === true)
+    if (failed && isLast && options.failureMessage && !current.failureMessage) {
+      current.entries.push({
+        kind: 'working',
+        item: {
+          type: 'message',
+          id: `${current.id}:error`,
+          content: options.failureMessage
+        }
+      })
+    }
     appendProviderConversationSegment(items, {
       id: current.id,
       timing: current.timing,
@@ -315,7 +327,10 @@ export const renderOpenCodeChatItems = (
         failed,
         stopped: isLast && options.stopped
       },
-      ...(failed && current.rateLimited ? { failureReason: 'rateLimit' as const } : {})
+      ...(failed && current.rateLimited ? { failureReason: 'rateLimit' as const } : {}),
+      ...(failed && (current.failureMessage || (isLast && options.failureMessage))
+        ? { failureMessage: current.failureMessage || options.failureMessage }
+        : {})
     })
   }
 
@@ -422,6 +437,7 @@ export const renderOpenCodeChatItems = (
     })
     if (message.info.error) {
       current.failed = true
+      current.failureMessage = getOpenCodeErrorMessage(message.info.error)
       if (isOpenCodeRateLimitError(message.info.error)) current.rateLimited = true
       current.entries.push({
         kind: 'working',

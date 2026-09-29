@@ -132,6 +132,18 @@ test('marks Codex usage and rate-limit failures as resettable rate-limit turns',
   assert.equal(renderFailedWorkingStep('rateLimitExceeded')?.failureReason, 'rateLimit')
 })
 
+test('keeps Codex failure details on the failed step', () => {
+  assert.equal(
+    renderFailedWorkingStep('serverOverloaded')?.failureMessage,
+    'Provider request failed'
+  )
+  const step = getChatItems([{ id: 'failed', status: 'failed', items: [] }]).find(
+    (item) => item.type === 'working'
+  )
+  assert.equal(step?.status, 'failed')
+  assert.equal(step?.failureMessage, undefined)
+})
+
 test('renders one timeline anchor when Codex repeats a subagent completion event', () => {
   const items = getChatItems([
     {

@@ -1906,6 +1906,14 @@ const WorkingStep: React.FC<{
           : item.status === 'worked'
             ? 'Worked'
             : 'Working'
+  const failureMessage = item.status === 'failed' ? item.failureMessage?.trim() : null
+  const failureSummary =
+    item.status === 'failed'
+      ? failureMessage?.replace(/\s+/g, ' ').trim() ||
+        (item.failureReason === 'rateLimit'
+          ? 'Rate limit exceeded.'
+          : 'The provider did not supply a failure reason.')
+      : null
   const heading = (
     <span className="chat-detail__working-label">
       {active && (
@@ -1918,6 +1926,11 @@ const WorkingStep: React.FC<{
         {label}
         {item.status === 'worked' && <WorkingElapsedTime item={item} />}
       </span>
+      {failureSummary && (
+        <span className="chat-detail__failure-summary" title={failureMessage ?? failureSummary}>
+          {failureSummary}
+        </span>
+      )}
     </span>
   )
   const renderedGeneratedImages = generatedImages.map((imageItem) => (
