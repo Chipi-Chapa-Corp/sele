@@ -242,8 +242,10 @@ import {
   gitCurrentChatModelValue,
   newSessionProjectPlaceholderValue,
   readChatGroupingPreference,
+  readGitCommitMode,
   streamingChatUpdateIntervalMs,
   writeChatGroupingPreference,
+  writeGitCommitMode,
   type ApplyChatDetailOptions,
   type ApprovalResolutionState,
   type CachedPatchChangedFiles,
@@ -685,7 +687,7 @@ export const useWorkspaceController = () => {
     null
   )
   const [commitInput, setCommitInput] = useState('')
-  const [gitCommitMode, setGitCommitMode] = useState<GitCommitMode>('commit')
+  const [gitCommitMode, setGitCommitMode] = useState<GitCommitMode>(readGitCommitMode)
   const [commitMessageGenerationProjectKeys, setCommitMessageGenerationProjectKeys] = useState<
     Set<string>
   >(() => new Set())
@@ -1084,6 +1086,10 @@ export const useWorkspaceController = () => {
   useEffect(() => {
     writeStoredRecentlyOpenedFiles(recentlyOpenedFilesByWorkspace)
   }, [recentlyOpenedFilesByWorkspace])
+
+  useEffect(() => {
+    writeGitCommitMode(gitCommitMode)
+  }, [gitCommitMode])
 
   useEffect(() => {
     writeStoredAppSettings(appSettings)

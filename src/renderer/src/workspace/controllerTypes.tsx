@@ -215,6 +215,8 @@ export const streamingChatUpdateIntervalMs = 50
 
 export const chatGroupingPreferenceStorageKey = 'sele:chat-grouping-preference:v1'
 
+export const gitCommitModeStorageKey = 'sele:git-commit-mode:v1'
+
 export const gitCurrentChatModelValue = '__sele_current_chat_model__'
 
 export const pinnedGroupKey = 'pinned'
@@ -265,6 +267,23 @@ export const writeChatGroupingPreference = (preference: ChatGroupingPreference):
   } catch (error) {
     console.error('[caught:controllerTypes:writeChatGroupingPreference]', error)
     // Sidebar grouping is non-critical; ignore unavailable storage.
+  }
+}
+
+export const readGitCommitMode = (): GitCommitMode => {
+  try {
+    return window.localStorage.getItem(gitCommitModeStorageKey) === 'push' ? 'push' : 'commit'
+  } catch (error) {
+    console.error('[caught:controllerTypes:readGitCommitMode]', error)
+    return 'commit'
+  }
+}
+
+export const writeGitCommitMode = (mode: GitCommitMode): void => {
+  try {
+    window.localStorage.setItem(gitCommitModeStorageKey, mode)
+  } catch (error) {
+    console.error('[caught:controllerTypes:writeGitCommitMode]', error)
   }
 }
 
