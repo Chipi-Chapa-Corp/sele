@@ -31,6 +31,7 @@ test('automatic bottom correction cannot trigger paging into older history', () 
   const element = { scrollTop: 0 }
   const context = vm.createContext({
     contentRef: { current: element },
+    chatDetail: null,
     chatTurnWindowRef: { current: { chatKey: 'chat', startIndex: 0, endIndex: 2, totalCount: 2 } },
     chatScrollAdjustmentTargetRef: { current: null },
     previousChatScrollTopRef: { current: 1200 },
@@ -52,7 +53,6 @@ test('automatic bottom correction cannot trigger paging into older history', () 
   assert.equal(context.chatTurnScrollDirectionRef.current, 'up')
 })
 
-
 const nativeScrollCode = extract(
   './workspace/useConversationViewModel.tsx',
   'handleNativeChatContentScroll'
@@ -63,6 +63,7 @@ const setupScroll = ({ top = 0, bottom = 0, automatic = true, userIntent = false
   const pages = []
   const context = vm.createContext({
     contentRef: { current: element },
+    chatDetail: null,
     chatTurnWindowRef: {
       current: { chatKey: 'claude:chat', startIndex: 10, endIndex: 20, totalCount: 20 }
     },
@@ -123,4 +124,11 @@ test('user scrolling downward still loads newer turns', () => {
   context.chatTurnWindowRef.current.endIndex = 15
   context.callback()
   assert.deepEqual(pages, ['newer'])
+})
+
+test('the bottom of a historical cursor page does not enable following the live tail', () => {
+  const { context } = setupScroll({ automatic: false, top: 200, bottom: 200 })
+  context.chatDetail = { turnPagination: { kind: 'cursor', newerCursor: 'newer' } }
+  context.callback()
+  assert.equal(context.chatAutoScrollEnabledRef.current, false)
 })

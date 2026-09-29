@@ -92,8 +92,9 @@ export const getLoadedChatTurnWindow = (
 ): ChatTurnWindow => {
   const loadedStart = getChatDetailItemsStartTurnIndex(detail)
   const loadedEnd = getLoadedChatDetailTurnEndIndex(detail)
-  const startIndex = Math.max(window.startIndex, loadedStart)
-  const endIndex = Math.min(window.endIndex, loadedEnd)
+  // Cursor boundaries describe the entire page, not an independently sliceable index range.
+  const startIndex = detail?.turnPagination ? loadedStart : Math.max(window.startIndex, loadedStart)
+  const endIndex = detail?.turnPagination ? loadedEnd : Math.min(window.endIndex, loadedEnd)
   return {
     ...window,
     // If a refresh replaced the entire range, show the available page rather than an empty gap.
@@ -216,15 +217,17 @@ export const retainLoadedChatDetailTurnWindow = (
   detail: ProviderChatDetail,
   retainedWindow: Pick<ChatTurnWindow, 'startIndex' | 'endIndex' | 'totalCount'>
 ): ProviderChatDetail =>
-  mergeChatDetailTurnPage(
-    detail,
-    {
-      items: [],
-      startIndex: retainedWindow.startIndex,
-      totalCount: retainedWindow.totalCount
-    },
-    retainedWindow
-  )
+  detail.turnPagination
+    ? detail
+    : mergeChatDetailTurnPage(
+        detail,
+        {
+          items: [],
+          startIndex: retainedWindow.startIndex,
+          totalCount: retainedWindow.totalCount
+        },
+        retainedWindow
+      )
 
 const getWorkingItemSegmentEndIndex = (segment: ProviderWorkingItemSegment): number =>
   segment.startIndex + segment.items.length

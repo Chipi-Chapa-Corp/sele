@@ -4,6 +4,7 @@ export type ChatScrollAnchor = {
   chatKey: string
   offset: number
   turnId: string
+  elements: { element: HTMLElement; offset: number }[]
 }
 
 export type ChatPaneWidths = {
@@ -35,6 +36,14 @@ export const getScrollBottomTop = (element: HTMLElement): number =>
 export const isScrolledToBottom = (element: HTMLElement): boolean =>
   getScrollBottomTop(element) - element.scrollTop <= 1
 
+export const isNearChatPageBoundary = (
+  element: HTMLElement,
+  direction: 'older' | 'newer',
+  threshold: number
+): boolean =>
+  (direction === 'older' ? element.scrollTop : getScrollBottomTop(element) - element.scrollTop) <=
+  threshold
+
 export const readChatScrollAnchor = (
   contentElement: HTMLElement,
   chatKey: string,
@@ -60,10 +69,24 @@ export const readChatScrollAnchor = (
     const turnId = turnElement.dataset.chatTurnId
     if (!turnId) continue
 
+    // Keep the visible block stationary when earlier content grows inside this same turn.
+    // Retain its ancestors as fallbacks if Markdown or working rows are replaced during a render.
+    const elements = [{ element: turnElement, offset: turnRect.top - contentRect.top }]
+    for (const element of turnElement.querySelectorAll<HTMLElement>(
+      '[data-chat-message-id], [data-working-motion-id], p, pre, li, table, img, video'
+    )) {
+      const rect = element.getBoundingClientRect()
+      if (rect.height === 0 || rect.bottom <= contentRect.top || rect.top >= contentRect.bottom)
+        continue
+      if (!elements.at(-1)!.element.contains(element)) break
+      elements.push({ element, offset: rect.top - contentRect.top })
+    }
+
     return {
       chatKey,
       offset: turnRect.top - contentRect.top,
-      turnId
+      turnId,
+      elements
     }
   }
 
@@ -74,6 +97,14 @@ export const restoreChatScrollAnchor = (
   contentElement: HTMLElement,
   anchor: ChatScrollAnchor
 ): boolean => {
+  const contentRect = contentElement.getBoundingClientRect()
+  for (const { element, offset } of anchor.elements.toReversed()) {
+    if (!contentElement.contains(element)) continue
+    const adjustment = element.getBoundingClientRect().top - contentRect.top - offset
+    if (Math.abs(adjustment) >= 0.5) contentElement.scrollTop += adjustment
+    return true
+  }
+
   const turnElements = contentElement.querySelectorAll<HTMLElement>('[data-chat-turn-id]')
   let anchorElement: HTMLElement | null = null
   for (const turnElement of turnElements) {
@@ -84,7 +115,6 @@ export const restoreChatScrollAnchor = (
   }
   if (!anchorElement) return false
 
-  const contentRect = contentElement.getBoundingClientRect()
   const nextOffset = anchorElement.getBoundingClientRect().top - contentRect.top
   const adjustment = nextOffset - anchor.offset
   if (Math.abs(adjustment) >= 0.5) contentElement.scrollTop += adjustment

@@ -23,6 +23,7 @@ import type {
   ProviderSkillInput
 } from '../../../shared/provider'
 
+import { getProviderChatTurns } from '../../../shared/chatTurns'
 import { markChatItemsChanged } from '../chatConversationModel'
 
 import { type ChatListGroupData } from '../components/ChatListGroup'
@@ -399,15 +400,28 @@ export const getChatDetailFromSnapshot = (
 
   const viewingOlderCursorPage = Boolean(
     currentDetail.turnPagination?.kind === 'cursor' &&
-      currentDetail.turnPagination.newerCursor &&
+      (currentDetail.turnPagination.newerCursor || options.preserveCurrentTurnWindow) &&
       snapshot.turnPagination?.kind === 'cursor' &&
       !snapshot.turnPagination.newerCursor
   )
   if (viewingOlderCursorPage) {
+    const incomingTurns = new Map(
+      getProviderChatTurns(snapshot.items).map((turn) => [turn.id, turn])
+    )
+    const currentItems = new Map(currentDetail.items.map((item) => [item.id, item]))
+    const refreshedItems = getProviderChatTurns(currentDetail.items).flatMap((turn) => {
+      const incoming = incomingTurns.get(turn.id)
+      return incoming
+        ? incoming.items.map((item) => retainLoadedChatItemPayload(item, currentItems.get(item.id)))
+        : turn.items
+    })
+    const unchanged =
+      refreshedItems.length === currentDetail.items.length &&
+      refreshedItems.every((item, index) => item === currentDetail.items[index])
     return {
       ...snapshot,
       container: stableContainer,
-      items: currentDetail.items,
+      items: unchanged ? currentDetail.items : refreshedItems,
       subagents: currentDetail.subagents,
       itemsStartTurnIndex: currentDetail.itemsStartTurnIndex,
       turnCount: currentDetail.turnCount,

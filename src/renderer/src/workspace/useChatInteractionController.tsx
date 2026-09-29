@@ -114,6 +114,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
 
     const atConversationBottom = Boolean(
       isScrolledToBottom(contentElement) &&
+        !chatDetail?.turnPagination?.newerCursor &&
         currentTurnWindow &&
         currentTurnWindow.endIndex >= currentTurnWindow.totalCount
     )

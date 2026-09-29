@@ -1,7 +1,8 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { buildChatConversationModel } from '../chatConversationModel'
+import { extendChatCursorWindow, type ChatCursorWindow } from '../chatCursorWindow'
 import { getRecentChatReferences, type PinnedChatTextReference } from '../chatRecents'
 import { getSubagentMarkerPlacements } from '../subagentUi'
 import { providerApi } from '../providerApi'
@@ -14,7 +15,12 @@ import {
   shiftChatTurnWindow,
   type ChatTurnWindow
 } from '../chatTurnWindow'
-import { getScrollBottomTop, readChatScrollAnchor, restoreChatScrollAnchor } from '../chatLayout'
+import {
+  getScrollBottomTop,
+  isNearChatPageBoundary,
+  readChatScrollAnchor,
+  restoreChatScrollAnchor
+} from '../chatLayout'
 import { type ChatCommitMarker } from '../components/AppStatusStates'
 import {
   getChatDetailItemsStartTurnIndex,
@@ -93,6 +99,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     selectedChatCommitMarkers
   } = dependencies
 
+  const cursorWindowRef = useRef<ChatCursorWindow | null>(null)
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const chatReadOnly = getChatWriteAccessPresentation(chatDetail).readOnly
   const messageBoxDisabled = selectedChat
@@ -382,14 +389,25 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       top: contentElement.scrollTop
     }
     chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, anchor.chatKey)
-  }, [effectiveChatTurnWindow?.endIndex, effectiveChatTurnWindow?.startIndex, selectedChatKey])
+  }, [
+    chatDetail?.items,
+    effectiveChatTurnWindow?.endIndex,
+    effectiveChatTurnWindow?.startIndex,
+    selectedChatKey
+  ])
   useLayoutEffect(() => {
     if (!scrollToLatestTurnAfterRenderRef.current || renderedChatTurns.length === 0) return
     scrollToLatestTurnAfterRenderRef.current = false
+    if (!chatAutoScrollEnabledRef.current) return
     pendingChatScrollAnchorRef.current = null
     const contentElement = contentRef.current
     if (contentElement) scrollChatContentToBottom(contentElement)
-  }, [effectiveChatTurnWindow?.endIndex, renderedChatTurns.length, scrollChatContentToBottom])
+  }, [
+    chatTurnWindow,
+    effectiveChatTurnWindow?.endIndex,
+    renderedChatTurns.length,
+    scrollChatContentToBottom
+  ])
   const loadChatTurnPage = useCallback(
     async (direction: ChatTurnPageLoadDirection): Promise<void> => {
       const chat = selectedChatRef.current
@@ -428,15 +446,19 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       chatTurnPageLoadInFlightRef.current = true
       setChatTurnPageLoadDirection(direction)
 
+      const canApplyPage = (): boolean =>
+        chatTurnPageLoadRequestRef.current === requestId &&
+        selectedChatKeyRef.current === currentWindow.chatKey &&
+        (direction === 'latest' ||
+          Boolean(
+            contentRef.current &&
+              isNearChatPageBoundary(contentRef.current, direction, chatTurnLoadThresholdPx)
+          ))
+
       try {
         if (direction === 'latest') {
           const detail = await providerApi.getChat(chat.providerId, chat.id)
-          if (
-            chatTurnPageLoadRequestRef.current !== requestId ||
-            selectedChatKeyRef.current !== currentWindow.chatKey
-          ) {
-            return
-          }
+          if (!canApplyPage()) return
 
           const totalCount = getChatDetailTurnCount(detail)
           const nextWindow = getLatestChatTurnWindow(
@@ -466,41 +488,48 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
             cursor,
             chatTurnPageSize
           )
-          if (
-            chatTurnPageLoadRequestRef.current !== requestId ||
-            selectedChatKeyRef.current !== currentWindow.chatKey
-          ) {
-            return
-          }
+          if (!canApplyPage()) return
 
-          const pageTurnCount = page.totalCount
+          const detail = chatDetailRef.current
+          if (!detail || detail.id !== chat.id) return
+          const buffer = extendChatCursorWindow(
+            cursorWindowRef.current,
+            currentWindow.chatKey,
+            detail,
+            page,
+            direction
+          )
+          const nextDetail = replaceChatDetailWithCursorPage(detail, {
+            ...page,
+            items: buffer.items,
+            subagents: buffer.pages.flatMap((part) => part.subagents ?? []),
+            turnPagination: {
+              kind: 'cursor',
+              olderCursor: buffer.pages[0].turnPagination?.olderCursor ?? null,
+              newerCursor: buffer.pages.at(-1)?.turnPagination?.newerCursor ?? null
+            }
+          })
           const nextWindow: ChatTurnWindow = {
             chatKey: currentWindow.chatKey,
             startIndex: 0,
-            endIndex: pageTurnCount,
-            totalCount: pageTurnCount
+            endIndex: getChatDetailTurnCount(nextDetail),
+            totalCount: getChatDetailTurnCount(nextDetail)
           }
+          const contentElement = contentRef.current
+          pendingChatScrollAnchorRef.current = contentElement
+            ? readChatScrollAnchor(contentElement, currentWindow.chatKey)
+            : null
           chatAutoScrollEnabledRef.current = false
           chatAutoScrollTargetRef.current = null
-          pendingChatScrollAnchorRef.current = null
-          chatViewportAnchorRef.current = null
+          scrollToLatestTurnAfterRenderRef.current = false
           chatTurnWindowRef.current = nextWindow
+          cursorWindowRef.current = buffer
 
           flushSync(() => {
-            setChatDetail((detail) => {
-              if (detail?.id !== chat.id) return detail
-              const nextDetail = replaceChatDetailWithCursorPage(detail, page)
-              chatDetailRef.current = nextDetail
-              return nextDetail
-            })
+            chatDetailRef.current = nextDetail
+            setChatDetail(nextDetail)
             setChatTurnWindow(nextWindow)
           })
-
-          const contentElement = contentRef.current
-          if (contentElement) {
-            if (direction === 'older') contentElement.scrollTop = getScrollBottomTop(contentElement)
-            else contentElement.scrollTop = 0
-          }
           return
         }
 
@@ -511,12 +540,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
         const limit =
           direction === 'older' ? currentWindow.startIndex - startIndex : chatTurnPageSize
         const page = await providerApi.getChatTurnPage(chat.providerId, chat.id, startIndex, limit)
-        if (
-          chatTurnPageLoadRequestRef.current !== requestId ||
-          selectedChatKeyRef.current !== currentWindow.chatKey
-        ) {
-          return
-        }
+        if (!canApplyPage()) return
 
         const latestRequestedWindow = chatTurnWindowRef.current
         if (!latestRequestedWindow || latestRequestedWindow.chatKey !== currentWindow.chatKey)
@@ -539,6 +563,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           : null
         chatAutoScrollEnabledRef.current = false
         chatAutoScrollTargetRef.current = null
+        scrollToLatestTurnAfterRenderRef.current = false
         chatTurnWindowRef.current = nextWindow
 
         flushSync(() => {

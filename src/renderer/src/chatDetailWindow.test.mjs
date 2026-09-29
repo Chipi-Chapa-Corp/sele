@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   getLoadedChatTurnWindow,
+  retainLoadedChatDetailTurnWindow,
   mergeChatDetailTurnPage,
   preserveOptimisticChatDetail,
   refreshRetainedChatDetailTurnWindow,
@@ -164,4 +165,50 @@ test('cursor pages retain their local coordinates and cursor metadata', () => {
   const window = { chatKey: 'session', startIndex: 0, endIndex: 1, totalCount: 1 }
   assert.deepEqual(getLoadedChatTurnWindow(loaded, window), window)
   assert.equal(loaded.turnPagination.olderCursor, 'older')
+})
+
+test('retention keeps a cursor page and its exact navigation boundaries intact', () => {
+  const current = detail(
+    Array.from({ length: 11 }, (_, index) => user(`turn-${index}`)),
+    {
+      turnCount: 11,
+      turnPagination: { kind: 'cursor', olderCursor: 'older', newerCursor: 'newer' }
+    }
+  )
+  const requested = { chatKey: 'codex:chat', startIndex: 1, endIndex: 11, totalCount: 11 }
+  assert.equal(retainLoadedChatDetailTurnWindow(current, requested), current)
+  assert.deepEqual(getLoadedChatTurnWindow(current, requested), { ...requested, startIndex: 0 })
+})
+
+test('cursor navigation keeps two adjacent pages and their boundaries after payload refreshes', async () => {
+  const { extendChatCursorWindow } = await import('./chatCursorWindow.ts')
+  const page = (start) => ({
+    items: Array.from({ length: 10 }, (_, index) => user(`turn-${start + index}`)),
+    startIndex: 0,
+    totalCount: 10,
+    turnPagination: {
+      kind: 'cursor',
+      olderCursor: `before-${start}`,
+      newerCursor: `after-${start + 9}`
+    }
+  })
+  const latest = page(30)
+  let current = detail(latest.items, { turnCount: 10, turnPagination: latest.turnPagination })
+  let buffer = extendChatCursorWindow(null, 'codex:chat', current, page(20), 'older')
+  assert.deepEqual(
+    buffer.items.map((item) => item.id),
+    Array.from({ length: 20 }, (_, i) => `turn-${20 + i}`)
+  )
+  current = { ...current, items: buffer.items.map((item) => ({ ...item, content: 'refreshed' })) }
+  buffer = extendChatCursorWindow(buffer, 'codex:chat', current, page(10), 'older')
+  assert.equal(buffer.items.length, 20)
+  assert.equal(buffer.items[10].content, 'refreshed')
+  assert.equal(buffer.pages[0].turnPagination.olderCursor, 'before-10')
+  assert.equal(buffer.pages[1].turnPagination.newerCursor, 'after-29')
+  current = { ...current, items: buffer.items }
+  buffer = extendChatCursorWindow(buffer, 'codex:chat', current, page(30), 'newer')
+  assert.deepEqual(
+    buffer.items.map((item) => item.id),
+    Array.from({ length: 20 }, (_, i) => `turn-${20 + i}`)
+  )
 })

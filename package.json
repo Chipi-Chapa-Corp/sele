@@ -37,6 +37,8 @@
     "test:chat-goal": "node scripts/tests/test-chat-goal.cjs",
     "test:codex-final-ui": "node scripts/tests/test-codex-final-response.cjs",
     "test:claude-discovery": "node --test src/main/providers/claude/ClaudeSessionDiscovery.test.mjs && node scripts/tests/test-claude-discovery.mjs",
+    "test:chat-scroll-visual": "node scripts/tests/test-chat-scroll-visual.cjs",
+    "test:chat-scroll": "node scripts/tests/test-chat-scroll.cjs",
     "test:ui-motion": "node scripts/tests/test-ui-motion.cjs",
     "test:ui-responsiveness": "node scripts/tests/test-ui-responsiveness.cjs",
     "test:input-focus": "node scripts/tests/test-input-focus.cjs",
