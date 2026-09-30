@@ -1,5 +1,5 @@
 import type { AppUpdateState, AppUpdateDismissal } from './appUpdate'
-import type { ProviderId } from './provider'
+import type { ProviderId, ProviderMessageAttachment } from './provider'
 
 export type FolderSelectionOptions = {
   defaultPath?: string | null
@@ -598,6 +598,10 @@ export type AppApi = {
   selectFolder: (options?: FolderSelectionOptions) => Promise<string | null>
   getProjectIcon: (options: AppProjectIconOptions) => Promise<AppProjectIcon | null>
   selectProjectIcon: (options: AppProjectIconOptions) => Promise<AppProjectIcon | null>
+  prepareMessageAttachments: (
+    attachments: ProviderMessageAttachment[],
+    options?: { container?: AppContainerTarget | null; cwd?: string | null }
+  ) => Promise<AppSelectedAttachment[]>
   selectMessageAttachments: () => Promise<AppSelectedAttachment[]>
   getDroppedMessageAttachments: (files: File[]) => Promise<AppSelectedAttachment[]>
   readClipboardText: () => Promise<string>
@@ -663,6 +667,7 @@ export const appIpcChannels = {
   selectFolder: 'app:select-folder',
   getProjectIcon: 'app:get-project-icon',
   selectProjectIcon: 'app:select-project-icon',
+  prepareMessageAttachments: 'app:prepare-message-attachments',
   selectMessageAttachments: 'app:select-message-attachments',
   getDroppedMessageAttachments: 'app:get-dropped-message-attachments',
   readClipboardText: 'app:read-clipboard-text',

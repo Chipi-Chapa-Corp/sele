@@ -1,0 +1,122 @@
+.token-usage {
+  --token-input: #ba8d61;
+  --token-cached: #70a699;
+  --token-output: #9385bf;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.token-usage__card {
+  min-width: 0;
+  padding: 0.7rem;
+  border: 1px solid var(--menu-border);
+  border-radius: 0.5rem;
+}
+
+.token-usage__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.token-usage__heading h3 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 650;
+}
+
+.token-usage__heading p {
+  margin: 0.2rem 0 0;
+  color: var(--lead);
+  line-height: 1.5;
+}
+
+.token-usage__heading strong {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-end;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.token-usage__heading strong > span {
+  color: var(--lead);
+  font-weight: 450;
+}
+
+.token-usage__bar {
+  display: flex;
+  height: 0.5rem;
+  margin: 0.85rem 0 0.65rem;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: var(--menu-border);
+}
+
+.token-usage__segment {
+  height: 100%;
+}
+
+.token-usage__segment--input {
+  background: var(--token-input);
+}
+.token-usage__segment--cached {
+  background: var(--token-cached);
+}
+.token-usage__segment--output {
+  background: var(--token-output);
+}
+
+.token-usage__legend {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-usage__legend > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.token-usage__legend dt {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--lead);
+  white-space: nowrap;
+}
+
+.token-usage__swatch {
+  display: inline-block;
+  width: 0.35rem;
+  height: 0.35rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.token-usage__legend dd {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.token-usage__legend dd > span {
+  color: var(--lead);
+}
+
+.token-usage__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}

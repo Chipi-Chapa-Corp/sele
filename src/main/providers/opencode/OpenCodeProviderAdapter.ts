@@ -1,3 +1,6 @@
+import { TokenUsageReporter } from '../TokenUsageReporter.ts'
+import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
+import { setNativeModelPricing } from '../modelPricing/TokenPricing'
 import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -363,6 +366,8 @@ const getPendingUserInput = (
 
 export class OpenCodeProviderAdapter implements ProviderAdapter {
   id = 'opencode' as const
+  private tokenUsageReporter = new TokenUsageReporter()
+  onTokenUsage = this.tokenUsageReporter.subscribe
 
   private clientEntries = new Map<string, OpenCodeClientEntry>()
   private clientEntryPromises = new Map<string, Promise<OpenCodeClientEntry>>()
@@ -426,6 +431,22 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         Object.values(provider.models).forEach((modelValue) => {
           const model = modelValue as OpenCodeModelRuntime
           this.modelContextLimits.set(`${provider.id}/${modelValue.id}`, model.limit.context)
+          setNativeModelPricing(
+            `opencode:${getContainerTargetKey(options.container)}:${provider.id}/${modelValue.id}`,
+            {
+              input: modelValue.cost.input,
+              output: modelValue.cost.output,
+              cacheRead: modelValue.cost.cache.read,
+              cacheWrite: modelValue.cost.cache.write,
+              tiers: modelValue.cost.tiers?.map((tier) => ({
+                input: tier.input,
+                output: tier.output,
+                cacheRead: tier.cache.read,
+                cacheWrite: tier.cache.write,
+                contextAbove: tier.tier.size
+              }))
+            }
+          )
         })
       })
       const models = mapOpenCodeModels(catalog.providers, catalog.default, config.model)
@@ -820,6 +841,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           },
           { throwOnError: true }
         )
+      )
+      this.reportMessageTokenUsage(
+        { id: session.id, container: entry.container, session },
+        result.info
       )
       await throwIfCanceled()
       return result.parts
@@ -1304,6 +1329,16 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       return
     }
     if (this.oneShotSessionIds.has(sessionID)) {
+      if (
+        type === 'message.updated' &&
+        isRecord(properties.info) &&
+        properties.info.role === 'assistant'
+      ) {
+        this.reportMessageTokenUsage(
+          { id: sessionID, container: entry.container, session: null },
+          properties.info as unknown as OpenCodeMessageWithParts['info']
+        )
+      }
       if (type === 'session.deleted') this.oneShotSessionIds.delete(sessionID)
       return
     }
@@ -1312,6 +1347,16 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const state = this.getOrCreateState(sessionID, directory, entry.container)
     state.eventRevision += 1
     state.messagesDirty = true
+    if (
+      type === 'message.updated' &&
+      isRecord(properties.info) &&
+      properties.info.role === 'assistant'
+    ) {
+      this.reportMessageTokenUsage(
+        state,
+        properties.info as unknown as OpenCodeMessageWithParts['info']
+      )
+    }
     if (type === 'session.deleted') {
       this.completionCoordinator.cancel(sessionID)
       this.states.delete(sessionID)
@@ -1586,6 +1631,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       authoritative: true,
       getId: (message) => message.info.id
     })
+    state.messages.forEach((message) => this.reportMessageTokenUsage(state, message.info))
     state.messagesHydrated = true
     state.messagesDirty = eventRevision !== state.eventRevision
     state.hydratedUpdatedAt = session.time.updated
@@ -1635,6 +1681,53 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (state.failed) return 'error'
     if (state.active) return 'active'
     return null
+  }
+
+  private reportMessageTokenUsage = (
+    state: Pick<OpenCodeChatState, 'id' | 'container' | 'session'>,
+    info: OpenCodeMessageWithParts['info']
+  ): void => {
+    if (info.role !== 'assistant') return
+    const session = state.session
+    const parent = session?.parentID ? this.states.get(session.parentID) : undefined
+    const parentTurnId = parent?.messages.findLast(
+      (message) =>
+        message.info.role === 'user' &&
+        message.info.time.created <= (session?.time.created ?? info.time.created)
+    )?.info.id
+    this.tokenUsageReporter.linkChat(
+      state.id,
+      getContainerTargetKey(state.container),
+      session?.parentID,
+      parentTurnId
+    )
+
+    this.tokenUsageReporter.report({
+      chatId: state.id,
+      sourceKey: getContainerTargetKey(state.container),
+      turnId: info.parentID,
+      recordId: info.id,
+      timestamp: info.time.created,
+      usage: normalizeTokenUsage(
+        info.tokens.input + info.tokens.cache.write,
+        info.tokens.cache.read,
+        info.tokens.output + info.tokens.reasoning
+      ),
+      models: [
+        {
+          modelId: `${info.providerID}/${info.modelID}`,
+          nativePricingKey: `opencode:${getContainerTargetKey(state.container)}:${info.providerID}/${info.modelID}`,
+          totalUSD: info.cost,
+          cacheWriteTokens: info.tokens.cache.write,
+          contextTokens: info.tokens.input + info.tokens.cache.read + info.tokens.cache.write,
+          usage: normalizeTokenUsage(
+            info.tokens.input + info.tokens.cache.write,
+            info.tokens.cache.read,
+            info.tokens.output + info.tokens.reasoning
+          )
+        }
+      ]
+    })
   }
 
   private getContextUsage = (state: OpenCodeChatState): ProviderChatContextUsage | null => {

@@ -45,6 +45,7 @@ vm.runInContext(code, context)
 
 const setup = () => {
   const instance = new context.Harness()
+  instance.reportResultTokenUsage = () => {}
   const state = {
     queuedMessages: [{ id: 'first' }],
     queuedMessagesPaused: false,
@@ -107,6 +108,7 @@ test('startup failure publishes the paused queued message for recovery', async (
 
 test('a preceding result keeps SDK-queued steering alive until its own result', async () => {
   const instance = new context.Harness()
+  instance.reportResultTokenUsage = () => {}
   const control = { getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }) }
   const state = {
     id: 'session',

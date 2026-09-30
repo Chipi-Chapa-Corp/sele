@@ -18,6 +18,46 @@ type SqliteNullableChatPurposeColumn = ColumnType<
 >
 
 export type LocalDatabase = {
+  model_pricing_cache: {
+    id: string
+    fetched_at: number
+    payload: string
+  }
+  token_usage_chat_parent: {
+    id: string
+    provider_id: ProviderId
+    source_key: string
+    chat_id: string
+    parent_chat_id: string
+    parent_turn_id: string | null
+  }
+  token_usage: {
+    id: string
+    provider_id: ProviderId
+    source_key: string
+    chat_id: string
+    turn_id: string | null
+    recorded_at: number
+    provisional_group: string | null
+    provisional_complete: number
+    input_tokens: number
+    cached_input_tokens: number
+    output_tokens: number
+    input_usd: SqliteNullableNumberColumn
+    cached_input_usd: SqliteNullableNumberColumn
+    output_usd: SqliteNullableNumberColumn
+    total_usd: SqliteNullableNumberColumn
+    models_json: string | null
+    priced_at: SqliteNullableNumberColumn
+  }
+  token_usage_checkpoint: {
+    id: string
+    input_tokens: number
+    cached_input_tokens: number
+    output_tokens: number
+    updated_at: number
+    models_json: string | null
+  }
   browser_hostname_zoom: {
     hostname: string
     scale: number
@@ -269,6 +309,93 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   await ensureColumn(db, 'projects', 'sidebar_order', () =>
     db.schema.alterTable('projects').addColumn('sidebar_order', 'integer').execute()
   )
+
+  await db.schema
+    .createTable('model_pricing_cache')
+    .ifNotExists()
+    .addColumn('id', 'text', (column) => column.primaryKey())
+    .addColumn('fetched_at', 'integer', (column) => column.notNull())
+    .addColumn('payload', 'text', (column) => column.notNull())
+    .execute()
+
+  await db.schema
+    .createTable('token_usage_chat_parent')
+    .ifNotExists()
+    .addColumn('id', 'text', (column) => column.primaryKey())
+    .addColumn('provider_id', 'text', (column) => column.notNull())
+    .addColumn('source_key', 'text', (column) => column.notNull())
+    .addColumn('chat_id', 'text', (column) => column.notNull())
+    .addColumn('parent_chat_id', 'text', (column) => column.notNull())
+    .addColumn('parent_turn_id', 'text')
+    .execute()
+  await db.schema
+    .createIndex('token_usage_parent')
+    .ifNotExists()
+    .on('token_usage_chat_parent')
+    .columns(['provider_id', 'source_key', 'parent_chat_id'])
+    .execute()
+
+  for (const table of ['token_usage', 'token_usage_checkpoint'] as const) {
+    let builder = db.schema
+      .createTable(table)
+      .ifNotExists()
+      .addColumn('id', 'text', (column) => column.primaryKey())
+      .addColumn('input_tokens', 'integer', (column) => column.notNull())
+      .addColumn('cached_input_tokens', 'integer', (column) => column.notNull())
+      .addColumn('output_tokens', 'integer', (column) => column.notNull())
+    if (table === 'token_usage') {
+      builder = builder
+        .addColumn('provider_id', 'text', (column) => column.notNull())
+        .addColumn('source_key', 'text', (column) => column.notNull())
+        .addColumn('chat_id', 'text', (column) => column.notNull())
+        .addColumn('turn_id', 'text')
+        .addColumn('provisional_group', 'text')
+        .addColumn('provisional_complete', 'integer', (column) => column.notNull().defaultTo(0))
+        .addColumn('recorded_at', 'integer', (column) => column.notNull())
+    } else builder = builder.addColumn('updated_at', 'integer', (column) => column.notNull())
+    await builder.execute()
+  }
+  await db.schema
+    .createIndex('token_usage_chat_turn')
+    .ifNotExists()
+    .on('token_usage')
+    .columns(['provider_id', 'source_key', 'chat_id', 'turn_id'])
+    .execute()
+  await ensureColumn(db, 'token_usage', 'provisional_group', () =>
+    db.schema.alterTable('token_usage').addColumn('provisional_group', 'text').execute()
+  )
+  for (const name of [
+    'input_usd',
+    'cached_input_usd',
+    'output_usd',
+    'total_usd',
+    'priced_at'
+  ] as const) {
+    await ensureColumn(db, 'token_usage', name, () =>
+      db.schema
+        .alterTable('token_usage')
+        .addColumn(name, name === 'priced_at' ? 'integer' : 'real')
+        .execute()
+    )
+  }
+  for (const table of ['token_usage', 'token_usage_checkpoint'] as const) {
+    await ensureColumn(db, table, 'models_json', () =>
+      db.schema.alterTable(table).addColumn('models_json', 'text').execute()
+    )
+  }
+  await db.schema
+    .createIndex('token_usage_recorded_at')
+    .ifNotExists()
+    .on('token_usage')
+    .column('recorded_at')
+    .execute()
+
+  await db.schema
+    .createIndex('token_usage_provider_recorded_at')
+    .ifNotExists()
+    .on('token_usage')
+    .columns(['provider_id', 'recorded_at'])
+    .execute()
 
   schemaReady = true
 }

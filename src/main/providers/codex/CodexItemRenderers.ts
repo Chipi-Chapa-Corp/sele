@@ -1602,8 +1602,9 @@ const getUserInputAttachments = (input: CodexUserInput): ProviderMessageAttachme
   return []
 }
 
-const collectUserInputAttachments = (inputs: CodexUserInput[]): ProviderMessageAttachment[] =>
-  inputs.flatMap(getUserInputAttachments)
+export const collectUserInputAttachments = (
+  inputs: CodexUserInput[]
+): ProviderMessageAttachment[] => inputs.flatMap(getUserInputAttachments)
 
 const shouldShowCommandText = (activity: ProviderToolActivity): boolean => activity !== 'script'
 
@@ -2053,7 +2054,11 @@ export const getChatItems = (
       options.workingItemTailTurnId === turn.id ? options.workingItemTailLimit : undefined
     // Keep the explicit incremental projection independent from the full-read cache.
     if (!isFinishedTurn(turn) && projection) {
-      chatItems.push(...renderChatItems([turn], fallbackStartedAt, options, projection))
+      chatItems.push(
+        ...renderChatItems([turn], fallbackStartedAt, options, projection).map((item) =>
+          item.type === 'working' ? { ...item, usageTurnId: turn.id } : item
+        )
+      )
       continue
     }
     const cachedTurn = turnChatItemsCache.get(turn)
@@ -2072,6 +2077,10 @@ export const getChatItems = (
       options,
       isFinishedTurn(turn) ? undefined : projection
     )
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]
+      if (item.type === 'working') items[index] = { ...item, usageTurnId: turn.id }
+    }
     turnChatItemsCache.set(turn, { fallbackStartedAt, items, workingItemTailLimit })
     chatItems.push(...items)
   }

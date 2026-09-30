@@ -1,3 +1,6 @@
+import { ClaudeLiveTokenUsage } from './ClaudeLiveTokenUsage.ts'
+import { TokenUsageReporter } from '../TokenUsageReporter.ts'
+import { normalizeTokenUsage, addTokenUsage, emptyTokenUsage } from '../../../shared/tokenUsage.ts'
 import { ClaudeSessionDiscovery } from './ClaudeSessionDiscovery'
 import { getClaudeSessionTitle } from './ClaudeSessionTitle'
 import { ClaudeRemoteSessionStore as RemoteSessionStore } from './ClaudeRemoteSessionStore'
@@ -535,6 +538,10 @@ const getTokenBreakdown = (
 export class ClaudeProviderAdapter implements ProviderAdapter {
   private readonly sessionDiscovery = new ClaudeSessionDiscovery()
   id = 'claude' as const
+  private tokenUsageReporter = new TokenUsageReporter()
+  private tokenUsageQueryIds = new WeakMap<Query, string>()
+  private liveTokenUsage = new ClaudeLiveTokenUsage()
+  onTokenUsage = this.tokenUsageReporter.subscribe
 
   private states = new Map<string, ClaudeSessionState>()
   private stateLoads = new Map<string, Promise<ClaudeSessionState>>()
@@ -1066,6 +1073,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       for await (const event of control) {
         if (generation.canceled) throw new Error(providerOneShotGenerationCanceledMessage)
         if (event.type === 'result') {
+          this.reportResultTokenUsage(
+            { id: sessionId, container: options?.container },
+            control,
+            event
+          )
           if (event.subtype === 'success') result = event.result.trim()
           else throw new Error(event.errors.join('\n') || 'Claude generation failed.')
           break
@@ -2038,16 +2050,125 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     }
   }
 
+  private getUsageQueryId = (control: Query): string => {
+    let id = this.tokenUsageQueryIds.get(control)
+    if (!id) {
+      id = randomUUID()
+      this.tokenUsageQueryIds.set(control, id)
+    }
+    return id
+  }
+
+  private reportLiveTokenUsage = (
+    state: ClaudeSessionState,
+    control: Query,
+    event: SDKMessage
+  ): boolean => {
+    if (event.type !== 'stream_event' && event.type !== 'assistant') return false
+    const user = state.messages.findLast(
+      (message) =>
+        message.type === 'user' &&
+        !message.parent_tool_use_id &&
+        !isClaudeInternalUserMessage(message) &&
+        getTextFromContent(getMessageContent(message.message))
+    )
+    const usage = this.liveTokenUsage.consume(control, event, user?.uuid ?? null)
+    if (!usage) return false
+    this.tokenUsageReporter.report({
+      chatId: state.id,
+      sourceKey: getContainerTargetKey(state.container),
+      turnId: usage.turnId,
+      recordId: `request:${usage.id}`,
+      timestamp: usage.timestamp,
+      usage: usage.usage,
+      models: usage.modelId
+        ? [
+            {
+              modelId: usage.modelId,
+              pricingProvider: 'anthropic',
+              usage: usage.usage,
+              cacheWriteTokens: usage.cacheWriteTokens,
+              contextTokens: usage.contextTokens
+            }
+          ]
+        : undefined,
+      provisionalGroup: this.getUsageQueryId(control),
+      provisionalComplete: usage.completed
+    })
+    return true
+  }
+
+  private reportResultTokenUsage = (
+    state: {
+      id: string
+      container?: AppContainerTarget | null
+      messages?: ClaudeTranscriptMessage[]
+    },
+    control: Query,
+    event: Extract<SDKMessage, { type: 'result' }>
+  ): void => {
+    const usageQueryId = this.getUsageQueryId(control)
+    const turnId =
+      event.user_message_uuid ??
+      event.user_message_uuids?.[0] ??
+      state.messages?.findLast((message) => {
+        if (message.type !== 'user' || isClaudeInternalUserMessage(message)) return false
+        const record = isRecord(message.message) ? message.message : null
+        const content = record?.content
+        return (
+          !Array.isArray(content) ||
+          !content.some((block) => isRecord(block) && block.type === 'tool_result')
+        )
+      })?.uuid ??
+      null
+    const usage = Object.values(event.modelUsage ?? {}).reduce(
+      (total, model) =>
+        addTokenUsage(
+          total,
+          normalizeTokenUsage(
+            model.inputTokens + model.cacheCreationInputTokens,
+            model.cacheReadInputTokens,
+            model.outputTokens
+          )
+        ),
+      emptyTokenUsage()
+    )
+    this.tokenUsageReporter.report({
+      chatId: state.id,
+      sourceKey: getContainerTargetKey(state.container),
+      turnId,
+      recordId: `query:${usageQueryId}`,
+      timestamp: Date.now(),
+      usage,
+      models: Object.entries(event.modelUsage ?? {}).map(([id, model]) => ({
+        modelId: model.canonicalModel ?? id,
+        pricingProvider: 'anthropic' as const,
+        usage: normalizeTokenUsage(
+          model.inputTokens + model.cacheCreationInputTokens,
+          model.cacheReadInputTokens,
+          model.outputTokens
+        ),
+        cacheWriteTokens: model.cacheCreationInputTokens,
+        totalUSD: model.costUSD
+      })),
+      cumulative: true,
+      replaceProvisionalGroup: usageQueryId
+    })
+  }
+
   private handleQueryEvent = async (
     state: ClaudeSessionState,
     control: Query,
     event: SDKMessage
   ): Promise<boolean> => {
     if (event.type === 'stream_event') {
-      if (applyClaudeStreamEvent(state.partialMessages, event)) this.queueUpdate(state)
+      const usageUpdated = this.reportLiveTokenUsage(state, control, event)
+      if (applyClaudeStreamEvent(state.partialMessages, event) || usageUpdated)
+        this.queueUpdate(state)
       return false
     }
     if (event.type === 'user' || event.type === 'assistant') {
+      this.reportLiveTokenUsage(state, control, event)
       let message = toTranscriptMessage(event)
       message.timestamp ??= new Date().toISOString()
       if (event.type === 'assistant') {
@@ -2135,6 +2256,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         failed: true
       })
     }
+
+    this.reportResultTokenUsage(state, control, event)
 
     const inputTokens = event.usage.input_tokens + event.usage.cache_creation_input_tokens
     const outputTokens = event.usage.output_tokens

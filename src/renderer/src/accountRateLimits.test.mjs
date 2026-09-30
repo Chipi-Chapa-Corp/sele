@@ -57,7 +57,15 @@ test('weekly badge prefers the main weekly limit over secondary weekly limits', 
   assert.equal(getUsageBadgeRateLimit([secondary, weekly], 'weekly'), weekly)
   const primary = { ...weekly, kind: 'primary', usedPercent: 20 }
   assert.equal(getUsageBadgeRateLimit([weekly, primary], 'weekly'), primary)
-  assert.equal(getUsageBadgeRateLimit([rateLimit(20)], 'weekly'), null)
+  const short = rateLimit(20)
+  assert.equal(getUsageBadgeRateLimit([short], 'weekly'), short)
+})
+
+test('weekly badge falls back to another available window when weekly and short are absent', () => {
+  const monthly = { ...rateLimit(45), id: 'monthly', windowMinutes: 43_200 }
+
+  assert.equal(getUsageBadgeRateLimit([monthly], 'weekly'), monthly)
+  assert.equal(getUsageBadgeRateLimit([], 'weekly'), null)
 })
 
 test('disables rate-limit resets when every limit has more than 5% left', () => {

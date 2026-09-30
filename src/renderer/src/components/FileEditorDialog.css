@@ -588,6 +588,7 @@
 
 .file-editor-dialog__markdown-preview th,
 .file-editor-dialog__markdown-preview td {
+  min-width: 8rem;
   padding: 0.35rem 0.5rem;
   border: 0;
   border-bottom: 0.0625rem solid var(--line);

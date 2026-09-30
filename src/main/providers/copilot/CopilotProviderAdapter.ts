@@ -1,6 +1,10 @@
+import { TokenUsageReporter } from '../TokenUsageReporter.ts'
+import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
+import { copilotPriceRates, setNativeModelPricing } from '../modelPricing/TokenPricing'
 import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { randomUUID } from 'node:crypto'
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
+import { homedir } from 'node:os'
 import {
   CopilotClient,
   RuntimeConnection,
@@ -47,7 +51,7 @@ import type {
 import type { AppContainerTarget } from '../../../shared/app'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getCurrentContainerHostBridge } from '../../currentContainer'
-import { getHostExecutableCommand, isRunningInFlatpak } from '../../hostProcess'
+import { getHostCommand, getHostExecutableCommand, isRunningInFlatpak } from '../../hostProcess'
 import { providerOneShotGenerationCanceledMessage } from '../../../shared/provider'
 import type {
   ProviderAdapter,
@@ -79,6 +83,14 @@ import {
 } from './CopilotSubagents'
 import { selectCopilotTitleModel } from './CopilotTitleModel'
 import { CopilotEventStore } from './CopilotEventStore.ts'
+import { SqliteUsageReader } from '../SqliteUsageReader'
+import {
+  bindCopilotUsageQuery,
+  copilotUsageColumns,
+  copilotUsageReadScript,
+  historicalUsageFromRows,
+  type HistoricalUsageRow
+} from './CopilotHistoricalUsage'
 
 type PendingPermission = {
   id: string
@@ -580,6 +592,62 @@ const getRuntimeEnvironment = (env: NodeJS.ProcessEnv | undefined): Record<strin
 
 export class CopilotProviderAdapter implements ProviderAdapter {
   id = 'copilot' as const
+  private historicalUsageReader = new SqliteUsageReader<HistoricalUsageRow>()
+  private tokenUsageReporter = new TokenUsageReporter()
+  onTokenUsage = this.tokenUsageReporter.subscribe
+
+  getHistoricalTokenUsage: NonNullable<ProviderAdapter['getHistoricalTokenUsage']> = async (
+    chatId,
+    options
+  ) => {
+    const container = normalizeContainerTarget(options?.container)
+    const sourceKey = getContainerTargetKey(container)
+    const now = Date.now()
+    const rows = await this.historicalUsageReader.read(
+      JSON.stringify([sourceKey, chatId]),
+      async () => {
+        const query = bindCopilotUsageQuery(now, chatId)
+        const queryWithoutDetails = bindCopilotUsageQuery(now, chatId, false)
+        const schema = {
+          table: 'assistant_usage_events',
+          requiredColumns: copilotUsageColumns,
+          query,
+          queryWithoutDetails
+        }
+        if (
+          container.kind === 'host' &&
+          !isRunningInFlatpak() &&
+          !(await getCurrentContainerHostBridge())
+        ) {
+          return {
+            ...schema,
+            path: join(process.env.COPILOT_HOME || join(homedir(), '.copilot'), 'session-store.db')
+          }
+        }
+        const command = await getHostCommand(
+          'sh',
+          [
+            '-lc',
+            copilotUsageReadScript,
+            'sele-copilot-usage',
+            query,
+            queryWithoutDetails,
+            JSON.stringify(copilotUsageColumns)
+          ],
+          { container, env: process.env }
+        )
+        return { ...schema, command }
+      }
+    )
+    if (!rows) return null
+    const anchor = rows[0]
+    return {
+      ...historicalUsageFromRows(rows, now),
+      ...(anchor?.database_identity && anchor.source_anchor
+        ? { sourceIdentity: `${anchor.database_identity}:${anchor.source_anchor}` }
+        : {})
+    }
+  }
 
   private clientEntries = new Map<string, CopilotClientEntry>()
   private clientEntryPromises = new Map<string, Promise<CopilotClientEntry>>()
@@ -651,6 +719,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     try {
       const client = await this.ensureClient(options.container)
       const models = await client.listModels()
+      models.forEach((model) => {
+        const rates = copilotPriceRates(model.billing?.tokenPrices)
+        if (rates) {
+          setNativeModelPricing(
+            `copilot:${getContainerTargetKey(options.container)}:${model.id}`,
+            rates
+          )
+        }
+      })
       const enabledModels = models.filter((model) => model.policy?.state !== 'disabled')
       if (enabledModels.length === 0) {
         throw new Error('No Copilot models are enabled for this account.')
@@ -1411,6 +1488,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
+    this.historicalUsageReader.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
     this.completionCoordinator.clear()
@@ -1852,9 +1930,63 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.events = store.add(event)
   }
 
+  private reportEventTokenUsage = (state: CopilotSessionState, event: SessionEvent): void => {
+    if (
+      event.type === 'assistant.usage' &&
+      (event.data.inputTokens != null || event.data.outputTokens != null)
+    ) {
+      const started = event.agentId
+        ? state.events.find(
+            (candidate) =>
+              candidate.type === 'subagent.started' && candidate.agentId === event.agentId
+          )
+        : undefined
+      const attributedAt = toMilliseconds(started?.timestamp ?? event.timestamp)
+      const user = state.events.findLast(
+        (candidate) =>
+          candidate.type === 'user.message' &&
+          !isCopilotSystemContextMessage(candidate) &&
+          !candidate.agentId &&
+          toMilliseconds(candidate.timestamp) <= attributedAt
+      )
+      this.tokenUsageReporter.report({
+        chatId: state.id,
+        sourceKey: getContainerTargetKey(state.container),
+        turnId: user?.id ?? null,
+        recordId: event.data.providerCallId ?? event.data.apiCallId ?? event.id,
+        timestamp: toMilliseconds(event.timestamp),
+        usage: normalizeTokenUsage(
+          event.data.inputTokens,
+          event.data.cacheReadTokens,
+          event.data.outputTokens,
+          true
+        ),
+        models: [
+          {
+            modelId: event.data.model,
+            nativePricingKey: `copilot:${getContainerTargetKey(state.container)}:${event.data.model}`,
+            contextTokens: event.data.inputTokens,
+            totalUSD:
+              event.data.copilotUsage?.totalNanoAiu != null
+                ? event.data.copilotUsage.totalNanoAiu / 100_000_000_000
+                : undefined,
+            cacheWriteTokens: event.data.cacheWriteTokens,
+            usage: normalizeTokenUsage(
+              event.data.inputTokens,
+              event.data.cacheReadTokens,
+              event.data.outputTokens,
+              true
+            )
+          }
+        ]
+      })
+    }
+  }
+
   private handleEvent = (sessionId: string, event: SessionEvent): void => {
     const state = this.createState(sessionId)
     this.storeEvent(state, event)
+    this.reportEventTokenUsage(state, event)
 
     if (event.type === 'session.title_changed') {
       state.title = event.data.title.trim() || null

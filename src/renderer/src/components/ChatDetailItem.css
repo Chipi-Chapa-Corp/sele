@@ -927,6 +927,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 
 .chat-detail__table th,
 .chat-detail__table td {
+  min-width: 8rem;
   padding: 0.35rem 0.45rem;
   border: 0;
   border-bottom: 0.0625rem solid var(--line);

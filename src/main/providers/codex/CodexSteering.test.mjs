@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { CodexMessageDelivery } from './CodexMessageDelivery.ts'
 
 // Execute the actual adapter method with only transport and state dependencies isolated.
 const source = ts.createSourceFile(
@@ -118,12 +119,16 @@ for (const successor of [null, 'next-turn']) {
       status: 'waiting'
     }
     const turn = { id: 'turn', status: 'inProgress' }
-    const adapter = createAdapter(['processWaitingSteeringMessage', 'getActiveTurnId'], {
-      createUserInput: (text) => [{ type: 'text', text }],
-      getSteerResponseTurnId: (response) => response.turnId,
-      isCodexTurnTerminal: (turn) => turn.status === 'completed'
-    })
+    const adapter = createAdapter(
+      ['processWaitingSteeringMessage', 'deliverWaitingSteeringMessage', 'getActiveTurnId'],
+      {
+        createUserInput: (text) => [{ type: 'text', text }],
+        getSteerResponseTurnId: (response) => response.turnId,
+        isCodexTurnTerminal: (turn) => turn.status === 'completed'
+      }
+    )
     Object.assign(adapter, {
+      messageDelivery: new CodexMessageDelivery(),
       threads: new Map([['chat', { turns: [turn] }]]),
       activeTurnIds: new Map([['chat', 'turn']]),
       getSteeringMessage: () => message,
@@ -131,6 +136,7 @@ for (const successor of [null, 'next-turn']) {
       client: { request: () => response }
     })
     const send = adapter.processWaitingSteeringMessage('chat', 'steer')
+    await Promise.resolve()
     turn.status = 'completed'
     adapter.activeTurnIds.delete('chat')
     if (successor) adapter.activeTurnIds.set('chat', successor)

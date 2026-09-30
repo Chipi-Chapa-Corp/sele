@@ -34,16 +34,14 @@ export const getUsageBadgeRateLimit = (
       return priority(first) - priority(second)
     })[0]
 
-  if (window === 'weekly') return weekly ?? null
-  return (
+  const short =
     rateLimits.find(
       (limit) => limit.windowMinutes === 300 && limit.usageScope == null && limit.kind === 'primary'
     ) ??
     rateLimits.find((limit) => limit.windowMinutes === 300 && limit.usageScope == null) ??
-    rateLimits.find((limit) => limit.windowMinutes === 300) ??
-    weekly ??
-    null
-  )
+    rateLimits.find((limit) => limit.windowMinutes === 300)
+
+  return (window === 'weekly' ? (weekly ?? short) : (short ?? weekly)) ?? rateLimits[0] ?? null
 }
 
 export const shouldDisableRateLimitReset = (

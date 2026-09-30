@@ -3,8 +3,26 @@ import test from 'node:test'
 import {
   createCodexSubagentTranscriptItems,
   getCodexSubagentInstruction,
+  getCodexSubagentParentThreadId,
   getCodexTurnSubagents
 } from './CodexSubagents.ts'
+
+test('accounting finds native parent identity in both thread and spawn metadata', () => {
+  assert.equal(getCodexSubagentParentThreadId({ parentThreadId: 'root' }), 'root')
+  assert.equal(
+    getCodexSubagentParentThreadId({
+      source: { subAgent: { threadSpawn: { parent_thread_id: 'root' } } }
+    }),
+    'root'
+  )
+  assert.equal(
+    getCodexSubagentParentThreadId({
+      source: { subAgent: { threadSpawn: { parentThreadId: 'root' } } }
+    }),
+    'root'
+  )
+  assert.equal(getCodexSubagentParentThreadId({ source: 'cli' }), null)
+})
 
 test('derives subagent summaries only from the bounded parent turns', () => {
   const subagents = getCodexTurnSubagents(

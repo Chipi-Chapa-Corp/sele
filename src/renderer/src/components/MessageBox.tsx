@@ -1,3 +1,5 @@
+import { TokenUsagePanel } from './TokenUsagePanel'
+import { formatTokenCostEstimateTitle, formatUsageDollars } from '../../../shared/tokenUsage'
 import { MenuPageTransition } from '../motion/MenuPageTransition'
 import { MotionSurface } from '../motion/MotionSurface'
 import { captureMessageFlight } from '../motion/messageFlight'
@@ -130,9 +132,15 @@ type MessageBoxProps = {
   activeSteeringEnabled?: boolean
   autoFocus?: boolean
   draftScopeKey: string
+  chatId?: string | null
   draftProjectKey: string
   disabled?: boolean
-  editSession?: { id: string; content: string; type?: 'message' | 'pending' } | null
+  editSession?: {
+    id: string
+    content: string
+    attachments: AppSelectedAttachment[]
+    type?: 'message' | 'pending'
+  } | null
   error?: string | null
   container?: AppContainerTarget | null
   model: ProviderModelId
@@ -209,7 +217,7 @@ type MessageBoxContextUsage = {
   maxTokens: number | null
 }
 
-type UsagePopoverView = 'usage' | 'statistics'
+type UsagePopoverView = 'limits' | 'usage' | 'statistics'
 type AccountRateLimit = ProviderAccountUsage['rateLimits'][number]
 
 const maxSelectedAttachmentCount = 10
@@ -1104,6 +1112,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   accountUsageState,
   actions = [],
   contextUsage,
+  chatId,
   displayUsage,
   lastActionId,
   notes = [],
@@ -1204,7 +1213,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [attachmentDragActive, setAttachmentDragActive] = useState(false)
   const [dismissedError, setDismissedError] = useState<string | null>(null)
   const [usageOpen, setUsageOpen] = useState(false)
-  const [usageView, setUsageView] = useState<UsagePopoverView>('usage')
+  const [usageView, setUsageView] = useState<UsagePopoverView>('limits')
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
   const [resetDetailsOpen, setResetDetailsOpen] = useState(false)
   const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
@@ -1961,12 +1970,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     if (editSessionIdRef.current === editSession.id) return
 
     editSessionIdRef.current = editSession.id
-    messageBeforeEditRef.current = messageRef.current
-    attachmentsBeforeEditRef.current = selectedAttachmentsRef.current
-    skillsBeforeEditRef.current = selectedSkillsRef.current
-    appsBeforeEditRef.current = selectedAppsRef.current
+    if (messageBeforeEditRef.current === null) {
+      messageBeforeEditRef.current = messageRef.current
+      attachmentsBeforeEditRef.current = selectedAttachmentsRef.current
+      skillsBeforeEditRef.current = selectedSkillsRef.current
+      appsBeforeEditRef.current = selectedAppsRef.current
+    }
     setMessage(editSession.content)
-    setSelectedAttachments([])
+    setSelectedAttachments(editSession.attachments)
     setSelectedSkills([])
     setSelectedApps([])
     setAttachmentSelectionError(null)
@@ -2094,6 +2105,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         selectedAppInputs.length === 0 &&
         !submittingReview) ||
       operationsDisabled ||
+      attachmentSelectionPending ||
       pending ||
       (!active && disabled)
     ) {
@@ -2104,16 +2116,29 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     textareaRef.current?.focus({ preventScroll: true })
 
     if (editing) {
+      const previousDraft = {
+        message: messageBeforeEditRef.current ?? '',
+        attachments: attachmentsBeforeEditRef.current ?? [],
+        skills: skillsBeforeEditRef.current ?? [],
+        apps: appsBeforeEditRef.current ?? []
+      }
       void Promise.resolve(
-        onSend(nextMessage, undefined, [], undefined, selectedSkillInputs, selectedAppInputs)
+        onSend(
+          nextMessage,
+          undefined,
+          selectedAttachments,
+          undefined,
+          selectedSkillInputs,
+          selectedAppInputs
+        )
       )
         .then((sent) => {
           if (!sent) return
 
-          setMessage(messageBeforeEditRef.current ?? '')
-          setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
-          setSelectedSkills(skillsBeforeEditRef.current ?? [])
-          setSelectedApps(appsBeforeEditRef.current ?? [])
+          setMessage(previousDraft.message)
+          setSelectedAttachments(previousDraft.attachments)
+          setSelectedSkills(previousDraft.skills)
+          setSelectedApps(previousDraft.apps)
           editSessionIdRef.current = null
           messageBeforeEditRef.current = null
           attachmentsBeforeEditRef.current = null
@@ -2187,13 +2212,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleSelectAttachments = async (): Promise<void> => {
-    if (attachmentSelectionPending || textareaDisabled || editing) return
+    if (attachmentSelectionPending || textareaDisabled) return
 
     setAttachmentSelectionPending(true)
     setAttachmentSelectionError(null)
 
     try {
+      const selectionEditId = editSessionIdRef.current
       const attachments = await appApi.selectMessageAttachments()
+      if (selectionEditId !== editSessionIdRef.current) return
       if (attachments.length === 0) return
 
       setSelectedAttachments((currentAttachments) => {
@@ -2227,7 +2254,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
     event.preventDefault()
     attachmentDragDepthRef.current += 1
-    if (!attachmentSelectionPending && !textareaDisabled && !editing) {
+    if (!attachmentSelectionPending && !textareaDisabled) {
       setAttachmentDragActive(true)
     }
   }
@@ -2236,8 +2263,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     if (!Array.from(event.dataTransfer.types).includes('Files')) return
 
     event.preventDefault()
-    event.dataTransfer.dropEffect =
-      attachmentSelectionPending || textareaDisabled || editing ? 'none' : 'copy'
+    event.dataTransfer.dropEffect = attachmentSelectionPending || textareaDisabled ? 'none' : 'copy'
   }
 
   const handleAttachmentDragLeave = (event: React.DragEvent<HTMLDivElement>): void => {
@@ -2255,7 +2281,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     attachmentDragDepthRef.current = 0
     setAttachmentDragActive(false)
 
-    if (attachmentSelectionPending || textareaDisabled || editing) return
+    if (attachmentSelectionPending || textareaDisabled) return
 
     const files = Array.from(event.dataTransfer.files)
     if (files.length === 0) return
@@ -2272,7 +2298,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     setAttachmentSelectionError(null)
 
     try {
+      const selectionEditId = editSessionIdRef.current
       const attachments = await appApi.getDroppedMessageAttachments(files)
+      if (selectionEditId !== editSessionIdRef.current) return
       setSelectedAttachments((currentAttachments) => {
         const existingPaths = new Set(currentAttachments.map((attachment) => attachment.path))
         const nextAttachments = [
@@ -2306,7 +2334,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     if (!hasImage) return
 
     event.preventDefault()
-    if (attachmentSelectionPending || textareaDisabled || editing) return
+    if (attachmentSelectionPending || textareaDisabled) return
     if (selectedAttachments.length >= maxSelectedAttachmentCount) {
       setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
       return
@@ -2316,7 +2344,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     setAttachmentSelectionError(null)
 
     try {
+      const selectionEditId = editSessionIdRef.current
       const image = await appApi.getClipboardImage()
+      if (selectionEditId !== editSessionIdRef.current) return
       if (!image) throw new Error('Unable to read the pasted image.')
 
       setSelectedAttachments((currentAttachments) => {
@@ -2672,6 +2702,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ]
     : undefined
   const accountUsageErrors = accountUsage?.errors ?? []
+  const tokenUsageSupported = providerId !== 'opencode'
   const statisticsSupported = providerId === 'codex'
   const statisticsReported = Boolean(
     statisticsSupported &&
@@ -2679,7 +2710,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       accountUsage.summary &&
       Object.values(accountUsage.summary).some((value) => value !== null)
   )
-  const visibleUsageView: UsagePopoverView = statisticsReported ? usageView : 'usage'
+  const visibleUsageView: UsagePopoverView =
+    (usageView === 'statistics' && !statisticsReported) ||
+    (usageView === 'usage' && !tokenUsageSupported)
+      ? 'limits'
+      : usageView
   const statisticsLoading =
     statisticsSupported && accountUsageState === 'loading' && !statisticsReported
   const rateLimits = accountUsage?.rateLimits ?? []
@@ -2692,8 +2727,17 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const badgeRateLimit =
     displayUsage === 'chatContext' ? null : getUsageBadgeRateLimit(rateLimits, displayUsage)
   const badgePercent = badgeRateLimit ? clampPercent(badgeRateLimit.usedPercent) : null
-  const badgeUsageLabel =
-    badgeRateLimit?.windowMinutes === 10_080 || displayUsage === 'weekly' ? 'Weekly' : 'Short'
+  const badgeUsageLabel = badgeRateLimit
+    ? badgeRateLimit.windowMinutes === 300
+      ? 'Short'
+      : badgeRateLimit.windowMinutes === 10_080
+        ? 'Weekly'
+        : formatWindowLabel(badgeRateLimit.windowMinutes).replace(/^./, (letter) =>
+            letter.toUpperCase()
+          )
+    : displayUsage === 'weekly'
+      ? 'Weekly'
+      : 'Short'
   const displayedUsagePercent = displayUsage === 'chatContext' ? contextPercent : badgePercent
   const usageButtonLabel =
     displayUsage !== 'chatContext'
@@ -2722,7 +2766,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     const nextOpen = !usageMenuOpen
     setUsageOpen(nextOpen)
     if (nextOpen) {
-      if (!statisticsReported) setUsageView('usage')
+      if (!statisticsReported && usageView === 'statistics') setUsageView('limits')
       void onUsageRefresh?.({ includeStatistics: true })
     }
   }
@@ -2873,7 +2917,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                     <Button
                       aria-label={`Remove ${attachment.name}`}
                       callback={() => handleRemoveAttachment(attachment.path)}
-                      disabled={textareaDisabled || editing}
+                      disabled={textareaDisabled}
                       icon={<X aria-hidden="true" />}
                       size="small"
                       theme="secondary"
@@ -2945,7 +2989,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                     label={attachment.name}
                     removeAriaLabel={`Remove ${attachment.name}`}
                     removeCallback={() => handleRemoveAttachment(attachment.path)}
-                    removeDisabled={textareaDisabled || editing}
+                    removeDisabled={textareaDisabled}
                     removeTitle={`Remove ${attachment.name}`}
                   />
                 ))}
@@ -3043,7 +3087,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               }
               disabled={
                 textareaDisabled ||
-                editing ||
                 attachmentSelectionPending ||
                 selectedAttachments.length >= maxSelectedAttachmentCount
               }
@@ -3131,37 +3174,47 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                     role="dialog"
                     aria-label="Usage"
                   >
-                    {statisticsSupported && (
-                      <SegmentedControl
-                        aria-label="Usage views"
-                        className="message-box__usage-tabs"
-                        options={[
-                          { value: 'usage', label: 'Usage' },
-                          {
-                            value: 'statistics',
-                            label: statisticsLoading
-                              ? 'Statistics'
-                              : statisticsReported
-                                ? 'Statistics'
-                                : 'No statistics',
-                            ariaLabel: statisticsLoading
-                              ? 'Statistics loading'
-                              : statisticsReported
-                                ? 'Statistics'
-                                : 'No statistics available',
-                            disabled: !statisticsReported,
-                            icon: statisticsLoading ? (
-                              <LoaderCircle className="app-loading-spinner message-box__usage-loading-icon" />
-                            ) : undefined
-                          }
-                        ]}
-                        size="small"
-                        value={visibleUsageView}
-                        onChange={handleUsageViewChange}
-                      />
-                    )}
+                    <SegmentedControl
+                      aria-label="Usage views"
+                      className="message-box__usage-tabs"
+                      options={[
+                        { value: 'limits', label: 'Limits' },
+                        {
+                          value: 'usage',
+                          label: 'Usage',
+                          disabled: !tokenUsageSupported,
+                          ariaLabel: tokenUsageSupported
+                            ? 'Usage'
+                            : 'Usage unavailable for OpenCode'
+                        },
+                        ...(statisticsSupported
+                          ? [
+                              {
+                                value: 'statistics' as const,
+                                label: statisticsLoading
+                                  ? 'Statistics'
+                                  : statisticsReported
+                                    ? 'Statistics'
+                                    : 'No statistics',
+                                ariaLabel: statisticsLoading
+                                  ? 'Statistics loading'
+                                  : statisticsReported
+                                    ? 'Statistics'
+                                    : 'No statistics available',
+                                disabled: !statisticsReported,
+                                icon: statisticsLoading ? (
+                                  <LoaderCircle className="app-loading-spinner message-box__usage-loading-icon" />
+                                ) : undefined
+                              }
+                            ]
+                          : [])
+                      ]}
+                      size="small"
+                      value={visibleUsageView}
+                      onChange={handleUsageViewChange}
+                    />
 
-                    {visibleUsageView === 'usage' ? (
+                    {visibleUsageView === 'limits' ? (
                       <div className="message-box__usage-page" role="tabpanel">
                         <section className="message-box__usage-section">
                           <div className="message-box__usage-row">
@@ -3204,7 +3257,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                           )}
                           {accountUsageState === 'error' && !accountUsage && (
                             <p className="message-box__usage-status">
-                              {accountUsageError ?? 'Usage unavailable.'}
+                              {accountUsageError ?? 'Limits unavailable.'}
                             </p>
                           )}
                           {visibleRateLimits.length > 0 && (
@@ -3314,6 +3367,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                           ))}
                         </section>
                       </div>
+                    ) : visibleUsageView === 'usage' ? (
+                      <TokenUsagePanel
+                        providerId={providerId}
+                        chatId={chatId}
+                        container={container}
+                      />
                     ) : (
                       <div className="message-box__usage-page" role="tabpanel">
                         <section className="message-box__usage-section">
@@ -3321,14 +3380,28 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                             <>
                               <div className="message-box__usage-row">
                                 <span>Lifetime tokens</span>
-                                <strong>
-                                  {formatTokenCount(accountUsage.summary.lifetimeTokens)}
+                                <strong
+                                  title={formatTokenCostEstimateTitle(
+                                    accountUsage.summary.lifetimeCostUSD,
+                                    accountUsage.summary.lifetimeCostSample,
+                                    'Estimated cost of the recorded lifetime usage.'
+                                  )}
+                                >
+                                  {formatTokenCount(accountUsage.summary.lifetimeTokens)} $
+                                  {formatUsageDollars(accountUsage.summary.lifetimeCostUSD)}
                                 </strong>
                               </div>
                               <div className="message-box__usage-row">
                                 <span>Peak day</span>
-                                <strong>
-                                  {formatTokenCount(accountUsage.summary.peakDailyTokens)}
+                                <strong
+                                  title={formatTokenCostEstimateTitle(
+                                    accountUsage.summary.peakDailyCostUSD,
+                                    accountUsage.summary.peakDailyCostSample,
+                                    'Estimated cost of the peak token day; the highest cost is shown if days tie.'
+                                  )}
+                                >
+                                  {formatTokenCount(accountUsage.summary.peakDailyTokens)} $
+                                  {formatUsageDollars(accountUsage.summary.peakDailyCostUSD)}
                                 </strong>
                               </div>
                               <div className="message-box__usage-row">
@@ -3373,6 +3446,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               title={buttonLabel}
               disabled={
                 operationsDisabled ||
+                (attachmentSelectionPending && (!active || activeWithContent)) ||
                 (activeWithContent ? pending : active ? false : disabled || pending || !hasContent)
               }
               callback={activeWithContent ? submitMessage : active ? handleStop : submitMessage}

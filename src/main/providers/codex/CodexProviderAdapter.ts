@@ -1,3 +1,6 @@
+import { TokenUsageReporter } from '../TokenUsageReporter.ts'
+import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
+import { CodexMessageDelivery } from './CodexMessageDelivery'
 import { CodexCommandStartAnchors } from './CodexCommandStartAnchors.ts'
 import { CodexGoals } from './CodexGoals.ts'
 import { CodexGoalPrompts, getCodexGoalPrompt } from './CodexGoalPrompts.ts'
@@ -97,7 +100,7 @@ import {
   CodexTranscriptProjection,
   getChatItems,
   getUserInputContent,
-  hasCodexUserInputAttachments,
+  collectUserInputAttachments,
   type CodexThreadItem,
   type CodexTurn,
   type CodexUserInput
@@ -141,6 +144,7 @@ import {
   createCodexSubagentSummary,
   createCodexSubagentTranscriptItems,
   getCodexTurnSubagents,
+  getCodexSubagentParentThreadId,
   getCodexSubagentInstruction,
   isCodexSubagentThread,
   selectCodexSubagentTurns
@@ -457,6 +461,7 @@ type QueuedTurn = {
   text: string
   createdAt: number
   options?: ProviderTurnOptions
+  input?: CodexUserInput[]
 }
 type OneShotGeneration = {
   client: CodexAppServerClient
@@ -474,6 +479,7 @@ type SteeringMessage = {
   createdAt: number
   status: 'waiting' | 'pending' | 'sent'
   options?: ProviderTurnOptions
+  input?: CodexUserInput[]
 }
 
 const getAccountLabel = (account: CodexAccount): string => {
@@ -1254,8 +1260,11 @@ const getTurnAccessOptions = (options?: ProviderTurnOptions): CodexTurnAccessOpt
 
 export class CodexProviderAdapter implements ProviderAdapter {
   id = 'codex' as const
+  private tokenUsageReporter = new TokenUsageReporter()
+  onTokenUsage = this.tokenUsageReporter.subscribe
 
   private clients = new Map<string, CodexAppServerClient>()
+  private threadListScanClients = new WeakSet<CodexAppServerClient>()
   private clientContainerContext = new AsyncLocalStorage<AppContainerTarget | null>()
   private threadContainers = new Map<string, AppContainerTarget | null>()
   private transcriptProjection = new CodexTranscriptProjection()
@@ -1278,6 +1287,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private agentResponseOverlays = new Map<string, Map<string, CodexAgentResponseOverlay>>()
   private paginatedTurnCatalogs = new Map<string, { threadUpdatedAt: number; turns: CodexTurn[] }>()
   private subagentHistory = new CodexSubagentHistory()
+  private messageDelivery = new CodexMessageDelivery()
   private pendingTurnIds = new Map<string, string>()
   private pendingTurnStarts = new Map<
     string,
@@ -2008,13 +2018,26 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private getChatsInContext = async (
     options: ProviderChatListOptions = {}
   ): Promise<ProviderChatPage> => {
-    const response = await this.client.request<ThreadListResponse>('thread/list', {
+    const client = this.client
+    const params = {
       cursor: options.cursor ?? null,
       limit: options.limit ?? 50,
       sortKey: 'created_at',
       sortDirection: 'desc',
       archived: false
+    }
+    // Sidebar listing must not scan and repair potentially large rollout files.
+    const useStateDbOnly = !this.threadListScanClients.has(client)
+    let response = await client.request<ThreadListResponse>('thread/list', {
+      ...params,
+      useStateDbOnly
     })
+    if (useStateDbOnly && !params.cursor && response.data.length === 0 && !response.nextCursor) {
+      // Codex returns an empty page when its state DB is unavailable or not yet indexed.
+      // Preserve legacy history, and keep subsequent pages on the same listing mode.
+      response = await client.request<ThreadListResponse>('thread/list', params)
+      if (response.data.length > 0 || response.nextCursor) this.threadListScanClients.add(client)
+    }
 
     const rootThreads = response.data.filter((thread) => !isCodexSubagentThread(thread))
     const threadNames = await loadSessionThreadNames(rootThreads.map((thread) => thread.id))
@@ -2999,21 +3022,25 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private continueChatImmediately = (
     chatId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    clientMessageId?: string,
+    input?: CodexUserInput[]
   ): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId, options), () =>
-      this.continueChatInContext(chatId, message, options, false)
+      this.continueChatInContext(chatId, message, options, false, clientMessageId, input)
     )
 
   private continueChatInContext = async (
     chatId: string,
     message: string,
     options: ProviderTurnOptions | undefined,
-    respectQueuedTurns: boolean
+    respectQueuedTurns: boolean,
+    clientMessageId?: string,
+    input?: CodexUserInput[]
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
     const text = message.trim()
-    if (!text && !hasAttachmentInput(options)) {
+    if (!text && !hasAttachmentInput(options) && !input?.length) {
       throw new Error('Cannot continue a chat with an empty message')
     }
 
@@ -3032,7 +3059,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         this.queuedTurnStartThreads.has(chatId) ||
         this.hasActiveOrSubmittingTurn(chatId))
     ) {
-      const queuedTurn = this.addQueuedTurn(chatId, text, options)
+      const queuedTurn = this.addQueuedTurn(chatId, text, options, input)
       if (!queuedTurn) throw new Error('Unable to queue chat message')
 
       this.pausedQueuedTurnThreads.delete(chatId)
@@ -3046,11 +3073,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.pausedQueuedTurnThreads.delete(chatId)
 
-    const pendingTurn = await this.addSubmittedPendingTurn(chatId, text, options)
+    const pendingTurn = await this.addSubmittedPendingTurn(
+      chatId,
+      text,
+      options,
+      clientMessageId,
+      input
+    )
     if (pendingTurn) this.emitChatUpdated(chatId)
 
     try {
-      await this.startCodexTurn(chatId, text, options, pendingTurn.id)
+      await this.startCodexTurn(chatId, text, options, pendingTurn.id, input)
     } catch (error) {
       this.removePendingTurn(chatId, pendingTurn.id)
       throw error
@@ -3242,6 +3275,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
     await this.ensureChatTailLoaded(chatId)
 
+    const delivery = this.messageDelivery.wait(chatId, messageId)
+    if (delivery) {
+      const target = await delivery
+      if (target)
+        return this.editMessageInContext(chatId, target.turnId, text, options, target.clientId)
+    }
+
     const editedSteeringMessage = this.editSteeringMessage(chatId, messageId, text, options)
     const editedQueuedTurn = editedSteeringMessage
       ? false
@@ -3277,7 +3317,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (!queuedTurn) throw new Error('Pending message cannot be steered')
 
     this.emitChatUpdated(chatId)
-    return this.steerActiveChat(chatId, queuedTurn.text, queuedTurn.options)
+    return this.steerActiveChat(chatId, queuedTurn.text, queuedTurn.options, queuedTurn.input)
   }
 
   interruptPendingMessage = (chatId: string, messageId: string): Promise<ProviderChatDetail> =>
@@ -3295,13 +3335,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const steeringMessage = this.takeSteeringMessage(chatId, messageId)
     if (steeringMessage) {
       this.emitChatUpdated(chatId)
-      return this.interruptAndContinueChat(chatId, steeringMessage.text, steeringMessage.options)
+      return this.interruptAndContinueChat(
+        chatId,
+        steeringMessage.text,
+        steeringMessage.options,
+        steeringMessage.input
+      )
     }
 
     const queuedTurn = this.takeQueuedTurn(chatId, messageId)
     if (queuedTurn) {
       this.emitChatUpdated(chatId)
-      return this.interruptAndContinueChat(chatId, queuedTurn.text, queuedTurn.options)
+      return this.interruptAndContinueChat(
+        chatId,
+        queuedTurn.text,
+        queuedTurn.options,
+        queuedTurn.input
+      )
     }
 
     throw new Error('Pending message cannot be interrupted')
@@ -3321,7 +3371,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     chatId: string,
     editTargetId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    targetClientId?: string
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
     const text = message.trim()
@@ -3331,7 +3382,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const separatorIndex = editTargetId.indexOf(':')
     const targetTurnId = separatorIndex < 0 ? editTargetId : editTargetId.slice(0, separatorIndex)
-    const targetItemId = separatorIndex < 0 ? null : editTargetId.slice(separatorIndex + 1)
+    let targetItemId = separatorIndex < 0 ? null : editTargetId.slice(separatorIndex + 1)
 
     let thread = await this.resumeThread(
       chatId,
@@ -3342,24 +3393,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     assertSupportedCodexHistory(thread)
     await this.stopActiveTurn(chatId, { startQueuedTurn: false })
     thread = this.threads.get(chatId) ?? thread
-
-    const targetTurn = thread.turns.find((turn) => turn.id === targetTurnId)
-    const userMessages =
-      targetTurn?.items.filter(
-        (item): item is CodexThreadItem & { content: CodexUserInput[] } =>
-          item.type === 'userMessage' && Array.isArray(item.content)
-      ) ?? []
-    const steeringIndex = targetItemId
-      ? userMessages.findIndex((item) => item.id === targetItemId)
-      : -1
-    if (targetItemId && steeringIndex < 1) {
-      throw new Error('Steering message cannot be edited safely because its history is unavailable')
-    }
-    const originalInput = steeringIndex >= 1 ? userMessages[0].content : null
-    const precedingSteeringMessages = steeringIndex >= 1 ? userMessages.slice(1, steeringIndex) : []
-    if (precedingSteeringMessages.some((item) => hasCodexUserInputAttachments(item.content))) {
-      throw new Error('Steering message cannot be edited safely with earlier attachments')
-    }
 
     const previousTurnCatalog = this.filterRolledBackTurns(
       chatId,
@@ -3374,6 +3407,44 @@ export class CodexProviderAdapter implements ProviderAdapter {
       threadUpdatedAt: thread.updatedAt,
       turns: turnCatalog
     })
+
+    let targetTurn = thread.turns.find((turn) => turn.id === targetTurnId)
+    if (
+      !targetTurn ||
+      (targetClientId &&
+        !targetTurn.items.some((item) => getCodexUserMessageClientId(item) === targetClientId))
+    ) {
+      const targetIndex = turnCatalog.findIndex((turn) => turn.id === targetTurnId)
+      if (targetIndex < 0) throw new Error('The message is no longer in this chat history.')
+      const turns = await hydrateCodexTurnRange(
+        (method, params) => this.client.request(method, params),
+        chatId,
+        turnCatalog,
+        targetIndex,
+        targetIndex + 1
+      )
+      targetTurn = turns[0]
+    }
+    const userMessages =
+      targetTurn?.items.filter(
+        (item): item is CodexThreadItem & { content: CodexUserInput[] } =>
+          item.type === 'userMessage' && Array.isArray(item.content)
+      ) ?? []
+    if (targetClientId) {
+      const targetIndex = userMessages.findIndex(
+        (item) => getCodexUserMessageClientId(item) === targetClientId
+      )
+      if (targetIndex < 0) throw new Error('The submitted message is unavailable in chat history.')
+      targetItemId = targetIndex === 0 ? null : userMessages[targetIndex].id
+    }
+    const steeringIndex = targetItemId
+      ? userMessages.findIndex((item) => item.id === targetItemId)
+      : -1
+    if (targetItemId && steeringIndex < 1) {
+      throw new Error('Steering message cannot be edited safely because its history is unavailable')
+    }
+    const originalInput = steeringIndex >= 1 ? userMessages[0].content : null
+    const precedingSteeringMessages = steeringIndex >= 1 ? userMessages.slice(1, steeringIndex) : []
 
     const firstLoadedPersistedTurn = thread.turns.find(
       (turn) => turn.status !== 'queued' && turn.local !== true
@@ -3478,7 +3549,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
       await this.steerActiveChat(
         chatId,
         getUserInputContent(precedingMessage.content),
-        replayOptions
+        replayOptions,
+        precedingMessage.content
       )
     }
     if (originalInput) await this.steerActiveChat(chatId, text, options)
@@ -3574,6 +3646,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.threads.clear()
     this.externallyOwnedThreadIds.clear()
     this.writeAccessChecks.clear()
+    this.messageDelivery.clear()
     this.pendingTurnIds.clear()
     this.activeTurnIds.clear()
     this.rolledBackTurnIds.clear()
@@ -3601,25 +3674,26 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private steerActiveChat = async (
     chatId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    input?: CodexUserInput[]
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text && !hasAttachmentInput(options)) {
+    if (!text && !hasAttachmentInput(options) && !input?.length) {
       throw new Error('Cannot steer a chat with an empty message')
     }
 
     await this.ensureChatTailLoaded(chatId)
 
     const turnId = this.getActiveTurnId(chatId)
-    if (!turnId) return this.continueChat(chatId, text, options)
+    if (!turnId) return this.continueChatInContext(chatId, text, options, true, undefined, input)
 
     // Final-tagged text does not end a turn. Let the active turn accept steering;
     // processWaitingSteeringMessage already handles a concurrent turn completion.
     if (this.hasPendingSteeringMessage(chatId)) {
-      return this.queueChatMessage(chatId, text, options)
+      return this.queueChatMessage(chatId, text, options, input)
     }
 
-    const steeringMessage = this.addWaitingSteeringMessage(chatId, turnId, text, options)
+    const steeringMessage = this.addWaitingSteeringMessage(chatId, turnId, text, options, input)
     if (!steeringMessage) throw new Error('Unable to steer chat')
 
     this.emitChatUpdated(chatId)
@@ -3637,7 +3711,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return detail
   }
 
-  private processWaitingSteeringMessage = async (
+  private processWaitingSteeringMessage = (chatId: string, messageId: string): Promise<void> =>
+    this.messageDelivery.run(chatId, messageId, () =>
+      this.deliverWaitingSteeringMessage(chatId, messageId)
+    )
+
+  private deliverWaitingSteeringMessage = async (
     chatId: string,
     initialMessageId: string
   ): Promise<void> => {
@@ -3654,7 +3733,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       await this.continueChatImmediately(
         chatId,
         currentSteeringMessage.text,
-        currentSteeringMessage.options
+        currentSteeringMessage.options,
+        currentSteeringMessage.id,
+        currentSteeringMessage.input
       )
       return
     }
@@ -3677,14 +3758,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
             threadId: chatId,
             expectedTurnId,
             clientUserMessageId: steeringMessage.itemId,
-            input: createUserInput(
-              steeringMessage.text,
-              steeringMessage.options?.images,
-              steeringMessage.options?.files,
-              steeringMessage.options?.skills
-            )
+            input:
+              steeringMessage.input ??
+              createUserInput(
+                steeringMessage.text,
+                steeringMessage.options?.images,
+                steeringMessage.options?.files,
+                steeringMessage.options?.skills
+              )
           })
           const acceptedTurnId = getSteerResponseTurnId(response) ?? expectedTurnId
+          this.messageDelivery.bind(chatId, initialMessageId, {
+            turnId: acceptedTurnId,
+            clientId: steeringMessage.itemId
+          })
           if (acceptedTurnId !== expectedTurnId) {
             steeringMessageId =
               this.updateSteeringMessageTurn(chatId, steeringMessageId, acceptedTurnId) ??
@@ -3725,7 +3812,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       if (isRecoverableCodexStopError(error)) {
         console.warn(`Codex steering raced with a stopped turn for thread ${chatId}`, error)
-        await this.continueChatImmediately(chatId, steeringMessage.text, steeringMessage.options)
+        await this.continueChatImmediately(
+          chatId,
+          steeringMessage.text,
+          steeringMessage.options,
+          steeringMessage.id,
+          steeringMessage.input
+        )
         return
       }
 
@@ -3736,15 +3829,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private queueChatMessage = async (
     chatId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    input?: CodexUserInput[]
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text && !hasAttachmentInput(options)) throw new Error('Cannot queue an empty message')
+    if (!text && !hasAttachmentInput(options) && !input?.length)
+      throw new Error('Cannot queue an empty message')
 
     await this.ensureChatTailLoaded(chatId)
-    if (!this.getActiveTurnId(chatId)) return this.continueChat(chatId, text, options)
+    if (!this.getActiveTurnId(chatId))
+      return this.continueChatInContext(chatId, text, options, true, undefined, input)
 
-    const queuedTurn = this.addQueuedTurn(chatId, text, options)
+    const queuedTurn = this.addQueuedTurn(chatId, text, options, input)
     if (!queuedTurn) throw new Error('Unable to queue chat message')
 
     this.pausedQueuedTurnThreads.delete(chatId)
@@ -3760,10 +3856,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private interruptAndContinueChat = async (
     chatId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    input?: CodexUserInput[]
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text && !hasAttachmentInput(options)) {
+    if (!text && !hasAttachmentInput(options) && !input?.length) {
       throw new Error('Cannot interrupt with an empty message')
     }
 
@@ -3772,14 +3869,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
       await this.stopActiveTurn(chatId, { startQueuedTurn: false })
     }
 
-    return this.continueChatImmediately(chatId, text, options)
+    return this.continueChatImmediately(chatId, text, options, undefined, input)
   }
 
   private startCodexTurn = async (
     chatId: string,
     text: string,
     options: ProviderTurnOptions | undefined,
-    pendingTurnId: string | null
+    pendingTurnId: string | null,
+    input?: CodexUserInput[]
   ): Promise<CodexTurn> => {
     if (!pendingTurnId) throw new Error('Unable to start Codex turn without a submitted message')
 
@@ -3790,7 +3888,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       return this.client.request<TurnStartResponse>('turn/start', {
         threadId: chatId,
         clientUserMessageId: pendingTurnId,
-        input: createUserInput(text, options?.images, options?.files, options?.skills),
+        input: input ?? createUserInput(text, options?.images, options?.files, options?.skills),
         ...getTurnModelOptions(options),
         ...getTurnAccessOptions(options)
       })
@@ -4029,6 +4127,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
     // Indexed live updates preserve uniqueness; validate unknown snapshots once on ingestion.
     thread.turns.forEach((turn) => indexTranscriptRecords(turn.items))
     this.threads.set(thread.id, thread)
+    const parentThreadId = getCodexSubagentParentThreadId(thread)
+    const parent = parentThreadId ? this.threads.get(parentThreadId) : undefined
+    this.tokenUsageReporter.linkChat(
+      thread.id,
+      getContainerTargetKey(this.threadContainers.get(thread.id)),
+      parentThreadId,
+      parent
+        ? getCodexTurnSubagents(parent.turns, parent.id).find((agent) => agent.id === thread.id)
+            ?.turnId
+        : null
+    )
+
     this.bumpThreadRevision(thread.id)
     const overlays = this.agentResponseOverlays.get(thread.id)
     if (overlays) {
@@ -4134,6 +4244,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const pendingTurnId = this.pendingTurnIds.get(threadId)
     if (pendingTurnId && turnIds.has(pendingTurnId)) this.pendingTurnIds.delete(threadId)
 
+    this.messageDelivery.removeTurns(threadId, turnIds)
     this.removeHiddenPendingMessagesForTurnIds(threadId, turnIds)
     this.removeQueuedTurns(threadId, turnIds)
     this.removeSteeringMessagesForTurnIds(threadId, turnIds)
@@ -4980,7 +5091,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private addQueuedTurn = (
     threadId: string,
     text: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    input?: CodexUserInput[]
   ): QueuedTurn | null => {
     if (!this.threads.has(threadId)) return null
 
@@ -4989,6 +5101,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const queuedTurn = {
       id: queuedTurnId,
       text,
+      input,
       createdAt,
       options: options ? { ...options } : undefined
     } satisfies QueuedTurn
@@ -5101,6 +5214,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           ? {
               ...turn,
               text,
+              input: undefined,
               options: options
                 ? {
                     ...options,
@@ -5120,7 +5234,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     threadId: string,
     turnId: string,
     text: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    input?: CodexUserInput[]
   ): SteeringMessage | null => {
     if (!this.threads.has(threadId)) return null
 
@@ -5133,6 +5248,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       text,
       createdAt,
       status: 'waiting',
+      input,
       options: options ? { ...options } : undefined
     } satisfies SteeringMessage
 
@@ -5230,7 +5346,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const steeringMessage =
       this.steeringMessagesByThread
         .get(threadId)
-        ?.find((message) => message.id === messageId && message.status !== 'sent') ?? null
+        ?.find((message) => message.id === messageId && message.status === 'waiting') ?? null
     if (!steeringMessage) return false
 
     this.updateSteeringMessages(threadId, (messages) =>
@@ -5239,6 +5355,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           ? {
               ...message,
               text,
+              input: undefined,
               options: options
                 ? {
                     ...options,
@@ -5317,7 +5434,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
           id: steeringMessage.id,
           kind: 'steering' as const,
           content: steeringMessage.text,
-          attachments: getMessageAttachments(steeringMessage.options),
+          attachments: steeringMessage.input
+            ? collectUserInputAttachments(steeringMessage.input)
+            : getMessageAttachments(steeringMessage.options),
           createdAt: steeringMessage.createdAt
         })),
       ...queuedTurns
@@ -5327,7 +5446,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
           id: queuedTurn.id,
           kind: 'queued' as const,
           content: queuedTurn.text,
-          attachments: getMessageAttachments(queuedTurn.options),
+          attachments: queuedTurn.input
+            ? collectUserInputAttachments(queuedTurn.input)
+            : getMessageAttachments(queuedTurn.options),
           createdAt: queuedTurn.createdAt
         }))
     ]
@@ -5484,7 +5605,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.emitChatUpdated(threadId)
   }
 
-  private runQueuedTurn = async (threadId: string, queuedTurn: QueuedTurn): Promise<void> => {
+  private runQueuedTurn = (threadId: string, queuedTurn: QueuedTurn): Promise<void> =>
+    this.messageDelivery.run(threadId, queuedTurn.id, () =>
+      this.deliverQueuedTurn(threadId, queuedTurn)
+    )
+
+  private deliverQueuedTurn = async (threadId: string, queuedTurn: QueuedTurn): Promise<void> => {
     const queuedTurns = this.queuedTurnsByThread.get(threadId)
     if (
       !queuedTurns ||
@@ -5502,13 +5628,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
       threadId,
       queuedTurn.text,
       queuedTurn.options,
-      queuedTurn.id
+      queuedTurn.id,
+      queuedTurn.input
     )
     this.setThreadStatus(threadId, { type: 'active', activeFlags: [] })
     this.emitChatUpdated(threadId)
 
     try {
-      await this.startCodexTurn(threadId, queuedTurn.text, queuedTurn.options, queuedTurn.id)
+      await this.startCodexTurn(
+        threadId,
+        queuedTurn.text,
+        queuedTurn.options,
+        queuedTurn.id,
+        queuedTurn.input
+      )
       this.emitChatUpdated(threadId)
     } catch (error) {
       const pendingTurnStillSynthetic = this.pendingTurnIds.get(threadId) === queuedTurn.id
@@ -5814,6 +5947,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const reconciledTurn =
       this.replacePendingTurn(threadId, pendingTurnId, startedTurn) ?? startedTurn
     this.clearPendingTurnId(threadId, pendingTurnId)
+    if (pendingTurnId)
+      this.messageDelivery.bind(threadId, pendingTurnId, { turnId: reconciledTurn.id })
 
     if (isCodexTurnTerminal(reconciledTurn)) {
       if (this.activeTurnIds.get(threadId) === reconciledTurn.id) {
@@ -6210,6 +6345,47 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const contextUsage = normalizeChatContextUsage(params.tokenUsage)
     if (!contextUsage) return
 
+    const turnId = getOptionalStringValue(params.turnId) ?? this.getActiveTurnId(threadId)
+    const total = contextUsage.total
+    const last = contextUsage.last
+    const model =
+      getOptionalStringValue(params.model) ??
+      this.threads.get(threadId)?.turns.find((turn) => turn.id === turnId)?.model
+    this.tokenUsageReporter.report({
+      chatId: threadId,
+      sourceKey: getContainerTargetKey(this.threadContainers.get(threadId)),
+      turnId,
+      recordId: 'thread',
+      timestamp: Date.now(),
+      usage: normalizeTokenUsage(
+        total.inputTokens,
+        total.cachedInputTokens,
+        total.outputTokens,
+        true
+      ),
+      models: model
+        ? [
+            {
+              modelId: model,
+              pricingProvider: 'openai',
+              contextTokens: last.inputTokens,
+              usage: normalizeTokenUsage(
+                total.inputTokens,
+                total.cachedInputTokens,
+                total.outputTokens,
+                true
+              )
+            }
+          ]
+        : undefined,
+      initialUsage: normalizeTokenUsage(
+        last.inputTokens,
+        last.cachedInputTokens,
+        last.outputTokens,
+        true
+      ),
+      cumulative: true
+    })
     this.contextUsageByThread.set(threadId, contextUsage)
     this.scheduleChatUpdated(threadId)
   }

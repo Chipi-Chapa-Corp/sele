@@ -1326,6 +1326,16 @@ export const registerProviderIpc = (): void => {
       )
   )
 
+  handleLoggedIpc(
+    providerIpcChannels.getTokenUsage,
+    (_, providerId: unknown, chatId: unknown, options: unknown) =>
+      providerApi.getTokenUsage(
+        requireProviderId(providerId),
+        chatId == null ? null : requireChatId(chatId),
+        requireSourceOptions(options)
+      )
+  )
+
   handleLoggedIpc(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredOptions = requireUsageOptions(options)

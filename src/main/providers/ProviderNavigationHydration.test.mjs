@@ -196,6 +196,7 @@ const openCodeHarness = (state, client) => {
     stateChecks: new WeakMap(),
     getClientEntry: async () => ({ client, container: null }),
     createChatDetailFromState: (current) => ({ count: current.messages.length }),
+    reportMessageTokenUsage: () => {},
     rememberSession: (session) => {
       state.session = session
       return state

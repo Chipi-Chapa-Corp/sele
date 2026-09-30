@@ -442,6 +442,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           accountUsageError={accountUsageError}
           accountUsageState={accountUsageState}
           container={changesContainer}
+          chatId={selectedChat?.id}
           contextUsage={messageBoxContextUsage}
           displayUsage={effectiveAppSettings.chat.displayUsage}
           draftProjectKey={terminalWorkspaceKey}

@@ -1,3 +1,4 @@
+import { prepareMessageAttachments } from './messageAttachments'
 import { getVideoMimeType } from '../shared/video'
 import { copyVideoFile } from './videoClipboard'
 import { diagnosticLog, handleLoggedIpc } from './logging'
@@ -3526,6 +3527,25 @@ export const registerAppIpc = (): void => {
       updatedAt: image.updatedAt
     }
   })
+
+  handleLoggedIpc(
+    appIpcChannels.prepareMessageAttachments,
+    async (_event, attachments: unknown, value: unknown) => {
+      if (value != null && (typeof value !== 'object' || Array.isArray(value))) {
+        throw new Error('Invalid message attachment options')
+      }
+      const options = value as { container?: unknown; cwd?: unknown } | undefined
+      const container = requireContainerTarget(options?.container, { optional: true })
+      const cwd = getOptionalCwd(options?.cwd)
+      return runWithGitContainer(container, () =>
+        prepareMessageAttachments(
+          attachments,
+          join(app.getPath('userData'), 'sele-message-images'),
+          (path) => getLocalMedia(cwd, path)
+        )
+      )
+    }
+  )
 
   handleLoggedIpc(appIpcChannels.selectMessageAttachments, async (event) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender)

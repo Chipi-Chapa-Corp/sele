@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
   ProviderChat,
@@ -118,8 +118,32 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     sendState
   } = dependencies
 
+  const editRequestRef = useRef(0)
+  useEffect(() => {
+    editRequestRef.current += 1
+  }, [selectedChatId, selectedChat?.providerId])
+  const prepareEditAttachments = async (
+    message: ProviderMessage | ProviderPendingMessage
+  ): Promise<AppSelectedAttachment[] | null> => {
+    const request = ++editRequestRef.current
+    const chatKey = selectedChatKeyRef.current
+    try {
+      const attachments = await appApi.prepareMessageAttachments(message.attachments ?? [], {
+        container: changesContainer,
+        cwd: changesCwd
+      })
+      return request === editRequestRef.current && chatKey === selectedChatKeyRef.current
+        ? attachments
+        : null
+    } catch (error) {
+      console.error('Unable to load attachments for editing.', error)
+      if (request === editRequestRef.current && chatKey === selectedChatKeyRef.current)
+        handleSendFailure(error, 'Unable to load message attachments.')
+      return null
+    }
+  }
   const handleEditMessage = useCallback(
-    (message: ProviderMessage): void => {
+    async (message: ProviderMessage): Promise<void> => {
       if (
         message.role !== 'user' ||
         message.editTargetId === null ||
@@ -129,31 +153,38 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         return
       }
 
+      const attachments = await prepareEditAttachments(message)
+      if (!attachments || sendInFlightRef.current) return
       setSendState('idle')
       setEditingMessage({
+        attachments,
         type: 'message',
         id: message.id,
         targetId: message.editTargetId ?? message.id,
         content: message.content
       })
     },
-    [chatDetail?.capabilities.editMessages]
+    [chatDetail?.capabilities.editMessages, changesContainer, changesCwd]
   )
   const handleEditPendingMessage = useCallback(
-    (message: ProviderPendingMessage): void => {
+    async (message: ProviderPendingMessage): Promise<void> => {
       if (!selectedChatId || sendInFlightRef.current) return
 
+      const attachments = await prepareEditAttachments(message)
+      if (!attachments || sendInFlightRef.current) return
       setSendState('idle')
       setEditingMessage({
+        attachments,
         type: 'pending',
         id: message.id,
         kind: message.kind,
         content: message.content
       })
     },
-    [selectedChatId]
+    [selectedChatId, changesContainer, changesCwd]
   )
   const handleCancelEditMessage = useCallback((): void => {
+    editRequestRef.current += 1
     setSendState('idle')
     setEditingMessage(null)
   }, [])
@@ -294,11 +325,11 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       .filter((attachment) => attachment.kind === 'file')
       .map((attachment) => attachment.path)
     const turnOptions =
-      attachments.length > 0
+      attachments.length > 0 || editingMessage
         ? {
             ...baseTurnOptions,
-            files: filePaths.length > 0 ? filePaths.map((path) => ({ path })) : undefined,
-            images: imagePaths.length > 0 ? imagePaths.map((path) => ({ path })) : undefined
+            files: filePaths.map((path) => ({ path })),
+            images: imagePaths.map((path) => ({ path }))
           }
         : baseTurnOptions
 
@@ -482,6 +513,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           ...chatDetail,
           status: 'active',
           contextUsage: chatDetail.contextUsage,
+          tokenUsage: chatDetail.tokenUsage,
           items: getOptimisticItems(
             chatDetail.items,
             messageWithComposerMentions,

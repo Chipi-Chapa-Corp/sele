@@ -35,6 +35,7 @@ type PendingRequest = {
 }
 
 const requestTimeoutMs = 30_000
+const threadListRequestTimeoutMs = 180_000
 const codexResourceMemoryHigh = '2G'
 
 type AppServerCommand = {
@@ -234,7 +235,7 @@ export class CodexAppServerClient {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(id)
         reject(new Error(`Codex app-server request timed out: ${method}`))
-      }, requestTimeoutMs)
+      }, method === 'thread/list' ? threadListRequestTimeoutMs : requestTimeoutMs)
 
       this.pendingRequests.set(id, {
         resolve: (value) => resolve(value as Result),

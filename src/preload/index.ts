@@ -73,6 +73,8 @@ const appApi: AppApi = {
   selectFolder: (options) => ipcRenderer.invoke(appIpcChannels.selectFolder, options),
   getProjectIcon: (options) => ipcRenderer.invoke(appIpcChannels.getProjectIcon, options),
   selectProjectIcon: (options) => ipcRenderer.invoke(appIpcChannels.selectProjectIcon, options),
+  prepareMessageAttachments: (attachments, options) =>
+    ipcRenderer.invoke(appIpcChannels.prepareMessageAttachments, attachments, options),
   selectMessageAttachments: () => ipcRenderer.invoke(appIpcChannels.selectMessageAttachments),
   getDroppedMessageAttachments: (files) =>
     ipcRenderer.invoke(
@@ -199,6 +201,8 @@ const providerApi: ProviderRendererApi = {
     ),
   setAppEnabled: (providerId, appId, enabled, options) =>
     ipcRenderer.invoke(providerIpcChannels.setAppEnabled, providerId, appId, enabled, options),
+  getTokenUsage: (providerId, chatId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getTokenUsage, providerId, chatId, options),
   getUsage: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getUsage, providerId, options),
   resetRateLimits: (providerId, options) =>

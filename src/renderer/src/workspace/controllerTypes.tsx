@@ -2,6 +2,7 @@ import { GitCommitHorizontal, Upload } from 'lucide-react'
 
 import type {
   AppContainerTarget,
+  AppSelectedAttachment,
   AppGitCommitAction,
   AppSourceAvailability,
   AppGitDeleteBranchScope,
@@ -58,8 +59,15 @@ export type CommittedChatUpdate = {
 }
 
 export type EditingMessage =
-  | (Pick<ProviderMessage, 'id' | 'content'> & { type: 'message'; targetId: string })
-  | (Pick<ProviderPendingMessage, 'id' | 'content' | 'kind'> & { type: 'pending' })
+  | (Pick<ProviderMessage, 'id' | 'content'> & {
+      attachments: AppSelectedAttachment[]
+      type: 'message'
+      targetId: string
+    })
+  | (Pick<ProviderPendingMessage, 'id' | 'content' | 'kind'> & {
+      attachments: AppSelectedAttachment[]
+      type: 'pending'
+    })
 
 export type ApprovalResolutionState = {
   approvalId: string | null

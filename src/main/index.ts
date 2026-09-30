@@ -23,6 +23,11 @@ import {
   type AppColorScheme
 } from '../shared/app'
 import { disposeDatabase } from './database/sqlite'
+import { flushTokenUsage } from './database/tokenUsage'
+import {
+  startModelPricingRefresh,
+  stopModelPricingRefresh
+} from './providers/modelPricing/ModelsDevPricing'
 import {
   deleteBrowserHostnameZoomScale,
   setBrowserHostnameZoomScale
@@ -343,6 +348,7 @@ const focusExistingWindow = (): void => {
 
 const startApp = (): void => {
   app.whenReady().then(() => {
+    startModelPricingRefresh()
     registerVisualizationProtocol()
     nativeTheme.themeSource = 'system'
     nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
@@ -383,11 +389,21 @@ if (isProviderCliInvocation()) {
   startApp()
 }
 
-app.on('before-quit', () => {
+let finishingQuit = false
+app.on('before-quit', (event) => {
+  if (finishingQuit) return
+  finishingQuit = true
+  event.preventDefault()
   beginProviderIpcShutdown()
   disposeProviderAdapters()
   disposeTerminalSessions()
-  void disposeDatabase()
+  void stopModelPricingRefresh()
+    .then(flushTokenUsage)
+    .then(disposeDatabase)
+    .catch((error: unknown) => {
+      console.error('Unable to close token usage storage.', error)
+    })
+    .finally(() => app.quit())
 })
 
 app.on('window-all-closed', () => {

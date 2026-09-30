@@ -38,6 +38,11 @@ const getThreadSpawn = (source: unknown): Record<string, unknown> | null => {
   )
 }
 
+export const getCodexSubagentParentThreadId = (thread: CodexSubagentThread): string | null => {
+  const spawn = getThreadSpawn(thread.source)
+  return thread.parentThreadId ?? getString(spawn?.parentThreadId ?? spawn?.parent_thread_id)
+}
+
 const getTaskNameFromPath = (path: string): string =>
   (path.split('/').filter(Boolean).at(-1) ?? path).replace(/[-_]+/g, ' ').trim()
 

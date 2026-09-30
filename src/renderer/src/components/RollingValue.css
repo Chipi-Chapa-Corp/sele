@@ -1,0 +1,44 @@
+.rolling-value {
+  display: inline-block;
+  position: relative;
+  vertical-align: bottom;
+  white-space: pre;
+  font-variant-numeric: tabular-nums;
+}
+
+.rolling-value__measure {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.rolling-value__characters {
+  display: inline-flex;
+  vertical-align: bottom;
+  user-select: none;
+}
+
+.rolling-value__character {
+  position: relative;
+  overflow: hidden;
+}
+
+.rolling-value__character::before {
+  content: attr(data-value);
+}
+
+.rolling-value__character--digit::before {
+  opacity: 0;
+}
+
+.rolling-value__label {
+  position: absolute;
+  inset: 0;
+  user-select: none;
+}
+
+.rolling-value__label::before {
+  content: attr(data-value);
+}

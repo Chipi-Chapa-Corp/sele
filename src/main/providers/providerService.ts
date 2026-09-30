@@ -1,3 +1,11 @@
+import { applyTurnTokenUsage, emptyTokenUsage } from '../../shared/tokenUsage'
+import {
+  getAccountUsageCosts,
+  getChatTokenUsage,
+  getTokenUsageSummary,
+  recordTokenUsage
+} from '../database/tokenUsage'
+import { getContainerTargetKey } from '../containerTarget'
 import type {
   ProviderApi,
   ProviderAccountConfiguration,
@@ -56,6 +64,7 @@ import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
 import type {
   ProviderAdapter,
+  HistoricalTokenUsageSnapshot,
   ProviderChatTurnCursorWindow,
   ProviderChatTurnWindow,
   ProviderChatUpdateMetadata
@@ -157,12 +166,20 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
   )
 }
 
-const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<ProviderChatDetail> => {
+const applyMetadataToDetail = async (
+  detail: ProviderChatDetail,
+  providerId: ProviderId
+): Promise<ProviderChatDetail> => {
   const [metadata, cwdMetadata, reviews] = await Promise.all([
     getChatMetadata(detail.id),
     getCwdMetadata(detail.cwd),
     getMessageReviews(detail.id)
   ])
+  const usage = await getChatTokenUsage(
+    providerId,
+    getContainerTargetKey(metadata.container ?? detail.container),
+    detail.id
+  )
   const reviewsByContent = new Map<string, typeof reviews>()
 
   reviews.forEach((review) => {
@@ -183,7 +200,8 @@ const applyMetadataToDetail = async (detail: ProviderChatDetail): Promise<Provid
     seenUpdatedAt: metadata.seenUpdatedAt,
     purpose: metadata.purpose,
     container: metadata.container ?? detail.container ?? null,
-    items: detail.items.map((item) => {
+    tokenUsage: usage.total,
+    items: applyTurnTokenUsage(detail.items, usage.byTurn).map((item) => {
       if (item.type !== 'message' && item.type !== 'pendingMessage') return item
 
       const review = reviewsByContent.get(item.content)?.shift()
@@ -216,7 +234,7 @@ const drainProviderChatUpdates = async (chatKey: string): Promise<void> => {
       pendingProviderChatUpdates.delete(chatKey)
 
       try {
-        const enrichedDetail = await applyMetadataToDetail(update.detail)
+        const enrichedDetail = await applyMetadataToDetail(update.detail, update.providerId)
         // Metadata and review reads are asynchronous. If another adapter snapshot arrived while
         // they were running, discard this one before it can overwrite the newer transcript.
         if (latestProviderChatUpdateRevision.get(chatKey) !== update.detail.revision) continue
@@ -293,7 +311,7 @@ export const getProviderChatWindow = async (
         await adapter.getChat(chatId, { container: metadata.container }),
         window
       )
-  return applyMetadataToDetail(detail)
+  return applyMetadataToDetail(detail, providerId)
 }
 
 export const getProviderChatCursorWindow = async (
@@ -307,7 +325,8 @@ export const getProviderChatCursorWindow = async (
     throw new Error(`${providerLabels[providerId]} does not support cursor-based chat history`)
   }
   return applyMetadataToDetail(
-    await adapter.getChatCursorWindow(chatId, window, { container: metadata.container })
+    await adapter.getChatCursorWindow(chatId, window, { container: metadata.container }),
+    providerId
   )
 }
 
@@ -323,7 +342,8 @@ export const getProviderChatItemWindow = async (
     return applyMetadataToDetail(
       await adapter.getChatWindowForItem(chatId, itemId, limit, {
         container: metadata.container
-      })
+      }),
+      providerId
     )
   }
 
@@ -335,7 +355,10 @@ export const getProviderChatItemWindow = async (
     Math.max(0, targetIndex - Math.floor(limit / 2)),
     Math.max(0, turns.length - limit)
   )
-  return applyMetadataToDetail(sliceChatDetailToTurnWindow(detail, { startIndex, limit }))
+  return applyMetadataToDetail(
+    sliceChatDetailToTurnWindow(detail, { startIndex, limit }),
+    providerId
+  )
 }
 
 export const getProviderSubagentItemWindow = async (
@@ -457,6 +480,7 @@ const collectProviderChatIdsByCwd = async (
 }
 
 for (const adapter of Object.values(adapters)) {
+  adapter.onTokenUsage?.((observation) => recordTokenUsage(adapter.id, observation))
   adapter.onChatUpdated((detail, updateMetadata) => {
     enqueueProviderChatUpdate(adapter.id, detail, updateMetadata)
   })
@@ -619,7 +643,73 @@ export const providerApi: ProviderApi = {
     adapters[providerId].setSkillsEnabled(paths, enabled, cwd, options),
   setAppEnabled: (providerId, appId, enabled, options) =>
     adapters[providerId].setAppEnabled(appId, enabled, options),
-  getUsage: (providerId, options?: ProviderUsageOptions) => adapters[providerId].getUsage(options),
+  getUsage: async (providerId, options?: ProviderUsageOptions) => {
+    const usage = await adapters[providerId].getUsage(options)
+    if (!options?.includeStatistics || !usage.summary) return usage
+    try {
+      const costs = await getAccountUsageCosts(
+        providerId,
+        getContainerTargetKey(options.container),
+        usage.summary,
+        async () => {
+          const models = await adapters[providerId].getModels({ container: options.container })
+          const model = models.find((model) => model.isDefault) ?? models[0]
+          if (!model) return null
+          const modelId = model.resolvedModelId ?? model.id
+          return {
+            modelId,
+            usage: emptyTokenUsage(),
+            ...(providerId === 'codex' ? { pricingProvider: 'openai' as const } : {}),
+            ...(providerId === 'claude' ? { pricingProvider: 'anthropic' as const } : {}),
+            nativePricingKey: `${providerId}:${getContainerTargetKey(options.container)}:${modelId}`
+          }
+        }
+      )
+      return { ...usage, summary: { ...usage.summary, ...costs } }
+    } catch (error) {
+      console.error('Unable to estimate account statistics costs.', error)
+      return usage
+    }
+  },
+  getTokenUsage: async (providerId, chatId, options) => {
+    const container =
+      options?.container !== undefined
+        ? options.container
+        : chatId
+          ? (await getChatMetadata(chatId)).container
+          : null
+    const sourceKey = getContainerTargetKey(container)
+    const nativeSources = new Map<string, HistoricalTokenUsageSnapshot>()
+    const readHistory = adapters[providerId].getHistoricalTokenUsage
+    if (readHistory) {
+      const sources = new Map(
+        [null, ...(await getChatContainers()), container].map((target) => [
+          getContainerTargetKey(target),
+          target
+        ])
+      )
+      // Bound remote work independently of the number of configured chat sources.
+      const entries = [...sources.entries()]
+      let next = 0
+      await Promise.all(
+        Array.from({ length: Math.min(2, entries.length) }, async () => {
+          while (next < entries.length) {
+            const [key, target] = entries[next++]
+            try {
+              const native = await readHistory(key === sourceKey ? (chatId ?? null) : null, {
+                container: target
+              })
+              if (native) nativeSources.set(key, native)
+            } catch (error) {
+              if (key === sourceKey) throw error
+              console.error('Unable to read historical token usage for another source.', error)
+            }
+          }
+        })
+      )
+    }
+    return getTokenUsageSummary(providerId, sourceKey, chatId ?? null, Date.now(), nativeSources)
+  },
   resetRateLimits: (providerId, options) => adapters[providerId].resetRateLimits(options),
   getChatContainers,
   getChats: async (providerId, options) => {
@@ -640,7 +730,8 @@ export const providerApi: ProviderApi = {
   getChat: async (providerId, chatId) => {
     const metadata = await getChatMetadata(chatId)
     return applyMetadataToDetail(
-      await adapters[providerId].getChat(chatId, { container: metadata.container })
+      await adapters[providerId].getChat(chatId, { container: metadata.container }),
+      providerId
     )
   },
   getSubagents: async (providerId, chatId): Promise<ProviderSubagent[]> => {
@@ -678,7 +769,7 @@ export const providerApi: ProviderApi = {
   setChatTitle: (providerId, chatId, title) =>
     adapters[providerId]
       .setChatTitle(chatId, title)
-      .then((detail) => applyMetadataToDetail(detail)),
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
   generateOneShot: (providerId, message, options) =>
     adapters[providerId].generateOneShot(message, options),
   cancelOneShot: (providerId, generationId) => adapters[providerId].cancelOneShot(generationId),
@@ -701,7 +792,7 @@ export const providerApi: ProviderApi = {
             }
           : undefined
       )
-      return applyMetadataToDetail(detail)
+      return applyMetadataToDetail(detail, providerId)
     } catch (error) {
       if (options?.review)
         await deleteMessageReview(options.review.id).catch((error) => {
@@ -713,7 +804,7 @@ export const providerApi: ProviderApi = {
   continueChat: (providerId, chatId, message, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].continueChat(chatId, message, options)
-    ).then((detail) => applyMetadataToDetail(detail)),
+    ).then((detail) => applyMetadataToDetail(detail, providerId)),
   continueChatInFork: async (providerId, chatId, message, purpose, options) => {
     try {
       const detail = await adapters[providerId].continueChatInFork(
@@ -732,7 +823,7 @@ export const providerApi: ProviderApi = {
           ])
         }
       )
-      return applyMetadataToDetail(detail)
+      return applyMetadataToDetail(detail, providerId)
     } catch (error) {
       if (options?.review)
         await deleteMessageReview(options.review.id).catch((error) => {
@@ -748,44 +839,48 @@ export const providerApi: ProviderApi = {
         await setChatContainer(forkedChatId, sourceMetadata.container)
       }
     })
-    return applyMetadataToDetail(detail)
+    return applyMetadataToDetail(detail, providerId)
   },
   sendActiveChatMessage: (providerId, chatId, message, mode, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].sendActiveChatMessage(chatId, message, mode, options)
-    ).then((detail) => applyMetadataToDetail(detail)),
+    ).then((detail) => applyMetadataToDetail(detail, providerId)),
   deletePendingMessage: (providerId, chatId, messageId) =>
     adapters[providerId]
       .deletePendingMessage(chatId, messageId)
-      .then((detail) => applyMetadataToDetail(detail)),
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
   editPendingMessage: (providerId, chatId, messageId, message, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].editPendingMessage(chatId, messageId, message, options)
-    ).then((detail) => applyMetadataToDetail(detail)),
+    ).then((detail) => applyMetadataToDetail(detail, providerId)),
   steerPendingMessage: (providerId, chatId, messageId) =>
     adapters[providerId]
       .steerPendingMessage(chatId, messageId)
-      .then((detail) => applyMetadataToDetail(detail)),
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
   interruptPendingMessage: (providerId, chatId, messageId) =>
     adapters[providerId]
       .interruptPendingMessage(chatId, messageId)
-      .then((detail) => applyMetadataToDetail(detail)),
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
   editMessage: (providerId, chatId, messageId, message, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].editMessage(chatId, messageId, message, options)
-    ).then((detail) => applyMetadataToDetail(detail)),
+    ).then((detail) => applyMetadataToDetail(detail, providerId)),
   resolveApproval: (providerId, chatId, decision) =>
     adapters[providerId]
       .resolveApproval(chatId, decision)
-      .then((detail) => applyMetadataToDetail(detail)),
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
   resolveUserInput: (providerId, chatId, requestId, response: ProviderUserInputResponse) =>
     adapters[providerId]
       .resolveUserInput(chatId, requestId, response)
-      .then((detail) => applyMetadataToDetail(detail)),
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
   compactChat: (providerId, chatId) =>
-    adapters[providerId].compactChat(chatId).then((detail) => applyMetadataToDetail(detail)),
+    adapters[providerId]
+      .compactChat(chatId)
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
   stopChat: (providerId, chatId) =>
-    adapters[providerId].stopChat(chatId).then((detail) => applyMetadataToDetail(detail)),
+    adapters[providerId]
+      .stopChat(chatId)
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
   markChatDone: (_providerId, chatId, done = true) => setChatDone(chatId, done),
   markCwdChatsDone: async (providerId, cwd) =>
     setChatsDone(await collectProviderChatIdsByCwd(providerId, cwd), true),

@@ -54,6 +54,7 @@ const forwardedEnvironmentVariables = new Set([
   'CODEX_HOME',
   'COLORTERM',
   'COPILOT_CLI_PATH',
+  'COPILOT_HOME',
   'HTTPS_PROXY',
   'HTTP_PROXY',
   'NO_PROXY',

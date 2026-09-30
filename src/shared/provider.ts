@@ -1,3 +1,4 @@
+import type { TokenCostSample, TokenUsage, TokenUsageSummary } from './tokenUsage'
 import type { AppContainerTarget } from './app'
 
 export const providerIds = ['codex', 'claude', 'copilot', 'opencode'] as const
@@ -446,6 +447,10 @@ export type ProviderChatContextUsage = {
 export type ProviderAccountUsageSummary = {
   lifetimeTokens: string | null
   peakDailyTokens: string | null
+  lifetimeCostUSD?: number | null
+  peakDailyCostUSD?: number | null
+  lifetimeCostSample?: TokenCostSample | null
+  peakDailyCostSample?: TokenCostSample | null
   longestRunningTurnSec: string | null
   currentStreakDays: string | null
   longestStreakDays: string | null
@@ -766,6 +771,9 @@ export type ProviderWorkingItemSegment = {
 }
 
 export type ProviderWorkingStep = {
+  tokenUsage?: TokenUsage
+  /** Native accounting turn identity, independent of presentation segments. */
+  usageTurnId?: string
   /** Section wall-clock boundaries in milliseconds since epoch. */
   startedAt?: number
   completedAt?: number
@@ -892,6 +900,7 @@ export type ProviderChatDetail = {
   pendingApproval: ProviderPendingApproval | null
   pendingUserInput: ProviderPendingUserInput | null
   contextUsage: ProviderChatContextUsage | null
+  tokenUsage?: TokenUsage | null
   subagents?: ProviderSubagent[]
   goal?: ProviderChatGoal | null
   items: ProviderChatItem[]
@@ -1113,6 +1122,11 @@ export type ProviderApi = {
     providerId: ProviderId,
     options?: ProviderUsageOptions
   ) => Promise<ProviderAccountUsage>
+  getTokenUsage: (
+    providerId: ProviderId,
+    chatId?: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<TokenUsageSummary>
   resetRateLimits: (
     providerId: ProviderId,
     options?: ProviderSourceOptions
@@ -1330,6 +1344,7 @@ export const providerIpcChannels = {
   setSkillsEnabled: 'provider:set-skills-enabled',
   setAppEnabled: 'provider:set-app-enabled',
   getUsage: 'provider:get-usage',
+  getTokenUsage: 'provider:get-token-usage',
   resetRateLimits: 'provider:reset-rate-limits',
   getChatContainers: 'provider:get-chat-containers',
   getChats: 'provider:get-chats',

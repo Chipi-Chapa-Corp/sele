@@ -1,3 +1,5 @@
+import type { TokenUsageSummary } from '../../shared/tokenUsage'
+import type { TokenUsageObservation } from './TokenUsageReporter'
 import type {
   ProviderChatListOptions,
   ProviderChatPage,
@@ -43,8 +45,16 @@ export type ProviderChatTurnCursorWindow = {
   limit: number
 }
 
+export type HistoricalTokenUsageSnapshot = TokenUsageSummary & { sourceIdentity?: string }
+
 export type ProviderAdapter = {
   id: ProviderId
+  /** Read retained, dated native consumption without hydrating chat transcripts. */
+  getHistoricalTokenUsage?: (
+    chatId: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<HistoricalTokenUsageSnapshot | null>
+  onTokenUsage?: (listener: (observation: TokenUsageObservation) => void) => () => void
   login: (options?: ProviderSourceOptions) => Promise<ProviderLoginResult>
   getUpdateAvailability: (
     options?: ProviderSourceOptions
