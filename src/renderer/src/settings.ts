@@ -1,3 +1,8 @@
+import {
+  defaultNetworkRetrySettings,
+  normalizeNetworkRetryCount,
+  normalizeNetworkRetryDelaySeconds
+} from '../../shared/networkRetry'
 import type {
   ProviderApprovalMode,
   ProviderModelId,
@@ -181,6 +186,8 @@ export type AppSettings = {
   }
   chat: AppChatProgressSettings & {
     continuePrompt: string
+    networkRetryCount: number
+    networkRetryDelaySeconds: number
     recentChatCacheLimit: number
     displayUsage: AppChatUsageDisplay
     hidePlans: boolean
@@ -381,6 +388,8 @@ export const defaultAppSettings: AppSettings = {
   appearance: defaultAppAppearanceSettings,
   chat: {
     continuePrompt: defaultStoppedTurnContinuePrompt,
+    networkRetryCount: defaultNetworkRetrySettings.count,
+    networkRetryDelaySeconds: defaultNetworkRetrySettings.delaySeconds,
     recentChatCacheLimit: 10,
     displayUsage: 'chatContext',
     hidePlans: false,
@@ -591,6 +600,14 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
   }
   if (hasOwnProperty(chat, 'recentChatCacheLimit')) {
     overrides.recentChatCacheLimit = getStoredRecentChatCacheLimit(chat.recentChatCacheLimit)
+  }
+  if (hasOwnProperty(chat, 'networkRetryCount')) {
+    overrides.networkRetryCount = normalizeNetworkRetryCount(chat.networkRetryCount)
+  }
+  if (hasOwnProperty(chat, 'networkRetryDelaySeconds')) {
+    overrides.networkRetryDelaySeconds = normalizeNetworkRetryDelaySeconds(
+      chat.networkRetryDelaySeconds
+    )
   }
   const displayUsage = getStoredChatUsageDisplay(chat.displayUsage)
   if (hasOwnProperty(chat, 'displayUsage') && displayUsage) {
@@ -1087,6 +1104,8 @@ export const readStoredAppSettings = (): AppSettings => {
           typeof chat.continuePrompt === 'string'
             ? chat.continuePrompt
             : defaultAppSettings.chat.continuePrompt,
+        networkRetryCount: normalizeNetworkRetryCount(chat.networkRetryCount),
+        networkRetryDelaySeconds: normalizeNetworkRetryDelaySeconds(chat.networkRetryDelaySeconds),
         recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
         displayUsage:
           getStoredChatUsageDisplay(chat.displayUsage) ?? defaultAppSettings.chat.displayUsage,
@@ -1387,6 +1406,14 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (Object.keys(storedAppearance).length > 0) storedSettings.appearance = storedAppearance
 
     const storedChat: Partial<AppSettings['chat']> = {}
+    const networkRetryCount = normalizeNetworkRetryCount(settings.chat.networkRetryCount)
+    const networkRetryDelaySeconds = normalizeNetworkRetryDelaySeconds(
+      settings.chat.networkRetryDelaySeconds
+    )
+    if (networkRetryCount !== defaultNetworkRetrySettings.count)
+      storedChat.networkRetryCount = networkRetryCount
+    if (networkRetryDelaySeconds !== defaultNetworkRetrySettings.delaySeconds)
+      storedChat.networkRetryDelaySeconds = networkRetryDelaySeconds
     if (settings.chat.continuePrompt !== defaultAppSettings.chat.continuePrompt) {
       storedChat.continuePrompt = settings.chat.continuePrompt
     }

@@ -1,3 +1,4 @@
+import type { NetworkRetrySettings } from './networkRetry'
 import type { TokenCostSample, TokenUsage, TokenUsageSummary } from './tokenUsage'
 import type { AppContainerTarget } from './app'
 
@@ -994,6 +995,7 @@ export type ProviderAppInput = {
 }
 
 export type ProviderTurnOptions = {
+  networkRetry?: NetworkRetrySettings
   additionalDirectories?: string[]
   agentMode?: ProviderAgentMode
   approvalPolicy: ProviderApprovalPolicy

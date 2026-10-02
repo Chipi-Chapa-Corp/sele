@@ -1,3 +1,4 @@
+import { normalizeNetworkRetrySettings, type NetworkRetrySettings } from '../../shared/networkRetry'
 import { handleLoggedIpc, logDiagnostic } from '../logging'
 import type { ProviderConfigValue } from '../../shared/provider'
 import { isDeepStrictEqual } from 'node:util'
@@ -928,6 +929,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
 
   const options = value as {
     additionalDirectories?: unknown
+    networkRetry?: unknown
     agentMode?: unknown
     approvalPolicy?: unknown
     approvalsReviewer?: unknown
@@ -942,6 +944,20 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     sandboxMode?: unknown
     showRecommendedPlugins?: unknown
     skills?: unknown
+  }
+  let networkRetry: NetworkRetrySettings | undefined
+  if (options.networkRetry !== undefined) {
+    const value = options.networkRetry
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error('Invalid network retry settings')
+    const candidate = value as Partial<NetworkRetrySettings>
+    networkRetry = normalizeNetworkRetrySettings(candidate)
+    if (
+      candidate.count !== networkRetry.count ||
+      candidate.delaySeconds !== networkRetry.delaySeconds
+    ) {
+      throw new Error('Invalid network retry settings')
+    }
   }
   const agentMode = options.agentMode
   if (agentMode != null && !isProviderAgentMode(agentMode)) {
@@ -1009,6 +1025,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
 
   return {
     additionalDirectories,
+    ...(networkRetry ? { networkRetry } : {}),
     ...(agentMode == null ? {} : { agentMode }),
     approvalPolicy,
     approvalsReviewer,

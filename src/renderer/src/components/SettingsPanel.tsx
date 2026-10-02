@@ -1,3 +1,8 @@
+import {
+  networkRetryCountMax,
+  networkRetryDelaySecondsMin,
+  networkRetryDelaySecondsMax
+} from '../../../shared/networkRetry'
 import { ProviderSettingsContent } from './ProviderSettingsContent'
 import type { Dispatch, SetStateAction } from 'react'
 import {
@@ -120,6 +125,10 @@ export type SettingsPanelProps = {
   ) => void
   handleChatUsageDisplayChange: (displayUsage: AppChatUsageDisplay) => void
   handleCodexRecommendedPluginsChange: (showRecommendedPlugins: boolean) => void
+  handleNetworkRetrySettingChange: (
+    key: 'networkRetryCount' | 'networkRetryDelaySeconds',
+    value: number
+  ) => void
   handleContinuePromptChange: (continuePrompt: string) => void
   handleDeleteProviderAccount: (accountId: string) => Promise<void>
   handleGitCommitMessageGenerationChange: (
@@ -370,6 +379,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     handleChatForcedDropdownChange,
     handleChatUsageDisplayChange,
     handleCodexRecommendedPluginsChange,
+    handleNetworkRetrySettingChange,
     handleContinuePromptChange,
     handleDeleteProviderAccount,
     handleGitCommitMessageGenerationChange,
@@ -1224,6 +1234,61 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
           </h2>
           <div className="settings-dialog__section-cards">
             {chatStoppedSteeredFailedProgressSettingFields.map(renderChatBooleanSettingField)}
+          </div>
+        </section>
+        <section
+          className="settings-dialog__section"
+          aria-labelledby="settings-chat-network-retries"
+        >
+          <h2 className="settings-dialog__section-heading" id="settings-chat-network-retries">
+            Network Retries
+          </h2>
+          <div className="settings-dialog__section-cards">
+            {(
+              [
+                {
+                  key: 'networkRetryCount',
+                  label: 'Retry attempts',
+                  description: 'Retry interrupted responses this many times. Use 0 to disable.',
+                  min: 0,
+                  max: networkRetryCountMax,
+                  step: 1
+                },
+                {
+                  key: 'networkRetryDelaySeconds',
+                  label: 'Retry interval (seconds)',
+                  description: 'Wait this many seconds between retry attempts.',
+                  min: networkRetryDelaySecondsMin,
+                  max: networkRetryDelaySecondsMax,
+                  step: 0.1
+                }
+              ] as const
+            ).map((field) => {
+              const path = { section: 'chat', key: field.key } satisfies AppProjectSettingPath
+              const id = `settings-chat-${field.key}`
+              return (
+                <div className={getSettingsFieldClassName()} key={field.key}>
+                  <label className="settings-dialog__field-header" htmlFor={id}>
+                    <h3>{field.label}</h3>
+                    <p>{field.description}</p>
+                  </label>
+                  {renderProjectSettingAction(path, field.label)}
+                  <Input
+                    className="settings-dialog__number-input"
+                    id={id}
+                    type="number"
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    disabled={isScopedSettingControlDisabled(path)}
+                    value={settingsPanelSettings.chat[field.key]}
+                    onChange={(event) =>
+                      handleNetworkRetrySettingChange(field.key, event.currentTarget.valueAsNumber)
+                    }
+                  />
+                </div>
+              )
+            })}
           </div>
         </section>
         <section className="settings-dialog__section" aria-labelledby="settings-chat-stopped-turns">

@@ -29,6 +29,7 @@ const bundled = await build({
             : `export const providerApi = {
                onChatUpdated: listener => { globalThis.harness.publish = listener },
                getChat: (...args) => globalThis.harness.getChat(...args),
+               continueChat: (...args) => globalThis.harness.continueChat(...args),
                getSubagent: (...args) => globalThis.harness.getSubagent(...args)
              };
              export const getChatUpdateSummary = () => {};
@@ -286,4 +287,40 @@ test('other providers retain bounded opening reads', async () => {
   }
   const detail = await h.harness.handlers.get(channels.getChat)({}, 'claude', 'chat')
   assert.equal(detail.id, 'chat')
+})
+
+test('chat IPC forwards validated retry settings and rejects invalid values', async () => {
+  const h = setup()
+  let received
+  h.harness.continueChat = async (_providerId, _id, _message, options) => {
+    received = options.networkRetry
+    return { id: 'chat', revision: 1, items: [] }
+  }
+  const handler = h.harness.handlers.get(channels.continueChatSummary)
+  const options = {
+    model: 'gpt-5.5',
+    approvalPolicy: 'never',
+    approvalsReviewer: 'user',
+    sandboxMode: 'workspace-write'
+  }
+  await handler({}, 'codex', 'chat', 'task', {
+    ...options,
+    networkRetry: { count: 7, delaySeconds: 1.5 }
+  })
+  assert.equal(received.count, 7)
+  assert.equal(received.delaySeconds, 1.5)
+  for (const networkRetry of [
+    null,
+    [],
+    { count: -1, delaySeconds: 2 },
+    { count: 1.5, delaySeconds: 2 },
+    { count: 10, delaySeconds: 0 },
+    { count: 10, delaySeconds: Infinity },
+    { count: '10', delaySeconds: 2 }
+  ]) {
+    await assert.rejects(
+      handler({}, 'codex', 'chat', 'task', { ...options, networkRetry }),
+      /Invalid network retry settings/
+    )
+  }
 })

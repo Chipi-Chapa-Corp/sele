@@ -48,6 +48,7 @@ import {
   getProviderChatTurns,
   sliceProviderChatTurns
 } from '../../shared/chatTurns'
+import { withProviderNetworkRetries } from './ProviderNetworkRetry'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
 import {
   cancelCodexAccountCreation as removePendingCodexAccount,
@@ -79,10 +80,10 @@ const codexAdapter = new CodexProviderAdapter()
 const claudeAdapter = new ClaudeProviderAdapter()
 
 const adapters: Record<ProviderId, ProviderAdapter> = {
-  codex: codexAdapter,
-  claude: claudeAdapter,
-  copilot: new CopilotProviderAdapter(),
-  opencode: new OpenCodeProviderAdapter()
+  codex: withProviderNetworkRetries(codexAdapter),
+  claude: withProviderNetworkRetries(claudeAdapter),
+  copilot: withProviderNetworkRetries(new CopilotProviderAdapter()),
+  opencode: withProviderNetworkRetries(new OpenCodeProviderAdapter())
 }
 
 const providerLabels: Record<ProviderId, string> = {

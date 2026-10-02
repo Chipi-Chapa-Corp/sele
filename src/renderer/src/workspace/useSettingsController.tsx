@@ -1,4 +1,8 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
+import {
+  normalizeNetworkRetryCount,
+  normalizeNetworkRetryDelaySeconds
+} from '../../../shared/networkRetry'
 import { useCallback } from 'react'
 import { SquarePen, Undo2 } from 'lucide-react'
 import type { AppProject, AppProjectIcon } from '../../../shared/app'
@@ -494,6 +498,20 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
       })
     )
   }
+  const handleNetworkRetrySettingChange = (
+    key: 'networkRetryCount' | 'networkRetryDelaySeconds',
+    value: number
+  ): void => {
+    if (!Number.isFinite(value)) return
+    const normalized =
+      key === 'networkRetryCount'
+        ? normalizeNetworkRetryCount(value)
+        : normalizeNetworkRetryDelaySeconds(value)
+    updateScopedSetting({ section: 'chat', key }, normalized, (currentSettings) => ({
+      ...currentSettings,
+      chat: { ...currentSettings.chat, [key]: normalized }
+    }))
+  }
   const handleContinuePromptChange = (continuePrompt: string): void => {
     updateScopedSetting(
       { section: 'chat', key: 'continuePrompt' },
@@ -813,6 +831,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handlePerformancePreferenceChange,
     handleProjectSaved,
     handleReasoningEffortChange,
+    handleNetworkRetrySettingChange,
     handleRecentChatCacheLimitChange,
     handleRecentlyOpenedFilesLimitChange,
     handleRecentsMessageLimitChange,

@@ -209,12 +209,20 @@ export function useChatMessagingController(dependencies: ChatMessagingController
 
       return {
         ...remainingOptions,
+        networkRetry: {
+          count: effectiveAppSettings.chat.networkRetryCount,
+          delaySeconds: effectiveAppSettings.chat.networkRetryDelaySeconds
+        },
         model: resolvedModel.id,
         ...(reasoningEffort ? { reasoningEffort } : {}),
         serviceTier
       }
     },
-    [models]
+    [
+      models,
+      effectiveAppSettings.chat.networkRetryCount,
+      effectiveAppSettings.chat.networkRetryDelaySeconds
+    ]
   )
   const currentProject = changesProjectCwd ? projectRecordsByCwd.get(changesProjectCwd) : undefined
   const currentProjectDirectories = currentProject
