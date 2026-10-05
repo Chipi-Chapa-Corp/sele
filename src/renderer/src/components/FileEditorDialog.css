@@ -869,3 +869,35 @@
     height: 0.1rem;
   }
 }
+
+.file-editor-confirm {
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: 1.25rem;
+  border: 0.0625rem solid var(--panel-border);
+  border-radius: 0.8rem;
+  color: var(--ink);
+  background: var(--floating-bg);
+  box-shadow: var(--panel-shadow);
+  font: inherit;
+}
+
+.file-editor-confirm::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+
+.file-editor-confirm h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1em;
+  overflow-wrap: anywhere;
+}
+
+.file-editor-confirm [role="alert"] {
+  color: var(--error);
+}
+
+.file-editor-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}

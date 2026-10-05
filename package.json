@@ -44,6 +44,8 @@
     "test:chat-scroll": "node scripts/tests/test-chat-scroll.cjs",
     "test:ui-motion": "node scripts/tests/test-ui-motion.cjs",
     "test:ui-responsiveness": "node scripts/tests/test-ui-responsiveness.cjs",
+    "test:file-editor": "node scripts/tests/test-file-editor.cjs",
+    "test:editor-comments": "node scripts/tests/test-editor-comments.cjs",
     "test:input-focus": "node scripts/tests/test-input-focus.cjs",
     "test:video-preview": "node scripts/tests/test-video-preview.cjs",
     "test:visualization": "node scripts/tests/test-visualization.cjs",

@@ -2565,14 +2565,21 @@ const getGitCommitMessageContext = async (
       summary.totalChangedLines <= appGitCommitMessageLargeChangeLineThreshold
         ? await runGit(
             repositoryRoot,
-            ['diff', '--cached', '--binary', '--full-index', '--find-renames'],
+            [
+              'diff',
+              '--cached',
+              '--no-textconv',
+              '--no-ext-diff',
+              '--full-index',
+              '--find-renames'
+            ],
             { env, required: true }
           )
         : null
 
     return {
       ...summary,
-      diff: diff ?? null
+      diff: diff?.replace(/^Binary files .+ differ$/gm, 'BINARY') ?? null
     }
   } finally {
     await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {

@@ -1,6 +1,7 @@
 import { getFileTreeAbsolutePath } from '../../../shared/fileTree'
 import { MotionSurface } from '../motion/MotionSurface'
 import { PopupWindow } from './PopupWindow'
+import { UnsavedFileDialog } from './UnsavedFileDialog'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -33,8 +34,6 @@ import {
   FileIcon as SymbolsFileIcon,
   FolderIcon as SymbolsFolderIcon
 } from '@react-symbols/icons/utils'
-import DOMPurify from 'dompurify'
-import { marked, Renderer, type Tokens } from 'marked'
 import type {
   AppContainerSuggestion,
   AppContainerTarget,
@@ -44,7 +43,7 @@ import type {
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { toCssRem } from '../cssUnits'
-import { isMermaidMarkdownCode, renderMarkdownCodeBlock } from '../codeHighlighting'
+import { hydrateFileMarkdownImages, renderFileMarkdown } from '../fileMarkdown'
 import { getFileDisplayParts } from '../fileDisplayPath'
 import {
   getAlternateFileEnvironments,
@@ -118,13 +117,6 @@ type MutableDiffTreeFolder = {
 
 const imageFilePattern = /\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i
 const markdownFilePattern = /\.(?:markdown|mdown|mkdn|mkd|md)$/i
-const defaultMarkdownRenderer = new Renderer()
-const markdownFileRenderer = new Renderer()
-markdownFileRenderer.code = function (token: Tokens.Code): string {
-  return isMermaidMarkdownCode(token.lang)
-    ? renderMarkdownCodeBlock(token.text, token.lang)
-    : defaultMarkdownRenderer.code.call(this, token)
-}
 const markdownViewOptions: readonly SegmentedControlOption<MarkdownViewMode>[] = [
   {
     value: 'code',
@@ -426,6 +418,12 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [reviewComments, setReviewComments] = useState<ProviderReviewComment[]>(() => [
     ...initialReviewComments
   ])
+  const [openSelectionComment, setOpenSelectionComment] = useState<(() => void) | null>(null)
+  const handleCommentSelectionChange = useCallback((openComment: (() => void) | null): void => {
+    setOpenSelectionComment(() => openComment)
+  }, [])
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
+  const savingRef = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const markdownSplitRef = useRef<HTMLDivElement>(null)
   const markdownPreviewRef = useRef<HTMLElement>(null)
@@ -598,18 +596,28 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   )
   const displayedFileDiff = showFileDiff ? editableFileDiff : regularFileContents
   const renderedMarkdown = useMemo(
-    () =>
-      isMarkdown
-        ? DOMPurify.sanitize(
-            marked.parse(contents, {
-              async: false,
-              gfm: true,
-              renderer: markdownFileRenderer
-            })
-          )
-        : '',
+    () => (isMarkdown ? renderFileMarkdown(contents) : ''),
     [contents, isMarkdown]
   )
+
+  useEffect(() => {
+    const preview = markdownPreviewRef.current
+    if (!preview || !renderedMarkdown || markdownView === 'code' || visibleLoadState !== 'ready')
+      return
+    return hydrateFileMarkdownImages(preview, {
+      container: fileContainer,
+      cwd: gitRepositoryRoot ?? target.cwd,
+      path: target.path
+    })
+  }, [
+    renderedMarkdown,
+    markdownView,
+    visibleLoadState,
+    fileContainer,
+    gitRepositoryRoot,
+    target.cwd,
+    target.path
+  ])
 
   useEffect(() => {
     const markdownPreview = markdownPreviewRef.current
@@ -889,10 +897,17 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     return () => observer.disconnect()
   }, [showTreeSidebar])
 
+  const requestLeave = useCallback(
+    (action: () => void): void => {
+      if (savingRef.current) return
+      if (dirty) setPendingLeave(() => action)
+      else action()
+    },
+    [dirty]
+  )
   const requestClose = useCallback((): void => {
-    if (dirty && !window.confirm('Discard your unsaved changes?')) return
-    onClose()
-  }, [dirty, onClose])
+    requestLeave(onClose)
+  }, [requestLeave, onClose])
   const tryFileEnvironment = useCallback(
     (value: string): void => {
       const choice = alternateEnvironmentChoices.find(
@@ -909,19 +924,17 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   )
   const continueReview = useCallback((): void => {
     if (!onContinueReview || reviewComments.length === 0) return
-    if (dirty && !window.confirm('Discard your unsaved changes?')) return
-    onContinueReview(reviewComments)
-  }, [dirty, onContinueReview, reviewComments])
+    requestLeave(() => onContinueReview(reviewComments))
+  }, [requestLeave, onContinueReview, reviewComments])
   const toggleWordWrap = useCallback((): void => {
     setWordWrap((currentWordWrap) => !currentWordWrap)
   }, [])
   const selectDiffTarget = useCallback(
     (nextTarget: FileEditorTarget): void => {
       if (nextTarget.path === target.path) return
-      if (dirty && !window.confirm('Discard your unsaved changes?')) return
-      onSelectTarget?.(nextTarget)
+      requestLeave(() => onSelectTarget?.(nextTarget))
     },
-    [dirty, onSelectTarget, target.path]
+    [requestLeave, onSelectTarget, target.path]
   )
   const toggleDiffFolder = useCallback((folderPath: string): void => {
     setCollapsedDiffFolders((currentFolders) => ({
@@ -1168,8 +1181,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [requestClose])
 
-  const handleSave = useCallback(async (): Promise<void> => {
-    if (visibleLoadState !== 'ready' || saveState === 'saving' || !version || !dirty) return
+  const handleSave = useCallback(async (): Promise<boolean> => {
+    if (visibleLoadState !== 'ready' || savingRef.current || !version) return false
+    if (!dirty) return true
+    savingRef.current = true
 
     const contentsToSave = contents
     setSaveState('saving')
@@ -1189,10 +1204,14 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setSaveState('saved')
       if (canShowDiff) void loadDiff({ background: true })
       void loadFileTree({ background: true })
+      return true
     } catch (saveError) {
       console.error('[caught:FileEditorDialog:FileEditorDialog]', saveError)
       setEditorError(getErrorMessage(saveError, 'Unable to save this file.'))
       setSaveState('error')
+      return false
+    } finally {
+      savingRef.current = false
     }
   }, [
     canShowDiff,
@@ -1200,7 +1219,6 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     dirty,
     loadDiff,
     loadFileTree,
-    saveState,
     target.container,
     target.cwd,
     target.path,
@@ -1347,6 +1365,19 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   onChange={setMarkdownView}
                 />
               )}
+              {isFileDiff && onContinueReview && (!isMarkdown || markdownView !== 'preview') && (
+                <Button
+                  aria-label="Comment on selection"
+                  callback={() => openSelectionComment?.()}
+                  disabled={!openSelectionComment}
+                  icon={<MessageSquare aria-hidden="true" />}
+                  label="Comment"
+                  onMouseDown={(event) => event.preventDefault()}
+                  size="small"
+                  theme="secondary"
+                  title={openSelectionComment ? 'Comment on selection' : 'Select text to comment'}
+                />
+              )}
               {isFileDiff && reviewComments.length > 0 && onContinueReview && (
                 <Button
                   callback={continueReview}
@@ -1376,7 +1407,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
               {canShowContents && (
                 <Button
                   aria-label={`Save ${displayPath}`}
-                  callback={handleSave}
+                  callback={async () => {
+                    await handleSave()
+                  }}
                   disabled={!canEdit || !dirty || saveState === 'saving'}
                   icon={
                     saveState === 'saving' ? (
@@ -1520,8 +1553,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                     (diff && renderedFileDiff ? (
                       <div className="file-editor-dialog__diff-scroll">
                         <UnifiedDiff
+                          key={target.path}
                           className="file-editor-dialog__diff"
                           comments={currentReviewComments}
+                          onCommentSelectionChange={handleCommentSelectionChange}
                           endLine={target.endLine}
                           fileDiff={renderedFileDiff}
                           line={target.line}
@@ -1660,6 +1695,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                         baselineContents={showFileDiff ? savedContents : contents}
                         className="file-editor-dialog__diff"
                         comments={currentReviewComments}
+                        onCommentSelectionChange={handleCommentSelectionChange}
                         contents={contents}
                         endLine={target.endLine}
                         fileDiff={displayedFileDiff}
@@ -1717,6 +1753,24 @@ export const FileEditorDialog = memo(function FileEditorDialog({
           </div>
         </section>
       </PopupWindow>
+      {pendingLeave && (
+        <UnsavedFileDialog
+          fileName={fileName}
+          saving={saveState === 'saving'}
+          error={saveState === 'error' ? editorError : null}
+          onCancel={() => setPendingLeave(null)}
+          onDiscard={() => {
+            setPendingLeave(null)
+            pendingLeave()
+          }}
+          onSave={async () => {
+            if (await handleSave()) {
+              setPendingLeave(null)
+              pendingLeave()
+            }
+          }}
+        />
+      )}
     </MotionSurface>
   )
 })

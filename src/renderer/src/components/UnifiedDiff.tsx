@@ -714,6 +714,7 @@ export const EditableUnifiedDiff = ({
   onAddComment,
   onChangeComment,
   onDeleteComment,
+  onCommentSelectionChange,
   onSave,
   onToggleWordWrap,
   readOnly = false,
@@ -729,6 +730,7 @@ export const EditableUnifiedDiff = ({
   fileDiff: ProviderFileDiff
   line?: number
   onChange: (contents: string) => void
+  onCommentSelectionChange?: (openComment: (() => void) | null) => void
   onAddComment?: (comment: string, location: DiffReviewLocation) => void
   onChangeComment?: (id: string, comment: string) => void
   onDeleteComment?: (id: string) => void
@@ -766,6 +768,7 @@ export const EditableUnifiedDiff = ({
   const initialConfigRef = useRef({ baselineContents, contents, fileDiff })
   const onChangeRef = useRef(onChange)
   const onAddCommentRef = useRef(onAddComment)
+  const onCommentSelectionChangeRef = useRef(onCommentSelectionChange)
   const onSaveRef = useRef(onSave)
   const onToggleWordWrapRef = useRef(onToggleWordWrap)
   const showOriginalLineNumbersRef = useRef(showOriginalLineNumbers)
@@ -813,7 +816,8 @@ export const EditableUnifiedDiff = ({
 
   useEffect(() => {
     onAddCommentRef.current = onAddComment
-  }, [onAddComment])
+    onCommentSelectionChangeRef.current = onCommentSelectionChange
+  }, [onAddComment, onCommentSelectionChange])
 
   useEffect(() => {
     onSaveRef.current = onSave
@@ -911,13 +915,6 @@ export const EditableUnifiedDiff = ({
     const changeSubscription = modifiedModel.onDidChangeContent(() => {
       onChangeRef.current(modifiedModel.getValue())
     })
-    let reviewSelectionTimer = 0
-    let reviewSelectionFrame = 0
-    let pointerSelectionEditor: monaco.editor.IStandaloneCodeEditor | null = null
-    const cancelScheduledReviewInput = (): void => {
-      window.clearTimeout(reviewSelectionTimer)
-      window.cancelAnimationFrame(reviewSelectionFrame)
-    }
     const showReviewInput = (
       sourceEditor: monaco.editor.IStandaloneCodeEditor,
       selection: monaco.Selection | null
@@ -945,55 +942,25 @@ export const EditableUnifiedDiff = ({
         }
       })
     }
-    const scheduleReviewInput = (
-      sourceEditor: monaco.editor.IStandaloneCodeEditor,
-      selection: monaco.Selection,
-      source: string
-    ): void => {
-      window.clearTimeout(reviewSelectionTimer)
-      // Monaco's Find controller selects matches through the editor API. Review comments
-      // should only open for selections made directly by the user.
-      if (selection.isEmpty() || source === 'api') {
-        setReviewInputPosition(null)
-        return
-      }
-      if (pointerSelectionEditor === sourceEditor) return
-
-      reviewSelectionTimer = window.setTimeout(
-        () => showReviewInput(sourceEditor, sourceEditor.getSelection()),
-        220
+    const trackSelection = (sourceEditor: monaco.editor.IStandaloneCodeEditor): void => {
+      const selection = sourceEditor.getSelection()
+      onCommentSelectionChangeRef.current?.(
+        onAddCommentRef.current && selection && !selection.isEmpty()
+          ? () => showReviewInput(sourceEditor, sourceEditor.getSelection())
+          : null
       )
     }
-    const originalSelectionSubscription = originalEditor.onDidChangeCursorSelection(
-      ({ selection, source }) => scheduleReviewInput(originalEditor, selection, source)
+    const originalSelectionSubscription = originalEditor.onDidChangeCursorSelection(() =>
+      trackSelection(originalEditor)
     )
-    const modifiedSelectionSubscription = modifiedEditor.onDidChangeCursorSelection(
-      ({ selection, source }) => scheduleReviewInput(modifiedEditor, selection, source)
+    const modifiedSelectionSubscription = modifiedEditor.onDidChangeCursorSelection(() =>
+      trackSelection(modifiedEditor)
     )
-    const startPointerSelection = (sourceEditor: monaco.editor.IStandaloneCodeEditor): void => {
-      cancelScheduledReviewInput()
-      pointerSelectionEditor = sourceEditor
-      setReviewInputPosition(null)
-    }
-    const finishPointerSelection = (sourceEditor: monaco.editor.IStandaloneCodeEditor): void => {
-      if (pointerSelectionEditor !== sourceEditor) return
-      pointerSelectionEditor = null
-      cancelScheduledReviewInput()
-      reviewSelectionFrame = window.requestAnimationFrame(() =>
-        showReviewInput(sourceEditor, sourceEditor.getSelection())
-      )
-    }
-    const originalMouseDownSubscription = originalEditor.onMouseDown(() =>
-      startPointerSelection(originalEditor)
+    const originalFocusSubscription = originalEditor.onDidFocusEditorText(() =>
+      trackSelection(originalEditor)
     )
-    const modifiedMouseDownSubscription = modifiedEditor.onMouseDown(() =>
-      startPointerSelection(modifiedEditor)
-    )
-    const originalMouseUpSubscription = originalEditor.onMouseUp(() =>
-      finishPointerSelection(originalEditor)
-    )
-    const modifiedMouseUpSubscription = modifiedEditor.onMouseUp(() =>
-      finishPointerSelection(modifiedEditor)
+    const modifiedFocusSubscription = modifiedEditor.onDidFocusEditorText(() =>
+      trackSelection(modifiedEditor)
     )
     const originalScrollSubscription = originalEditor.onDidScrollChange(() =>
       setReviewLayoutVersion((version) => version + 1)
@@ -1058,7 +1025,7 @@ export const EditableUnifiedDiff = ({
 
     queueMicrotask(() => modifiedEditor.focus())
     return () => {
-      cancelScheduledReviewInput()
+      onCommentSelectionChangeRef.current?.(null)
       editorStateRef.current = null
       reviewDecorationCollectionsRef.current = null
       targetDecorationCollectionRef.current = null
@@ -1067,10 +1034,8 @@ export const EditableUnifiedDiff = ({
       changeSubscription.dispose()
       originalSelectionSubscription.dispose()
       modifiedSelectionSubscription.dispose()
-      originalMouseDownSubscription.dispose()
-      modifiedMouseDownSubscription.dispose()
-      originalMouseUpSubscription.dispose()
-      modifiedMouseUpSubscription.dispose()
+      originalFocusSubscription.dispose()
+      modifiedFocusSubscription.dispose()
       originalScrollSubscription.dispose()
       modifiedScrollSubscription.dispose()
       layoutSubscription.dispose()
@@ -1215,13 +1180,15 @@ export const UnifiedDiff = ({
   line,
   onAddComment,
   onChangeComment,
-  onDeleteComment
+  onDeleteComment,
+  onCommentSelectionChange
 }: {
   className?: string
   comments?: readonly ProviderReviewComment[]
   endLine?: number
   fileDiff: ProviderFileDiff
   line?: number
+  onCommentSelectionChange?: (openComment: (() => void) | null) => void
   onAddComment?: (comment: string, location: DiffReviewLocation) => void
   onChangeComment?: (id: string, comment: string) => void
   onDeleteComment?: (id: string) => void
@@ -1428,6 +1395,7 @@ export const UnifiedDiff = ({
   }, [files, reviewGroups])
 
   const handleSelection = useCallback((): void => {
+    onCommentSelectionChange?.(null)
     if (!onAddComment) return
 
     const host = reviewHostRef.current
@@ -1511,7 +1479,7 @@ export const UnifiedDiff = ({
     }
     if (!location) return
 
-    setReviewInputPosition({
+    const position = {
       left: Math.max(
         6.4,
         Math.min(selectionRect.left - hostRect.left, hostRect.width - reviewInputWidth - 6.4)
@@ -1521,8 +1489,18 @@ export const UnifiedDiff = ({
         Math.min(selectionRect.bottom - hostRect.top + 4.8, hostRect.height - 38.4)
       ),
       location
-    })
-  }, [changeLocations, fileDiff.kind, onAddComment])
+    }
+    onCommentSelectionChange?.(() => setReviewInputPosition(position))
+  }, [changeLocations, fileDiff.kind, onAddComment, onCommentSelectionChange])
+
+  useEffect(() => {
+    if (!onAddComment) return
+    document.addEventListener('selectionchange', handleSelection)
+    return () => {
+      document.removeEventListener('selectionchange', handleSelection)
+      onCommentSelectionChange?.(null)
+    }
+  }, [handleSelection, onAddComment, onCommentSelectionChange])
 
   const renderedDiff =
     files.length === 0 ? (
@@ -1563,7 +1541,7 @@ export const UnifiedDiff = ({
   if (!onAddComment && comments.length === 0) return <>{renderedDiff}</>
 
   return (
-    <div className="unified-diff__review-host" ref={reviewHostRef} onMouseUp={handleSelection}>
+    <div className="unified-diff__review-host" ref={reviewHostRef}>
       {renderedDiff}
       <ReviewMarkers
         markers={reviewMarkers}

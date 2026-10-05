@@ -5,6 +5,7 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
   Globe2,
   Plus,
   RefreshCw,
@@ -30,6 +31,7 @@ import {
 } from '../../../shared/browser'
 import { useBrowserAutomation } from '../useBrowserAutomation'
 import { browserApi } from '../browserApi'
+import { appApi } from '../appApi'
 import {
   readStoredBrowserWorkspaces,
   writeStoredBrowserWorkspaces,
@@ -934,6 +936,23 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
             }
             event.currentTarget.blur()
           }}
+        />
+        <Button
+          aria-label="Open in host browser"
+          callback={() => {
+            if (!activeTab || !isBrowserPageUrl(activeTab.url)) return
+
+            void appApi
+              .handleExternalLink({ url: activeTab.url, action: 'open' })
+              .catch((error) => {
+                console.error('[caught:BrowserPanel:openInHostBrowser]', error)
+              })
+          }}
+          disabled={!activeTab || !isBrowserPageUrl(activeTab.url)}
+          icon={<ExternalLink aria-hidden="true" />}
+          size="small"
+          theme="transparent"
+          title="Open in host browser"
         />
       </form>
       {findOpen && (

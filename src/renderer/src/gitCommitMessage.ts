@@ -21,7 +21,7 @@ const formatFileChange = (file: AppGitCommitMessageFileChange): string => {
     ? `${JSON.stringify(file.previousPath)} -> ${JSON.stringify(file.path)}`
     : JSON.stringify(file.path)
 
-  if (file.additions == null && file.deletions == null) return `- ${path}: binary change`
+  if (file.additions == null && file.deletions == null) return `- ${path}: BINARY`
 
   const additions = file.additions ?? 0
   const deletions = file.deletions ?? 0
