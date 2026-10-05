@@ -1,3 +1,4 @@
+import { getFileTreeAbsolutePath } from '../../../shared/fileTree'
 import { MotionSurface } from '../motion/MotionSurface'
 import { PopupWindow } from './PopupWindow'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
@@ -499,7 +500,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       visibleFileTreeResult?.files.map((file) => ({
         container: target.container,
         cwd: visibleFileTreeResult.repositoryRoot,
-        path: file.path,
+        path: getFileTreeAbsolutePath(visibleFileTreeResult.repositoryRoot, file.path),
         displayPath: file.path,
         kind: file.kind ?? null,
         previousPath: file.previousPath ?? null

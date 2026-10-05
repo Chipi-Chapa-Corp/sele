@@ -675,6 +675,7 @@ export const useWorkspaceController = () => {
   const [fileTree, setFileTree] = useState<AppFileTreeResult | null>(null)
   const [fileTreeScope, setFileTreeScope] = useState<FileTreeScope | null>(null)
   const [fileTreeLoadState, setFileTreeLoadState] = useState<LoadState>('ready')
+  const [fileTreeLoadError, setFileTreeLoadError] = useState<string | null>(null)
   const [fileTreeLoadScope, setFileTreeLoadScope] = useState<FileTreeScope | null>(null)
   const [fileTreeLoadRequest, setFileTreeLoadRequest] = useState(0)
   const [collapsedChangeTreeFolders, setCollapsedChangeTreeFolders] = useState<
@@ -3172,6 +3173,7 @@ export const useWorkspaceController = () => {
     setUncommittedPatchFilter,
     setFileTreeLoadScope,
     setFileTreeLoadState,
+    setFileTreeLoadError,
     setFileTree,
     setFileTreeScope,
     setLastOpenedFileTreeFolderPath,
@@ -5916,6 +5918,8 @@ export const useWorkspaceController = () => {
       displayedRecentChatReferences,
       effectiveAppSettings,
       filesEmptyMessage,
+      fileTreeLoadError,
+      setFileTreeLoadRequest,
       handleDismissGitChangeLoadError,
       handleGitChangeLoadErrorAiResolution,
       handleGoToPinnedText,

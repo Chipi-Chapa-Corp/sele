@@ -32,6 +32,8 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
     displayedRecentChatReferences,
     effectiveAppSettings,
     filesEmptyMessage,
+    fileTreeLoadError,
+    setFileTreeLoadRequest,
     handleDismissGitChangeLoadError,
     handleGitChangeLoadErrorAiResolution,
     handleGoToPinnedText,
@@ -158,7 +160,23 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
                 <ChangesSidebarGitState active label="Loading files" />
               )}
               {visibleFilesLoadState === 'error' && (
-                <p className="changes-sidebar__status">Unable to load files.</p>
+                <section
+                  className="changes-sidebar__git-error"
+                  aria-label="Files error"
+                  role="alert"
+                >
+                  <span className="changes-sidebar__git-error-message">
+                    {`Could not list files in ${changesCwd}.\n${fileTreeLoadError ?? 'File listing failed without an error message.'}`}
+                  </span>
+                  <div className="changes-sidebar__git-error-actions">
+                    <Button
+                      callback={() => setFileTreeLoadRequest((request) => request + 1)}
+                      icon={<GitRefreshIcon />}
+                      label={<span>Retry</span>}
+                      theme="secondary"
+                    />
+                  </div>
+                </section>
               )}
               {visibleFilesLoadState === 'ready' && repositoryFiles.length === 0 && (
                 <p className="changes-sidebar__status">{filesEmptyMessage}</p>

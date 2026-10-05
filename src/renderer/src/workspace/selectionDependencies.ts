@@ -173,6 +173,7 @@ export type WorkspaceSelectionDependencies = {
   setUncommittedPatchFilter: React.Dispatch<React.SetStateAction<UncommittedPatchFilter | null>>
   setFileTreeLoadScope: React.Dispatch<React.SetStateAction<FileTreeScope | null>>
   setFileTreeLoadState: React.Dispatch<React.SetStateAction<LoadState>>
+  setFileTreeLoadError: React.Dispatch<React.SetStateAction<string | null>>
   setFileTree: React.Dispatch<React.SetStateAction<AppFileTreeResult | null>>
   setFileTreeScope: React.Dispatch<React.SetStateAction<FileTreeScope | null>>
   setLastOpenedFileTreeFolderPath: React.Dispatch<React.SetStateAction<string | null>>

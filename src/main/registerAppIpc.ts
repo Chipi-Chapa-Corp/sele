@@ -91,6 +91,7 @@ import {
 import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
+import { parseTargetFileTree, readLocalFileTree, targetFileTreeScript } from './fileTree'
 import { commitAllGitChanges } from './gitCommit'
 import { summarizeGitNumstat } from './gitCommitMessage'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
@@ -569,7 +570,7 @@ const getLocalMedia = async (
   kind: 'image' | 'video' = 'image'
 ): Promise<AppLocalImage> => {
   const container = gitCommandContext.getStore()?.container
-  if (await shouldReadImageThroughTarget(container)) {
+  if (await shouldReadFilesThroughTarget(container)) {
     return getTargetLocalMedia(container, cwd, path, relativeTo, kind)
   }
 
@@ -2001,35 +2002,16 @@ const getFileTree = async (
   branchName: string | null
   files: AppFileTreeFile[]
 }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const container = gitCommandContext.getStore()?.container
+  if (!(await shouldReadFilesThroughTarget(container))) return readLocalFileTree(cwd)
 
-  const [branchName, fileOutput, statusOutput] = await Promise.all([
-    getCurrentBranchName(repositoryRoot),
-    runGit(repositoryRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], true),
-    runGit(repositoryRoot, ['status', '--porcelain=v1', '--untracked-files=all', '-z'], true)
-  ])
-  const changesByPath = new Map(
-    parsePorcelainChanges(statusOutput ?? '').map((file) => [file.path, file])
+  const output = await runTargetFileCommand(
+    container,
+    cwd,
+    ['-lc', targetFileTreeScript, 'sele-list-files', cwd],
+    { maxBuffer: 32 * 1024 * 1024 }
   )
-  const filesByPath = new Map<string, AppFileTreeFile>()
-
-  for (const path of parseGitPathList(fileOutput ?? '')) {
-    const change = changesByPath.get(path)
-    filesByPath.set(path, change ? { ...change } : { path })
-  }
-
-  for (const change of changesByPath.values()) {
-    if (!filesByPath.has(change.path)) filesByPath.set(change.path, { ...change })
-  }
-
-  return {
-    repositoryRoot,
-    branchName,
-    files: Array.from(filesByPath.values()).sort((firstFile, secondFile) =>
-      firstFile.path.localeCompare(secondFile.path)
-    )
-  }
+  return parseTargetFileTree(output)
 }
 
 const maxEditableFileBytes = 2 * 1024 * 1024
@@ -2251,7 +2233,7 @@ const getTargetLocalMedia = async (
   }
 }
 
-const shouldReadImageThroughTarget = async (
+const shouldReadFilesThroughTarget = async (
   container: AppContainerTarget | null | undefined
 ): Promise<boolean> => {
   if (container?.kind === 'container') {

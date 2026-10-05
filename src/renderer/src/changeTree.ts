@@ -1,3 +1,4 @@
+import { getFileTreeAbsolutePath } from '../../shared/fileTree'
 import type {
   AppFileTreeResult,
   AppGitChangeKind,
@@ -310,7 +311,8 @@ export const getGitChangedFiles = (result: AppGitChangesResult | null): ChangedF
 export const getRepositoryFiles = (result: AppFileTreeResult | null): RepositoryFile[] =>
   sortTreeFiles(
     result?.files.map((file) => ({
-      path: file.path,
+      path: getFileTreeAbsolutePath(result!.repositoryRoot, file.path),
+      displayPath: file.path,
       previousPath: file.previousPath,
       kind: file.kind,
       status: file.status

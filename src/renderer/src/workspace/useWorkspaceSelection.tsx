@@ -183,6 +183,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     setUncommittedPatchFilter,
     setFileTreeLoadScope,
     setFileTreeLoadState,
+    setFileTreeLoadError,
     setFileTree,
     setFileTreeScope,
     setLastOpenedFileTreeFolderPath,
@@ -1449,6 +1450,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       if (!active) return
       setFileTreeLoadScope(nextFileTreeScope)
       setFileTreeLoadState('loading')
+      setFileTreeLoadError(null)
     })
 
     appApi
@@ -1477,6 +1479,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
 
         if (!active) return
         setFileTreeLoadScope(nextFileTreeScope)
+        setFileTreeLoadError(
+          getErrorMessage(error, 'File listing failed without an error message.')
+        )
         setFileTreeLoadState('error')
       })
 

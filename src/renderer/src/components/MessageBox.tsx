@@ -51,7 +51,6 @@ import type {
   AppFileTreeFile,
   AppSelectedAttachment
 } from '../../../shared/app'
-import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
 import { toCssRem } from '../cssUnits'
 import type {
   ProviderActiveSendMode,
@@ -1222,6 +1221,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [fileMention, setFileMention] = useState<FileMention | null>(null)
   const [projectFileCache, setProjectFileCache] = useState<ProjectFileCache | null>(null)
   const [projectFilesErrorCwd, setProjectFilesErrorCwd] = useState<string | null>(null)
+  const [projectFilesError, setProjectFilesError] = useState<string | null>(null)
   const [activeFileMentionIndex, setActiveFileMentionIndex] = useState(0)
   const [skillMention, setSkillMention] = useState<SkillMention | null>(null)
   const [composerCache, setComposerCache] = useState<ComposerCache | null>(null)
@@ -1805,21 +1805,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         setProjectFilesErrorCwd(null)
       })
       .catch((error: unknown) => {
-        if (isExpectedFileAbsenceError(error)) {
-          if (active) {
-            setProjectFileCache({
-              cwd: projectCwd,
-              files: [],
-              repositoryRoot: projectCwd,
-              sourceKey: composerSourceKey
-            })
-            setProjectFilesErrorCwd(null)
-          }
-          return
-        }
         console.error('Unable to load files for composer mentions.', error)
         if (!active) return
         setProjectFilesErrorCwd(projectCwd)
+        setProjectFilesError(error instanceof Error ? error.message : String(error))
       })
 
     return () => {
@@ -2828,7 +2817,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   ) : !projectCwd ? (
     <div className="message-box__file-mention-status">No project selected</div>
   ) : projectFilesErrorCwd === projectCwd ? (
-    <div className="message-box__file-mention-status">Unable to load files</div>
+    <div className="message-box__file-mention-status" role="alert">
+      Could not list files in {projectCwd}: {projectFilesError}
+    </div>
   ) : projectFileCache?.cwd !== projectCwd || projectFileCache.sourceKey !== composerSourceKey ? (
     <div className="message-box__file-mention-status">Searching files…</div>
   ) : (

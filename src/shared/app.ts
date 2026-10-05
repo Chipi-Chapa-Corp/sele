@@ -408,6 +408,7 @@ export type AppGitChangesResult = {
 }
 
 export type AppFileTreeResult = {
+  /** Listing root (the selected folder); does not require a Git repository. */
   repositoryRoot: string
   branchName: string | null
   files: AppFileTreeFile[]
