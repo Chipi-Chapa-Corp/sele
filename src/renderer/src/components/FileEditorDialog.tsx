@@ -600,6 +600,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     [contents, isMarkdown]
   )
 
+  // Hydration adds image URLs to this DOM. Keep the HTML prop stable so unrelated
+  // editor updates do not replace those nodes without rerunning hydration.
+  const markdownPreviewHtml = useMemo(() => ({ __html: renderedMarkdown }), [renderedMarkdown])
+
   useEffect(() => {
     const preview = markdownPreviewRef.current
     if (!preview || !renderedMarkdown || markdownView === 'code' || visibleLoadState !== 'ready')
@@ -1744,7 +1748,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                         className="file-editor-dialog__markdown-preview"
                         ref={markdownPreviewRef}
                         aria-label={`Preview of ${target.displayPath}`}
-                        dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
+                        dangerouslySetInnerHTML={markdownPreviewHtml}
                       />
                     )}
                   </div>

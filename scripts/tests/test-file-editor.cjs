@@ -141,6 +141,59 @@ if (!process.versions.electron) {
         await run('document.querySelector("img[alt=Remote]").getAttribute("src")'),
         'https://example.com/image.png'
       )
+      const rememberImages = () =>
+        run(
+          `window.previewImages = [...document.querySelectorAll('img[data-file-image-path]')]; window.imageReadCount = window.images.length`
+        )
+      const assertImagesRetained = async (message) => {
+        assert.equal(
+          await run(
+            `window.previewImages.length === 2 && window.previewImages.every(image => image.isConnected && image.src.startsWith('blob:') && image.naturalWidth === 10)`
+          ),
+          true,
+          message
+        )
+        assert.equal(
+          await run('window.images.length === window.imageReadCount'),
+          true,
+          'unchanged images do not reload'
+        )
+      }
+      await rememberImages()
+      await click('[aria-label="Expand file editor"]')
+      await assertImagesRetained('expanding preserves rendered images')
+      await click('[aria-label="Collapse file editor"]')
+      await assertImagesRetained('collapsing preserves rendered images')
+      await click('[aria-label="Split"]')
+      await rememberImages()
+      await run(
+        `document.querySelector('[aria-label="Resize Markdown editor and preview"]').focus()`
+      )
+      const splitBefore = await run(
+        `document.querySelector('[aria-label="Resize Markdown editor and preview"]').getAttribute('aria-valuenow')`
+      )
+      window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' })
+      window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' })
+      await settle()
+      assert.notEqual(
+        await run(
+          `document.querySelector('[aria-label="Resize Markdown editor and preview"]').getAttribute('aria-valuenow')`
+        ),
+        splitBefore
+      )
+      await assertImagesRetained('resizing the split preserves rendered images')
+      await run(
+        'document.querySelector("textarea").focus(); document.querySelector("textarea").setSelectionRange(0, 0)'
+      )
+      await window.webContents.insertText('Updated README\n')
+      await settle()
+      await rememberImages()
+      await run('window.delaySave = true')
+      await click('[aria-label="Save docs/README.md"]')
+      await assertImagesRetained('starting a save preserves rendered images')
+      await run('window.finishSave(); window.delaySave = false')
+      await settle()
+      await assertImagesRetained('finishing a save preserves rendered images')
       await click('[aria-label="Code"]')
       await edit()
       await close()
@@ -201,7 +254,7 @@ if (!process.versions.electron) {
       await close()
       assert.equal(await run('window.closedCount'), 3, 'clean files close directly')
       console.log(
-        'File editor checks passed: relative Markdown/HTML images, absolute file paths, container context, save/discard/cancel, save failures, and pending saves.'
+        'File editor checks passed: relative Markdown/HTML images, absolute file paths, container context, images retained through resizing and saving, save/discard/cancel, save failures, and pending saves.'
       )
     } catch (error) {
       console.error(error)
