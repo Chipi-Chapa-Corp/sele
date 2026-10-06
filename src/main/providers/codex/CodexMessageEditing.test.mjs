@@ -24,7 +24,9 @@ const methods = [
   'markWaitingSteeringMessagePending',
   'runQueuedTurn',
   'deliverQueuedTurn',
-  'reconcileStartedTurn'
+  'reconcileStartedTurn',
+  'interruptPendingMessageInContext',
+  'steerPendingMessageInContext'
 ]
 const createAdapter = () => {
   const adapter = vm.runInNewContext(
@@ -54,6 +56,10 @@ const createAdapter = () => {
     ensureChatTailLoaded: async () => {},
     emitChatUpdated() {},
     getCachedChatDetail: () => ({ id: 'chat' }),
+    hasPendingSteeringMessage: () => false,
+    takeQueuedTurn: (_chat, id) =>
+      adapter.queuedTurnsByThread.get('chat')?.find((turn) => turn.id === id) ?? null,
+    takeSteeringMessage: () => null,
     hasActiveOrSubmittingTurn: () => false,
     getActiveTurnId: () => 'server-turn',
     setThreadStatus() {},
@@ -79,6 +85,72 @@ const steering = (adapter) => {
   }
   adapter.steeringMessagesByThread.set('chat', [pending])
   return pending
+}
+
+for (const action of ['interruptPendingMessageInContext', 'steerPendingMessageInContext']) {
+  test(`${action} still sends a message that has not entered automatic delivery`, async () => {
+    const adapter = createAdapter()
+    const pending = queue(adapter)
+    pending.text = 'Send this now'
+    adapter.hasPendingSteeringMessage = () => false
+    adapter.takeSteeringMessage = () => null
+    adapter.takeQueuedTurn = (_chat, id) => (id === pending.id ? pending : null)
+    const sent = []
+    adapter.interruptAndContinueChat = adapter.steerActiveChat = async (...args) => {
+      sent.push(args)
+      return { id: 'chat' }
+    }
+    assert.equal((await adapter[action]('chat', 'queued')).id, 'chat')
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][1], 'Send this now')
+    assert.equal(sent[0][2].images[0], image)
+    await assert.rejects(adapter[action]('chat', 'missing'), /Pending message cannot be/)
+  })
+
+  test(`${action} waits for automatic delivery and does not resend the queued message`, async () => {
+    const adapter = createAdapter()
+    const pending = queue(adapter)
+    let finishPersistence
+    let acknowledge
+    let refreshed = 0
+    adapter.emitChatUpdated = () => refreshed++
+    adapter.addSubmittedPendingTurn = () =>
+      new Promise((resolve) => {
+        finishPersistence = resolve
+      })
+    adapter.startCodexTurn = () =>
+      new Promise((resolve) => {
+        acknowledge = () => {
+          adapter.reconcileStartedTurn('chat', 'queued', {
+            id: 'server-turn',
+            status: 'inProgress'
+          })
+          resolve()
+        }
+      })
+    adapter.interruptAndContinueChat = () => assert.fail('must not submit a duplicate')
+    adapter.steerActiveChat = () => assert.fail('must not steer a duplicate')
+
+    const sending = adapter.runQueuedTurn('chat', pending)
+    await Promise.resolve()
+    assert.equal(adapter.queuedTurnsByThread.has('chat'), false)
+    let settled = false
+    const clicking = adapter[action]('chat', 'queued').then((detail) => {
+      settled = true
+      return detail
+    })
+    await Promise.resolve()
+    assert.equal(settled, false)
+    finishPersistence({ id: 'queued' })
+    await Promise.resolve()
+    await Promise.resolve()
+    acknowledge()
+    await sending
+    assert.equal((await clicking).id, 'chat')
+    const beforeRefresh = refreshed
+    assert.equal((await adapter[action]('chat', 'queued')).id, 'chat')
+    assert.equal(refreshed, beforeRefresh + 1, 'a stale queue click refreshes delivered detail')
+  })
 }
 
 test('queued edits preserve, replace, and explicitly remove images', async () => {

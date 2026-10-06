@@ -76,10 +76,14 @@ const fixture = () => {
     cacheThread: (thread) => adapter.threads.set(thread.id, thread),
     loadTranscriptMetadata: () => metadata,
     goals: { read: async () => {} },
-    createChatDetail: (thread) => ({ id: thread.id, items: thread.turns }),
+    createChatDetail: (thread, options) => ({
+      id: thread.id,
+      items: [...thread.turns, ...(options.cursorPendingMessages ?? [])]
+    }),
     checkChatWriteAccessInBackground: () => {},
     getCachedChatDetail: () => null,
-    scheduleChatUpdated: (id) => publications.push(id)
+    scheduleChatUpdated: (id) => publications.push(id),
+    scheduleQueueDrain() {}
   })
   return { adapter, finishMetadata, requests, publications }
 }
@@ -131,4 +135,38 @@ test('explicit historical pages still await their enrichment before returning', 
   }
   assert.equal(returned, true)
   assert.deepEqual(publications, [])
+})
+
+test('a latest page cannot resurrect a queued message delivered while it was loading', async () => {
+  const { adapter, finishMetadata } = fixture()
+  let pending = [{ type: 'pendingMessage', id: 'queued', kind: 'queued' }]
+  adapter.getProviderPendingMessages = () => pending
+  const deliveredTurn = { id: 'delivered-turn', status: 'completed', items: [] }
+  let finishPage
+  adapter.client.request = () =>
+    new Promise((resolve) => {
+      finishPage = resolve
+    })
+  const opening = adapter.getChat('chat')
+  await setImmediate()
+
+  // Live delivery finishes after the request captured its queue, before history responds.
+  pending = []
+  adapter.threadRevisions.set('chat', 1)
+  adapter.threads.set('chat', {
+    id: 'chat',
+    path: '/rollout',
+    historyMode: 'paginated',
+    turns: [deliveredTurn]
+  })
+  finishPage({ data: [deliveredTurn], nextCursor: null, backwardsCursor: null })
+  try {
+    const detail = await opening
+    assert.deepEqual(
+      Array.from(detail.items, (item) => item.id),
+      ['delivered-turn']
+    )
+  } finally {
+    finishMetadata(false)
+  }
 })

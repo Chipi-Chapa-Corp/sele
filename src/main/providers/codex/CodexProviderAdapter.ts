@@ -2423,6 +2423,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           this.scheduleChatUpdated(chatId)
       })
       await this.goals.read(thread.id, (method, params) => this.client.request(method, params))
+      this.scheduleQueueDrain(chatId)
     } else {
       await Promise.all([
         this.loadTranscriptMetadata(thread),
@@ -2430,7 +2431,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ])
     }
     return this.createChatDetail(cacheLatest ? (this.threads.get(chatId) ?? thread) : thread, {
-      cursorPendingMessages: pendingMessages
+      // Delivery can finish while the page is loading. Pair the current transcript/revision
+      // with the current queue, rather than resurrecting a message from the request's snapshot.
+      cursorPendingMessages:
+        window.direction === 'older' && window.cursor == null
+          ? this.getProviderPendingMessages(chatId).slice(-window.limit)
+          : []
     })
   }
 
@@ -3309,6 +3315,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
     await this.ensureChatTailLoaded(chatId)
+    const delivery = this.messageDelivery.wait(chatId, messageId)
+    if (delivery && (await delivery)) {
+      this.emitChatUpdated(chatId)
+      const detail = this.getCachedChatDetail(chatId)
+      if (!detail) throw new Error('Unable to load delivered message')
+      return detail
+    }
     if (this.hasPendingSteeringMessage(chatId)) {
       throw new Error('A steering message is already pending.')
     }
@@ -3331,6 +3344,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     this.rememberThreadContainer(chatId)
     await this.ensureChatTailLoaded(chatId)
+    // Automatic delivery may have taken the message before this click reached the provider.
+    // Wait for its server identity and return the delivered turn without submitting it twice.
+    const delivery = this.messageDelivery.wait(chatId, messageId)
+    if (delivery && (await delivery)) {
+      this.emitChatUpdated(chatId)
+      const detail = this.getCachedChatDetail(chatId)
+      if (!detail) throw new Error('Unable to load delivered message')
+      return detail
+    }
 
     const steeringMessage = this.takeSteeringMessage(chatId, messageId)
     if (steeringMessage) {
@@ -3915,6 +3937,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       } finally {
         if (this.pendingTurnStarts.get(threadId)?.pendingTurnId === pendingTurnId) {
           this.pendingTurnStarts.delete(threadId)
+          this.scheduleQueueDrain(threadId)
         }
       }
     })()
@@ -5482,11 +5505,21 @@ export class CodexProviderAdapter implements ProviderAdapter {
     includeDrainLock = true
   ): ReturnType<typeof getCodexQueueDrainDecision> => {
     const thread = this.threads.get(threadId)
+    const latestTurn = thread?.turns.findLast((turn) => turn.status !== 'queued')
+    // Hydrated terminal turns also make the renderer idle. Raw thread metadata can still say
+    // active/notLoaded after completion, so it must not strand the queue behind that stale state.
+    const threadStatus =
+      thread?.status.type !== 'systemError' && latestTurn && isCodexTurnTerminal(latestTurn)
+        ? 'idle'
+        : (thread?.status.type ?? null)
     return getCodexQueueDrainDecision({
       hasQueuedTurn: (this.queuedTurnsByThread.get(threadId)?.length ?? 0) > 0,
-      drainInProgress: includeDrainLock && this.queuedTurnStartThreads.has(threadId),
+      drainInProgress:
+        (includeDrainLock && this.queuedTurnStartThreads.has(threadId)) ||
+        this.pendingTurnStarts.has(threadId) ||
+        this.pendingTurnIds.has(threadId),
       paused: this.pausedQueuedTurnThreads.has(threadId),
-      threadStatus: thread?.status.type ?? null,
+      threadStatus,
       hasActiveTurn: this.hasActiveOrSubmittingTurn(threadId),
       hasPendingApproval: (this.pendingApprovalsByThread.get(threadId)?.length ?? 0) > 0
     })
@@ -5553,6 +5586,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private reconcileIdleThreadForQueueDrain = async (threadId: string): Promise<void> => {
     const activeTurnIdBeforeRead = this.getActiveTurnId(threadId)
+    const revisionBeforeRead = this.threadRevisions.get(threadId) ?? 0
     const response = await this.readThread(threadId, false)
     assertSupportedCodexHistory(response.thread)
     const [cwd, name, cursorWindow] = await Promise.all([
@@ -5565,29 +5599,38 @@ export class CodexProviderAdapter implements ProviderAdapter {
       })
     ])
 
+    const refreshedTurns = await this.attachSubmittedUserMessages(
+      threadId,
+      this.filterRolledBackTurns(threadId, cursorWindow.turns)
+    )
     const currentThread = this.threads.get(threadId)
     const activeTurnIdAfterRead = this.getActiveTurnId(threadId)
     if (
-      currentThread?.status.type !== 'idle' ||
+      !currentThread ||
+      (this.threadRevisions.get(threadId) ?? 0) !== revisionBeforeRead ||
+      this.getQueueDrainDecision(threadId, false) !== 'reconcile' ||
       (activeTurnIdAfterRead && activeTurnIdAfterRead !== activeTurnIdBeforeRead)
     ) {
       return
     }
 
-    const refreshedTurns = await this.attachSubmittedUserMessages(
-      threadId,
-      this.filterRolledBackTurns(threadId, cursorWindow.turns)
-    )
     const currentTurnsById = new Map(currentThread.turns.map((turn) => [turn.id, turn]))
     const reconciledTurns = refreshedTurns.map((turn) => {
       const currentTurn = currentTurnsById.get(turn.id)
       return currentTurn ? this.mergeTurn(threadId, turn, currentTurn) : turn
     })
+    const activeTurn = reconciledTurns.findLast((turn) => turn.status === 'inProgress')
     this.cacheThread({
       ...response.thread,
       name,
       cwd,
-      status: currentThread.status,
+      status: activeTurn
+        ? {
+            type: 'active',
+            activeFlags:
+              currentThread.status.type === 'active' ? currentThread.status.activeFlags : []
+          }
+        : { type: 'idle' },
       turns: reconciledTurns,
       turnPagination: {
         kind: 'cursor',
@@ -5596,7 +5639,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
     })
 
-    const activeTurn = reconciledTurns.findLast((turn) => turn.status === 'inProgress')
     if (activeTurn) this.activeTurnIds.set(threadId, activeTurn.id)
     else {
       this.activeTurnIds.delete(threadId)
