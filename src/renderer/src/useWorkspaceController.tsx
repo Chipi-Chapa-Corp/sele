@@ -3374,6 +3374,7 @@ export const useWorkspaceController = () => {
     }
 
     projects.forEach((project) => addProject(project.cwd, project.updatedAt, project))
+    chats.forEach((chat) => addProject(getChatProjectCwd(chat), chat.updatedAt))
     addProject(newSessionCwd, Number.MAX_SAFE_INTEGER)
 
     const getProjectOptionIcon = (
@@ -3423,7 +3424,7 @@ export const useWorkspaceController = () => {
     }
 
     return options
-  }, [newSessionCwd, projects, projectIconsByGroup])
+  }, [chats, newSessionCwd, projects, projectIconsByGroup])
   const newSessionProjectValue = newSessionCwd ?? newSessionProjectPlaceholderValue
   const handleDeleteSshEnvironment = useCallback(
     async (environment: AppSshEnvironment): Promise<void> => {
