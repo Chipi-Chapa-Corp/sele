@@ -240,7 +240,7 @@ if (!process.versions.electron) {
           `document.querySelectorAll('.test-message iframe').length`
         ),
         1,
-        'The actual MarkdownMessage mounts its visualization portal'
+        'The actual MarkdownMessage mounts its visualization'
       )
       assert.equal(
         await window.webContents.executeJavaScript(
@@ -414,6 +414,77 @@ if (!process.versions.electron) {
         true,
         'Equivalent workspace objects do not reread the file'
       )
+      // Stream multiple Markdown commits in the message that owns the live frame.
+      // Observe every paint as well as the final DOM: reconnecting the same iframe
+      // can still reload its document and erase its interaction state.
+      await window.webContents.executeJavaScript(`
+        window.streamGaps=[];
+        window.streamPaintChecks=0;
+        window.streamHeight=document.querySelector('.visualization__viewport').offsetHeight;
+        window.streamTop=originalFrame.getBoundingClientRect().top;
+        window.streamLoads=0;
+        originalFrame.addEventListener('load',()=>streamLoads++);
+        window.monitorStream=true;
+        function inspectStream(){
+          if(!monitorStream)return;
+          streamPaintChecks++;
+          if(document.querySelector('.test-message iframe')!==originalFrame ||
+             !originalFrame.isConnected ||
+             originalFrame.classList.contains('visualization__frame--pending') ||
+             document.querySelector('.visualization__viewport').offsetHeight!==streamHeight ||
+             Math.abs(originalFrame.getBoundingClientRect().top-streamTop)>1)
+            streamGaps.push('frame replaced, hidden, resized or shifted');
+          requestAnimationFrame(inspectStream);
+        }
+        requestAnimationFrame(inspectStream);
+      `)
+      for (let chunk = 1; chunk <= 4; chunk++) {
+        await window.webContents.executeJavaScript(
+          `document.querySelector('#stream-chunk').click()`
+        )
+        for (let i = 0; i < 100; i++) {
+          if (
+            await window.webContents.executeJavaScript(
+              `document.querySelector('.test-message').textContent.split('Streamed paragraph').length-1===${chunk}`
+            )
+          )
+            break
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+        assert.equal(
+          await window.webContents.executeJavaScript(
+            `document.querySelector('.test-message').textContent.split('Streamed paragraph').length-1`
+          ),
+          chunk,
+          'The surrounding response continues to stream'
+        )
+      }
+      await window.webContents.executeJavaScript(`document.querySelector('#finish-stream').click()`)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      assert.deepEqual(
+        await window.webContents.executeJavaScript(`monitorStream=false;streamGaps`),
+        [],
+        'Streaming never blanks, collapses or shifts the visualization'
+      )
+      assert.equal(await window.webContents.executeJavaScript(`streamPaintChecks>0`), true)
+      assert.equal(
+        await window.webContents.executeJavaScript(`streamLoads`),
+        0,
+        'Streaming does not reload the iframe document'
+      )
+      assert.equal(
+        await window.webContents.executeJavaScript(`visualizationFixture.reads===originalReads`),
+        true,
+        'Streaming does not reread the visualization file'
+      )
+      assert.equal(
+        await child.executeJavaScript(`document.querySelector('#value').textContent`),
+        '73',
+        'Interactions survive streaming and finalization'
+      )
+      console.log(
+        'PASS: streaming response preserves the live iframe, height, position and interactions'
+      )
       // Observe visible frames on every paint while a slow reload is in progress.
       await window.webContents.executeJavaScript(
         `window.reloadGaps=[];window.reloadPaintChecks=0;window.oldHeight=document.querySelector('.visualization__viewport').offsetHeight;window.monitorReload=true;function inspectReload(){if(!monitorReload)return;reloadPaintChecks++;const visible=document.querySelector('.visualization__frame:not(.visualization__frame--pending)');if(!visible || document.querySelector('.visualization__viewport').offsetHeight!==oldHeight)reloadGaps.push('missing frame or changed height');requestAnimationFrame(inspectReload)}requestAnimationFrame(inspectReload);document.querySelector('.visualization__actions button').click();`
@@ -516,8 +587,51 @@ if (!process.versions.electron) {
         true,
         'The reload visibility check observed actual paint frames'
       )
+      await window.webContents.executeJavaScript(
+        `visualizationFixture.error=null;document.querySelector('#show-nested').click()`
+      )
+      for (let i = 0; i < 100; i++) {
+        if (
+          await window.webContents.executeJavaScript(
+            `document.querySelectorAll('.test-nested-message blockquote .visualization__frame:not(.visualization__frame--pending)').length===2`
+          )
+        )
+          break
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(
+        await window.webContents.executeJavaScript(
+          `document.querySelectorAll('.test-nested-message blockquote iframe').length`
+        ),
+        2,
+        'Repeated references inside a Markdown blockquote render independently'
+      )
+      await window.webContents.executeJavaScript(`
+        window.nestedFrames=[...document.querySelectorAll('.test-nested-message iframe')];
+        window.nestedReads=visualizationFixture.reads;
+        document.querySelector('#stream-chunk').click();
+      `)
+      for (let i = 0; i < 100; i++) {
+        if (
+          await window.webContents.executeJavaScript(
+            `document.querySelector('.test-nested-message').textContent.split('Streamed paragraph').length-1===5`
+          )
+        )
+          break
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(
+        await window.webContents.executeJavaScript(`
+        document.querySelector('.test-nested-message').textContent.split('Streamed paragraph').length-1===5 &&
+        nestedFrames.every((frame,index)=>frame.isConnected && document.querySelectorAll('.test-nested-message iframe')[index]===frame) &&
+        visualizationFixture.reads===nestedReads
+      `),
+        true,
+        'Nested and repeated visualizations stay mounted while their blockquote streams'
+      )
+      await window.webContents.executeJavaScript(`document.querySelector('#finish-stream').click()`)
       console.log(
-        'PASS: actual MarkdownMessage rendering, code examples, portal persistence and interaction state'
+        'PASS: actual MarkdownMessage rendering, code examples, frame persistence and interaction state'
       )
       console.log(
         'PASS: stable workspace identity, unchanged reloads, atomic document replacement and reload failure recovery'

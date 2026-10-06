@@ -7,12 +7,11 @@ import { useStreamReveal } from '../motion/useStreamReveal'
 import { useMessageArrival } from '../motion/messageFlight'
 import { getMessageModelLabel } from '../messageModelLabel'
 import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplayLabel'
-import { createPortal } from 'react-dom'
 import { Marked } from 'marked'
 import markedFootnote from 'marked-footnote'
-import { Visualization } from './Visualization'
+import { MarkdownContent } from './MarkdownContent'
 import { WorkingMark, type WorkingMarkAnimation } from './WorkingMark'
-import { visualizationExtension, decodeVisualizationReference } from '../visualizationReference'
+import { visualizationExtension } from '../visualizationReference'
 import {
   Fragment,
   memo,
@@ -1337,7 +1336,6 @@ const MarkdownMessageComponent: React.FC<{
       ),
     [footnotePrefix]
   )
-  const [visualizationHosts, setVisualizationHosts] = useState<HTMLElement[]>([])
   const renderedMarkdown = useMemo(
     () =>
       DOMPurify.sanitize(
@@ -1361,15 +1359,6 @@ const MarkdownMessageComponent: React.FC<{
     brokenImageIconMarkup
   )
   useStreamReveal(containerRef, renderedMarkdown, streaming)
-  // React must not replace this DOM when portal or preview state changes:
-  // the visualization portals and hydrated images live inside it.
-  const markdownHtml = useMemo(() => ({ __html: renderedMarkdown }), [renderedMarkdown])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: HTML signals replacement of visualization hosts.
-  useEffect(() => {
-    setVisualizationHosts(
-      Array.from(containerRef.current?.querySelectorAll<HTMLElement>('[data-visualization]') ?? [])
-    )
-  }, [renderedMarkdown])
   useEffect(() => {
     if (streaming) return undefined
 
@@ -1445,21 +1434,11 @@ const MarkdownMessageComponent: React.FC<{
   return (
     <>
       <div className={className} ref={containerRef} onClick={handleClick}>
-        <div className="chat-detail__message-markdown" dangerouslySetInnerHTML={markdownHtml} />
-        {visualizationHosts.map((host, index) => {
-          const reference = decodeVisualizationReference(host.dataset.visualization ?? '')
-          return reference
-            ? createPortal(
-                <Visualization
-                  reference={reference}
-                  container={localImageContainer}
-                  cwd={localImageCwd}
-                />,
-                host,
-                String(index)
-              )
-            : null
-        })}
+        <MarkdownContent
+          html={renderedMarkdown}
+          container={localImageContainer}
+          cwd={localImageCwd}
+        />
         {selectionQuoteHost && <div className="chat-detail__message-quote-host" />}
       </div>
       {localImagePreview && (
