@@ -1,6 +1,7 @@
 import { TokenUsageReporter } from '../TokenUsageReporter.ts'
 import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
 import { CodexMessageDelivery } from './CodexMessageDelivery'
+import { CodexUserQuestions } from './CodexUserQuestions'
 import { CodexCommandStartAnchors } from './CodexCommandStartAnchors.ts'
 import { CodexGoals } from './CodexGoals.ts'
 import { CodexGoalPrompts, getCodexGoalPrompt } from './CodexGoalPrompts.ts'
@@ -45,6 +46,8 @@ import type {
   ProviderActiveSendMode,
   ProviderApprovalDecision,
   ProviderPendingApproval,
+  ProviderPendingUserInput,
+  ProviderUserInputResponse,
   ProviderPendingMessage,
   ProviderAccountRateLimit,
   ProviderAccountRateLimitResetCredit,
@@ -1309,6 +1312,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private rolledBackTurnIds = new Map<string, Set<string>>()
   private manuallyStoppedTurnIds = new Map<string, Set<string>>()
   private pendingApprovalsByThread = new Map<string, CodexPendingApproval[]>()
+  private userQuestions = new CodexUserQuestions()
   private contextUsageByThread = new Map<string, ProviderChatContextUsage>()
   private loginCompletions = new Map<string, CodexLoginCompletion>()
   private loginWaiters = new Map<string, CodexLoginWaiter>()
@@ -1354,6 +1358,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     )
     client.onStopped((error) => {
       this.rejectLoginWaitersForContainer(key, error)
+      for (const threadId of this.userQuestions.removeContainer(
+        (container) => getContainerTargetKey(container) === key
+      )) {
+        this.setThreadActiveFlag(threadId, 'waitingOnUserInput', false)
+        this.emitChatUpdated(threadId)
+      }
     })
     this.clients.set(key, client)
     return client
@@ -1401,6 +1411,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.transcriptMetadataStatSupport.delete(key)
     this.transcriptMetadataWarnings.delete(key)
     this.subagentHistory.clearContainer(key)
+    this.userQuestions.removeContainer((target) => getContainerTargetKey(target) === key)
     const client = this.clients.get(key)
     client?.dispose()
     this.clients.delete(key)
@@ -3604,8 +3615,28 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return this.getChat(chatId)
   }
 
-  resolveUserInput = async (): Promise<ProviderChatDetail> => {
-    throw new Error('Interactive questions are not supported by this provider.')
+  resolveUserInput = async (
+    chatId: string,
+    requestId: string,
+    response: ProviderUserInputResponse,
+    options?: ProviderTurnOptions
+  ): Promise<ProviderChatDetail> => {
+    this.getProviderPendingUserInput(chatId)
+    await this.userQuestions.resolve(chatId, requestId, response, {
+      server: (request, result) =>
+        this.getClient(request.container).resolveServerRequest(request.requestId, result),
+      asynchronous: async (question, answer) => {
+        const text = `${question.question}\n\nAnswer: ${answer}`
+        await this.runWithContainer(this.getThreadContainer(chatId), async () => {
+          if (this.hasActiveOrSubmittingTurn(chatId))
+            await this.steerActiveChat(chatId, text, options)
+          else await this.continueChatImmediately(chatId, text, options)
+        })
+      }
+    })
+    this.setThreadActiveFlag(chatId, 'waitingOnUserInput', this.userQuestions.hasBlocking(chatId))
+    this.emitChatUpdated(chatId)
+    return this.getCachedChatDetail(chatId) ?? this.getChat(chatId)
   }
 
   compactChat = (chatId: string): Promise<ProviderChatDetail> =>
@@ -3674,6 +3705,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rolledBackTurnIds.clear()
     this.manuallyStoppedTurnIds.clear()
     this.pendingApprovalsByThread.clear()
+    this.userQuestions.clear()
     this.contextUsageByThread.clear()
     this.clients.forEach((client) => client.dispose())
     this.clients.clear()
@@ -4007,6 +4039,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     await this.ensureChatTailLoaded(chatId)
     const turnId = this.getActiveTurnId(chatId)
     this.cancelPendingApprovals(chatId)
+    this.userQuestions.cancel(chatId, (request) =>
+      this.getClient(request.container).resolveServerRequest(request.requestId, { answers: {} })
+    )
 
     if (!turnId) {
       this.removeSteeringMessageForThread(chatId)
@@ -4098,10 +4133,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       projectCwd: null,
       branchName: null,
       worktreeBaseBranchName: null,
-      status: getHydratedThreadStatus(
-        thread,
-        this.pendingTurnStarts.has(thread.id) || this.pendingTurnIds.has(thread.id)
-      ),
+      status: this.userQuestions.hasBlocking(thread.id)
+        ? 'waitingOnUserInput'
+        : getHydratedThreadStatus(
+            thread,
+            this.pendingTurnStarts.has(thread.id) || this.pendingTurnIds.has(thread.id)
+          ),
       pinned: false,
       sidebarOrder: null,
       done: false,
@@ -4124,7 +4161,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ? { ...codexCapabilities, editMessages: false, activeMessages: false }
         : codexCapabilities,
       pendingApproval: this.getProviderPendingApproval(thread.id),
-      pendingUserInput: null,
+      pendingUserInput: this.getProviderPendingUserInput(thread.id),
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
       subagents: getCodexTurnSubagents(renderableTurns, thread.id),
       goal: this.goals.get(thread.id),
@@ -4953,6 +4990,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
   }
 
+  private getProviderPendingUserInput = (threadId: string): ProviderPendingUserInput | null => {
+    this.userQuestions.syncAsync(
+      threadId,
+      this.threads.get(threadId)?.turns.findLast((turn) => turn.status !== 'queued')
+    )
+    return this.userQuestions.getPending(threadId)
+  }
+
   private addPendingApproval = (approval: CodexPendingApproval): void => {
     this.rememberThreadContainer(approval.threadId, approval.container)
     const pendingApprovals = this.pendingApprovalsByThread.get(approval.threadId) ?? []
@@ -5521,7 +5566,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       paused: this.pausedQueuedTurnThreads.has(threadId),
       threadStatus,
       hasActiveTurn: this.hasActiveOrSubmittingTurn(threadId),
-      hasPendingApproval: (this.pendingApprovalsByThread.get(threadId)?.length ?? 0) > 0
+      hasPendingApproval:
+        (this.pendingApprovalsByThread.get(threadId)?.length ?? 0) > 0 ||
+        this.userQuestions.hasBlocking(threadId)
     })
   }
 
@@ -6168,6 +6215,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
       if (this.activeTurnIds.get(threadId) === turn.id) this.activeTurnIds.delete(threadId)
       this.pendingApprovalsByThread.delete(threadId)
+      this.userQuestions.clearServerTurn(threadId, turn.id)
       if (!this.getActiveTurnId(threadId)) this.setThreadStatus(threadId, { type: 'idle' })
       this.retainThreadTurnTail(threadId)
     }
@@ -6471,6 +6519,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private handleServerRequest = (request: RpcRequest): boolean => {
+    if (request.method === 'item/tool/requestUserInput') {
+      const container = this.getCurrentContainer()
+      const threadId = this.userQuestions.addServerRequest(request, container)
+      this.rememberThreadContainer(threadId, container)
+      this.setThreadActiveFlag(
+        threadId,
+        'waitingOnUserInput',
+        this.userQuestions.hasBlocking(threadId)
+      )
+      this.emitChatUpdated(threadId)
+      return true
+    }
     if (request.method === 'mcpServer/elicitation/request') {
       const params = getRecordValue(request.params)
       if (!params || !isBrowserPermissionRequest(params)) return false
@@ -6574,7 +6634,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (notification.method === 'serverRequest/resolved') {
       const requestId = (params as ServerRequestResolvedParams).requestId
-      if (typeof requestId === 'number') this.removePendingApprovalByRequestId(requestId)
+      if (typeof requestId === 'number') {
+        this.removePendingApprovalByRequestId(requestId)
+        const containerKey = getContainerTargetKey(this.getCurrentContainer())
+        const threadId = this.userQuestions.removeResolved(
+          requestId,
+          (container) => getContainerTargetKey(container) === containerKey
+        )
+        if (threadId) {
+          this.setThreadActiveFlag(
+            threadId,
+            'waitingOnUserInput',
+            this.userQuestions.hasBlocking(threadId)
+          )
+          this.emitChatUpdated(threadId)
+        }
+      }
       return
     }
 

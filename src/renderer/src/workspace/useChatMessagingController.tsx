@@ -902,7 +902,10 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         selectedChat.providerId,
         selectedChat.id,
         requestId,
-        response
+        response,
+        response.kind === 'answer' && !pendingUserInput.isBlocking
+          ? getCurrentTurnOptions()
+          : undefined
       )
       applyViewedChatDetail(selectedChat.providerId, detail)
     } catch (error) {
@@ -910,7 +913,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       setUserInputResolution({
         requestId,
         resolving: false,
-        error: getErrorMessage(error, 'Unable to resolve Copilot question.')
+        error: getErrorMessage(error, 'Unable to submit your answer.')
       })
       return
     }

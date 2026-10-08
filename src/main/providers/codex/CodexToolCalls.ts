@@ -14,6 +14,7 @@ const nestedToolNames = new Set([
   'write_stdin',
   'view_image',
   'request_user_input',
+  'request_user_input_async',
   'request_plugin_install'
 ])
 

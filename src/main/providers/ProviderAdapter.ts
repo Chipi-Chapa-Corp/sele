@@ -195,7 +195,8 @@ export type ProviderAdapter = {
   resolveUserInput: (
     chatId: string,
     requestId: string,
-    response: ProviderUserInputResponse
+    response: ProviderUserInputResponse,
+    options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
   compactChat: (chatId: string) => Promise<ProviderChatDetail>
   stopChat: (chatId: string) => Promise<ProviderChatDetail>

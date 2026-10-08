@@ -5,6 +5,7 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import { getCodexQueueDrainDecision } from './CodexQueueDrain.ts'
 import { isCodexTurnTerminal } from './CodexLiveMerge.ts'
+import { CodexUserQuestions } from './CodexUserQuestions.ts'
 
 const source = ts.createSourceFile(
   'adapter.ts',
@@ -55,6 +56,7 @@ const fixture = (status = 'idle', turnStatus = 'completed') => {
     pendingTurnIds: new Map(),
     activeTurnIds: new Map(),
     pendingApprovalsByThread: new Map(),
+    userQuestions: new CodexUserQuestions(),
     readThread: async () => ({ thread: { id: 'chat' } }),
     resolveThreadCwd: async () => '/repo',
     resolveThreadName: async () => 'Chat',
@@ -90,6 +92,24 @@ test('active turns, errors, approvals and deliberately paused queues wait', () =
   adapter.pendingApprovalsByThread.clear()
   adapter.pausedQueuedTurnThreads.add('chat')
   assert.equal(adapter.getQueueDrainDecision('chat'), 'wait')
+})
+
+test('blocking questions hold queued turns until the answer is delivered', () => {
+  const { adapter } = fixture()
+  adapter.userQuestions.addServerRequest(
+    {
+      id: 7,
+      params: {
+        threadId: 'chat',
+        turnId: 'turn',
+        questions: [{ id: 'q', question: 'Which account?' }]
+      }
+    },
+    null
+  )
+  assert.equal(adapter.getQueueDrainDecision('chat'), 'wait')
+  adapter.userQuestions.removeServerRequest('chat', 7)
+  assert.equal(adapter.getQueueDrainDecision('chat'), 'start')
 })
 
 test('submission locks never allow reconciliation to clear an in-flight message', () => {

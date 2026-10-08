@@ -1823,12 +1823,20 @@ const WorkingStep: React.FC<{
   const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
   const unloaded = item.itemsLoaded === false
   const linkedToFollowingStep = continuedStoppedTurn || continueClicked
+  const failureMessage = item.status === 'failed' ? item.failureMessage?.trim() : null
   const itemSegments = getWorkingStepItemSegments(item, workingItemPageSize)
   const renderedSegments = itemSegments.map((segment) => {
     const { generatedImages, remaining } = partitionGeneratedImageItems(segment.items)
     return {
       ...segment,
-      blocks: groupWorkingItems(remaining),
+      blocks: groupWorkingItems(
+        remaining.filter(
+          (workingItem) =>
+            !failureMessage ||
+            workingItem.type !== 'message' ||
+            workingItem.content.trim() !== failureMessage
+        )
+      ),
       generatedImages
     }
   })
@@ -1885,10 +1893,9 @@ const WorkingStep: React.FC<{
           : item.status === 'worked'
             ? 'Worked'
             : 'Working'
-  const failureMessage = item.status === 'failed' ? item.failureMessage?.trim() : null
-  const failureSummary =
+  const failureText =
     item.status === 'failed'
-      ? failureMessage?.replace(/\s+/g, ' ').trim() ||
+      ? failureMessage ||
         (item.failureReason === 'rateLimit'
           ? 'Rate limit exceeded.'
           : 'The provider did not supply a failure reason.')
@@ -1905,13 +1912,13 @@ const WorkingStep: React.FC<{
         {label}
         {item.status === 'worked' && <WorkingElapsedTime item={item} />}
       </span>
-      {failureSummary && (
-        <span className="chat-detail__failure-summary" title={failureMessage ?? failureSummary}>
-          {failureSummary}
-        </span>
-      )}
     </span>
   )
+  const failureLabel = failureText ? (
+    <div className="chat-detail__failure-label" role="status">
+      {failureText}
+    </div>
+  ) : null
   const renderedGeneratedImages = generatedImages.map((imageItem) => (
     <ToolItem
       item={imageItem}
@@ -2009,6 +2016,7 @@ const WorkingStep: React.FC<{
       </div>
       {turnActions}
       {renderedGeneratedImages}
+      {failureLabel}
     </>
   )
 
@@ -2054,6 +2062,7 @@ const WorkingStep: React.FC<{
           )}
         </div>
         {turnActions}
+        {failureLabel}
       </>
     )
   }
@@ -2064,6 +2073,7 @@ const WorkingStep: React.FC<{
         <>
           {turnActions}
           {renderedGeneratedImages}
+          {failureLabel}
         </>
       )
     }
@@ -2208,6 +2218,7 @@ const WorkingStep: React.FC<{
       </details>
       {turnActions}
       {renderedGeneratedImages}
+      {failureLabel}
     </>
   )
 }

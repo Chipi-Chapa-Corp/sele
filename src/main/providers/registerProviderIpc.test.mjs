@@ -30,6 +30,7 @@ const bundled = await build({
                onChatUpdated: listener => { globalThis.harness.publish = listener },
                getChat: (...args) => globalThis.harness.getChat(...args),
                continueChat: (...args) => globalThis.harness.continueChat(...args),
+               resolveUserInput: (...args) => globalThis.harness.resolveUserInput(...args),
                getSubagent: (...args) => globalThis.harness.getSubagent(...args)
              };
              export const getChatUpdateSummary = () => {};
@@ -323,4 +324,47 @@ test('chat IPC forwards validated retry settings and rejects invalid values', as
       /Invalid network retry settings/
     )
   }
+})
+
+test('question answer IPC forwards selected turn settings and validates permissions', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.resolveUserInput = async (...args) => {
+    calls.push(args)
+    return { id: 'chat', revision: 1, items: [] }
+  }
+  const handler = h.harness.handlers.get(channels.resolveUserInput)
+  const response = { kind: 'answer', answer: 'Continue Login', wasFreeform: false }
+  const options = {
+    model: 'gpt-6.1-sol',
+    reasoningEffort: 'high',
+    serviceTier: 'fast',
+    approvalPolicy: 'never',
+    approvalsReviewer: 'user',
+    sandboxMode: 'danger-full-access',
+    cwd: '/project',
+    additionalDirectories: ['/shared']
+  }
+  await handler({}, 'codex', 'chat', 'question', response, options)
+  const received = calls[0][4]
+  for (const key of [
+    'model',
+    'reasoningEffort',
+    'serviceTier',
+    'approvalPolicy',
+    'sandboxMode',
+    'cwd'
+  ]) {
+    assert.equal(received[key], options[key])
+  }
+  assert.deepEqual(Array.from(received.additionalDirectories), ['/shared'])
+  for (const invalid of [{ approvalPolicy: 'invalid' }, { sandboxMode: 'invalid' }]) {
+    await assert.rejects(
+      handler({}, 'codex', 'chat', 'question', response, { ...options, ...invalid }),
+      /Invalid (approval policy|sandbox mode)/
+    )
+  }
+  assert.equal(calls.length, 1)
+  await handler({}, 'codex', 'chat', 'question', { kind: 'cancel' })
+  assert.equal(calls[1][4], undefined)
 })

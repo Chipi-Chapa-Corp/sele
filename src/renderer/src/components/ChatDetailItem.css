@@ -489,15 +489,12 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   align-items: center;
 }
 
-.chat-detail__failure-summary {
-  display: -webkit-box;
+.chat-detail__failure-label {
+  width: 100%;
   min-width: 0;
-  overflow: hidden;
   color: var(--error);
   overflow-wrap: anywhere;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
 }
 
 .chat-detail__working-spinner {

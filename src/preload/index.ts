@@ -350,13 +350,14 @@ const providerApi: ProviderRendererApi = {
     ),
   resolveApproval: (providerId, chatId, decision) =>
     ipcRenderer.invoke(providerIpcChannels.resolveApproval, providerId, chatId, decision),
-  resolveUserInput: (providerId, chatId, requestId, response) =>
+  resolveUserInput: (providerId, chatId, requestId, response, options) =>
     ipcRenderer.invoke(
       providerIpcChannels.resolveUserInput,
       providerId,
       chatId,
       requestId,
-      response
+      response,
+      options
     ),
   compactChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.compactChat, providerId, chatId),

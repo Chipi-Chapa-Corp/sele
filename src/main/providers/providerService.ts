@@ -870,9 +870,9 @@ export const providerApi: ProviderApi = {
     adapters[providerId]
       .resolveApproval(chatId, decision)
       .then((detail) => applyMetadataToDetail(detail, providerId)),
-  resolveUserInput: (providerId, chatId, requestId, response: ProviderUserInputResponse) =>
+  resolveUserInput: (providerId, chatId, requestId, response: ProviderUserInputResponse, options) =>
     adapters[providerId]
-      .resolveUserInput(chatId, requestId, response)
+      .resolveUserInput(chatId, requestId, response, options)
       .then((detail) => applyMetadataToDetail(detail, providerId)),
   compactChat: (providerId, chatId) =>
     adapters[providerId]

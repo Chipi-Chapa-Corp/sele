@@ -38,6 +38,7 @@ export type CodexThreadItem = {
   content?: CodexUserInput[]
   text?: string
   phase?: 'commentary' | 'final_answer' | null
+  questions?: { title: string; options?: string[] | null }[] | null
   command?: string
   cwd?: string
   processId?: string | null
@@ -1112,6 +1113,27 @@ const renderTool = (
   }
 }
 
+const isQuestionMessage = (item: CodexThreadItem): boolean =>
+  item.type === 'agentMessage' && Array.isArray(item.questions) && item.questions.length > 0
+
+const isQuestionTool = (item: CodexThreadItem): boolean =>
+  /(?:^|[/.])request_user_input(?:_async)?$/.test(item.customToolName ?? item.tool ?? '')
+
+const renderQuestionTool = (item: CodexThreadItem): WorkingItemRenderResult =>
+  renderTool(
+    item,
+    'other',
+    getWorkingToolStatus(item.status) === 'running' ? 'Asking question' : 'Asked a question',
+    null,
+    null,
+    [],
+    getToolId(item),
+    null,
+    [],
+    'question',
+    true
+  )
+
 type ToolPresentation = {
   activity: ProviderToolActivity
   icon?: ProviderToolIcon
@@ -1331,6 +1353,7 @@ const getCustomToolArgument = (item: CodexThreadItem, key: string): string | nul
 const renderKnownCustomTool = (item: CodexThreadItem): WorkingItemRenderResult | null => {
   const name = item.customToolName
   if (!name) return null
+  if (isQuestionTool(item)) return renderQuestionTool(item)
 
   if (name === 'tool_search') {
     const query = getCustomToolArgument(item, 'query')
@@ -1429,6 +1452,10 @@ const renderFileChanges = (item: CodexThreadItem): WorkingItemRenderResult[] => 
 }
 
 const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
+  {
+    matches: (item) => isQuestionMessage(item) || isQuestionTool(item),
+    render: renderQuestionTool
+  },
   {
     matches: (item) => item.type === 'agentMessage',
     render: (item) => {
@@ -1610,11 +1637,14 @@ const shouldShowCommandText = (activity: ProviderToolActivity): boolean => activ
 
 const getFinalMessageIndex = (items: CodexThreadItem[]): number => {
   const explicitFinalIndex = items.findLastIndex(
-    (item) => item.type === 'agentMessage' && item.phase === 'final_answer'
+    (item) =>
+      item.type === 'agentMessage' && item.phase === 'final_answer' && !isQuestionMessage(item)
   )
   if (explicitFinalIndex >= 0) return explicitFinalIndex
 
-  const lastAgentMessageIndex = items.findLastIndex((item) => item.type === 'agentMessage')
+  const lastAgentMessageIndex = items.findLastIndex(
+    (item) => item.type === 'agentMessage' && !isQuestionMessage(item)
+  )
   if (lastAgentMessageIndex < 0) return -1
 
   return items[lastAgentMessageIndex].phase === 'commentary' ? -1 : lastAgentMessageIndex
@@ -1771,7 +1801,7 @@ const renderChatItems = (
     const tail = turn.items.at(-1)
     const finalMessageIndex = isFinishedTurn(turn)
       ? getFinalMessageIndex(turn.items)
-      : tail?.type === 'agentMessage' && tail.phase === 'final_answer'
+      : tail?.type === 'agentMessage' && tail.phase === 'final_answer' && !isQuestionMessage(tail)
         ? turn.items.length - 1
         : -1
     const resume = reusable

@@ -555,6 +555,8 @@ export type ProviderPendingUserInput = {
   question: string
   choices: ProviderUserInputChoice[]
   allowFreeform: boolean
+  isBlocking?: boolean
+  isSecret?: boolean
   startedAt: number
 }
 
@@ -1229,7 +1231,8 @@ export type ProviderApi = {
     providerId: ProviderId,
     chatId: string,
     requestId: string,
-    response: ProviderUserInputResponse
+    response: ProviderUserInputResponse,
+    options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
   compactChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
   stopChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>

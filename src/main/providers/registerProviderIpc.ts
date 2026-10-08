@@ -1917,13 +1917,21 @@ export const registerProviderIpc = (): void => {
 
   handleLoggedIpc(
     providerIpcChannels.resolveUserInput,
-    (_, providerId: unknown, chatId: unknown, requestId: unknown, response: unknown) =>
+    (
+      _,
+      providerId: unknown,
+      chatId: unknown,
+      requestId: unknown,
+      response: unknown,
+      options: unknown
+    ) =>
       getRendererChatDetail(() =>
         providerApi.resolveUserInput(
           requireProviderId(providerId),
           requireChatId(chatId),
           requireMessageId(requestId),
-          requireUserInputResponse(response)
+          requireUserInputResponse(response),
+          requireTurnOptions(options)
         )
       )
   )

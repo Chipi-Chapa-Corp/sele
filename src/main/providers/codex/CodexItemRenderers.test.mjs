@@ -3,9 +3,111 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildChatConversationModel } from '../../../renderer/src/chatConversationModel.ts'
 import { CodexTranscriptProjection, getChatItems } from './CodexItemRenderers.ts'
+import { updateIndexedTranscriptRecord } from '../transcriptProjection/recordChanges.ts'
 
 const imageSizingMetadata =
   '[Image: original 2380x292, displayed at 2000x245. Multiply coordinates by 1.19 to map to original image.]'
+
+test('structured async questions render only as a question tool in live and completed history', () => {
+  for (const status of ['inProgress', 'completed']) {
+    for (const phase of [null, 'commentary', 'final_answer']) {
+      const turn = {
+        id: 'turn',
+        status,
+        items: [
+          {
+            id: 'question',
+            type: 'agentMessage',
+            phase,
+            status: 'completed',
+            text: 'Which saved integration?\n- Integration #1\n- Integration #3',
+            questions: [
+              { title: 'Which saved integration?', options: ['Integration #1', 'Integration #3'] }
+            ]
+          }
+        ]
+      }
+      const items = getChatItems([turn])
+      assert.deepEqual(items, getChatItems([turn], null, {}, new CodexTranscriptProjection()))
+      const tool = items.find((item) => item.type === 'working')?.items[0]
+      assert.equal(tool?.type, 'tool')
+      assert.equal(tool.icon, 'question')
+      assert.equal(tool.label, 'Asked a question')
+      for (const key of ['command', 'stdout', 'rawInput', 'rawOutput'])
+        assert.equal(tool[key], null)
+      assert.equal(JSON.stringify(items).includes('Which saved integration?'), false)
+      assert.equal(
+        items.some((item) => item.type === 'message' && item.role === 'assistant'),
+        false
+      )
+      assert.equal(turn.items[0].questions[0].title, 'Which saved integration?')
+    }
+  }
+})
+
+test('late question metadata replaces provisional text without hiding an earlier final answer', () => {
+  for (const status of ['inProgress', 'completed']) {
+    const projection = new CodexTranscriptProjection()
+    let turn = {
+      id: 'turn',
+      status,
+      items: [
+        { type: 'agentMessage', id: 'answer', phase: 'final_answer', text: 'Real answer' },
+        {
+          type: 'agentMessage',
+          id: 'question',
+          phase: 'final_answer',
+          text: 'Private question',
+          questions: null
+        }
+      ]
+    }
+    getChatItems([turn], null, {}, projection)
+    turn = {
+      ...turn,
+      items: updateIndexedTranscriptRecord(turn.items, 'question', (item) => ({
+        ...item,
+        questions: [{ title: 'Private question', options: null }]
+      }))
+    }
+    const items = getChatItems([turn], null, {}, projection)
+    assert.deepEqual(items, getChatItems([turn]))
+    assert.equal(JSON.stringify(items).includes('Private question'), false)
+    assert.equal(JSON.stringify(items).includes('Real answer'), true)
+    assert.equal(JSON.stringify(items).includes('Asked a question'), true)
+  }
+})
+
+test('blocking and async question tool calls hide payloads and keep lifecycle labels', () => {
+  for (const name of ['request_user_input', 'request_user_input_async']) {
+    for (const type of ['customToolCall', 'dynamicToolCall', 'mcpToolCall', 'nested']) {
+      for (const status of ['running', 'completed']) {
+        const payload = '{"questions":[{"title":"Private question"}]}'
+        const call = {
+          id: 'question',
+          status,
+          type,
+          customToolName: type === 'customToolCall' ? name : undefined,
+          tool: type === 'dynamicToolCall' || type === 'mcpToolCall' ? name : undefined,
+          customToolInput: payload,
+          arguments: JSON.parse(payload),
+          customToolOutput: 'Private answer',
+          result: 'Private answer',
+          ...(type === 'nested'
+            ? { type: 'commandExecution', command: `tools.${name}(${payload})` }
+            : {})
+        }
+        const items = getChatItems([
+          { id: 'turn', status: status === 'running' ? 'inProgress' : 'completed', items: [call] }
+        ])
+        const tool = items.find((item) => item.type === 'working')?.items[0]
+        assert.equal(tool?.icon, 'question')
+        assert.equal(tool.label, status === 'running' ? 'Asking question' : 'Asked a question')
+        assert.equal(JSON.stringify(items).includes('Private'), false)
+      }
+    }
+  }
+})
 
 test('image sizing metadata keeps one working segment in full and incremental history', () => {
   for (const status of ['inProgress', 'completed']) {
@@ -20,7 +122,11 @@ test('image sizing metadata keeps one working segment in full and incremental hi
     }
     getChatItems([turn], null, {}, projection)
     for (const item of [
-      { type: 'userMessage', id: 'metadata', content: [{ type: 'text', text: imageSizingMetadata }] },
+      {
+        type: 'userMessage',
+        id: 'metadata',
+        content: [{ type: 'text', text: imageSizingMetadata }]
+      },
       { type: 'agentMessage', id: 'after', text: 'After screenshot', phase: 'commentary' }
     ]) {
       turn = { ...turn, items: [...turn.items, item] }
@@ -38,7 +144,10 @@ test('image sizing metadata keeps one working segment in full and incremental hi
 test('preserves user text discussing image metadata and messages with actual attachments', () => {
   for (const content of [
     [{ type: 'text', text: `What does this mean? ${imageSizingMetadata}` }],
-    [{ type: 'text', text: imageSizingMetadata }, { type: 'localImage', path: '/tmp/screenshot.png' }]
+    [
+      { type: 'text', text: imageSizingMetadata },
+      { type: 'localImage', path: '/tmp/screenshot.png' }
+    ]
   ]) {
     const items = getChatItems([
       {

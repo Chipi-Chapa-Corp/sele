@@ -60,6 +60,11 @@ export const UserInputRequestBox = ({
         <span className="chat-approval__summary chat-user-input__question" id={questionId}>
           {question}
         </span>
+        {request.isBlocking === false && (
+          <span className="chat-user-input__choice-description">
+            You can answer while the agent keeps working.
+          </span>
+        )}
         {choices.length > 0 && (
           <div
             className={`chat-user-input__choices${choicesHaveDescriptions ? ' chat-user-input__choices--described' : ''}`}
@@ -98,6 +103,7 @@ export const UserInputRequestBox = ({
               className="chat-user-input__input"
               disabled={disabled}
               placeholder={choices.length > 0 ? 'Or type an answer…' : 'Type your answer…'}
+              type={request.isSecret ? 'password' : 'text'}
               value={freeformAnswer}
               onChange={(event) => setFreeformAnswer(event.target.value)}
               onKeyDown={(event) => {
