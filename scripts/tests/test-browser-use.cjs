@@ -94,6 +94,11 @@ if (!process.versions.electron) {
       const codexOwner = {}
       registerBrowserUseSession(codexOwner, 'browser-test-session', '/work', null)
       ipcMain.handle('browser:resolve-page-zoom-scale', () => 100)
+      const externalLinks = []
+      ipcMain.handle('app:handle-external-link', (_event, options) => {
+        externalLinks.push(options)
+        return { action: 'open', always: false }
+      })
       const window = new BrowserWindow({
         show: false,
         width: 900,
@@ -198,6 +203,28 @@ if (!process.versions.electron) {
           'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
         awaitPromise: true
       })
+      const hostButton = await window.webContents.executeJavaScript(`(() => {
+        const button = document.querySelector('[aria-label="Open in host browser"]')
+        if (!button || button.disabled) throw new Error('Host browser button is not enabled')
+        const rect = button.getBoundingClientRect()
+        return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }
+      })()`)
+      window.webContents.sendInputEvent({
+        type: 'mouseDown',
+        ...hostButton,
+        button: 'left',
+        clickCount: 1
+      })
+      window.webContents.sendInputEvent({
+        type: 'mouseUp',
+        ...hostButton,
+        button: 'left',
+        clickCount: 1
+      })
+      for (let i = 0; i < 50 && externalLinks.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.deepEqual(externalLinks, [{ url: url + '/', action: 'open' }])
       const click = async (selector) => {
         const box = await cdp('Runtime.evaluate', {
           expression: `(()=>{const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2}})()`,
@@ -239,8 +266,9 @@ if (!process.versions.electron) {
       const target = (await cdp('Target.getTargets')).targetInfos[0]
       await cdp('Target.closeTarget', { targetId: target.targetId })
       assert.equal((await rpc('getTabs')).length, 1)
-      const { checkClaudeBrowserTools, checkInstalledClaudeBrowserSdk } =
-        await import('./fixtures/claude-browser-check.mjs')
+      const { checkClaudeBrowserTools, checkInstalledClaudeBrowserSdk } = await import(
+        './fixtures/claude-browser-check.mjs'
+      )
       await checkClaudeBrowserTools({
         createClaudeBrowserIntegration,
         browserService,
@@ -257,8 +285,9 @@ if (!process.versions.electron) {
         })
       }
       if (process.env.SELE_BROWSER_RUNTIME) {
-        const { checkInstalledBrowserRuntime } =
-          await import('./fixtures/browser-runtime-check.mjs')
+        const { checkInstalledBrowserRuntime } = await import(
+          './fixtures/browser-runtime-check.mjs'
+        )
         await checkInstalledBrowserRuntime({
           runtimePath: process.env.SELE_BROWSER_RUNTIME,
           socketPath: path.join('/tmp/codex-browser-use', name),

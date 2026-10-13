@@ -116,6 +116,7 @@ import {
   logUnexpectedOptionalGitProbeFailure
 } from './optionalProbe'
 import { getProcessFailureMessage } from './processFailure'
+import { openExternalLink } from './externalLink'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
 import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
 import { getCopilotExecutable } from './providers/copilot/CopilotExecutable'
@@ -201,7 +202,7 @@ const performExternalLinkAction = async (
     return
   }
 
-  await shell.openExternal(url)
+  await openExternalLink(url)
 }
 
 const imageMimeTypes = {

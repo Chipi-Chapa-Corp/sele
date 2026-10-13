@@ -3352,30 +3352,30 @@ export const useWorkspaceController = () => {
   const projectOptions = useMemo<DropdownOption<string>[]>(() => {
     const projectsByCwd = new Map<
       string,
-      { cwd: string; updatedAt: number; project: AppProject | null }
+      { cwd: string; latestChatCreatedAt: number; project: AppProject | null }
     >()
 
     const addProject = (
       cwd: string | null,
-      updatedAt: number,
+      latestChatCreatedAt: number,
       project: AppProject | null = null
     ): void => {
       const normalizedCwd = cwd?.trim()
       if (!normalizedCwd) return
 
       const existingProject = projectsByCwd.get(normalizedCwd)
-      if (!existingProject || updatedAt > existingProject.updatedAt) {
+      if (!existingProject || latestChatCreatedAt > existingProject.latestChatCreatedAt) {
         projectsByCwd.set(normalizedCwd, {
           cwd: normalizedCwd,
-          updatedAt,
+          latestChatCreatedAt,
           project: project ?? existingProject?.project ?? null
         })
       }
     }
 
-    projects.forEach((project) => addProject(project.cwd, project.updatedAt, project))
-    chats.forEach((chat) => addProject(getChatProjectCwd(chat), chat.updatedAt))
-    addProject(newSessionCwd, Number.MAX_SAFE_INTEGER)
+    projects.forEach((project) => addProject(project.cwd, 0, project))
+    chats.forEach((chat) => addProject(getChatProjectCwd(chat), chat.createdAt))
+    addProject(newSessionCwd, 0)
 
     const getProjectOptionIcon = (
       cwd: string | null,
@@ -3393,8 +3393,8 @@ export const useWorkspaceController = () => {
 
     const options = Array.from(projectsByCwd.values())
       .sort((firstProject, secondProject) => {
-        if (secondProject.updatedAt !== firstProject.updatedAt) {
-          return secondProject.updatedAt - firstProject.updatedAt
+        if (secondProject.latestChatCreatedAt !== firstProject.latestChatCreatedAt) {
+          return secondProject.latestChatCreatedAt - firstProject.latestChatCreatedAt
         }
 
         return getFolderName(firstProject.cwd).localeCompare(getFolderName(secondProject.cwd))

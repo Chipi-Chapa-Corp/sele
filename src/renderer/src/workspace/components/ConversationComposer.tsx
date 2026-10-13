@@ -260,6 +260,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             aria-label="Project"
             title={newSessionCwd ?? 'Choose folder'}
             disabled={providerUpdateInProgress || sendState === 'sending'}
+            emptyContent="No matching projects"
             menuActions={[
               {
                 id: 'add-project',
@@ -271,6 +272,8 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             ]}
             options={projectOptions}
             placement="top"
+            searchable
+            searchPlaceholder="Search projects"
             size="small"
             value={newSessionProjectValue}
             onChange={(cwd) => setNewSessionCwd(cwd)}

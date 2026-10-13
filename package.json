@@ -17,6 +17,7 @@
     "test:chat-delivery": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/registerProviderIpc.test.mjs src/main/providers/ProviderClientPool.test.mjs src/main/providers/ProviderNetworkRetry.test.mjs",
     "test:app-update": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/appUpdate.test.mjs src/main/macAppUpdate.test.mjs",
     "test:logging": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/diagnosticLog.test.mjs",
+    "test:external-links": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/externalLink.test.mjs",
     "test:error-logging": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/errorLoggingAudit.test.mjs src/shared/expectedAbsence.test.mjs",
     "test:file-tree": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/fileTree.test.mjs && node scripts/tests/test-file-tree.cjs",
     "test:chat-scaling": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/conversationTiming.test.mjs src/main/providers/chatScaling.regression.test.mjs src/main/providers/chatAdapterScaling.test.mjs src/main/providers/workingPageScaling.test.mjs src/main/providers/chatWindow.test.mjs src/main/providers/ProviderNavigationHydration.test.mjs",

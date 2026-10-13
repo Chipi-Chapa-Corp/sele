@@ -3,15 +3,7 @@ import './logging'
 import { startBrowserUseBridge } from './providers/codex/CodexBrowserBridge'
 import { startBrowserAutomationService } from './browser/BrowserAutomation'
 import { registerVisualizationProtocol } from './visualizationProtocol'
-import {
-  app,
-  protocol,
-  BrowserWindow,
-  dialog,
-  nativeTheme,
-  shell,
-  type WebContents
-} from 'electron'
+import { app, protocol, BrowserWindow, dialog, nativeTheme, type WebContents } from 'electron'
 import { join } from 'path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -35,6 +27,7 @@ import {
 import { disposeProviderAdapters } from './providers/providerService'
 import { beginProviderIpcShutdown, registerProviderIpc } from './providers/registerProviderIpc'
 import { registerAppIpc, sendAppWindowState } from './registerAppIpc'
+import { openExternalLink } from './externalLink'
 import { disposeTerminalSessions, registerTerminalIpc } from './registerTerminalIpc'
 import {
   getBrowserGuestDefaultScale,
@@ -84,7 +77,9 @@ const routeNewWindowUrl = (mainWindow: BrowserWindow, url: string): void => {
   }
 
   if (browserSystemProtocols.has(getUrlProtocol(url) ?? '')) {
-    void shell.openExternal(url)
+    void openExternalLink(url).catch((error) => {
+      console.error('[caught:index:routeNewWindowUrl]', error)
+    })
   }
 }
 
@@ -140,7 +135,11 @@ const secureBrowserWebContents = (mainWindow: BrowserWindow, guest: WebContents)
     if (isBrowserPageUrl(url) || url === 'about:blank') return
 
     event.preventDefault()
-    if (browserSystemProtocols.has(protocol ?? '')) void shell.openExternal(url)
+    if (browserSystemProtocols.has(protocol ?? '')) {
+      void openExternalLink(url).catch((error) => {
+        console.error('[caught:index:preventUnsupportedNavigation]', error)
+      })
+    }
   }
 
   guest.on('will-navigate', (event) => preventUnsupportedNavigation(event, event.url))
