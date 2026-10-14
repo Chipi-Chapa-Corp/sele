@@ -742,6 +742,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     effectiveChatTurnWindow,
     firstPendingChatItemId,
     followingWorkingStepsById,
+    steeredWorkingStepDisclosureTargets: chatConversationModel.steeredWorkingStepDisclosureTargets,
     handleNativeChatContentScroll,
     handleNativeChatContentWheel,
     loadChatTurnPage,

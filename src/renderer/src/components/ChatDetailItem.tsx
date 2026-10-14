@@ -109,6 +109,7 @@ import {
   getWorkingStepDefaultOpen,
   getWorkingStepDisclosureKey,
   resolveWorkingStepOpen,
+  type WorkingStepDisclosureTarget,
   type WorkingStepProgressPolicy
 } from '../workingStepDisclosure'
 import { Button } from './Button'
@@ -163,6 +164,7 @@ type ChatDetailItemProps = {
   cwd?: string | null
   projectCwd?: string | null
   progressPolicy?: WorkingStepProgressPolicy
+  progressDisclosureTarget?: WorkingStepDisclosureTarget
   progressSettings?: AppChatProgressSettings
   rateLimitResetDisabled?: boolean
   retryMessage?: ProviderMessage | null
@@ -234,6 +236,9 @@ const areChatDetailItemPropsEqual = (
   first.cwd === second.cwd &&
   first.projectCwd === second.projectCwd &&
   first.progressPolicy === second.progressPolicy &&
+  first.progressDisclosureTarget?.status === second.progressDisclosureTarget?.status &&
+  first.progressDisclosureTarget?.hasNextWorkingStep ===
+    second.progressDisclosureTarget?.hasNextWorkingStep &&
   first.rateLimitResetDisabled === second.rateLimitResetDisabled &&
   first.retryMessage === second.retryMessage &&
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
@@ -1788,6 +1793,7 @@ const WorkingStep: React.FC<{
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   projectCwd?: string | null
   progressPolicy?: WorkingStepProgressPolicy
+  progressDisclosureTarget?: WorkingStepDisclosureTarget
   progressSettings: AppChatProgressSettings
   rateLimitResetDisabled?: boolean
   retryDisabled?: boolean
@@ -1813,6 +1819,7 @@ const WorkingStep: React.FC<{
   onUsageReset,
   projectCwd,
   progressPolicy = 'regular',
+  progressDisclosureTarget,
   progressSettings,
   rateLimitResetDisabled = false,
   retryDisabled = false
@@ -1867,16 +1874,16 @@ const WorkingStep: React.FC<{
       ? false
       : hasNextWorkingStep
   const defaultOpen = getWorkingStepDefaultOpen(
-    autoCollapseStatus,
+    progressDisclosureTarget?.status ?? autoCollapseStatus,
     progressPolicy,
     progressSettings,
-    autoCollapseHasNextWorkingStep
+    progressDisclosureTarget?.hasNextWorkingStep ?? autoCollapseHasNextWorkingStep
   )
   const disclosureKey = getWorkingStepDisclosureKey(
-    autoCollapseStatus,
+    progressDisclosureTarget?.status ?? autoCollapseStatus,
     progressPolicy,
     progressSettings,
-    autoCollapseHasNextWorkingStep
+    progressDisclosureTarget?.hasNextWorkingStep ?? autoCollapseHasNextWorkingStep
   )
   const [openState, setOpenState] = useState({ key: disclosureKey, open: defaultOpen })
   const preferredOpen = resolveWorkingStepOpen(openState, disclosureKey, defaultOpen)
@@ -2264,6 +2271,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   cwd,
   projectCwd,
   progressPolicy = 'regular',
+  progressDisclosureTarget,
   progressSettings,
   rateLimitResetDisabled = false,
   retryMessage,
@@ -2540,6 +2548,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       onUsageReset={onUsageReset}
       projectCwd={projectCwd}
       progressPolicy={progressPolicy}
+      progressDisclosureTarget={progressDisclosureTarget}
       progressSettings={resolvedProgressSettings}
       rateLimitResetDisabled={rateLimitResetDisabled}
       retryDisabled={retryStoppedTurnDisabled}

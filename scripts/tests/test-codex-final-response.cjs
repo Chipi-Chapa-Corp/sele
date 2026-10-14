@@ -14,7 +14,8 @@ if (!process.versions.electron) {
             import { flushSync } from 'react-dom'
             import { ChatDetailItem, ChatWorkingPlaceholder } from './src/renderer/src/components/ChatDetailItem'
             import { getChatItems, CodexTranscriptProjection } from './src/main/providers/codex/CodexItemRenderers'
-            import { getConversationTailWorkingStep } from './src/renderer/src/chatConversationModel'
+            import { buildChatConversationModel, getConversationTailWorkingStep } from './src/renderer/src/chatConversationModel'
+            import { getWorkingStepProgressPolicy } from './src/renderer/src/workingStepDisclosure'
             import './src/renderer/src/assets/styles/tokens.css'
             window.testNow = 1700003665000
             Date.now = () => window.testNow
@@ -37,6 +38,29 @@ if (!process.versions.electron) {
               </React.Fragment>))
             }
             window.renderTurn('early')
+            window.renderSteeredTurn = (status, settings, nextTurn = false) => {
+              const items = getChatItems([{ id: 'steered', status, items: [
+                { type: 'userMessage', id: 'initial', content: [{ type: 'text', text: 'Start' }] },
+                { type: 'agentMessage', id: 'before', phase: 'commentary', text: 'First work' },
+                { type: 'userMessage', id: 'steer-1', content: [{ type: 'text', text: 'Steer once' }] },
+                { type: 'agentMessage', id: 'middle', phase: 'commentary', text: 'Middle work' },
+                { type: 'userMessage', id: 'steer-2', content: [{ type: 'text', text: 'Steer twice' }] },
+                { type: 'agentMessage', id: 'last', phase: 'commentary', text: 'Final work' }
+              ] }, ...(nextTurn ? [{ id: 'next', status: 'inProgress', items: [
+                { type: 'userMessage', id: 'next-user', content: [{ type: 'text', text: 'Next turn' }] },
+                { type: 'agentMessage', id: 'next-work', phase: 'commentary', text: 'Next work' }
+              ] }] : [])])
+              const model = buildChatConversationModel(items)
+              flushSync(() => root.render(<React.Fragment key="steering">
+                {model.turns.map((turn, index) => <React.Fragment key={turn.id}>
+                  {turn.items.map(item => <ChatDetailItem key={item.id} item={item}
+                    progressSettings={settings}
+                    progressPolicy={item.type === 'working' ? getWorkingStepProgressPolicy(item, turn.items, model.turns[index + 1]?.items[0]) : undefined}
+                    progressDisclosureTarget={model.steeredWorkingStepDisclosureTargets.get(item.id)}
+                    hasNextWorkingStep={model.workingStepIdsWithNextWorkingStep.has(item.id)} />)}
+                </React.Fragment>)}
+              </React.Fragment>))
+            }
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -86,6 +110,7 @@ if (!process.versions.electron) {
   })
 } else {
   const { app, BrowserWindow } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'profile'))
   app.whenReady().then(async () => {
     const win = new BrowserWindow({
       show: false,
@@ -154,6 +179,57 @@ if (!process.versions.electron) {
         return !final.closest('details') && final.getBoundingClientRect().top >= work.getBoundingClientRect().bottom
       })()`),
         true
+      )
+      const steeringSettings = {
+        expandProgressOnStart: true,
+        collapseProgressOnFinish: true,
+        collapseProgressOnNextTurn: true,
+        collapseStoppedSteeredFailedProgressOnFinish: true,
+        collapseStoppedSteeredFailedProgressOnNextTurn: true
+      }
+      const renderSteering = (status, settings = steeringSettings, nextTurn = false) =>
+        run(
+          `window.renderSteeredTurn(${JSON.stringify(status)}, ${JSON.stringify(settings)}, ${nextTurn})`
+        )
+      const steeringOpenStates = () =>
+        run(`[...document.querySelectorAll('details')].map(element => element.open).slice(0, 3)`)
+      await renderSteering('inProgress')
+      assert.deepEqual(
+        await steeringOpenStates(),
+        [true, true, true],
+        'internal steers do not collapse earlier progress'
+      )
+      await renderSteering('completed')
+      assert.deepEqual(
+        await steeringOpenStates(),
+        [false, false, false],
+        'all blocks collapse when final work finishes'
+      )
+      const keepOnFinish = {
+        ...steeringSettings,
+        collapseStoppedSteeredFailedProgressOnFinish: false
+      }
+      await renderSteering('completed', keepOnFinish)
+      assert.deepEqual(
+        await steeringOpenStates(),
+        [true, true, true],
+        'all blocks stay open when finish collapse is off'
+      )
+      await renderSteering('completed', keepOnFinish, true)
+      assert.deepEqual(
+        await steeringOpenStates(),
+        [false, false, false],
+        'the next ordinary turn collapses the whole steering chain'
+      )
+      await renderSteering(
+        'completed',
+        { ...keepOnFinish, collapseStoppedSteeredFailedProgressOnNextTurn: false },
+        true
+      )
+      assert.deepEqual(
+        await steeringOpenStates(),
+        [true, true, true],
+        'both disabled collapse settings preserve the whole chain'
       )
       console.log('Final response UI checks passed')
     } catch (error) {

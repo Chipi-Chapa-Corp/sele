@@ -122,3 +122,44 @@ test('active confirmation keeps a placeholder until the provider working step ar
     )
   }
 })
+
+test('incremental steering targets track final work and preserve previous snapshots', () => {
+  const earlier = { type: 'working', id: 'earlier', status: 'worked', items: [] }
+  const final = { type: 'working', id: 'final', status: 'working', items: [] }
+  const items = [
+    message('initial', 'user', 'Start'),
+    earlier,
+    { ...message('steer', 'user', 'Change direction'), kind: 'steering' },
+    final
+  ]
+  const initialModel = buildChatConversationModel(items)
+  const completedItems = [...items.slice(0, -1), { ...final, status: 'worked' }]
+  markChatItemsChanged(completedItems, items.length - 1, items)
+  const completedModel = buildChatConversationModel(completedItems, initialModel)
+  assert.deepEqual(completedModel, buildChatConversationModel([...completedItems]))
+  assert.deepEqual(initialModel.steeredWorkingStepDisclosureTargets.get('earlier'), {
+    status: 'working',
+    hasNextWorkingStep: false
+  })
+  assert.deepEqual(completedModel.steeredWorkingStepDisclosureTargets.get('earlier'), {
+    status: 'worked',
+    hasNextWorkingStep: false
+  })
+
+  const nextItems = [
+    ...completedItems,
+    message('next-user', 'user', 'Next ordinary turn'),
+    { type: 'working', id: 'next-working', status: 'working', items: [] }
+  ]
+  markChatItemsChanged(nextItems, completedItems.length, completedItems)
+  const nextModel = buildChatConversationModel(nextItems, completedModel)
+  assert.deepEqual(nextModel, buildChatConversationModel([...nextItems]))
+  assert.deepEqual(nextModel.steeredWorkingStepDisclosureTargets.get('earlier'), {
+    status: 'worked',
+    hasNextWorkingStep: true
+  })
+  assert.equal(
+    completedModel.steeredWorkingStepDisclosureTargets.get('earlier').hasNextWorkingStep,
+    false
+  )
+})

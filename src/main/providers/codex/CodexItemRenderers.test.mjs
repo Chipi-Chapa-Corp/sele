@@ -2,6 +2,10 @@ import { getToolDisplayLabel } from '../../../renderer/src/toolDisplayLabel.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildChatConversationModel } from '../../../renderer/src/chatConversationModel.ts'
+import {
+  getWorkingStepDefaultOpen,
+  getWorkingStepProgressPolicy
+} from '../../../renderer/src/workingStepDisclosure.ts'
 import { CodexTranscriptProjection, getChatItems } from './CodexItemRenderers.ts'
 import { updateIndexedTranscriptRecord } from '../transcriptProjection/recordChanges.ts'
 
@@ -396,6 +400,48 @@ test('marks an inline follow-up as a steering message', () => {
   assert.equal(steeringMessage?.kind, 'steering')
   assert.equal(steeringMessage?.label, 'Steered with')
   assert.equal(steeringMessage?.editTargetId, 'steered-turn:steering-message')
+})
+
+test('progress finished by steering uses steered collapse settings across displayed turns', () => {
+  for (const status of ['inProgress', 'completed']) {
+    const items = getChatItems([
+      {
+        id: 'steered-turn',
+        status,
+        items: [
+          { type: 'userMessage', id: 'initial', content: [{ type: 'text', text: 'Start' }] },
+          { type: 'agentMessage', id: 'before-steer', phase: 'commentary', text: 'Working' },
+          {
+            type: 'userMessage',
+            id: 'steer',
+            content: [{ type: 'text', text: 'Change direction' }]
+          },
+          { type: 'agentMessage', id: 'after-steer', phase: 'commentary', text: 'Continuing' }
+        ]
+      }
+    ])
+    const model = buildChatConversationModel(items)
+    assert.equal(model.turns.length, 2)
+    const step = model.turns[0].items.find((item) => item.type === 'working')
+    assert.equal(step.status, 'worked')
+    const policy = getWorkingStepProgressPolicy(step, model.turns[0].items, model.turns[1].items[0])
+    assert.equal(policy, 'stoppedSteeredFailed')
+    assert.equal(
+      getWorkingStepDefaultOpen(
+        step.status,
+        policy,
+        {
+          expandProgressOnStart: true,
+          collapseProgressOnFinish: true,
+          collapseProgressOnNextTurn: true,
+          collapseStoppedSteeredFailedProgressOnFinish: false,
+          collapseStoppedSteeredFailedProgressOnNextTurn: false
+        },
+        model.workingStepIdsWithNextWorkingStep.has(step.id)
+      ),
+      true
+    )
+  }
 })
 
 test('promotes the final response as soon as it starts streaming', () => {

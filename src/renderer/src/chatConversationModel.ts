@@ -1,5 +1,9 @@
 import type { ProviderChatItem, ProviderMessage, ProviderWorkingStep } from '../../shared/provider'
 import { startsProviderChatTurn, type ProviderChatTurn } from '../../shared/chatTurns.ts'
+import {
+  getSteeredWorkingStepDisclosureTargets,
+  type WorkingStepDisclosureTarget
+} from './workingStepDisclosure.ts'
 
 export type FollowingWorkingStep = {
   hasNextWorkingStep: boolean
@@ -15,6 +19,7 @@ export type ChatConversationModel = {
   stoppedTurnRetryMessages: ReadonlyMap<string, ProviderMessage>
   turns: ProviderChatTurn[]
   workingStepIdsWithNextWorkingStep: ReadonlySet<string>
+  steeredWorkingStepDisclosureTargets: ReadonlyMap<string, WorkingStepDisclosureTarget>
 }
 
 type ChatConversationModelInternals = {
@@ -145,7 +150,8 @@ const buildFullChatConversationModel = (
     lastNonPendingItem,
     stoppedTurnRetryMessages,
     turns,
-    workingStepIdsWithNextWorkingStep
+    workingStepIdsWithNextWorkingStep,
+    steeredWorkingStepDisclosureTargets: getSteeredWorkingStepDisclosureTargets(turns)
   }
   modelInternals.set(model, {
     sourceItems: items,
@@ -328,7 +334,8 @@ const buildIncrementalChatConversationModel = (
     lastNonPendingItem,
     stoppedTurnRetryMessages,
     turns,
-    workingStepIdsWithNextWorkingStep
+    workingStepIdsWithNextWorkingStep,
+    steeredWorkingStepDisclosureTargets: getSteeredWorkingStepDisclosureTargets(turns)
   }
   nextInternals.sourceItems = items
   modelInternals.set(model, nextInternals)

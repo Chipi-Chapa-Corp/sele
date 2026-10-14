@@ -4835,6 +4835,7 @@ export const useWorkspaceController = () => {
     effectiveChatTurnWindow,
     firstPendingChatItemId,
     followingWorkingStepsById,
+    steeredWorkingStepDisclosureTargets,
     handleNativeChatContentScroll,
     handleNativeChatContentWheel,
     loadChatTurnPage,
@@ -5484,6 +5485,9 @@ export const useWorkspaceController = () => {
 
   const renderChatTurn = (turnIndex: number, turn: ProviderChatTurn): React.ReactElement => {
     const turnIsLatestRendered = turn === renderedChatTurns.at(-1)
+    const lastItemIndex = chatItemIndexesById.get(turn.items.at(-1)?.id ?? '')
+    const nextTurnStartItem =
+      lastItemIndex === undefined ? undefined : visibleChatItems[lastItemIndex + 1]
 
     return (
       <div
@@ -5559,10 +5563,11 @@ export const useWorkspaceController = () => {
                 projectCwd={changesProjectCwd}
                 progressPolicy={
                   item.type === 'working'
-                    ? getWorkingStepProgressPolicy(item, turn.items)
+                    ? getWorkingStepProgressPolicy(item, turn.items, nextTurnStartItem)
                     : undefined
                 }
                 progressSettings={effectiveAppSettings.chat}
+                progressDisclosureTarget={steeredWorkingStepDisclosureTargets.get(item.id)}
                 rateLimitResetDisabled={rateLimitResetDisabled}
                 retryMessage={canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null}
                 retryStoppedTurnDisabled={stoppedTurnActionDisabled}
@@ -5590,49 +5595,60 @@ export const useWorkspaceController = () => {
   const renderSubagentChatTurn = (
     turnIndex: number,
     turn: ProviderChatTurn
-  ): React.ReactElement => (
-    <div
-      className="chat-detail__turn"
-      data-chat-turn-id={turn.id}
-      data-chat-turn-index={turnIndex}
-      key={turn.id}
-    >
-      {turn.items.map((item) => {
-        const itemIndex = subagentChatItemIndexesById.get(item.id) ?? -1
-        const followingWorkingStep = subagentChatConversationModel.followingWorkingStepsById.get(
-          item.id
-        )
+  ): React.ReactElement => {
+    const lastItemIndex = subagentChatItemIndexesById.get(turn.items.at(-1)?.id ?? '')
+    const nextTurnStartItem =
+      lastItemIndex === undefined ? undefined : subagentVisibleChatItems[lastItemIndex + 1]
 
-        return (
-          <ChatDetailItem
-            container={changesContainer}
-            followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
-            followingWorkingStepStatus={followingWorkingStep?.status}
-            hasNextWorkingStep={subagentChatConversationModel.workingStepIdsWithNextWorkingStep.has(
-              item.id
-            )}
-            item={item}
-            key={item.id}
-            cwd={changesCwd}
-            modelLabelsById={modelLabelsById}
-                resolvedModelIdsById={resolvedModelIdsById}
-            onLoadWorkingStep={handleLoadSubagentWorkingStep}
-            onLoadWorkingItem={handleLoadSubagentWorkingItem}
-            onLoadWorkingToolPage={handleLoadSubagentWorkingToolPage}
-            onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
-            previousItem={itemIndex > 0 ? subagentVisibleChatItems[itemIndex - 1] : null}
-            projectCwd={changesProjectCwd}
-            progressPolicy={
-              item.type === 'working' ? getWorkingStepProgressPolicy(item, turn.items) : undefined
-            }
-            progressSettings={effectiveAppSettings.chat}
-            selectedModelId={model}
-            turnIndex={turnIndex}
-          />
-        )
-      })}
-    </div>
-  )
+    return (
+      <div
+        className="chat-detail__turn"
+        data-chat-turn-id={turn.id}
+        data-chat-turn-index={turnIndex}
+        key={turn.id}
+      >
+        {turn.items.map((item) => {
+          const itemIndex = subagentChatItemIndexesById.get(item.id) ?? -1
+          const followingWorkingStep = subagentChatConversationModel.followingWorkingStepsById.get(
+            item.id
+          )
+
+          return (
+            <ChatDetailItem
+              container={changesContainer}
+              followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
+              followingWorkingStepStatus={followingWorkingStep?.status}
+              hasNextWorkingStep={subagentChatConversationModel.workingStepIdsWithNextWorkingStep.has(
+                item.id
+              )}
+              item={item}
+              key={item.id}
+              cwd={changesCwd}
+              modelLabelsById={modelLabelsById}
+              resolvedModelIdsById={resolvedModelIdsById}
+              onLoadWorkingStep={handleLoadSubagentWorkingStep}
+              onLoadWorkingItem={handleLoadSubagentWorkingItem}
+              onLoadWorkingToolPage={handleLoadSubagentWorkingToolPage}
+              onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+              previousItem={itemIndex > 0 ? subagentVisibleChatItems[itemIndex - 1] : null}
+              projectCwd={changesProjectCwd}
+              progressPolicy={
+                item.type === 'working'
+                  ? getWorkingStepProgressPolicy(item, turn.items, nextTurnStartItem)
+                  : undefined
+              }
+              progressSettings={effectiveAppSettings.chat}
+              progressDisclosureTarget={subagentChatConversationModel.steeredWorkingStepDisclosureTargets.get(
+                item.id
+              )}
+              selectedModelId={model}
+              turnIndex={turnIndex}
+            />
+          )
+        })}
+      </div>
+    )
+  }
 
   const showChatTurnDownButton = Boolean(
     !activeSubagentChatView &&

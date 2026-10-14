@@ -1,7 +1,46 @@
 import type { ProviderChatItem, ProviderWorkingStep } from '../../shared/provider'
 import type { AppChatProgressSettings } from './settings'
+import type { ProviderChatTurn } from '../../shared/chatTurns'
 
 export type WorkingStepProgressPolicy = 'regular' | 'stoppedSteeredFailed'
+
+export type WorkingStepDisclosureTarget = {
+  status: ProviderWorkingStep['status']
+  hasNextWorkingStep: boolean
+}
+
+const isSteeringMessage = (item: ProviderChatItem): boolean =>
+  item.type === 'message' &&
+  item.role === 'user' &&
+  (item.kind === 'steering' || item.label === 'Steering with' || item.label === 'Steered with')
+
+export const getSteeredWorkingStepDisclosureTargets = (
+  turns: readonly ProviderChatTurn[]
+): ReadonlyMap<string, WorkingStepDisclosureTarget> => {
+  const targets = new Map<string, WorkingStepDisclosureTarget>()
+  let target: WorkingStepDisclosureTarget | undefined
+  let nextTurnIsSteering = false
+  let hasLaterWorkingStep = false
+
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]
+    const isSteeredTurn = turn.items.some(isSteeringMessage)
+    if (!nextTurnIsSteering) target = undefined
+
+    // A chain of steering messages shares the last block's lifecycle. An internal
+    // steering boundary is not a next turn for the collapse-on-next-turn rule.
+    for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+      const item = turn.items[itemIndex]
+      if (item.type !== 'working') continue
+      target ??= { status: item.status, hasNextWorkingStep: hasLaterWorkingStep }
+      if (isSteeredTurn || nextTurnIsSteering) targets.set(item.id, target)
+      hasLaterWorkingStep = true
+    }
+    nextTurnIsSteering = isSteeredTurn
+  }
+
+  return targets
+}
 
 type ProgressDisclosurePolicy = {
   expandOnStart: boolean
@@ -31,16 +70,14 @@ const getProgressDisclosurePolicy = (
 
 export const getWorkingStepProgressPolicy = (
   step: ProviderWorkingStep,
-  turnItems: readonly ProviderChatItem[]
+  turnItems: readonly ProviderChatItem[],
+  nextTurnStartItem?: ProviderChatItem
 ): WorkingStepProgressPolicy => {
   if (step.status === 'stopped' || step.status === 'failed') return 'stoppedSteeredFailed'
 
-  return turnItems.some(
-    (item) =>
-      item.type === 'message' &&
-      item.role === 'user' &&
-      (item.kind === 'steering' || item.label === 'Steering with')
-  )
+  // Steering starts a new displayed turn, but also finishes the progress before it.
+  return turnItems.some(isSteeringMessage) ||
+    (nextTurnStartItem != null && isSteeringMessage(nextTurnStartItem))
     ? 'stoppedSteeredFailed'
     : 'regular'
 }
