@@ -165,5 +165,5 @@
         event.error instanceof Error ? event.error.message : event.message || 'Visualization error'
     })
   )
-  send('visualization:ready', { supportsRenderedMessage: true })
+  send('visualization:ready')
 })()

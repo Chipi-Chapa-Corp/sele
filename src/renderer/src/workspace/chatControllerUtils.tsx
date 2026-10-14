@@ -81,12 +81,8 @@ export const getChatKey = (chat: Pick<ProviderChat, 'providerId' | 'id'>): strin
 export const getProviderChatKey = (providerId: ProviderId, chatId: string): string =>
   getChatKey({ providerId, id: chatId })
 
-export const getTimestamp = (): number => Date.now()
-
-export const createChatCommitMarkerId = (): string => {
-  const randomId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
-  return `ai-commit:${Date.now()}:${randomId}`
-}
+export const createChatCommitMarkerId = (): string =>
+  `ai-commit:${Date.now()}:${crypto.randomUUID()}`
 
 export const trimRecentChatCache = (
   cache: Map<string, RecentChatCacheEntry>,

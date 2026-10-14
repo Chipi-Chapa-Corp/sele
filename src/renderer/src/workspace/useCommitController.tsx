@@ -21,7 +21,6 @@ import {
   getLastChatCommitMarkerAnchorId,
   getProviderChatKey,
   getScopedChatCommitPrompt,
-  getTimestamp,
   isActiveChatStatus
 } from './chatControllerUtils'
 import type { CommitControllerDependencies } from './controllerDependencies'
@@ -353,7 +352,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
     if (getCommitActionDisabled(action, commitMessage)) return false
 
     commitInFlightProjectKeysRef.current.add(commitProjectKey)
-    const startedAt = getTimestamp()
+    const startedAt = Date.now()
     const activityId = `git:${changesCwd}:${action}:${startedAt}`
     const activity = {
       source: 'git',

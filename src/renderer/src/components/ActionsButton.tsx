@@ -110,12 +110,6 @@ const emptyActionDraft: ActionDraft = {
   type: 'command'
 }
 
-const createActionId = (): string => {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
-
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
 const getDraftFromAction = (action: AppAction | null, defaultScope: AppActionScope): ActionDraft =>
   action
     ? {
@@ -236,7 +230,7 @@ export const ActionsButton = ({
     }
 
     const savedActionBase = {
-      id: draft.id ?? createActionId(),
+      id: draft.id ?? crypto.randomUUID(),
       icon: draft.icon,
       keybinding: draft.keybinding,
       name,

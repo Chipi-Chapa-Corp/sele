@@ -8,38 +8,28 @@ if (!process.versions.electron) {
   ;(async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sele-visualization-test-'))
     try {
-      for (const legacy of [false, true]) {
-        await build({
-          entryPoints: [path.resolve(__dirname, '../../src/main/visualizationProtocol.ts')],
-          bundle: true,
-          platform: 'node',
-          outfile: path.join(directory, legacy ? 'legacy-protocol.cjs' : 'protocol.cjs'),
-          external: ['electron'],
-          plugins: [
-            {
-              name: 'raw',
-              setup(builder) {
-                builder.onResolve({ filter: /\?raw$/ }, (args) => ({
-                  path: path.resolve(args.resolveDir, args.path.slice(0, -4)),
-                  namespace: 'raw'
-                }))
-                builder.onLoad({ filter: /.*/, namespace: 'raw' }, async (args) => ({
-                  contents:
-                    legacy && args.path.endsWith('/runtime.js')
-                      ? (await fs.readFile(args.path, 'utf8'))
-                          .replace(/send\('visualization:rendered',[\s\S]*?\n {4}\}\)/, '')
-                          .replace(
-                            'supportsRenderedMessage: true',
-                            'supportsRenderedMessage: false'
-                          )
-                      : await fs.readFile(args.path, 'utf8'),
-                  loader: 'text'
-                }))
-              }
+      await build({
+        entryPoints: [path.resolve(__dirname, '../../src/main/visualizationProtocol.ts')],
+        bundle: true,
+        platform: 'node',
+        outfile: path.join(directory, 'protocol.cjs'),
+        external: ['electron'],
+        plugins: [
+          {
+            name: 'raw',
+            setup(builder) {
+              builder.onResolve({ filter: /\?raw$/ }, (args) => ({
+                path: path.resolve(args.resolveDir, args.path.slice(0, -4)),
+                namespace: 'raw'
+              }))
+              builder.onLoad({ filter: /.*/, namespace: 'raw' }, async (args) => ({
+                contents: await fs.readFile(args.path, 'utf8'),
+                loader: 'text'
+              }))
             }
-          ]
-        })
-      }
+          }
+        ]
+      })
       await build({
         entryPoints: [path.resolve(__dirname, 'fixtures/visualization-message.tsx')],
         bundle: true,
@@ -109,6 +99,7 @@ if (!process.versions.electron) {
   const { registerVisualizationProtocol } = require(
     require('node:path').join(process.argv[2], 'protocol.cjs')
   )
+  app.setPath('userData', require('node:path').join(process.argv[2], 'user-data'))
   protocol.registerSchemesAsPrivileged([
     { scheme: 'sele-visualize', privileges: { standard: true, secure: true } }
   ])
@@ -636,32 +627,6 @@ if (!process.versions.electron) {
       console.log(
         'PASS: stable workspace identity, unchanged reloads, atomic document replacement and reload failure recovery'
       )
-      await window.loadURL('about:blank')
-      protocol.unhandle('sele-visualize')
-      require(
-        require('node:path').join(process.argv[2], 'legacy-protocol.cjs')
-      ).registerVisualizationProtocol()
-      await window.loadFile(process.argv[2] + '/message.html')
-      await window.webContents.executeJavaScript(
-        `window.appApi={getFileContents:async()=>({contents:${JSON.stringify(fragment)}})};const script=document.createElement('script');script.src='message.js';document.body.append(script);`
-      )
-      for (let i = 0; i < 100; i++) {
-        if (
-          await window.webContents.executeJavaScript(
-            `!!document.querySelector('.visualization__frame:not(.visualization__frame--pending)')`
-          )
-        )
-          break
-        await new Promise((resolve) => setTimeout(resolve, 50))
-      }
-      assert.equal(
-        await window.webContents.executeJavaScript(
-          `!!document.querySelector('.visualization__frame:not(.visualization__frame--pending)') && !document.querySelector('.visualization__actions button').disabled`
-        ),
-        true,
-        'An older main-process runtime cannot leave the refreshed UI stuck loading'
-      )
-      console.log('PASS: renderer hot reload with the older sandbox handshake')
       app.exit(0)
     } catch (error) {
       console.error(error)

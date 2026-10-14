@@ -11,7 +11,7 @@ import { getCodexTurnSubagents } from './codex/CodexSubagents.ts'
 import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns.ts'
 
 // Execute the real adapter navigation/detail methods, isolating only session transport and
-// unrelated metadata. This also tests the service's pre-existing getChat fallback on old code.
+// unrelated metadata.
 const harness = (provider, name, globals, state) => {
   const source = ts.createSourceFile(`${name}ProviderAdapter.ts`, readFileSync(new URL(`./${provider}/${name}ProviderAdapter.ts`, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true)
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name.text === `${name}ProviderAdapter`)
@@ -52,9 +52,7 @@ for (const [provider, name, globals] of [['claude', 'Claude', claude], ['copilot
     const adapter = harness(provider, name, globals, current)
     for (const startIndex of [1990, 20]) {
       visits = 0
-      const detail = adapter.getChatWindow
-        ? await adapter.getChatWindow('chat', { startIndex, limit: 10 })
-        : await adapter.getChat('chat')
+      const detail = await adapter.getChatWindow('chat', { startIndex, limit: 10 })
       assert.ok(visits <= 100, `adapter read ${visits} assistant payloads for ten turns`)
       assert.equal(detail.itemsStartTurnIndex, startIndex)
       assert.equal(detail.turnCount, 2000)
@@ -77,6 +75,7 @@ test('codex: actual detail construction reuses an unchanged active turn', () => 
   }, thread)
   Object.assign(adapter, {
     getRenderableTurns: thread => thread.turns, getProviderPendingMessages: () => [], getProviderPendingApproval: () => null,
+    getProviderPendingUserInput: () => null, userQuestions: { hasBlocking: () => false },
     externallyOwnedThreadIds: new Set(), writeAccessChecks: new Map(), threadRevisions: new Map(), pendingTurnStarts: new Set(), pendingTurnIds: new Map(), threadContainers: new Map(), contextUsageByThread: new Map(), goals: new Map()
   })
   const first = adapter.createChatDetail(thread)

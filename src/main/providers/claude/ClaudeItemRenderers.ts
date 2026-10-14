@@ -384,10 +384,6 @@ const getStandaloneUserText = (message: ClaudeTranscriptMessage): string | null 
   return blocks[0].text.trim()
 }
 
-export const isClaudeInterruptedRequestMarker = (message: ClaudeTranscriptMessage): boolean => {
-  return getStandaloneUserText(message) === interruptedRequestMarker
-}
-
 // After a Skill tool call Claude appends the skill body as a user-role message so the
 // model can follow it. The person never typed it, so it must not render as their message.
 export const isClaudeSkillContextMessage = (message: ClaudeTranscriptMessage): boolean => {

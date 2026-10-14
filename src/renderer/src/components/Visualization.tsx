@@ -27,7 +27,6 @@ function VisualizationContent({
   const framesRef = useRef(new Map<number, HTMLIFrameElement>())
   const activeDocumentRef = useRef<VisualizationDocument | null>(null)
   const warningIdsRef = useRef(new Set<number>())
-  const legacyFramesRef = useRef(new Set<number>())
   const nextDocumentIdRef = useRef(0)
   const [activeDocument, setActiveDocument] = useState<VisualizationDocument | null>(null)
   const [pendingDocument, setPendingDocument] = useState<VisualizationDocument | null>(null)
@@ -79,7 +78,6 @@ function VisualizationContent({
       const data = event.data
       const source = event.source as Window
       if (data?.type === 'visualization:ready') {
-        if (data.supportsRenderedMessage !== true) legacyFramesRef.current.add(document.id)
         source.postMessage(
           {
             type: 'visualization:init',
@@ -90,17 +88,7 @@ function VisualizationContent({
         )
         return
       }
-      // A hot-reloaded renderer may be talking to a main process started before the
-      // explicit completion signal existed. Its first content resize is the ready signal.
-      const legacyRendered =
-        data?.type === 'visualization:resize' &&
-        typeof data.height === 'number' &&
-        data.height > 0 &&
-        legacyFramesRef.current.has(document.id)
-      if (
-        (data?.type === 'visualization:rendered' || legacyRendered) &&
-        document.id === pendingDocument?.id
-      ) {
+      if (data?.type === 'visualization:rendered' && document.id === pendingDocument?.id) {
         // Promote the already initialized frame in place. Its key and DOM node stay unchanged.
         activeDocumentRef.current = document
         setActiveDocument(document)

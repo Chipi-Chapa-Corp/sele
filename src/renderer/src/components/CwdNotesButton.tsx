@@ -25,12 +25,6 @@ type CwdNotesButtonProps = {
   onNotesChange: (notes: ProviderCwdNote[]) => void
 }
 
-const createNoteId = (): string => {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
-
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
 const getNotesMenuStyle = (buttonRect: DOMRect): CSSProperties => {
   const viewportInset = 9.6
   const menuOffset = 4.8
@@ -137,7 +131,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
     onNotesChange([
       ...notes,
       {
-        id: createNoteId(),
+        id: crypto.randomUUID(),
         text,
         createdAt: Date.now()
       }

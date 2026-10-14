@@ -44,7 +44,6 @@ export type BrowserCookieConversionResult =
 const firefoxSameSiteNone = 0
 const firefoxSameSiteLax = 1
 const firefoxSameSiteStrict = 2
-const firefoxSameSiteUnset = 256
 const firefoxSchemeHttp = 0x01
 const firefoxSchemeHttps = 0x02
 const firefoxMillisecondExpirySchemaVersion = 15
@@ -140,10 +139,6 @@ const getFirefoxCookieSameSite = (
   if (sameSite === firefoxSameSiteLax) return 'lax'
   if (sameSite === firefoxSameSiteStrict) return 'strict'
   if (sameSite === firefoxSameSiteNone && secure) return 'no_restriction'
-  if (sameSite === firefoxSameSiteUnset || sameSite === firefoxSameSiteNone) {
-    return 'unspecified'
-  }
-
   return 'unspecified'
 }
 
@@ -192,9 +187,3 @@ export const convertFirefoxCookie = (
     skipReason: null
   }
 }
-
-export const getBrowserCookieDetails = (
-  row: FirefoxCookieRow,
-  schemaVersion: number,
-  nowSeconds = Date.now() / 1_000
-): BrowserCookieDetails | null => convertFirefoxCookie(row, schemaVersion, nowSeconds).cookie

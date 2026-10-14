@@ -2438,18 +2438,7 @@ export const useWorkspaceController = () => {
         ? currentServiceTier
         : (selectedModel.defaultServiceTier ?? null)
     )
-  }, [
-    effectiveAppSettings.chat.forceModel,
-    effectiveAppSettings.chat.forceReasoning,
-    effectiveAppSettings.chat.forceSpeed,
-    configProviderModelCatalogKey,
-    displayedModelCatalogKey,
-    model,
-    models,
-    modelsLoading,
-    modelsError,
-    activeModelCatalog
-  ])
+  }, [model, models, activeModelCatalog])
 
   const removeRecentChatCacheEntry = useCallback((providerId: ProviderId, chatId: string): void => {
     recentChatCacheRef.current.delete(getProviderChatKey(providerId, chatId))

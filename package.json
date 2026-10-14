@@ -53,7 +53,8 @@
     "test:visualization": "node scripts/tests/test-visualization.cjs",
     "lint:fix": "biome lint --write .",
     "benchmark:performance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/benchmarks/benchmark-performance-hotpaths.mjs",
-    "benchmark:codex-revisions": "node scripts/benchmarks/benchmark-codex-revisions.mjs"
+    "benchmark:codex-revisions": "node scripts/benchmarks/benchmark-codex-revisions.mjs",
+    "test:single-instance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/singleInstance.test.mjs && node scripts/tests/test-single-instance.cjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.263",

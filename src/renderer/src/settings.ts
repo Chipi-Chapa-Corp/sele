@@ -17,8 +17,6 @@ import {
 } from '../../shared/provider'
 import {
   appWindowZoomLevelDefault,
-  appWindowZoomLevelMax,
-  appWindowZoomLevelMin,
   appWindowZoomLevelToPercent,
   appWindowZoomPercentMax,
   appWindowZoomPercentMin,
@@ -146,8 +144,6 @@ export type AppCodexProviderSettings = {
 }
 
 export const appAppearanceZoomLevelDefault = appWindowZoomLevelDefault
-export const appAppearanceZoomLevelMin = appWindowZoomLevelMin
-export const appAppearanceZoomLevelMax = appWindowZoomLevelMax
 export const normalizeAppAppearanceZoomLevel = normalizeAppWindowZoomLevel
 export const appAppearanceZoomPercentMin = appWindowZoomPercentMin
 export const appAppearanceZoomPercentMax = appWindowZoomPercentMax
@@ -391,7 +387,7 @@ export const defaultAppSettings: AppSettings = {
     networkRetryCount: defaultNetworkRetrySettings.count,
     networkRetryDelaySeconds: defaultNetworkRetrySettings.delaySeconds,
     recentChatCacheLimit: 10,
-    displayUsage: 'chatContext',
+    displayUsage: 'short',
     hidePlans: false,
     enableActions: true,
     enableNotesButton: true,

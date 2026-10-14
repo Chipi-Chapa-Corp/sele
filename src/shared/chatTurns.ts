@@ -1,9 +1,4 @@
-import type {
-  ProviderChatItem,
-  ProviderMessage,
-  ProviderPendingMessage,
-  ProviderWorkingStep
-} from './provider'
+import type { ProviderChatItem, ProviderWorkingStep } from './provider'
 
 export type ProviderChatTurn = {
   id: string
@@ -75,15 +70,6 @@ export const getProviderChatTurns = (items: ProviderChatItem[]): ProviderChatTur
   return turns
 }
 
-const unloadMessageContent = <TMessage extends ProviderMessage | ProviderPendingMessage>(
-  message: TMessage
-): TMessage => ({
-  ...message,
-  content: '',
-  attachments: undefined,
-  contentLoaded: false
-})
-
 export const unloadWorkingStepItems = (step: ProviderWorkingStep): ProviderWorkingStep => {
   const stepWithoutSegments = { ...step }
   delete stepWithoutSegments.itemSegments
@@ -97,37 +83,4 @@ export const unloadWorkingStepItems = (step: ProviderWorkingStep): ProviderWorki
         : Math.max(step.itemCount ?? 0, step.items.length),
     itemsStartIndex: 0
   }
-}
-
-export const unloadChatItemsOutsideTurnRange = (
-  items: ProviderChatItem[],
-  startIndex: number,
-  endIndex: number
-): ProviderChatItem[] => {
-  const turns = getProviderChatTurns(items)
-  const loadedItemIds = new Set(
-    turns
-      .slice(Math.max(0, startIndex), Math.min(turns.length, endIndex))
-      .flatMap((turn) => turn.items.map((item) => item.id))
-  )
-  let changed = false
-  const nextItems = items.map((item) => {
-    if (loadedItemIds.has(item.id)) return item
-    if (item.type === 'working') {
-      if (item.itemsLoaded === false) return item
-      changed = true
-      return unloadWorkingStepItems(item)
-    }
-    if (
-      (item.type === 'message' || item.type === 'pendingMessage') &&
-      item.contentLoaded !== false
-    ) {
-      changed = true
-      return unloadMessageContent(item)
-    }
-
-    return item
-  })
-
-  return changed ? nextItems : items
 }
