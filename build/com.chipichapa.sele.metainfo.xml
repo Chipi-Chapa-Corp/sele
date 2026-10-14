@@ -23,8 +23,9 @@
       keep the tools needed for agent-assisted development close at hand.
     </p>
     <p>
-      The Flatpak uses host command execution so that Codex, Git, shells, and
-      developer tools installed on the computer remain available to Sele.
+      The Flatpak uses host command execution and filesystem access so that
+      Codex, Git, shells, and developer tools installed on the computer remain
+      fully available to Sele and its AI agents.
     </p>
   </description>
 
