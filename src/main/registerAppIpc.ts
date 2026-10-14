@@ -1,6 +1,7 @@
 import { prepareMessageAttachments } from './messageAttachments'
 import { getVideoMimeType } from '../shared/video'
 import { copyVideoFile } from './videoClipboard'
+import { writeClipboardImage } from './imageClipboard'
 import { diagnosticLog, handleLoggedIpc } from './logging'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile, spawn } from 'node:child_process'
@@ -10,7 +11,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import { app, BrowserWindow, clipboard, dialog, nativeImage, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, nativeTheme, shell } from 'electron'
 import type {
   AppColorScheme,
   AppAddProjectOptions,
@@ -3619,15 +3620,9 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  handleLoggedIpc(appIpcChannels.copyLocalImage, async (_event, value: unknown) => {
-    const options = getLocalMediaOptions(value)
-    const image = await runWithGitContainer(options.container, () =>
-      getLocalMedia(options.cwd ?? null, options.path, options.relativeTo)
-    )
-    const clipboardImage = nativeImage.createFromBuffer(Buffer.from(image.data))
-    if (clipboardImage.isEmpty()) throw new Error('Unable to copy this image.')
-    clipboard.writeImage(clipboardImage)
-  })
+  handleLoggedIpc(appIpcChannels.writeClipboardImage, (_event, value: unknown) =>
+    writeClipboardImage(value)
+  )
 
   for (const kind of ['image', 'video'] as const) {
     handleLoggedIpc(

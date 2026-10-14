@@ -55,7 +55,7 @@ if (!process.versions.electron) {
         `
         const { contextBridge, ipcRenderer } = require('electron')
         contextBridge.exposeInMainWorld('appApi', Object.fromEntries(
-          ['getLocalVideo', 'getLocalImage', 'copyLocalVideo', 'saveLocalVideo', 'copyLocalImage', 'saveLocalImage']
+          ['getLocalVideo', 'getLocalImage', 'copyLocalVideo', 'saveLocalVideo', 'writeClipboardImage', 'saveLocalImage']
             .map(name => [name, options => ipcRenderer.invoke(name, options)])
         ))
       `
@@ -90,7 +90,7 @@ if (!process.versions.electron) {
         'getLocalImage',
         'copyLocalVideo',
         'saveLocalVideo',
-        'copyLocalImage',
+        'writeClipboardImage',
         'saveLocalImage'
       ]) {
         ipcMain.handle(name, (_event, options) => {
@@ -185,8 +185,9 @@ if (!process.versions.electron) {
       await js('document.querySelector(\'[data-local-image-path="./image.png"]\').click()', true)
       await waitFor("document.querySelector('.image-lightbox img')")
       await js('document.querySelector(\'[aria-label="Copy Image"]\').click()')
+      await waitFor('document.querySelector(\'[aria-label="Copy Image"] svg.lucide-check\')')
       await js('document.querySelector(\'[aria-label="Save Image"]\').click()')
-      assert.ok(calls.some((call) => call.name === 'copyLocalImage'))
+      assert.ok(calls.some((call) => call.name === 'writeClipboardImage'))
       assert.ok(calls.some((call) => call.name === 'saveLocalImage'))
       if (process.platform === 'linux') {
         const { copyVideoFile } = require(path.join(directory, 'clipboard.cjs'))

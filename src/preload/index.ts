@@ -88,7 +88,7 @@ const appApi: AppApi = {
   copyLocalVideo: (options) => ipcRenderer.invoke(appIpcChannels.copyLocalVideo, options),
   saveLocalVideo: (options) => ipcRenderer.invoke(appIpcChannels.saveLocalVideo, options),
   getLocalImage: (options) => ipcRenderer.invoke(appIpcChannels.getLocalImage, options),
-  copyLocalImage: (options) => ipcRenderer.invoke(appIpcChannels.copyLocalImage, options),
+  writeClipboardImage: (png) => ipcRenderer.invoke(appIpcChannels.writeClipboardImage, png),
   saveLocalImage: (options) => ipcRenderer.invoke(appIpcChannels.saveLocalImage, options),
   onColorSchemeUpdated: (listener): (() => void) => {
     const handleColorSchemeUpdated = (_: IpcRendererEvent, scheme: AppColorScheme): void => {

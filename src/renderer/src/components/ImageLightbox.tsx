@@ -3,6 +3,7 @@ import { Check, Copy, Download, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { AppLocalImageOptions } from '../../../shared/app'
 import { appApi } from '../appApi'
+import { copyRenderedImage } from '../imageClipboard'
 import { Button } from './Button'
 import { PopupWindow } from './PopupWindow'
 import './ImageLightbox.css'
@@ -29,6 +30,7 @@ export const ImageLightbox = ({
 }: ImageLightboxProps): React.ReactElement => {
   const [copyState, setCopyState] = useState<CopyState>('idle')
   const [saveState, setSaveState] = useState<SaveState>('idle')
+  const imageRef = useRef<HTMLImageElement | null>(null)
   const copyFeedbackTimerRef = useRef<number | null>(null)
   const saveFeedbackTimerRef = useRef<number | null>(null)
 
@@ -54,7 +56,7 @@ export const ImageLightbox = ({
   )
 
   const handleCopy = async (): Promise<void> => {
-    if (!path || copyState === 'copying') return
+    if (copyState === 'copying' || (mediaType === 'video' ? !path : !imageRef.current)) return
 
     if (copyFeedbackTimerRef.current !== null) {
       window.clearTimeout(copyFeedbackTimerRef.current)
@@ -62,10 +64,11 @@ export const ImageLightbox = ({
     }
     setCopyState('copying')
     try {
-      await (mediaType === 'video' ? appApi.copyLocalVideo : appApi.copyLocalImage)({
-        ...localImageOptions,
-        path
-      })
+      if (mediaType === 'video' && path) {
+        await appApi.copyLocalVideo({ ...localImageOptions, path })
+      } else if (imageRef.current) {
+        await copyRenderedImage(imageRef.current)
+      }
       setCopyState('copied')
       copyFeedbackTimerRef.current = window.setTimeout(() => {
         copyFeedbackTimerRef.current = null
@@ -126,10 +129,10 @@ export const ImageLightbox = ({
             {mediaType === 'video' ? (
               <video src={imageUrl} aria-label={`${name} preview`} controls autoPlay playsInline />
             ) : (
-              <img src={imageUrl} alt={`${name} preview`} />
+              <img ref={imageRef} src={imageUrl} alt={`${name} preview`} />
             )}
             <div className="image-lightbox__actions">
-              {path && (
+              {(mediaType === 'image' || path) && (
                 <>
                   <Button
                     disabled={copyState === 'copying'}
@@ -148,23 +151,25 @@ export const ImageLightbox = ({
                       copyState === 'error' ? `Unable to copy ${mediaType}` : `Copy ${mediaType}`
                     }
                   />
-                  <Button
-                    disabled={saveState === 'saving'}
-                    aria-label={`Save ${name}`}
-                    callback={handleSave}
-                    icon={
-                      saveState === 'saved' ? (
-                        <Check aria-hidden="true" />
-                      ) : (
-                        <Download aria-hidden="true" />
-                      )
-                    }
-                    size="small"
-                    theme="secondary"
-                    title={
-                      saveState === 'error' ? `Unable to save ${mediaType}` : `Save ${mediaType}`
-                    }
-                  />
+                  {path && (
+                    <Button
+                      disabled={saveState === 'saving'}
+                      aria-label={`Save ${name}`}
+                      callback={handleSave}
+                      icon={
+                        saveState === 'saved' ? (
+                          <Check aria-hidden="true" />
+                        ) : (
+                          <Download aria-hidden="true" />
+                        )
+                      }
+                      size="small"
+                      theme="secondary"
+                      title={
+                        saveState === 'error' ? `Unable to save ${mediaType}` : `Save ${mediaType}`
+                      }
+                    />
+                  )}
                 </>
               )}
               <Button

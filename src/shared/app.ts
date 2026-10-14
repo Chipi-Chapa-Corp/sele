@@ -612,7 +612,7 @@ export type AppApi = {
   copyLocalVideo: (options: AppLocalMediaOptions) => Promise<void>
   saveLocalVideo: (options: AppLocalMediaOptions) => Promise<string | null>
   getLocalImage: (options: AppLocalImageOptions) => Promise<AppLocalImage>
-  copyLocalImage: (options: AppLocalImageOptions) => Promise<void>
+  writeClipboardImage: (png: ArrayBuffer) => Promise<void>
   saveLocalImage: (options: AppLocalImageOptions) => Promise<string | null>
   onColorSchemeUpdated: (listener: (scheme: AppColorScheme) => void) => () => void
   onWindowStateUpdated: (listener: (state: AppWindowState) => void) => () => void
@@ -678,6 +678,6 @@ export const appIpcChannels = {
   copyLocalVideo: 'app:copy-local-video',
   saveLocalVideo: 'app:save-local-video',
   getLocalImage: 'app:get-local-image',
-  copyLocalImage: 'app:copy-local-image',
+  writeClipboardImage: 'app:write-clipboard-image',
   saveLocalImage: 'app:save-local-image'
 } as const

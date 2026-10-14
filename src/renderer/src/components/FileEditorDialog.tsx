@@ -51,6 +51,7 @@ import {
   isMissingFileError
 } from '../fileEnvironment'
 import { createLocalImageUrl } from '../localImage'
+import { copyRenderedImage } from '../imageClipboard'
 import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { Button } from './Button'
 import { Dropdown, type DropdownOption } from './Dropdown'
@@ -381,6 +382,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [contents, setContents] = useState('')
   const [savedContents, setSavedContents] = useState('')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
+  const imageRef = useRef<HTMLImageElement | null>(null)
   const [version, setVersion] = useState<string | null>(null)
   const [editable, setEditable] = useState<boolean | null>(null)
   const [gitRepositoryRoot, setGitRepositoryRoot] = useState<string | null>(null)
@@ -1231,7 +1233,13 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   ])
 
   const handleCopyImage = useCallback(async (): Promise<void> => {
-    if (!canShowImage || visibleLoadState !== 'ready' || copyState === 'copying') return
+    if (
+      !canShowImage ||
+      visibleLoadState !== 'ready' ||
+      copyState === 'copying' ||
+      !imageRef.current
+    )
+      return
 
     if (copyFeedbackTimerRef.current !== null) {
       window.clearTimeout(copyFeedbackTimerRef.current)
@@ -1241,11 +1249,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     setEditorError(null)
 
     try {
-      await appApi.copyLocalImage({
-        container: fileContainer,
-        cwd: target.cwd,
-        path: target.path
-      })
+      await copyRenderedImage(imageRef.current)
       setCopyState('copied')
       copyFeedbackTimerRef.current = window.setTimeout(() => {
         copyFeedbackTimerRef.current = null
@@ -1253,10 +1257,16 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       }, 1000)
     } catch (copyError) {
       console.error('[caught:FileEditorDialog:FileEditorDialog]', copyError)
-      setEditorError(getErrorMessage(copyError, 'Unable to copy this image.'))
+      setEditorError(
+        getErrorMessage(
+          copyError,
+          'Could not copy the image to the clipboard. No error details were provided. ' +
+            'Try copying again.'
+        )
+      )
       setCopyState('error')
     }
-  }, [canShowImage, copyState, fileContainer, target.cwd, target.path, visibleLoadState])
+  }, [canShowImage, copyState, visibleLoadState])
 
   const handleOpenInApp = useCallback(async (): Promise<void> => {
     try {
@@ -1661,7 +1671,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
               {canShowImage && visibleLoadState === 'ready' && imageDataUrl && (
                 <div className="file-editor-dialog__image-preview">
-                  <img src={imageDataUrl} alt={fileName} draggable={false} />
+                  <img ref={imageRef} src={imageDataUrl} alt={fileName} draggable={false} />
                 </div>
               )}
 

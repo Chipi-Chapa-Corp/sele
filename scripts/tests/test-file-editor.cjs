@@ -13,6 +13,8 @@ if (!process.versions.electron) {
             import {createRoot} from 'react-dom/client'
             import {flushSync} from 'react-dom'
             import {FileEditorDialog} from './src/renderer/src/components/FileEditorDialog'
+            import {ImageLightbox} from './src/renderer/src/components/ImageLightbox'
+            import {copyRenderedImage} from './src/renderer/src/imageClipboard'
             const root = createRoot(document.getElementById('root'))
             let key = 0
             window.renderEditor = (path = 'docs/README.md') => flushSync(() => root.render(
@@ -21,6 +23,10 @@ if (!process.versions.electron) {
                 onClose={() => { window.closedCount++; root.render(null) }} />
             ))
             window.renderEditor()
+            window.copyRenderedImage = copyRenderedImage
+            window.renderLightbox = (imageUrl, path) => flushSync(() => root.render(
+              <ImageLightbox key={++key} imageUrl={imageUrl} name="Clipboard fixture" path={path} onClose={() => root.render(null)} />
+            ))
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -43,6 +49,21 @@ if (!process.versions.electron) {
         jsx: 'automatic',
         outfile: path.join(directory, 'test.js')
       })
+      await require('esbuild').build({
+        entryPoints: [path.resolve(__dirname, '../../src/main/imageClipboard.ts')],
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        external: ['electron'],
+        outfile: path.join(directory, 'clipboard.cjs')
+      })
+      await fs.writeFile(
+        path.join(directory, 'preload.cjs'),
+        `const {contextBridge, ipcRenderer} = require('electron');
+        contextBridge.exposeInMainWorld('clipboardApi', {
+          writeClipboardImage: png => ipcRenderer.invoke('test:copy-image', png)
+        });`
+      )
       await fs.writeFile(
         path.join(directory, 'test.html'),
         `<!doctype html>
@@ -50,13 +71,14 @@ if (!process.versions.electron) {
         <div id="root"></div><script>
           window.closedCount = 0; window.writes = []; window.images = []; window.failSave = false;
           window.appApi = {
+            ...window.clipboardApi,
             getFileContents: async () => ({contents: '# README\\n![Local](./images/a%20b.svg)\\n<img src="../logo.svg" alt="Logo">\\n![Remote](https://example.com/image.png)',
               version: 'v1', editable: true, gitRepositoryRoot: '/project'}),
             getFileTree: async () => ({repositoryRoot: '/project/subfolder', branchName: 'main', files: []}),
             getGitFileDiff: async () => ({diff: ''}),
             getLocalImage: async options => {
               window.images.push(options);
-              return {data: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>').buffer, mimeType: 'image/svg+xml'};
+              return {data: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="5" height="10" fill="red"/></svg>').buffer, mimeType: 'image/svg+xml'};
             },
             writeFileContents: async options => {
               window.writes.push(options);
@@ -85,15 +107,24 @@ if (!process.versions.electron) {
     process.exitCode = 1
   })
 } else {
-  const { app, BrowserWindow } = require('electron')
+  const { app, BrowserWindow, clipboard, ipcMain, nativeImage } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'profile'))
+  const { writeClipboardImage } = require(path.join(process.argv[2], 'clipboard.cjs'))
+  ipcMain.handle('test:copy-image', (_event, png) => writeClipboardImage(png))
   app.whenReady().then(async () => {
     const window = new BrowserWindow({
       show: false,
       width: 1100,
       height: 800,
-      webPreferences: { offscreen: true }
+      webPreferences: { offscreen: true, preload: path.join(process.argv[2], 'preload.cjs') }
     })
-    const run = (source) => window.webContents.executeJavaScript(source)
+    const run = async (source) => {
+      try {
+        return await window.webContents.executeJavaScript(source)
+      } catch (error) {
+        throw new Error(`Renderer check failed: ${source}`, { cause: error })
+      }
+    }
     const settle = () => new Promise((resolve) => setTimeout(resolve, 180))
     const click = async (selector) => {
       await run(`document.querySelector(${JSON.stringify(selector)}).click()`)
@@ -253,8 +284,78 @@ if (!process.versions.electron) {
       await settle()
       await close()
       assert.equal(await run('window.closedCount'), 3, 'clean files close directly')
+
+      // SVG renders in Chromium but cannot be passed directly to NativeImage.
+      await run("window.renderEditor('picture.svg')")
+      await settle()
+      const imageReads = await run('window.images.length')
+      const svgUrl = await run(`document.querySelector('img[alt="picture.svg"]').src`)
+      const svgBytes = await run(`fetch(${JSON.stringify(svgUrl)}).then(r => r.text())`)
+      assert.equal(nativeImage.createFromBuffer(Buffer.from(svgBytes)).isEmpty(), true)
+      const assertClipboardPixels = async () => {
+        const copied = clipboard.readImage()
+        assert.deepEqual(copied.getSize(), { width: 10, height: 10 })
+        assert.deepEqual(
+          await run(`(async () => {
+            const image = new Image(); image.src = ${JSON.stringify(copied.toDataURL())};
+            await image.decode();
+            const canvas = document.createElement('canvas'); canvas.width = canvas.height = 10;
+            const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+            return [Array.from(context.getImageData(1, 1, 1, 1).data),
+              Array.from(context.getImageData(8, 1, 1, 1).data)];
+          })()`),
+          [
+            [255, 0, 0, 255],
+            [0, 0, 0, 0]
+          ],
+          'clipboard preserves original dimensions, color, and transparency'
+        )
+      }
+      clipboard.clear()
+      await click('[aria-label="Copy picture.svg"]')
+      assert.equal(
+        await run(`document.querySelector('[aria-label="Copy picture.svg"]').textContent`),
+        'Copied'
+      )
+      await assertClipboardPixels()
+      assert.equal(await run('window.images.length'), imageReads, 'copy does not reread the file')
+
+      // The lightbox also copies displayed images, including images without a file path.
+      const svgDataUrl = `data:image/svg+xml;base64,${Buffer.from(svgBytes).toString('base64')}`
+      for (const imagePath of ['/missing-after-preview.svg', null]) {
+        await run(
+          `window.renderLightbox(${JSON.stringify(svgDataUrl)}, ${JSON.stringify(imagePath)})`
+        )
+        await settle()
+        clipboard.clear()
+        await click('[aria-label="Copy Clipboard fixture"]')
+        await assertClipboardPixels()
+      }
+
+      // Raster sources follow the same browser-to-PNG path.
+      for (const mimeType of ['image/png', 'image/webp', 'image/jpeg']) {
+        clipboard.clear()
+        await run(`(async () => {
+          const canvas = document.createElement('canvas'); canvas.width = 13; canvas.height = 7;
+          const context = canvas.getContext('2d'); context.fillStyle = 'red'; context.fillRect(0, 0, 13, 7);
+          const image = new Image(); image.src = canvas.toDataURL(${JSON.stringify(mimeType)});
+          await window.copyRenderedImage(image);
+        })()`)
+        assert.deepEqual(clipboard.readImage().getSize(), { width: 13, height: 7 }, mimeType)
+      }
+      const beforeInvalidCopy = clipboard.readImage().toPNG()
+      assert.throws(() => writeClipboardImage(new ArrayBuffer(0)), /No image data/)
+      assert.throws(
+        () => writeClipboardImage(new Uint8Array([1, 2, 3]).buffer),
+        /could not be decoded/
+      )
+      assert.deepEqual(
+        clipboard.readImage().toPNG(),
+        beforeInvalidCopy,
+        'invalid data preserves clipboard'
+      )
       console.log(
-        'File editor checks passed: relative Markdown/HTML images, absolute file paths, container context, images retained through resizing and saving, save/discard/cancel, save failures, and pending saves.'
+        'File editor checks passed: Markdown images, resizing, saving, save/discard/cancel, and real clipboard round trips for SVG, PNG, WebP, JPEG in the editor and lightbox.'
       )
     } catch (error) {
       console.error(error)
