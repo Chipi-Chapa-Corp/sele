@@ -1,4 +1,5 @@
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
+import { isDefaultOpenCodeTitle } from './OpenCodeChatTitle.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -47,7 +48,6 @@ const maxToolOutputLength = 160_000
 const maxRawToolValueLength = 80_000
 const maxChatTitleLength = 80
 const truncatedMarker = '… [truncated to keep the app responsive]'
-const defaultChatTitlePattern = /^New session - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -267,7 +267,7 @@ export const getOpenCodeDisplayTitle = (
   title: string,
   messages: OpenCodeMessageWithParts[]
 ): string => {
-  if (!defaultChatTitlePattern.test(title)) return title
+  if (!isDefaultOpenCodeTitle(title)) return title
   const firstUserMessage = messages.find((message) => message.info.role === 'user')
   const firstUserText = getUserText(firstUserMessage?.parts ?? [])
     .replace(/\s+/g, ' ')

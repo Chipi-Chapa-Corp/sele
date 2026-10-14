@@ -76,6 +76,11 @@ import {
   OpenCodeGoNoSubscriptionError
 } from './OpenCodeUsage'
 import { mapOpenCodeModels, parseOpenCodeModelId } from './OpenCodeModels'
+import {
+  generateOpenCodeChatTitle,
+  isDefaultOpenCodeTitle,
+  selectOpenCodeTitleModels
+} from './OpenCodeChatTitle.ts'
 import { getOpenCodePermissionRules } from './OpenCodePermissions'
 import { OpenCodeServerClient } from './OpenCodeServerClient'
 import { getOpenCodeUpdateAvailability, updateOpenCodeProvider } from './OpenCodeProviderUpdate'
@@ -382,6 +387,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private updateTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private completionCoordinator = new ProviderConversationCompletionCoordinator()
   private modelContextLimits = new Map<string, number>()
+  private titleGenerations = new WeakSet<OpenCodeChatState>()
+  private manualTitles = new WeakSet<OpenCodeChatState>()
+  private titleWrites = new WeakMap<OpenCodeChatState, Promise<void>>()
   private oneShotGenerations = new Map<string, OpenCodeOneShotGeneration>()
   private oneShotSessionIds = new Set<string>()
   private canceledOneShotGenerationIds = new Set<string>()
@@ -764,6 +772,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
+    this.manualTitles.add(state)
+    // A manual rename must be the last write even if an automatic update is in flight.
+    await this.titleWrites.get(state)
     const client = (await this.getClientEntry(state.container)).client
     state.session = requireData(
       await client.session.update(
@@ -1934,6 +1945,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         await new Promise((resolve) => setTimeout(resolve, updateDelayMs))
         const client = (await this.getClientEntry(state.container)).client
         await this.refreshState(state, client)
+        this.recoverChatTitle(state, client)
       },
       publishReconciled: () => this.emitUpdateNow(state, false, false),
       isCurrent: () => this.states.get(state.id) === state,
@@ -1941,6 +1953,85 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         console.error(`Unable to ${phase} completed OpenCode session ${state.id}`, error)
       }
     })
+
+  private recoverChatTitle = (state: OpenCodeChatState, client: OpencodeClient): void => {
+    const isCurrent = (): boolean =>
+      this.states.get(state.id) === state &&
+      !this.manualTitles.has(state) &&
+      Boolean(
+        state.session && !state.session.parentID && isDefaultOpenCodeTitle(state.session.title)
+      )
+    if (!isCurrent() || this.titleGenerations.has(state) || state.stopped || state.failed) return
+    const firstUser = state.messages.find((message) => message.info.role === 'user')
+    if (!firstUser || firstUser.info.role !== 'user') return
+    const prompt = firstUser.parts
+      .flatMap((part) =>
+        part.type === 'text' && !part.synthetic && !part.ignored ? [part.text] : []
+      )
+      .join('\n')
+      .trim()
+    if (!prompt) return
+    const latestUser = state.messages.findLast((message) => message.info.role === 'user')!
+    const model = latestUser.info.role === 'user' ? latestUser.info.model : firstUser.info.model
+    const chatModel = `${model.providerID}/${model.modelID}`
+    this.titleGenerations.add(state)
+    void (async () => {
+      const request = { throwOnError: true as const, signal: AbortSignal.timeout(10_000) }
+      const [catalog, config] = await Promise.all([
+        client.provider.list({ directory: state.directory }, request).then(requireData),
+        client.config.get({ directory: state.directory }, request).then(requireData)
+      ])
+      if (config.agent?.title?.disable || !isCurrent()) return
+      const models = selectOpenCodeTitleModels(
+        catalog.all,
+        catalog.connected,
+        config.agent?.title?.model ?? config.small_model,
+        chatModel
+      )
+      const title = await generateOpenCodeChatTitle(
+        client,
+        state.directory,
+        prompt,
+        models,
+        isCurrent,
+        (session, message) =>
+          this.reportMessageTokenUsage(
+            { id: session.id, container: state.container, session },
+            message
+          )
+      )
+      if (!title || !isCurrent()) return
+      const write = (async () => {
+        // Native generation or another client may have named the chat while we waited.
+        const latest = requireData(
+          await client.session.get(
+            { sessionID: state.id, directory: state.directory },
+            { throwOnError: true, signal: AbortSignal.timeout(10_000) }
+          )
+        )
+        if (!isCurrent() || !isDefaultOpenCodeTitle(latest.title)) return
+        state.session = requireData(
+          await client.session.update(
+            { sessionID: state.id, directory: state.directory, title },
+            { throwOnError: true, signal: AbortSignal.timeout(10_000) }
+          )
+        )
+        this.scheduleUpdate(state.id)
+      })().catch((error) => {
+        console.error('[OpenCodeProviderAdapter:recoverChatTitle] Unable to save title', error)
+      })
+      this.titleWrites.set(state, write)
+      try {
+        await write
+      } finally {
+        this.titleWrites.delete(state)
+      }
+    })()
+      .catch((error) => {
+        console.error('[OpenCodeProviderAdapter:recoverChatTitle] Unable to recover title', error)
+      })
+      .finally(() => this.titleGenerations.delete(state))
+  }
 
   private emitUpdateNow = async (
     state: OpenCodeChatState,
