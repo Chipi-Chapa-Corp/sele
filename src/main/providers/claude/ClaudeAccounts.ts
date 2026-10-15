@@ -19,6 +19,7 @@ type Login = {
   accountId: string
   flow: ClaudeAccountLogin
   reauthentication?: boolean
+  verified?: boolean
   directory: string | null
 }
 
@@ -249,11 +250,15 @@ export class ClaudeAccounts {
     if (!status.loggedIn || status.authMethod !== 'claude.ai') {
       throw new Error('Claude did not save a subscription login for this account.')
     }
+    if (this.logins.get(key) !== login) throw new Error('Claude sign-in was canceled.')
+    login.verified = true
   }
 
   complete = async (accountId: string, options: ProviderSourceOptions = {}) => {
     const login = this.logins.get(getContainerTargetKey(options.container))
     const store = await this.store(options)
+    if (login?.reauthentication && !login.verified)
+      throw new Error('Claude sign-in has not been verified.')
     const result =
       login?.accountId === accountId && login.reauthentication
         ? await store.get()

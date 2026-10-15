@@ -1,7 +1,15 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { getSubagentPageNavigationEpoch, refreshSubagentDetail } from '../subagentUi'
 import { chatWorkingItemPageSize, chatWorkingItemWindowSize } from './controllerTypes'
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { flushSync } from 'react-dom'
 import type { ProviderSubagent, ProviderUsageOptions } from '../../../shared/provider'
 import { providerIds } from '../../../shared/provider'
@@ -711,9 +719,15 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       available: usageProviderAvailable,
       revision: providerAccountRevision
     }),
-    [changesContainer, usageProviderId, usageProviderAvailable, providerAccountRevision]
+    [changesContainerKey, usageProviderId, usageProviderAvailable, providerAccountRevision]
   )
   const usageScopeRef = useRef<object | null>(usageScope)
+  const [usageAuthentication, setUsageAuthentication] = useState<{
+    scope: object
+    required: boolean
+  } | null>(null)
+  const usageAuthenticationRequired =
+    usageAuthentication?.scope === usageScope && usageAuthentication.required
   useLayoutEffect(() => {
     usageScopeRef.current = usageScope
     return () => {
@@ -737,6 +751,10 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       try {
         const usage = await providerApi.getUsage(providerId, { ...options, container })
         if (usageScopeRef.current !== usageScope) return
+        setUsageAuthentication({
+          scope: usageScope,
+          required: usage.authenticationRequired === true
+        })
         setAccountUsage((currentUsage) => mergeAccountUsage(currentUsage, usage))
         setAccountUsageState('ready')
       } catch (error) {
@@ -797,7 +815,11 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     providerApi
       .getUsage(providerId, { container })
       .then((usage) => {
-        if (!active) return
+        if (!active || usageScopeRef.current !== usageScope) return
+        setUsageAuthentication({
+          scope: usageScope,
+          required: usage.authenticationRequired === true
+        })
         setAccountUsage((currentUsage) => mergeAccountUsage(currentUsage, usage))
         setAccountUsageState('ready')
       })
@@ -820,7 +842,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     usageProviderAvailabilityReady,
     usageProviderAvailable,
     usageProviderId,
-    providerAccountRevision
+    providerAccountRevision,
+    usageScope
   ])
   const latestAssistantMessage =
     chatDetail && chatDetail.id === selectedChatId
@@ -1128,6 +1151,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       setChatSearchMatchCount(matches.length)
       setChatSearchActiveIndex(activeIndex)
       setChatSearchHighlights(matches, activeIndex)
+      const wasFollowingBottom = chatAutoScrollEnabledRef.current
       chatAutoScrollEnabledRef.current = false
       chatAutoScrollTargetRef.current = null
 
@@ -1137,6 +1161,12 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           contentRef.current ?? searchContent,
           'auto'
         )
+      }
+      // Even an unmatched search stops following. Save its viewport now, since
+      // bottom following no longer pays for a detailed anchor on every resize.
+      const contentElement = contentRef.current
+      if (wasFollowingBottom && contentElement && selectedChatKey) {
+        chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, selectedChatKey)
       }
     }
 
@@ -1511,6 +1541,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     pendingUserInput,
     recentlyOpenedFilesWorkspaceKey,
     refreshAccountUsage,
+    usageAuthenticationRequired,
     resetAccountRateLimits,
     resolvingApprovalId,
     scopedCommitActivitiesByMarkerId,

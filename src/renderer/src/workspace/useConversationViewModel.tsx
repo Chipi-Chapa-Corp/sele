@@ -48,6 +48,7 @@ import type { ConversationViewModelDependencies } from './viewModelDependencies'
 // Return shape is inferred from the view-model declarations below.
 export function useConversationViewModel(dependencies: ConversationViewModelDependencies) {
   const {
+    authenticationRequired,
     selectedChat,
     newSessionProviderAvailable,
     providerUpdateInProgress,
@@ -102,7 +103,6 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   const cursorWindowRef = useRef<ChatCursorWindow | null>(null)
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const chatReadOnly = getChatWriteAccessPresentation(chatDetail).readOnly
-  const authenticationRequired = chatDetail?.authenticationRequired === true
   const messageBoxDisabled = selectedChat
     ? providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
@@ -110,7 +110,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       authenticationRequired ||
       Boolean(activeSubagentChatView) ||
       (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
-    : providerUpdateInProgress || !newSessionProviderAvailable
+    : providerUpdateInProgress || !newSessionProviderAvailable || authenticationRequired
   const canEditOwnMessages = Boolean(
     selectedChat &&
       !activeSubagentChatView &&

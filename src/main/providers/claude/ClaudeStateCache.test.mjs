@@ -170,6 +170,7 @@ test('reopened authentication failures restore the error state until a later rea
     const { instance } = makeHarness({ records: () => messages })
     const state = await instance.ensureState('expired')
     assert.equal(state.failed, messages.length === 2)
+    assert.equal(instance.authenticationFailures.has('host'), messages.length === 2)
     assert.deepEqual(state.messages, messages)
     instance.dispose()
   }

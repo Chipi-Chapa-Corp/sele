@@ -9,6 +9,7 @@ import { getMessageModelLabel } from '../messageModelLabel'
 import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplayLabel'
 import { Marked } from 'marked'
 import markedFootnote from 'marked-footnote'
+import { createBoundedTextCache } from '../boundedTextCache'
 import { MarkdownContent } from './MarkdownContent'
 import { WorkingMark, type WorkingMarkAnimation } from './WorkingMark'
 import { visualizationExtension } from '../visualizationReference'
@@ -128,6 +129,7 @@ const workingItemPageSize = 50
 const workingToolPageSize = 50
 
 type ChatDetailItemProps = {
+  authenticationRequired?: boolean
   motionChatKey?: string | null
   availableRateLimitResets?: number
   canEditOwnMessages?: boolean
@@ -208,6 +210,7 @@ const areChatDetailItemPropsEqual = (
   second: ChatDetailItemProps
 ): boolean =>
   first.motionChatKey === second.motionChatKey &&
+  first.authenticationRequired === second.authenticationRequired &&
   first.canEditOwnMessages === second.canEditOwnMessages &&
   first.availableRateLimitResets === second.availableRateLimitResets &&
   first.container === second.container &&
@@ -1314,6 +1317,8 @@ const ToolItem: React.FC<{
   )
 }
 
+const messageMarkdownCache = createBoundedTextCache<string>(100, 4_000_000, (html) => html.length)
+
 const MarkdownMessageComponent: React.FC<{
   className: string
   content: string
@@ -1343,9 +1348,10 @@ const MarkdownMessageComponent: React.FC<{
   } | null>(null)
   const [expandedTableHtml, setExpandedTableHtml] = useState<string | null>(null)
   const { visibleContent } = useStreamRenderedContent(content, streaming)
+  const interactiveFileLinks = Boolean(onOpenFileLink)
   const markdownRenderer = useMemo(
-    () => createChatMarkdownRenderer(Boolean(onOpenFileLink)),
-    [onOpenFileLink]
+    () => createChatMarkdownRenderer(interactiveFileLinks),
+    [interactiveFileLinks]
   )
   const visualizationMarkdown = useMemo(
     () =>
@@ -1354,8 +1360,8 @@ const MarkdownMessageComponent: React.FC<{
       ),
     [footnotePrefix]
   )
-  const renderedMarkdown = useMemo(
-    () =>
+  const renderedMarkdown = useMemo(() => {
+    const render = (): string =>
       DOMPurify.sanitize(
         visualizationMarkdown.parse(
           preserveLineBreaks ? withPromptMarkdownLineBreaks(visibleContent) : visibleContent,
@@ -1366,9 +1372,22 @@ const MarkdownMessageComponent: React.FC<{
           }
         ),
         { ADD_ATTR: ['target'] }
-      ),
-    [markdownRenderer, preserveLineBreaks, visibleContent, visualizationMarkdown]
-  )
+      )
+    // Footnotes contain mount-specific IDs. Keep their original rendering path,
+    // and avoid retaining a succession of transient streaming snapshots.
+    if (streaming || visibleContent.includes('[^')) return render()
+    return messageMarkdownCache.get(
+      `${interactiveFileLinks}:${preserveLineBreaks}:${visibleContent}`,
+      render
+    )
+  }, [
+    interactiveFileLinks,
+    markdownRenderer,
+    preserveLineBreaks,
+    visibleContent,
+    visualizationMarkdown,
+    streaming
+  ])
   useMarkdownImages(
     containerRef,
     renderedMarkdown,
@@ -1785,6 +1804,7 @@ const partitionGeneratedImageItems = (
 }
 
 const WorkingStep: React.FC<{
+  authenticationRequired?: boolean
   activityContent?: ReactNode
   availableRateLimitResets?: number
   container?: AppContainerTarget | null
@@ -1813,6 +1833,7 @@ const WorkingStep: React.FC<{
   rateLimitResetDisabled?: boolean
   retryDisabled?: boolean
 }> = ({
+  authenticationRequired = true,
   activityContent,
   availableRateLimitResets = 0,
   container,
@@ -1848,7 +1869,8 @@ const WorkingStep: React.FC<{
   const unloaded = item.itemsLoaded === false
   const linkedToFollowingStep = continuedStoppedTurn || continueClicked
   const failureMessage = item.status === 'failed' ? item.failureMessage?.trim() : null
-  const authenticationFailed = item.status === 'failed' && item.failureReason === 'authentication'
+  const authenticationFailed =
+    authenticationRequired && item.status === 'failed' && item.failureReason === 'authentication'
   const itemSegments = getWorkingStepItemSegments(item, workingItemPageSize)
   const renderedSegments = itemSegments.map((segment) => {
     const { generatedImages, remaining } = partitionGeneratedImageItems(segment.items)
@@ -2274,6 +2296,7 @@ const getPendingMessageActionLabel = (message: ProviderPendingMessage): string =
   message.kind === 'steering' ? 'steering' : 'queued'
 
 const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
+  authenticationRequired,
   motionChatKey,
   availableRateLimitResets = 0,
   canEditOwnMessages = false,
@@ -2552,6 +2575,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
 
   return (
     <WorkingStep
+      authenticationRequired={authenticationRequired}
       activityContent={workingStepContent}
       availableRateLimitResets={availableRateLimitResets}
       container={container}

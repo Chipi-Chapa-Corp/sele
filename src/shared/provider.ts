@@ -483,6 +483,7 @@ export type ProviderAccountRateLimitResetOutcome =
   | 'alreadyRedeemed'
 
 export type ProviderAccountUsage = {
+  authenticationRequired?: boolean
   updatedAt: number
   statisticsLoaded: boolean
   summary: ProviderAccountUsageSummary | null

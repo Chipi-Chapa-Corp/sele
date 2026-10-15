@@ -1,5 +1,6 @@
 import type { SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderAccountRateLimit } from '../../../shared/provider'
+import { ClaudeAuthenticationError } from './ClaudeAuthentication.ts'
 
 type ClaudeRateLimitValue = {
   utilization: number | null
@@ -29,6 +30,10 @@ export const fetchClaudeRateLimits = async (
   } catch {
     throw new Error('Unable to reach Claude usage. Please try again.')
   }
+  if (response.status === 401 || response.status === 403)
+    throw new ClaudeAuthenticationError(
+      'Claude authentication expired. Sign in again before sending messages.'
+    )
   if (!response.ok)
     throw new Error(`Claude usage request failed (HTTP ${response.status}). Please try again.`)
   let limits: SDKControlGetUsageResponse['rate_limits']

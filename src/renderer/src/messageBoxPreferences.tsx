@@ -1,4 +1,5 @@
 import { preferences as preferenceStorage } from './preferences.ts'
+import { createAfterPaintWriter } from './afterPaintWriter'
 import {
   BadgeCheck,
   FileLock,
@@ -172,9 +173,9 @@ const chatMessageBoxSelectionsStorageKey = 'sele:chat-message-box-selections:v1'
 
 export const readStoredChatMessageBoxSelections = (): Record<string, StoredMessageBoxSelection> => {
   try {
-    const value = JSON.parse(
-      preferenceStorage.getItem(chatMessageBoxSelectionsStorageKey) ?? '{}'
-    )
+    // A remount before the scheduled write must see the most recent selection.
+    chatSelectionsWriter.flush()
+    const value = JSON.parse(preferenceStorage.getItem(chatMessageBoxSelectionsStorageKey) ?? '{}')
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
     return Object.fromEntries(
       Object.entries(value).map(([key, selection]) => [
@@ -188,16 +189,20 @@ export const readStoredChatMessageBoxSelections = (): Record<string, StoredMessa
   }
 }
 
+const chatSelectionsWriter = createAfterPaintWriter<Record<string, StoredMessageBoxSelection>>(
+  (selections) => {
+    try {
+      preferenceStorage.setItem(chatMessageBoxSelectionsStorageKey, JSON.stringify(selections))
+    } catch (error) {
+      console.error('Unable to store chat composer preferences.', error)
+      // Composer preferences are non-critical; ignore unavailable storage.
+    }
+  }
+)
+
 export const writeStoredChatMessageBoxSelections = (
   selections: Record<string, StoredMessageBoxSelection>
-): void => {
-  try {
-    preferenceStorage.setItem(chatMessageBoxSelectionsStorageKey, JSON.stringify(selections))
-  } catch (error) {
-    console.error('Unable to store chat composer preferences.', error)
-    // Composer preferences are non-critical; ignore unavailable storage.
-  }
-}
+): void => chatSelectionsWriter.schedule(selections)
 
 const getDropdownOptions = <TValue extends string>(
   labels: Record<TValue, string>

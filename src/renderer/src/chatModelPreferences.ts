@@ -23,10 +23,10 @@ export const updateChatPreferences = (
 }
 
 export const selectionsEqual = (
-  left: MessageBoxSelection | null,
+  left: StoredMessageBoxSelection | null | undefined,
   right: MessageBoxSelection
 ): boolean =>
-  left !== null &&
+  left != null &&
   left.agentMode === right.agentMode &&
   left.approvalMode === right.approvalMode &&
   left.model === right.model &&

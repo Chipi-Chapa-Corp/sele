@@ -140,6 +140,7 @@ export type ChatInteractionControllerDependencies = {
 }
 
 export type ChatMessagingControllerDependencies = {
+  authenticationRequired: boolean
   messageBoxSelection: MessageBoxSelection
   rememberStartedChatSelection: (
     providerId: ProviderId,

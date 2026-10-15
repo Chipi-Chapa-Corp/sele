@@ -1,5 +1,6 @@
 import type { RootContent } from 'hast'
 import { refractor } from 'refractor'
+import { createBoundedTextCache } from './boundedTextCache.ts'
 import jsx from 'refractor/jsx'
 import tsx from 'refractor/tsx'
 
@@ -82,6 +83,8 @@ export const highlightCode = (code: string, language: string | null): RootConten
   }
 }
 
+const codeBlockCache = createBoundedTextCache<string>(100, 2_000_000, (html) => html.length)
+
 export const renderMarkdownCodeBlock = (
   code: string,
   infoString: string | null | undefined
@@ -91,11 +94,13 @@ export const renderMarkdownCodeBlock = (
   }
 
   const language = getMarkdownCodeLanguage(infoString)
-  const highlighted = highlightCode(code, language)
-  const contents = highlighted
-    ? highlighted.map(renderHighlightedNodeToHtml).join('')
-    : escapeHtml(code)
-  const languageClass = language ? ` class="language-${language}"` : ''
+  return codeBlockCache.get(`${language}:${code}`, () => {
+    const highlighted = highlightCode(code, language)
+    const contents = highlighted
+      ? highlighted.map(renderHighlightedNodeToHtml).join('')
+      : escapeHtml(code)
+    const languageClass = language ? ` class="language-${language}"` : ''
 
-  return `<pre class="chat-detail__highlighted-code"><code${languageClass}>${contents}\n</code></pre>\n`
+    return `<pre class="chat-detail__highlighted-code"><code${languageClass}>${contents}\n</code></pre>\n`
+  })
 }

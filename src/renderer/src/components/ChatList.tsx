@@ -1,6 +1,6 @@
 import { AnimatePresence } from 'motion/react'
 import { MotionListItem } from '../motion/MotionListItem'
-import { memo, useState } from 'react'
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { ChatListItem } from './ChatListItem'
 import './ChatList.css'
@@ -101,6 +101,40 @@ export const ChatList = memo(function ChatList({
     resetDrag()
   }
 
+  // Parents provide fresh closures as workspace state changes. Keep row props
+  // stable while dispatching to the latest committed handlers (never stale state).
+  const handlers = {
+    onMarkDone,
+    onRename,
+    onResolveApproval,
+    onSelect,
+    onTogglePinned,
+    resetDrag,
+    handleDragOver,
+    handleDragStart
+  }
+  const handlersRef = useRef(handlers)
+  useLayoutEffect(() => {
+    handlersRef.current = handlers
+  })
+  const rowActions = useMemo(
+    () => ({
+      onMarkDone: (chat: ProviderChat, done?: boolean) =>
+        handlersRef.current.onMarkDone(chat, done),
+      onRename: (chat: ProviderChat, title: string) => handlersRef.current.onRename(chat, title),
+      onResolveApproval: (chat: ProviderChat, decision: ProviderApprovalDecision) =>
+        handlersRef.current.onResolveApproval(chat, decision),
+      onClick: (chat: ProviderChat) => handlersRef.current.onSelect(chat),
+      onTogglePinned: (chat: ProviderChat) => handlersRef.current.onTogglePinned(chat),
+      onDragEnd: () => handlersRef.current.resetDrag(),
+      onDragOver: (event: React.DragEvent<HTMLElement>, chat: ProviderChat) =>
+        handlersRef.current.handleDragOver(event, chat),
+      onDragStart: (event: React.DragEvent<HTMLElement>, chat: ProviderChat) =>
+        handlersRef.current.handleDragStart(event, chat)
+    }),
+    []
+  )
+
   const order = chats.map(getChatKey).join('\n')
 
   return (
@@ -142,14 +176,7 @@ export const ChatList = memo(function ChatList({
                     ? 'allow'
                     : null
                 }
-                onMarkDone={(done) => onMarkDone(chat, done)}
-                onRename={(title) => onRename(chat, title)}
-                onClick={() => onSelect(chat)}
-                onDragEnd={resetDrag}
-                onDragOver={(event) => handleDragOver(event, chat)}
-                onDragStart={(event) => handleDragStart(event, chat)}
-                onResolveApproval={(decision) => onResolveApproval(chat, decision)}
-                onTogglePinned={() => onTogglePinned(chat)}
+                {...rowActions}
               />
             </MotionListItem>
           )

@@ -575,10 +575,14 @@ export const providerApi: ProviderApi = {
     return configuration
   },
   useAccount: async (providerId, accountId, options) => {
-    if (providerId === 'claude')
+    if (providerId === 'claude') {
+      const previous = await claudeAccounts.get(options)
+      if (previous.accounts.some((account) => account.id === accountId && account.active))
+        return previous
       return claudeAdapter.changeAccount(options?.container, () =>
         claudeAccounts.select(accountId, options)
       )
+    }
     if (providerId !== 'codex') return getUnavailableAccountConfiguration(providerId)
     const configuration = await selectCodexAccount(accountId, options?.container)
     codexAdapter.resetClientsForContainer(options?.container)
@@ -651,7 +655,7 @@ export const providerApi: ProviderApi = {
     adapters[providerId].setAppEnabled(appId, enabled, options),
   getUsage: async (providerId, options?: ProviderUsageOptions) => {
     const usage = await adapters[providerId].getUsage(options)
-    if (!options?.includeStatistics || !usage.summary) return usage
+    if (usage.authenticationRequired || !options?.includeStatistics || !usage.summary) return usage
     try {
       const costs = await getAccountUsageCosts(
         providerId,

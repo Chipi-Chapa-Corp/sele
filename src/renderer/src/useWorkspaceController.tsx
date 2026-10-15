@@ -871,8 +871,9 @@ export const useWorkspaceController = () => {
       element: contentElement,
       top: contentElement.scrollTop
     }
-    const chatKey = selectedChatKeyRef.current
-    chatViewportAnchorRef.current = chatKey ? readChatScrollAnchor(contentElement, chatKey) : null
+    // Following the bottom needs only a bottom offset. Capture detailed anchors
+    // when the user leaves it, rather than measuring the new Markdown tree here.
+    chatViewportAnchorRef.current = null
   }, [])
 
   const scrollPinnedChatMessageIntoView = useCallback((messageId: string): boolean => {
@@ -884,6 +885,8 @@ export const useWorkspaceController = () => {
     ).find((element) => element.dataset.chatMessageId === messageId)
     if (!messageElement) return false
 
+    const chatKey = selectedChatKeyRef.current
+    chatViewportAnchorRef.current = chatKey ? readChatScrollAnchor(contentElement, chatKey) : null
     chatAutoScrollEnabledRef.current = false
     chatAutoScrollTargetRef.current = null
     chatUserScrollIntentRef.current = false
@@ -1302,9 +1305,13 @@ export const useWorkspaceController = () => {
     const previousChatKey = messageBoxSelectionChatKeyRef.current
 
     if (previousProviderId !== configProviderId || previousChatKey !== chatKey) {
-      if (previousChatKey) {
+      let preferencesChanged = false
+      if (
+        previousChatKey &&
+        !selectionsEqual(chatMessageBoxSelectionsRef.current[previousChatKey], currentSelection)
+      ) {
         chatMessageBoxSelectionsRef.current[previousChatKey] = currentSelection
-        writeStoredChatMessageBoxSelections(chatMessageBoxSelectionsRef.current)
+        preferencesChanged = true
       }
       const nextSelections = messageBoxSelectionsRef.current
       const nextSelection = selectChatPreferences(
@@ -1339,8 +1346,14 @@ export const useWorkspaceController = () => {
         serviceTier: nextSelection.serviceTier ?? null
       }
       lastMessageBoxSelectionRef.current = restoredSelection
-      if (chatKey) {
+      if (
+        chatKey &&
+        !selectionsEqual(chatMessageBoxSelectionsRef.current[chatKey], restoredSelection)
+      ) {
         chatMessageBoxSelectionsRef.current[chatKey] = restoredSelection
+        preferencesChanged = true
+      }
+      if (preferencesChanged) {
         writeStoredChatMessageBoxSelections(chatMessageBoxSelectionsRef.current)
       }
       setAgentMode(restoredSelection.agentMode)
@@ -3046,6 +3059,7 @@ export const useWorkspaceController = () => {
     pendingUserInput,
     recentlyOpenedFilesWorkspaceKey,
     refreshAccountUsage,
+    usageAuthenticationRequired,
     resetAccountRateLimits,
     resolvingApprovalId,
     scopedCommitActivitiesByMarkerId,
@@ -3589,13 +3603,20 @@ export const useWorkspaceController = () => {
       runtime: getContainerTargetFromSuggestion(suggestion)
     })
   }
-  const applyProviderAccountConfiguration = (configuration: ProviderAccountConfiguration): void => {
-    setSettingsProviderAccounts(configuration)
-    setProviderAccountsError(null)
-    setProviderAccountsLoadState('ready')
-    providerModelCatalogCacheRef.current.delete(
-      `${newSessionProvider}:${getContainerTargetKey(newSessionContainer)}`
-    )
+  const applyProviderAccountConfiguration = (
+    configuration: ProviderAccountConfiguration,
+    providerId: ProviderId = newSessionProvider,
+    container: AppContainerTarget | null = newSessionContainer
+  ): void => {
+    if (
+      providerId === newSessionProvider &&
+      getContainerTargetKey(container) === getContainerTargetKey(newSessionContainer)
+    ) {
+      setSettingsProviderAccounts(configuration)
+      setProviderAccountsError(null)
+      setProviderAccountsLoadState('ready')
+    }
+    providerModelCatalogCacheRef.current.delete(`${providerId}:${getContainerTargetKey(container)}`)
     setProviderModelsRevision((revision) => revision + 1)
     setProviderResourcesRefresh((refresh) => refresh + 1)
     setAccountUsage(null)
@@ -3673,8 +3694,8 @@ export const useWorkspaceController = () => {
           loginId,
           { container }
         )
-        applyProviderAccountConfiguration(restoredConfiguration)
-        setProviderAccountRevision((revision) => revision + 1)
+        applyProviderAccountConfiguration(restoredConfiguration, providerId, container)
+        if (!reauthentication) setProviderAccountRevision((revision) => revision + 1)
       } catch (cleanupError) {
         console.error('Unable to clean up an incomplete provider account.', cleanupError)
         // Keep the original login error when cleanup cannot be completed.
@@ -3690,10 +3711,14 @@ export const useWorkspaceController = () => {
           loginId,
           { container }
         )
-        applyProviderAccountConfiguration(result.configuration)
-        setProviderAccountRevision((revision) => revision + 1)
+        applyProviderAccountConfiguration(result.configuration, providerId, container)
         if (!result.success) {
           throw new Error(result.error || 'Account authorization was not completed.')
+        }
+        setProviderAccountRevision((revision) => revision + 1)
+        if (reauthentication) {
+          setSendState('idle')
+          setSendError(null)
         }
       } catch (error) {
         const restoredConfiguration = await providerApi
@@ -3705,7 +3730,8 @@ export const useWorkspaceController = () => {
             )
             return null
           })
-        if (restoredConfiguration) applyProviderAccountConfiguration(restoredConfiguration)
+        if (restoredConfiguration)
+          applyProviderAccountConfiguration(restoredConfiguration, providerId, container)
         throw error
       }
     })()
@@ -3731,8 +3757,8 @@ export const useWorkspaceController = () => {
           loginId,
           { container }
         )
-        applyProviderAccountConfiguration(configuration)
-        setProviderAccountRevision((revision) => revision + 1)
+        applyProviderAccountConfiguration(configuration, providerId, container)
+        if (!reauthentication) setProviderAccountRevision((revision) => revision + 1)
       }
     }
   }
@@ -4492,6 +4518,11 @@ export const useWorkspaceController = () => {
     chatSearchActiveIndexRef.current = activeIndex
     setChatSearchActiveIndex(activeIndex)
     setChatSearchHighlights(matches, activeIndex)
+    const contentElement = contentRef.current
+    const chatKey = selectedChatKeyRef.current
+    if (chatAutoScrollEnabledRef.current && contentElement && chatKey) {
+      chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, chatKey)
+    }
     chatAutoScrollEnabledRef.current = false
     chatAutoScrollTargetRef.current = null
 
@@ -4596,6 +4627,9 @@ export const useWorkspaceController = () => {
     providerUpdatePreferences
   })
   const chatWriteAccess = getChatWriteAccessPresentation(chatDetail)
+  const authenticationRequired =
+    usageAuthenticationRequired ||
+    (Boolean(selectedChat) && chatDetail?.authenticationRequired === true)
   const chatOpenedElsewhere = chatWriteAccess.openedElsewhere
   const chatLegacyHistoryReadOnly = chatWriteAccess.legacyHistory
   const requestErrorVisible = chatDetail?.writeAccess === 'readOnly' || sendState === 'error'
@@ -4618,19 +4652,18 @@ export const useWorkspaceController = () => {
   }
 
   const handleManageChatAccounts = useCallback((): void => {
-    if (!selectedChat) return
-    setNewSessionProvider(selectedChat.providerId)
+    setNewSessionProvider(selectedChat?.providerId ?? newSessionProvider)
     setNewSessionContainer(normalizeContainerTarget(changesContainer))
     setSettingsScope('global')
     setSettingsTab('providers')
     setSettingsOpen(true)
-  }, [selectedChat, changesContainer])
+  }, [selectedChat, changesContainer, newSessionProvider])
 
   const handleOpenChatReauthentication = useCallback((): void => {
-    if (selectedChat?.providerId !== 'claude') return
+    if ((selectedChat?.providerId ?? newSessionProvider) !== 'claude') return
     const container = normalizeContainerTarget(changesContainer)
     setReauthenticationTarget({ container: container.kind === 'container' ? container : null })
-  }, [selectedChat, changesContainer])
+  }, [selectedChat, changesContainer, newSessionProvider])
 
   const handleRetryChatWriteAccess = (): void => {
     if (!selectedChat) return
@@ -4698,6 +4731,7 @@ export const useWorkspaceController = () => {
     handleStopChat,
     resolveSelectedUserInput
   } = useChatMessagingController({
+    authenticationRequired,
     messageBoxSelection: {
       agentMode,
       approvalMode,
@@ -4873,6 +4907,7 @@ export const useWorkspaceController = () => {
     visibleChatItems,
     workingStepIdsWithNextWorkingStep
   } = useConversationViewModel({
+    authenticationRequired,
     selectedChat,
     newSessionProviderAvailable,
     providerUpdateInProgress,
@@ -5524,6 +5559,7 @@ export const useWorkspaceController = () => {
                 trailingChatCommitMarkers.map(renderChatCommitMarker)}
               <ChatDetailItem
                 motionChatKey={selectedChatKey}
+                authenticationRequired={authenticationRequired}
                 availableRateLimitResets={
                   item.type === 'working' && item.failureReason === 'rateLimit'
                     ? (accountUsage?.rateLimitResetCredits?.availableCount ?? 0)
@@ -5793,7 +5829,7 @@ export const useWorkspaceController = () => {
       visibleChatItems
     },
     conversationComposer: {
-      authenticationRequired: chatDetail?.authenticationRequired === true,
+      authenticationRequired,
       handleOpenChatReauthentication,
       handleManageChatAccounts,
       accountUsage,

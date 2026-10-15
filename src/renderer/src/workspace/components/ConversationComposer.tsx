@@ -161,7 +161,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             </div>
           </section>
         )}
-        {!activeSubagentChatView && requestErrorVisible && (
+        {!activeSubagentChatView && !authenticationRequired && requestErrorVisible && (
           <section
             className="chat-approval chat-request-error"
             aria-label="Request error"

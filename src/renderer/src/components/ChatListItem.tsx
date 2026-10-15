@@ -14,6 +14,7 @@ import {
   X
 } from 'lucide-react'
 import {
+  memo,
   useId,
   useLayoutEffect,
   useMemo,
@@ -44,14 +45,14 @@ type ChatListItemProps = {
   draggable?: boolean
   dragging?: boolean
   dropPosition?: 'before' | 'after' | null
-  onClick: () => void
+  onClick: (chat: ProviderChat) => void
   onDragEnd?: React.DragEventHandler<HTMLElement>
-  onDragOver?: React.DragEventHandler<HTMLElement>
-  onDragStart?: React.DragEventHandler<HTMLElement>
-  onMarkDone: (done?: boolean) => void
-  onRename: (title: string) => Promise<void>
-  onResolveApproval: (decision: ProviderApprovalDecision) => void
-  onTogglePinned: () => void
+  onDragOver?: (event: React.DragEvent<HTMLElement>, chat: ProviderChat) => void
+  onDragStart?: (event: React.DragEvent<HTMLElement>, chat: ProviderChat) => void
+  onMarkDone: (chat: ProviderChat, done?: boolean) => void
+  onRename: (chat: ProviderChat, title: string) => Promise<void>
+  onResolveApproval: (chat: ProviderChat, decision: ProviderApprovalDecision) => void
+  onTogglePinned: (chat: ProviderChat) => void
   approvalDecisionInFlight?: ProviderApprovalDecision | null
 }
 
@@ -100,7 +101,7 @@ type DetailCardPosition = {
   top: number
 }
 
-export const ChatListItem: React.FC<ChatListItemProps> = ({
+export const ChatListItem = memo(function ChatListItem({
   chat,
   projectDisplayName,
   selected,
@@ -120,7 +121,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   onResolveApproval,
   onTogglePinned,
   approvalDecisionInFlight = null
-}) => {
+}: ChatListItemProps) {
   const chatTitle = getRenderableText(chat.title, 'Untitled chat')
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(chatTitle)
@@ -227,7 +228,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
 
     setSavingName(true)
     try {
-      await onRename(normalizedNameDraft)
+      await onRename(chat, normalizedNameDraft)
       setDetailFocused(false)
       setEditingName(false)
     } catch (error) {
@@ -266,8 +267,8 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
       className={`chat-list-item${!committing && workingStatus ? ' chat-list-item--working' : ''}${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
       draggable={editingName ? false : draggable}
       onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragStart={onDragStart}
+      onDragOver={(event) => onDragOver?.(event, chat)}
+      onDragStart={(event) => onDragStart?.(event, chat)}
       onFocusCapture={(event) => {
         if (editingName) {
           setDetailFocused(false)
@@ -297,7 +298,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               type: 'button' as const,
               'aria-current': selected ? ('true' as const) : undefined,
               'aria-describedby': detailOpen ? detailCardId : undefined,
-              onClick
+              onClick: () => onClick(chat)
             })}
       >
         <span className="chat-list-item__header">
@@ -409,7 +410,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
             <>
               <Button
                 aria-label={`Reject approval for ${chatTitle}`}
-                callback={() => onResolveApproval('deny')}
+                callback={() => onResolveApproval(chat, 'deny')}
                 disabled={Boolean(approvalDecisionInFlight)}
                 icon={<X aria-hidden="true" />}
                 size="small"
@@ -418,7 +419,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               />
               <Button
                 aria-label={`Approve approval for ${chatTitle}`}
-                callback={() => onResolveApproval('allow')}
+                callback={() => onResolveApproval(chat, 'allow')}
                 disabled={Boolean(approvalDecisionInFlight)}
                 icon={<Check aria-hidden="true" />}
                 size="small"
@@ -441,7 +442,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               size="small"
               aria-label="Mark chat done"
               title="Mark done"
-              callback={() => onMarkDone(true)}
+              callback={() => onMarkDone(chat, true)}
               icon={<Check aria-hidden="true" />}
             />
           )}
@@ -451,7 +452,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
               size="small"
               aria-label="Mark chat not done"
               title="Mark not done"
-              callback={() => onMarkDone(false)}
+              callback={() => onMarkDone(chat, false)}
               icon={<Undo2 aria-hidden="true" />}
             />
           )}
@@ -460,7 +461,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
             size="small"
             aria-label={chat.pinned ? 'Unpin chat' : 'Pin chat'}
             title={chat.pinned ? 'Unpin chat' : 'Pin chat'}
-            callback={onTogglePinned}
+            callback={() => onTogglePinned(chat)}
             icon={chat.pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
           />
         </span>
@@ -502,4 +503,4 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
         )}
     </article>
   )
-}
+})

@@ -8,6 +8,7 @@ import test from 'node:test'
 import { ClaudeAccountStore, getClaudeAccountEnvironment } from './ClaudeAccountStore.ts'
 import { ClaudeAccountLogin, findClaudeAuthorizationUrl } from './ClaudeAccountLogin.ts'
 import { fetchClaudeRateLimits } from './ClaudeUsage.ts'
+import { isClaudeAuthenticationError } from './ClaudeAuthentication.ts'
 
 const fixture = (initial = null) => {
   let saved = initial
@@ -112,6 +113,21 @@ test('usage fallback reads the authenticated endpoint and does not hide unavaila
     }),
     (error) => error.message === 'Unable to reach Claude usage. Please try again.'
   )
+})
+
+test('usage authentication rejection is typed without exposing response bodies; throttling stays retryable', async () => {
+  for (const status of [401, 403, 429, 500]) {
+    await assert.rejects(
+      fetchClaudeRateLimits('fixture-token', '2.1.281', async () =>
+        Response.json({ error: 'private upstream details' }, { status })
+      ),
+      (error) => {
+        assert.equal(isClaudeAuthenticationError(error), status === 401 || status === 403)
+        assert.doesNotMatch(error.message, /private upstream details|fixture-token/)
+        return true
+      }
+    )
+  }
 })
 
 test('cancel and crash recovery remove only the pending credential store', async () => {

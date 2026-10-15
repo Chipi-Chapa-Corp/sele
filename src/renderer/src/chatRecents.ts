@@ -2,6 +2,7 @@ import { marked, type Token, type Tokens } from 'marked'
 import type { ProviderChatItem, ProviderId, ProviderMessage } from '../../shared/provider'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from './markdownFileLink.ts'
 import { appRecentsMessageLimitDefault } from './performanceSettings.ts'
+import { createBoundedTextCache } from './boundedTextCache.ts'
 
 export const recentChatMessageLimit = appRecentsMessageLimitDefault
 
@@ -58,13 +59,28 @@ const getLinkLabel = (token: Tokens.Link, href: string): string => token.text.tr
 const getImageLabel = (token: Tokens.Image, fallback: string): string =>
   token.text.trim() || fallback
 
-const getMarkdownReferences = (
-  message: ProviderMessage
-): Array<RecentChatFileReference | RecentChatLinkReference> => {
-  if (!message.content.trim() || message.contentLoaded === false) return []
+type MarkdownReference =
+  | Omit<RecentChatFileReference, 'messageId' | 'role'>
+  | Omit<RecentChatLinkReference, 'messageId' | 'role'>
 
-  const references: Array<RecentChatFileReference | RecentChatLinkReference> = []
-  const tokens = marked.lexer(message.content)
+const markdownReferenceCache = createBoundedTextCache<MarkdownReference[]>(
+  100,
+  2_000_000,
+  (references) =>
+    references.reduce(
+      (total, reference) =>
+        total +
+        reference.label.length +
+        (reference.kind === 'file'
+          ? reference.path.length + reference.displayPath.length
+          : reference.href.length),
+      0
+    )
+)
+
+const extractMarkdownReferences = (content: string): MarkdownReference[] => {
+  const references: MarkdownReference[] = []
+  const tokens = marked.lexer(content)
 
   marked.walkTokens(tokens, (token: Token) => {
     if (token.type !== 'link' && token.type !== 'image') return
@@ -79,8 +95,6 @@ const getMarkdownReferences = (
           (linkToken
             ? getMarkdownFileLinkLabel(linkToken, fileTarget.line)
             : getImageLabel(imageToken!, fileTarget.displayPath)) || fileTarget.displayPath,
-        messageId: message.id,
-        role: message.role,
         ...fileTarget
       })
       return
@@ -92,13 +106,20 @@ const getMarkdownReferences = (
     references.push({
       kind: 'link',
       href,
-      label: linkToken ? getLinkLabel(linkToken, href) : getImageLabel(imageToken!, href),
-      messageId: message.id,
-      role: message.role
+      label: linkToken ? getLinkLabel(linkToken, href) : getImageLabel(imageToken!, href)
     })
   })
 
   return references
+}
+
+const getMarkdownReferences = (message: ProviderMessage): RecentChatReference[] => {
+  if (!message.content.trim() || message.contentLoaded === false) return []
+  // Cache by content, not provider-object identity: IPC creates fresh snapshots.
+  // Attach identity afterward so identical text in other messages stays correct.
+  return markdownReferenceCache
+    .get(message.content, () => extractMarkdownReferences(message.content))
+    .map((reference) => ({ ...reference, messageId: message.id, role: message.role }))
 }
 
 const getAttachmentReferences = (message: ProviderMessage): RecentChatFileReference[] =>

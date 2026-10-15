@@ -55,6 +55,7 @@ import type { ChatMessagingControllerDependencies } from './featureControllerDep
 // Return shape is inferred from the controller declarations below.
 export function useChatMessagingController(dependencies: ChatMessagingControllerDependencies) {
   const {
+    authenticationRequired,
     messageBoxSelection,
     rememberStartedChatSelection,
     chatDetail,
@@ -291,6 +292,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     if (
       providerUpdateInProgress ||
       sendInFlightRef.current ||
+      authenticationRequired ||
       (chatDetailRef.current?.authenticationRequired && sendTarget !== 'new') ||
       (activeSubagentChatView && sendTarget !== 'new')
     ) {

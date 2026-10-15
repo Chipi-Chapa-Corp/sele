@@ -122,7 +122,10 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
 
     const chatKey = currentTurnWindow?.chatKey
     const updateViewportAnchor = (): void => {
-      chatViewportAnchorRef.current = chatKey ? readChatScrollAnchor(contentElement, chatKey) : null
+      chatViewportAnchorRef.current =
+        !chatAutoScrollEnabledRef.current && chatKey
+          ? readChatScrollAnchor(contentElement, chatKey)
+          : null
     }
 
     if (isScrollAdjustment || isAutoScroll) {

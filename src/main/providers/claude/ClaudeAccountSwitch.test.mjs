@@ -5,6 +5,7 @@ import test from 'node:test'
 import ts from 'typescript'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget.ts'
 import { mapClaudeRateLimits } from './ClaudeUsage.ts'
+import { ClaudeAuthenticationError, isClaudeAuthenticationError } from './ClaudeAuthentication.ts'
 
 const source = ts.createSourceFile(
   'ClaudeProviderAdapter.ts',
@@ -53,6 +54,78 @@ const findRefresh = (node) => {
   ts.forEachChild(node, findRefresh)
 }
 findRefresh(selectionSource)
+
+let automaticUsageEffect
+const findAutomaticUsage = (node) => {
+  if (
+    ts.isCallExpression(node) &&
+    node.expression.getText(selectionSource) === 'useEffect' &&
+    /\.getUsage\(providerId, \{ container \}\)/.test(
+      node.arguments[0]?.getText(selectionSource) ?? ''
+    )
+  ) {
+    automaticUsageEffect = node.arguments[0].getText(selectionSource)
+  }
+  ts.forEachChild(node, findAutomaticUsage)
+}
+findAutomaticUsage(selectionSource)
+
+for (const automatic of [true, false]) {
+  for (const stale of [true, false]) {
+    test(`${automatic ? 'automatic new-chat' : 'manual'} usage signals reauthentication immediately${stale ? ' but ignores an old account result' : ''}`, async () => {
+      const gate = deferred()
+      const scope = {}
+      const scopeRef = { current: scope }
+      const authentication = []
+      let requests = 0
+      const context = vm.createContext({
+        usageProviderAvailable: true,
+        usageProviderAvailabilityReady: true,
+        usageProviderId: 'claude',
+        changesContainer: null,
+        normalizeContainerTarget,
+        usageScope: scope,
+        usageScopeRef: scopeRef,
+        selectedChatId: undefined,
+        loadState: 'ready',
+        providerApi: {
+          getUsage: async () => {
+            requests++
+            await gate.promise
+            return { authenticationRequired: true, errors: ['Expired credentials'] }
+          }
+        },
+        setUsageAuthentication: (value) => authentication.push(value),
+        setAccountUsage: () => {},
+        setAccountUsageState: () => {},
+        setAccountUsageError: () => {},
+        queueMicrotask,
+        console
+      })
+      vm.runInContext(
+        ts.transpileModule(
+          `globalThis.run = ${automatic ? automaticUsageEffect : refreshCallback}`,
+          {
+            compilerOptions: { target: ts.ScriptTarget.ES2022 }
+          }
+        ).outputText,
+        context
+      )
+      const pending = context.run()
+      assert.equal(requests, 1, 'the check runs without sending any chat message')
+      if (stale) scopeRef.current = {}
+      gate.resolve()
+      if (!automatic) await pending
+      await new Promise(setImmediate)
+      assert.equal(authentication.length, stale ? 0 : 1)
+      if (!stale) {
+        assert.equal(authentication[0].required, true)
+        assert.equal(authentication[0].scope, scope)
+      }
+      if (automatic) pending()
+    })
+  }
+}
 
 for (const fail of [false, true]) {
   test(`late manual usage ${fail ? 'errors' : 'results'} cannot replace the newly selected account`, async () => {
@@ -105,6 +178,7 @@ const setup = () => {
     getContainerTargetKey,
     normalizeContainerTarget,
     mapClaudeRateLimits,
+    isClaudeAuthenticationError,
     emptyUsageSummary: {},
     console,
     getClaudeExecutable: () => 'claude',
@@ -172,6 +246,48 @@ test('a null subscription SDK response falls back, while API-key and valid respo
   }
   assert.equal((await h.getUsage()).rateLimits[0].usedPercent, 7)
   assert.equal(calls.length, 1)
+})
+
+test('usage authentication failure blocks the account before any message is submitted', async () => {
+  for (const error of [
+    new ClaudeAuthenticationError('Sign in again'),
+    new Error('Failed to authenticate: OAuth session expired and could not be refreshed'),
+    new Error('Claude usage request failed (HTTP 429). Please try again.'),
+    new Error('Unable to reach Claude usage. Please try again.')
+  ]) {
+    const { h } = setup()
+    const auth = isClaudeAuthenticationError(error)
+    const chat = { id: 'empty', container: null, queuedMessagesPaused: false }
+    const remote = { id: 'remote', container: { kind: 'container', tool: 'ssh', name: 'server' } }
+    h.states.set(chat.id, chat)
+    h.states.set(remote.id, remote)
+    const updates = []
+    h.emitUpdate = (state) => updates.push(state.id)
+    h.withControlQuery = async () => {
+      throw error
+    }
+    const usage = await h.getUsage()
+    assert.equal(usage.authenticationRequired, auth)
+    assert.equal(h.authenticationFailures.has('host'), auth)
+    assert.equal(chat.queuedMessagesPaused, auth)
+    assert.deepEqual(updates, auth ? ['empty'] : [])
+    assert.equal(h.authenticationFailures.has(getContainerTargetKey(remote.container)), false)
+  }
+})
+
+test('a stale usage authentication failure cannot relock a newly authenticated account', async () => {
+  const { h } = setup()
+  const gate = deferred()
+  h.withControlQuery = async () => {
+    await gate.promise
+    throw new ClaudeAuthenticationError('Old credentials expired')
+  }
+  const request = h.getUsage()
+  await h.changeAccount(null, async () => {})
+  gate.resolve()
+  const usage = await request
+  assert.equal(usage.authenticationRequired, false)
+  assert.equal(h.authenticationFailures.has('host'), false)
 })
 
 test('switching closes only the selected environment and leaves transcript state intact', async () => {
@@ -312,4 +428,41 @@ test('a failed switch releases the transition gate for the next attempt', async 
   )
   await h.changeAccount(null, async () => {})
   assert.equal((await h.getQueryRuntime(null)).accountRevision, 2)
+})
+
+test('failed sign-in completion keeps the send block; verified completion clears only that environment', async () => {
+  const { h } = setup()
+  const remote = { kind: 'container', tool: 'ssh', name: 'server' }
+  const remoteKey = getContainerTargetKey(remote)
+  h.authenticationFailures.add('host')
+  h.authenticationFailures.add(remoteKey)
+  const state = {
+    id: 'expired',
+    container: null,
+    active: false,
+    queueDrainInProgress: false,
+    pendingApprovals: [],
+    pendingUserInputs: [],
+    queuedMessages: [],
+    messages: ['original prompt', 'auth failure']
+  }
+  h.states.set(state.id, state)
+  const updates = []
+  h.emitUpdate = (state) =>
+    updates.push({ id: state.id, blocked: h.authenticationFailures.has('host') })
+  await assert.rejects(
+    h.changeAccount(null, async () => {
+      throw new Error('Sign-in not verified')
+    }),
+    /not verified/
+  )
+  assert.equal(h.authenticationFailures.has('host'), true)
+  assert.equal(h.authenticatedSources.has('host'), false)
+  assert.deepEqual(updates, [])
+  await h.changeAccount(null, async () => {})
+  assert.equal(h.authenticationFailures.has('host'), false)
+  assert.equal(h.authenticationFailures.has(remoteKey), true)
+  assert.equal(h.authenticatedSources.has('host'), true)
+  assert.deepEqual(state.messages, ['original prompt', 'auth failure'])
+  assert.deepEqual(updates, [{ id: 'expired', blocked: false }])
 })

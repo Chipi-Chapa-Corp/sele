@@ -24,7 +24,13 @@ const methods = new Set([
   'getQueueDrainDecision',
   'getDrainingMessage',
   'getPendingMessages',
-  'handleQueryEvent'
+  'handleQueryEvent',
+  'requireAuthentication',
+  'sendMessageRespectingQueue',
+  'sendQueuedMessageNow',
+  'continueChat',
+  'editMessage',
+  'sendActiveChatMessage'
 ])
 const code = ts.transpileModule(
   `${source.statements.find((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((declaration) => declaration.name.getText(source) === 'toTranscriptMessage')).getText(source)}
@@ -55,6 +61,7 @@ const setup = () => {
   const instance = new context.Harness()
   instance.authenticationFailures = new Set()
   instance.authenticatedSources = new Set()
+  instance.states = new Map()
   instance.reportResultTokenUsage = () => {}
   const state = {
     queuedMessages: [{ id: 'first' }],
@@ -92,12 +99,20 @@ test('live expired OAuth errors finish the turn and pause queued messages for re
   state.active = true
   state.failed = false
   const pending = state.queuedMessages[0]
+  const sibling = { container: null, queuedMessagesPaused: false }
+  const remote = {
+    container: { kind: 'container', tool: 'ssh', name: 'server' },
+    queuedMessagesPaused: false
+  }
+  instance.states.set('sibling', sibling)
+  instance.states.set('remote', remote)
   const updates = []
   const messages = []
   instance.reportLiveTokenUsage = () => {}
   instance.addTranscriptMessage = (_state, message) => messages.push(message)
   instance.emitUpdate = (_state, completed) => updates.push(completed)
-  instance.queueUpdate = () => assert.fail('The failure must be emitted immediately')
+  const accountUpdates = []
+  instance.queueUpdate = (other) => accountUpdates.push(other)
   const text = 'Failed to authenticate: OAuth session expired and could not be refreshed'
   assert.equal(
     await instance.handleQueryEvent(
@@ -122,6 +137,29 @@ test('live expired OAuth errors finish the turn and pause queued messages for re
   assert.equal(instance.getQueueDrainDecision(state), 'wait')
   assert.equal(messages[0].error, 'authentication_failed')
   assert.deepEqual(updates, [true])
+  assert.equal(instance.authenticationFailures.has('host'), true)
+  assert.deepEqual(
+    accountUpdates,
+    [sibling],
+    'other chats using the failed account must also disable sending'
+  )
+  assert.equal(sibling.queuedMessagesPaused, true)
+  assert.equal(remote.queuedMessagesPaused, false)
+})
+
+test('unauthenticated sends and retries are rejected before changing transcript or queue', async () => {
+  const { instance, state } = setup()
+  instance.authenticationFailures.add('host')
+  instance.ensureState = async () => state
+  const before = JSON.stringify(state)
+  for (const action of [
+    () => instance.continueChat('session', 'another message'),
+    () => instance.sendActiveChatMessage('session', 'another message', 'queue'),
+    () => instance.sendMessageRespectingQueue(state, 'another message'),
+    () => instance.editMessage('session', 'first', 'retry')
+  ])
+    await assert.rejects(action(), /Sign in again before sending/)
+  assert.equal(JSON.stringify(state), before)
 })
 
 test('startup presents the submitted message as sent and preserves usage', async () => {

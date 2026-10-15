@@ -45,7 +45,7 @@ const setup = async () => {
     console.log('https://claude.com/cai/oauth/authorize?code=true&response_type=code&state=fixture&client_id=fixture');
     process.stdin.once('data', code => {
       if (code.toString().trim() !== 'fixture-code') process.exit(1);
-      fs.writeFileSync(require('node:path').join(directory,'.credentials.json'), 'fixture-only');
+      if (directory) fs.writeFileSync(require('node:path').join(directory,'.credentials.json'), 'fixture-only');
       process.exit(0);
     });`
   )
@@ -177,6 +177,54 @@ test('complete CLI sign-in keeps the shared home and activates only after verifi
     await h.cleanup()
   }
 })
+
+for (const named of [false, true]) {
+  test(`reauthentication refreshes ${named ? 'a named account' : 'Default'} without creating an account`, async () => {
+    const h = await setup()
+    try {
+      if (named) {
+        const { accountId } = await h.accounts.create('Work')
+        await h.accounts.complete(accountId)
+      }
+      const before = JSON.stringify(await h.accounts.get())
+      const { accountId, login } = await h.accounts.reauthenticate()
+      assert.equal(accountId === 'default', !named)
+      assert.equal(login.status, 'pending')
+      assert.equal(JSON.stringify(await h.accounts.get()), before)
+      await assert.rejects(h.accounts.complete(accountId), /not been verified/)
+      const waiting = h.accounts.waitForLogin(accountId, login.loginId)
+      await h.accounts.submitCode(login.loginId, 'fixture-code')
+      await waiting
+      const configuration = await h.accounts.complete(accountId)
+      assert.equal(JSON.stringify(configuration), before)
+      const command = h.commands.find((command) => command.args[1] === 'login')
+      assert.equal(Boolean(command.options.env.CLAUDE_SECURESTORAGE_CONFIG_DIR), named)
+      if (named) assert.ok(command.options.env.CLAUDE_SECURESTORAGE_CONFIG_DIR.endsWith(accountId))
+    } finally {
+      await h.cleanup()
+    }
+  })
+
+  test(`canceling ${named ? 'named' : 'Default'} reauthentication preserves the account and credentials`, async () => {
+    const h = await setup()
+    try {
+      if (named) {
+        const { accountId } = await h.accounts.create('Work')
+        await h.accounts.complete(accountId)
+      }
+      const before = JSON.stringify(await h.accounts.get())
+      const { accountId, login } = await h.accounts.reauthenticate()
+      const waiting = assert.rejects(h.accounts.waitForLogin(accountId, login.loginId), /canceled/)
+      await h.accounts.cancel(accountId)
+      await waiting
+      await h.accounts.cancel(accountId)
+      assert.equal(JSON.stringify(await h.accounts.get()), before)
+      await assert.rejects(h.accounts.waitForLogin(accountId, login.loginId), /not found/)
+    } finally {
+      await h.cleanup()
+    }
+  })
+}
 
 test('fallback caching never carries usage from Default to the added account', async () => {
   const h = await setup()

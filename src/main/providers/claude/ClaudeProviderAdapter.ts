@@ -83,7 +83,7 @@ import {
 } from '../providerResources'
 import { getClaudeExecutable } from './ClaudeExecutable'
 import { loadClaudeHistory } from './ClaudeHistory'
-import { isClaudeAuthenticationFailure } from './ClaudeAuthentication'
+import { isClaudeAuthenticationFailure, isClaudeAuthenticationError } from './ClaudeAuthentication'
 import { claudeAccounts } from './ClaudeAccounts'
 import {
   ClaudeTranscriptProjection,
@@ -836,6 +836,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     })
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
+    const sourceKey = getContainerTargetKey(options.container)
+    const accountRevision = this.accountRevisions.get(sourceKey) ?? 0
     try {
       return await this.withControlQuery(options, 'usage', async (control) => {
         const usage = await control.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
@@ -854,12 +856,27 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           dailyUsageBuckets: null,
           rateLimits: mapClaudeRateLimits(limits),
           rateLimitResetCredits: null,
-          errors: []
+          errors: [],
+          authenticationRequired: this.authenticationFailures.has(sourceKey)
         }
       })
     } catch (error) {
       console.error('Unable to load Claude usage.', error)
+      if (
+        isClaudeAuthenticationError(error) &&
+        accountRevision === (this.accountRevisions.get(sourceKey) ?? 0)
+      ) {
+        this.authenticationFailures.add(sourceKey)
+        this.authenticatedSources.delete(sourceKey)
+        for (const state of this.states.values()) {
+          if (getContainerTargetKey(state.container) === sourceKey) {
+            state.queuedMessagesPaused = true
+            this.emitUpdate(state, false, false)
+          }
+        }
+      }
       return {
+        authenticationRequired: this.authenticationFailures.has(sourceKey),
         updatedAt: Date.now(),
         statisticsLoaded: false,
         summary: emptyUsageSummary,
@@ -1839,6 +1856,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       const sourceKey = getContainerTargetKey(state.container)
       if (state.failed && !this.authenticatedSources.has(sourceKey)) {
         this.authenticationFailures.add(sourceKey)
+        for (const other of this.states.values()) {
+          if (getContainerTargetKey(other.container) === sourceKey) {
+            other.queuedMessagesPaused = true
+            this.queueUpdate(other, false)
+          }
+        }
       }
       state.messageIds = new Set(messages.map((message) => message.uuid))
       this.rememberStateTranscriptSize(state)
@@ -2214,6 +2237,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         const sourceKey = getContainerTargetKey(state.container)
         this.authenticationFailures.add(sourceKey)
         this.authenticatedSources.delete(sourceKey)
+        for (const other of this.states.values()) {
+          if (other !== state && getContainerTargetKey(other.container) === sourceKey) {
+            other.queuedMessagesPaused = true
+            this.queueUpdate(other, false)
+          }
+        }
         state.failed = true
         state.active = false
         state.queuedMessagesPaused = true

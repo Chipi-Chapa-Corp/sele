@@ -387,6 +387,10 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
         if (!active || !terminal) return
         fitAndResize()
 
+        if (initialCommand?.trim()) {
+          terminal.writeln(`$ ${initialCommand.trim().replace(/\r?\n/g, '\r\n')}`)
+        }
+
         await terminalApi.createSession({
           sessionId,
           container,

@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 
-const extract = (path, name) => {
+const extract = (path, name, effectMarker) => {
   const source = ts.createSourceFile(
     path,
     readFileSync(new URL(path, import.meta.url), 'utf8'),
@@ -16,6 +16,14 @@ const extract = (path, name) => {
   const visit = (node) => {
     if (ts.isVariableDeclaration(node) && node.name.getText(source) === name)
       expression = node.initializer.getText(source)
+    if (
+      effectMarker &&
+      ts.isCallExpression(node) &&
+      node.expression.getText(source) === 'useEffect' &&
+      node.arguments[0]?.getText(source).includes(effectMarker)
+    ) {
+      expression = node.arguments[0].getText(source)
+    }
     ts.forEachChild(node, visit)
   }
   visit(source)
@@ -131,4 +139,85 @@ test('the bottom of a historical cursor page does not enable following the live 
   context.chatDetail = { turnPagination: { kind: 'cursor', newerCursor: 'newer' } }
   context.callback()
   assert.equal(context.chatAutoScrollEnabledRef.current, false)
+})
+
+test('bottom following skips detailed measurements and captures anchors after user scrolling', () => {
+  const { context } = setupScroll({ top: 200, bottom: 200 })
+  let reads = 0
+  context.readChatScrollAnchor = () => {
+    reads++
+    return { turnId: 'visible' }
+  }
+  context.chatViewportAnchorRef.current = { turnId: 'obsolete' }
+  context.callback()
+  assert.equal(reads, 0)
+  assert.equal(context.chatViewportAnchorRef.current, null)
+  context.contentRef.current.scrollTop = 100
+  context.chatAutoScrollTargetRef.current = null
+  context.chatUserScrollIntentRef.current = true
+  context.callback()
+  assert.equal(reads, 1)
+  assert.equal(context.chatViewportAnchorRef.current.turnId, 'visible')
+})
+
+test('initial bottom positioning retains its offset without walking message descendants', () => {
+  const code = extract('./useWorkspaceController.tsx', 'scrollChatContentToBottom')
+  const element = { scrollTop: 0, scrollHeight: 4000, clientHeight: 300 }
+  const context = vm.createContext({
+    useCallback: (fn) => fn,
+    chatAtConversationBottomRef: { current: false },
+    chatAutoScrollTargetRef: { current: null },
+    chatViewportAnchorRef: { current: {} },
+    selectedChatKeyRef: { current: 'codex:chat' },
+    setChatAtConversationBottom: (value) => assert.equal(value, true),
+    getScrollBottomTop: (element) => element.scrollHeight - element.clientHeight,
+    readChatScrollAnchor: () => assert.fail('bottom positioning must not measure individual blocks')
+  })
+  vm.runInContext(code, context)
+  context.callback(element)
+  assert.equal(element.scrollTop, 3700)
+  assert.equal(context.chatAutoScrollTargetRef.current.top, 3700)
+  assert.equal(context.chatViewportAnchorRef.current, null)
+})
+
+test('an unmatched search still anchors the viewport when it stops bottom following', () => {
+  const code = extract(
+    './workspace/useWorkspaceSelection.tsx',
+    null,
+    'const refreshMatches = (resetActiveMatch: boolean)'
+  )
+  const element = {}
+  const anchor = { turnId: 'visible-bottom-message' }
+  const context = vm.createContext({
+    chatSearchOpen: true,
+    chatSearchQuery: 'missing',
+    selectedChatKey: 'codex:chat',
+    chatSearchContentRef: { current: element },
+    contentRef: { current: element },
+    chatSearchActiveIndexRef: { current: 0 },
+    chatSearchMatchesRef: { current: [] },
+    chatAutoScrollEnabledRef: { current: true },
+    chatAutoScrollTargetRef: { current: {} },
+    chatViewportAnchorRef: { current: null },
+    findChatSearchMatches: () => [],
+    setChatSearchMatchCount: (count) => assert.equal(count, 0),
+    setChatSearchActiveIndex: () => {},
+    setChatSearchHighlights: () => {},
+    clearChatSearchHighlights: () => {},
+    scrollChatSearchMatchIntoView: () => assert.fail('there is no matching message to scroll to'),
+    readChatScrollAnchor: (content, key) => {
+      assert.equal(content, element)
+      assert.equal(key, 'codex:chat')
+      return anchor
+    },
+    MutationObserver: class {
+      observe() {}
+      disconnect() {}
+    }
+  })
+  vm.runInContext(code, context)
+  const cleanup = context.callback()
+  assert.equal(context.chatAutoScrollEnabledRef.current, false)
+  assert.equal(context.chatViewportAnchorRef.current, anchor)
+  cleanup()
 })
