@@ -75,11 +75,16 @@
 }
 
 .chat-list-item:hover,
-.chat-list-item:has(:focus-visible),
-.chat-list-item--selected {
+.chat-list-item:has(:focus-visible) {
   border-color: transparent;
   background: var(--glass-subtle);
   transform: none;
+}
+
+.chat-list-item.chat-list-item--selected {
+  border-color: var(--field-border);
+  background: var(--control-surface);
+  box-shadow: var(--field-shadow);
 }
 
 .chat-list-item:active {

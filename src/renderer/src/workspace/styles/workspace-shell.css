@@ -22,6 +22,16 @@
   overflow: hidden;
 }
 
+:root[data-color-scheme='dark'] .chat {
+  --control-surface: #171513;
+  --field-border: var(--control-surface);
+  --tab-track-surface: var(--control-surface);
+  --field-shadow:
+    inset 0 0.0625rem 0.125rem rgb(0 0 0 / 24%), 0 0.0625rem rgb(233 211 188 / 6%);
+
+  background: #1b1917;
+}
+
 .window-controls {
   position: absolute;
   top: 0.65rem;
