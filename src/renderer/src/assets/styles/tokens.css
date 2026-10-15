@@ -19,8 +19,8 @@
   --accent-ink: #ffffff;
   --accent-soft: rgb(122 86 56 / 12%);
   --focus-ring: rgb(122 86 56 / 28%);
-  --control-bg: #ffffff;
-  --control-hover-bg: #ececea;
+  --control-bg: #efefed;
+  --control-hover-bg: #e5e5e2;
   --control-border: rgb(27 27 24 / 12%);
   --control-disabled-color: #aaa9a4;
   --control-height: 2rem;
@@ -28,63 +28,58 @@
   --control-icon-size: 1rem;
   --control-radius: 0.5rem;
   --control-radius-small: 0.4rem;
-  --control-surface: #ffffff;
-  --control-surface-hover: #f0efed;
-  --control-surface-active: #e8e6e3;
+  --control-surface: #efefed;
+  --control-surface-hover: #e5e5e2;
+  --control-surface-active: #dededb;
   --control-shadow: 0 0.0625rem 0.125rem rgb(27 27 24 / 6%);
   --control-shadow-hover: 0 0.125rem 0.375rem rgb(27 27 24 / 9%);
   --control-shadow-active: inset 0 0.0625rem 0.1875rem rgb(27 27 24 / 14%);
-  --field-border: var(--control-border);
+  /* Recessed controls share a surface and catch the light along their lower edge. */
+  --field-border: var(--control-surface);
   --field-shadow:
-    inset 0 0.0625rem 0.125rem rgb(27 27 24 / 6%);
-  --tab-track-surface: var(--control-hover-bg);
-  --tab-hover-surface: rgb(27 27 24 / 6%);
-  --tab-indicator-border-width: 0.0625rem;
-  --secondary-border: var(--control-border);
-  --secondary-border-hover: var(--control-border);
-  --secondary-border-colors: rgb(27 27 24 / 7%) var(--secondary-border) rgb(27 27 24 / 22%);
-  --secondary-border-colors-hover:
-    rgb(27 27 24 / 7%) var(--secondary-border-hover) rgb(27 27 24 / 22%);
-  --secondary-surface: var(--control-surface);
-  --secondary-surface-hover: #f0ebe6;
-  --secondary-surface-active: #e6e6e6;
+    inset 0 0.0625rem 0.125rem rgb(27 27 24 / 12%), 0 0.0625rem rgb(255 255 255 / 80%);
+  --tab-track-surface: var(--control-surface);
+  --tab-hover-surface: var(--control-surface-hover);
+  --tab-indicator-border-width: 0;
+  /* Raised controls sit above the surrounding neutral surface. */
+  --secondary-surface: #ffffff;
+  --secondary-surface-hover: #fafaf8;
+  --secondary-surface-active: #e8e8e5;
+  --secondary-border: var(--secondary-surface);
+  --secondary-border-hover: var(--secondary-surface-hover);
+  --secondary-border-colors: var(--secondary-border);
+  --secondary-border-colors-hover: var(--secondary-border-hover);
   --secondary-shadow:
-    inset 0 0.0625rem rgb(255 255 255 / 70%), inset 0 -0.0625rem rgb(27 27 24 / 5%),
-    0 0.0625rem 0.0625rem rgb(27 27 24 / 10%);
-  --secondary-shadow-hover: var(--secondary-shadow);
+    inset 0 0.0625rem 0.0625rem rgb(255 255 255 / 90%), 0 0.0625rem 0.125rem rgb(27 27 24 / 15%);
+  --secondary-shadow-hover:
+    inset 0 0.0625rem 0.0625rem rgb(255 255 255 / 90%), 0 0.4375rem 1.125rem rgb(27 27 24 / 12%);
   --secondary-before-shadow: none;
   --primary-surface: var(--accent);
   --primary-surface-hover: color-mix(in srgb, var(--accent) 90%, transparent);
   --primary-surface-active: var(--accent-hover);
   --primary-border: var(--accent);
-  --primary-border-colors:
-    color-mix(in srgb, var(--primary-surface) 93%, #1b1b18)
-    color-mix(in srgb, var(--primary-surface) 88%, #1b1b18)
-    color-mix(in srgb, var(--primary-surface) 78%, #1b1b18);
-  --primary-border-colors-hover:
-    color-mix(in srgb, var(--primary-surface-hover) 93%, #1b1b18)
-    color-mix(in srgb, var(--primary-surface-hover) 88%, #1b1b18)
-    color-mix(in srgb, var(--primary-surface-hover) 78%, #1b1b18);
+  --primary-border-colors: var(--primary-surface);
+  --primary-border-colors-hover: var(--primary-surface-hover);
   --primary-shadow:
-    inset 0 0.0625rem rgb(255 255 255 / 16%), inset 0 -0.0625rem rgb(27 27 24 / 5%),
-    0 0.0625rem 0.0625rem rgb(27 27 24 / 10%);
-  --primary-shadow-hover: var(--primary-shadow);
-  --floating-bg: #ffffff;
-  --floating-control-bg: #f2f2f0;
-  --floating-control-hover-bg: #e7e7e4;
-  --floating-control-active-bg: #dedbd7;
+    inset 0 0.0625rem 0.0625rem rgb(255 255 255 / 16%), 0 0.0625rem 0.125rem rgb(27 27 24 / 15%);
+  --primary-shadow-hover:
+    inset 0 0.0625rem 0.0625rem rgb(255 255 255 / 16%), 0 0.4375rem 1.125rem rgb(27 27 24 / 12%);
+  --floating-bg: #f5f5f3;
+  --floating-control-bg: var(--control-surface);
+  --floating-control-hover-bg: var(--control-surface-hover);
+  --floating-control-active-bg: var(--control-surface-active);
   --floating-muted: #595955;
   --floating-control-disabled-color: #aaa9a4;
   --panel-border: rgb(27 27 24 / 7%);
   --panel-shadow: 0 1.5rem 3.75rem rgb(27 27 24 / 9%), 0 0.0625rem 0 rgb(255 255 255 / 80%) inset;
-  --menu-bg: #ffffff;
+  --menu-bg: #f5f5f3;
   --menu-border: rgb(27 27 24 / 8%);
   --menu-shadow: 0 1.125rem 2.8125rem rgb(27 27 24 / 14%);
   --menu-option-active-bg: var(--accent-soft);
   --menu-option-selected-color: var(--accent);
   --menu-option-check-color: var(--accent);
-  --glass: #ffffff;
-  --glass-strong: #fafaf8;
+  --glass: #f5f5f3;
+  --glass-strong: #efefed;
   --glass-subtle: rgb(27 27 24 / 5%);
   --glass-line: rgb(27 27 24 / 10%);
   --glass-edge: rgb(27 27 24 / 18%);

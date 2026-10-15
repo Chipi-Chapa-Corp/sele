@@ -119,6 +119,8 @@ import { Button } from './Button'
 import { BoundedHighlightedCode } from './BoundedHighlightedCode'
 import { HighlightedCode } from './HighlightedCode'
 import { ImageLightbox } from './ImageLightbox'
+import { ChatMediaScope, useChatMedia } from './ChatMediaGallery'
+import { chatMediaId } from '../chatMedia'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { RateLimitResetButton } from './RateLimitResetButton'
 import { TableLightbox } from './TableLightbox'
@@ -778,7 +780,9 @@ const GeneratedImageThumbnail: React.FC<{
   path?: string | null
   initialDataUrl?: string | null
   name?: string
-}> = ({ path, initialDataUrl, name = 'Generated image' }) => {
+  mediaId: string
+}> = ({ path, initialDataUrl, name = 'Generated image', mediaId }) => {
+  const { open: openGallery } = useChatMedia()
   const [loadedImage, setLoadedImage] = useState<{ path: string; url: string } | null>(null)
   const [failedPath, setFailedPath] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -841,7 +845,11 @@ const GeneratedImageThumbnail: React.FC<{
         type="button"
         title={`Open ${name}`}
         aria-label={`Open ${name}`}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          if (openGallery)
+            openGallery({ id: mediaId, mediaType: 'image', name, path, url: imageUrl })
+          else setOpen(true)
+        }}
       >
         <img src={imageUrl} alt={name} />
       </button>
@@ -858,6 +866,7 @@ const MessageAttachments: React.FC<{
   projectCwd?: string | null
   resources?: ChatMessageResource[]
 }> = ({ attachments, onOpenFileLink, projectCwd, resources = [] }) => {
+  const { scope } = useChatMedia()
   const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image')
   const otherAttachments = attachments.filter((attachment) => attachment.kind !== 'image')
 
@@ -876,6 +885,7 @@ const MessageAttachments: React.FC<{
               role="listitem"
             >
               <GeneratedImageThumbnail
+                mediaId={chatMediaId(scope, 'attachment', index)}
                 path={attachment.path}
                 initialDataUrl={attachment.dataUrl}
                 name={attachment.name}
@@ -977,15 +987,12 @@ const GeneratedImageTool: React.FC<{
   label: string
   tools: ProviderWorkingTool[]
 }> = ({ active, label, tools }) => {
-  const images = Array.from(
-    new Map(
-      tools
-        .flatMap((tool) => tool.images)
-        .flatMap((image) => {
-          const key = image.path || image.dataUrl
-          return key ? [[key, image] as const] : []
-        })
-    ).values()
+  const images = tools.flatMap((tool) =>
+    tool.images.flatMap((image, index) =>
+      image.path || image.dataUrl
+        ? [{ ...image, mediaId: chatMediaId(tool.id, 'image', index) }]
+        : []
+    )
   )
 
   return (
@@ -1007,10 +1014,11 @@ const GeneratedImageTool: React.FC<{
       <div className="chat-detail__generated-image-gallery">
         {images.map((image) => (
           <GeneratedImageThumbnail
+            mediaId={image.mediaId}
             path={image.path}
             initialDataUrl={image.dataUrl}
             name={image.name ?? undefined}
-            key={image.path || image.dataUrl}
+            key={image.mediaId}
           />
         ))}
       </div>
@@ -1328,6 +1336,7 @@ const MarkdownMessageComponent: React.FC<{
   preserveLineBreaks?: boolean
   selectionQuoteHost?: boolean
   streaming?: boolean
+  mediaScope?: string
 }> = ({
   className,
   content,
@@ -1336,14 +1345,16 @@ const MarkdownMessageComponent: React.FC<{
   onOpenFileLink,
   preserveLineBreaks = false,
   selectionQuoteHost = false,
-  streaming = false
+  streaming = false,
+  mediaScope
 }) => {
+  const { open: openGallery, scope } = useChatMedia()
   const containerRef = useRef<HTMLDivElement>(null)
   const footnotePrefix = `chat-${useId().replace(/:/g, '')}-footnote-`
   const [localImagePreview, setLocalImagePreview] = useState<{
     imageUrl: string
     name: string
-    path: string
+    path?: string
     mediaType: 'image' | 'video'
   } | null>(null)
   const [expandedTableHtml, setExpandedTableHtml] = useState<string | null>(null)
@@ -1425,16 +1436,43 @@ const MarkdownMessageComponent: React.FC<{
       const imageButton = event.target.closest<HTMLButtonElement>(
         '.chat-detail__markdown-image[data-local-image-path]'
       )
-      if (imageButton && containerRef.current?.contains(imageButton)) {
-        const path = imageButton.dataset.localImagePath
-        const name = imageButton.dataset.localImageName ?? 'Image'
-        const imageUrl = imageButton.querySelector<HTMLImageElement | HTMLVideoElement>(
-          'img, video'
-        )?.src
-        const mediaType = imageButton.dataset.mediaType === 'video' ? 'video' : 'image'
-        if (path && imageUrl) {
+      const remoteImage = event.target.closest<HTMLImageElement>(
+        'img:not(.chat-detail__link-favicon)'
+      )
+      const mediaElement = imageButton ?? remoteImage
+      if (mediaElement && containerRef.current?.contains(mediaElement)) {
+        const path = imageButton?.dataset.localImagePath
+        const name = imageButton?.dataset.localImageName ?? remoteImage?.alt ?? 'Image'
+        const imageUrl = imageButton
+          ? imageButton.querySelector<HTMLImageElement | HTMLVideoElement>('img, video')?.src
+          : remoteImage?.src
+        const mediaType = imageButton?.dataset.mediaType === 'video' ? 'video' : 'image'
+        if (imageUrl) {
           event.preventDefault()
-          setLocalImagePreview({ imageUrl, name, path, mediaType })
+          if (openGallery) {
+            const elements = Array.from(
+              containerRef.current.querySelectorAll(
+                '.chat-detail__markdown-image[data-local-image-path], img:not(.chat-detail__link-favicon)'
+              )
+            ).filter(
+              (element) =>
+                element.tagName !== 'IMG' || !element.closest('.chat-detail__markdown-image')
+            )
+            openGallery({
+              id: chatMediaId(mediaScope ?? scope, 'markdown', elements.indexOf(mediaElement)),
+              mediaType,
+              name,
+              path,
+              url: imageUrl,
+              localImageOptions: {
+                container: localImageContainer,
+                cwd: localImageCwd,
+                relativeTo: 'cwd'
+              }
+            })
+          } else {
+            setLocalImagePreview({ imageUrl, name, path, mediaType })
+          }
         }
         return
       }
@@ -1459,7 +1497,7 @@ const MarkdownMessageComponent: React.FC<{
       event.preventDefault()
       onOpenFileLink(path, displayPath, line)
     },
-    [onOpenFileLink]
+    [onOpenFileLink, openGallery, mediaScope, scope, localImageContainer, localImageCwd]
   )
 
   const localImageOptions: Omit<AppLocalImageOptions, 'path'> = {
@@ -2240,6 +2278,7 @@ const WorkingStep: React.FC<{
                       </button>
                     ) : (
                       <MarkdownMessage
+                        mediaScope={block.item.id}
                         className="chat-detail__working-message"
                         content={block.item.content}
                         key={block.item.id}
@@ -2621,4 +2660,11 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   )
 }
 
-export const ChatDetailItem = memo(ChatDetailItemComponent, areChatDetailItemPropsEqual)
+export const ChatDetailItem = memo(
+  (props: ChatDetailItemProps) => (
+    <ChatMediaScope id={props.item.id}>
+      <ChatDetailItemComponent {...props} />
+    </ChatMediaScope>
+  ),
+  areChatDetailItemPropsEqual
+)

@@ -113,7 +113,7 @@ if (!process.versions.electron) {
         })
       }
       const window = new BrowserWindow({
-        show: false,
+        show: true,
         width: 1000,
         height: 750,
         webPreferences: { preload: path.join(directory, 'preload.cjs'), sandbox: true }
@@ -125,6 +125,22 @@ if (!process.versions.electron) {
           assert.ok(Date.now() < deadline, `Timed out: ${code}`)
           await new Promise((resolve) => setTimeout(resolve, 40))
         }
+      }
+      const assertNavigationGap = async () => {
+        const bounds = await js(`(() => {
+          const frame = document.querySelector('.image-lightbox__frame').getBoundingClientRect()
+          const previous = document.querySelector('[aria-label="Previous media"]')?.getBoundingClientRect()
+          const next = document.querySelector('[aria-label="Next media"]')?.getBoundingClientRect()
+          return {
+            previousGap: previous ? frame.left - previous.right : null,
+            nextGap: next ? next.left - frame.right : null,
+            inside: (!previous || previous.left >= 0) && (!next || next.right <= innerWidth)
+          }
+        })()`)
+        for (const gap of [bounds.previousGap, bounds.nextGap]) {
+          if (gap !== null) assert.ok(gap >= 8 && gap <= 16, `Navigation gap: ${gap}`)
+        }
+        assert.equal(bounds.inside, true)
       }
       await window.loadFile(path.join(directory, 'index.html'))
       await waitFor("document.querySelector('.chat-detail__markdown-video video')?.readyState >= 2")
@@ -145,6 +161,15 @@ if (!process.versions.electron) {
         await js("document.querySelector('.chat-detail__markdown-video').click()", true)
         await waitFor("document.querySelector('.image-lightbox video')?.currentTime > 0")
         assert.equal(await js("document.querySelector('.image-lightbox video').controls"), true)
+        await assertNavigationGap()
+        if (close === 'button') {
+          const artifacts = path.resolve(__dirname, '../../test-results/media-gallery')
+          await fs.mkdir(artifacts, { recursive: true })
+          await fs.writeFile(
+            path.join(artifacts, 'preview.png'),
+            (await window.webContents.capturePage()).toPNG()
+          )
+        }
         assert.equal(
           await js("getComputedStyle(document.querySelector('.image-lightbox__frame')).resize"),
           'both'
@@ -160,7 +185,15 @@ if (!process.versions.electron) {
           })()`),
           true
         )
+        await assertNavigationGap()
         if (close === 'button') {
+          await js('document.querySelector(".image-lightbox__frame").style.width = "1000px"')
+          await assertNavigationGap()
+          window.setContentSize(420, 750)
+          await waitFor('innerWidth === 420')
+          await assertNavigationGap()
+          window.setContentSize(1000, 750)
+          await waitFor('innerWidth === 1000')
           await js('document.querySelector(\'[aria-label="Copy Demo"]\').click()')
           await js('document.querySelector(\'[aria-label="Save Demo"]\').click()')
           await js('document.querySelector(\'[aria-label="Close video preview"]\').click()')
@@ -184,11 +217,80 @@ if (!process.versions.electron) {
       }
       await js('document.querySelector(\'[data-local-image-path="./image.png"]\').click()', true)
       await waitFor("document.querySelector('.image-lightbox img')")
+      assert.equal(
+        await js('getComputedStyle(document.querySelector(".image-lightbox img")).animationName'),
+        'image-lightbox-media-enter'
+      )
+      window.webContents.debugger.attach('1.3')
+      await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+      })
+      assert.equal(
+        await js('getComputedStyle(document.querySelector(".image-lightbox img")).animationName'),
+        'none'
+      )
+      await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+      window.webContents.debugger.detach()
       await js('document.querySelector(\'[aria-label="Copy Image"]\').click()')
       await waitFor('document.querySelector(\'[aria-label="Copy Image"] svg.lucide-check\')')
       await js('document.querySelector(\'[aria-label="Save Image"]\').click()')
       assert.ok(calls.some((call) => call.name === 'writeClipboardImage'))
       assert.ok(calls.some((call) => call.name === 'saveLocalImage'))
+
+      // Navigate every occurrence, including duplicate attachments and response media.
+      await js('document.querySelector(\'[aria-label="Previous media"]\').click()')
+      await waitFor(
+        "document.querySelector('.image-lightbox [role=alert]')?.textContent.includes('Missing')"
+      )
+      await js(
+        'document.dispatchEvent(new KeyboardEvent("keydown", {key:"ArrowLeft", cancelable:true}))'
+      )
+      await waitFor(
+        'document.querySelector(\'.image-lightbox[aria-label="Embedded preview"] video\')'
+      )
+      await js(
+        'document.dispatchEvent(new KeyboardEvent("keydown", {key:"ArrowLeft", cancelable:true}))'
+      )
+      await waitFor('document.querySelector(\'.image-lightbox[aria-label="Demo preview"] video\')')
+      await js('document.querySelector(\'[aria-label="Previous media"]\').click()')
+      await waitFor(
+        'document.querySelector(\'.image-lightbox[aria-label="Attachment two preview"] img\')'
+      )
+      await js('document.querySelector(\'[aria-label="Previous media"]\').click()')
+      await waitFor(
+        'document.querySelector(\'.image-lightbox[aria-label="Attachment one preview"] img\')'
+      )
+      assert.equal(await js('document.querySelector(\'[aria-label="Previous media"]\')'), null)
+      assert.equal(
+        await js('document.querySelector(".image-lightbox__position").textContent'),
+        '1 / 8'
+      )
+      await js('document.querySelector(\'[aria-label="Close image preview"]\').click()')
+
+      // Clicking the second identical thumbnail must open that occurrence.
+      await js('document.querySelector(\'[aria-label="Open Attachment two"]\').click()')
+      await waitFor('document.querySelector(".image-lightbox__position")?.textContent === "2 / 8"')
+      await js('document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))')
+      await js('document.querySelector(\'[aria-label="Open Later image"]\').click()')
+      await waitFor(
+        'document.querySelector(\'.image-lightbox[aria-label="Later image preview"] img\')'
+      )
+      await js('document.querySelector(\'[aria-label="Next media"]\').click()')
+      await waitFor('document.querySelector(\'.image-lightbox[aria-label="Remote preview"] img\')')
+      assert.equal(await js('document.querySelector(\'[aria-label="Next media"]\')'), null)
+      await js('document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))')
+
+      // Source paths survive transcript page eviction; another chat has its own list.
+      await js('document.querySelector("#later-page").click()')
+      await waitFor('!document.querySelector(\'[aria-label="Open Attachment one"]\')')
+      await js('document.querySelector(\'[aria-label="Open Later image"]\').click()')
+      await waitFor('document.querySelector(".image-lightbox__position")?.textContent === "7 / 8"')
+      await js('document.querySelector(\'[aria-label="Previous media"]\').click()')
+      await waitFor('document.querySelector(\'.image-lightbox[aria-label="Image preview"] img\')')
+      await js('document.querySelector("#switch-chat").click()')
+      await waitFor('!document.querySelector(".image-lightbox")')
+      await js('document.querySelector(\'[aria-label="Open Later image"]\').click()')
+      await waitFor('document.querySelector(".image-lightbox__position")?.textContent === "1 / 2"')
       if (process.platform === 'linux') {
         const { copyVideoFile } = require(path.join(directory, 'clipboard.cjs'))
         await copyVideoFile('demo video.webm', video)
@@ -197,7 +299,7 @@ if (!process.versions.electron) {
       }
       window.destroy()
       console.log(
-        'Video preview: thumbnail, autoplay, media actions, all close methods, missing files, image regression, and clipboard passed.'
+        'Media gallery: video playback, copy/save, close methods, occurrence order, duplicates, keyboard navigation, missing files, retained paths, chat isolation, and clipboard passed.'
       )
       app.quit()
     })

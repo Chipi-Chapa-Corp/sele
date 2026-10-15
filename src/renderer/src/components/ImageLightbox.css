@@ -5,6 +5,7 @@
   display: grid;
   place-items: center;
   background: rgb(0 0 0 / 78%);
+  outline: none;
 }
 
 .image-lightbox__preview {
@@ -16,6 +17,55 @@
   place-items: center;
   padding: 2.4rem;
   cursor: zoom-out;
+}
+
+.image-lightbox:has(.image-lightbox__position) .image-lightbox__frame {
+  min-width: min(16rem, calc(100vw - 9rem));
+  max-width: min(calc(100vw - 9rem), 72rem);
+  max-height: calc(100vh - 7rem);
+}
+
+.image-lightbox__stage {
+  position: relative;
+  display: flex;
+  width: fit-content;
+  height: fit-content;
+  max-width: 100%;
+  max-height: 100%;
+  cursor: default;
+}
+
+.image-lightbox__previous,
+.image-lightbox__next {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.image-lightbox__previous {
+  right: calc(100% + 0.75rem);
+}
+
+.image-lightbox__next {
+  left: calc(100% + 0.75rem);
+}
+
+.image-lightbox__position {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.25rem 0.65rem;
+  border-radius: 1rem;
+  background: rgb(0 0 0 / 65%);
+  color: white;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-lightbox__status {
+  padding: 3rem;
+  color: white;
+  background: rgb(0 0 0 / 65%);
 }
 
 .image-lightbox__frame {
@@ -39,6 +89,26 @@
   border-radius: 0.7rem;
   object-fit: contain;
   box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 42%);
+  animation: image-lightbox-media-enter 160ms ease-out both;
+}
+
+@keyframes image-lightbox-media-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-lightbox__frame > img,
+  .image-lightbox__frame > video {
+    animation: none;
+  }
 }
 
 .image-lightbox__actions {

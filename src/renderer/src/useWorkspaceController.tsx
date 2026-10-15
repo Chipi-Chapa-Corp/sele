@@ -5799,6 +5799,14 @@ export const useWorkspaceController = () => {
     },
     conversationMessages: {
       visible: Boolean(selectedChat),
+      changesContainer,
+      changesCwd,
+      chatMediaTotalCount: activeSubagentChatView
+        ? activeSubagentChatView.detail?.turnCount
+        : chatDetail?.turnCount,
+      chatMediaStartIndex: activeSubagentChatView
+        ? (activeSubagentChatView.detail?.itemsStartTurnIndex ?? 0)
+        : (chatDetail?.itemsStartTurnIndex ?? 0),
       activeSubagentChatView,
       chatHasActiveTurn,
       chatLoadState,

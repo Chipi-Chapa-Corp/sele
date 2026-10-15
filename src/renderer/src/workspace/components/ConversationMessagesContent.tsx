@@ -1,9 +1,11 @@
-import type { ReactElement } from 'react'
+import { useMemo, type ReactElement } from 'react'
+import { getProviderChatTurns } from '../../../../shared/chatTurns'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { ArrowLeft, ChevronDown, CircleAlert, LoaderCircle } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { ChatWorkingPlaceholder } from '../../components/ChatDetailItem'
 import { getConversationTailWorkingStep } from '../../chatConversationModel'
+import { ChatMediaGallery } from '../../components/ChatMediaGallery'
 
 type ConversationMessagesContentProps = WorkspaceController['conversationMessages']
 
@@ -35,6 +37,10 @@ export function ConversationMessagesContent(
   const {
     activeSubagentChatView,
     chatHasActiveTurn,
+    changesContainer,
+    changesCwd,
+    chatMediaStartIndex,
+    chatMediaTotalCount,
     chatLoadState,
     chatSearchContentRef,
     chatTurnPageLoadDirection,
@@ -62,6 +68,17 @@ export function ConversationMessagesContent(
     subagentVisibleChatItems,
     visibleChatItems
   } = props
+
+  const mediaItems = activeSubagentChatView ? subagentVisibleChatItems : visibleChatItems
+  const chatMediaTurns = useMemo(() => getProviderChatTurns(mediaItems), [mediaItems])
+  const mediaOptions = useMemo(
+    () => ({
+      container: changesContainer,
+      cwd: changesCwd,
+      relativeTo: 'cwd' as const
+    }),
+    [changesContainer, changesCwd]
+  )
 
   if (!selectedChat) return null
 
@@ -101,148 +118,160 @@ export function ConversationMessagesContent(
   }
 
   return (
-    <div className="chat-detail__messages-shell">
-      {activeSubagentChatView ? (
-        <div className="chat-detail__commit-back-button">
-          <Button
-            aria-label="Back to parent chat"
-            title="Back to parent chat"
-            callback={handleReturnFromSubagentChat}
-            icon={<ArrowLeft aria-hidden="true" />}
-            theme="secondary"
-          />
-        </div>
-      ) : (
-        commitChatReturnTarget?.providerId === selectedChat.providerId &&
-        commitChatReturnTarget.commitChatId === selectedChat.id && (
-          <div className="chat-detail__commit-back-button chat-detail__commit-back-button--original">
+    <ChatMediaGallery
+      key={
+        activeSubagentChatView
+          ? `${selectedChatKey}:subagent:${activeSubagentChatView.summary.id}`
+          : selectedChatKey
+      }
+      turns={chatMediaTurns}
+      startIndex={chatMediaStartIndex}
+      totalCount={Math.max(chatMediaTotalCount ?? 0, chatMediaStartIndex + chatMediaTurns.length)}
+      localImageOptions={mediaOptions}
+    >
+      <div className="chat-detail__messages-shell">
+        {activeSubagentChatView ? (
+          <div className="chat-detail__commit-back-button">
             <Button
-              aria-label="Back to original chat"
-              title="Back to original chat"
-              callback={handleReturnFromAiCommitChat}
+              aria-label="Back to parent chat"
+              title="Back to parent chat"
+              callback={handleReturnFromSubagentChat}
               icon={<ArrowLeft aria-hidden="true" />}
               theme="secondary"
             />
           </div>
-        )
-      )}
-      <div
-        className="chat-detail__messages"
-        id="chat-search-content"
-        key={
-          activeSubagentChatView
-            ? `${selectedChatKey}:subagent:${activeSubagentChatView.summary.id}`
-            : selectedChatKey
-        }
-        onScroll={activeSubagentChatView ? undefined : handleNativeChatContentScroll}
-        onWheel={activeSubagentChatView ? undefined : handleNativeChatContentWheel}
-        ref={(element) => {
-          if (activeSubagentChatView) {
-            subagentContentRef.current = element
-            if (element) contentRef.current = null
-          } else {
-            contentRef.current = element
-            if (element) subagentContentRef.current = null
-          }
-          chatSearchContentRef.current = element
-        }}
-      >
-        <div className="chat-detail__messages-layout">
-          <div className="chat-detail__messages-header" />
-          <div className="chat-detail__messages-inner">
-            {activeSubagentChatView?.detail &&
-              (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) > 0 && (
-                <Button
-                  aria-label="Load older subagent messages"
-                  title="Load older messages"
-                  theme="secondary"
-                  label="Load older messages"
-                  disabled={activeSubagentChatView.pageLoading}
-                  callback={() => void handleNavigateSubagentTurns('older')}
-                />
-              )}
-            {/* Transient activity belongs after history but before queued/steering turns. */}
-            {renderedConversation}
-            {activeSubagentChatView?.detail &&
-              (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) + displayedTurns.length <
-                (activeSubagentChatView.detail.turnCount ?? displayedTurns.length) && (
-                <div>
-                  <Button
-                    aria-label="Load newer subagent messages"
-                    title="Load newer messages"
-                    theme="secondary"
-                    label="Load newer messages"
-                    disabled={activeSubagentChatView.pageLoading}
-                    callback={() => void handleNavigateSubagentTurns('newer')}
-                  />
-                  <Button
-                    aria-label="Jump to latest subagent messages"
-                    title="Jump to latest messages"
-                    theme="secondary"
-                    label="Jump to latest"
-                    disabled={activeSubagentChatView.pageLoading}
-                    callback={() => void handleNavigateSubagentTurns('latest')}
-                  />
-                </div>
-              )}
-          </div>
-          <div className="chat-detail__messages-footer" />
-        </div>
-      </div>
-      {!activeSubagentChatView && chatLoadState === 'loading' && (
-        <ConversationMessagesState kind="loading" label="Loading messages…" />
-      )}
-      {!activeSubagentChatView && chatLoadState === 'error' && visibleChatItems.length === 0 && (
-        <ConversationMessagesState kind="error" label="Unable to load messages." />
-      )}
-      {!activeSubagentChatView &&
-        !editingMessage &&
-        chatLoadState === 'ready' &&
-        sendState !== 'sending' &&
-        !chatHasActiveTurn &&
-        visibleChatItems.length === 0 &&
-        selectedChatCommitMarkers.length === 0 &&
-        selectedChatSubagents.length === 0 && (
-          <p className="chat__status chat-detail__messages-status">No messages found.</p>
+        ) : (
+          commitChatReturnTarget?.providerId === selectedChat.providerId &&
+          commitChatReturnTarget.commitChatId === selectedChat.id && (
+            <div className="chat-detail__commit-back-button chat-detail__commit-back-button--original">
+              <Button
+                aria-label="Back to original chat"
+                title="Back to original chat"
+                callback={handleReturnFromAiCommitChat}
+                icon={<ArrowLeft aria-hidden="true" />}
+                theme="secondary"
+              />
+            </div>
+          )
         )}
-      {activeSubagentChatView?.loadState === 'loading' && !activeSubagentChatView.detail && (
-        <ConversationMessagesState kind="loading" label="Loading subagent chat…" />
-      )}
-      {activeSubagentChatView?.loadState === 'error' && (
-        <ConversationMessagesState
-          kind="error"
-          label="Unable to load this subagent chat."
-          title={activeSubagentChatView.error ?? undefined}
-        />
-      )}
-      {activeSubagentChatView?.pageLoading && (
-        <ConversationMessagesState kind="loading" label="Loading subagent messages…" />
-      )}
-      {activeSubagentChatView?.loadState === 'ready' && activeSubagentChatView.error && (
-        <ConversationMessagesState kind="error" label={activeSubagentChatView.error} />
-      )}
-      {activeSubagentChatView?.loadState === 'ready' && subagentVisibleChatItems.length === 0 && (
-        <p className="chat__status chat-detail__messages-status">
-          No messages found in this subagent chat.
-        </p>
-      )}
-      {!activeSubagentChatView &&
-        chatTurnPageLoadDirection &&
-        chatTurnPageLoadDirection !== 'latest' && (
+        <div
+          className="chat-detail__messages"
+          id="chat-search-content"
+          key={
+            activeSubagentChatView
+              ? `${selectedChatKey}:subagent:${activeSubagentChatView.summary.id}`
+              : selectedChatKey
+          }
+          onScroll={activeSubagentChatView ? undefined : handleNativeChatContentScroll}
+          onWheel={activeSubagentChatView ? undefined : handleNativeChatContentWheel}
+          ref={(element) => {
+            if (activeSubagentChatView) {
+              subagentContentRef.current = element
+              if (element) contentRef.current = null
+            } else {
+              contentRef.current = element
+              if (element) subagentContentRef.current = null
+            }
+            chatSearchContentRef.current = element
+          }}
+        >
+          <div className="chat-detail__messages-layout">
+            <div className="chat-detail__messages-header" />
+            <div className="chat-detail__messages-inner">
+              {activeSubagentChatView?.detail &&
+                (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) > 0 && (
+                  <Button
+                    aria-label="Load older subagent messages"
+                    title="Load older messages"
+                    theme="secondary"
+                    label="Load older messages"
+                    disabled={activeSubagentChatView.pageLoading}
+                    callback={() => void handleNavigateSubagentTurns('older')}
+                  />
+                )}
+              {/* Transient activity belongs after history but before queued/steering turns. */}
+              {renderedConversation}
+              {activeSubagentChatView?.detail &&
+                (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) + displayedTurns.length <
+                  (activeSubagentChatView.detail.turnCount ?? displayedTurns.length) && (
+                  <div>
+                    <Button
+                      aria-label="Load newer subagent messages"
+                      title="Load newer messages"
+                      theme="secondary"
+                      label="Load newer messages"
+                      disabled={activeSubagentChatView.pageLoading}
+                      callback={() => void handleNavigateSubagentTurns('newer')}
+                    />
+                    <Button
+                      aria-label="Jump to latest subagent messages"
+                      title="Jump to latest messages"
+                      theme="secondary"
+                      label="Jump to latest"
+                      disabled={activeSubagentChatView.pageLoading}
+                      callback={() => void handleNavigateSubagentTurns('latest')}
+                    />
+                  </div>
+                )}
+            </div>
+            <div className="chat-detail__messages-footer" />
+          </div>
+        </div>
+        {!activeSubagentChatView && chatLoadState === 'loading' && (
           <ConversationMessagesState kind="loading" label="Loading messages…" />
         )}
-      {showChatTurnDownButton && (
-        <div className="chat-detail__down-button">
-          <Button
-            aria-label="Jump to latest messages"
-            disabled={chatTurnPageLoadDirection === 'latest'}
-            theme="secondary"
-            title="Jump to latest messages"
-            callback={() => loadChatTurnPage('latest')}
-            icon={<ChevronDown aria-hidden="true" />}
+        {!activeSubagentChatView && chatLoadState === 'error' && visibleChatItems.length === 0 && (
+          <ConversationMessagesState kind="error" label="Unable to load messages." />
+        )}
+        {!activeSubagentChatView &&
+          !editingMessage &&
+          chatLoadState === 'ready' &&
+          sendState !== 'sending' &&
+          !chatHasActiveTurn &&
+          visibleChatItems.length === 0 &&
+          selectedChatCommitMarkers.length === 0 &&
+          selectedChatSubagents.length === 0 && (
+            <p className="chat__status chat-detail__messages-status">No messages found.</p>
+          )}
+        {activeSubagentChatView?.loadState === 'loading' && !activeSubagentChatView.detail && (
+          <ConversationMessagesState kind="loading" label="Loading subagent chat…" />
+        )}
+        {activeSubagentChatView?.loadState === 'error' && (
+          <ConversationMessagesState
+            kind="error"
+            label="Unable to load this subagent chat."
+            title={activeSubagentChatView.error ?? undefined}
           />
-        </div>
-      )}
-    </div>
+        )}
+        {activeSubagentChatView?.pageLoading && (
+          <ConversationMessagesState kind="loading" label="Loading subagent messages…" />
+        )}
+        {activeSubagentChatView?.loadState === 'ready' && activeSubagentChatView.error && (
+          <ConversationMessagesState kind="error" label={activeSubagentChatView.error} />
+        )}
+        {activeSubagentChatView?.loadState === 'ready' && subagentVisibleChatItems.length === 0 && (
+          <p className="chat__status chat-detail__messages-status">
+            No messages found in this subagent chat.
+          </p>
+        )}
+        {!activeSubagentChatView &&
+          chatTurnPageLoadDirection &&
+          chatTurnPageLoadDirection !== 'latest' && (
+            <ConversationMessagesState kind="loading" label="Loading messages…" />
+          )}
+        {showChatTurnDownButton && (
+          <div className="chat-detail__down-button">
+            <Button
+              aria-label="Jump to latest messages"
+              disabled={chatTurnPageLoadDirection === 'latest'}
+              theme="secondary"
+              title="Jump to latest messages"
+              callback={() => loadChatTurnPage('latest')}
+              icon={<ChevronDown aria-hidden="true" />}
+            />
+          </div>
+        )}
+      </div>
+    </ChatMediaGallery>
   )
 }

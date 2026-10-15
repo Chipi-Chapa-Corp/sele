@@ -3,6 +3,8 @@ import { spawn, type IPty } from '@lydell/node-pty'
 const running = new Map<IPty, Promise<void>>()
 let stopping = false
 
+export const isPtyShutdown = (): boolean => stopping
+
 export const spawnPty: typeof spawn = (...args) => {
   if (stopping) throw new Error('Sele is shutting down.')
   const pty = spawn(...args)

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { basename, delimiter, extname, isAbsolute, join } from 'node:path'
-import { spawnPty } from './pty'
+import { isPtyShutdown, spawnPty } from './pty'
 import type { AppContainerTarget, AppContainerTool, AppLocalContainerTarget } from '../shared/app'
 import { isExpectedFileAbsenceError } from '../shared/expectedAbsence.ts'
 import {
@@ -551,7 +551,9 @@ const runLocalPtyShellLookup = (
     }
 
     const timeout = setTimeout(() => {
-      console.warn('[hostProcess:runLocalPtyShellLookup] Shell lookup timed out')
+      if (!isPtyShutdown()) {
+        console.warn('[hostProcess:runLocalPtyShellLookup] Shell lookup timed out')
+      }
       killPty(pty)
       settle(null)
     }, shellLookupTimeoutMs)
@@ -577,7 +579,7 @@ const runLocalPtyShellLookup = (
       output = `${output}${data}`.slice(-shellLookupMaxBuffer)
     })
     pty.onExit(({ exitCode, signal }) => {
-      if (exitCode !== 0) {
+      if (!settled && !isPtyShutdown() && exitCode !== 0) {
         console.error('[hostProcess:runLocalPtyShellLookup] Shell lookup exited unsuccessfully', {
           exitCode,
           shell,
@@ -608,7 +610,9 @@ const runFlatpakPtyShellLookup = (
     }
 
     const timeout = setTimeout(() => {
-      console.warn('[hostProcess:runFlatpakPtyShellLookup] Host shell lookup timed out')
+      if (!isPtyShutdown()) {
+        console.warn('[hostProcess:runFlatpakPtyShellLookup] Host shell lookup timed out')
+      }
       killPty(pty)
       settle(null)
     }, shellLookupTimeoutMs)
@@ -643,7 +647,12 @@ const runFlatpakPtyShellLookup = (
       output = `${output}${data}`.slice(-shellLookupMaxBuffer)
     })
     pty.onExit(({ exitCode, signal }) => {
-      if (exitCode !== 0 && !isExpectedShellCandidateAbsence({ code: exitCode }, output)) {
+      if (
+        !settled &&
+        !isPtyShutdown() &&
+        exitCode !== 0 &&
+        !isExpectedShellCandidateAbsence({ code: exitCode }, output)
+      ) {
         console.error(
           '[hostProcess:runFlatpakPtyShellLookup] Host shell lookup exited unsuccessfully',
           { exitCode, shell, signal }
@@ -691,6 +700,8 @@ const resolveFromShell = async (
 
   for (const shell of shells) {
     for (const args of getShellLookupArgSets(shell, commandName, true)) {
+      // A previous probe may have been killed by stopPtys while we awaited it.
+      if (isPtyShutdown()) return null
       const result = await runPtyShellLookup(shell, args, shellEnv, cwd, baseEnv)
       if (result && (isRunningInFlatpak() || (await isExecutableFile(result.file)))) {
         return { file: result.file, path: result.path ?? lookupPath }
@@ -698,6 +709,7 @@ const resolveFromShell = async (
     }
 
     for (const args of getShellLookupArgSets(shell, commandName, false)) {
+      if (isPtyShutdown()) return null
       const result = await runShellLookup(shell, args, shellEnv, cwd, baseEnv)
       if (result && (isRunningInFlatpak() || (await isExecutableFile(result.file)))) {
         return { file: result.file, path: result.path ?? lookupPath }
