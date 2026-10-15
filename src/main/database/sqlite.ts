@@ -130,6 +130,7 @@ export type LocalDatabase = {
 }
 
 let database: Kysely<LocalDatabase> | null = null
+let connection: Database.Database | null = null
 let schemaReady = false
 
 const getDatabasePath = (): string =>
@@ -405,9 +406,10 @@ export const getDatabase = async (): Promise<Kysely<LocalDatabase>> => {
     const path = getDatabasePath()
     mkdirSync(dirname(path), { recursive: true })
 
+    connection = new Database(path)
     database = new Kysely<LocalDatabase>({
       dialect: new SqliteDialect({
-        database: new Database(path)
+        database: connection
       })
     })
   }
@@ -416,9 +418,15 @@ export const getDatabase = async (): Promise<Kysely<LocalDatabase>> => {
   return database
 }
 
+export const getSqliteConnection = (): Database.Database => {
+  if (!connection) throw new Error('Database is not initialized.')
+  return connection
+}
+
 export const disposeDatabase = async (): Promise<void> => {
   const db = database
   database = null
+  connection = null
   schemaReady = false
 
   if (db) await db.destroy()

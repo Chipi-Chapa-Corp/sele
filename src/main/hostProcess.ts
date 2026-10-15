@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { basename, delimiter, extname, isAbsolute, join } from 'node:path'
-import { spawn as spawnPty } from '@lydell/node-pty'
+import { spawnPty } from './pty'
 import type { AppContainerTarget, AppContainerTool, AppLocalContainerTarget } from '../shared/app'
 import { isExpectedFileAbsenceError } from '../shared/expectedAbsence.ts'
 import {

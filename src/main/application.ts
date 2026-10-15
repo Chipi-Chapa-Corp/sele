@@ -1,3 +1,5 @@
+import { stopPtys } from './pty'
+import { registerPreferences } from './registerPreferences'
 import { registerAppUpdate } from './appUpdate'
 import './logging'
 import { startBrowserUseBridge } from './providers/codex/CodexBrowserBridge'
@@ -329,31 +331,42 @@ const focusExistingWindow = (): void => {
 }
 
 const startApp = (): void => {
-  app.whenReady().then(() => {
-    startModelPricingRefresh()
-    registerVisualizationProtocol()
-    nativeTheme.themeSource = 'system'
-    nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
-    electronApp.setAppUserModelId('com.sele')
-    registerAppIpc()
-    registerAppUpdate()
-    registerBrowserIpc()
-    void startBrowserUseBridge(startBrowserAutomationService()).catch((error: unknown) =>
-      console.error('Unable to start browser-use bridge:', error)
-    )
-    registerProviderIpc()
-    registerTerminalIpc()
+  app
+    .whenReady()
+    .then(async () => {
+      await registerPreferences()
+      startModelPricingRefresh()
+      registerVisualizationProtocol()
+      nativeTheme.themeSource = 'system'
+      nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
+      electronApp.setAppUserModelId('com.sele')
+      registerAppIpc()
+      registerAppUpdate()
+      registerBrowserIpc()
+      void startBrowserUseBridge(startBrowserAutomationService()).catch((error: unknown) =>
+        console.error('Unable to start browser-use bridge:', error)
+      )
+      registerProviderIpc()
+      registerTerminalIpc()
 
-    app.on('browser-window-created', (_, window) => {
-      optimizer.watchWindowShortcuts(window)
+      app.on('browser-window-created', (_, window) => {
+        optimizer.watchWindowShortcuts(window)
+      })
+
+      createWindow()
+
+      app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      })
     })
-
-    createWindow()
-
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    .catch((error: unknown) => {
+      console.error('Unable to initialize Sele preferences.', error)
+      dialog.showErrorBox(
+        'Sele could not load preferences',
+        String(error) + '\nSaved preferences have not been reset.'
+      )
+      app.exit(1)
     })
-  })
 }
 
 export const startApplication = (): { focus: () => void } => {
@@ -362,20 +375,26 @@ export const startApplication = (): { focus: () => void } => {
 }
 
 let finishingQuit = false
+let quitReady = false
 app.on('before-quit', (event) => {
+  if (quitReady) return
+  event.preventDefault()
   if (finishingQuit) return
   finishingQuit = true
-  event.preventDefault()
   beginProviderIpcShutdown()
   disposeProviderAdapters()
   disposeTerminalSessions()
-  void stopModelPricingRefresh()
+  void stopPtys()
+    .then(stopModelPricingRefresh)
     .then(flushTokenUsage)
     .then(disposeDatabase)
     .catch((error: unknown) => {
-      console.error('Unable to close token usage storage.', error)
+      console.error('Unable to finish shutdown.', error)
     })
-    .finally(() => app.quit())
+    .finally(() => {
+      quitReady = true
+      app.quit()
+    })
 })
 
 app.on('window-all-closed', () => {

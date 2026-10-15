@@ -6,6 +6,7 @@ export type WorkingStepProgressPolicy = 'regular' | 'stoppedSteeredFailed'
 
 export type WorkingStepDisclosureTarget = {
   status: ProviderWorkingStep['status']
+  progressPolicy: WorkingStepProgressPolicy
   hasNextWorkingStep: boolean
 }
 
@@ -27,12 +28,19 @@ export const getSteeredWorkingStepDisclosureTargets = (
     const isSteeredTurn = turn.items.some(isSteeringMessage)
     if (!nextTurnIsSteering) target = undefined
 
-    // A chain of steering messages shares the last block's lifecycle. An internal
-    // steering boundary is not a next turn for the collapse-on-next-turn rule.
+    // A chain shares the final block's lifecycle and completion policy. Steering
+    // boundaries neither end the work nor make a successful finish exceptional.
     for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
       const item = turn.items[itemIndex]
       if (item.type !== 'working') continue
-      target ??= { status: item.status, hasNextWorkingStep: hasLaterWorkingStep }
+      target ??= {
+        status: item.status,
+        progressPolicy:
+          item.status === 'stopped' || item.status === 'failed'
+            ? 'stoppedSteeredFailed'
+            : 'regular',
+        hasNextWorkingStep: hasLaterWorkingStep
+      }
       if (isSteeredTurn || nextTurnIsSteering) targets.set(item.id, target)
       hasLaterWorkingStep = true
     }

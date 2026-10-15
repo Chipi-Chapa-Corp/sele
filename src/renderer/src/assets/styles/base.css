@@ -35,8 +35,7 @@ textarea {
   -webkit-tap-highlight-color: transparent;
 }
 
-summary:focus-visible,
-textarea:focus-visible {
+summary:focus-visible {
   outline: 0.1875rem solid var(--focus-ring);
   outline-offset: 0.1875rem;
 }
@@ -60,6 +59,7 @@ textarea:focus-visible {
   --control-shadow: none;
   --control-shadow-hover: none;
   --control-shadow-active: none;
+  --field-shadow: none;
   --secondary-shadow: none;
   --secondary-shadow-hover: none;
   --secondary-before-shadow: none;
@@ -83,6 +83,11 @@ textarea:focus-visible {
 :root[data-disable-shadows='true'] :focus-visible {
   outline: 0.1875rem solid var(--focus-ring);
   outline-offset: 0.1875rem;
+}
+
+:root[data-disable-shadows='true']
+  :is(.ui-input, .ui-textarea, .settings-dialog__prompt-textarea, .cwd-actions-dialog__keybinding):focus-visible {
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

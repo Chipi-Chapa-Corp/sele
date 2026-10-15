@@ -288,13 +288,13 @@ button.changes-sidebar__recent-row:not(:disabled) {
 }
 
 .changes-sidebar__recent-actions .ui-button {
-  border-color: var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   background: var(--secondary-surface);
   box-shadow: var(--secondary-shadow);
 }
 
 .changes-sidebar__recent-actions .ui-button:not(:disabled):hover {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
 }

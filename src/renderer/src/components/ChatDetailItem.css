@@ -98,6 +98,7 @@
   overflow: hidden;
   padding: 0.12em 0.46em;
   border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: 0.35rem;
   color: var(--ink);
   background: var(--secondary-surface);
@@ -135,7 +136,7 @@
 .chat-detail__message-attachment-file:not(:disabled):hover,
 .chat-detail__message-attachment-review:hover,
 .chat-detail__message-attachment-review[aria-expanded='true'] {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
@@ -198,21 +199,25 @@
 }
 
 .chat-detail__message--user {
+  --user-message-background: color-mix(in srgb, var(--user-message-surface) 92%, var(--accent));
   max-width: 82%;
   padding: 0.65rem 0.8rem;
-  border: 0.0625rem solid var(--message-border);
+  border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: 0.85rem 0.85rem 0.3rem;
   color: var(--lead);
-  background: var(--assistant-message);
-  box-shadow: var(--message-shadow);
-  -webkit-backdrop-filter: blur(0.75rem) saturate(1.25);
-  backdrop-filter: blur(0.75rem) saturate(1.25);
+  background: var(--user-message-background);
+  box-shadow: var(--secondary-shadow);
+}
+
+:root[data-color-scheme='dark'] .chat-detail__message--user {
+  border-color: var(--user-message-background);
 }
 
 .chat-detail__message-block--pending .chat-detail__message--user {
   border-style: dashed;
   color: color-mix(in srgb, var(--lead) 72%, transparent);
-  background: color-mix(in srgb, var(--assistant-message) 68%, transparent);
+  background: color-mix(in srgb, var(--user-message-surface) 68%, transparent);
   box-shadow: none;
 }
 
@@ -290,19 +295,6 @@
   flex: none;
   align-items: center;
   gap: 0.3rem;
-}
-
-.chat-detail__message-block--user .chat-detail__message-actions .ui-button {
-  border-color: var(--message-border);
-  color: var(--lead);
-  background: var(--assistant-message);
-  box-shadow: var(--message-shadow);
-}
-
-.chat-detail__message-block--user .chat-detail__message-actions .ui-button:not(:disabled):hover {
-  border-color: color-mix(in srgb, var(--message-border) 72%, var(--accent));
-  background: color-mix(in srgb, var(--accent) 10%, var(--assistant-message));
-  box-shadow: var(--glass-shadow-hover);
 }
 
 .chat-detail__message-action-placeholder {
@@ -697,6 +689,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   margin: 0 0.05em;
   padding: 0.12em 0.46em;
   border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: 0.35rem;
   color: var(--ink);
   background: var(--secondary-surface);
@@ -743,7 +736,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 }
 
 .chat-detail__file-link:hover {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);

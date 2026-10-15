@@ -4,10 +4,10 @@
   grid-template-columns: repeat(var(--ui-segmented-control-count), minmax(0, 1fr));
   gap: 0.15rem;
   padding: 0.15rem;
-  border: 0.0625rem solid var(--control-border);
+  border: 0.0625rem solid var(--field-border);
   border-radius: var(--control-radius);
-  background: var(--control-surface);
-  box-shadow: var(--control-shadow);
+  background: var(--tab-track-surface);
+  box-shadow: var(--field-shadow);
 }
 
 :where(.ui-segmented-control__item) {
@@ -61,7 +61,7 @@
 :where(.ui-segmented-control__option:hover:not(:disabled)),
 :where(.ui-segmented-control__option:focus-visible) {
   color: var(--ink);
-  background: var(--control-surface-hover);
+  background: var(--tab-hover-surface);
 }
 
 :where(.ui-segmented-control__option:focus-visible) {
@@ -171,8 +171,11 @@
 .ui-segmented-control__indicator {
   position: absolute;
   inset: 0;
+  border: var(--tab-indicator-border-width) solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: inherit;
-  background: var(--glass-subtle);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
   pointer-events: none;
 }
 .ui-segmented-control__option {

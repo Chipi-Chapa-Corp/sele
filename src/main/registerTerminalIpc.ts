@@ -4,7 +4,7 @@ import { userInfo } from 'node:os'
 import { basename, isAbsolute } from 'node:path'
 import { app, ipcMain } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
-import { spawn as spawnPty } from '@lydell/node-pty'
+import { spawnPty } from './pty'
 import type { IDisposable, IPty } from '@lydell/node-pty'
 import type {
   TerminalCreateOptions,
@@ -341,7 +341,7 @@ const createSession = async (
           cwd,
           env,
           keepAlive: Boolean(command && options.keepAliveOnCommandFinish),
-          shell: baseShell
+          shell
         })
       : await getHostCommand(shell.file, shell.args, { cwd, env })
   const pty = spawnPty(hostCommand.file, hostCommand.args, {

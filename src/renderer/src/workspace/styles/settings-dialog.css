@@ -101,7 +101,14 @@
 
 .settings-dialog__nav-item--active {
   color: var(--ink);
-  background: var(--glass-subtle);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
+}
+
+.settings-dialog__nav-item--active:focus-visible {
+  box-shadow:
+    0 0 0 0.1875rem var(--focus-ring),
+    var(--secondary-shadow);
 }
 
 .settings-dialog__nav-icon {

@@ -1,4 +1,5 @@
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
+import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -46,6 +47,7 @@ export type ClaudeTranscriptMessage = {
   label?: string | null
   attachments?: ProviderMessageAttachment[]
   failed?: boolean
+  error?: string
 }
 
 type ClaudeContentBlock = {
@@ -74,6 +76,7 @@ type Segment = {
   id: string
   entries: ProviderConversationEntry[]
   failed: boolean
+  failureReason?: 'authentication'
   failureMessage?: string
 }
 
@@ -474,7 +477,8 @@ export const renderClaudeChatItems = (
         failed,
         stopped: isLast && options.stopped
       },
-      ...(failed && current.failureMessage ? { failureMessage: current.failureMessage } : {})
+      ...(failed && current.failureMessage ? { failureMessage: current.failureMessage } : {}),
+      ...(failed && current.failureReason ? { failureReason: current.failureReason } : {})
     })
   }
 
@@ -516,6 +520,18 @@ export const renderClaudeChatItems = (
     if (message.type === 'assistant') {
       const current = ensureSegment(message.uuid)
       current.timing = includeClaudeMessageTime(current.timing, message)
+      if (isClaudeAuthenticationFailure(message)) {
+        current.failed = true
+        current.failureReason = 'authentication'
+        current.failureMessage =
+          getTextContent(getMessageRecord(message.message)?.content) ||
+          'Claude authentication failed.'
+        current.entries.push({
+          kind: 'working',
+          item: { type: 'message', id: message.uuid, content: current.failureMessage }
+        })
+        continue
+      }
       const blockBaseId = getClaudeBlockBaseId(message)
       blocks.forEach((block) => {
         if (
@@ -604,7 +620,7 @@ export const renderClaudeChatItems = (
         if (message.failed) {
           const current = ensureSegment(message.uuid)
           current.failed = true
-          if (content) current.failureMessage = content
+          if (content && !current.failureReason) current.failureMessage = content
         }
         if (content) {
           ensureSegment(message.uuid).entries.push({
@@ -631,6 +647,7 @@ type ProjectedClaudeSegment = {
   timing?: ConversationTiming
   id: string
   failed: boolean
+  failureReason?: 'authentication'
   failureMessage?: string
   groups: ProviderWorkingItem[]
   groupCount: number
@@ -798,6 +815,23 @@ export class ClaudeTranscriptProjection {
     if (message.type === 'assistant') {
       const segment = this.ensureSegment(message.uuid)
       this.journal.set(segment, 'timing', includeClaudeMessageTime(segment.timing, message))
+      if (isClaudeAuthenticationFailure(message)) {
+        this.demoteFinal(segment)
+        this.journal.set(segment, 'failed', true)
+        this.journal.set(segment, 'failureReason', 'authentication')
+        this.journal.set(
+          segment,
+          'failureMessage',
+          getTextContent(getMessageRecord(message.message)?.content) ||
+            'Claude authentication failed.'
+        )
+        this.appendWorking(segment, {
+          type: 'message',
+          id: message.uuid,
+          content: segment.failureMessage!
+        })
+        return
+      }
       for (const block of blocks) {
         if (
           block.type === 'thinking' &&
@@ -907,7 +941,8 @@ export class ClaudeTranscriptProjection {
         if (message.failed) {
           const segment = this.ensureSegment(message.uuid)
           this.journal.set(segment, 'failed', true)
-          if (content) this.journal.set(segment, 'failureMessage', content)
+          if (content && !segment.failureReason)
+            this.journal.set(segment, 'failureMessage', content)
         }
         if (content) {
           const segment = this.ensureSegment(message.uuid)
@@ -971,6 +1006,7 @@ export class ClaudeTranscriptProjection {
               stopped: last && options.stopped
             },
             ...(failed && node.failureMessage ? { failureMessage: node.failureMessage } : {}),
+            ...(failed && node.failureReason ? { failureReason: node.failureReason } : {}),
             workingItemWindow: {
               itemCount: node.groupCount,
               itemsStartIndex: node.groupCount - node.groups.length

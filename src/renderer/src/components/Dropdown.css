@@ -56,6 +56,7 @@
   gap: 0.45rem;
   padding: 0 0.65rem 0 0.7rem;
   border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: var(--control-radius);
   color: var(--lead);
   cursor: pointer;
@@ -86,7 +87,7 @@
 }
 
 :where(.ui-dropdown__trigger:not(:disabled):hover) {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
@@ -96,7 +97,7 @@
   .ui-dropdown--open:not([data-dropdown-menu-root='true']):not(.ui-dropdown--disabled)
     .ui-dropdown__trigger
 ) {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
@@ -120,6 +121,7 @@
 
 :where(.ui-dropdown--inline .ui-dropdown__trigger) {
   border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: var(--control-radius-small);
   color: var(--lead);
   background: var(--secondary-surface);
@@ -129,7 +131,7 @@
 
 :where(.ui-dropdown--inline .ui-dropdown__trigger:hover),
 :where(.ui-dropdown--inline .ui-dropdown__trigger:focus-visible) {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);

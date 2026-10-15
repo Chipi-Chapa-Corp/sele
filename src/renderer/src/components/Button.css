@@ -175,7 +175,7 @@
 }
 
 :where(.ui-button--primary) {
-  border-color: var(--primary-border);
+  border-color: var(--primary-border-colors);
   color: var(--accent-ink);
   background: var(--primary-surface);
   box-shadow: var(--primary-shadow);
@@ -183,13 +183,13 @@
 }
 
 :where(.ui-button--primary:not(:disabled):hover, .ui-button--primary[data-pressed]:not(:disabled)) {
-  border-color: var(--primary-border);
+  border-color: var(--primary-border-colors-hover);
   background: var(--primary-surface-hover);
   box-shadow: var(--primary-shadow-hover);
 }
 
 :where(.ui-button--secondary) {
-  border-color: var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   color: var(--ink);
   background: var(--secondary-surface);
   box-shadow: var(--secondary-shadow);
@@ -204,7 +204,7 @@
   .ui-button--secondary:not(:disabled):hover,
   .ui-button--secondary[data-pressed]:not(:disabled)
 ) {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
@@ -224,13 +224,23 @@
   box-shadow: none;
 }
 
-:where(.ui-button--primary:not(:disabled):active) {
+:where(.ui-button--primary:not(:disabled):active, .ui-button--secondary:not(:disabled):active) {
   transform: translateY(0.0625rem);
+}
+
+:where(
+  .ui-button--primary[data-pressed]:not(:disabled),
+  .ui-button--secondary[data-pressed]:not(:disabled)
+) {
+  box-shadow: var(--control-shadow-active);
+}
+
+:where(.ui-button--primary[data-pressed]:not(:disabled)) {
+  background: var(--primary-surface-active);
 }
 
 :where(.ui-button--secondary[data-pressed]:not(:disabled)) {
   background: var(--secondary-surface-active);
-  box-shadow: var(--control-shadow-active);
 }
 
 .ui-button:disabled {
@@ -255,7 +265,7 @@
 }
 
 :where(.ui-button--secondary:disabled) {
-  border-color: var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   color: var(--control-disabled-color);
   background: var(--secondary-surface);
   box-shadow: none;

@@ -14,7 +14,13 @@ import { getClaudeExecutable } from './ClaudeExecutable'
 import { parseClaudeVersion } from './ClaudeVersion'
 import { fetchClaudeRateLimits } from './ClaudeUsage'
 
-type Login = { id: string; accountId: string; flow: ClaudeAccountLogin }
+type Login = {
+  id: string
+  accountId: string
+  flow: ClaudeAccountLogin
+  reauthentication?: boolean
+  directory: string | null
+}
 
 // This is the oldest CLI version verified by Sele's credential-isolation probe.
 const minimumVersion = '2.1.281'
@@ -151,18 +157,48 @@ export class ClaudeAccounts {
     const store = await this.store(options)
     const pending = await store.getPending()
     if (!pending) return null
+    return this.startLogin(pending.id, store.credentialDirectory(pending.id), false, options)
+  }
+
+  reauthenticate = async (options: ProviderSourceOptions = {}) => {
+    const store = await this.store(options)
+    if (await store.getPending())
+      throw new Error('Finish or cancel the current Claude sign-in first.')
+    const selected = await store.getSelection()
+    const accountId = selected?.id ?? 'default'
+    const login = await this.startLogin(
+      accountId,
+      selected ? store.credentialDirectory(accountId) : null,
+      true,
+      options
+    )
+    return { accountId, login }
+  }
+
+  private startLogin = async (
+    accountId: string,
+    directory: string | null,
+    reauthentication: boolean,
+    options: ProviderSourceOptions
+  ): Promise<ProviderLoginResult> => {
+    const store = await this.store(options)
     const key = getContainerTargetKey(options.container)
     if (this.logins.has(key)) throw new Error('Claude sign-in is already running.')
-    const command = await this.command(
-      ['auth', 'login', '--claudeai'],
-      options,
-      store.credentialDirectory(pending.id)
-    )
+    const command = await this.command(['auth', 'login', '--claudeai'], options, directory)
     // Recheck after command resolution, which can involve SSH and shell discovery.
-    if ((await store.getPending())?.id !== pending.id || this.logins.has(key)) {
+    const expectedId = reauthentication
+      ? ((await store.getSelection())?.id ?? 'default')
+      : (await store.getPending())?.id
+    if (expectedId !== accountId || this.logins.has(key)) {
       throw new Error('Claude sign-in is no longer available.')
     }
-    const login = { id: randomUUID(), accountId: pending.id, flow: new ClaudeAccountLogin(command) }
+    const login = {
+      id: randomUUID(),
+      accountId,
+      directory,
+      reauthentication,
+      flow: new ClaudeAccountLogin(command)
+    }
     this.logins.set(key, login)
     try {
       return {
@@ -201,14 +237,13 @@ export class ClaudeAccounts {
     const result = await login.flow.completion
     if (!result.success) throw new Error(result.error || 'Claude sign-in failed.')
     const store = await this.store(options)
-    if ((await store.getPending())?.id !== accountId)
+    const expectedId = login.reauthentication
+      ? ((await store.getSelection())?.id ?? 'default')
+      : (await store.getPending())?.id
+    if (this.logins.get(key) !== login || expectedId !== accountId)
       throw new Error('Claude sign-in was canceled.')
     const output = await runClaudeAccountCommand(
-      await this.command(
-        ['auth', 'status', '--json'],
-        options,
-        store.credentialDirectory(accountId)
-      )
+      await this.command(['auth', 'status', '--json'], options, login.directory)
     )
     const status = JSON.parse(output) as { loggedIn?: boolean; authMethod?: string }
     if (!status.loggedIn || status.authMethod !== 'claude.ai') {
@@ -217,7 +252,12 @@ export class ClaudeAccounts {
   }
 
   complete = async (accountId: string, options: ProviderSourceOptions = {}) => {
-    const result = await (await this.store(options)).complete(accountId)
+    const login = this.logins.get(getContainerTargetKey(options.container))
+    const store = await this.store(options)
+    const result =
+      login?.accountId === accountId && login.reauthentication
+        ? await store.get()
+        : await store.complete(accountId)
     this.logins.delete(getContainerTargetKey(options.container))
     return result
   }
@@ -228,8 +268,13 @@ export class ClaudeAccounts {
     if (login?.accountId === accountId) {
       await login.flow.cancel()
       if (this.logins.get(key) === login) this.logins.delete(key)
+      if (login.reauthentication) return (await this.store(options)).get()
     }
-    return (await this.store(options)).cancel(accountId)
+    const store = await this.store(options)
+    // Canceling reauthentication must never remove an existing account's credentials,
+    // including a second cancellation racing with the completion request.
+    if ((await store.getPending())?.id !== accountId) return store.get()
+    return store.cancel(accountId)
   }
 
   select = async (accountId: string, options: ProviderSourceOptions = {}) => {

@@ -102,10 +102,12 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   const cursorWindowRef = useRef<ChatCursorWindow | null>(null)
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const chatReadOnly = getChatWriteAccessPresentation(chatDetail).readOnly
+  const authenticationRequired = chatDetail?.authenticationRequired === true
   const messageBoxDisabled = selectedChat
     ? providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
       chatReadOnly ||
+      authenticationRequired ||
       Boolean(activeSubagentChatView) ||
       (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
     : providerUpdateInProgress || !newSessionProviderAvailable
@@ -113,6 +115,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     selectedChat &&
       !activeSubagentChatView &&
       !chatReadOnly &&
+      !authenticationRequired &&
       chatDetail?.capabilities.editMessages &&
       chatLoadState === 'ready' &&
       sendState !== 'sending' &&
@@ -628,6 +631,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   const stoppedTurnRetryMessages = chatConversationModel.stoppedTurnRetryMessages
   const canRetryStoppedTurns = Boolean(selectedChat && chatDetail?.capabilities.editMessages)
   const stoppedTurnActionDisabled =
+    authenticationRequired ||
     chatLoadState !== 'ready' ||
     sendState === 'sending' ||
     providerUpdateInProgress ||

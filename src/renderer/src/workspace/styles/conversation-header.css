@@ -117,11 +117,6 @@
   background: var(--composer-bg);
 }
 
-.chat-detail__search:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
-}
-
 .chat-detail__search-input {
   min-height: var(--control-height-small);
   padding-inline: 0.4rem;
@@ -236,7 +231,7 @@
 
 :root[data-control-style='transparent'] :where(.chat-home__search-field .ui-input:focus) {
   background: transparent;
-  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
+  box-shadow: none;
 }
 
 :root[data-control-style='transparent']

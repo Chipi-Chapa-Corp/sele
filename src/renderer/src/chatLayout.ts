@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import type { ChatTurnWindow } from './chatTurnWindow'
 
 export type ChatScrollAnchor = {
@@ -224,7 +225,7 @@ const isChatPanePercentValue = (value: unknown): value is number =>
 
 export const readStoredChatPanePercents = (): ChatPanePercents | null => {
   try {
-    const storedValue = window.localStorage.getItem(chatPanePreferenceStorageKey)
+    const storedValue = preferenceStorage.getItem(chatPanePreferenceStorageKey)
     if (!storedValue) return null
 
     const parsedValue = JSON.parse(storedValue) as Partial<ChatPanePercents> | null
@@ -244,7 +245,7 @@ export const readStoredChatPanePercents = (): ChatPanePercents | null => {
 
 export const writeStoredChatPanePercents = (percents: ChatPanePercents): void => {
   try {
-    window.localStorage.setItem(chatPanePreferenceStorageKey, JSON.stringify(percents))
+    preferenceStorage.setItem(chatPanePreferenceStorageKey, JSON.stringify(percents))
   } catch (error) {
     console.error('[caught:chatLayout:writeStoredChatPanePercents]', error)
     // Layout preferences are non-critical; ignore unavailable storage.

@@ -374,6 +374,9 @@ export const useWorkspaceController = () => {
   const [providerAccountRevision, setProviderAccountRevision] = useState(0)
   const [providerAccountUpdatingId, setProviderAccountUpdatingId] = useState<string | null>(null)
   const [accountDialogOpen, setAccountDialogOpen] = useState(false)
+  const [reauthenticationTarget, setReauthenticationTarget] = useState<{
+    container: AppContainerTarget | null
+  } | null>(null)
   const [providerResourcesLoadState, setProviderResourcesLoadState] =
     useState<ProviderResourcesLoadState>('idle')
   const [providerResourcesError, setProviderResourcesError] = useState<string | null>(null)
@@ -2432,7 +2435,8 @@ export const useWorkspaceController = () => {
       catalog.error ||
       catalog.displayedKey !== catalog.activeKey ||
       !selectedModel
-    ) return
+    )
+      return
     setServiceTier((currentServiceTier) =>
       modelSupportsServiceTier(selectedModel, currentServiceTier)
         ? currentServiceTier
@@ -3638,17 +3642,23 @@ export const useWorkspaceController = () => {
     }
   }
   const handleCreateProviderAccount = async (
-    name: string
+    name: string,
+    reauthentication?: { container: AppContainerTarget | null }
   ): Promise<AccountAuthorizationSession> => {
-    const providerId = newSessionProvider
-    const container = normalizeContainerTarget(newSessionContainer)
-    const creation = await providerApi.createAccount(providerId, name, { container })
+    const providerId = reauthentication ? 'claude' : newSessionProvider
+    const container = normalizeContainerTarget(
+      reauthentication ? reauthentication.container : newSessionContainer
+    )
+    const restart = reauthentication
+      ? await providerApi.reauthenticateAccount(providerId, { container })
+      : null
+    const creation = restart ?? (await providerApi.createAccount(providerId, name, { container }))
     let loginId: string | null = null
     let userCode: string | null = null
     let authUrl: string | null = null
     let acceptsCode = false
     try {
-      const login = await providerApi.login(providerId, { container })
+      const login = restart?.login ?? (await providerApi.login(providerId, { container }))
       if (login.status === 'pending') {
         loginId = login.loginId
         userCode = login.userCode ?? null
@@ -3979,9 +3989,12 @@ export const useWorkspaceController = () => {
     ? displayedGitSettingsModels.find((candidateModel) => candidateModel.id === savedGitCommitModel)
     : undefined
   const resolvedModelIdsById = useMemo(
-    () => new Map<ProviderModelId, ProviderModelId>(
-      models.flatMap((model) => model.resolvedModelId ? [[model.id, model.resolvedModelId]] : [])
-    ),
+    () =>
+      new Map<ProviderModelId, ProviderModelId>(
+        models.flatMap((model) =>
+          model.resolvedModelId ? [[model.id, model.resolvedModelId]] : []
+        )
+      ),
     [models]
   )
   const modelLabelsById = useMemo(
@@ -4603,6 +4616,21 @@ export const useWorkspaceController = () => {
     setSendState('idle')
     setSendError(null)
   }
+
+  const handleManageChatAccounts = useCallback((): void => {
+    if (!selectedChat) return
+    setNewSessionProvider(selectedChat.providerId)
+    setNewSessionContainer(normalizeContainerTarget(changesContainer))
+    setSettingsScope('global')
+    setSettingsTab('providers')
+    setSettingsOpen(true)
+  }, [selectedChat, changesContainer])
+
+  const handleOpenChatReauthentication = useCallback((): void => {
+    if (selectedChat?.providerId !== 'claude') return
+    const container = normalizeContainerTarget(changesContainer)
+    setReauthenticationTarget({ container: container.kind === 'container' ? container : null })
+  }, [selectedChat, changesContainer])
 
   const handleRetryChatWriteAccess = (): void => {
     if (!selectedChat) return
@@ -5538,6 +5566,8 @@ export const useWorkspaceController = () => {
                 onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
                 onToggleMessagePinned={handleToggleChatMessagePinned}
                 onRetryStoppedTurn={handleRetryStoppedTurn}
+                onManageAccounts={handleManageChatAccounts}
+                onReauthenticate={handleOpenChatReauthentication}
                 onUsageRefresh={
                   item.type === 'working' && item.failureReason === 'rateLimit'
                     ? refreshAccountUsage
@@ -5663,6 +5693,10 @@ export const useWorkspaceController = () => {
       setSettingsScope,
       setSettingsTab,
       accountDialogOpen,
+      reauthenticationTarget,
+      setReauthenticationTarget,
+      handleReauthenticateChatAccount: () =>
+        handleCreateProviderAccount('', reauthenticationTarget ?? undefined),
       setAccountDialogOpen,
       handleCreateProviderAccount,
       projectDialogOpen,
@@ -5759,6 +5793,9 @@ export const useWorkspaceController = () => {
       visibleChatItems
     },
     conversationComposer: {
+      authenticationRequired: chatDetail?.authenticationRequired === true,
+      handleOpenChatReauthentication,
+      handleManageChatAccounts,
       accountUsage,
       accountUsageError,
       accountUsageState,

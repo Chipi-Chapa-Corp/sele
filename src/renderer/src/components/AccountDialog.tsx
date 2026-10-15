@@ -16,12 +16,14 @@ export type AccountAuthorizationSession = {
 }
 
 type AccountDialogProps = {
+  reauthenticate?: boolean
   providerLabel: string
   onClose: () => void
   onLogin: (name: string) => Promise<AccountAuthorizationSession>
 }
 
 export const AccountDialog = ({
+  reauthenticate = false,
   providerLabel,
   onClose,
   onLogin
@@ -53,7 +55,7 @@ export const AccountDialog = ({
 
   const handleLogin = async (): Promise<void> => {
     if (phase !== 'idle') return
-    if (!name.trim()) {
+    if (!reauthenticate && !name.trim()) {
       setError('Account name is required.')
       return
     }
@@ -93,6 +95,19 @@ export const AccountDialog = ({
       setPhase('idle')
     }
   }
+
+  const startReauthenticationRef = useRef(handleLogin)
+  const reauthenticationStartedRef = useRef(false)
+  useEffect(() => {
+    if (!reauthenticate) return
+    // Start once on opening; rerenders must not create another OAuth flow.
+    queueMicrotask(() => {
+      if (mounted.current && !reauthenticationStartedRef.current) {
+        reauthenticationStartedRef.current = true
+        void startReauthenticationRef.current()
+      }
+    })
+  }, [reauthenticate])
 
   const handleCancel = async (): Promise<void> => {
     if (phase !== 'authorizing' || !authorization) return
@@ -171,7 +186,9 @@ export const AccountDialog = ({
           aria-label={
             phase === 'authorizing' || phase === 'canceling'
               ? `Authorize ${providerLabel} account`
-              : `Create ${providerLabel} account`
+              : reauthenticate
+                ? `Sign in to ${providerLabel} again`
+                : `Create ${providerLabel} account`
           }
           onSubmit={handleSubmit}
           onKeyDown={(event) => {
@@ -184,6 +201,8 @@ export const AccountDialog = ({
           <div className="account-dialog__header">
             {phase === 'authorizing' || phase === 'canceling' ? (
               <span>Authorize account</span>
+            ) : reauthenticate ? (
+              <span>Sign in again</span>
             ) : (
               <label htmlFor="account-dialog-name">Name</label>
             )}
@@ -204,8 +223,9 @@ export const AccountDialog = ({
                 {userCode
                   ? 'Copy the one-time code and complete authorization in your browser.'
                   : 'Open the authorization page in your browser.'}{' '}
-                The account will be added only after {providerLabel} confirms that sign-in
-                succeeded.
+                {reauthenticate
+                  ? 'Sending will be enabled after sign-in succeeds.'
+                  : `The account will be added only after ${providerLabel} confirms that sign-in succeeded.`}
               </p>
               {authorization?.submitCode && (
                 <>
@@ -230,6 +250,8 @@ export const AccountDialog = ({
                 </>
               )}
             </div>
+          ) : reauthenticate ? (
+            <p>Your Claude session expired. Sign in again to continue this conversation.</p>
           ) : (
             <Input
               id="account-dialog-name"
@@ -279,9 +301,11 @@ export const AccountDialog = ({
             ) : (
               <Button
                 callback={handleLogin}
-                disabled={phase !== 'idle' || !name.trim()}
+                disabled={phase !== 'idle' || (!reauthenticate && !name.trim())}
                 icon={<LogIn aria-hidden="true" />}
-                label={phase === 'starting' ? 'Starting…' : 'Log In'}
+                label={
+                  phase === 'starting' ? 'Starting…' : reauthenticate ? 'Sign in again' : 'Log In'
+                }
                 theme="primary"
               />
             )}

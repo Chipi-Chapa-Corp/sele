@@ -38,14 +38,15 @@ if (!process.versions.electron) {
               </React.Fragment>))
             }
             window.renderTurn('early')
-            window.renderSteeredTurn = (status, settings, nextTurn = false) => {
+            window.renderSteeredTurn = (status, settings, nextTurn = false, finalStage = 'none') => {
               const items = getChatItems([{ id: 'steered', status, items: [
                 { type: 'userMessage', id: 'initial', content: [{ type: 'text', text: 'Start' }] },
                 { type: 'agentMessage', id: 'before', phase: 'commentary', text: 'First work' },
                 { type: 'userMessage', id: 'steer-1', content: [{ type: 'text', text: 'Steer once' }] },
                 { type: 'agentMessage', id: 'middle', phase: 'commentary', text: 'Middle work' },
                 { type: 'userMessage', id: 'steer-2', content: [{ type: 'text', text: 'Steer twice' }] },
-                { type: 'agentMessage', id: 'last', phase: 'commentary', text: 'Final work' }
+                { type: 'agentMessage', id: 'last', phase: 'commentary', text: 'Final work' },
+                ...(finalStage === 'none' ? [] : [{ type: 'agentMessage', id: 'answer', phase: 'final_answer', text: finalStage === 'start' ? '' : 'Actual final response' }])
               ] }, ...(nextTurn ? [{ id: 'next', status: 'inProgress', items: [
                 { type: 'userMessage', id: 'next-user', content: [{ type: 'text', text: 'Next turn' }] },
                 { type: 'agentMessage', id: 'next-work', phase: 'commentary', text: 'Next work' }
@@ -187,9 +188,14 @@ if (!process.versions.electron) {
         collapseStoppedSteeredFailedProgressOnFinish: true,
         collapseStoppedSteeredFailedProgressOnNextTurn: true
       }
-      const renderSteering = (status, settings = steeringSettings, nextTurn = false) =>
+      const renderSteering = (
+        status,
+        settings = steeringSettings,
+        nextTurn = false,
+        finalStage = 'none'
+      ) =>
         run(
-          `window.renderSteeredTurn(${JSON.stringify(status)}, ${JSON.stringify(settings)}, ${nextTurn})`
+          `window.renderSteeredTurn(${JSON.stringify(status)}, ${JSON.stringify(settings)}, ${nextTurn}, ${JSON.stringify(finalStage)})`
         )
       const steeringOpenStates = () =>
         run(`[...document.querySelectorAll('details')].map(element => element.open).slice(0, 3)`)
@@ -205,9 +211,28 @@ if (!process.versions.electron) {
         [false, false, false],
         'all blocks collapse when final work finishes'
       )
+      const keepSteeredOpen = {
+        ...steeringSettings,
+        collapseStoppedSteeredFailedProgressOnFinish: false,
+        collapseStoppedSteeredFailedProgressOnNextTurn: false
+      }
+      await renderSteering('inProgress', keepSteeredOpen)
+      assert.deepEqual(await steeringOpenStates(), [true, true, true])
+      await renderSteering('inProgress', keepSteeredOpen, false, 'start')
+      assert.deepEqual(
+        await steeringOpenStates(),
+        [false, false, false],
+        'regular finish collapse applies to the whole chain as the final answer starts'
+      )
+      await renderSteering('inProgress', keepSteeredOpen, false, 'streaming')
+      assert.deepEqual(await steeringOpenStates(), [false, false, false])
+      state = await inspect()
+      assert.deepEqual(state.standalone, ['Actual final response'])
+      await renderSteering('completed', keepSteeredOpen, false, 'streaming')
+      assert.deepEqual(await steeringOpenStates(), [false, false, false])
       const keepOnFinish = {
         ...steeringSettings,
-        collapseStoppedSteeredFailedProgressOnFinish: false
+        collapseProgressOnFinish: false
       }
       await renderSteering('completed', keepOnFinish)
       assert.deepEqual(
@@ -223,7 +248,7 @@ if (!process.versions.electron) {
       )
       await renderSteering(
         'completed',
-        { ...keepOnFinish, collapseStoppedSteeredFailedProgressOnNextTurn: false },
+        { ...keepOnFinish, collapseProgressOnNextTurn: false },
         true
       )
       assert.deepEqual(

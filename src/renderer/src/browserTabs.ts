@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import { getBrowserPageLabel, isBrowserPageUrl } from '../../shared/browser.ts'
 
 export type StoredBrowserTab = {
@@ -91,12 +92,12 @@ export const readStoredBrowserWorkspaces = (
 ): StoredBrowserWorkspaces => {
   try {
     const storedWorkspaces = parseStoredBrowserWorkspaces(
-      window.localStorage.getItem(browserTabsStorageKey)
+      preferenceStorage.getItem(browserTabsStorageKey)
     )
     if (Object.keys(storedWorkspaces).length > 0) return storedWorkspaces
 
     const legacySession = parseStoredBrowserSession(
-      window.localStorage.getItem(legacyBrowserTabsStorageKey)
+      preferenceStorage.getItem(legacyBrowserTabsStorageKey)
     )
     return legacySession ? { [legacyWorkspaceKey]: legacySession } : {}
   } catch (error) {
@@ -107,8 +108,8 @@ export const readStoredBrowserWorkspaces = (
 
 export const writeStoredBrowserWorkspaces = (workspaces: StoredBrowserWorkspaces): void => {
   try {
-    window.localStorage.setItem(browserTabsStorageKey, JSON.stringify(workspaces))
-    window.localStorage.removeItem(legacyBrowserTabsStorageKey)
+    preferenceStorage.setItem(browserTabsStorageKey, JSON.stringify(workspaces))
+    preferenceStorage.removeItem(legacyBrowserTabsStorageKey)
   } catch (error) {
     console.error('[caught:browserTabs:writeStoredBrowserWorkspaces]', error)
     // Browsing remains available when local storage is unavailable or full.

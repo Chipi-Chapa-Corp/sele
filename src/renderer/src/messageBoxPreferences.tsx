@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import {
   BadgeCheck,
   FileLock,
@@ -125,7 +126,7 @@ const parseStoredMessageBoxSelection = (value: unknown): StoredMessageBoxSelecti
 
 export const readStoredMessageBoxSelections = (): StoredMessageBoxSelections => {
   try {
-    const storedValue = window.localStorage.getItem(messageBoxSelectionsStorageKey)
+    const storedValue = preferenceStorage.getItem(messageBoxSelectionsStorageKey)
     if (storedValue) {
       const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
       if (parsedValue && typeof parsedValue === 'object' && !Array.isArray(parsedValue)) {
@@ -145,7 +146,7 @@ export const readStoredMessageBoxSelections = (): StoredMessageBoxSelections => 
   }
 
   try {
-    const storedValue = window.localStorage.getItem(legacyMessageBoxSelectionStorageKey)
+    const storedValue = preferenceStorage.getItem(legacyMessageBoxSelectionStorageKey)
     if (!storedValue) return {}
 
     const legacySelection = parseStoredMessageBoxSelection(JSON.parse(storedValue))
@@ -160,7 +161,7 @@ export const readStoredMessageBoxSelections = (): StoredMessageBoxSelections => 
 
 export const writeStoredMessageBoxSelections = (selections: StoredMessageBoxSelections): void => {
   try {
-    window.localStorage.setItem(messageBoxSelectionsStorageKey, JSON.stringify(selections))
+    preferenceStorage.setItem(messageBoxSelectionsStorageKey, JSON.stringify(selections))
   } catch (error) {
     console.error('Unable to store composer preferences.', error)
     // Composer preferences are non-critical; ignore unavailable storage.
@@ -172,7 +173,7 @@ const chatMessageBoxSelectionsStorageKey = 'sele:chat-message-box-selections:v1'
 export const readStoredChatMessageBoxSelections = (): Record<string, StoredMessageBoxSelection> => {
   try {
     const value = JSON.parse(
-      window.localStorage.getItem(chatMessageBoxSelectionsStorageKey) ?? '{}'
+      preferenceStorage.getItem(chatMessageBoxSelectionsStorageKey) ?? '{}'
     )
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
     return Object.fromEntries(
@@ -191,7 +192,7 @@ export const writeStoredChatMessageBoxSelections = (
   selections: Record<string, StoredMessageBoxSelection>
 ): void => {
   try {
-    window.localStorage.setItem(chatMessageBoxSelectionsStorageKey, JSON.stringify(selections))
+    preferenceStorage.setItem(chatMessageBoxSelectionsStorageKey, JSON.stringify(selections))
   } catch (error) {
     console.error('Unable to store chat composer preferences.', error)
     // Composer preferences are non-critical; ignore unavailable storage.

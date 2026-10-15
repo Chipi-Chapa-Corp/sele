@@ -200,7 +200,7 @@ test('tool output preserves non-JSON text without warning and unwraps JSON envel
   assert.equal(warn.mock.callCount(), 0)
 })
 
-test('renders viewed images with nonstandard filename extensions as previews', () => {
+test('renders read images with nonstandard filename extensions as previews', () => {
   const path = '/tmp/makehuman/hair/long01.thumb'
   const items = getChatItems([
     {
@@ -211,9 +211,46 @@ test('renders viewed images with nonstandard filename extensions as previews', (
   ])
   const tool = items.find((item) => item.type === 'working')?.items[0]
 
-  assert.equal(tool?.label, 'Viewed image')
+  assert.equal(tool?.label, 'Read image')
   assert.deepEqual(tool?.images, [{ path, name: 'long01.thumb' }])
   assert.equal(tool?.rawOutput, null)
+})
+
+test('group headings describe image viewing instead of generic tool use', async () => {
+  const { getToolSequenceDisplayLabel } = await import('../../../renderer/src/toolDisplayLabel.ts')
+  const items = getChatItems([
+    {
+      id: 'image-group',
+      status: 'completed',
+      items: [
+        { type: 'commandExecution', id: 'read', command: 'cat base.css', status: 'completed' },
+        { type: 'imageView', id: 'image-1', path: '/tmp/one.png', status: 'completed' },
+        {
+          type: 'customToolCall',
+          id: 'image-2',
+          customToolName: 'view_image',
+          customToolInput: JSON.stringify({ path: '/tmp/two.png' }),
+          status: 'completed'
+        }
+      ]
+    }
+  ])
+  const group = items.find((item) => item.type === 'working')?.items[0]
+  assert.equal(group.type, 'toolGroup')
+  assert.deepEqual(group.toolActivities, ['read', 'image-view'])
+  assert.equal(group.dominantActivity, 'image-view')
+  assert.equal(
+    getToolSequenceDisplayLabel(group.toolActivities, false),
+    'Read files, read images'
+  )
+  assert.equal(
+    getToolSequenceDisplayLabel(group.toolActivities, true),
+    'Reading files, Reading images'
+  )
+  assert.equal(
+    getToolSequenceDisplayLabel(['image-view', 'other'], false),
+    'Read images, used tools'
+  )
 })
 
 // Test fixtures intentionally omit production-only Codex fields.
@@ -624,4 +661,43 @@ test('mixed tool headings name both reading and searching while active', async (
     'Reading files, Searching'
   )
   assert.equal(getToolSequenceDisplayLabel(['read', 'search'], false), 'Read files, searched')
+})
+
+test('skill usage retains its activity in grouped headings and paged summaries', async () => {
+  const { getToolSequenceDisplayLabel } = await import('../../../renderer/src/toolDisplayLabel.ts')
+  for (const type of ['commandExecution', 'customToolCall']) {
+    const command = 'cat /skills/visualize/SKILL.md'
+    const turn = {
+      id: 'skill-turn',
+      status: 'completed',
+      items: [
+        {
+          id: 'skill',
+          type,
+          command: type === 'commandExecution' ? command : undefined,
+          customToolName: type === 'customToolCall' ? 'exec_command' : undefined,
+          customToolInput: JSON.stringify({ cmd: command }),
+          status: 'completed'
+        },
+        { id: 'mkdir', type: 'commandExecution', command: 'mkdir output', status: 'completed' }
+      ]
+    }
+    const working = getChatItems([turn]).find((item) => item.type === 'working')
+    const group = working.items[0]
+    assert.equal(group.type, 'toolGroup')
+    assert.equal(group.tools[0].label, 'Used visualize skill')
+    assert.equal(group.tools[0].icon, 'skill')
+    assert.equal(group.tools[0].activity, 'skill')
+    assert.deepEqual(group.toolActivities, ['skill', 'command'])
+    assert.equal(group.dominantActivity, 'skill')
+    assert.equal(
+      getToolSequenceDisplayLabel(group.toolActivities, false),
+      'Used skills, ran commands'
+    )
+    assert.equal(
+      getToolSequenceDisplayLabel(group.toolActivities, true),
+      'Using skills, Running commands'
+    )
+  }
+  assert.equal(getToolSequenceDisplayLabel(['skill', 'read'], false), 'Used skills, read files')
 })

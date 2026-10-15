@@ -1,3 +1,4 @@
+import { preferencesChannel, type PreferencesApi } from '../shared/preferences'
 import type { AppUpdateState } from '../shared/appUpdate'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
@@ -125,6 +126,8 @@ const appApi: AppApi = {
 const providerApi: ProviderRendererApi = {
   login: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.login, providerId, options),
+  reauthenticateAccount: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.reauthenticateAccount, providerId, options),
   getAccounts: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getAccounts, providerId, options),
   createAccount: (providerId, name, options) =>
@@ -494,3 +497,15 @@ contextBridge.exposeInMainWorld('appApi', appApi)
 contextBridge.exposeInMainWorld('providerApi', providerApi)
 contextBridge.exposeInMainWorld('terminalApi', terminalApi)
 contextBridge.exposeInMainWorld('browserApi', browserApi)
+
+const preferencesApi: PreferencesApi = {
+  initialize: (values) =>
+    ipcRenderer.invoke(
+      preferencesChannel,
+      values === undefined ? { action: 'load' } : { action: 'migrate', values }
+    ),
+  getItem: (key) => ipcRenderer.sendSync(preferencesChannel, { action: 'get', key }),
+  setItem: (key, value) => ipcRenderer.sendSync(preferencesChannel, { action: 'set', key, value }),
+  removeItem: (key) => ipcRenderer.sendSync(preferencesChannel, { action: 'remove', key })
+}
+contextBridge.exposeInMainWorld('preferencesApi', preferencesApi)

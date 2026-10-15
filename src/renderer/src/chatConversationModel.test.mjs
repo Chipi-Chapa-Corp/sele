@@ -139,10 +139,12 @@ test('incremental steering targets track final work and preserve previous snapsh
   assert.deepEqual(completedModel, buildChatConversationModel([...completedItems]))
   assert.deepEqual(initialModel.steeredWorkingStepDisclosureTargets.get('earlier'), {
     status: 'working',
+    progressPolicy: 'regular',
     hasNextWorkingStep: false
   })
   assert.deepEqual(completedModel.steeredWorkingStepDisclosureTargets.get('earlier'), {
     status: 'worked',
+    progressPolicy: 'regular',
     hasNextWorkingStep: false
   })
 
@@ -156,6 +158,7 @@ test('incremental steering targets track final work and preserve previous snapsh
   assert.deepEqual(nextModel, buildChatConversationModel([...nextItems]))
   assert.deepEqual(nextModel.steeredWorkingStepDisclosureTargets.get('earlier'), {
     status: 'worked',
+    progressPolicy: 'regular',
     hasNextWorkingStep: true
   })
   assert.equal(

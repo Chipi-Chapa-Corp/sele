@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 export type CollapsedProjectGroups = Record<string, boolean>
 
 export const collapsedProjectGroupsStorageKey = 'sele:collapsed-project-groups:v1'
@@ -32,7 +33,7 @@ export const parseStoredCollapsedProjectGroups = (value: string | null): Collaps
 export const readStoredCollapsedProjectGroups = (): CollapsedProjectGroups => {
   try {
     return parseStoredCollapsedProjectGroups(
-      window.localStorage.getItem(collapsedProjectGroupsStorageKey)
+      preferenceStorage.getItem(collapsedProjectGroupsStorageKey)
     )
   } catch (error) {
     console.error('[caught:collapsedProjectGroups:readStoredCollapsedProjectGroups]', error)
@@ -50,11 +51,11 @@ export const writeStoredCollapsedProjectGroups = (
       .slice(0, maxStoredCollapsedProjectGroups)
 
     if (collapsedProjectGroupKeys.length === 0) {
-      window.localStorage.removeItem(collapsedProjectGroupsStorageKey)
+      preferenceStorage.removeItem(collapsedProjectGroupsStorageKey)
       return
     }
 
-    window.localStorage.setItem(
+    preferenceStorage.setItem(
       collapsedProjectGroupsStorageKey,
       JSON.stringify(collapsedProjectGroupKeys)
     )

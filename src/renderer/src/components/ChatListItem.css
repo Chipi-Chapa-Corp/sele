@@ -183,9 +183,7 @@
 .chat-list-item__status {
   width: 0.45rem;
   height: 0.45rem;
-  border: 0.125rem solid rgb(255 255 255 / 52%);
   border-radius: 50%;
-  box-shadow: 0 0 0 0.125rem var(--glass-edge);
 }
 
 .chat-list-item__status--error {
@@ -280,13 +278,13 @@
 }
 
 .chat-list-item__actions .ui-button {
-  border-color: var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   background: var(--secondary-surface);
   box-shadow: var(--secondary-shadow);
 }
 
 .chat-list-item__actions .ui-button:not(:disabled):hover {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
 }

@@ -66,6 +66,7 @@ export const loadClaudeHistory = async (
       parent_tool_use_id: message.parent_tool_use_id,
       // SDK SessionMessage omits top-level system payloads and internal user flags.
       message: original?.type === 'system' ? original : message.message,
+      ...(typeof original?.error === 'string' ? { error: original.error } : {}),
       ...(original?.isMeta === true ? { isMeta: true } : {}),
       ...(original?.isSynthetic === true ? { isSynthetic: true } : {}),
       ...(original?.isCompactSummary === true ? { isCompactSummary: true } : {}),

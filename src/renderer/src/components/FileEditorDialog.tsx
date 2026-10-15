@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from '../preferences.ts'
 import { getFileTreeAbsolutePath } from '../../../shared/fileTree'
 import { MotionSurface } from '../motion/MotionSurface'
 import { PopupWindow } from './PopupWindow'
@@ -218,7 +219,7 @@ const isExpectedFileOpenError = (message: string | null): boolean =>
 
 const readStoredMarkdownSplitPercentage = (): number => {
   try {
-    const storedValue = window.localStorage.getItem(markdownSplitPercentageStorageKey)
+    const storedValue = preferenceStorage.getItem(markdownSplitPercentageStorageKey)
     if (storedValue === null) return markdownSplitDefaultPercentage
 
     const storedPercentage = Number(storedValue)
@@ -236,7 +237,7 @@ const getDiffTreeMaxWidth = (bodyWidth: number): number =>
 
 const readStoredDiffTreeWidth = (): number => {
   try {
-    const storedWidth = Number(window.localStorage.getItem(diffTreeWidthStorageKey))
+    const storedWidth = Number(preferenceStorage.getItem(diffTreeWidthStorageKey))
     return Number.isFinite(storedWidth)
       ? clamp(storedWidth, diffTreeMinWidth, diffTreeMaxWidth)
       : diffTreeDefaultWidth
@@ -853,7 +854,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(diffTreeWidthStorageKey, String(diffTreeWidth))
+      preferenceStorage.setItem(diffTreeWidthStorageKey, String(diffTreeWidth))
     } catch (error) {
       console.error('[caught:FileEditorDialog:FileEditorDialog]', error)
       // The sidebar remains resizable when persistent storage is unavailable.
@@ -862,7 +863,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(
+      preferenceStorage.setItem(
         markdownSplitPercentageStorageKey,
         String(markdownSplitPercentage)
       )

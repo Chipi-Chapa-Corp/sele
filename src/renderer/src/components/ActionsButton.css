@@ -181,22 +181,14 @@
   align-items: center;
   justify-content: flex-start;
   padding: 0 0.6rem;
-  border: 0.0625rem solid var(--control-border);
+  border: 0.0625rem solid var(--field-border);
   border-radius: var(--control-radius);
   color: var(--lead);
   cursor: text;
   background: var(--control-surface);
-  box-shadow: var(--control-shadow);
+  box-shadow: var(--field-shadow);
   font: inherit;
   outline: 0;
-}
-
-.cwd-actions-dialog__keybinding:focus {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  background: var(--control-surface);
-  box-shadow:
-    0 0 0 0.1875rem var(--focus-ring),
-    var(--control-shadow);
 }
 
 .cwd-actions-dialog__keybinding > span {

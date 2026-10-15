@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import type { AppGitCommitAction } from '../../shared/app'
 import type { ProviderId, ProviderToolActivity, ProviderToolIcon } from '../../shared/provider'
 import { isProviderId } from '../../shared/provider'
@@ -47,7 +48,7 @@ const chatCommitMarkerStatuses = new Set<ChatCommitMarkerStatus>([
 
 export const readStoredChatCommitMarkers = (): Record<string, ChatCommitMarker> => {
   try {
-    const storedValue = window.localStorage.getItem(chatCommitMarkersStorageKey)
+    const storedValue = preferenceStorage.getItem(chatCommitMarkersStorageKey)
     if (!storedValue) return {}
 
     const parsedValue = JSON.parse(storedValue) as unknown
@@ -109,11 +110,11 @@ export const readStoredChatCommitMarkers = (): Record<string, ChatCommitMarker> 
 export const writeStoredChatCommitMarkers = (markers: Record<string, ChatCommitMarker>): void => {
   try {
     if (Object.keys(markers).length === 0) {
-      window.localStorage.removeItem(chatCommitMarkersStorageKey)
+      preferenceStorage.removeItem(chatCommitMarkersStorageKey)
       return
     }
 
-    window.localStorage.setItem(chatCommitMarkersStorageKey, JSON.stringify(markers))
+    preferenceStorage.setItem(chatCommitMarkersStorageKey, JSON.stringify(markers))
   } catch (error) {
     console.error('[caught:chatCommitStorage:writeStoredChatCommitMarkers]', error)
     // Visual commit history remains available for this session if storage is unavailable.
@@ -122,7 +123,7 @@ export const writeStoredChatCommitMarkers = (markers: Record<string, ChatCommitM
 
 export const readStoredContinuedStoppedWorkingSteps = (): ContinuedStoppedWorkingStepsByChat => {
   try {
-    const storedValue = window.localStorage.getItem(continuedStoppedWorkingStepsStorageKey)
+    const storedValue = preferenceStorage.getItem(continuedStoppedWorkingStepsStorageKey)
     if (!storedValue) return {}
 
     const parsedValue = JSON.parse(storedValue) as unknown
@@ -150,11 +151,11 @@ export const writeStoredContinuedStoppedWorkingSteps = (
 ): void => {
   try {
     if (Object.keys(continuedSteps).length === 0) {
-      window.localStorage.removeItem(continuedStoppedWorkingStepsStorageKey)
+      preferenceStorage.removeItem(continuedStoppedWorkingStepsStorageKey)
       return
     }
 
-    window.localStorage.setItem(
+    preferenceStorage.setItem(
       continuedStoppedWorkingStepsStorageKey,
       JSON.stringify(continuedSteps)
     )

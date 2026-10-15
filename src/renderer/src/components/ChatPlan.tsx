@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from '../preferences.ts'
 import { useEffect, useId, useState } from 'react'
 import { ArrowRight, Check, ChevronUp, Minus } from 'lucide-react'
 import './ChatPlan.css'
@@ -7,7 +8,7 @@ const maxStoredSeenPlans = 500
 
 const readSeenPlanSignatures = (): Record<string, string> => {
   try {
-    const storedValue = window.localStorage.getItem(seenPlansStorageKey)
+    const storedValue = preferenceStorage.getItem(seenPlansStorageKey)
     if (!storedValue) return {}
 
     const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
@@ -32,7 +33,7 @@ const writeSeenPlanSignatures = (signatures: Record<string, string>): void => {
     const storedSignatures = Object.fromEntries(
       Object.entries(signatures).slice(-maxStoredSeenPlans)
     )
-    window.localStorage.setItem(seenPlansStorageKey, JSON.stringify(storedSignatures))
+    preferenceStorage.setItem(seenPlansStorageKey, JSON.stringify(storedSignatures))
   } catch (error) {
     console.error('[caught:ChatPlan:writeSeenPlanSignatures]', error)
     // Seen state is non-critical; ignore unavailable storage.

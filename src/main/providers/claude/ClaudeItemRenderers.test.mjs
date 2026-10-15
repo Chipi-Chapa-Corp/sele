@@ -31,6 +31,47 @@ const renderUserPresentations = (message) => {
   ]
 }
 
+test('authentication errors fail only their own turn and ordinary quoted errors remain messages', () => {
+  const text = 'Failed to authenticate: OAuth session expired and could not be refreshed'
+  const error = {
+    type: 'assistant',
+    uuid: 'auth',
+    session_id: 'session',
+    parent_tool_use_id: null,
+    error: 'authentication_failed',
+    message: { content: [{ type: 'text', text }] }
+  }
+  const next = { ...userPrompt, uuid: 'retry', message: { content: 'Try again' } }
+  const answer = { ...error, uuid: 'answer', error: undefined, message: { content: 'Done' } }
+  for (const source of [
+    [userPrompt, error],
+    [userPrompt, error, next, answer]
+  ]) {
+    for (const items of [
+      renderClaudeChatItems(source, { active: false, stopped: false }),
+      new ClaudeTranscriptProjection().read(source, [], { active: false, stopped: false }).items
+    ]) {
+      const failed = items.find((item) => item.type === 'working')
+      assert.equal(failed.status, 'failed')
+      assert.equal(failed.failureReason, 'authentication')
+      assert.equal(failed.failureMessage, text)
+      assert.deepEqual(
+        items.filter((item) => item.role === 'assistant').map((item) => item.content),
+        source.length > 2 ? ['Done'] : []
+      )
+    }
+  }
+  for (const message of [
+    { ...error, error: undefined },
+    { ...userPrompt, error: 'authentication_failed', message: { content: text } }
+  ]) {
+    for (const item of renderClaudeChatItems([message], { active: false, stopped: false })) {
+      assert.notEqual(item.status, 'failed')
+      assert.equal(item.content, text)
+    }
+  }
+})
+
 test('keeps Claude failure details in full and projected history', () => {
   const error = {
     type: 'system',

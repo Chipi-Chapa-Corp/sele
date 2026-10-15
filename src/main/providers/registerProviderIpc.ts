@@ -1151,6 +1151,15 @@ export const registerProviderIpc = (): void => {
     providerApi.login(requireProviderId(providerId), requireSourceOptions(options))
   )
 
+  handleLoggedIpc(
+    providerIpcChannels.reauthenticateAccount,
+    (_, providerId: unknown, options: unknown) =>
+      providerApi.reauthenticateAccount(
+        requireProviderId(providerId),
+        requireSourceOptions(options)
+      )
+  )
+
   handleLoggedIpc(providerIpcChannels.getAccounts, (_, providerId: unknown, options: unknown) =>
     providerApi.getAccounts(requireProviderId(providerId), requireSourceOptions(options))
   )

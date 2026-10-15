@@ -40,6 +40,7 @@
   gap: 0.45rem;
   padding: 0 0.65rem 0 0.7rem;
   border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: var(--control-radius);
   color: var(--lead);
   cursor: pointer;
@@ -59,7 +60,7 @@
 
 .message-box__chat-config-trigger:not(:disabled):hover,
 .message-box__chat-config-trigger[aria-expanded="true"] {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
@@ -177,6 +178,23 @@
   overscroll-behavior: contain;
 }
 
+.message-box__chat-config-section {
+  display: flex;
+  max-height: max(0rem, calc(var(--menu-surface-max-height) - 0.825rem));
+  flex-direction: column;
+}
+
+.message-box__chat-config-section .message-box__chat-config-option-groups {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.message-box__chat-config-footer {
+  flex: none;
+  padding-top: 0.35rem;
+}
+
 .message-box__chat-config-sections,
 .message-box__chat-config-option-groups {
   display: flex;
@@ -262,7 +280,6 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  padding-bottom: 0.35rem;
 }
 
 .message-box__chat-config-back {
@@ -477,6 +494,7 @@
   align-items: center;
   overflow: hidden;
   border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   color: var(--ink);
   background: var(--secondary-surface);
   box-shadow: var(--secondary-shadow);
@@ -494,7 +512,7 @@
 }
 
 .message-box__attachment-preview:has(> .message-box__attachment-open:not(:disabled):hover) {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   transform: none;
 }
 

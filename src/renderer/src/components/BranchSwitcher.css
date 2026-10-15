@@ -15,6 +15,7 @@
   gap: 0.45rem;
   padding: 0 0.65rem 0 0.7rem;
   border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: var(--control-radius);
   color: var(--lead);
   cursor: pointer;
@@ -34,7 +35,7 @@
 
 :where(.branch-switcher__trigger:not(:disabled):hover),
 :where(.branch-switcher--open .branch-switcher__trigger) {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);

@@ -686,6 +686,8 @@ export type ProviderFileDiff = {
 }
 
 export type ProviderToolActivity =
+  | 'image-view'
+  | 'skill'
   | 'read'
   | 'search'
   | 'git'
@@ -701,6 +703,7 @@ export type ProviderToolActivity =
 export type ProviderWorkingToolStatus = 'running' | 'finished'
 
 export type ProviderToolIcon =
+  | 'skill'
   | 'image-view'
   | 'image-generation'
   | 'openai-docs'
@@ -774,7 +777,7 @@ export type ProviderWorkingStep = {
   type: 'working'
   id: string
   status: 'working' | 'worked' | 'stopped' | 'failed' | 'queued'
-  failureReason?: 'rateLimit'
+  failureReason?: 'rateLimit' | 'authentication'
   failureMessage?: string
   items: ProviderWorkingItem[]
   itemsLoaded?: boolean
@@ -890,6 +893,8 @@ export type ProviderChatDetail = {
   writeAccess?: ProviderChatWriteAccess
   /** Why a read-only chat cannot be changed. Missing read-only reasons are external ownership. */
   writeAccessReason?: 'externalOwner' | 'legacyHistory'
+  /** Sending is blocked until the provider account is authenticated again. */
+  authenticationRequired?: boolean
   capabilities: ProviderCapabilities
   pendingApproval: ProviderPendingApproval | null
   pendingUserInput: ProviderPendingUserInput | null
@@ -1013,6 +1018,10 @@ export type ProviderOneShotOptions = ProviderTurnOptions & {
 export const providerOneShotGenerationCanceledMessage = 'One-shot generation canceled'
 
 export type ProviderApi = {
+  reauthenticateAccount: (
+    providerId: ProviderId,
+    options?: ProviderSourceOptions
+  ) => Promise<{ accountId: string; login: ProviderLoginResult }>
   login: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderLoginResult>
   getAccounts: (
     providerId: ProviderId,
@@ -1316,6 +1325,7 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
 }
 
 export const providerIpcChannels = {
+  reauthenticateAccount: 'provider:reauthenticate-account',
   login: 'provider:login',
   getAccounts: 'provider:get-accounts',
   createAccount: 'provider:create-account',

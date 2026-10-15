@@ -39,7 +39,8 @@ import {
   SearchIcon as AnimatedSearchIcon,
   SparklesIcon as AnimatedSparklesIcon,
   TerminalIcon as AnimatedTerminalIcon,
-  WrenchIcon as AnimatedWrenchIcon
+  WrenchIcon as AnimatedWrenchIcon,
+  ZapIcon as AnimatedZapIcon
 } from 'lucide-animated'
 import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -76,7 +77,8 @@ import {
   Square,
   Terminal,
   Trash2,
-  Wrench
+  Wrench,
+  Zap
 } from 'lucide-react'
 import DOMPurify from 'dompurify'
 import { Renderer, type Tokens } from 'marked'
@@ -158,6 +160,8 @@ type ChatDetailItemProps = {
   onToggleMessagePinned?: (message: ProviderMessage, turnIndex: number, pinned: boolean) => void
   onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
   onRetryStoppedTurn?: (message: ProviderMessage) => Promise<void> | void
+  onManageAccounts?: () => void
+  onReauthenticate?: () => void
   onUsageRefresh?: () => Promise<void> | void
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   previousItem?: ProviderChatItem | null
@@ -230,6 +234,8 @@ const areChatDetailItemPropsEqual = (
   first.onToggleMessagePinned === second.onToggleMessagePinned &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
+  first.onManageAccounts === second.onManageAccounts &&
+  first.onReauthenticate === second.onReauthenticate &&
   first.onUsageRefresh === second.onUsageRefresh &&
   first.onUsageReset === second.onUsageReset &&
   isQueuedPendingMessage(first.previousItem) === isQueuedPendingMessage(second.previousItem) &&
@@ -237,6 +243,8 @@ const areChatDetailItemPropsEqual = (
   first.projectCwd === second.projectCwd &&
   first.progressPolicy === second.progressPolicy &&
   first.progressDisclosureTarget?.status === second.progressDisclosureTarget?.status &&
+  first.progressDisclosureTarget?.progressPolicy ===
+    second.progressDisclosureTarget?.progressPolicy &&
   first.progressDisclosureTarget?.hasNextWorkingStep ===
     second.progressDisclosureTarget?.hasNextWorkingStep &&
   first.rateLimitResetDisabled === second.rateLimitResetDisabled &&
@@ -274,6 +282,8 @@ type AnimatedIconComponent = ForwardRefExoticComponent<
 >
 
 const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent | null> = {
+  'image-view': AnimatedEyeIcon,
+  skill: AnimatedZapIcon,
   read: AnimatedFileTextIcon,
   search: AnimatedSearchIcon,
   git: AnimatedGitBranchIcon,
@@ -288,6 +298,7 @@ const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent 
 }
 
 const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
+  skill: AnimatedZapIcon,
   'image-view': AnimatedEyeIcon,
   'image-generation': AnimatedSparklesIcon,
   'openai-docs': AnimatedBookTextIcon,
@@ -619,8 +630,9 @@ const ToolTypeIcon: React.FC<{
   activity: ProviderToolActivity
   icon?: ProviderToolIcon | null
 }> = ({ activity, icon }) => {
+  if (icon === 'skill' || activity === 'skill') return <Zap aria-hidden="true" />
   if (icon === 'browser') return <Globe2 aria-hidden="true" />
-  if (icon === 'image-view') return <Eye aria-hidden="true" />
+  if (icon === 'image-view' || activity === 'image-view') return <Eye aria-hidden="true" />
   if (icon === 'image-generation') return <Sparkles aria-hidden="true" />
   if (icon === 'openai-docs') return <BookOpenText aria-hidden="true" />
   if (icon === 'plan') return <ListChecks aria-hidden="true" />
@@ -1275,6 +1287,7 @@ const ToolItem: React.FC<{
 
   if (
     tools.every((tool) => tool.compact) ||
+    activity === 'skill' ||
     activity === 'read' ||
     tools.every((tool) => tool.icon === 'plan') ||
     !tools.some((tool) => hasToolDetails(tool, activity))
@@ -1789,6 +1802,8 @@ const WorkingStep: React.FC<{
   onDisclosureToggle?: () => void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onRetry?: () => Promise<void> | void
+  onManageAccounts?: () => void
+  onReauthenticate?: () => void
   onUsageRefresh?: () => Promise<void> | void
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   projectCwd?: string | null
@@ -1815,6 +1830,8 @@ const WorkingStep: React.FC<{
   onDisclosureToggle,
   onOpenFileLink,
   onRetry,
+  onManageAccounts,
+  onReauthenticate,
   onUsageRefresh,
   onUsageReset,
   projectCwd,
@@ -1831,6 +1848,7 @@ const WorkingStep: React.FC<{
   const unloaded = item.itemsLoaded === false
   const linkedToFollowingStep = continuedStoppedTurn || continueClicked
   const failureMessage = item.status === 'failed' ? item.failureMessage?.trim() : null
+  const authenticationFailed = item.status === 'failed' && item.failureReason === 'authentication'
   const itemSegments = getWorkingStepItemSegments(item, workingItemPageSize)
   const renderedSegments = itemSegments.map((segment) => {
     const { generatedImages, remaining } = partitionGeneratedImageItems(segment.items)
@@ -1875,13 +1893,13 @@ const WorkingStep: React.FC<{
       : hasNextWorkingStep
   const defaultOpen = getWorkingStepDefaultOpen(
     progressDisclosureTarget?.status ?? autoCollapseStatus,
-    progressPolicy,
+    progressDisclosureTarget?.progressPolicy ?? progressPolicy,
     progressSettings,
     progressDisclosureTarget?.hasNextWorkingStep ?? autoCollapseHasNextWorkingStep
   )
   const disclosureKey = getWorkingStepDisclosureKey(
     progressDisclosureTarget?.status ?? autoCollapseStatus,
-    progressPolicy,
+    progressDisclosureTarget?.progressPolicy ?? progressPolicy,
     progressSettings,
     progressDisclosureTarget?.hasNextWorkingStep ?? autoCollapseHasNextWorkingStep
   )
@@ -1924,6 +1942,7 @@ const WorkingStep: React.FC<{
   const failureLabel = failureText ? (
     <div className="chat-detail__failure-label" role="status">
       {failureText}
+      {authenticationFailed && <div>Sign in again to continue this conversation.</div>}
     </div>
   ) : null
   const renderedGeneratedImages = generatedImages.map((imageItem) => (
@@ -1945,8 +1964,26 @@ const WorkingStep: React.FC<{
   const hasStoppedOrFailed = item.status === 'stopped' || item.status === 'failed'
   const turnActions =
     !linkedToFollowingStep &&
-    ((hasStoppedOrFailed && (onRetry || onContinue)) || rateLimitResetActions) ? (
+    ((hasStoppedOrFailed && (onRetry || onContinue)) ||
+      (authenticationFailed && (onReauthenticate || onManageAccounts)) ||
+      rateLimitResetActions) ? (
       <div className="chat-detail__working-actions">
+        {authenticationFailed && onReauthenticate && (
+          <Button
+            theme="primary"
+            size="small"
+            callback={onReauthenticate}
+            label={<span>Sign in again</span>}
+          />
+        )}
+        {authenticationFailed && onManageAccounts && (
+          <Button
+            theme="secondary"
+            size="small"
+            callback={onManageAccounts}
+            label={<span>Manage accounts</span>}
+          />
+        )}
         {hasStoppedOrFailed && onRetry && (
           <Button
             theme="secondary"
@@ -2265,6 +2302,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onToggleMessagePinned,
   onContinueStoppedTurn,
   onRetryStoppedTurn,
+  onManageAccounts,
+  onReauthenticate,
   onUsageRefresh,
   onUsageReset,
   previousItem,
@@ -2544,6 +2583,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       onRetry={
         retryMessage && onRetryStoppedTurn ? () => onRetryStoppedTurn(retryMessage) : undefined
       }
+      onManageAccounts={onManageAccounts}
+      onReauthenticate={onReauthenticate}
       onUsageRefresh={onUsageRefresh}
       onUsageReset={onUsageReset}
       projectCwd={projectCwd}

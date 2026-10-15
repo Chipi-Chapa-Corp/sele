@@ -21,6 +21,9 @@ type AppDialogsProps = WorkspaceController['dialogs']
 export function AppDialogs(props: AppDialogsProps): ReactElement {
   const {
     accountDialogOpen,
+    reauthenticationTarget,
+    setReauthenticationTarget,
+    handleReauthenticateChatAccount,
     editingSshEnvironment,
     fileEditorDiffTargets,
     fileEditorTarget,
@@ -81,6 +84,15 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
           providerLabel={settingsPanelProps.newSessionProvider === 'claude' ? 'Claude' : 'Codex'}
           onClose={() => setAccountDialogOpen(false)}
           onLogin={handleCreateProviderAccount}
+        />
+      )}
+      {reauthenticationTarget && (
+        <AccountDialog
+          key="reauthentication"
+          providerLabel="Claude"
+          reauthenticate
+          onClose={() => setReauthenticationTarget(null)}
+          onLogin={handleReauthenticateChatAccount}
         />
       )}
       {projectDialogOpen && (

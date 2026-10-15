@@ -488,6 +488,11 @@ for (const adapter of Object.values(adapters)) {
 }
 
 export const providerApi: ProviderApi = {
+  reauthenticateAccount: async (providerId, options) => {
+    if (providerId !== 'claude')
+      throw new Error('Reauthentication is not available for this provider.')
+    return claudeAccounts.reauthenticate(options)
+  },
   login: (providerId, options) => adapters[providerId].login(options),
   getAccounts: (providerId, options) =>
     providerId === 'codex'

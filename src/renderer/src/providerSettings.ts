@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import type {
   ProviderId,
   ProviderModel,
@@ -112,7 +113,7 @@ const isProviderUpdatePreference = (value: unknown): value is ProviderUpdatePref
 
 export const readStoredProviderUpdatePreferences = (): ProviderUpdatePreferences => {
   try {
-    const storedValue = window.localStorage.getItem(providerUpdatePreferenceStorageKey)
+    const storedValue = preferenceStorage.getItem(providerUpdatePreferenceStorageKey)
     if (!storedValue) return {}
 
     const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
@@ -135,7 +136,7 @@ export const writeStoredProviderUpdatePreferences = (
   preferences: ProviderUpdatePreferences
 ): void => {
   try {
-    window.localStorage.setItem(providerUpdatePreferenceStorageKey, JSON.stringify(preferences))
+    preferenceStorage.setItem(providerUpdatePreferenceStorageKey, JSON.stringify(preferences))
   } catch (error) {
     console.error('[caught:providerSettings:writeStoredProviderUpdatePreferences]', error)
     // Update suggestion preferences are non-critical; ignore unavailable storage.

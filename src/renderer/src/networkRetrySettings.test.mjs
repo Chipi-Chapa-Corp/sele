@@ -20,10 +20,16 @@ const setup = () => {
     require: createRequire(import.meta.url),
     console,
     window: {
-      localStorage: {
-        getItem: (key) => stored.get(key) ?? null,
-        setItem: (key, value) => stored.set(key, value),
-        removeItem: (key) => stored.delete(key)
+      preferencesApi: {
+        getItem: (key) => ({ ok: true, value: stored.get(key) ?? null }),
+        setItem: (key, value) => {
+          stored.set(key, value)
+          return { ok: true, value: null }
+        },
+        removeItem: (key) => {
+          stored.delete(key)
+          return { ok: true, value: null }
+        }
       }
     }
   })

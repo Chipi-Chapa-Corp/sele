@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import { isProviderId } from '../../shared/provider.ts'
 import {
   getRecentChatReferenceKey,
@@ -105,7 +106,7 @@ export const parsePinnedRecentChatReferences = (
 
 export const readStoredPinnedRecentChatReferences = (): PinnedRecentChatReferencesByChat => {
   try {
-    const storedValue = window.localStorage.getItem(pinnedRecentChatReferencesStorageKey)
+    const storedValue = preferenceStorage.getItem(pinnedRecentChatReferencesStorageKey)
     return storedValue ? parsePinnedRecentChatReferences(JSON.parse(storedValue)) : {}
   } catch (error) {
     console.error('[caught:recentReferencePins:readStoredPinnedRecentChatReferences]', error)
@@ -118,11 +119,11 @@ export const writeStoredPinnedRecentChatReferences = (
 ): void => {
   try {
     if (Object.keys(referencesByChat).length === 0) {
-      window.localStorage.removeItem(pinnedRecentChatReferencesStorageKey)
+      preferenceStorage.removeItem(pinnedRecentChatReferencesStorageKey)
       return
     }
 
-    window.localStorage.setItem(
+    preferenceStorage.setItem(
       pinnedRecentChatReferencesStorageKey,
       JSON.stringify(referencesByChat)
     )

@@ -83,6 +83,7 @@ import {
 } from '../providerResources'
 import { getClaudeExecutable } from './ClaudeExecutable'
 import { loadClaudeHistory } from './ClaudeHistory'
+import { isClaudeAuthenticationFailure } from './ClaudeAuthentication'
 import { claudeAccounts } from './ClaudeAccounts'
 import {
   ClaudeTranscriptProjection,
@@ -444,6 +445,7 @@ const toTranscriptMessage = (
   session_id: message.session_id ?? '',
   message: message.message,
   parent_tool_use_id: message.parent_tool_use_id,
+  ...('error' in message && typeof message.error === 'string' ? { error: message.error } : {}),
   ...('isSynthetic' in message && message.isSynthetic === true ? { isSynthetic: true } : {}),
   // The SDK types omit isMeta, but live stream events still carry it for injected context
   // such as skill bodies. Keep it so the renderer can hide those from the person.
@@ -569,6 +571,14 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private modelDiscoveryQueries = new WeakSet<Query>()
   private accountChanges = new Map<string, Promise<unknown>>()
   private accountRevisions = new Map<string, number>()
+  private authenticationFailures = new Set<string>()
+  private authenticatedSources = new Set<string>()
+
+  private requireAuthentication = (state: Pick<ClaudeSessionState, 'container'>): void => {
+    if (this.authenticationFailures.has(getContainerTargetKey(state.container))) {
+      throw new Error('Claude authentication expired. Sign in again before sending messages.')
+    }
+  }
   private controlQueries = new ProviderClientPool<ClaudeControlQueryEntry>((entry) =>
     this.closeControlQueryEntry(entry)
   )
@@ -635,7 +645,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
               }
             })
         )
-        return change()
+        const result = await change()
+        this.authenticationFailures.delete(key)
+        this.authenticatedSources.add(key)
+        for (const state of this.states.values()) {
+          if (getContainerTargetKey(state.container) === key) this.emitUpdate(state, false, false)
+        }
+        return result
       })
     this.accountChanges.set(key, pending)
     void pending
@@ -1116,6 +1132,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const id = randomUUID()
     const state = this.createState(id, options)
+    this.requireAuthentication(state)
     this.states.set(id, state)
     this.sessionContainers.set(id, state.container)
     await this.startStateQuery(state, options)
@@ -1142,6 +1159,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     onForkCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
     const source = await this.ensureState(chatId, options)
+    this.requireAuthentication(source)
     const id = randomUUID()
     const state = this.createState(id, options, source.container)
     state.cwd = source.cwd
@@ -1191,6 +1209,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options)
+    this.requireAuthentication(state)
 
     if (!state.active) {
       await this.sendMessageRespectingQueue(state, message, options)
@@ -1237,6 +1256,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   steerPendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
+    this.requireAuthentication(state)
     const index = state.queuedMessages.findIndex((item) => item.id === messageId)
     const pending = state.queuedMessages[index]
     if (!pending) throw new Error('The Claude message is no longer queued.')
@@ -1262,6 +1282,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     messageId: string
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
+    this.requireAuthentication(state)
     const index = state.queuedMessages.findIndex((item) => item.id === messageId)
     const pending = state.queuedMessages[index]
     if (!pending) throw new Error('The Claude message is no longer queued.')
@@ -1284,6 +1305,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options)
+    this.requireAuthentication(state)
     this.pinState(state)
     try {
       const targetIndex = state.messages.findIndex(
@@ -1806,6 +1828,18 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.updatedAt = metadata?.lastModified ?? state.updatedAt
       state.cwd = metadata?.cwd ?? rememberedOptions?.cwd ?? null
       state.messages = messages
+      state.failed = isClaudeAuthenticationFailure(
+        messages.findLast(
+          (message) =>
+            !message.parent_tool_use_id &&
+            (message.type === 'assistant' ||
+              (message.type === 'user' && !isClaudeInternalUserMessage(message)))
+        ) ?? { type: 'system' }
+      )
+      const sourceKey = getContainerTargetKey(state.container)
+      if (state.failed && !this.authenticatedSources.has(sourceKey)) {
+        this.authenticationFailures.add(sourceKey)
+      }
       state.messageIds = new Set(messages.map((message) => message.uuid))
       this.rememberStateTranscriptSize(state)
       this.states.set(chatId, state)
@@ -2176,6 +2210,16 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         clearClaudeStreamMessages(state.partialMessages, event)
       }
       this.addTranscriptMessage(state, message)
+      if (isClaudeAuthenticationFailure(message)) {
+        const sourceKey = getContainerTargetKey(state.container)
+        this.authenticationFailures.add(sourceKey)
+        this.authenticatedSources.delete(sourceKey)
+        state.failed = true
+        state.active = false
+        state.queuedMessagesPaused = true
+        this.emitUpdate(state, true)
+        return true
+      }
       this.queueUpdate(state)
       return false
     }
@@ -2366,6 +2410,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     message: string,
     options?: ProviderTurnOptions
   ): Promise<void> => {
+    this.requireAuthentication(state)
     state.queuedMessages.push(this.createQueuedMessage(message, options))
     state.queuedMessagesPaused = false
     if (this.getQueueDrainDecision(state) !== 'start') {
@@ -2417,6 +2462,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state: ClaudeSessionState,
     message: QueuedClaudeMessage
   ): void => {
+    this.requireAuthentication(state)
     if (!state.input) throw new Error('Claude session is not connected')
     state.waitingForSessionIdle = false
     state.active = true
@@ -2643,6 +2689,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       purpose: null,
       container: state.container,
       capabilities: { editMessages: true, activeMessages: true },
+      authenticationRequired: this.authenticationFailures.has(
+        getContainerTargetKey(state.container)
+      ),
       pendingApproval: this.getPendingApproval(state),
       pendingUserInput: this.getPendingUserInput(state),
       contextUsage: state.contextUsage,

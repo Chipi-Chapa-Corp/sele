@@ -202,7 +202,13 @@ test('all steering segments follow the final block through finish and the next o
           : [])
       ])
       const target = model.steeredWorkingStepDisclosureTargets.get(final.id)
-      assert.deepEqual(target, { status, hasNextWorkingStep: hasNextTurn })
+      const finalPolicy =
+        status === 'stopped' || status === 'failed' ? 'stoppedSteeredFailed' : 'regular'
+      assert.deepEqual(target, {
+        status,
+        progressPolicy: finalPolicy,
+        hasNextWorkingStep: hasNextTurn
+      })
       assert.equal(model.steeredWorkingStepDisclosureTargets.has('next-working'), false)
 
       for (const expandOnStart of [false, true]) {
@@ -211,18 +217,17 @@ test('all steering segments follow the final block through finish and the next o
             const settings = {
               ...defaultSettings,
               expandProgressOnStart: expandOnStart,
-              collapseStoppedSteeredFailedProgressOnFinish: collapseOnFinish,
-              collapseStoppedSteeredFailedProgressOnNextTurn: collapseOnNextTurn
+              collapseProgressOnFinish: collapseOnFinish,
+              collapseProgressOnNextTurn: collapseOnNextTurn,
+              collapseStoppedSteeredFailedProgressOnFinish:
+                finalPolicy === 'regular' ? !collapseOnFinish : collapseOnFinish,
+              collapseStoppedSteeredFailedProgressOnNextTurn:
+                finalPolicy === 'regular' ? !collapseOnNextTurn : collapseOnNextTurn
             }
             const expectedOpen =
               (status === 'working' ? expandOnStart : !collapseOnFinish) &&
               !(hasNextTurn && collapseOnNextTurn)
-            const finalKey = getWorkingStepDisclosureKey(
-              status,
-              'stoppedSteeredFailed',
-              settings,
-              hasNextTurn
-            )
+            const finalKey = getWorkingStepDisclosureKey(status, finalPolicy, settings, hasNextTurn)
 
             for (const step of [previous, middle, final]) {
               const stepTarget = model.steeredWorkingStepDisclosureTargets.get(step.id)
@@ -230,7 +235,7 @@ test('all steering segments follow the final block through finish and the next o
               assert.equal(
                 getWorkingStepDefaultOpen(
                   stepTarget.status,
-                  'stoppedSteeredFailed',
+                  stepTarget.progressPolicy,
                   settings,
                   stepTarget.hasNextWorkingStep
                 ),
@@ -239,7 +244,7 @@ test('all steering segments follow the final block through finish and the next o
               assert.equal(
                 getWorkingStepDisclosureKey(
                   stepTarget.status,
-                  'stoppedSteeredFailed',
+                  stepTarget.progressPolicy,
                   settings,
                   stepTarget.hasNextWorkingStep
                 ),

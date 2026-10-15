@@ -1,6 +1,8 @@
 import type { ProviderToolActivity } from '../../shared/provider'
 
 export const activityLabels: Record<ProviderToolActivity, string> = {
+  'image-view': 'read images',
+  skill: 'used skills',
   read: 'read files',
   search: 'searched',
   git: 'used Git',
@@ -15,6 +17,8 @@ export const activityLabels: Record<ProviderToolActivity, string> = {
 }
 
 export const activeActivityLabels: Record<ProviderToolActivity, string> = {
+  'image-view': 'Reading images',
+  skill: 'Using skills',
   read: 'Reading files',
   search: 'Searching',
   git: 'Using Git',

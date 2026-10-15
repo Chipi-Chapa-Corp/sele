@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import { Box, Boxes, Container, ToolCase } from 'lucide-react'
 import type {
   AppContainerSuggestion,
@@ -156,14 +157,14 @@ const parseStoredContainerSelection = (
 export const readStoredContainerSelection = (): AppContainerTarget | null => {
   try {
     const storedSelection = parseStoredContainerSelection(
-      window.localStorage.getItem(containerSelectionStorageKey),
+      preferenceStorage.getItem(containerSelectionStorageKey),
       { allowHost: true }
     )
     if (storedSelection) return storedSelection
 
     for (const legacyStorageKey of legacyContainerSelectionStorageKeys) {
       const legacySelection = parseStoredContainerSelection(
-        window.localStorage.getItem(legacyStorageKey),
+        preferenceStorage.getItem(legacyStorageKey),
         { allowHost: legacyStorageKey === 'sele:container-selection:v3' }
       )
       if (legacySelection) return legacySelection
@@ -178,7 +179,7 @@ export const readStoredContainerSelection = (): AppContainerTarget | null => {
 
 export const writeStoredContainerSelection = (container: AppContainerTarget): void => {
   try {
-    window.localStorage.setItem(
+    preferenceStorage.setItem(
       containerSelectionStorageKey,
       JSON.stringify(normalizeContainerTarget(container))
     )

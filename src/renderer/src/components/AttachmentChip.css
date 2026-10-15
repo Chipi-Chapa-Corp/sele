@@ -9,6 +9,7 @@
   align-items: center;
   overflow: hidden;
   border: 0.0625rem solid var(--secondary-border);
+  border-color: var(--secondary-border-colors);
   border-radius: 0.35rem;
   color: var(--ink);
   background: var(--secondary-surface);
@@ -22,7 +23,7 @@
 .attachment-chip:hover,
 .attachment-chip:focus-within,
 .attachment-chip[data-active] {
-  border-color: var(--secondary-border-hover);
+  border-color: var(--secondary-border-colors-hover);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
 }

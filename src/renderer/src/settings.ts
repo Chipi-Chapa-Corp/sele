@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import {
   defaultNetworkRetrySettings,
   normalizeNetworkRetryCount,
@@ -1000,7 +1001,7 @@ export const resolveAppSettings = (
 
 export const readStoredAppSettings = (): AppSettings => {
   try {
-    const storedValue = window.localStorage.getItem(appSettingsStorageKey)
+    const storedValue = preferenceStorage.getItem(appSettingsStorageKey)
     if (!storedValue) return defaultAppSettings
 
     const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
@@ -1291,7 +1292,7 @@ const readStoredAppProjectSettingsOverride = (
 
 export const readStoredAppProjectSettings = (): AppProjectSettingsByCwd => {
   try {
-    const storedValue = window.localStorage.getItem(appProjectSettingsStorageKey)
+    const storedValue = preferenceStorage.getItem(appProjectSettingsStorageKey)
     if (!storedValue) return {}
 
     const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
@@ -1328,11 +1329,11 @@ export const writeStoredAppProjectSettings = (projectSettings: AppProjectSetting
     }
 
     if (Object.keys(storedProjectSettings).length === 0) {
-      window.localStorage.removeItem(appProjectSettingsStorageKey)
+      preferenceStorage.removeItem(appProjectSettingsStorageKey)
       return
     }
 
-    window.localStorage.setItem(appProjectSettingsStorageKey, JSON.stringify(storedProjectSettings))
+    preferenceStorage.setItem(appProjectSettingsStorageKey, JSON.stringify(storedProjectSettings))
   } catch (error) {
     console.error('[caught:settings:writeStoredAppProjectSettings]', error)
     // App settings are non-critical; ignore unavailable storage.
@@ -1617,11 +1618,11 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (Object.keys(storedGit).length > 0) storedSettings.git = storedGit
 
     if (Object.keys(storedSettings).length === 0) {
-      window.localStorage.removeItem(appSettingsStorageKey)
+      preferenceStorage.removeItem(appSettingsStorageKey)
       return
     }
 
-    window.localStorage.setItem(appSettingsStorageKey, JSON.stringify(storedSettings))
+    preferenceStorage.setItem(appSettingsStorageKey, JSON.stringify(storedSettings))
   } catch (error) {
     console.error('[caught:settings:writeStoredAppSettings]', error)
     // App settings are non-critical; ignore unavailable storage.

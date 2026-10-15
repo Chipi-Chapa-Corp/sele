@@ -373,9 +373,10 @@ type SegmentClassification = {
 }
 
 type CommandClassification = {
+  icon?: ProviderToolIcon
   activity: Extract<
     ProviderToolActivity,
-    'read' | 'search' | 'git' | 'npm' | 'npx' | 'script' | 'command'
+    'skill' | 'read' | 'search' | 'git' | 'npm' | 'npx' | 'script' | 'command'
   >
   label: string
   command: string
@@ -501,27 +502,38 @@ const getSkillNameFromPath = (path: string): string | null => {
   return parts.at(-2) ?? 'skill'
 }
 
-const getReadToolLabel = (command: string, classifications: SegmentClassification[]): string => {
+const getReadToolPresentation = (
+  command: string,
+  classifications: SegmentClassification[]
+): Pick<CommandClassification, 'activity' | 'label' | 'icon'> => {
   const targets = getReadCommandTargets(classifications)
   const skillNames = targets
     .map(getSkillNameFromPath)
     .filter((name): name is string => name != null)
   if (skillNames.length > 0 && skillNames.length === targets.length) {
     const visibleSkills = skillNames.slice(0, 3).join(', ')
-    return skillNames.length === 1
-      ? visibleSkills === 'skill'
-        ? 'Read skill'
-        : `Read ${visibleSkills} skill`
-      : `Read ${visibleSkills}${skillNames.length > 3 ? ', …' : ''} skills`
+    const label =
+      skillNames.length === 1
+        ? visibleSkills === 'skill'
+          ? 'Used skill'
+          : `Used ${visibleSkills} skill`
+        : `Used ${visibleSkills}${skillNames.length > 3 ? ', …' : ''} skills`
+    return { activity: 'skill', label, icon: 'skill' }
   }
 
   const files = targets.map(getFileName)
-  if (files.length === 0) return `Read ${truncate(command.replace(/\s+/g, ' '), 80)}`
+  if (files.length === 0) {
+    return { activity: 'read', label: `Read ${truncate(command.replace(/\s+/g, ' '), 80)}` }
+  }
 
   const visibleFiles = files.slice(0, 3).join(', ')
-  return files.length === 1
-    ? `Read file ${visibleFiles}`
-    : `Read files ${visibleFiles}${files.length > 3 ? ', …' : ''}`
+  return {
+    activity: 'read',
+    label:
+      files.length === 1
+        ? `Read file ${visibleFiles}`
+        : `Read files ${visibleFiles}${files.length > 3 ? ', …' : ''}`
+  }
 }
 
 const getSearchDetailsFromSegment = (
@@ -655,8 +667,7 @@ const classifyCommand = (command: string): CommandClassification[] => {
   if (activity === 'read') {
     return [
       {
-        activity,
-        label: getReadToolLabel(classifiedCommand, [firstClassification]),
+        ...getReadToolPresentation(classifiedCommand, [firstClassification]),
         command: classifiedCommand
       }
     ]
@@ -1087,7 +1098,7 @@ const renderTool = (
   icon: ProviderToolIcon | null = null,
   compact = false
 ): WorkingItemRenderResult => {
-  const showRawValues = activity === 'other' && !compact
+  const showRawValues = (activity === 'other' || activity === 'image-view') && !compact
 
   return {
     type: 'tool',
@@ -1153,8 +1164,8 @@ const isOpenAiDeveloperDocsToolName = (name: string | null | undefined): boolean
 const exactToolPresentations = new Map<string, ToolPresentation>([
   ['webSearch', { activity: 'search', label: 'Searched the web' }],
   ['web_search', { activity: 'search', label: 'Searched the web' }],
-  ['imageView', { activity: 'other', icon: 'image-view', label: 'Viewed image' }],
-  ['view_image', { activity: 'other', icon: 'image-view', label: 'Viewed image' }],
+  ['imageView', { activity: 'image-view', icon: 'image-view', label: 'Read image' }],
+  ['view_image', { activity: 'image-view', icon: 'image-view', label: 'Read image' }],
   ['imageGeneration', { activity: 'other', icon: 'image-generation', label: 'Generated image' }],
   [
     'image_gen__imagegen',
@@ -1267,7 +1278,7 @@ const getViewedImages = (item: CodexThreadItem): ProviderToolImage[] => {
 
   visit(item)
 
-  const name = path ? getFileName(path) : 'Viewed image'
+  const name = path ? getFileName(path) : 'Read image'
   if (dataUrls.size > 0) {
     return [...dataUrls].map((dataUrl) => ({ dataUrl, name, path }))
   }
@@ -1478,7 +1489,7 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
 
       if (name === 'exec_command') {
         const command = getToolStringArgument(item.customToolInput ?? '', name, 'cmd')
-        const classifications = command
+        const classifications: CommandClassification[] = command
           ? classifyCommand(command)
           : [
               {
@@ -1493,7 +1504,12 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
             classification.activity,
             classification.label,
             shouldShowCommandText(classification.activity) ? classification.command || null : null,
-            getToolStdout(item.customToolOutput)
+            getToolStdout(item.customToolOutput),
+            [],
+            getToolId(item),
+            defaultRawToolOutput,
+            [],
+            classification.icon ?? null
           )
         )
       }
@@ -1516,7 +1532,12 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
               shouldShowCommandText(classification.activity)
                 ? classification.command || null
                 : null,
-              getToolStdout(item.aggregatedOutput)
+              getToolStdout(item.aggregatedOutput),
+              [],
+              getToolId(item),
+              defaultRawToolOutput,
+              [],
+              classification.icon ?? null
             )
           )
         : null

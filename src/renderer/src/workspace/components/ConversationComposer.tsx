@@ -16,6 +16,9 @@ type ConversationComposerProps = WorkspaceController['conversationComposer']
 
 export function ConversationComposer(props: ConversationComposerProps): ReactElement {
   const {
+    authenticationRequired,
+    handleOpenChatReauthentication,
+    handleManageChatAccounts,
     accountUsage,
     accountUsageError,
     accountUsageState,
@@ -133,6 +136,31 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
   return (
     <div className="chat-panel__composer">
       <div className="chat-panel__composer-inner">
+        {!activeSubagentChatView && authenticationRequired && (
+          <section
+            className="chat-approval chat-request-error"
+            role="alert"
+            aria-label="Claude sign-in required"
+          >
+            <div className="chat-approval__main">
+              <span className="chat-approval__summary">
+                Your Claude session expired. Sign in again to send messages.
+              </span>
+            </div>
+            <div className="chat-approval__actions">
+              <Button
+                callback={handleOpenChatReauthentication}
+                label="Sign in again"
+                theme="primary"
+              />
+              <Button
+                callback={handleManageChatAccounts}
+                label="Switch account"
+                theme="secondary"
+              />
+            </div>
+          </section>
+        )}
         {!activeSubagentChatView && requestErrorVisible && (
           <section
             className="chat-approval chat-request-error"

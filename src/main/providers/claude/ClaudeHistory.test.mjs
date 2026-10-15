@@ -72,6 +72,35 @@ const store = (entries) => ({
 const userTexts = (items) =>
   items.filter((item) => item.role === 'user').map((item) => item.content)
 
+test('reopening an expired OAuth session preserves the authentication failure through the SDK', async () => {
+  const text = 'Failed to authenticate: OAuth session expired and could not be refreshed'
+  const entries = [
+    record('user', 'request', null, 'build me a zip to publish using scripts'),
+    record('assistant', 'auth', 'request', [{ type: 'text', text }], {
+      error: 'authentication_failed',
+      isApiErrorMessage: true
+    })
+  ]
+  const before = structuredClone(entries)
+  const messages = await loadClaudeHistory(sessionId, store(entries))
+  assert.equal(messages.at(-1).error, 'authentication_failed')
+  for (const items of [
+    renderClaudeChatItems(messages, options),
+    new ClaudeTranscriptProjection().read(messages, [], options).items,
+    renderClaudeChatItems(messages, { ...options, turnWindow: { startIndex: null, limit: 1 } })
+  ]) {
+    const failed = items.find((item) => item.type === 'working')
+    assert.equal(failed.status, 'failed')
+    assert.equal(failed.failureReason, 'authentication')
+    assert.equal(failed.failureMessage, text)
+    assert.equal(
+      items.some((item) => item.role === 'assistant'),
+      false
+    )
+  }
+  assert.deepEqual(entries, before)
+})
+
 test('reopening manual compaction loads original history and delimiter through the real SDK', async () => {
   const entries = fixture()
   const before = structuredClone(entries)

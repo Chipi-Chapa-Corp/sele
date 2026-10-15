@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from '../preferences.ts'
 import { GitCommitHorizontal, Upload } from 'lucide-react'
 
 import type {
@@ -260,7 +261,7 @@ export type ChatGroupingPreference = 'grouped' | 'ungrouped'
 
 export const readChatGroupingPreference = (): ChatGroupingPreference => {
   try {
-    return window.localStorage.getItem(chatGroupingPreferenceStorageKey) === 'ungrouped'
+    return preferenceStorage.getItem(chatGroupingPreferenceStorageKey) === 'ungrouped'
       ? 'ungrouped'
       : 'grouped'
   } catch (error) {
@@ -271,7 +272,7 @@ export const readChatGroupingPreference = (): ChatGroupingPreference => {
 
 export const writeChatGroupingPreference = (preference: ChatGroupingPreference): void => {
   try {
-    window.localStorage.setItem(chatGroupingPreferenceStorageKey, preference)
+    preferenceStorage.setItem(chatGroupingPreferenceStorageKey, preference)
   } catch (error) {
     console.error('[caught:controllerTypes:writeChatGroupingPreference]', error)
     // Sidebar grouping is non-critical; ignore unavailable storage.
@@ -280,7 +281,7 @@ export const writeChatGroupingPreference = (preference: ChatGroupingPreference):
 
 export const readGitCommitMode = (): GitCommitMode => {
   try {
-    return window.localStorage.getItem(gitCommitModeStorageKey) === 'push' ? 'push' : 'commit'
+    return preferenceStorage.getItem(gitCommitModeStorageKey) === 'push' ? 'push' : 'commit'
   } catch (error) {
     console.error('[caught:controllerTypes:readGitCommitMode]', error)
     return 'commit'
@@ -289,7 +290,7 @@ export const readGitCommitMode = (): GitCommitMode => {
 
 export const writeGitCommitMode = (mode: GitCommitMode): void => {
   try {
-    window.localStorage.setItem(gitCommitModeStorageKey, mode)
+    preferenceStorage.setItem(gitCommitModeStorageKey, mode)
   } catch (error) {
     console.error('[caught:controllerTypes:writeGitCommitMode]', error)
   }

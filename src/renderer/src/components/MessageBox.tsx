@@ -564,28 +564,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   )
 
   const renderSectionOptions = (section: ChatConfigSection): ReactNode => (
-    <>
-      <ChatConfigSectionHeader
-        modelError={section.id === 'model' ? modelsError : null}
-        onBack={() => {
-          setActiveSectionId(null)
-          setModelSearchQuery('')
-          focusFirstMenuButton()
-        }}
-      />
-      {section.id === 'model' && (
-        <div className="message-box__chat-config-search">
-          <Input
-            ref={modelSearchInputRef}
-            type="search"
-            aria-label="Search models"
-            autoComplete="off"
-            placeholder="Search models"
-            value={modelSearchQuery}
-            onChange={(event) => setModelSearchQuery(event.target.value)}
-          />
-        </div>
-      )}
+    <div className="message-box__chat-config-section">
       <div className="message-box__chat-config-option-groups">
         {visibleSectionGroups.map((group, groupIndex) => (
           <div
@@ -664,7 +643,30 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           </div>
         )}
       </div>
-    </>
+      <div className="message-box__chat-config-footer">
+        {section.id === 'model' && (
+          <div className="message-box__chat-config-search">
+            <Input
+              ref={modelSearchInputRef}
+              type="search"
+              aria-label="Search models"
+              autoComplete="off"
+              placeholder="Search models"
+              value={modelSearchQuery}
+              onChange={(event) => setModelSearchQuery(event.target.value)}
+            />
+          </div>
+        )}
+        <ChatConfigSectionHeader
+          modelError={section.id === 'model' ? modelsError : null}
+          onBack={() => {
+            setActiveSectionId(null)
+            setModelSearchQuery('')
+            focusFirstMenuButton()
+          }}
+        />
+      </div>
+    </div>
   )
 
   const menu = menuOpen ? (

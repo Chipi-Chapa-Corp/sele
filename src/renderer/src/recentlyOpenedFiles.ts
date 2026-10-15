@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import { getRecentChatReferenceKey, type RecentChatReferenceKeySource } from './chatRecents.ts'
 
 export type RecentlyOpenedFile = {
@@ -60,7 +61,7 @@ export const parseRecentlyOpenedFiles = (value: unknown): RecentlyOpenedFilesByW
 
 export const readStoredRecentlyOpenedFiles = (): RecentlyOpenedFilesByWorkspace => {
   try {
-    const storedValue = window.localStorage.getItem(recentlyOpenedFilesStorageKey)
+    const storedValue = preferenceStorage.getItem(recentlyOpenedFilesStorageKey)
     return storedValue ? parseRecentlyOpenedFiles(JSON.parse(storedValue)) : {}
   } catch (error) {
     console.error('[caught:recentlyOpenedFiles:readStoredRecentlyOpenedFiles]', error)
@@ -73,11 +74,11 @@ export const writeStoredRecentlyOpenedFiles = (
 ): void => {
   try {
     if (Object.keys(filesByWorkspace).length === 0) {
-      window.localStorage.removeItem(recentlyOpenedFilesStorageKey)
+      preferenceStorage.removeItem(recentlyOpenedFilesStorageKey)
       return
     }
 
-    window.localStorage.setItem(recentlyOpenedFilesStorageKey, JSON.stringify(filesByWorkspace))
+    preferenceStorage.setItem(recentlyOpenedFilesStorageKey, JSON.stringify(filesByWorkspace))
   } catch (error) {
     console.error('[caught:recentlyOpenedFiles:writeStoredRecentlyOpenedFiles]', error)
     // Recently opened files are non-critical; ignore unavailable storage.

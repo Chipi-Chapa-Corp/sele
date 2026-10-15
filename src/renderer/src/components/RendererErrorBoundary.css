@@ -46,6 +46,7 @@
   min-height: var(--control-height);
   padding: 0.4rem 0.75rem;
   border: 0.0625rem solid var(--primary-border);
+  border-color: var(--primary-border-colors);
   border-radius: var(--control-radius);
   color: var(--accent-ink);
   background: var(--primary-surface);
@@ -56,6 +57,7 @@
 }
 
 .renderer-error__panel button:hover {
+  border-color: var(--primary-border-colors-hover);
   background: var(--primary-surface-hover);
   box-shadow: var(--primary-shadow-hover);
 }

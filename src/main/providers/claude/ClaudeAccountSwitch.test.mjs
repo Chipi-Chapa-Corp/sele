@@ -132,6 +132,9 @@ const setup = () => {
   Object.assign(h, {
     accountChanges: new Map(),
     accountRevisions: new Map(),
+    authenticationFailures: new Set(),
+    authenticatedSources: new Set(),
+    emitUpdate: () => {},
     controlQueries: { invalidateKey: (key) => calls.push(['invalidate', key]) },
     modelDiscoveryRequests: new Map([['account:host', Promise.resolve([])]]),
     states: new Map(),

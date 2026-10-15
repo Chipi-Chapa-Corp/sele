@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
-import { normalizeContainerTarget } from '../../containerTarget.ts'
+import { normalizeContainerTarget, getContainerTargetKey } from '../../containerTarget.ts'
 import { ProviderConversationCompletionCoordinator } from '../ProviderConversationEngine.ts'
+import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
+import { isClaudeInternalUserMessage } from './ClaudeItemRenderers.ts'
 
 const source = ts.createSourceFile(
   'ClaudeProviderAdapter.ts',
@@ -57,7 +59,10 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
   const loads = new Map()
   let queryCreations = 0
   const context = vm.createContext({
+    isClaudeAuthenticationFailure,
+    isClaudeInternalUserMessage,
     normalizeContainerTarget,
+    getContainerTargetKey,
     maxIdleSessionStates: 8,
     maxIdleTranscriptBytes: 32 * 1024 * 1024,
     updateDelayMs: 1,
@@ -91,6 +96,8 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
   const instance = new context.Harness()
   Object.assign(instance, {
     states: new Map(),
+    authenticationFailures: new Set(),
+    authenticatedSources: new Set(),
     stateLoads: new Map(),
     stateGeneration: 0,
     disposed: false,
@@ -140,6 +147,32 @@ const record = (id, size = 100) => ({
   session_id: id,
   message: { role: 'user', content: 'x'.repeat(size) },
   parent_tool_use_id: null
+})
+
+test('reopened authentication failures restore the error state until a later real turn', async () => {
+  const error = {
+    type: 'assistant',
+    uuid: 'auth',
+    session_id: 'expired',
+    parent_tool_use_id: null,
+    error: 'authentication_failed',
+    message: { content: 'Failed to authenticate: OAuth session expired and could not be refreshed' }
+  }
+  for (const messages of [
+    [record('expired'), error],
+    [record('expired'), error, { ...record('retry'), message: { content: 'Retry' } }],
+    [
+      record('expired'),
+      error,
+      { ...error, uuid: 'success', error: undefined, message: { content: 'Done' } }
+    ]
+  ]) {
+    const { instance } = makeHarness({ records: () => messages })
+    const state = await instance.ensureState('expired')
+    assert.equal(state.failed, messages.length === 2)
+    assert.deepEqual(state.messages, messages)
+    instance.dispose()
+  }
 })
 
 test('real getChat admission bounds visited transcripts and reopens the least recent session', async () => {

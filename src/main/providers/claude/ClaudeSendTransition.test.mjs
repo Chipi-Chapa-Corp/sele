@@ -5,6 +5,9 @@ import test from 'node:test'
 import ts from 'typescript'
 import { getClaudeQueueDrainDecision } from './ClaudeQueueDrain.ts'
 import { getClaudeResultLifecycleDecision } from './ClaudeQueryLifecycle.ts'
+import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
+import { getContainerTargetKey } from '../../containerTarget.ts'
+import { retainClaudeStreamTiming, clearClaudeStreamMessages } from './ClaudeStreaming.ts'
 
 // Exercise the actual adapter methods without starting Electron or the Claude CLI.
 const source = ts.createSourceFile(
@@ -24,13 +27,18 @@ const methods = new Set([
   'handleQueryEvent'
 ])
 const code = ts.transpileModule(
-  `class Harness { ${adapter.members
+  `${source.statements.find((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((declaration) => declaration.name.getText(source) === 'toTranscriptMessage')).getText(source)}
+  class Harness { ${adapter.members
     .filter((member) => methods.has(member.name?.getText(source)))
     .map((member) => member.getText(source))
     .join('\n')} }; globalThis.Harness = Harness`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
 ).outputText
 const context = vm.createContext({
+  isClaudeAuthenticationFailure,
+  getContainerTargetKey,
+  retainClaudeStreamTiming,
+  clearClaudeStreamMessages,
   getClaudeQueueDrainDecision,
   getClaudeResultLifecycleDecision,
   getTokenBreakdown: (inputTokens, outputTokens, cachedInputTokens) => ({
@@ -45,6 +53,8 @@ vm.runInContext(code, context)
 
 const setup = () => {
   const instance = new context.Harness()
+  instance.authenticationFailures = new Set()
+  instance.authenticatedSources = new Set()
   instance.reportResultTokenUsage = () => {}
   const state = {
     queuedMessages: [{ id: 'first' }],
@@ -75,6 +85,44 @@ const setup = () => {
   }
   return { instance, state, updates }
 }
+
+test('live expired OAuth errors finish the turn and pause queued messages for recovery', async () => {
+  const { instance, state } = setup()
+  state.partialMessages = new Map()
+  state.active = true
+  state.failed = false
+  const pending = state.queuedMessages[0]
+  const updates = []
+  const messages = []
+  instance.reportLiveTokenUsage = () => {}
+  instance.addTranscriptMessage = (_state, message) => messages.push(message)
+  instance.emitUpdate = (_state, completed) => updates.push(completed)
+  instance.queueUpdate = () => assert.fail('The failure must be emitted immediately')
+  const text = 'Failed to authenticate: OAuth session expired and could not be refreshed'
+  assert.equal(
+    await instance.handleQueryEvent(
+      state,
+      {},
+      {
+        type: 'assistant',
+        uuid: 'auth',
+        session_id: 'session',
+        parent_tool_use_id: null,
+        error: 'authentication_failed',
+        message: { content: [{ type: 'text', text }] }
+      }
+    ),
+    true,
+    'the consumer must close the unauthenticated query'
+  )
+  assert.equal(state.active, false)
+  assert.equal(state.failed, true)
+  assert.equal(state.queuedMessagesPaused, true)
+  assert.equal(state.queuedMessages[0], pending)
+  assert.equal(instance.getQueueDrainDecision(state), 'wait')
+  assert.equal(messages[0].error, 'authentication_failed')
+  assert.deepEqual(updates, [true])
+})
 
 test('startup presents the submitted message as sent and preserves usage', async () => {
   const { instance, state, updates } = setup()

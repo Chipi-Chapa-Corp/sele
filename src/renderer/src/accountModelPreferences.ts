@@ -1,3 +1,4 @@
+import { preferences as preferenceStorage } from './preferences.ts'
 import type { ProviderId, ProviderModelId } from '../../shared/provider'
 
 export type AccountModelPreferences = Record<string, ProviderModelId>
@@ -14,7 +15,7 @@ export const readAccountModelPreferences = (
   storage?: Pick<Storage, 'getItem'>
 ): AccountModelPreferences => {
   try {
-    const value = JSON.parse((storage ?? window.localStorage).getItem(storageKey) ?? '{}')
+    const value = JSON.parse((storage ?? preferenceStorage).getItem(storageKey) ?? '{}')
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
     return Object.fromEntries(
       Object.entries(value).filter(
@@ -33,7 +34,7 @@ export const writeAccountModelPreferences = (
   storage?: Pick<Storage, 'setItem'>
 ): void => {
   try {
-    ;(storage ?? window.localStorage).setItem(storageKey, JSON.stringify(preferences))
+    ;(storage ?? preferenceStorage).setItem(storageKey, JSON.stringify(preferences))
   } catch (error) {
     console.error('Unable to store account model preferences.', error)
   }
