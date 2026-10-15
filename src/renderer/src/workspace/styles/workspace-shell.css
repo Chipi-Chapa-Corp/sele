@@ -14,6 +14,10 @@
   );
   --chat-detail-header-height: 0.4rem;
   --panel-bottom-inset: 0.7rem;
+  --control-surface: var(--depth-shell-surface);
+  --field-border: var(--depth-shell-surface);
+  --field-shadow: var(--depth-shell-shadow);
+  --tab-track-surface: var(--depth-shell-surface);
   position: relative;
   width: 100%;
   height: 100vh;
@@ -23,12 +27,6 @@
 }
 
 :root[data-color-scheme='dark'] .chat {
-  --control-surface: #171513;
-  --field-border: var(--control-surface);
-  --tab-track-surface: var(--control-surface);
-  --field-shadow:
-    inset 0 0.0625rem 0.125rem rgb(0 0 0 / 24%), 0 0.0625rem rgb(233 211 188 / 6%);
-
   background: #1b1917;
 }
 

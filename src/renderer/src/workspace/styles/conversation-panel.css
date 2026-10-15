@@ -123,10 +123,12 @@
 
 .chat-panel__composer {
   position: relative;
+  /* Keep composer popups above the message pane and its floating controls. */
+  z-index: 5;
   width: 100%;
   flex: none;
   margin: 0;
-  overflow: hidden;
+  overflow: visible;
   background: transparent;
   /* Reserve the same scrollbar gutter as the messages to align their content. */
   scrollbar-color: var(--glass-edge) transparent;

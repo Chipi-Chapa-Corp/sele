@@ -25,6 +25,14 @@ textarea {
   font: inherit;
 }
 
+/* Floating surfaces use the notes-search depth, including those inside the shell. */
+:where(.ui-menu-surface, [role='dialog']) {
+  --control-surface: var(--depth-popup-surface);
+  --field-border: var(--depth-popup-surface);
+  --field-shadow: var(--depth-popup-shadow);
+  --tab-track-surface: var(--depth-popup-surface);
+}
+
 /* Keep decorative media from becoming a separate hit target inside native buttons. */
 button :where(svg, img) {
   pointer-events: none;

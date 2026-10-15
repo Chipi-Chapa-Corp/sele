@@ -68,10 +68,22 @@ if (!process.versions.electron) {
             import { WorkingElapsedTime } from './src/renderer/src/components/WorkingElapsedTime'
             import { fallbackProviderModels, fallbackProviderApprovalModes, fallbackProviderSandboxModes } from './src/shared/provider'
             import './src/renderer/src/assets/styles/tokens.css'
+            import './src/renderer/src/workspace/styles/conversation-panel.css'
+            import './src/renderer/src/workspace/styles/conversation-messages-shell.css'
+            import './src/renderer/src/workspace/styles/conversation-messages.css'
+            import './src/renderer/src/workspace/styles/conversation-composer.css'
             const root = createRoot(document.getElementById('root'))
             const noop = () => {}
             window.renderUsage = (provider = 'codex', chatId = 'chat') => flushSync(() => root.render(<>
               <div id="time"><WorkingElapsedTime item={{ type: 'working', id:'turn', status:'worked', items: [], startedAt: 1000, completedAt: 6000, tokenUsage: {inputTokens: 400, cachedInputTokens: 800, outputTokens: 250, cost: {input:0.0008,cachedInput:0.00016,output:0.0025,total:0.00346}} }} /></div>
+              <section className="chat-panel chat-panel--selected">
+                <div className="chat-detail__messages-shell">
+                  <div className="chat-detail__messages">Conversation</div>
+                  <button className="chat-detail__down-button">Jump to bottom</button>
+                </div>
+                <div className="chat-panel__composer">
+                  <div className="chat-panel__composer-input">
+                    <div className="chat-panel__composer-inner">
               <MessageBox draftScopeKey="chat" draftProjectKey="project" chatId={chatId}
                 providerId={provider} model={fallbackProviderModels[0].id} models={fallbackProviderModels}
                 agentMode="interactive" agentModes={[]} approvalMode="never" approvalModes={fallbackProviderApprovalModes}
@@ -83,6 +95,10 @@ if (!process.versions.electron) {
                 onAgentModeChange={noop} onApprovalModeChange={noop} onModelChange={noop}
                 onReasoningEffortChange={noop} onServiceTierChange={noop} onSandboxModeChange={noop}
                 onSend={async () => true} />
+                    </div>
+                  </div>
+                </div>
+              </section>
             </>))
             window.renderUsage()
           `,
@@ -98,7 +114,7 @@ if (!process.versions.electron) {
         path.join(directory, 'usage.html'),
         `<!doctype html><html data-color-scheme="dark"><link rel="stylesheet" href="usage.css"><style>
         body {margin:0; padding:20px; height:600px; box-sizing:border-box; display:flex; flex-direction:column; background:var(--paper); color:var(--ink); font-family:system-ui; font-size:14px;}
-        #root {margin-top:auto; width:100%;} #time {padding-bottom:15px;}
+        #root {height:100%; width:100%; display:flex; flex-direction:column;} #time {padding-bottom:15px;}
       </style><div id="root"></div><script>
         window.requests = []; window.failUsage = false;
         window.usage = {chat:{inputTokens:400,cachedInputTokens:800,outputTokens:250},week:{inputTokens:20000,cachedInputTokens:80000,outputTokens:5000},month:{inputTokens:200000,cachedInputTokens:800000,outputTokens:50000},updatedAt:1};
@@ -1040,6 +1056,19 @@ if (!process.versions.electron) {
           'Array.from(document.querySelectorAll(".token-usage__card")).some(card=>card.scrollWidth>card.clientWidth)'
         )
         assert.equal(overflow, false, 'usage cards fit the popover')
+        await run('new Promise(resolve => setTimeout(resolve, 200))')
+        assert.equal(
+          await run(`(() => {
+            const popup = document.querySelector('.message-box__usage-popover')
+            const rect = popup.getBoundingClientRect()
+            const composer = document.querySelector('.chat-panel__composer').getBoundingClientRect()
+            return rect.top < composer.top &&
+              [rect.top + 12, composer.top - 20].every(y =>
+                popup.contains(document.elementFromPoint(rect.right - 20, y)))
+          })()`),
+          true,
+          'usage popup stays visible and receives pointer input above the composer and chat controls'
+        )
         await run('new Promise(resolve => setTimeout(resolve, 350))')
         await fs.writeFile(
           '/tmp/sele-token-usage-dark.png',
