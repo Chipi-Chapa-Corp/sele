@@ -1,3 +1,15 @@
+.chat-panel__composer-notices:not(:empty) {
+  padding-block: 0.8rem;
+}
+
+.chat-panel__composer-notices > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-panel__composer-input {
+  border-top: 0.0625rem solid var(--glass-line);
+}
+
 .chat-panel__new-session {
   display: flex;
   min-width: 0;

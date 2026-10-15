@@ -1,7 +1,8 @@
 .chat-panel {
   --chat-content-max-width: 60rem;
-  --muted: var(--floating-muted);
-  --quiet: var(--floating-muted);
+  --chat-content-padding: 1.7rem;
+  --muted: color-mix(in srgb, var(--floating-muted) 80%, var(--lead));
+  --quiet: var(--muted);
   --control-bg: var(--floating-control-bg);
   --control-hover-bg: var(--floating-control-hover-bg);
   --control-disabled-color: var(--floating-control-disabled-color);
@@ -22,10 +23,10 @@
   margin: 0;
   padding: 0;
   overflow: hidden;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  border: 0.0625rem solid var(--field-border);
+  border-radius: var(--control-radius);
+  background: var(--control-surface);
+  box-shadow: var(--field-shadow);
   container: chat-panel / inline-size;
   z-index: 1;
 }
@@ -125,15 +126,19 @@
   width: 100%;
   flex: none;
   margin: 0;
-  border-top: 0;
+  overflow: hidden;
   background: transparent;
+  /* Reserve the same scrollbar gutter as the messages to align their content. */
+  scrollbar-color: var(--glass-edge) transparent;
+  scrollbar-gutter: stable;
   transition: transform 220ms ease;
 }
 
 .chat-panel__composer-inner {
   width: 100%;
-  max-width: var(--chat-content-max-width);
+  max-width: calc(var(--chat-content-max-width) + 2 * var(--chat-content-padding));
   margin: 0 auto;
+  padding: 0 var(--chat-content-padding);
 }
 
 .chat-panel__composer::after {

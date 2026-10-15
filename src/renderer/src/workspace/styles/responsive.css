@@ -64,10 +64,11 @@
   }
 
   .chat-panel {
+    --chat-content-padding: 1.05rem;
+
     display: none;
     height: auto;
     padding: 0;
-    border-radius: 0;
   }
 
   .chat--has-selection .chat-panel {
@@ -185,22 +186,12 @@
     width: 100%;
   }
 
-  .chat-detail__messages-inner {
-    max-width: calc(var(--chat-content-max-width) + 2.1rem);
-    padding: 0 1.05rem;
-  }
-
   .chat-detail__messages-header {
     height: 0.8rem;
   }
 
   .chat-detail__search {
     width: calc(100% - 2.1rem);
-  }
-
-  .chat-panel__composer {
-    width: 100%;
-    padding: 0.6rem 1.05rem 0;
   }
 
   .chat-panel--new {

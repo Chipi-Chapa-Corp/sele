@@ -1,12 +1,12 @@
 .chat-detail__messages-inner {
   display: flex;
   width: 100%;
-  max-width: calc(var(--chat-content-max-width) + 3.4rem);
+  max-width: calc(var(--chat-content-max-width) + 2 * var(--chat-content-padding));
   min-width: 0;
   flex-direction: column;
   gap: 0.7rem;
   margin: 0 auto;
-  padding: 0 1.7rem;
+  padding: 0 var(--chat-content-padding);
 }
 
 .chat-detail__turn {

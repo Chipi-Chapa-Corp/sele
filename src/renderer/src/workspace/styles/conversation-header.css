@@ -199,6 +199,15 @@
   box-shadow: none;
 }
 
+/* The custom model trigger has stronger state selectors than the shared controls. */
+:root[data-control-style='transparent']
+  .message-box__chat-config-trigger:not(:disabled):is(:hover, [aria-expanded='true']) {
+  border-color: transparent;
+  color: var(--ink);
+  background: var(--glass-subtle);
+  box-shadow: none;
+}
+
 :root[data-control-style='transparent']
   :where(
     .message-box .ui-button--secondary[data-pressed]:not(:disabled),

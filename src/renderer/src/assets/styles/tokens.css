@@ -154,10 +154,18 @@
   --secondary-before-shadow: none;
   --primary-surface-hover: color-mix(in srgb, var(--accent) 90%, transparent);
   --primary-border: var(--accent);
-  --primary-border-colors: var(--primary-surface);
-  --primary-border-colors-hover: var(--primary-surface-hover);
-  --primary-shadow: var(--secondary-shadow);
-  --primary-shadow-hover: var(--secondary-shadow-hover);
+  --primary-border-colors:
+    color-mix(in srgb, var(--primary-surface), #fff 14%) var(--primary-surface)
+    color-mix(in srgb, var(--primary-surface), #000 16%);
+  --primary-border-colors-hover:
+    color-mix(in srgb, var(--primary-surface-hover), #fff 14%) var(--primary-surface-hover)
+    color-mix(in srgb, var(--primary-surface-hover), #000 16%);
+  --primary-shadow:
+    inset 0 0.0625rem 0.125rem rgb(255 255 255 / 18%),
+    inset 0 -0.0625rem 0.125rem rgb(0 0 0 / 20%), 0 0.0625rem 0.125rem rgb(0 0 0 / 32%);
+  --primary-shadow-hover:
+    inset 0 0.0625rem 0.125rem rgb(255 255 255 / 18%),
+    inset 0 -0.0625rem 0.125rem rgb(0 0 0 / 20%), 0 0.125rem 0.375rem rgb(0 0 0 / 38%);
   --floating-bg: #181818;
   --floating-control-bg: #1f1f1f;
   --floating-control-hover-bg: #2e2e2e;
@@ -197,4 +205,40 @@
   --warning: #d8a451;
   --info: #8db6d1;
   --success: #68c58e;
+}
+
+/* Raised bevels for the light theme only. */
+:root:not([data-color-scheme='dark']) {
+  --raised-edge-light: 24%;
+  --raised-edge-shade: 24%;
+  --raised-bevel-shadow:
+    inset 0.125rem 0.125rem 0.125rem -0.0625rem rgb(255 255 255 / 18%),
+    inset -0.125rem -0.125rem 0.125rem -0.0625rem rgb(0 0 0 / 18%);
+  --raised-drop-shadow: 0 0.0625rem 0.1875rem rgb(27 27 24 / 20%);
+  --raised-drop-shadow-hover: 0 0.125rem 0.25rem rgb(27 27 24 / 22%);
+  /* The border continues into the inner bevel, with light coming from the upper left. */
+  --secondary-border-colors:
+    color-mix(in srgb, var(--secondary-surface), #fff var(--raised-edge-light))
+    color-mix(in srgb, var(--secondary-surface), #000 16%)
+    color-mix(in srgb, var(--secondary-surface), #000 var(--raised-edge-shade))
+    color-mix(in srgb, var(--secondary-surface), #fff 16%);
+  --secondary-border-colors-hover:
+    color-mix(in srgb, var(--secondary-surface-hover), #fff var(--raised-edge-light))
+    color-mix(in srgb, var(--secondary-surface-hover), #000 16%)
+    color-mix(in srgb, var(--secondary-surface-hover), #000 var(--raised-edge-shade))
+    color-mix(in srgb, var(--secondary-surface-hover), #fff 16%);
+  --secondary-shadow: var(--raised-bevel-shadow), var(--raised-drop-shadow);
+  --secondary-shadow-hover: var(--raised-bevel-shadow), var(--raised-drop-shadow-hover);
+  --primary-border-colors:
+    color-mix(in srgb, var(--primary-surface), #fff var(--raised-edge-light))
+    color-mix(in srgb, var(--primary-surface), #000 16%)
+    color-mix(in srgb, var(--primary-surface), #000 var(--raised-edge-shade))
+    color-mix(in srgb, var(--primary-surface), #fff 16%);
+  --primary-border-colors-hover:
+    color-mix(in srgb, var(--primary-surface-hover), #fff var(--raised-edge-light))
+    color-mix(in srgb, var(--primary-surface-hover), #000 16%)
+    color-mix(in srgb, var(--primary-surface-hover), #000 var(--raised-edge-shade))
+    color-mix(in srgb, var(--primary-surface-hover), #fff 16%);
+  --primary-shadow: var(--raised-bevel-shadow), var(--raised-drop-shadow);
+  --primary-shadow-hover: var(--raised-bevel-shadow), var(--raised-drop-shadow-hover);
 }

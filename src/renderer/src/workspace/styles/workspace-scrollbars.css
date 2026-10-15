@@ -1,5 +1,6 @@
 .chat-sidebar__body::-webkit-scrollbar,
 .changes-sidebar__body::-webkit-scrollbar,
+.chat-panel__composer::-webkit-scrollbar,
 .chat-detail__messages::-webkit-scrollbar {
   width: 0.5rem;
 }
