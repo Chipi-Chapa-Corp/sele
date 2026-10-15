@@ -223,9 +223,9 @@
   --raised-edge-shade: 24%;
   --raised-bevel-shadow:
     inset 0.125rem 0.125rem 0.125rem -0.0625rem rgb(255 255 255 / 18%),
-    inset -0.125rem -0.125rem 0.125rem -0.0625rem rgb(0 0 0 / 18%);
-  --raised-drop-shadow: 0 0.0625rem 0.1875rem rgb(27 27 24 / 20%);
-  --raised-drop-shadow-hover: 0 0.125rem 0.25rem rgb(27 27 24 / 22%);
+    inset -0.125rem -0.125rem 0.0625rem -0.0625rem rgb(0 0 0 / 18%);
+  --raised-drop-shadow: 0 0.0625rem 0.09375rem rgb(27 27 24 / 20%);
+  --raised-drop-shadow-hover: 0 0.09375rem 0.125rem rgb(27 27 24 / 16%);
   /* The border continues into the inner bevel, with light coming from the upper left. */
   --secondary-border-colors:
     color-mix(in srgb, var(--secondary-surface), #fff var(--raised-edge-light))
