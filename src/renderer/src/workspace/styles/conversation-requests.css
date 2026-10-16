@@ -130,6 +130,7 @@
 .chat-user-input__input {
   width: auto;
   flex: 1 1 auto;
+  background: var(--depth-popup-surface);
 }
 
 .chat-provider-update {
