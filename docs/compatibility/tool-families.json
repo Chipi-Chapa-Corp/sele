@@ -1,0 +1,107 @@
+[
+  {
+    "family": "exec_command; shell; unified_exec",
+    "feature_id": "tools.shell",
+    "boundary": "Provider-owned shell executor; command/output rendering and command approvals are wired."
+  },
+  {
+    "family": "write_stdin",
+    "feature_id": "tools.shell",
+    "boundary": "Provider-owned process input; not a UI to manage all provider background terminals."
+  },
+  {
+    "family": "apply_patch",
+    "feature_id": "tools.patch",
+    "boundary": "Provider file editing with diff rendering; modern file-change approvals are supported."
+  },
+  {
+    "family": "view_image",
+    "feature_id": "image.input",
+    "boundary": "Provider image inspection; Sele can display viewed-image output."
+  },
+  {
+    "family": "update_plan",
+    "feature_id": "plan.display",
+    "boundary": "Tool execution belongs to Codex; Sele displays the plan. This does not activate plan mode."
+  },
+  {
+    "family": "request_user_input",
+    "feature_id": "security.questions",
+    "boundary": "Sele handles item/tool/requestUserInput and displays questions."
+  },
+  {
+    "family": "request_user_input_async",
+    "feature_id": "security.questions",
+    "boundary": "Asynchronous agent question messages are collected and answered."
+  },
+  {
+    "family": "request_plugin_install",
+    "feature_id": "plugin.install-request",
+    "boundary": "A recognized display name does not establish an install/authentication continuation flow."
+  },
+  {
+    "family": "create_goal; get_goal; update_goal",
+    "feature_id": "goal.objective",
+    "boundary": "Provider goal tools depend on runtime availability; Sele integrates goal get/set/clear APIs, with lifecycle limitations."
+  },
+  {
+    "family": "functions.exec; functions.wait",
+    "feature_id": "agent.code-mode",
+    "boundary": "Provider Code Mode executor. Nested presentation recognizes a subset of namespaces."
+  },
+  {
+    "family": "collaboration.*; multi-agent tools",
+    "feature_id": "agent.spawn",
+    "boundary": "Provider delegation can run; transcript inspection is integrated. Direct subagent management is partial."
+  },
+  {
+    "family": "clock.*; sleep",
+    "feature_id": "agent.sleep",
+    "boundary": "Provider tool availability is conditional; the separate currentTime/read client callback is currently unsupported."
+  },
+  {
+    "family": "web.*; web__*; web search",
+    "feature_id": "web.search",
+    "boundary": "Provider/backend tools can run when available. No promise of all first-party rich result widgets."
+  },
+  {
+    "family": "image_gen.*; image_gen__*; image generation",
+    "feature_id": "image.generate",
+    "boundary": "Provider/image tools and skills are conditional; generated-media display exists."
+  },
+  {
+    "family": "MCP connector tools; mcp__*",
+    "feature_id": "plugin.tools",
+    "boundary": "Generic tool output can render, but arbitrary elicitation/auth/tool approval flows are incomplete."
+  },
+  {
+    "family": "MCP resources and resource templates",
+    "feature_id": "mcp.resources",
+    "boundary": "Provider-hosted resource APIs can be available; no native Sele resource browser."
+  },
+  {
+    "family": "MCP custom UI; Apps SDK widgets",
+    "feature_id": "plugin.widgets",
+    "boundary": "No general widget host. Sele visualizations are a separate supported format."
+  },
+  {
+    "family": "Browser Use; unified browser automation",
+    "feature_id": "browser.agent",
+    "boundary": "Sele implements the in-app browser transport. Requires a compatible installed OpenAI runtime."
+  },
+  {
+    "family": "Native computer-use operations",
+    "feature_id": "computer.native",
+    "boundary": "May be exposed by separately installed tools; Sele itself only implements the browser bridge."
+  },
+  {
+    "family": "Hosted Sites, Space, office and other plugin tools",
+    "feature_id": "plugin.tools",
+    "boundary": "Access depends on installed/authenticated tools and backend eligibility. A skill/tool name alone is not proof of parity."
+  },
+  {
+    "family": "Dynamic client-side tools: item/tool/call",
+    "feature_id": "security.dynamic-tool",
+    "boundary": "Provider-requested client tool execution is unsupported, even though dynamicToolCall transcript items can render."
+  }
+]

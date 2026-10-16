@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sele · ChatGPT and Codex compatibility</title>
+<style>
+:root{font:15px/1.5 system-ui,sans-serif;color:#20252d;background:#f7f8fa;color-scheme:light dark}
+body{margin:0;padding:32px;max-width:1700px;margin-inline:auto}h1{font-size:30px;letter-spacing:-.025em;margin:0}p{max-width:1000px;color:#59616e}
+a{color:#245eb8}header{margin-bottom:24px}.filters{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0 12px}
+input,select,button{font:inherit;border:1px solid #cbd1da;border-radius:7px;padding:9px;background:#fff;color:#20252d}input{min-width:260px;flex:1}label{display:flex;gap:6px;align-items:center}button{cursor:pointer}
+.table-wrap{overflow:auto;border:1px solid #d8dde5;border-radius:10px;background:#fff}table{border-collapse:collapse;width:100%;font-size:14px}th{text-align:left;background:#edf0f5;position:sticky;top:0}th,td{padding:12px 14px;border-bottom:1px solid #e5e8ed;vertical-align:top}td:nth-child(1){min-width:220px}td:nth-child(4){min-width:300px}small{display:block;color:#626c79}code{font-size:11px}.badge{font-size:12px;font-weight:650;padding:3px 8px;border-radius:12px;background:#e8ecf2;white-space:nowrap}.Implemented{background:#d9f0e2;color:#145c32}.Partial{background:#fff0cb;color:#755100}.Runtime{background:#dfebff;color:#204f91}.Missing{background:#f8dfe0;color:#942d34}.Unverified{background:#ece4f7;color:#604082}
+#count{margin:12px 0}details{margin-bottom:20px}summary{cursor:pointer}footer{margin-top:20px;font-size:13px;color:#626c79}
+@media(prefers-color-scheme:dark){:root{background:#14171c;color:#e8edf4}p,small,footer{color:#aab4c3}input,select,button,.table-wrap{background:#1e242c;color:#e8edf4;border-color:#3c4655}th{background:#292f3a}td,th{border-color:#343d49}a{color:#9abfff}}
+@media(max-width:700px){body{padding:16px}h1{font-size:24px}}
+</style>
+<header>
+<h1>Sele compatibility with ChatGPT desktop &amp; Codex</h1>
+<p id="intro"></p>
+<p>Static source audit. Runtime capabilities require the installed provider, skills, credentials, and permissions. Counts are an inventory, not a parity score.</p>
+<a href="README.md">Methodology and full report</a> · <a href="features.csv" download>Download CSV</a> · <a href="tool-families.csv">Tool compatibility</a> · <a href="protocol.csv">Protocol inventory</a> · <a href="coverage.csv">Source coverage</a>
+</header>
+<details><summary>Rating definitions and scope</summary><p><b>Implemented</b>: explicit Sele wiring. <b>Partial</b>: useful subset. <b>Runtime</b>: inherited possibility, not verified. <b>Missing</b>: no native implementation found. <b>Unverified</b>: evidence is insufficient.</p><p>Current desktop Chat, Work, and Codex, Codex CLI, and separately labelled Classic features. Hosted tools are included at their desktop boundary. Standalone mobile/web/IDE UX and enterprise/cloud administration are excluded. Public documentation cannot establish undocumented features or every plugin operation.</p></details>
+<div class="filters">
+<label for="q">Search</label><input id="q" type="search" placeholder="Feature, gap, ID, or source path…">
+<label for="status">Sele</label><select id="status"><option value="">All ratings</option></select>
+<label for="category">Category</label><select id="category"><option value="">All categories</option></select>
+<label for="priority">Priority</label><select id="priority"><option value="">All priorities</option><option>P0</option><option>P1</option><option>P2</option></select>
+<button id="reset" type="button">Reset</button>
+</div>
+<div id="count" role="status" aria-live="polite"></div>
+<div class="table-wrap"><table><thead><tr><th scope="col">Feature</th><th scope="col">Baseline surface</th><th scope="col">Sele</th><th scope="col">Assessment / gap</th><th scope="col">Evidence and sources</th></tr></thead><tbody id="rows"></tbody></table></div>
+<footer>Source code evidence is linked relative to this checkout. Each assessment is human-reviewed; refreshing sources does not automatically certify support.</footer>
+<script type="application/json" id="audit-data">"__AUDIT_DATA__"</script>
+<script>
+'use strict';
+const data=JSON.parse(document.getElementById('audit-data').textContent);
+const all=data.features;const $=id=>document.getElementById(id);
+$('intro').textContent=`${all.length} feature rows · audited ${data.as_of} · Sele ${data.sele_version} · Codex CLI ${data.codex_version}`;
+for(const key of ['status','category']){const field=key==='status'?'sele_status':'category';for(const value of [...new Set(all.map(r=>r[field]))].sort()){const o=document.createElement('option');o.value=value;o.textContent=value;$(key).append(o)}}
+function make(tag,text){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;return el}
+function render(){const query=$('q').value.toLocaleLowerCase();const found=all.filter(r=>(!$('status').value||r.sele_status===$('status').value)&&(!$('category').value||r.category===$('category').value)&&(!$('priority').value||r.priority===$('priority').value)&&Object.values(r).join(' ').toLocaleLowerCase().includes(query));const fragment=document.createDocumentFragment();
+for(const r of found){const tr=make('tr');const title=make('td',r.feature);title.append(make('small',r.category),make('code',`${r.id} · ${r.priority}`));tr.append(title,make('td',r.baseline_surface));const status=make('td');const badge=make('span',r.sele_status);badge.className=`badge ${r.sele_status}`;status.append(badge);tr.append(status,make('td',r.assessment));const refs=make('td');for(const [i,url] of r.sources.split('; ').entries()){const a=make('a',`Source ${i+1}`);a.href=url;a.target='_blank';a.rel='noreferrer';refs.append(a,make('br'))}for(const path of r.evidence.split('; ')){const a=make('a',path);a.href='../../'+path.replace(/:(\d+)$/,'#L$1');const small=make('small');small.append(a);refs.append(small)}tr.append(refs);fragment.append(tr)}$('rows').replaceChildren(fragment);const counts={};for(const r of found)counts[r.sele_status]=(counts[r.sele_status]||0)+1;$('count').textContent=`Showing ${found.length} of ${all.length} · `+Object.entries(counts).map(([s,n])=>`${s}: ${n}`).join(' · ')}
+for(const id of ['q','status','category','priority'])$(id).addEventListener('input',render);
+$('reset').addEventListener('click',()=>{for(const id of ['q','status','category','priority'])$(id).value='';render()});render();
+</script>
+</html>

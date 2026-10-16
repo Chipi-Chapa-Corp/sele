@@ -32,6 +32,11 @@
   min-width: 0;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
+  border: 0.0625rem solid var(--field-border);
+  border-radius: var(--control-radius);
+  background: var(--control-surface);
+  box-shadow: var(--field-shadow);
 }
 
 .terminal-panel__session {
@@ -95,7 +100,7 @@
 }
 
 .terminal-panel__host .xterm-viewport {
-  background-color: var(--bg);
+  background-color: var(--control-surface);
   scrollbar-color: var(--glass-edge) transparent;
   scrollbar-width: thin;
 }

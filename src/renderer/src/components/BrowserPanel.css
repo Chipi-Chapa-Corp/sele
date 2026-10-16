@@ -6,10 +6,7 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 0.0625rem solid var(--panel-border);
-  border-radius: 0.9rem;
-  background: var(--floating-bg);
-  box-shadow: none;
+  background: transparent;
 }
 
 .browser-panel__tab-toolbar,
@@ -19,11 +16,9 @@
   flex: none;
   align-items: center;
   gap: 0.4rem;
-  padding-inline: var(--changes-sidebar-x, 0.7rem);
 }
 
 .browser-panel__tab-toolbar {
-  padding-top: 0.5rem;
   padding-bottom: 0.4rem;
   user-select: none;
 }
@@ -39,7 +34,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 0.2rem;
-  padding: 0 var(--changes-sidebar-x, 0.7rem) 0.5rem;
+  padding: 0 0 0.5rem;
 }
 
 .browser-panel__find-input {
@@ -87,6 +82,8 @@
   min-height: 0;
   flex: 1;
   overflow: hidden;
+  border: 0.0625rem solid var(--panel-border);
+  border-radius: var(--control-radius);
   background: var(--floating-bg);
 }
 

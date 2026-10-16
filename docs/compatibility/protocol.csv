@@ -1,0 +1,270 @@
+kind,method,sele_static_result,references,note
+ClientRequest,account/bedrock/checkGovCloudRequirements,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,account/bedrock/discover,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,account/bedrock/setup,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,account/gatewayOAuth/cancel,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,account/gatewayOAuth/login,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,account/gatewayOAuth/read,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,account/login/cancel,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1465,Static reference only; assess behavior in the feature table.
+ClientRequest,account/login/start,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1526,Static reference only; assess behavior in the feature table.
+ClientRequest,account/logout,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,account/rateLimitResetCredit/consume,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:2019,Static reference only; assess behavior in the feature table.
+ClientRequest,account/rateLimits/read,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1974,Static reference only; assess behavior in the feature table.
+ClientRequest,account/read,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1506,Static reference only; assess behavior in the feature table.
+ClientRequest,account/sendAddCreditsNudgeEmail,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,account/usage/read,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1972,Static reference only; assess behavior in the feature table.
+ClientRequest,account/workspaceMessages/read,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,app/installed,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1805; src/main/providers/codex/CodexProviderAdapter.ts:1942,Static reference only; assess behavior in the feature table.
+ClientRequest,app/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,app/read,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1815,Static reference only; assess behavior in the feature table.
+ClientRequest,collaborationMode/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,command/exec,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:4763; src/main/providers/codex/CodexProviderAdapter.ts:4800,Static reference only; assess behavior in the feature table.
+ClientRequest,command/exec/resize,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,command/exec/terminate,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,command/exec/write,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,config/batchWrite,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1790; src/main/providers/codex/CodexProviderAdapter.ts:1931,Static reference only; assess behavior in the feature table.
+ClientRequest,config/mcpServer/reload,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,config/read,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1728; src/main/providers/codex/CodexProviderAdapter.ts:1779,Static reference only; assess behavior in the feature table.
+ClientRequest,config/value/write,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,configRequirements/read,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1725,Static reference only; assess behavior in the feature table.
+ClientRequest,environment/add,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,environment/info,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,environment/status,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,experimentalFeature/enablement/set,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,experimentalFeature/list,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1734,Static reference only; assess behavior in the feature table.
+ClientRequest,externalAgentConfig/detect,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,externalAgentConfig/import,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,externalAgentConfig/import/readHistories,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,externalAgentConfig/import/recordHistory,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,feedback/upload,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/copy,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/createDirectory,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/getMetadata,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:4733,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/readDirectory,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/readFile,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:4752,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/remove,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/unwatch,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/watch,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fs/writeFile,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fuzzyFileSearch,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fuzzyFileSearch/sessionStart,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fuzzyFileSearch/sessionStop,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,fuzzyFileSearch/sessionUpdate,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,hooks/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,initialize,Literal reference,src/main/providers/codex/CodexAppServerClient.ts:220,Static reference only; assess behavior in the feature table.
+ClientRequest,marketplace/add,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,marketplace/remove,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,marketplace/upgrade,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,mcpServer/event/stream/start,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,mcpServer/event/stream/stop,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,mcpServer/oauth/login,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,mcpServer/resource/read,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,mcpServer/tool/call,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,mcpServerStatus/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,memory/reset,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,memory/status,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,mock/experimentalMethod,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,model/list,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1588,Static reference only; assess behavior in the feature table.
+ClientRequest,modelProvider/capabilities/read,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,permissionProfile/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/install,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/installed,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1850,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/list,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1608,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/read,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1863,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/reconcile,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/search,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/share/checkout,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/share/delete,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/share/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/share/save,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/share/updateTargets,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/skill/read,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,plugin/uninstall,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,process/kill,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,process/resizePty,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,process/spawn,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,process/writeStdin,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,project/create,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,project/delete,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,project/import,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,project/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,project/move,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,project/read,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,project/update,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,remoteControl/client/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,remoteControl/client/revoke,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,remoteControl/disable,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,remoteControl/enable,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,remoteControl/pairing/start,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,remoteControl/pairing/status,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,remoteControl/status/read,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,review/start,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,rollout/compress,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,server/diagnostics,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,skills/config/write,Literal reference,src/main/providers/codex/CodexSkillConfig.ts:14,Static reference only; assess behavior in the feature table.
+ClientRequest,skills/extraRoots/set,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,skills/list,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:1617,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/approveGuardianDeniedAction,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/archive,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/attachment/add,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/attachment/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/attachment/remove,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/attachmentOwner/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/backgroundTerminals/clean,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/backgroundTerminals/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/backgroundTerminals/terminate,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/compact/start,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:3650,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/decrement_elicitation,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/delete,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/fork,Literal reference,src/main/providers/codex/CodexAppServerClient.ts:118; src/main/providers/codex/CodexProviderAdapter.ts:3144; src/main/providers/codex/CodexProviderAdapter.ts:3219,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/goal/clear,Literal reference,src/main/providers/codex/CodexGoals.ts:50,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/goal/get,Literal reference,src/main/providers/codex/CodexGoals.ts:22,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/goal/set,Literal reference,src/main/providers/codex/CodexGoals.ts:47,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/increment_elicitation,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/inject_items,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/items/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/items/read,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/list,Literal reference,src/main/providers/codex/CodexAppServerClient.ts:238; src/main/providers/codex/CodexProviderAdapter.ts:2042; src/main/providers/codex/CodexProviderAdapter.ts:2049,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/loaded/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/memoryMode/set,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/metadata/update,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/name/set,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:2772; src/main/providers/codex/CodexProviderAdapter.ts:4575,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/prediction/request,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/queue/add,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/queue/delete,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/queue/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/queue/reorder,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/queue/start,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/queue/update,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/read,Literal reference,src/main/providers/codex/CodexPaginatedHistory.ts:75; src/main/providers/codex/CodexProviderAdapter.ts:1327,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/readState/update,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/realtime/appendAudio,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/realtime/appendSpeech,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/realtime/appendText,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/realtime/listVoices,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/realtime/start,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/realtime/stop,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/resume,Literal reference,src/main/providers/codex/CodexAppServerClient.ts:118; src/main/providers/codex/CodexProviderAdapter.ts:2173; src/main/providers/codex/CodexProviderAdapter.ts:4603,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/revert,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:3525,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/search,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/searchOccurrences,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/section/move,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/settings/update,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/shellCommand,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/start,Literal reference,src/main/providers/codex/CodexAppServerClient.ts:118; src/main/providers/codex/CodexProviderAdapter.ts:2832; src/main/providers/codex/CodexProviderAdapter.ts:2978; src/main/providers/codex/CodexProviderAdapter.ts:4434,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/timeline/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/turns/list,Literal reference,src/main/providers/codex/CodexPaginatedHistory.ts:251; src/main/providers/codex/CodexPaginatedHistory.ts:293; src/main/providers/codex/CodexPaginatedHistory.ts:317; src/main/providers/codex/CodexPaginatedHistory.ts:347; src/main/providers/codex/CodexPaginatedHistory.ts:388; src/main/providers/codex/CodexProviderAdapter.ts:2741; src/main/providers/codex/CodexSubagentHistory.ts:52,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/unarchive,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,thread/unsubscribe,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:2905; src/main/providers/codex/CodexProviderAdapter.ts:4480,Static reference only; assess behavior in the feature table.
+ClientRequest,threadSection/create,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,threadSection/delete,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,threadSection/list,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,threadSection/update,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,turn/interrupt,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:3993; src/main/providers/codex/CodexProviderAdapter.ts:4009,Static reference only; assess behavior in the feature table.
+ClientRequest,turn/settings/update,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,turn/start,Literal reference,src/main/providers/codex/CodexAppServerClient.ts:109; src/main/providers/codex/CodexProviderAdapter.ts:2871; src/main/providers/codex/CodexProviderAdapter.ts:3007; src/main/providers/codex/CodexProviderAdapter.ts:3174; src/main/providers/codex/CodexProviderAdapter.ts:3563; src/main/providers/codex/CodexProviderAdapter.ts:3942; src/main/providers/codex/CodexProviderAdapter.ts:4455,Static reference only; assess behavior in the feature table.
+ClientRequest,turn/steer,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:3811,Static reference only; assess behavior in the feature table.
+ClientRequest,userVerification/cancel,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,userVerification/delete,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,userVerification/enroll,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,userVerification/status,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,userVerification/verify,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,windowsSandbox/readiness,No literal reference,,Static reference only; assess behavior in the feature table.
+ClientRequest,windowsSandbox/setupStart,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerRequest,account/chatgptAuthTokens/refresh,No handler,,Falls through to Unsupported server request (-32601).
+ServerRequest,applyPatchApproval,No handler,,Falls through to Unsupported server request (-32601).
+ServerRequest,attestation/generate,No handler,,Falls through to Unsupported server request (-32601).
+ServerRequest,currentTime/read,No handler,,Falls through to Unsupported server request (-32601).
+ServerRequest,execCommandApproval,No handler,,Falls through to Unsupported server request (-32601).
+ServerRequest,item/commandExecution/requestApproval,Handler present,src/main/providers/codex/CodexProviderAdapter.ts:6553,Explicit dispatch in CodexProviderAdapter.
+ServerRequest,item/fileChange/requestApproval,Handler present,src/main/providers/codex/CodexProviderAdapter.ts:6558,Explicit dispatch in CodexProviderAdapter.
+ServerRequest,item/permissions/requestApproval,No handler,,Falls through to Unsupported server request (-32601).
+ServerRequest,item/tool/call,No handler,,Falls through to Unsupported server request (-32601).
+ServerRequest,item/tool/requestUserInput,Handler present,src/main/providers/codex/CodexProviderAdapter.ts:6522,Explicit dispatch in CodexProviderAdapter.
+ServerRequest,mcpServer/elicitation/request,Partial handler,src/main/providers/codex/CodexProviderAdapter.ts:6534,Only ordinary empty-schema browser permission prompts.
+ClientNotification,initialized,Literal reference,src/main/providers/codex/CodexAppServerClient.ts:228,Static reference only; assess behavior in the feature table.
+ServerNotification,account/gatewayOAuth/changed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,account/login/completed,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6582,Static reference only; assess behavior in the feature table.
+ServerNotification,account/rateLimits/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,account/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,app/list/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,autoApprovalReview/strictReviewRequired,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,command/exec/outputDelta,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,configWarning,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,deprecationNotice,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,error,Literal reference,src/main/providers/codex/CodexAppServerClient.ts:210; src/main/providers/codex/CodexBrowserBridge.ts:182; src/main/providers/codex/CodexBrowserBridge.ts:205; src/main/providers/codex/CodexBrowserBridge.ts:207; src/main/providers/codex/CodexProviderAdapter.ts:789; src/main/providers/codex/CodexProviderAdapter.ts:805; src/main/providers/codex/CodexSubagents.ts:70,Static reference only; assess behavior in the feature table.
+ServerNotification,externalAgentConfig/import/completed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,externalAgentConfig/import/progress,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,fs/changed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,fuzzyFileSearch/sessionCompleted,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,fuzzyFileSearch/sessionUpdated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,guardianWarning,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,hook/completed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,hook/started,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,item/agentMessage/delta,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:4535; src/main/providers/codex/CodexProviderAdapter.ts:4542; src/main/providers/codex/CodexProviderAdapter.ts:6605,Static reference only; assess behavior in the feature table.
+ServerNotification,item/autoApprovalReview/completed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,item/autoApprovalReview/started,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,item/commandExecution/outputDelta,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6620,Static reference only; assess behavior in the feature table.
+ServerNotification,item/commandExecution/terminalInteraction,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,item/completed,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:4536; src/main/providers/codex/CodexProviderAdapter.ts:6258; src/main/providers/codex/CodexProviderAdapter.ts:6600,Static reference only; assess behavior in the feature table.
+ServerNotification,item/fileChange/outputDelta,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,item/fileChange/patchUpdated,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6625,Static reference only; assess behavior in the feature table.
+ServerNotification,item/mcpToolCall/progress,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,item/plan/delta,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6610,Static reference only; assess behavior in the feature table.
+ServerNotification,item/reasoning/summaryPartAdded,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,item/reasoning/summaryTextDelta,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6615,Static reference only; assess behavior in the feature table.
+ServerNotification,item/reasoning/textDelta,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,item/started,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6253; src/main/providers/codex/CodexProviderAdapter.ts:6600,Static reference only; assess behavior in the feature table.
+ServerNotification,mcpServer/event/stream/notification,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,mcpServer/oauthLogin/completed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,mcpServer/startupStatus/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,model/rerouted,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,model/safetyBuffering/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,model/verification,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,modelProvider/authRecoveryCompleted,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,modelProvider/authRecoveryStarted,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,process/exited,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,process/outputDelta,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,project/changed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,remoteControl/status/changed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,serverRequest/resolved,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6635,Static reference only; assess behavior in the feature table.
+ServerNotification,skills/changed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/archived,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/attachment/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/closed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/compacted,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/deleted,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/environment/connected,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/environment/disconnected,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/goal/cleared,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6572,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/goal/updated,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6571; src/main/providers/codex/CodexProviderAdapter.ts:6576,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/name/updated,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6422; src/main/providers/codex/CodexProviderAdapter.ts:6658,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/prediction/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/project/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/queue/changed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/readState/changed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/closed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/error,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/item/completed,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/item/started,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/item/transcript/delta,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/itemAdded,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/outputAudio/delta,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/sdp,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/started,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/transcript/delta,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/realtime/transcript/done,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/reverted,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/settings/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/started,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/status/changed,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6413; src/main/providers/codex/CodexProviderAdapter.ts:6657,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/tokenUsage/updated,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:6664,Static reference only; assess behavior in the feature table.
+ServerNotification,thread/unarchived,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,turn/completed,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:4553; src/main/providers/codex/CodexProviderAdapter.ts:6165; src/main/providers/codex/CodexProviderAdapter.ts:6170; src/main/providers/codex/CodexProviderAdapter.ts:6177; src/main/providers/codex/CodexProviderAdapter.ts:6209; src/main/providers/codex/CodexProviderAdapter.ts:6223; src/main/providers/codex/CodexProviderAdapter.ts:6237; src/main/providers/codex/CodexProviderAdapter.ts:6595,Static reference only; assess behavior in the feature table.
+ServerNotification,turn/diff/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,turn/moderationMetadata,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,turn/plan/updated,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,turn/started,Literal reference,src/main/providers/codex/CodexProviderAdapter.ts:4524; src/main/providers/codex/CodexProviderAdapter.ts:6194; src/main/providers/codex/CodexProviderAdapter.ts:6199; src/main/providers/codex/CodexProviderAdapter.ts:6595,Static reference only; assess behavior in the feature table.
+ServerNotification,warning,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,windows/worldWritableWarning,No literal reference,,Static reference only; assess behavior in the feature table.
+ServerNotification,windowsSandbox/setupCompleted,No literal reference,,Static reference only; assess behavior in the feature table.

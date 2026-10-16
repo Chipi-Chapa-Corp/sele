@@ -41,6 +41,7 @@ mac:
 dmg:
   artifactName: ${name}-macos-${arch}.${ext}
 linux:
+  artifactName: ${name}-linux-${arch}.${ext}
   icon: build/icons
   target:
     - flatpak

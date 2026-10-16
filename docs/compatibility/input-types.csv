@@ -1,0 +1,8 @@
+type,sele_status,note
+audio,Missing,No audio/localAudio input creation in Sele.
+image,Partial,Image input is sent as localImage; remote image items can be read from history.
+localAudio,Missing,No audio/localAudio input creation in Sele.
+localImage,Implemented,Structured input supported in createUserInput.
+mention,Partial,App mention is composed as prompt context; no general structured mention transport.
+skill,Implemented,Structured input supported in createUserInput.
+text,Implemented,Structured input supported in createUserInput.

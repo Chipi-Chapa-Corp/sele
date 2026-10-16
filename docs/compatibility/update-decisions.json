@@ -1,0 +1,2428 @@
+{
+  "ca6ef4d663474ba447c3": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Standalone mobile UI update; excluded."
+  },
+  "b8bb23bc5f67264c30cf": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "165cc08a7431eeb1ea0d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.dots"
+    ],
+    "reason": "Desktop boundary for persistent assistant configuration and supervision."
+  },
+  "f780bfe5fa7cfbfb5cb9": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.sync",
+      "environment.remote-pair"
+    ],
+    "reason": "Desktop continuity and remote pairing are in scope."
+  },
+  "3e066528c099c5d785c1": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.space",
+      "hosted.space-ui"
+    ],
+    "reason": "Desktop hosted-Page tool boundary and collaborative editor distinction."
+  },
+  "7de4bf7e035633f953b8": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "14e5015e7fbe418a8ed5": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Hosted execution-service update; desktop cloud handoff is covered separately."
+  },
+  "f01cd6715144d9b1421c": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Separate hosted security-service update; desktop plugin access is represented separately."
+  },
+  "43561c40a1ac3077e3da": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.partner"
+    ],
+    "reason": "Partner authentication management from the desktop."
+  },
+  "42aa854b4526645be237": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.sites-build",
+      "hosted.sites-data"
+    ],
+    "reason": "Desktop Sites plugin boundary."
+  },
+  "dcd089da5b72d8f29c53": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.extensions",
+      "plugin.widgets"
+    ],
+    "reason": "Plugin UI extension hosting."
+  },
+  "34185cd0cf75069acf80": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "mcp.events",
+      "automation.events"
+    ],
+    "reason": "MCP event subscription and task triggering."
+  },
+  "c3d73c942afabd00dd32": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.annotate"
+    ],
+    "reason": "Browser annotation/visual controls."
+  },
+  "e42722e375b78824f540": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "dd3d13221eedb9b1137d": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "API/pricing change; model selector and service tiers are covered separately."
+  },
+  "c2963af1eccb64433157": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "External messaging or hosted/team administration surface is outside desktop/CLI scope."
+  },
+  "465171fedd7d6d5eead6": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "External messaging or hosted/team administration surface is outside desktop/CLI scope."
+  },
+  "6807e779a6de1d85062e": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "External messaging or hosted/team administration surface is outside desktop/CLI scope."
+  },
+  "98ea95fe0b61d649fbcb": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "security.managed",
+      "security.network"
+    ],
+    "reason": "Client enforcement boundary, excluding enterprise policy authoring."
+  },
+  "da565c0527097e158c86": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "8b689567cd5deab35a67": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.dots"
+    ],
+    "reason": "Desktop boundary for persistent assistant configuration and supervision."
+  },
+  "9fd74b9ebb0fd80a4781": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "b63003e65ebbf1c0e30d": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Hosted execution-service update; desktop cloud handoff is covered separately."
+  },
+  "033aab4565bd82978672": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Separate hosted security-service update; desktop plugin access is represented separately."
+  },
+  "3a312244d17554fd6ac4": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.sync",
+      "environment.remote-pair"
+    ],
+    "reason": "Desktop continuity and remote pairing are in scope."
+  },
+  "cf5672c8a94f57ebc794": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.space",
+      "hosted.space-ui"
+    ],
+    "reason": "Desktop hosted-Page tool boundary and collaborative editor distinction."
+  },
+  "91e803bb96422d593455": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "External messaging or hosted/team administration surface is outside desktop/CLI scope."
+  },
+  "fc6424fec68c65ffc9a8": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.partner"
+    ],
+    "reason": "Partner authentication management from the desktop."
+  },
+  "09106cc9edd77efa4fba": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.extensions",
+      "plugin.widgets"
+    ],
+    "reason": "Plugin UI extension hosting."
+  },
+  "97fac9c04a3e7d797f49": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "mcp.events",
+      "automation.events"
+    ],
+    "reason": "MCP event subscription and task triggering."
+  },
+  "be49d391cee48f861e22": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.annotate"
+    ],
+    "reason": "Browser annotation/visual controls."
+  },
+  "f1b263858bee8d9b76c7": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "7d3ff6eff7120838cb0b": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "850cecdb7d9a279bef39": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "pet.quickchat"
+    ],
+    "reason": "Floating companion quick-chat interface."
+  },
+  "9ec0de9c98a7a47ef031": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "computer.appshots"
+    ],
+    "reason": "Native app/window capture."
+  },
+  "da0ad5b05c0d9a9ecd78": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "d421bf522d65648d3222": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.sites-build",
+      "hosted.sites-data"
+    ],
+    "reason": "Desktop Sites plugin boundary."
+  },
+  "ba541a5d0c8bf933344b": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "automation.events"
+    ],
+    "reason": "Event-driven scheduling."
+  },
+  "07161eeff0b1a0260f2c": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.catalog",
+      "plugin.tools"
+    ],
+    "reason": "Plugin discovery/tool transport; does not establish individual connector parity."
+  },
+  "e84bc5ff8534a25736e2": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Hosted execution-service update; desktop cloud handoff is covered separately."
+  },
+  "2cda827cd7cfa2c354f6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.catalog",
+      "plugin.tools"
+    ],
+    "reason": "Plugin discovery/tool transport; does not establish individual connector parity."
+  },
+  "5814c7ab93e875f8c069": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "memory.activity"
+    ],
+    "reason": "Desktop activity collection and memory."
+  },
+  "85c66e7d3454c263fd32": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.platforms"
+    ],
+    "reason": "Linux desktop packaging."
+  },
+  "fd3749f26c72019fbc60": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.import"
+    ],
+    "reason": "External agent setup/history import."
+  },
+  "f3a1822bc9dd566b2a5c": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Security plugin availability, not native workbench or cloud administration."
+  },
+  "4752cedf5493edc0845a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "voice.conversation",
+      "voice.delegate"
+    ],
+    "reason": "Live desktop voice and task coordination."
+  },
+  "495dcd38066e0495d898": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.tools"
+    ],
+    "reason": "Plugin family availability; catalog is not an exhaustive list of third-party operations."
+  },
+  "a894d93e8c74bbdb1f52": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "file.library",
+      "chat.search"
+    ],
+    "reason": "Saved-file library and conversation retrieval."
+  },
+  "5dacf2a0c4c169057901": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.usage"
+    ],
+    "reason": "Usage display boundary."
+  },
+  "24af7b9a48b2b4334775": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "092f513abdf22acd22a6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.archive",
+      "chat.side",
+      "plugin.catalog",
+      "cli.status"
+    ],
+    "reason": "CLI organization and extension mechanisms; exact current protocol is inventoried separately."
+  },
+  "e15c6f379ee1ca72943e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Security plugin availability, not native workbench or cloud administration."
+  },
+  "8fa3ac3359657f8672c4": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Security plugin availability, not native workbench or cloud administration."
+  },
+  "d130d8459b069f865b55": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "API/pricing change; model selector and service tiers are covered separately."
+  },
+  "2fa807a42144550c31d2": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.extension"
+    ],
+    "reason": "External browser context/extension workflow."
+  },
+  "f067f763f28e93dce439": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.review-scope"
+    ],
+    "reason": "Multi-repository review scope."
+  },
+  "c3c623d0ebf8c05d935d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "image.edit",
+      "image.annotate"
+    ],
+    "reason": "Image creation/editing and visual feedback."
+  },
+  "e0bc342fc65c54bb4c12": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.activity",
+      "notification.system"
+    ],
+    "reason": "Attention and notification interface."
+  },
+  "02417c6f83847ac4ba7c": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.partner"
+    ],
+    "reason": "Partner authentication management from the desktop."
+  },
+  "9ce3fe0a52b5be15087e": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "External messaging or hosted/team administration surface is outside desktop/CLI scope."
+  },
+  "6807dfc799248ade7310": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Standalone mobile UI update; excluded."
+  },
+  "5b45a8e64fa029309a61": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Security plugin availability, not native workbench or cloud administration."
+  },
+  "95fa709ceef6f910c8bc": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Security plugin availability, not native workbench or cloud administration."
+  },
+  "1909b94aca07f9ef0b01": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.archive",
+      "chat.side",
+      "plugin.catalog",
+      "cli.status"
+    ],
+    "reason": "CLI organization and extension mechanisms; exact current protocol is inventoried separately."
+  },
+  "205eb855cb3d368add8b": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "9b247e852307703db689": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "418afa35da9899a20a6e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "voice.conversation",
+      "voice.delegate"
+    ],
+    "reason": "Live desktop voice and task coordination."
+  },
+  "161d452e2fcaf79b7e16": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "project.multiroot"
+    ],
+    "reason": "Multi-root workspace support."
+  },
+  "9d4f8b1f2c1b87e909b1": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.work",
+      "project.workspace"
+    ],
+    "reason": "Unified desktop modes and hosted projects."
+  },
+  "570acf5f84c39db12413": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hardware.micro"
+    ],
+    "reason": "Dedicated companion hardware integration."
+  },
+  "01c71ceed75ca36feda5": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.bedrock"
+    ],
+    "reason": "Alternative model provider configuration."
+  },
+  "4193fdc58e6db6563892": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Standalone mobile UI update; excluded."
+  },
+  "24b15ac66590ab327182": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.work"
+    ],
+    "reason": "Desktop Chat/Work/Codex mode integration."
+  },
+  "c5143c96f4e5daccbe02": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "9f933d456ce0c6a24764": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.work"
+    ],
+    "reason": "Desktop Chat/Work/Codex mode integration."
+  },
+  "14dc8743b167bae4cdb4": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "skill.record"
+    ],
+    "reason": "Recording and replaying a demonstrated skill."
+  },
+  "13550c6d96fafebc3381": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "environment.remote-pair"
+    ],
+    "reason": "Remote host-to-host handoff."
+  },
+  "5a1dff2ca2ebf409d0a3": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Standalone mobile UI update; excluded."
+  },
+  "3bd6bb3aae9ea1ecd86a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.dev"
+    ],
+    "reason": "Browser developer inspection UI."
+  },
+  "e0ae384053e6fc31ae4e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.import"
+    ],
+    "reason": "External agent setup/history import."
+  },
+  "33742f387d3be3c46417": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Standalone mobile UI update; excluded."
+  },
+  "c13943e58e679a702235": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.sites-build",
+      "hosted.sites-data"
+    ],
+    "reason": "Desktop Sites plugin boundary."
+  },
+  "5f787b455a89b3760443": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.bedrock"
+    ],
+    "reason": "Alternative model provider configuration."
+  },
+  "5f0b0d4076ce60582643": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "computer.native",
+      "environment.remote-pair"
+    ],
+    "reason": "Native-app automation and remote access."
+  },
+  "2b332f0cfdf65f77a7b0": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "computer.appshots"
+    ],
+    "reason": "Native app/window capture."
+  },
+  "b180e9c2b270ccb4b00b": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "goal.objective",
+      "goal.lifecycle"
+    ],
+    "reason": "Persistent goal controls."
+  },
+  "a3ed6e1bce7651178a75": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.sync",
+      "environment.remote-pair"
+    ],
+    "reason": "Desktop continuity and remote pairing are in scope."
+  },
+  "dbabc503029bec9d9a07": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "automation.schedule",
+      "security.guardian"
+    ],
+    "reason": "Scheduled work and automatic action review."
+  },
+  "7ac3b5faa46de0c0d77e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.extension"
+    ],
+    "reason": "External browser context/extension workflow."
+  },
+  "8dba9f9fe80c1de8c029": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model availability/speed update normalized to catalog and service-tier controls."
+  },
+  "53d11ab6d234e79684d6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.agent",
+      "security.browser"
+    ],
+    "reason": "Browser automation approval boundary."
+  },
+  "b3df6811f649d91c24bd": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.tabs",
+      "browser.annotate"
+    ],
+    "reason": "Browser previews and feedback."
+  },
+  "3f0f6f1c06a22d603cba": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.steer",
+      "file.attach"
+    ],
+    "reason": "Active follow-ups and prompt context."
+  },
+  "4c38e51f4e82ac565df2": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.pr"
+    ],
+    "reason": "Native remote PR browsing and review."
+  },
+  "eb7a995d6e15f20da9c8": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.custom",
+      "plugin.catalog"
+    ],
+    "reason": "Plugin packaging and discovery."
+  },
+  "dad852c78efc82ee7d83": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.branch",
+      "chat.steer"
+    ],
+    "reason": "Forking and live conversation steering."
+  },
+  "ed6766e76e2d8a4300c5": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "automation.schedule",
+      "automation.worktree"
+    ],
+    "reason": "Scheduling and execution environment choice."
+  },
+  "455be7b391a4dc5008e1": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "terminal.context"
+    ],
+    "reason": "Terminal-to-agent context sharing."
+  },
+  "b8a38359706d58af6230": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.platforms",
+      "security.windows-setup"
+    ],
+    "reason": "Windows packaging and sandbox setup."
+  },
+  "c36e85aa63fcecbd60ac": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "worktree.handoff"
+    ],
+    "reason": "Bidirectional checkout handoff."
+  },
+  "3a7098ce42f534b0ae7d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.branch",
+      "chat.steer"
+    ],
+    "reason": "Forking and live conversation steering."
+  },
+  "dba499ea447458b50820": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.platforms"
+    ],
+    "reason": "Desktop packaging."
+  },
+  "9fcc2bf3550555696b0e": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Event heading or embedded illustrative UI; not an independent feature announcement."
+  },
+  "d4016cf557aea4482d7a": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Event heading or embedded illustrative UI; not an independent feature announcement."
+  },
+  "5856c05716f6cae0eeb4": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Event heading or embedded illustrative UI; not an independent feature announcement."
+  },
+  "66b9be7f8e3adab36a02": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Event heading or embedded illustrative UI; not an independent feature announcement."
+  },
+  "3d87cbdd8f53a314b24f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.steer",
+      "file.attach"
+    ],
+    "reason": "Active follow-ups and prompt context."
+  },
+  "cli-0.163.0-new-1": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "config.full",
+      "cli.status"
+    ],
+    "reason": "Current CLI release user-facing feature; normalized to the relevant client/runtime boundary."
+  },
+  "cli-0.163.0-new-2": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.steer",
+      "agent.code-mode"
+    ],
+    "reason": "Current CLI release user-facing feature; normalized to the relevant client/runtime boundary."
+  },
+  "cli-0.163.0-new-3": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "cli.theme"
+    ],
+    "reason": "Current CLI release user-facing feature; normalized to the relevant client/runtime boundary."
+  },
+  "cli-0.163.0-new-4": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "cli.daemon"
+    ],
+    "reason": "Current CLI release user-facing feature; normalized to the relevant client/runtime boundary."
+  },
+  "cli-0.163.0-new-5": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "agent.code-mode",
+      "agent.spawn"
+    ],
+    "reason": "Current CLI release user-facing feature; normalized to the relevant client/runtime boundary."
+  },
+  "cli-0.163.0-new-6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security",
+      "model.catalog"
+    ],
+    "reason": "Current CLI release user-facing feature; normalized to the relevant client/runtime boundary."
+  },
+  "a2f4b999f9e0b6ca5677": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Event heading; individual feature announcements are mapped separately."
+  },
+  "timeline-30d239796d6fb6b709bf": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-b37273610c4b9a2e5100": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "memory.predictions"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-eb8354062d5ed454f826": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-1b19075061e4d778d431": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-3589edbb8fed2ae501ae": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-dbfe6bdfbaf35777eca6": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-3068d78daecf75a7f3f3": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-7f3664e202272566538f": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-aa5acccc1387085ee7d3": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-df516a348920737560e0": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-c77ded5335b4810287ef": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.bulk-move"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-3b8081dcc8ac575bf232": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-cde673ed7b5fcff51ef9": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-550f71a4fae719fbae2b": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Security fix or documentation update; not a new client feature."
+  },
+  "timeline-3bfd990f2bcc8dbe848f": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-6c01703297ba8f00236d": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-da765df316a1bedd70d6": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-a19f4a1bbba591a03906": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "notification.channels"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-60f22fbf5ee08d052011": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-bab853da5a4bc85bd1b8": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-696a64a52164c188aacd": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-47e8b66298458dc3259c": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-e91d05ec7b43049cc3cc": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-60c39b22ccd6eef7c142": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-00e4ad67dafbabdc7837": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-2b6f47d1f1e68225d32e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "pet.quickchat",
+      "desktop.quickchat",
+      "computer.appshots"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-b14fce14c5a197ac435a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.shortcuts"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-ebe87b5da1b56a221a17": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.file-tabs",
+      "code.editor"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-aebf6b0c039248e6175c": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-15807b0758969610f1f9": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-394a68e68aef3f51c279": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-68f6b33d1eb671026b37": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-bb379264b3b5c3e23686": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-12e69c2896b65de7c7fa": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Retired standalone MCP-server command; excluded from current-feature parity."
+  },
+  "timeline-b1088cd565019a8801db": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-2c91bd75a4940ca0d732": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-82f884041b9b5a66bcd6": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-f6ae9a3637646ab69f67": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-c26770e8158109a60722": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-05ac951024ba33e6dd78": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-449186292a1d98d313a0": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-c0778a9dd17414e46d72": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-f3ed5252531d8089537d": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-a51a889149f2fc64a783": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-890c408548421d264975": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-3bdcc428e8845bad9034": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-59241477f2015f5c2c75": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-03ee5da2b14cacabcdac": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-3186e4b1dfefaeede8ba": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.extension",
+      "browser.webmcp",
+      "browser.auth"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-7ae50898df6eaf4fbc1c": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "automation.events"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-1876625187681044974a": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Retired standalone MCP-server command; excluded from current-feature parity."
+  },
+  "timeline-9ca44b176e3de83aafee": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.tools"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-1f93ebe7f4a745345ded": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.sites-share"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-c1070b147bf32fa6be90": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.sites-manage"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-5eb54dfeff0b19690b16": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "memory.activity"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-01985f06e2eb1bee703b": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.share"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-78fb37e472b6c7399daf": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.pin-sync"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-05ea13588bccd46ce3fd": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-b12ced6b204942fb4c1f": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-9a1fd4021f5eee479869": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-0be24883f3f6cde81d0b": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-225a4fde1eb5f228de92": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-13b6391a5d20741a08eb": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-b03e735efa57e29aa189": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-7d45a5885e89b081d919": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "memory.activity"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-89285280f32338677be6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.platforms",
+      "chat.import"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-10c914ecf4a1375ea300": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security",
+      "model.catalog"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-6ce3db44a50e687e519f": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-101f69658a67762a9fec": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-f999488ddd394c360303": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "project.multiroot",
+      "terminal.interactive"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-aeeed474a58a08b7d016": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-e3d0bba6f5c6a3128808": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "skill.record"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-9c1c25760702eebca561": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.dev",
+      "code.review-scope",
+      "image.annotate"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f439290fa9cb4b91b06f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.partner"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-bc729378194f3606dc20": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-e241e37acf50bee48d78": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "voice.conversation",
+      "project.multiroot"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-eab10883b582f9d85c59": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-f1bf356ebddfb44db747": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-63b254dc4aafde8f0837": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-1cfd99465448153a9888": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-1f47110f6db7a2791c70": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.editor",
+      "code.comments"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-ded720d75d262abdd81f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.pr"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-4b981591b11b5fb587d9": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.sites-manage"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-cd239f68fcb3e9f5e1ff": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-941dfa964540446749dc": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-6e58f34c2553bfcd4990": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-5a12f2bb544822ed21af": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-6cf56a318e52028e67be": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-a510b0624fc7059f15c5": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-41fbe9a12420b1368699": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-fad7847c05a1e2ac3554": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "environment.remote-pair"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-c0b8403468db6ce192f7": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-d6c144b15103ca980cec": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-276ac58d963b850c8ed3": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-a67ec9b700310f3d8a00": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "skill.record"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-ab9e083b74a4c34a1038": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "automation.test"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-a0501a3e2e354a8cb8da": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "environment.remote-pair"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-8e9ee96f6a51dce66a35": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "computer.native",
+      "skill.record",
+      "environment.remote-pair"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-fe98c2709df463c9b8da": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-de0bcdd3bd9db957f67a": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-52eab02de5d8bdb06354": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-e090409becc1b8435d5c": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-c3e85acb76329d94c51e": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-b9d70e1319144f1bbbd3": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.reset"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-93d91a5aff068a9c2d73": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.dev"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-5d892b8fe518fff7ab4f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "instructions.init"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-4d67c313d2ab6d1c93d9": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.dock-icon"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-fb865f50a83fffbecc6d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "computer.native"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-ad03d4886e5434ccd1e7": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "computer.permissions"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-d61d22f3a9fd2265fb4b": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.activity",
+      "desktop.command-menu"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f6fa4386333f89c9bef6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.import"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-e6f4c3141305b09f6463": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.catalog",
+      "plugin.install"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-a6968a84810d1c42540f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.settings-search"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-b199d399c586bb3320ce": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-9e434ecc625538823584": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-f19d3bbe98e3c8948f26": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-5e06edf472273ddc6088": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-dd492de4b4e143170b24": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-715a248396de7a483ac8": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-e26bcf14d4e7cabc1255": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.profile"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-c11c7c892c0b872381df": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.sites-build"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-aecdbf247c88fa1dfc25": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-2d540f614655a6572b9f": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-6d9897303da282b6864d": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-46afc57ee33d066e5f5a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.bedrock"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-b4b46ab4aaa3bc388492": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "terminal.placement"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-91f470f9238cd4a280f2": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "computer.native"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f875f87ebea719ffc6f7": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "environment.remote-pair"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-03c40e6dbfbf240cd9ed": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.profile"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-00d3a3c83e02ddca863d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "agent.parallel"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-93291fa71f66e30ca315": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.search"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-be8f8e709d096a176e03": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "agent.inspect"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-786ae5a8ae257ebc06ec": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.shortcuts"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-7299d17aa3f2a08de9c7": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.extension"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-9dcf96f260aa0c664cd1": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-06c6d71614e57813c18d": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-4ad193fdf482d6b2706f": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-4c916b92b1d22c55261d": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-0effbbe4eaed269d8808": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-95d1b4daf70ef9dcc5a9": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "computer.appshots",
+      "goal.lifecycle"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-9beff99fe28193dc4048": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-3c4c6f7dbb50dd8b35b9": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  },
+  "timeline-c8b0eb013d4da5f93a92": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "environment.remote-pair"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-d3e5f6ac8440984dd84f": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Security fix or documentation update; not a new client feature."
+  },
+  "timeline-52c76281e9128efc36ac": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hooks.manage"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-b0b11ed8f0cdfd463217": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "browser.extension"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-86102df1b9d596bc68d5": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Security fix or documentation update; not a new client feature."
+  },
+  "timeline-9d18f3cc198912002034": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-955f554f78f504dbb4e7": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "voice.dictionary"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-693022ddcc1fe58c6687": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "media.view"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-9faddf823edf0a50e323": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "voice.delegate"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-e91938f1d4ffd5a56be8": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "browser.agent",
+      "security.guardian"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-1bd546d01bc4fd3e8aec": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.branch",
+      "file.attach"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-c307ba097944512e9547": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "project.folders",
+      "desktop.tray",
+      "desktop.command-menu"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-76eeb388c90afaa1c74c": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.quickchat",
+      "browser.tabs",
+      "file.office-preview"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-ffcbbda656a188a06ef1": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.tree"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-2a24beb6f6bbfffbfd54": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "file.pdf-preview",
+      "code.editor",
+      "media.view"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-028671eb476d18767b15": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "terminal.interactive",
+      "terminal.context",
+      "desktop.feedback"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-030d43e9341e8fba95fe": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.updates"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-1fce7a742089ec5a7b1d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.pr"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f949e5fceb077c443512": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.file-tabs",
+      "environment.actions",
+      "account.logout"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-3a39c15b7486a0471343": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.comments"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-bb2873cef87e768b0fb4": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.diff",
+      "code.tree"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-4ba6087507118511c5fa": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.quickchat",
+      "media.view"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-8132a6c94e37d8b46266": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-3edf1c361e6794f8b40d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "config.layers"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-28df5f4643f4c9d9a481": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "security.forms"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-4ddbbf4e340b41db6678": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.updates",
+      "desktop.tray"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-808e259a24dda3048e15": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.mention",
+      "agent.diff-stats",
+      "file.artifact-cards"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-41e5f77221a48f124eff": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.quickchat",
+      "automation.schedule",
+      "image.input"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-cd5aa76f1ac984262794": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.install",
+      "plugin.custom"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-22b88f4b3d94398281b6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "skill.discover",
+      "plugin.catalog"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-c269d9a500ad166ea32a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.window-zoom",
+      "code.diff"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-703e2b59af664d8e58b9": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "automation.test",
+      "desktop.theme-share"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-1861ef36b187b5eb8085": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.search",
+      "desktop.shortcuts"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-12a3ffe8d172495e848c": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.archive"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f99e2695d73d8a3a1278": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "config.layers"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-672fa8b56c5b8c264bec": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.quickchat"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-8289d4fa98cbf37c792f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "terminal.interactive"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-5b973dab8747ce582370": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plugin.catalog",
+      "image.input"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-41b91effd07f39e93975": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "skill.invoke"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-57d84bc45173d3c55483": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.find",
+      "code.diff"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f5a842382ff6a5c44dbd": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Purely cosmetic loading effect; excluded from functional capability parity."
+  },
+  "timeline-9d17df7134ef8a7f2905": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.branch"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-b1ff5c8aac1786a33bf6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.slash"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-604c79e11851c86e1043": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "notification.system"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-82b0b2003fbbab86f29d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-2ca5a4dbe00f8091708d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.navigate"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-87fa910fb9d91e1208fa": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.open-external"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f0b0fe92fa8112f944f7": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.theme",
+      "desktop.theme-share"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-8bfd89ddeae8f60a83ee": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "terminal.context"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-9546cf3c14f457e3dfe2": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-ed5f2cb589f6df3fdeeb": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-b860b811e0eb69ecb10e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.platforms",
+      "environment.wsl"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-4f72e7bbb3015e3cf58e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "worktree.cleanup"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-48ceb0c6ac2dacaada9e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "worktree.handoff"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-49102d369060baaba706": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.language"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-ae27bb3acdcbd410af75": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Fixes and performance changes, not a new feature."
+  },
+  "timeline-7ff32c6a44da71a2252a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.pr"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-02fa1df6e596b726cf1f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "worktree.cleanup"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-a2dbb7a3ea0bc9072783": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "mcp.status",
+      "plugin.install"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-34351e50c3050a81ad36": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "skill.invoke",
+      "code.comments"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-9225a7fcd48ea233ee8e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "automation.worktree"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-2a108882424102561337": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.queue-reorder"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-5e6c7b1ca0884a08d264": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.downgrade-warning"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-150e1b532d77be7130d0": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-e5dc782be6340efa38e6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-7fdf723fc336e89c268a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.branch"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-68438bebce4f8835ab99": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.multiwindow"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-7c60fee1c5cff2ad357a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.branch"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-838b88c2e7eea616da5f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "plan.mode"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f52a76b4e27ff3c7e920": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "security.parallel-approvals"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-d136d1f0ff6a263136b1": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-36bbbdbdf6c1dd2ecd59": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "desktop.command-menu",
+      "memory.personality"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-b5f0a1564a09113e95d4": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.queue"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-df5530085a9a14846b82": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.open-external"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f3e3005d3046823a9bd6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-2d0ebb4ce3a567ef83c8": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-91972f32519a5b664aa5": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.steer"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-9fa88a5c277f6f883e85": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "file.attach"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-cc5e72607fac0226b590": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "code.open-external"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-9b32e59e38ee978d6097": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "file.pdf-preview"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-ea73de0cd711456497ab": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.rename"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-0e4e9a827c7a876e22d6": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "agent.parallel",
+      "worktree.create",
+      "desktop.platforms"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-cb8d7c6ab3a97915600e": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "web.search"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-765b1a5464e08255edbc": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "config.layers",
+      "instructions.agents",
+      "security.rules",
+      "mcp.config"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-e17811879fcd87a1d3b5": {
+    "disposition": "Reference",
+    "feature_ids": [],
+    "reason": "Deprecated customization mechanism; reusable skills are covered."
+  },
+  "timeline-ae530de481019191f62a": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-85346709ce695246462c": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "skill.discover",
+      "skill.invoke"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-b8d25b6f7930582c3153": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-57cfab8f8c25512cc270": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-ce93b2bab34da03e9e07": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.usage"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-f4f2ca318b3a0fd2a198": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-7cc66447378449589316": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-fefa5cb2d45c074ddede": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-fc644c8a248aaf92aa82": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-c339c2935369f82e681d": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "account.billing"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-c64cf0f8b0c542a1bf19": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-b6a2d09dcaa67910e8e0": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-0f3002e3f098e08c711f": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-31c186b3383ba921cc1c": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "model.catalog",
+      "model.speed"
+    ],
+    "reason": "Model selection/speed capability; historical model IDs and retirements are not separate current features."
+  },
+  "timeline-d42757c483cdaf95e6fb": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "cli.exec",
+      "environment.cloud",
+      "code.pr"
+    ],
+    "reason": "Changelog candidate reviewed and normalized to these feature rows; repeated releases do not add duplicate inventory counts."
+  },
+  "timeline-7fcb69313b9783e11198": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-f9c15a5d839c23cfa060": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-43b934bd4f9e484fb3a7": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-e654d37ce862dbadc143": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Cloud, enterprise, external integration, or API/IDE surface outside the chosen client scope."
+  },
+  "timeline-3739cfd1d2e7f2467780": {
+    "disposition": "Excluded",
+    "feature_ids": [],
+    "reason": "Mobile-only interface outside the desktop/CLI scope."
+  }
+}

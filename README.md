@@ -112,6 +112,10 @@ is not safely reachable by Sele.
 
 ## Development
 
+For the source-backed ChatGPT desktop and Codex app/CLI feature audit, see the
+[compatibility table](docs/compatibility/README.md), including a searchable HTML
+view, CSV, source coverage, and reproducible protocol/feature inventories.
+
 Requires Node.js 22.
 
 ```bash

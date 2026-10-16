@@ -1,7 +1,7 @@
 {
   "as_of": "2026-10-16",
-  "sele_version": "3.6.0",
-  "sele_commit": "fe67c09b24a6aa80bffa9a3cdb13864cbcb8b225",
+  "sele_version": "3.7.0",
+  "sele_commit": "ac152596071be622672efc5c8c97a44a0b912d30",
   "codex_version": "0.163.0",
   "scope": "Current ChatGPT desktop (Chat, Work, and Codex), Codex desktop lineage and CLI, plus a separately labelled Classic desktop comparison. Hosted tools are included only at their desktop integration boundary.",
   "features": [
@@ -16,11 +16,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -39,11 +39,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -62,11 +62,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ProjectDialog.tsx",
-          "needle": ""
+          "needle": "export const ProjectDialog"
         },
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         }
       ],
       "sources": [
@@ -85,7 +85,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ProjectDialog.tsx",
-          "needle": ""
+          "needle": "export const ProjectDialog"
         },
         {
           "path": "src/shared/provider.ts",
@@ -112,11 +112,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ProjectDialog.tsx",
-          "needle": ""
+          "needle": "export const ProjectDialog"
         },
         {
           "path": "src/main/providers/providerService.ts",
-          "needle": ""
+          "needle": "export const getProviderChatWindow"
         }
       ],
       "sources": [
@@ -139,7 +139,7 @@
         },
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         }
       ],
       "sources": [
@@ -158,11 +158,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         },
         {
           "path": "src/renderer/src/components/ChatListItem.tsx",
-          "needle": ""
+          "needle": "export const ChatListItem"
         }
       ],
       "sources": [
@@ -181,7 +181,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         }
       ],
       "sources": [
@@ -200,7 +200,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -223,7 +223,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -246,11 +246,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": ""
+          "needle": "export function useChatListController"
         },
         {
           "path": "src/renderer/src/chatSearch.ts",
-          "needle": ""
+          "needle": "export const findChatSearchMatches"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -273,7 +273,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/chatSearch.ts",
-          "needle": ""
+          "needle": "export const findChatSearchMatches"
         }
       ],
       "sources": [
@@ -334,7 +334,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -357,7 +357,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -380,7 +380,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -418,7 +418,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         },
         {
           "path": "src/shared/provider.ts",
@@ -445,7 +445,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -468,7 +468,7 @@
         },
         {
           "path": "src/main/providers/providerService.ts",
-          "needle": ""
+          "needle": "export const getProviderChatWindow"
         }
       ],
       "sources": [
@@ -487,7 +487,7 @@
       "evidence": [
         {
           "path": "src/main/providers/providerService.ts",
-          "needle": ""
+          "needle": "export const getProviderChatWindow"
         }
       ],
       "sources": [
@@ -506,7 +506,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatListItem.tsx",
-          "needle": ""
+          "needle": "export const ChatListItem"
         }
       ],
       "sources": [
@@ -525,7 +525,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatListItem.tsx",
-          "needle": ""
+          "needle": "export const ChatListItem"
         }
       ],
       "sources": [
@@ -567,7 +567,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         },
         {
           "path": "src/shared/provider.ts",
@@ -590,7 +590,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -613,7 +613,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -636,7 +636,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -659,7 +659,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -682,7 +682,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -728,7 +728,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -808,7 +808,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/TokenUsagePanel.tsx",
-          "needle": ""
+          "needle": "export function TokenUsagePanel"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -892,7 +892,7 @@
         },
         {
           "path": "src/renderer/src/components/ChatGoal.tsx",
-          "needle": ""
+          "needle": "export const ChatGoal"
         }
       ],
       "sources": [
@@ -911,7 +911,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatGoal.tsx",
-          "needle": ""
+          "needle": "export const ChatGoal"
         },
         {
           "path": "src/main/providers/codex/CodexGoals.ts",
@@ -938,7 +938,7 @@
         },
         {
           "path": "src/renderer/src/components/ChatGoal.tsx",
-          "needle": ""
+          "needle": "export const ChatGoal"
         }
       ],
       "sources": [
@@ -1018,7 +1018,7 @@
       "evidence": [
         {
           "path": "src/main/providers/providerService.ts",
-          "needle": ""
+          "needle": "export const getProviderChatWindow"
         }
       ],
       "sources": [
@@ -1037,7 +1037,7 @@
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexSubagents.ts",
-          "needle": ""
+          "needle": "export const getCodexSubagentParentThreadId"
         }
       ],
       "sources": [
@@ -1056,7 +1056,7 @@
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexSubagents.ts",
-          "needle": ""
+          "needle": "export const getCodexSubagentParentThreadId"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -1074,12 +1074,12 @@
       "feature": "Directly message, interrupt, or resume a subagent",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Partial",
-      "assessment": "Subagent inspection exists; Sele does not expose the full CLI /agent management surface.",
+      "assessment": "Subagent transcript inspection and cancellation are implemented; direct message/resume controls do not cover the full CLI agent-management surface.",
       "priority": "P2",
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexSubagents.ts",
-          "needle": ""
+          "needle": "export const getCodexSubagentParentThreadId"
         },
         {
           "path": "src/shared/provider.ts",
@@ -1301,7 +1301,7 @@
         },
         {
           "path": "src/main/providers/codex/CodexBrowserPermissions.ts",
-          "needle": ""
+          "needle": "export function isBrowserPermissionRequest"
         }
       ],
       "sources": [
@@ -1339,7 +1339,7 @@
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexBrowserPermissions.ts",
-          "needle": ""
+          "needle": "export function isBrowserPermissionRequest"
         },
         {
           "path": "docs/browser-use.md",
@@ -1621,7 +1621,7 @@
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexAccounts.ts",
-          "needle": ""
+          "needle": "export const getCodexAccounts"
         }
       ],
       "sources": [
@@ -1644,7 +1644,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -1663,7 +1663,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -1709,7 +1709,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -1812,11 +1812,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -1858,7 +1858,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -1877,7 +1877,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -1900,7 +1900,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -1923,7 +1923,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -1946,7 +1946,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -1992,7 +1992,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -2034,11 +2034,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         },
         {
           "path": "src/renderer/src/components/Visualization.tsx",
-          "needle": ""
+          "needle": "export function Visualization"
         }
       ],
       "sources": [
@@ -2103,7 +2103,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -2164,7 +2164,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -2286,7 +2286,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -2324,11 +2324,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         },
         {
           "path": "src/renderer/src/components/CwdNotesButton.tsx",
-          "needle": ""
+          "needle": "export const CwdNotesButton"
         }
       ],
       "sources": [
@@ -2347,7 +2347,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -2370,7 +2370,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -2412,7 +2412,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -2450,7 +2450,7 @@
       "evidence": [
         {
           "path": "src/main/providers/providerService.ts",
-          "needle": ""
+          "needle": "export const getProviderChatWindow"
         }
       ],
       "sources": [
@@ -2469,11 +2469,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         },
         {
           "path": "src/renderer/src/components/CwdNotesButton.tsx",
-          "needle": ""
+          "needle": "export const CwdNotesButton"
         }
       ],
       "sources": [
@@ -2492,11 +2492,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -2515,7 +2515,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -2538,7 +2538,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -2561,7 +2561,7 @@
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2584,7 +2584,7 @@
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2607,7 +2607,7 @@
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2630,7 +2630,7 @@
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2653,7 +2653,7 @@
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2676,7 +2676,7 @@
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2699,7 +2699,7 @@
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2722,7 +2722,7 @@
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2741,11 +2741,11 @@
       "evidence": [
         {
           "path": "src/main/browserCookies.ts",
-          "needle": ""
+          "needle": "export const discoverBrowserCookieProfiles"
         },
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2806,7 +2806,7 @@
         },
         {
           "path": "src/main/providers/codex/CodexBrowserPermissions.ts",
-          "needle": ""
+          "needle": "export function isBrowserPermissionRequest"
         }
       ],
       "sources": [
@@ -2829,7 +2829,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -2905,7 +2905,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         }
       ],
       "sources": [
@@ -2985,11 +2985,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3008,11 +3008,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         },
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -3031,11 +3031,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3054,11 +3054,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3077,11 +3077,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3100,11 +3100,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3123,11 +3123,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3146,7 +3146,7 @@
       "evidence": [
         {
           "path": "src/main/messageAttachments.ts",
-          "needle": ""
+          "needle": "export const prepareMessageAttachments"
         }
       ],
       "sources": [
@@ -3165,11 +3165,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3188,11 +3188,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3211,11 +3211,11 @@
       "evidence": [
         {
           "path": "src/main/messageAttachments.ts",
-          "needle": ""
+          "needle": "export const prepareMessageAttachments"
         },
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         }
       ],
       "sources": [
@@ -3234,11 +3234,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         },
         {
           "path": "src/main/fileTree.ts",
-          "needle": ""
+          "needle": "export const readLocalFileTree"
         }
       ],
       "sources": [
@@ -3257,11 +3257,11 @@
       "evidence": [
         {
           "path": "src/main/messageAttachments.ts",
-          "needle": ""
+          "needle": "export const prepareMessageAttachments"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -3284,7 +3284,7 @@
         },
         {
           "path": "src/renderer/src/chatMedia.ts",
-          "needle": ""
+          "needle": "export const chatMediaId"
         }
       ],
       "sources": [
@@ -3303,11 +3303,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         },
         {
           "path": "src/renderer/src/chatMedia.ts",
-          "needle": ""
+          "needle": "export const chatMediaId"
         }
       ],
       "sources": [
@@ -3326,11 +3326,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/chatMedia.ts",
-          "needle": ""
+          "needle": "export const chatMediaId"
         },
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         }
       ],
       "sources": [
@@ -3349,7 +3349,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/chatMedia.ts",
-          "needle": ""
+          "needle": "export const chatMediaId"
         }
       ],
       "sources": [
@@ -3368,11 +3368,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/chatMedia.ts",
-          "needle": ""
+          "needle": "export const chatMediaId"
         },
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         }
       ],
       "sources": [
@@ -3414,7 +3414,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         }
       ],
       "sources": [
@@ -3433,7 +3433,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         },
         {
           "path": "src/main/providers/codex/CodexItemRenderers.ts",
@@ -3460,7 +3460,7 @@
         },
         {
           "path": "src/main/fileTree.ts",
-          "needle": ""
+          "needle": "export const readLocalFileTree"
         }
       ],
       "sources": [
@@ -3483,7 +3483,7 @@
         },
         {
           "path": "src/main/fileTree.ts",
-          "needle": ""
+          "needle": "export const readLocalFileTree"
         }
       ],
       "sources": [
@@ -3506,7 +3506,7 @@
         },
         {
           "path": "src/main/fileTree.ts",
-          "needle": ""
+          "needle": "export const readLocalFileTree"
         }
       ],
       "sources": [
@@ -3529,7 +3529,7 @@
         },
         {
           "path": "src/main/fileTree.ts",
-          "needle": ""
+          "needle": "export const readLocalFileTree"
         }
       ],
       "sources": [
@@ -3567,11 +3567,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         },
         {
           "path": "src/renderer/src/chatMedia.ts",
-          "needle": ""
+          "needle": "export const chatMediaId"
         }
       ],
       "sources": [
@@ -3590,11 +3590,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         },
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         }
       ],
       "sources": [
@@ -3613,15 +3613,15 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": ""
+          "needle": "export const BrowserPanel"
         },
         {
           "path": "src/renderer/src/components/Visualization.tsx",
-          "needle": ""
+          "needle": "export function Visualization"
         },
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         }
       ],
       "sources": [
@@ -3640,7 +3640,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         }
       ],
       "sources": [
@@ -3659,11 +3659,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         },
         {
           "path": "src/renderer/src/components/ReviewCommentsButton.tsx",
-          "needle": ""
+          "needle": "export const ReviewCommentsButton"
         }
       ],
       "sources": [
@@ -3701,7 +3701,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         }
       ],
       "sources": [
@@ -3720,7 +3720,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         }
       ],
       "sources": [
@@ -3739,11 +3739,11 @@
       "evidence": [
         {
           "path": "src/main/fileTree.ts",
-          "needle": ""
+          "needle": "export const readLocalFileTree"
         },
         {
           "path": "src/main/providers/providerService.ts",
-          "needle": ""
+          "needle": "export const getProviderChatWindow"
         }
       ],
       "sources": [
@@ -3762,11 +3762,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/Visualization.tsx",
-          "needle": ""
+          "needle": "export function Visualization"
         },
         {
           "path": "src/main/visualization/README.md",
-          "needle": ""
+          "needle": "# Visualization host"
         }
       ],
       "sources": [
@@ -3785,7 +3785,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         }
       ],
       "sources": [
@@ -3804,7 +3804,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/Visualization.tsx",
-          "needle": ""
+          "needle": "export function Visualization"
         }
       ],
       "sources": [
@@ -3823,7 +3823,7 @@
       "evidence": [
         {
           "path": "src/main/fileTree.ts",
-          "needle": ""
+          "needle": "export const readLocalFileTree"
         }
       ],
       "sources": [
@@ -3842,7 +3842,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         }
       ],
       "sources": [
@@ -3861,11 +3861,11 @@
       "evidence": [
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         },
         {
           "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": ""
+          "needle": "export const ChatDetailItem"
         }
       ],
       "sources": [
@@ -3884,11 +3884,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/ReviewCommentsButton.tsx",
-          "needle": ""
+          "needle": "export const ReviewCommentsButton"
         },
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         }
       ],
       "sources": [
@@ -3901,19 +3901,19 @@
       "category": "Coding workspace and Git",
       "feature": "Stage or revert files and selected hunks",
       "baseline_surface": "Codex desktop / CLI",
-      "sele_status": "Implemented",
-      "assessment": "Sele implements Git file/hunk operations.",
+      "sele_status": "Partial",
+      "assessment": "Sele stages selected changes as part of committing; no standalone stage/unstage or Git-revert UI was found.",
       "priority": "P2",
       "evidence": [
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/code-review"
       ],
-      "verification": "static implementation"
+      "verification": "static limitation"
     },
     {
       "id": "code.commit",
@@ -3926,7 +3926,7 @@
       "evidence": [
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         }
       ],
       "sources": [
@@ -3945,7 +3945,7 @@
       "evidence": [
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         }
       ],
       "sources": [
@@ -3968,7 +3968,7 @@
         },
         {
           "path": "src/renderer/src/components/ReviewCommentsButton.tsx",
-          "needle": ""
+          "needle": "export const ReviewCommentsButton"
         }
       ],
       "sources": [
@@ -3987,15 +3987,15 @@
       "evidence": [
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         },
         {
           "path": "src/renderer/src/components/ReviewCommentsButton.tsx",
-          "needle": ""
+          "needle": "export const ReviewCommentsButton"
         },
         {
           "path": "src/renderer/src/components/ProjectDialog.tsx",
-          "needle": ""
+          "needle": "export const ProjectDialog"
         }
       ],
       "sources": [
@@ -4018,7 +4018,7 @@
         },
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         }
       ],
       "sources": [
@@ -4041,7 +4041,7 @@
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -4060,7 +4060,7 @@
       "evidence": [
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         }
       ],
       "sources": [
@@ -4079,7 +4079,7 @@
       "evidence": [
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
@@ -4098,11 +4098,11 @@
       "evidence": [
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -4125,7 +4125,7 @@
         },
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
@@ -4190,11 +4190,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatMessagingController.tsx",
-          "needle": ""
+          "needle": "export function useChatMessagingController"
         },
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         }
       ],
       "sources": [
@@ -4213,11 +4213,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatMessagingController.tsx",
-          "needle": ""
+          "needle": "export function useChatMessagingController"
         },
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         }
       ],
       "sources": [
@@ -4236,11 +4236,11 @@
       "evidence": [
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         },
         {
           "path": "src/renderer/src/workspace/useChatMessagingController.tsx",
-          "needle": ""
+          "needle": "export function useChatMessagingController"
         }
       ],
       "sources": [
@@ -4259,7 +4259,7 @@
       "evidence": [
         {
           "path": "src/main/registerAppIpc.ts",
-          "needle": ""
+          "needle": "export const registerAppIpc"
         }
       ],
       "sources": [
@@ -4278,11 +4278,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatMessagingController.tsx",
-          "needle": ""
+          "needle": "export function useChatMessagingController"
         },
         {
           "path": "src/renderer/src/actions.ts",
-          "needle": ""
+          "needle": "export const appActionIconIds"
         }
       ],
       "sources": [
@@ -4301,7 +4301,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/actions.ts",
-          "needle": ""
+          "needle": "export const appActionIconIds"
         }
       ],
       "sources": [
@@ -4320,7 +4320,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/actions.ts",
-          "needle": ""
+          "needle": "export const appActionIconIds"
         }
       ],
       "sources": [
@@ -4339,11 +4339,11 @@
       "evidence": [
         {
           "path": "src/main/sshCommand.ts",
-          "needle": ""
+          "needle": "export const sshConnectTimeoutSeconds"
         },
         {
           "path": "src/main/containerTarget.ts",
-          "needle": ""
+          "needle": "export const hostContainerTarget"
         }
       ],
       "sources": [
@@ -4362,11 +4362,11 @@
       "evidence": [
         {
           "path": "src/main/containerTarget.ts",
-          "needle": ""
+          "needle": "export const hostContainerTarget"
         },
         {
           "path": "README.md",
-          "needle": ""
+          "needle": "# Sele"
         }
       ],
       "sources": [
@@ -4385,11 +4385,11 @@
       "evidence": [
         {
           "path": "README.md",
-          "needle": ""
+          "needle": "# Sele"
         },
         {
           "path": "src/main/containerTarget.ts",
-          "needle": ""
+          "needle": "export const hostContainerTarget"
         }
       ],
       "sources": [
@@ -4412,7 +4412,7 @@
         },
         {
           "path": "src/main/sshCommand.ts",
-          "needle": ""
+          "needle": "export const sshConnectTimeoutSeconds"
         }
       ],
       "sources": [
@@ -4454,11 +4454,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         },
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4477,11 +4477,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         },
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4500,11 +4500,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         },
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4523,11 +4523,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/workspace/useChatMessagingController.tsx",
-          "needle": ""
+          "needle": "export function useChatMessagingController"
         },
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4546,11 +4546,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/ChatListItem.tsx",
-          "needle": ""
+          "needle": "export const ChatListItem"
         }
       ],
       "sources": [
@@ -4569,7 +4569,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -4588,11 +4588,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -4615,7 +4615,7 @@
         },
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4634,7 +4634,7 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4653,11 +4653,11 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -4676,7 +4676,7 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4695,7 +4695,7 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4714,7 +4714,7 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4733,7 +4733,7 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -4752,11 +4752,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/actions.ts",
-          "needle": ""
+          "needle": "export const appActionIconIds"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -4775,11 +4775,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/actions.ts",
-          "needle": ""
+          "needle": "export const appActionIconIds"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -4798,7 +4798,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -4817,11 +4817,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/settings.ts",
-          "needle": ""
+          "needle": "export const appChatManualDropdownValue"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -4840,11 +4840,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/settings.ts",
-          "needle": ""
+          "needle": "export const appChatManualDropdownValue"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -4863,7 +4863,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -4882,7 +4882,7 @@
       "evidence": [
         {
           "path": "docs/auto-updates.md",
-          "needle": ""
+          "needle": "# Application updates"
         }
       ],
       "sources": [
@@ -4901,7 +4901,7 @@
       "evidence": [
         {
           "path": "README.md",
-          "needle": ""
+          "needle": "# Sele"
         }
       ],
       "sources": [
@@ -4922,11 +4922,11 @@
       "evidence": [
         {
           "path": "src/main/diagnosticLog.ts",
-          "needle": ""
+          "needle": "export const createDiagnosticLog"
         },
         {
           "path": "README.md",
-          "needle": ""
+          "needle": "# Sele"
         }
       ],
       "sources": [
@@ -4964,7 +4964,7 @@
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexAccounts.ts",
-          "needle": ""
+          "needle": "export const getCodexAccounts"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -4987,7 +4987,7 @@
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexAccounts.ts",
-          "needle": ""
+          "needle": "export const getCodexAccounts"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -5010,11 +5010,11 @@
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexAccounts.ts",
-          "needle": ""
+          "needle": "export const getCodexAccounts"
         },
         {
           "path": "README.md",
-          "needle": ""
+          "needle": "# Sele"
         }
       ],
       "sources": [
@@ -5033,7 +5033,7 @@
       "evidence": [
         {
           "path": "src/main/providers/codex/CodexAccounts.ts",
-          "needle": ""
+          "needle": "export const getCodexAccounts"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -5079,7 +5079,7 @@
         },
         {
           "path": "src/renderer/src/components/TokenUsagePanel.tsx",
-          "needle": ""
+          "needle": "export function TokenUsagePanel"
         }
       ],
       "sources": [
@@ -5117,7 +5117,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/TokenUsagePanel.tsx",
-          "needle": ""
+          "needle": "export function TokenUsagePanel"
         }
       ],
       "sources": [
@@ -5136,7 +5136,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         },
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
@@ -5159,7 +5159,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -5178,11 +5178,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/TokenUsagePanel.tsx",
-          "needle": ""
+          "needle": "export function TokenUsagePanel"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -5243,7 +5243,7 @@
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
@@ -5281,11 +5281,11 @@
       "evidence": [
         {
           "path": "README.md",
-          "needle": ""
+          "needle": "# Sele"
         },
         {
           "path": "src/main/containerTarget.ts",
-          "needle": ""
+          "needle": "export const hostContainerTarget"
         }
       ],
       "sources": [
@@ -5327,7 +5327,7 @@
         },
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
@@ -5350,7 +5350,7 @@
         },
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
@@ -5373,34 +5373,11 @@
         },
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/non-interactive-mode"
-      ],
-      "verification": "runtime dependency; not exercised"
-    },
-    {
-      "id": "cli.mcp-server",
-      "category": "CLI-specific interfaces",
-      "feature": "Expose Codex as an MCP server",
-      "baseline_surface": "Codex CLI",
-      "sele_status": "Runtime",
-      "assessment": "An installed CLI can provide it; Sele does not host or manage that server.",
-      "priority": "P2",
-      "evidence": [
-        {
-          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
-          "needle": "export class CodexProviderAdapter"
-        },
-        {
-          "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
-        }
-      ],
-      "sources": [
-        "https://learn.chatgpt.com/codex/developer-commands"
       ],
       "verification": "runtime dependency; not exercised"
     },
@@ -5438,7 +5415,7 @@
         },
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
@@ -5461,7 +5438,7 @@
         },
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
@@ -5484,7 +5461,7 @@
         },
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
@@ -5507,7 +5484,7 @@
         },
         {
           "path": "src/main/registerTerminalIpc.ts",
-          "needle": ""
+          "needle": "export const registerTerminalIpc"
         }
       ],
       "sources": [
@@ -5734,11 +5711,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         },
         {
           "path": "src/renderer/src/components/ReviewCommentsButton.tsx",
-          "needle": ""
+          "needle": "export const ReviewCommentsButton"
         }
       ],
       "sources": [
@@ -5757,34 +5734,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
-        }
-      ],
-      "sources": [
-        "https://help.openai.com/en/articles/9260256-chatgpt-capabilities-overview"
-      ],
-      "verification": "static limitation"
-    },
-    {
-      "id": "classic.gpt-build",
-      "category": "ChatGPT Classic desktop",
-      "feature": "Create or publish a custom GPT",
-      "baseline_surface": "ChatGPT Classic, where available",
-      "sele_status": "Missing",
-      "assessment": "No custom-GPT builder, knowledge uploads, or GPT publication interface.",
-      "priority": "P2",
-      "evidence": [
-        {
-          "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
-        },
-        {
-          "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -5803,11 +5757,11 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         },
         {
           "path": "src/renderer/src/components/MessageBox.tsx",
-          "needle": ""
+          "needle": "export const MessageBox"
         }
       ],
       "sources": [
@@ -5826,7 +5780,7 @@
       "evidence": [
         {
           "path": "src/renderer/src/components/FileEditorDialog.tsx",
-          "needle": ""
+          "needle": "export const FileEditorDialog"
         }
       ],
       "sources": [
@@ -5845,7 +5799,7 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         }
       ],
       "sources": [
@@ -5864,17 +5818,458 @@
       "evidence": [
         {
           "path": "src/main/application.ts",
-          "needle": ""
+          "needle": "export const startApplication"
         },
         {
           "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": ""
+          "needle": "export const renderSettingsPanel"
         }
       ],
       "sources": [
         "https://help.openai.com/en/articles/9703738-macos-app-release-notes"
       ],
       "verification": "static limitation"
+    },
+    {
+      "id": "security.clock-callback",
+      "category": "Approvals and security",
+      "feature": "Answer provider requests for the current time",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Missing",
+      "assessment": "The exported currentTime/read server callback has no handler and is rejected as unsupported.",
+      "priority": "P0",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "needle": "private handleServerRequest"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/app-server"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "security.legacy-callbacks",
+      "category": "Approvals and security",
+      "feature": "Handle legacy command and patch approval callbacks",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Partial",
+      "assessment": "Modern item approval callbacks are handled; legacy execCommandApproval and applyPatchApproval are not.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "needle": "private handleServerRequest"
+        },
+        {
+          "path": "src/shared/provider.ts",
+          "needle": "export type ProviderTurnOptions"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/agent-approvals-security"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "transcript.items",
+      "category": "Goals, plans, and agents",
+      "feature": "Render every current protocol item kind",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Partial",
+      "assessment": "The installed protocol has 19 item variants; several rely on generic or absent handling. An unknown item type is not evidence of complete transcript parity.",
+      "priority": "P1",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexToolCalls.ts",
+          "needle": "const nestedToolNames"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/app-server"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "chat.copy",
+      "category": "Core chat and projects",
+      "feature": "Copy messages and code blocks",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Implemented",
+      "assessment": "Message and code-block copy controls are implemented; whole-transcript export is separate.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/renderer/src/components/ChatDetailItem.tsx",
+          "needle": "export const ChatDetailItem"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/projects"
+      ],
+      "verification": "static implementation"
+    },
+    {
+      "id": "chat.bulk-move",
+      "category": "Core chat and projects",
+      "feature": "Move several chats between projects at once",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Missing",
+      "assessment": "No multi-select conversation transfer action or provider project-move integration.",
+      "priority": "P1",
+      "evidence": [
+        {
+          "path": "src/renderer/src/workspace/useChatListController.tsx",
+          "needle": "export function useChatListController"
+        },
+        {
+          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "needle": "export class CodexProviderAdapter"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "voice.dictionary",
+      "category": "Voice and capture",
+      "feature": "Customize dictation cleanup and specialist vocabulary",
+      "baseline_surface": "ChatGPT desktop, platform dependent",
+      "sele_status": "Missing",
+      "assessment": "No dictation recorder, cleanup pipeline, or custom vocabulary settings.",
+      "priority": "P1",
+      "evidence": [
+        {
+          "path": "src/main/application.ts",
+          "needle": "export const startApplication"
+        },
+        {
+          "path": "src/renderer/src/components/MessageBox.tsx",
+          "needle": "export const MessageBox"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "desktop.dock-icon",
+      "category": "Automation and companion experiences",
+      "feature": "Choose a light or dark app icon",
+      "baseline_surface": "ChatGPT / Codex desktop",
+      "sele_status": "Missing",
+      "assessment": "No in-app Dock/icon customization control.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/renderer/src/settings.ts",
+          "needle": "export const appChatManualDropdownValue"
+        },
+        {
+          "path": "src/renderer/src/components/SettingsPanel.tsx",
+          "needle": "export const renderSettingsPanel"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "desktop.settings-search",
+      "category": "Accounts, usage, and configuration",
+      "feature": "Search across every settings panel",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Partial",
+      "assessment": "Resource and feature filtering exist; no unified all-settings search.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "needle": "setConfigValue ="
+        },
+        {
+          "path": "src/renderer/src/components/SettingsPanel.tsx",
+          "needle": "export const renderSettingsPanel"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "terminal.placement",
+      "category": "Coding workspace and Git",
+      "feature": "Choose bottom or side placement for terminal tabs",
+      "baseline_surface": "Codex desktop / CLI",
+      "sele_status": "Partial",
+      "assessment": "Sele has a terminal panel and workspace scoping; no equivalent bottom-versus-right placement preference.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/registerTerminalIpc.ts",
+          "needle": "export const registerTerminalIpc"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "chat.queue-reorder",
+      "category": "Core chat and projects",
+      "feature": "Reorder queued follow-up messages with drag and drop",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Missing",
+      "assessment": "Editing/deletion and queued delivery exist; no drag ordering for pending messages.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "needle": "export class CodexProviderAdapter"
+        },
+        {
+          "path": "src/renderer/src/components/MessageBox.tsx",
+          "needle": "export const MessageBox"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "model.downgrade-warning",
+      "category": "Models and execution",
+      "feature": "Warn when the requested model is downgraded",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Missing",
+      "assessment": "Model discovery and per-message labels exist; no dedicated downgrade warning flow.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "needle": "const mapCodexModel"
+        },
+        {
+          "path": "src/renderer/src/components/MessageBox.tsx",
+          "needle": "export const MessageBox"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "security.parallel-approvals",
+      "category": "Approvals and security",
+      "feature": "Review multiple outstanding approvals",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Partial",
+      "assessment": "Sele can store pending requests and approve per chat, but shows one current request rather than a complete parallel approval interface.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "needle": "private handleServerRequest"
+        },
+        {
+          "path": "src/shared/provider.ts",
+          "needle": "export type ProviderTurnOptions"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "desktop.window-zoom",
+      "category": "Automation and companion experiences",
+      "feature": "Adjust zoom independently for each window",
+      "baseline_surface": "ChatGPT / Codex desktop",
+      "sele_status": "Partial",
+      "assessment": "UI/code font controls exist; no explicit per-window zoom setting.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/renderer/src/settings.ts",
+          "needle": "export const appChatManualDropdownValue"
+        },
+        {
+          "path": "src/renderer/src/components/SettingsPanel.tsx",
+          "needle": "export const renderSettingsPanel"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "desktop.language",
+      "category": "Automation and companion experiences",
+      "feature": "Choose the application interface language",
+      "baseline_surface": "ChatGPT / Codex desktop",
+      "sele_status": "Missing",
+      "assessment": "No localization catalog or interface-language selector was found.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/renderer/src/actions.ts",
+          "needle": "export const appActionIconIds"
+        },
+        {
+          "path": "src/renderer/src/components/SettingsPanel.tsx",
+          "needle": "export const renderSettingsPanel"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "desktop.navigate",
+      "category": "Automation and companion experiences",
+      "feature": "Navigate back and forward through app screens",
+      "baseline_surface": "ChatGPT / Codex desktop",
+      "sele_status": "Missing",
+      "assessment": "Browser history controls exist; no comparable global screen-history navigation controls were found.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/renderer/src/actions.ts",
+          "needle": "export const appActionIconIds"
+        },
+        {
+          "path": "src/renderer/src/components/SettingsPanel.tsx",
+          "needle": "export const renderSettingsPanel"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "code.file-tabs",
+      "category": "Coding workspace and Git",
+      "feature": "Keep and reorder multiple source-file tabs",
+      "baseline_surface": "Codex desktop / CLI",
+      "sele_status": "Unverified",
+      "assessment": "Recent files and editor dialogs exist; native thread-side-panel tab-strip and drag-order parity are not established.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/renderer/src/components/FileEditorDialog.tsx",
+          "needle": "export const FileEditorDialog"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "desktop.tray",
+      "category": "ChatGPT Classic desktop",
+      "feature": "Keep the app in a system tray with usage controls",
+      "baseline_surface": "ChatGPT Classic, where available",
+      "sele_status": "Missing",
+      "assessment": "No native tray lifecycle or account-usage tray menu was found.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/application.ts",
+          "needle": "export const startApplication"
+        },
+        {
+          "path": "src/renderer/src/components/SettingsPanel.tsx",
+          "needle": "export const renderSettingsPanel"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "agent.diff-stats",
+      "category": "Goals, plans, and agents",
+      "feature": "Inspect subagent-specific diff statistics",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Partial",
+      "assessment": "Subagent transcripts and status exist; no dedicated per-subagent changed-file statistics surface was established.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexSubagents.ts",
+          "needle": "export const getCodexSubagentParentThreadId"
+        },
+        {
+          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "needle": "export class CodexProviderAdapter"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "file.artifact-cards",
+      "category": "Search, images, and generated files",
+      "feature": "Review generated files through rich artifact cards",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Partial",
+      "assessment": "File references and media are shown; office/PDF citation cards and native review are not fully implemented.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/main/providers/codex/CodexAppServerClient.ts",
+          "needle": "private initialize"
+        },
+        {
+          "path": "src/main/fileTree.ts",
+          "needle": "export const readLocalFileTree"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
+    },
+    {
+      "id": "chat.pin-sync",
+      "category": "Core chat and projects",
+      "feature": "Keep pins synchronized with other first-party devices",
+      "baseline_surface": "Desktop + CLI",
+      "sele_status": "Missing",
+      "assessment": "Sele pins are local metadata, not the shared desktop/mobile account pin state.",
+      "priority": "P2",
+      "evidence": [
+        {
+          "path": "src/renderer/src/workspace/useChatListController.tsx",
+          "needle": "export function useChatListController"
+        },
+        {
+          "path": "src/renderer/src/components/ChatListItem.tsx",
+          "needle": "export const ChatListItem"
+        }
+      ],
+      "sources": [
+        "https://learn.chatgpt.com/codex/changelog"
+      ],
+      "verification": "static limitation"
     }
-  ]
+  ],
+  "working_tree_note": "The current checkout includes the recorded commit and the uncommitted audit artifacts. An unrelated composer layout change was inspected and does not change the capability ratings."
 }

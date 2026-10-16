@@ -117,8 +117,17 @@ const lightTerminalTheme: ITheme = {
   brightWhite: '#ffffff'
 }
 
-const getTerminalTheme = (): ITheme =>
-  document.documentElement.dataset.colorScheme === 'dark' ? darkTerminalTheme : lightTerminalTheme
+const getTerminalTheme = (host: HTMLElement): ITheme => {
+  const theme =
+    document.documentElement.dataset.colorScheme === 'dark' ? darkTerminalTheme : lightTerminalTheme
+  const background = getComputedStyle(host).getPropertyValue('--control-surface').trim()
+
+  return {
+    ...theme,
+    background: background || theme.background,
+    cursorAccent: background || theme.cursorAccent
+  }
+}
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Unable to start the terminal.'
@@ -279,7 +288,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
           rightClickSelectsWord: true,
           scrollback: 5_000,
           scrollOnUserInput: true,
-          theme: getTerminalTheme()
+          theme: getTerminalTheme(host)
         })
         terminalRef.current = terminal
 
@@ -301,7 +310,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
         }
 
         themeObserver = new MutationObserver(() => {
-          if (terminal) terminal.options.theme = getTerminalTheme()
+          if (terminal) terminal.options.theme = getTerminalTheme(host)
         })
         themeObserver.observe(document.documentElement, {
           attributes: true,

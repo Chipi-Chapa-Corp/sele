@@ -1,0 +1,1235 @@
+{
+  "https://help.openai.com/en/articles/10003026-windows-app-release-notes": {
+    "disposition": "Mapped",
+    "reason": "Read via web tool during the audit; the collector cannot automatically reproduce this blocked Help Center fetch.",
+    "reviewed_sha256": "",
+    "reviewed_fetch_status": "verified through web tool; direct refresh HTTP 403"
+  },
+  "https://help.openai.com/en/articles/6825453-chatgpt-release-notes": {
+    "disposition": "Reference",
+    "reason": "Historical general release notes consulted to separate Classic and current desktop; not a complete historical changelog ingestion.",
+    "reviewed_sha256": "",
+    "reviewed_fetch_status": "verified through web tool; direct refresh HTTP 403"
+  },
+  "https://help.openai.com/en/articles/9260256-chatgpt-capabilities-overview": {
+    "disposition": "Mapped",
+    "reason": "Read via web tool during the audit; the collector cannot automatically reproduce this blocked Help Center fetch.",
+    "reviewed_sha256": "",
+    "reviewed_fetch_status": "verified through web tool; direct refresh HTTP 403"
+  },
+  "https://help.openai.com/en/articles/9703738-macos-app-release-notes": {
+    "disposition": "Mapped",
+    "reason": "Read via web tool during the audit; the collector cannot automatically reproduce this blocked Help Center fetch.",
+    "reviewed_sha256": "",
+    "reviewed_fetch_status": "verified through web tool; direct refresh HTTP 403"
+  },
+  "https://learn.chatgpt.com/codex": {
+    "disposition": "Reference",
+    "reason": "Product landing/navigation, not an additional independently testable feature.",
+    "reviewed_sha256": "28e767a3d20ee272f8d03a25ed273743cbb9128ded428bddde9223582ca8fee3",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/administration": {
+    "disposition": "Reference",
+    "reason": "Administration landing page; detailed enterprise administration is outside the chosen scope.",
+    "reviewed_sha256": "eac8df9fd87078dbdb60c9879050007e6d91b068f2ce829ec0298b8281b92add",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/agent-approvals-security": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "69a23f37e7f763615dc48de60f27174450a84def35182bbb2cec6f48eca61765",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/agent-configuration/agents-md": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "6b78c5fd13c3f97aaf8d23b849e94a14c7e3cc8ddc1b71044e48097725acd379",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/agent-configuration/rules": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "1d7067d6e23d71614432173b282ff0f43540ea155ad2272d3df356c9d97ff9ed",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/agent-configuration/speed": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "e68f9875869e0e8c3fd0ae84cf116361163d3743e988b52efd84c804461c2028",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/agent-configuration/subagents": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "8a6f2712d08b354af42a2dd4b84e2d8903f2de96839da245e7b5a08da6bbd0e8",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/amazon-bedrock": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "def733ba04107126ee053f1466948c76dad461c71b4cea897848ad920e24e2b2",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/annotations-extensibility": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "152ef1a41545ad9d3366e2bcd9fb168f5e3d48a14a8fe0020d1004b7ff817256",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/app": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "7b2a5a7d0bf0e16aa6195bf5bd42c6f90c3753391c8921b672ffb6d7b5e7f009",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/app-server": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "c85e728b1828a5255d80429f7fd43dd65fea925acd686ef2a2da6d37f5269028",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/appshots": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "62d62a6854caef42a7752e515641757c76aefb456de22d6f2d270cdda7cf886b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/artifacts-viewer": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "7802696ef2dfef3b99d7f491b4a6854223c6249592edfaedf6ae6fa23eb2b79b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/auth": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "5ee946095a4ba15e3ec3da008990ee7421a1049e14a17119f9859a702515e320",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/automations": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "f3a04d26c40b003530e86c09d6fddeb2a313cacba1f438863fd32f1a932e928e",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/browser": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "4e23d0262f1a5c46db9faff30ba33cbae6b15c0e821841441e25ec93c741fc7c",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/build-plugins": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "e01d1d50a4b466f09dce711ec2433244217dbce954dac1518049cd904b17c1f0",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/build-skills": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "dd89ee6c044c77e280b3fd3f6e20ee7a9a7cda59bac1e459ccb98ee4037401b5",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/changelog": {
+    "disposition": "Reference",
+    "reason": "All published desktop timeline entries and New Features bullets are classified in updates.csv; fixes/retirements/excluded surfaces remain explicit.",
+    "reviewed_sha256": "c0224f6286d5b67e070fe6ac42e3de308ba1ead06e0c87d7047e6b813a8b874e",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/chrome-extension": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "703a345a6920e5e3aafda8445eac79793f7578726e50f3b4ebf77eb70d59fb02",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/cli": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "24adda09845c1e38f0cb7d85c2a3fbca790bc0eb18466e164d90fa79c3abba46",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/cli-customization": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "e2ce00d0c6b6402525bdf5452d315c8115835a937e6a83d50aca1b462248da45",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/cloud": {
+    "disposition": "Excluded",
+    "reason": "Hosted execution-service implementation is excluded; the desktop/CLI cloud handoff is represented.",
+    "reviewed_sha256": "bf741fa1de68e994ef89afbc0a0987a392af071f614f8006865b53f9d70f540a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/code-review": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "62d43bc3985a27b9ec17a45fed5a3b1bb78966a52e52bad6cb2074095ead39f7",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/codex-sdk": {
+    "disposition": "Excluded",
+    "reason": "Developer SDK API is not desktop/CLI client feature parity.",
+    "reviewed_sha256": "fdd281aefc5cd969a0979dd7ea87539d32a66945db2facbd8305a616b851ec42",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/computer-use": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "01a041fd58be56930d2a2420c78e2e8475a6a3a3365869cf8da0930b0853b954",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/config-file/config-advanced": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "82a53dfe046250a18fdc75f92b545512902a113d6b62d89ef1bc28a607ff4fb5",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/config-file/config-basic": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "1f5deee5058bef314463ca2b8dc2dd01a09374e733fe564aa8f285f329db01e3",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/config-file/config-reference": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "950619baa0466f2c55e51f3e81ce067d87b421fdfee7ea32f7761d989f68c792",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/config-file/config-sample": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "config.full"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "ec0c8c4433bfb9adb16f6b77af8ba8f7f6fd134fcb94b1e9fa8823a08f79bc83",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/config-file/environment-variables": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "7aee7f4c78ebd2ecb7137158f18d1110234e1e80404bd0b34ab8dcadf4e845ff",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/configuration": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "config.full"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "d6399ec12e3b39c3c3b59b625a4867cc7c76e2e151de191fa39ad64a806e37e6",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/customization/computer-history": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "3844cb4cb59ef0e63ce9aed028c74b18f7b13a03f9d1b1abc1b1cb0d0aa5dff4",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/customization/memories": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "72db44228d09967dd56496539ebb28a444360e305031b1ec8ace636656514014",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/customization/overview": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "instructions.agents",
+      "skill.discover",
+      "mcp.config"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "28a26244a27cbd32361aa0307f8000f91291b91104128a362d6bed1fe716c7c5",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/cyber-safety": {
+    "disposition": "Reference",
+    "reason": "Account/model safety eligibility and policy guidance, not a Sele-owned client capability.",
+    "reviewed_sha256": "6576ae5de8ce9dba0e6ae2387fc1f246808183428a03f858546a6820913c09c3",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/cyber-safety/recommended-configuration": {
+    "disposition": "Reference",
+    "reason": "Operational security guidance; provider permissions, rules, and sandboxing are covered separately.",
+    "reviewed_sha256": "011a45805e24fd87bcb4881d7ca2efc368fc964de7d71508b9ff7df804438afd",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/developer-commands": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "b45dc90cd0893f40315f37d11d66283522be21cfdc45cd3e2e2b82a0a71ff09b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/developer-settings": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "config.full",
+      "config.structured"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "8c7dd39b2abf6f03ad50ffce0f2022753dbf1a0cd44306bde615f87a5dcb59f5",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/developers": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "cli.exec",
+      "code.diff"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "413b750368ccea7f58f679b4d465eca0a4e80351e28afed36c571d55a03383bc",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/dots": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.dots"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "a4c1d4872e027d3357e478b31c912ea887823b869114257795ce3aa94a73d423",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/dots/channels": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.dots"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "b03b1b4974eafa323b76b1a89299b1b452ce56afa5872cc2f70b36329b429a01",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/dots/computers-and-apps": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.dots"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "9b37f1485c145ebbc618743e1a173ddcf1144154019758b4b27b553f8176a27c",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/dots/controls": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "bc67b7aa17bf712698759d15c6a0251f94217fce395d4e53da5a4192e698308c",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/dots/getting-started": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.dots"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "c71965b52775a1dffd1a51698e4eee04ee6c49895ff82dd9b5d0d03ff713477c",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/dots/tasks-and-memory": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.dots"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "e7f734857c48983b103e21927c6b1cbbf2515f17adf975fe874dc9d817df6832",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/access-tokens": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "32fe90e08d4ece58c51391b50156035d5cf16730aadfff99ae09ad7417503a10",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/admin-plugin": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "4e105cc303cee4cf4a15559a0b31020a7d5628031eb38bdf3de4a269487a53ee",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/admin-setup": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "d401212fe30afa4510033558a300d35d37a64a8e659c75851d24922e997a22a7",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/agent-security": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "b92fc37edece087d6d8cac001388dd526a59fef43dfe26f612b9515b59f96143",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/analytics-api": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "e55bab1845b7e9bfd60cbf3d900a8eb31a4825b931192e4fe6db4a085ffeea0a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/apps-and-connectors": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "9aec7dba074bfebc6940b5843b8f44e069af6bb6ce2a91ad9f16edd91c68eb5a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/bedrock-through-litellm": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "4ad07fe09f96d0bb55c51bd212fe9fd0219d5d70b238ef83f4fd5ac50c6f37da",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/chatgpt-slack-and-teams": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "248ef8e065cd818021e62cbe1b8f920cd6d56e3bdb97d62c5c93204a5a130e06",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/chatgpt-work-cloud-security": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "fba9532ba02419b05b04089bdd5bc8ea582b18e13edbe9279ecedbd7252e55ca",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/chatgpt-work-local-security": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "d30890a155915a8995789638bbbf5a4690808f7abdd2f0a57b4fc51cffb7033e",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/chatgpt-work-overview": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "8c2b449e0c1f202adddbdd767ab1c7e8f869b917d451418206a38681ae72d14b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/chatgpt-work-usage-and-cost": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "32c2b6f002bc417c560a996b5cb8da8f8b41c0c6c88cfdd5013d99b2f37fa600",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/cloud-local-access": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "666d90a2dc376a82486ecbc0c90389433839c26b85bbecd1cfe081b9b724346a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/compliance-api": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "d508573d3dc1c1811e8bb8cdc023233111d6fcbc2d786b91730b4e4f34e96d84",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/connect-to-a-gateway": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "89c674f7d27b85f06238d5cb4735d92b2befe1cb596856637eb76a83a714f47a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/dynamic-groups": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "87e3206a6c57f9ebad90cc4ac61498675346ad05d922597076e06a5914e1cf89",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/gateway-compatibility": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "31c5fc0d0be706bdca782c46108a0176f128cfbc2a1bdbd93651d4d2dade2088",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/govcloud-configuration": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "064c4f6f213ebaf3f58783a6f731cd1e4191c999bf8b5506392e1b3a4b3dbe27",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/governance": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "56c24fdcb83798fbad9b532f43367acf57e6fd68b41359addf4ac57df3e2d6f6",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/gpts-and-sharing": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "191434b8e9ee23ad3c59c08a662e8d27a7d739e760f31d4d97c6ab8cc4843513",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/groups-and-provisioning": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "07b3f30551e33ff187662603583d8d31f39bdc0424f0171f2f98e51ff29a5dab",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/manage-app-updates": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "240ad83ef99f840a9206c18f72f79ead85394007788e5c75382b06cc51dd7b63",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/managed-configuration": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "b945a55de755ea939c4eeb31b3c6c4ca20fece7083119029341832229800a6a8",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/plugin-management": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "ba8a4113dffa2c8449b5e676718badcea4717db6771b2bdf358f9aacde4357d9",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/prisma-airs": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "b75bc8cdfc5d47a0915924b962d80d29ca7370cbe2013e646deba9f0ba9bbf36",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/roles-and-workspace-permissions": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "fbb8a7a463dd015ec8f1003b935876ad0abe17a3fee428df71a481fc13b5ee88",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/roll-out-a-gateway": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "5240cc0ed1e7ae9e92e6bb9ac8284cc9003ed32168e42e97b43ac73d6cce739f",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/service-accounts": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "c3fc8e0f340f91cd34c30a420867b9e7f344b689f4af7bb20412a5f552407486",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/shared-connections": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "bc81b90659d1a6e21e2c9c2f4437d54a7ef8d72699f8f061fbddee9e3b4bbbdf",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/sign-in-with-chatgpt-through-a-gateway": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "fd288ab7dea28aaf1f5cec0dff418233804a6f9611127aa617194fc37a68e28e",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/sites": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "ceb8a56aa040aa992ebe6eede72bfd44fd4809d8cc1c2f7b8c6863bf830526cc",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/skills": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "8969c38b1439f9702616197d282658a7d34c920ebba4b63fb82305988e922e2b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/teams": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "32e7bf056db3830f2348937d8b0fe640f42127092f44fe5750db3a8a2fc161e1",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/usage-insights": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "48b0fbd0dc1046443ae42e8411e7dcb46a904d05a52c1da30766782156023cb5",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/user-lifecycle": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "bab647204c8216ef1dabb91aee838789e0db85e5116623290795f4f4448e10d5",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/windows-deployment": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "0d291f0b15af1a3b25c6be733722fd7176058f61b486fd2c5b3e6926d1fd00ac",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/work-admin-faq": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "a1a81fe31c622fd318a69f2fa18b94c0a3785f9c80e0ef87145120931c35557b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/workspace-analytics": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "0ef30a0ea33b052adf496593104230a7980c497f889d92e8b34b827d222e0944",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/enterprise/workspace-model-availability": {
+    "disposition": "Excluded",
+    "reason": "Enterprise provisioning, governance, deployment policy, or hosted team administration is outside desktop/CLI capability scope.",
+    "reviewed_sha256": "499258f2c7eeef9ab4b17c79acbdf503f808d6864f51dc1276739b1e1db0556d",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/environments/cloud-environments": {
+    "disposition": "Excluded",
+    "reason": "Hosted environment lifecycle/admin is excluded; desktop handoff is represented.",
+    "reviewed_sha256": "9693088d03e1b5b61373ad6d7af8d9dba584800d5b4ebbdd1f8eee251fae6bf6",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/environments/git-worktrees": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "ed294c6f8510e3cce0b36e707252726ea8489e1f3f3885037b36ae806cc7fc1a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/environments/local-environment": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "02763fe0f0498765c00a1629fcb55cb135bcb75adf1c22d84a43a067d16ddf31",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/environments/modes": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "81fcc116cc5a086b5dea2f1cf4d1db232f7254a332892ef1b35144add577a2aa",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/extend/mcp": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "ad9a4aca19cd006b01dadd97fa5f21f98a681f91f965f072b83659afad3b417f",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/extend/record-and-replay": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "4f84712669c039d7601f6088de329d875d323a5e8ea4d5a47f1b5fa6841a8b74",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/feature-maturity": {
+    "disposition": "Reference",
+    "reason": "Explains rollout maturity; not a capability row. Availability remains conditional.",
+    "reviewed_sha256": "d0a2afa710a8a31db801ec42bbda74b4006eff2322a128b5b78e1545db30e192",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/features": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.new",
+      "model.work"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "2270e60e867ba21e6e2863c44f6404c6852cae6ad3a49491c0148e030dc10b9b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/features/codex-micro": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "1acd37e95835fd60fc8740ae1f9d8df6ea1a1d299feea82d4b85c68448ef7f42",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/features/composer-predictions": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "8281f2f8c484468acfb2419174dfba74d7e5cbe92bc80412fe04a9339c2bd34f",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/features/voice": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "4a53acc31062f38fff58d00acdf5ffd9673c4a9921892b78728d8dbba77b9d4f",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/get-started-with-work": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "5de45ea336a448a8e6049f49808927b7cef778c1f01f9e746cac9cda712dadcd",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/github-action": {
+    "disposition": "Excluded",
+    "reason": "CI automation integration is outside desktop/CLI scope.",
+    "reviewed_sha256": "9461ad99d58712d4a1374e1ed2d25d81c5d001beafced3ad6dcf512a9b27d718",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/glossary": {
+    "disposition": "Reference",
+    "reason": "Terminology reference, not additional functionality.",
+    "reviewed_sha256": "31d014f04309845d954c24f1cb714d35c6046ad7b48a2018084147304840ef75",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/hipaa-configuration": {
+    "disposition": "Excluded",
+    "reason": "Enterprise compliance configuration is outside the requested scope.",
+    "reviewed_sha256": "009978e90f8e4ea7284e4a436f92f1c91ad027efb39760e389577c81f3d379e1",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/hooks": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "3ebef6243f07ace7799a48488d1a17594dbb6e5d8af7a0123e264ea7f55a6313",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/ide": {
+    "disposition": "Excluded",
+    "reason": "Standalone IDE extension UI is outside the requested desktop/CLI scope.",
+    "reviewed_sha256": "f29eb68f951df9b686085b28c5dabddb300ea928f26bc97d1e5d29278703c16a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/image-generation": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "8d44c4aa04e9a7bb7b9a9c05a815eb969603a488e44d50520ca16a13ad756748",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/image-inputs": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "dc6fa44490a68a7265afff803a93789d3415f42b4db307cf890942d8bd4ed2a6",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/import": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "375a0b92e194212f9fa71a171b3c0b10557823313c54b48b359f701e3cdbf803",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/integrated-terminal": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "3e28a16ea618409b278c14bc2b350cd6d4f36e053082baa6bb93e16afc8c57b2",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/linux/linux-app": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "e580dcab5bed72778280a8c7668b86d9be477214702edf46d2aad60726611ce1",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/long-running-work": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "497c5c8ca25236bbca6501093c87af14f915c300063512c9c6f0a814f3d0a76b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/migrate-custom-gpts": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "classic.gpts",
+      "plugin.builder"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "eaf47ab44070f9d1c884f813f175481fdae2d18b004427ac9f705f0e308064f3",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/mobile": {
+    "disposition": "Excluded",
+    "reason": "Standalone mobile UI is outside the requested desktop/CLI scope.",
+    "reviewed_sha256": "c6ed90b0668405e489ca6b36420c809848b26844b28c879497b3f8fa1478cf99",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/model-selection": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "5ab30b850cc675308273f6d68cdb333eb257f880ca97de98bd616a3072652647",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/models": {
+    "disposition": "Reference",
+    "reason": "Model releases and retirements are normalized to live model selection, not counted as separate features.",
+    "reviewed_sha256": "92c00967d7aea07c4a936a1efa7c3a647f0561c959eb5cbf78913d77d9181133",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/non-interactive-mode": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "89a2586ff024fe270de626a64e4792129e43c5ccc539df40b318985b2255bfb5",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/notifications": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "288a9dfeb726a8b381263a10da02d621e498ab60443c741384a83f9d4df37e6d",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/open-source": {
+    "disposition": "Reference",
+    "reason": "Project/source-distribution information, not client feature parity.",
+    "reviewed_sha256": "a6ca9e5af0163230efcd033ad108c764aa14ee01180fc5e0934c0de9235f9505",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/permission-modes": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "security.sandbox",
+      "security.approval"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "b48dd5607c4666789cda1cde8cf17d98f4c1ed18c25511e3d368568a09561a90",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/permissions": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "819576998a3edd04fc3e2d6c03ffbe605b17197a5801bfb802400b1cf72a7f94",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/personalize": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "e821bac9ae7703505b88cd77e06a85d1d90d0d362926059a31ea90ce1a925c89",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/pets": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "686f9abc3a2d669c167c964eda7e543086f716cf1f14289a5cb0b4c67d342a53",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/plugins": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "9f44028ede9280deb415ae9dba7427cefba1a003f32970aedd3672dc2f26ffdc",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/pricing": {
+    "disposition": "Reference",
+    "reason": "Plan entitlements and prices are not duplicated as feature rows; account eligibility remains a prerequisite.",
+    "reviewed_sha256": "9f09bb5f901251202e1fa7451791322184eb7eebb7949fd13ad67080e399fe3d",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/projects": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "d6f54fd54b8c80556e26aa0569e9d53c330f1ed70382b02588fa48c21b1ec6c8",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/prompting": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "578cc214244c6eba6453c3c4024174c241352ff3c4b031fb12bb59329d45dcfc",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/quickstart": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "chat.new",
+      "account.login"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "0ec9522a687b4b5661b9ab5b4d0ecb890f16c3cdc70a8934c54501b82eddf03d",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/reference/commands": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "ab985e50e7456d48a93380d9da4a0eb298c14c5bae52f8c4fbfeb7e9a59cc91c",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/reference/settings": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "83bebe7a03e7e1565587bff377628f4693ae8013d7bf42b8e4d4f56691c4fcd1",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/reference/slash-commands": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "240d82d55248860e4ba31f2502df6b9859f58c29fd02a843c3c17253746429ce",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/reference/troubleshooting": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "559258462a1df0e04c2643723f5796e6f29cb470fa2afcc1937116fca92f0413",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/remote-connections": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "c48be4a91d2517c57044ba11da0a6cbe8642c12d4be981494adcdef161add999",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/resources": {
+    "disposition": "Reference",
+    "reason": "Learning/resource directory, not an additional product feature.",
+    "reviewed_sha256": "4e08c16de31f00c41d2ce2cee9a75e69c40c7e44ffe1d8595aee0dbe12b68b02",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/sandboxing": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "security.sandbox",
+      "security.guardian"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "86339059a1feadb9b9fc62d5f8b7b7a28c7d73598d7872395dd52458c8705560",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/sandboxing/auto-review": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "aa2353bd41d80f30abdb24b0546fdc153a851d440e60de4b2d6762766ff21c16",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "17e4cd4248558793b918c1a5c427529d78ae97d5947670a9c8a0414e59a58e4b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security-administration": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "security.sandbox"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "3247622d67ffa1848a4fe93d30c16c3c79e4edf9dba8a2cbd0e553c726ef40ee",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/cli": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "ebb34e4d1c0ea83834933a8252b9d2df2624569dd3e9a5638ca51229687efa90",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/cli/bulk-scans": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "661b4f622fb89bff4288bb6a19b180e7202449f8071cc26ef41408be01768a1a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/cli/ci": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "48821e1f6b9cc353e1320fc9d6dca41f1c6fcb08f3b1bbc5b742d740068919c4",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/cli/ci/gitlab": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "955fbd12124c61cc528fc754259b40957d3b0600048d6a8ed0dc9ea5ec594bff",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/cli/faq": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "b1965b5873c81a95e4bbd8a0af5b788130b45b2232dd7c0a4108c057272c52b7",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/cli/reference": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "ea90abcf70a2cec96f395418f6768c2a08df3ff349c3b8d5069b4edabb89daa1",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/faq": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "a92b885a06a403dfdac9142c23192d70960930711a863fd0e23a05698d5f0883",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "cedaf1d2cb729a6a78b8a57f3a874d76347774207dabc496a605cdb473185767",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/changelog": {
+    "disposition": "Reference",
+    "reason": "Security plugin operational/release history; desktop plugin boundary is covered by hosted.security.",
+    "reviewed_sha256": "5d724b451526ba5db0794a8b4f459de0c7fce0fa3d79973612b1e3071cc93711",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/code-changes": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "a8acbc18ba35e5f72f03ee997da5dda01855eea6a22547e7f7596d2b92a76191",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/deep-scans": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "9e95f64a744171ece05f26f59f52906a3a97f233c28648e272f52de67843a496",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/export-findings": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "06c83e09846bf01dd5c604a24ef0ed09fac5cd437044a33a49c71b4b7ddff6ee",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/fix-findings": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "3646e9a9696d20799309c88f0b776bc9b45047160c6f64d3b0a6960115f4d4de",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/scans": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "118d392e90bc1ae20b7de76c02c8b6d043086a981382b9432ad178f3910e08b0",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/security-hardening": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "35c43633ac26dd58d8bc7d69b5a2aae8da4de84d79ef2366cbeeaf1430830631",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/triage-backlog": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "524fb37da187a98408eaada69d5842621508bcd2bbd5ade6ef1c7b918f724801",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/vulnerability-reports": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.security"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "36cc0514d93dc50dc42ca87fa015f0939fd7d14342e7554561ee3fb66d1b5357",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/plugin/workbench": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "fc94c261e47aab07fa5c50a0423e68cd555edfe5172b5aaba6816f8436105295",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/sdk": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "7fc7624bf983cf097f6f97808cb9fd1f374e0cafb81c15368c52a687089e8515",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/security-review": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "93ce89c1062e9887f1ae9e95b5c0c70b05b22cc645910e67999ccac8732d5511",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/setup": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "5cdfbe1f6ded1128b8c0e9ebae762a9534afcbf7d33107bfe9420054b730849a",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/security/threat-model": {
+    "disposition": "Excluded",
+    "reason": "Separate Security product cloud/CI/SDK administration; desktop Security plugin boundary is retained.",
+    "reviewed_sha256": "3372a3ddb4a48e0e034ad587bdb8674514b16dc6e3af2cdbafc542bb87da391c",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/sign-in-with-chatgpt": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "b7c6d55769290d4e9ae83d61bf49f8726579f845ee20746ad668367a7dcf45c3",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/sites": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "257beee4790c06362160d23efb620d1247f5736b97a4c798827e929694bb5d12",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/sites/creating-a-site": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.sites-build"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "cb9997ce44143a2b017b7826f3c2f38959866adfb40996f8b45c0118a0eeb90b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/sites/data-and-connections": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "78b55cdacd61339f90c15973666172af95d8f630359f37002d323f4237233a92",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/sites/managing-a-site": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "c508395d98db7661ed0725cb37a031c5ccf3722987d5878699a4ba34af4671b6",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/sites/publishing-and-sharing": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "ace7d1de44e0f2eb8f75008587d02900373371cd04b2e74ac6e8c5254b6e235d",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/skills-and-plugins": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "e7d107af33c68270e544459625c615d0586a079aa34444523319d76a59757e1c",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/space": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "c9420edd2e24bfe524bf9cdeed2c4e8fb257b9127ac46ac71040b2b67fe74b70",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/space/agents": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.space"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "c8bbc4d3fcdd4d6a51d00f701a8c8104be4b5ca017c6a2d88d182f8b25020967",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/space/collaboration": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "8e9241b4274e77db8e30252a4f60289291d65ae2833b09376239f839681fefb6",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/space/getting-started": {
+    "disposition": "Mapped",
+    "feature_ids": [
+      "hosted.space"
+    ],
+    "reason": "Related documentation crosswalk to normalized feature rows; not a separate duplicate capability.",
+    "reviewed_sha256": "5682f077ed2971496e2d15f62bcc8f82dc991afc0509f0414e4f3e54848e5298",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/space/pages": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "be6af565fdbd9a03591e8aee197ca4fba72782a09bbdb6a99d7464996bf8f504",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/third-party/github": {
+    "disposition": "Excluded",
+    "reason": "Server-side GitHub review/bot behavior is excluded; desktop PR review integration remains a feature row.",
+    "reviewed_sha256": "a0b0b5363faa83af69aca061d296f4a30a7851abad5a8364232f20b3634380a1",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/third-party/gitlab": {
+    "disposition": "Excluded",
+    "reason": "Server-side GitLab bot/review behavior is excluded; installed connector mechanisms remain represented.",
+    "reviewed_sha256": "94ba91230cdda1b5f89d53fa375d628b502091f7b93fed2a97ae65a63800aac9",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/third-party/linear": {
+    "disposition": "Excluded",
+    "reason": "External Linear task delegation is excluded; connected-app mechanisms remain represented.",
+    "reviewed_sha256": "a4f6c2309500e4882b8f43543ee354902d851a2973f891e6ed36019b53f08e08",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/third-party/slack": {
+    "disposition": "Excluded",
+    "reason": "ChatGPT inside Slack is an external client surface, outside the requested scope.",
+    "reviewed_sha256": "d9f0f6992648952fe17345c1520349ada059bb135acf9d20f48caaa99441a6f1",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/use-cases": {
+    "disposition": "Reference",
+    "reason": "Use-case examples or training media, not distinct product capabilities.",
+    "reviewed_sha256": "278e03e273cbbffdda0d07d04cf00ee800fc13e2c01f5ac4bcf6484aa0cce7a2",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/use-cases/collections": {
+    "disposition": "Reference",
+    "reason": "Use-case examples or training media, not distinct product capabilities.",
+    "reviewed_sha256": "72eabf7ed7f3239d2d8311a4c9b50f284929e1a5e24968e41bfc755cd61cf7c0",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/use-chatgpt": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "4c17214ef3e4c22b9782529157560781450dbb1ace05394749e35cb1584169e9",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/videos": {
+    "disposition": "Reference",
+    "reason": "Use-case examples or training media, not distinct product capabilities.",
+    "reviewed_sha256": "e4e3c3fac1e4f126344b170c32f699e06726a4195734d7a2588360d66254c7ab",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/visualizations": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "85a41675834ad5716c06940ede0b4e3778c26a913ac32b17c03ed147e4adceee",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/web": {
+    "disposition": "Excluded",
+    "reason": "Standalone web UI is outside the requested desktop/CLI scope.",
+    "reviewed_sha256": "505f497328378a6c14884b7dfc149926b94517ee42dd015c20447fb30180a166",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/web-search": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "b52e87193f94e6e587bd8a89d0c7df08fedfd5e84db29ee8096150723a1a5658",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/webmcp": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "4c2b17b334604b374300091a4acb4efa473f1e7f26ecda5aacc49be01953add0",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/whats-new": {
+    "disposition": "Reference",
+    "reason": "Dated feature digest; every extracted update heading has its own decision in updates.csv.",
+    "reviewed_sha256": "38a34e72646c7acea4bde808b175b66749e11ce11ff61f1add2f003ecb9c1a7b",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/windows/windows-app": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "75e6da4c22742a38bc25be36fe8b27eee366fc96c54b1fbaae7c72e7aec21994",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/windows/windows-sandbox": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "15b81495f6baafd7c6031dc88d610f99dba88208ce8d04e96746add9562e67d4",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://learn.chatgpt.com/codex/windows/wsl": {
+    "disposition": "Mapped",
+    "reason": "Reviewed at feature-topic level; source-backed rows reference this page.",
+    "reviewed_sha256": "c38ef5895ae89184a6cb93691c1f3a78b3bfc58b362baab4e6c5b6d2d0916d33",
+    "reviewed_fetch_status": "HTTP 200"
+  },
+  "https://openai.com/products/release-notes/": {
+    "disposition": "Unavailable",
+    "reason": "Direct retrieval returned HTTP 403; not used as evidence. Dedicated desktop and CLI docs were available.",
+    "reviewed_sha256": "",
+    "reviewed_fetch_status": "unavailable: HTTP 403"
+  },
+  "https://github.com/openai/codex/releases/tag/rust-v0.163.0": {
+    "disposition": "Reference",
+    "reason": "Version-pinned primary CLI release; all six New Features bullets have update decisions.",
+    "reviewed_sha256": "c223b3d5e86da0072dd94db705d7e87dcb361cca93cef09afa476e8b2e06fddb",
+    "reviewed_fetch_status": "HTTP 200"
+  }
+}
