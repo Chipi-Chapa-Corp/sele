@@ -705,6 +705,7 @@ const requireChatListOptions = (value: unknown): ProviderChatListOptions | undef
   const options = value as {
     container?: unknown
     cursor?: unknown
+    searchTerm?: unknown
     done?: unknown
     limit?: unknown
     projectCwd?: unknown
@@ -713,6 +714,10 @@ const requireChatListOptions = (value: unknown): ProviderChatListOptions | undef
     options.container === undefined ? undefined : requireContainerTarget(options.container)
   const cursor = options.cursor
   if (cursor != null && typeof cursor !== 'string') throw new Error('Invalid chat list cursor')
+  const searchTerm = options.searchTerm
+  if (searchTerm !== undefined && (typeof searchTerm !== 'string' || !searchTerm.trim())) {
+    throw new Error('Invalid chat search term')
+  }
 
   const done = options.done
   if (done != null && typeof done !== 'boolean') throw new Error('Invalid chat done filter')
@@ -733,6 +738,7 @@ const requireChatListOptions = (value: unknown): ProviderChatListOptions | undef
   return {
     ...(container !== undefined ? { container } : {}),
     cursor: cursor ?? null,
+    ...(typeof searchTerm === 'string' ? { searchTerm } : {}),
     ...(typeof done === 'boolean' ? { done } : {}),
     limit: limit ?? null,
     ...(typeof projectCwd === 'string' ? { projectCwd: projectCwd.trim() } : {})

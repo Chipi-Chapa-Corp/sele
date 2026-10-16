@@ -3,6 +3,7 @@ import {
   updateChatPreferences,
   selectionsEqual
 } from './chatModelPreferences'
+import { useSidebarSearch } from './workspace/useSidebarSearch'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Bot,
@@ -3194,8 +3195,37 @@ export const useWorkspaceController = () => {
     () => searchQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean),
     [searchQuery]
   )
+  const codexSearchSources = useMemo(() => {
+    const sources = new Map<string, AppContainerTarget | null>()
+    if (newSessionAvailableProviderIds.includes('codex')) {
+      sources.set(
+        getContainerTargetKey(newSessionContainer),
+        normalizeContainerTarget(newSessionContainer)
+      )
+    }
+    for (const chat of chats) {
+      if (chat.providerId === 'codex')
+        sources.set(getContainerTargetKey(chat.container), chat.container)
+    }
+    return [...sources.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, source]) => source)
+  }, [chats, newSessionAvailableProviderIds, newSessionContainer])
+  const sidebarSearch = useSidebarSearch(searchQuery, codexSearchSources, searchOpen)
+  useEffect(() => {
+    if (!sidebarSearch.chats.length) return
+    // Newly discovered threads must participate in ordinary metadata actions and selection.
+    setChats((current) => {
+      const known = new Set(current.map(getChatKey))
+      const discovered = sidebarSearch.chats.filter((chat) => !known.has(getChatKey(chat)))
+      return discovered.length ? mergeChats(current, discovered) : current
+    })
+  }, [sidebarSearch.chats])
+  const nativeSidebarSearchKeys = useMemo(
+    () => new Set(sidebarSearch.chats.map(getChatKey)),
+    [sidebarSearch.chats]
+  )
   const matchesChatSearch = useCallback(
     (chat: ProviderChat): boolean => {
+      if (nativeSidebarSearchKeys.has(getChatKey(chat))) return true
       const title = chat.title.toLocaleLowerCase()
       const cwd = chat.cwd?.toLocaleLowerCase() ?? ''
       const cwdLabel = getChatCwdLabel(chat.cwd).toLocaleLowerCase()
@@ -3203,12 +3233,18 @@ export const useWorkspaceController = () => {
         (term) => title.includes(term) || cwd.includes(term) || cwdLabel.includes(term)
       )
     },
-    [searchTerms]
+    [searchTerms, nativeSidebarSearchKeys]
   )
-  const filteredChats = useMemo(
-    () => (searchTerms.length === 0 ? chats : chats.filter(matchesChatSearch)),
-    [chats, matchesChatSearch, searchTerms]
-  )
+  const filteredChats = useMemo(() => {
+    if (searchTerms.length === 0) return chats
+    const matching = new Map(
+      chats.filter(matchesChatSearch).map((chat) => [getChatKey(chat), chat])
+    )
+    for (const chat of sidebarSearch.chats) {
+      if (!matching.has(getChatKey(chat))) matching.set(getChatKey(chat), chat)
+    }
+    return [...matching.values()]
+  }, [chats, matchesChatSearch, searchTerms, sidebarSearch.chats])
   const projectRecordsByCwd = useMemo(
     () => new Map(projects.map((project) => [project.cwd, project])),
     [projects]
@@ -3249,7 +3285,14 @@ export const useWorkspaceController = () => {
           cwd: null,
           label: 'Done',
           kind: 'done' as const,
-          chats: doneProjectFilterChats.filter(matchesChatSearch)
+          chats: sortChatsForGroup(
+            mergeChats(
+              doneProjectFilterChats,
+              filteredChats.filter(
+                (chat) => chat.done && getChatProjectCwd(chat) === doneProjectFilterValue
+              )
+            )
+          ).filter(matchesChatSearch)
         }
       : unfilteredDoneChatGroup
   const messageBoxNotesCwd = selectedChat ? changesProjectCwd : newSessionCwd
@@ -5780,6 +5823,7 @@ export const useWorkspaceController = () => {
       searchInputRef,
       searchOpen,
       searchQuery,
+      sidebarSearch,
       setSearchOpen,
       setSearchQuery
     },

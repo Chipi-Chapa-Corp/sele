@@ -723,6 +723,9 @@ export const providerApi: ProviderApi = {
   resetRateLimits: (providerId, options) => adapters[providerId].resetRateLimits(options),
   getChatContainers,
   getChats: async (providerId, options) => {
+    if (options?.searchTerm !== undefined && providerId !== 'codex') {
+      throw new Error('Native conversation search is unavailable for this provider')
+    }
     const page = await adapters[providerId].getChats(options)
     const chats = await applyMetadataToChats(page.chats)
     const projectCwd = normalizeCwd(options?.projectCwd)

@@ -2037,17 +2037,31 @@ export class CodexProviderAdapter implements ProviderAdapter {
       sortDirection: 'desc',
       archived: false
     }
-    // Sidebar listing must not scan and repair potentially large rollout files.
-    const useStateDbOnly = !this.threadListScanClients.has(client)
-    let response = await client.request<ThreadListResponse>('thread/list', {
-      ...params,
-      useStateDbOnly
-    })
-    if (useStateDbOnly && !params.cursor && response.data.length === 0 && !response.nextCursor) {
-      // Codex returns an empty page when its state DB is unavailable or not yet indexed.
-      // Preserve legacy history, and keep subsequent pages on the same listing mode.
-      response = await client.request<ThreadListResponse>('thread/list', params)
-      if (response.data.length > 0 || response.nextCursor) this.threadListScanClients.add(client)
+    let response: ThreadListResponse
+    const searchSnippets = new Map<string, string>()
+    if (options.searchTerm !== undefined) {
+      const results = await client.request<{
+        data: { thread: CodexThread; snippet: string }[]
+        nextCursor: string | null
+      }>('thread/search', { ...params, searchTerm: options.searchTerm })
+      for (const { thread, snippet } of results.data) searchSnippets.set(thread.id, snippet)
+      response = {
+        data: results.data.map(({ thread }) => thread),
+        nextCursor: results.nextCursor
+      }
+    } else {
+      // Sidebar listing must not scan and repair potentially large rollout files.
+      const useStateDbOnly = !this.threadListScanClients.has(client)
+      response = await client.request<ThreadListResponse>('thread/list', {
+        ...params,
+        useStateDbOnly
+      })
+      if (useStateDbOnly && !params.cursor && response.data.length === 0 && !response.nextCursor) {
+        // Codex returns an empty page when its state DB is unavailable or not yet indexed.
+        // Preserve legacy history, and keep subsequent pages on the same listing mode.
+        response = await client.request<ThreadListResponse>('thread/list', params)
+        if (response.data.length > 0 || response.nextCursor) this.threadListScanClients.add(client)
+      }
     }
 
     const rootThreads = response.data.filter((thread) => !isCodexSubagentThread(thread))
@@ -2061,7 +2075,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           id: namedThread.id,
           providerId: this.id,
           title: getThreadTitle(namedThread),
-          preview: namedThread.preview.trim(),
+          preview: (searchSnippets.get(namedThread.id) ?? namedThread.preview).trim(),
           cwd: getThreadApiCwd(namedThread),
           cwdKind: 'directory' as const,
           projectCwd: null,

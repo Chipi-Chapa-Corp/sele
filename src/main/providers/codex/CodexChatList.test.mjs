@@ -142,3 +142,52 @@ test('a failed DB request remains visible without starting another expensive req
   await assert.rejects(adapter.getChatsInContext(), /Codex app-server stopped/)
   assert.equal(requests, 1)
 })
+
+test('sidebar search uses native message search with snippets and its own pagination', async () => {
+  const adapter = fixture()
+  const requests = []
+  adapter.client = {
+    request: async (method, params) => {
+      requests.push({ method, ...params })
+      return {
+        data: [
+          {
+            thread: thread(params.cursor ? 'older' : 'matching'),
+            snippet: 'A message with needle'
+          },
+          { thread: { ...thread('child'), subagent: true }, snippet: 'needle' }
+        ],
+        nextCursor: params.cursor ? null : 'search-next'
+      }
+    }
+  }
+  const first = await adapter.getChatsInContext({ searchTerm: 'needle', limit: 2 })
+  const second = await adapter.getChatsInContext({ searchTerm: 'needle', cursor: first.nextCursor })
+  assert.equal(first.chats.length, 1)
+  assert.equal(first.chats[0].preview, 'A message with needle')
+  assert.equal(second.chats[0].id, 'older')
+  assert.equal(second.nextCursor, null)
+  assert.ok(
+    requests.every(
+      (request) => request.method === 'thread/search' && request.searchTerm === 'needle'
+    )
+  )
+  assert.ok(requests.every((request) => request.useStateDbOnly === undefined))
+  assert.deepEqual(
+    requests.map(({ cursor }) => cursor),
+    [null, 'search-next']
+  )
+})
+
+test('an unavailable native sidebar search never scans the rollout history', async () => {
+  const adapter = fixture()
+  const methods = []
+  adapter.client = {
+    request: async (method) => {
+      methods.push(method)
+      throw new Error('thread/search is not supported yet')
+    }
+  }
+  await assert.rejects(adapter.getChatsInContext({ searchTerm: 'needle' }), /not supported/)
+  assert.deepEqual(methods, ['thread/search'])
+})

@@ -29,6 +29,7 @@ const bundled = await build({
             : `export const providerApi = {
                onChatUpdated: listener => { globalThis.harness.publish = listener },
                getChat: (...args) => globalThis.harness.getChat(...args),
+               getChats: (...args) => globalThis.harness.getChats(...args),
                continueChat: (...args) => globalThis.harness.continueChat(...args),
                resolveUserInput: (...args) => globalThis.harness.resolveUserInput(...args),
                getSubagent: (...args) => globalThis.harness.getSubagent(...args)
@@ -367,4 +368,20 @@ test('question answer IPC forwards selected turn settings and validates permissi
   assert.equal(calls.length, 1)
   await handler({}, 'codex', 'chat', 'question', { kind: 'cancel' })
   assert.equal(calls[1][4], undefined)
+})
+
+test('sidebar search IPC forwards native queries and opaque cursors and rejects invalid input', async () => {
+  const h = setup()
+  const requests = []
+  h.harness.getChats = async (_provider, options) => {
+    requests.push(options)
+    return { chats: [], nextCursor: null }
+  }
+  const list = h.harness.handlers.get(channels.getChats)
+  await list({}, 'codex', { searchTerm: 'query', cursor: 'next', limit: 20 })
+  assert.equal(requests.at(-1).searchTerm, 'query')
+  assert.equal(requests.at(-1).cursor, 'next')
+  for (const searchTerm of ['', '  ', null, 123]) {
+    assert.throws(() => list({}, 'codex', { searchTerm }), /Invalid chat search term/)
+  }
 })

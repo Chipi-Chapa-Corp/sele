@@ -602,6 +602,8 @@ export type ProviderChat = {
 
 export type ProviderChatListOptions = ProviderSourceOptions & {
   cursor?: string | null
+  /** Native full-history search, currently supported by Codex. */
+  searchTerm?: string
   done?: boolean
   limit?: number | null
   projectCwd?: string

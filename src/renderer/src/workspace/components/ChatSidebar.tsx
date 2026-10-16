@@ -3,7 +3,7 @@ import { MotionListItem } from '../../motion/MotionListItem'
 import { AppUpdatePrompt } from './AppUpdatePrompt'
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import { Search, SquarePen, X } from 'lucide-react'
+import { LoaderCircle, Search, SquarePen, X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { ChatSidebarLoadingState } from '../../components/AppStatusStates'
@@ -29,6 +29,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     searchInputRef,
     searchOpen,
     searchQuery,
+    sidebarSearch,
     setSearchOpen,
     setSearchQuery
   } = props
@@ -62,11 +63,21 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
                 type="search"
                 value={searchQuery}
                 placeholder="Search conversations"
+                aria-busy={sidebarSearch.loading}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') handleCloseSearch()
                 }}
               />
+              {sidebarSearch.loading && (
+                <span
+                  className="chat-home__search-spinner"
+                  role="status"
+                  aria-label="Searching conversations"
+                >
+                  <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
+                </span>
+              )}
             </div>
             <Button
               theme={chromeControlTheme}
@@ -108,11 +119,15 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           <ChatSidebarLoadingState label="Loading conversations" />
         )}
         {loadState === 'error' && <p className="chat__status">Unable to load chats.</p>}
-        {loadState === 'ready' && chats.length === 0 && (
-          <p className="chat__status">No chats found.</p>
+        {loadState === 'ready' && !hasVisibleGroups && !sidebarSearch.loading && (
+          <p className="chat__status">
+            {searchQuery.trim() ? 'No matching chats.' : 'No chats found.'}
+          </p>
         )}
-        {loadState === 'ready' && chats.length > 0 && !hasVisibleGroups && (
-          <p className="chat__status">No matching chats.</p>
+        {sidebarSearch.error && (
+          <p className="chat__status" role="status">
+            {sidebarSearch.error}
+          </p>
         )}
         <div
           className="chat-list-stack"
@@ -127,6 +142,14 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
             ))}
           </AnimatePresence>
         </div>
+        {sidebarSearch.hasMore && (
+          <Button
+            theme="transparent"
+            label="More search results"
+            disabled={sidebarSearch.loading}
+            callback={sidebarSearch.loadMore}
+          />
+        )}
       </div>
       <AppUpdatePrompt />
     </aside>
