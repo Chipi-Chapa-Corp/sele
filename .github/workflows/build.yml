@@ -184,6 +184,9 @@ jobs:
       - name: Build Flatpak bundle
         run: npm run build:linux -- --x64 --publish never
 
+      - name: Package Linux tarball
+        run: npm run package:linux-tarball
+
       - name: Build Flatpak update repository
         run: npm run package:flatpak-repo
 
@@ -191,6 +194,9 @@ jobs:
         run: |
           test -f dist/sele-linux-x64.flatpak
           test -f dist/sele-linux-x64.tar.gz
+          archive_contents="$(tar -tzf dist/sele-linux-x64.tar.gz)"
+          grep -Fxq './sele' <<< "$archive_contents"
+          grep -Fxq './resources/app.asar' <<< "$archive_contents"
           test -f dist/sele.flatpakrepo
           test -f dist/flatpak-pages/flatpak/summary
           test -f dist/flatpak-pages/flatpak/sele.flatpakref
