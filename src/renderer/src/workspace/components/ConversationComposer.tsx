@@ -280,6 +280,72 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             </div>
           </section>
         )}
+        {!selectedChat && newChatOpen && worktreeCreationState !== 'idle' && (
+          <section className="chat-approval chat-worktree-creation" aria-label="Worktree creation">
+            <div className="chat-approval__main">
+              <span className="chat-approval__label">Creating worktree</span>
+            </div>
+            <div className="chat-approval__actions">
+              <Button
+                disabled={worktreeCreationState === 'canceling'}
+                callback={() => void handleCancelWorktreeCreation()}
+                icon={<X aria-hidden="true" />}
+                label={<span>Cancel</span>}
+                theme="secondary"
+              />
+            </div>
+          </section>
+        )}
+        {selectedChat && !activeSubagentChatView && pendingApproval && (
+          <section className="chat-approval" aria-label="Approval request">
+            <div className="chat-approval__main">
+              <span className="chat-approval__label">
+                {approvalTypeLabels[pendingApproval.type]}
+              </span>
+              <span className="chat-approval__summary" title={getApprovalSummary(pendingApproval)}>
+                {getApprovalSummary(pendingApproval)}
+              </span>
+              {pendingApproval.cwd && pendingApproval.command && (
+                <span className="chat-approval__cwd" title={pendingApproval.cwd}>
+                  {pendingApproval.cwd}
+                </span>
+              )}
+              {approvalError && (
+                <span className="chat-approval__error" role="status">
+                  {approvalError}
+                </span>
+              )}
+            </div>
+            <div className="chat-approval__actions">
+              <Button
+                disabled={providerUpdateInProgress || Boolean(approvalDecisionInFlight)}
+                callback={() => void handleResolveApproval('deny')}
+                icon={<X aria-hidden="true" />}
+                label={<span>Deny</span>}
+                theme="secondary"
+              />
+              <Button
+                disabled={providerUpdateInProgress || Boolean(approvalDecisionInFlight)}
+                callback={() => void handleResolveApproval('allow')}
+                icon={<Check aria-hidden="true" />}
+                label={<span>Allow</span>}
+                theme="primary"
+              />
+            </div>
+          </section>
+        )}
+        {selectedChat && !activeSubagentChatView && pendingUserInput && (
+          <UserInputRequestBox
+            disabled={providerUpdateInProgress || userInputResolving}
+            error={userInputError}
+            key={pendingUserInput.id}
+            request={pendingUserInput}
+            onCancel={() => resolveSelectedUserInput({ kind: 'cancel' })}
+            onSubmit={(answer, wasFreeform) =>
+              resolveSelectedUserInput({ kind: 'answer', answer, wasFreeform })
+            }
+          />
+        )}
       </div>
       {!selectedChat && newChatOpen && (
         <div className="chat-panel__new-session">
@@ -390,78 +456,6 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
       )}
       <div className="chat-panel__composer-input">
         <div className="chat-panel__composer-inner">
-          {!selectedChat && newChatOpen && worktreeCreationState !== 'idle' && (
-            <section
-              className="chat-approval chat-worktree-creation"
-              aria-label="Worktree creation"
-            >
-              <div className="chat-approval__main">
-                <span className="chat-approval__label">Creating worktree</span>
-              </div>
-              <div className="chat-approval__actions">
-                <Button
-                  disabled={worktreeCreationState === 'canceling'}
-                  callback={() => void handleCancelWorktreeCreation()}
-                  icon={<X aria-hidden="true" />}
-                  label={<span>Cancel</span>}
-                  theme="secondary"
-                />
-              </div>
-            </section>
-          )}
-          {selectedChat && !activeSubagentChatView && pendingApproval && (
-            <section className="chat-approval" aria-label="Approval request">
-              <div className="chat-approval__main">
-                <span className="chat-approval__label">
-                  {approvalTypeLabels[pendingApproval.type]}
-                </span>
-                <span
-                  className="chat-approval__summary"
-                  title={getApprovalSummary(pendingApproval)}
-                >
-                  {getApprovalSummary(pendingApproval)}
-                </span>
-                {pendingApproval.cwd && pendingApproval.command && (
-                  <span className="chat-approval__cwd" title={pendingApproval.cwd}>
-                    {pendingApproval.cwd}
-                  </span>
-                )}
-                {approvalError && (
-                  <span className="chat-approval__error" role="status">
-                    {approvalError}
-                  </span>
-                )}
-              </div>
-              <div className="chat-approval__actions">
-                <Button
-                  disabled={providerUpdateInProgress || Boolean(approvalDecisionInFlight)}
-                  callback={() => void handleResolveApproval('deny')}
-                  icon={<X aria-hidden="true" />}
-                  label={<span>Deny</span>}
-                  theme="secondary"
-                />
-                <Button
-                  disabled={providerUpdateInProgress || Boolean(approvalDecisionInFlight)}
-                  callback={() => void handleResolveApproval('allow')}
-                  icon={<Check aria-hidden="true" />}
-                  label={<span>Allow</span>}
-                  theme="primary"
-                />
-              </div>
-            </section>
-          )}
-          {selectedChat && !activeSubagentChatView && pendingUserInput && (
-            <UserInputRequestBox
-              disabled={providerUpdateInProgress || userInputResolving}
-              error={userInputError}
-              key={pendingUserInput.id}
-              request={pendingUserInput}
-              onCancel={() => resolveSelectedUserInput({ kind: 'cancel' })}
-              onSubmit={(answer, wasFreeform) =>
-                resolveSelectedUserInput({ kind: 'answer', answer, wasFreeform })
-              }
-            />
-          )}
           <MessageBox
             active={activeSubagentChatView ? false : editingMessage ? false : chatHasActiveTurn}
             activePrimaryMode="queue"
