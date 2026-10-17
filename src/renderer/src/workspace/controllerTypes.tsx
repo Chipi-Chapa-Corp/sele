@@ -124,6 +124,8 @@ export type SubagentChatView = {
   loadState: LoadState
   error: string | null
   pageLoading?: boolean
+  /** Bumped after the user messages the subagent so a settled transcript resumes polling. */
+  refreshRequest?: number
 }
 
 export type DirectCommitActivity = {

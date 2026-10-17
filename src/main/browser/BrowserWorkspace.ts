@@ -5,6 +5,7 @@ import {
   type BrowserAutomationTab
 } from '../../shared/browser'
 import { BrowserAccessibility, type BrowserTreeOptions } from './BrowserAccessibility'
+import { BrowserRecording, saveBrowserArtifact, type BrowserArtifact } from './BrowserArtifacts'
 import type {
   BrowserAutomationClient,
   BrowserAutomationService,
@@ -37,6 +38,8 @@ type Page = {
   ready: Promise<void>
   console: ConsoleEntry[]
   network: Map<string, NetworkEntry>
+  dialog?: { type: string; message: string; defaultPrompt?: string; url?: string }
+  recording?: BrowserRecording
 }
 export type BrowserComputerAction = {
   action:
@@ -81,6 +84,7 @@ export class BrowserWorkspace {
   private closed = false
   private queue: Promise<unknown> = Promise.resolve()
   private controller = new AbortController()
+  private downloadBaselines = new Map<number, Set<string>>()
 
   constructor(service: BrowserAutomationService, scope: BrowserAutomationScope) {
     this.client = service.createClient(scope, (event) => this.onEvent(event))
@@ -102,8 +106,10 @@ export class BrowserWorkspace {
     if (this.closed) return
     this.closed = true
     this.controller.abort()
+    for (const page of this.pages.values()) page.recording?.close()
     this.client.close()
     this.pages.clear()
+    this.downloadBaselines.clear()
   }
 
   private assertOpen(): void {
@@ -111,14 +117,28 @@ export class BrowserWorkspace {
   }
 
   private onEvent(event: BrowserCdpEvent): void {
+    if (event.type === 'download') return
+    if (event.type === 'detach') this.downloadBaselines.delete(event.tabId)
     const page = this.pages.get(event.tabId)
     if (!page) return
     if (event.type === 'detach') {
+      page.recording?.close()
       page.accessibility.clear()
       this.pages.delete(event.tabId)
       return
     }
     const params = event.params
+    if (event.method === 'Page.javascriptDialogOpening') {
+      page.dialog = {
+        type: String(params.type),
+        message: String(params.message),
+        ...(typeof params.defaultPrompt === 'string'
+          ? { defaultPrompt: params.defaultPrompt }
+          : {}),
+        ...(typeof params.url === 'string' ? { url: params.url } : {})
+      }
+    }
+    if (event.method === 'Page.javascriptDialogClosed') page.dialog = undefined
     if (
       event.method === 'Page.frameNavigated' &&
       !(params.frame as { parentId?: string })?.parentId
@@ -315,6 +335,151 @@ export class BrowserWorkspace {
 
   async fill(ref: string, value: string | number | boolean, id?: number): Promise<void> {
     await (await this.page(id)).page.accessibility.fill(ref, value)
+  }
+
+  async uploadFiles(
+    options: { paths: string[]; ref?: string; selector?: string },
+    id?: number
+  ): Promise<{ files: number }> {
+    if ((!options.ref && !options.selector) || (options.ref && options.selector))
+      throw new Error('Provide exactly one file input ref or CSS selector')
+    const { page } = await this.page(id)
+    let node: { backendNodeId?: number; nodeId?: number }
+    if (options.ref) node = { backendNodeId: page.accessibility.backendNodeId(options.ref) }
+    else {
+      const { root } = await page.cdp<{ root: { nodeId: number } }>('DOM.getDocument')
+      const { nodeIds } = await page.cdp<{ nodeIds: number[] }>('DOM.querySelectorAll', {
+        nodeId: root.nodeId,
+        selector: options.selector
+      })
+      if (nodeIds.length !== 1)
+        throw new Error('File input selector must match exactly one element')
+      node = { nodeId: nodeIds[0] }
+    }
+    const { node: input } = await page.cdp<{ node: { nodeName: string; attributes?: string[] } }>(
+      'DOM.describeNode',
+      node
+    )
+    const attributes = new Map<string, string>()
+    for (let index = 0; index < (input.attributes?.length ?? 0); index += 2)
+      attributes.set(input.attributes![index], input.attributes![index + 1])
+    if (
+      input.nodeName.toLowerCase() !== 'input' ||
+      attributes.get('type')?.toLowerCase() !== 'file'
+    )
+      throw new Error('Upload target must be an input[type=file] element')
+    if (attributes.has('disabled')) throw new Error('File input is disabled')
+    if (options.paths.length > 1 && !attributes.has('multiple'))
+      throw new Error('This file input does not accept multiple files')
+    await page.cdp('DOM.setFileInputFiles', { ...node, files: options.paths })
+    return { files: options.paths.length }
+  }
+
+  async downloads(
+    options: {
+      action: 'allow' | 'list' | 'wait'
+      url?: string
+      timeoutMs?: number
+      downloadId?: string
+    },
+    id?: number
+  ): Promise<unknown> {
+    const tab = await this.tab(id)
+    if (options.action === 'allow') {
+      if (!options.url) throw new Error('Allowing a download requires its exact URL')
+      const previous = await this.client.listDownloads(tab.id)
+      await this.client.allowDownload(tab.id, options.url)
+      this.downloadBaselines.set(tab.id, new Set(previous.map((download) => download.id)))
+      return { allowed: true }
+    }
+    if (options.action === 'list') return this.client.listDownloads(tab.id)
+    const timeout = options.timeoutMs ?? 30000
+    if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 120000)
+      throw new Error('Download timeout must be between 1 and 120000 milliseconds')
+    const deadline = Date.now() + timeout
+    do {
+      const downloads = await this.client.listDownloads(tab.id)
+      const download = options.downloadId
+        ? downloads.find((entry) => entry.id === options.downloadId)
+        : downloads.filter((entry) => !this.downloadBaselines.get(tab.id)?.has(entry.id)).at(-1)
+      if (download?.status === 'complete') return download
+      if (download && ['failed', 'canceled'].includes(download.status))
+        throw new Error(`Download ${download.status}`)
+      await this.delay(50)
+    } while (Date.now() < deadline)
+    throw new Error('Timed out waiting for download; allow its URL and trigger it before waiting')
+  }
+
+  async dialog(
+    options: { action: 'status' | 'accept' | 'dismiss'; promptText?: string },
+    id?: number
+  ): Promise<unknown> {
+    const { page } = await this.page(id)
+    if (options.action === 'status') return { dialog: page.dialog ?? null }
+    if (!page.dialog) throw new Error('No JavaScript dialog is open in this tab')
+    await page.cdp('Page.handleJavaScriptDialog', {
+      accept: options.action === 'accept',
+      ...(options.promptText === undefined ? {} : { promptText: options.promptText })
+    })
+    page.dialog = undefined
+    return { handled: true }
+  }
+
+  async screenshotFile(
+    options: { path: string; fullPage?: boolean; scale?: number },
+    id?: number
+  ): Promise<BrowserArtifact> {
+    const { page } = await this.page(id)
+    let shot: { data: string }
+    if (options.fullPage) {
+      const scale = options.scale ?? 1
+      if (!Number.isFinite(scale) || scale < 0.1 || scale > 1)
+        throw new Error('Invalid screenshot scale')
+      const { cssContentSize } = await page.cdp<{
+        cssContentSize: { x: number; y: number; width: number; height: number }
+      }>('Page.getLayoutMetrics')
+      if (cssContentSize.width * cssContentSize.height * scale * scale > 32_000_000)
+        throw new Error('Full-page screenshot exceeds the 32 megapixel limit; reduce scale')
+      shot = await page.cdp<{ data: string }>('Page.captureScreenshot', {
+        format: 'png',
+        fromSurface: true,
+        captureBeyondViewport: true,
+        clip: { ...cssContentSize, scale }
+      })
+    } else shot = await this.screenshot(id, options.scale)
+    this.assertOpen()
+    return saveBrowserArtifact(options.path, Buffer.from(shot.data, 'base64'), 'image/png')
+  }
+
+  async printPdf(
+    options: { path: string; landscape?: boolean; printBackground?: boolean },
+    id?: number
+  ): Promise<BrowserArtifact> {
+    const { page } = await this.page(id)
+    const { data } = await page.cdp<{ data: string }>('Page.printToPDF', {
+      landscape: options.landscape ?? false,
+      printBackground: options.printBackground ?? true,
+      preferCSSPageSize: true
+    })
+    this.assertOpen()
+    return saveBrowserArtifact(options.path, Buffer.from(data, 'base64'), 'application/pdf')
+  }
+
+  async recording(
+    options: { action: 'start' | 'stop' | 'status' | 'discard'; path?: string },
+    id?: number
+  ): Promise<unknown> {
+    const { page, id: tabId } = await this.page(id)
+    if (options.action === 'discard') {
+      page.recording?.close()
+      page.recording = undefined
+      return { active: false, frames: 0 }
+    }
+    if (!page.recording) page.recording = new BrowserRecording(() => this.screenshot(tabId))
+    if (options.action === 'start') return page.recording.start()
+    if (options.action === 'status') return page.recording.status()
+    if (!options.path) throw new Error('Stopping a recording requires an absolute output path')
+    return page.recording.stop(options.path)
   }
 
   private async viewport(page: Page): Promise<{ width: number; height: number }> {

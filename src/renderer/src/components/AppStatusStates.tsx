@@ -200,7 +200,7 @@ export const ChatSubagentMarkerItem: React.FC<{
 
   return (
     <div
-      className={`chat-detail__commit-marker chat-detail__commit-marker--${presentation.status}`}
+      className={`chat-detail__commit-marker chat-detail__subagent-marker chat-detail__commit-marker--${presentation.status}`}
       role="status"
       aria-live={presentation.status === 'pending' ? 'polite' : undefined}
     >

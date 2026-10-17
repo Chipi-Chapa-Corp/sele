@@ -1,3 +1,4 @@
+import type { ProviderConnectInput } from '../../shared/providerConnections'
 import { normalizeNetworkRetrySettings, type NetworkRetrySettings } from '../../shared/networkRetry'
 import { handleLoggedIpc, logDiagnostic } from '../logging'
 import type { ProviderConfigValue } from '../../shared/provider'
@@ -594,7 +595,11 @@ const requireUserInputResponse = (value: unknown): ProviderUserInputResponse => 
     throw new Error('Invalid user input response')
   }
 
-  const response = value as { kind?: unknown; answer?: unknown; wasFreeform?: unknown }
+  const response = value as {
+    kind?: unknown
+    answer?: unknown
+    wasFreeform?: unknown
+  }
   if (response.kind === 'cancel') return { kind: 'cancel' }
   if (
     response.kind !== 'answer' ||
@@ -616,6 +621,41 @@ const requireUserInputResponse = (value: unknown): ProviderUserInputResponse => 
 const requireActiveSendMode = (value: unknown): ProviderActiveSendMode => {
   if (!isProviderActiveSendMode(value)) throw new Error('Invalid active send mode')
   return value
+}
+
+const requireConnectionString = (value: unknown): string => {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid connection value')
+  return value.trim()
+}
+
+const requireConnectionInput = (value: unknown): ProviderConnectInput => {
+  if (!value || typeof value !== 'object') throw new Error('Invalid connection input')
+  const input = value as Record<string, unknown>
+  const integrationId = requireConnectionString(input.integrationId)
+  if (
+    input.inputs !== undefined &&
+    (!input.inputs ||
+      typeof input.inputs !== 'object' ||
+      Array.isArray(input.inputs) ||
+      Object.values(input.inputs).some((value) => typeof value !== 'string'))
+  )
+    throw new Error('Invalid connection inputs')
+  if (input.method === 'key') {
+    return {
+      integrationId,
+      method: 'key',
+      key: requireConnectionString(input.key),
+      ...(input.inputs ? { inputs: input.inputs as Record<string, string> } : {})
+    }
+  }
+  if (input.method !== 'oauth') throw new Error('Invalid connection method')
+  const methodId = requireConnectionString(input.methodId)
+  return {
+    integrationId,
+    method: 'oauth',
+    methodId,
+    inputs: input.inputs as Record<string, string> | undefined
+  }
 }
 
 const requireSourceOptions = (value: unknown): ProviderSourceOptions | undefined => {
@@ -788,7 +828,11 @@ const requireReview = (value: unknown): ProviderReview | undefined => {
     throw new Error('Invalid review')
   }
 
-  const review = value as { id?: unknown; prompt?: unknown; comments?: unknown }
+  const review = value as {
+    id?: unknown
+    prompt?: unknown
+    comments?: unknown
+  }
   if (
     typeof review.id !== 'string' ||
     !/^[A-Za-z0-9:_-]{1,200}$/.test(review.id) ||
@@ -1281,6 +1325,56 @@ export const registerProviderIpc = (): void => {
       )
   )
 
+  handleLoggedIpc(providerIpcChannels.getConnections, (_, providerId: unknown, options: unknown) =>
+    providerApi.getConnections(requireProviderId(providerId), requireSourceOptions(options))
+  )
+  handleLoggedIpc(
+    providerIpcChannels.connectProvider,
+    (_, providerId: unknown, input: unknown, options: unknown) =>
+      providerApi.connectProvider(
+        requireProviderId(providerId),
+        requireConnectionInput(input),
+        requireSourceOptions(options)
+      )
+  )
+  handleLoggedIpc(
+    providerIpcChannels.getConnectionAttempt,
+    (_, providerId: unknown, attemptId: unknown, options: unknown) =>
+      providerApi.getConnectionAttempt(
+        requireProviderId(providerId),
+        requireConnectionString(attemptId),
+        requireSourceOptions(options)
+      )
+  )
+  handleLoggedIpc(
+    providerIpcChannels.completeConnection,
+    (_, providerId: unknown, attemptId: unknown, code: unknown, options: unknown) =>
+      providerApi.completeConnection(
+        requireProviderId(providerId),
+        requireConnectionString(attemptId),
+        requireConnectionString(code),
+        requireSourceOptions(options)
+      )
+  )
+  handleLoggedIpc(
+    providerIpcChannels.cancelConnection,
+    (_, providerId: unknown, attemptId: unknown, options: unknown) =>
+      providerApi.cancelConnection(
+        requireProviderId(providerId),
+        requireConnectionString(attemptId),
+        requireSourceOptions(options)
+      )
+  )
+  handleLoggedIpc(
+    providerIpcChannels.deleteConnection,
+    (_, providerId: unknown, credentialId: unknown, options: unknown) =>
+      providerApi.deleteConnection(
+        requireProviderId(providerId),
+        requireConnectionString(credentialId),
+        requireSourceOptions(options)
+      )
+  )
+
   handleLoggedIpc(providerIpcChannels.getConfig, (_, providerId: unknown, options: unknown) =>
     providerApi.getConfig(requireProviderId(providerId), requireSourceOptions(options))
   )
@@ -1477,6 +1571,17 @@ export const registerProviderIpc = (): void => {
         requireProviderId(providerId),
         requireChatId(chatId),
         requireChatId(subagentId)
+      )
+  )
+
+  handleLoggedIpc(
+    providerIpcChannels.sendSubagentMessage,
+    (_, providerId: unknown, chatId: unknown, subagentId: unknown, message: unknown) =>
+      providerApi.sendSubagentMessage(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireChatId(subagentId),
+        requireMessage(message)
       )
   )
 
@@ -1961,8 +2066,8 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(providerIpcChannels.markCwdChatsDone, (_, providerId: unknown, cwd: unknown) =>
-    providerApi.markCwdChatsDone(requireProviderId(providerId), requireOptionalCwd(cwd))
+  handleLoggedIpc(providerIpcChannels.markChatsDone, (_, chatIds: unknown) =>
+    providerApi.markChatsDone(requireChatIds(chatIds))
   )
 
   handleLoggedIpc(providerIpcChannels.getCwdNotes, (_, providerId: unknown, cwd: unknown) =>

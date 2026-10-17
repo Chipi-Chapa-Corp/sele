@@ -331,7 +331,9 @@ const contentToDiff = (content: string, kind: 'create' | 'delete'): string => {
 
 const toUnifiedDiff = ({ diff, kind }: ProviderFileDiff): string => {
   const normalized = diff.replace(/\r\n?/g, '\n')
-  const trimmed = normalized.trimStart()
+  // jsdiff's createPatch (used by OpenCode) prefixes the patch with an
+  // "Index: <path>" line and a "====" separator before the ---/+++ headers.
+  const trimmed = normalized.trimStart().replace(/^Index: [^\n]*\n(?:=+\n)?/, '')
 
   if (trimmed.startsWith('diff --git ')) return trimmed
   if (trimmed.startsWith('--- ')) return `diff --git a/file b/file\n${trimmed}`

@@ -27,6 +27,12 @@ const bundled = await build({
             ? `export const handleLoggedIpc = (channel, handler) => globalThis.harness.handlers.set(channel, handler);
              export const logDiagnostic = (...args) => globalThis.harness.logs.push(args);`
             : `export const providerApi = {
+               getConnections: (...args) => globalThis.harness.connection('list', ...args),
+               connectProvider: (...args) => globalThis.harness.connection('connect', ...args),
+               getConnectionAttempt: (...args) => globalThis.harness.connection('status', ...args),
+               completeConnection: (...args) => globalThis.harness.connection('complete', ...args),
+               cancelConnection: (...args) => globalThis.harness.connection('cancel', ...args),
+               deleteConnection: (...args) => globalThis.harness.connection('delete', ...args),
                onChatUpdated: listener => { globalThis.harness.publish = listener },
                getChat: (...args) => globalThis.harness.getChat(...args),
                getChats: (...args) => globalThis.harness.getChats(...args),
@@ -384,4 +390,65 @@ test('sidebar search IPC forwards native queries and opaque cursors and rejects 
   for (const searchTerm of ['', '  ', null, 123]) {
     assert.throws(() => list({}, 'codex', { searchTerm }), /Invalid chat search term/)
   }
+})
+
+test('connection IPC validates secrets and forwards each operation to the selected source', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.connection = async (...args) => {
+    calls.push(JSON.parse(JSON.stringify(args)))
+    return []
+  }
+  const source = { container: { kind: 'container', tool: 'toolbox', name: 'fixture' } }
+  const invoke = (channel, ...args) => h.harness.handlers.get(channel)({}, 'opencode', ...args)
+  await invoke(channels.getConnections, source)
+  await invoke(
+    channels.connectProvider,
+    { integrationId: 'openai', method: 'key', key: ' fixture-key ' },
+    source
+  )
+  assert.deepEqual(calls.at(-1), [
+    'connect',
+    'opencode',
+    { integrationId: 'openai', method: 'key', key: 'fixture-key' },
+    source
+  ])
+  await invoke(
+    channels.connectProvider,
+    {
+      integrationId: 'copilot',
+      method: 'oauth',
+      methodId: '0',
+      inputs: { domain: 'fixture.test' }
+    },
+    source
+  )
+  assert.deepEqual(calls.at(-1)[2].inputs, { domain: 'fixture.test' })
+  for (const channel of [
+    channels.getConnectionAttempt,
+    channels.cancelConnection,
+    channels.deleteConnection
+  ]) {
+    await invoke(channel, 'identifier', source)
+    assert.deepEqual(calls.at(-1).at(-1), source)
+  }
+  await invoke(channels.completeConnection, 'attempt', ' code ', source)
+  assert.deepEqual(calls.at(-1), ['complete', 'opencode', 'attempt', 'code', source])
+  for (const input of [
+    null,
+    {},
+    { integrationId: 'openai', method: 'key', key: '' },
+    { integrationId: 'copilot', method: 'oauth', methodId: '0', inputs: { key: 42 } },
+    { integrationId: 'openai', method: 'invalid' }
+  ]) {
+    assert.throws(() => invoke(channels.connectProvider, input, source), /Invalid connection/)
+  }
+  assert.throws(
+    () => invoke(channels.completeConnection, 'attempt', '', source),
+    /Invalid connection/
+  )
+  assert.throws(
+    () => invoke(channels.getConnections, { container: { kind: 'invalid' } }),
+    /Invalid/
+  )
 })

@@ -3665,6 +3665,15 @@ export const useWorkspaceController = () => {
     setAccountUsage(null)
     setAccountUsageState('loading')
   }
+  const handleProviderConnectionsChanged = (
+    providerId: ProviderId,
+    container: AppContainerTarget
+  ): void => {
+    providerModelCatalogCacheRef.current.delete(`${providerId}:${getContainerTargetKey(container)}`)
+    setProviderModelsRevision((revision) => revision + 1)
+    setProviderAccountsRefresh((revision) => revision + 1)
+    setProviderResourcesRefresh((revision) => revision + 1)
+  }
   const handleUseProviderAccount = async (accountId: string): Promise<void> => {
     if (providerAccountUpdatingId) return
     const container = normalizeContainerTarget(newSessionContainer)
@@ -4812,6 +4821,7 @@ export const useWorkspaceController = () => {
     worktreeBranchGenerationRef,
     providerUpdateInProgress,
     activeSubagentChatView,
+    setSubagentChatView,
     selectedChat,
     newSessionCwd,
     sendInFlightProjectKeyRef,
@@ -5414,6 +5424,7 @@ export const useWorkspaceController = () => {
   const windowControlsHidden = settingsPanelSettings.appearance.position === 'hidden'
 
   const settingsPanelProps: SettingsPanelProps = {
+    handleProviderConnectionsChanged,
     appearanceFontSizeInputDraft,
     appearanceZoomLevelInput,
     browserDefaultScaleInput,

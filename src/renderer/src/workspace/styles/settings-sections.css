@@ -259,3 +259,10 @@
   font: inherit;
   font-weight: 400;
 }
+
+.settings-dialog__connection-input {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+}

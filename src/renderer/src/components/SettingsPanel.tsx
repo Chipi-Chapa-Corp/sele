@@ -130,6 +130,7 @@ export type SettingsPanelProps = {
     value: number
   ) => void
   handleContinuePromptChange: (continuePrompt: string) => void
+  handleProviderConnectionsChanged: (providerId: ProviderId, container: AppContainerTarget) => void
   handleDeleteProviderAccount: (accountId: string) => Promise<void>
   handleGitCommitMessageGenerationChange: (
     key: keyof AppGitCommitMessageGenerationSettings,
@@ -382,6 +383,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     handleNetworkRetrySettingChange,
     handleContinuePromptChange,
     handleDeleteProviderAccount,
+    handleProviderConnectionsChanged,
     handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange,
     handleGitCommitPromptChange,
@@ -679,6 +681,10 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
           />
         </div>
         <ProviderSettingsContent
+          key={newSessionProvider}
+          onConnectionsChanged={() =>
+            handleProviderConnectionsChanged(newSessionProvider, props.newSessionContainer)
+          }
           providerId={newSessionProvider}
           container={props.newSessionContainer}
         >

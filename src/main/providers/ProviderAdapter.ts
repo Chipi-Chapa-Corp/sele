@@ -138,6 +138,13 @@ export type ProviderAdapter = {
     subagentId: string,
     options?: { container?: AppContainerTarget | null }
   ) => Promise<void>
+  /** Deliver user input to a subagent's own thread; only for subagents with `canMessage`. */
+  sendSubagentMessage?: (
+    chatId: string,
+    subagentId: string,
+    message: string,
+    options?: { container?: AppContainerTarget | null }
+  ) => Promise<void>
   setChatGoal?: (
     chatId: string,
     objective: string | null,

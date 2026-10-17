@@ -54,6 +54,7 @@ type Segment = {
   entries: ProviderConversationEntry[]
   failed: boolean
   failureMessage?: string
+  stopped?: boolean
 }
 
 const maxToolOutputLength = 160_000
@@ -534,6 +535,7 @@ export const renderCopilotChatItems = (
     const currentSegment = segment
     segment = null
     const failed = currentSegment.failed || (isLast && options.failed === true)
+    const stopped = currentSegment.stopped === true || (isLast && options.stopped)
     const finalMessageIndex = currentSegment.entries.findLastIndex(
       (entry) => entry.kind === 'assistant'
     )
@@ -547,12 +549,13 @@ export const renderCopilotChatItems = (
         active: isLast && options.active,
         completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
         failed,
-        stopped: isLast && options.stopped
+        stopped
       },
       showWorking:
         currentSegment.entries.some((entry) => entry.kind === 'working') ||
         (isLast && options.active) ||
-        failed,
+        failed ||
+        stopped,
       ...(failed && currentSegment.failureMessage
         ? { failureMessage: currentSegment.failureMessage }
         : {})
@@ -693,6 +696,12 @@ export const renderCopilotChatItems = (
       continue
     }
 
+    if (event.type === 'abort') {
+      // A user abort marks its turn as stopped; the event itself carries nothing to show.
+      if (segment) segment.stopped = true
+      continue
+    }
+
     if (event.type === 'session.error') {
       const currentSegment = ensureSegment(event.id)
       currentSegment.failed = true
@@ -748,6 +757,7 @@ const classifyCopilotTurnRecord = (message: SessionEvent): 'start' | 'content' |
     message.type === 'assistant.intent' ||
     message.type.startsWith('tool.execution_') ||
     message.type === 'session.error' ||
+    message.type === 'abort' ||
     message.type === 'session.compaction_complete' ||
     message.type === 'session.task_complete'
     ? 'content'

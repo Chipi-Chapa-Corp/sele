@@ -19,8 +19,14 @@ export function registerBrowserUseSession(
   container: AppContainerTarget | null
 ): void {
   // Remote providers need a forwarded transport, not access to an unrelated local browser.
-  if (container?.kind === 'container' && container.tool === 'ssh') return
   const existing = sessions.get(sessionId)
+  if (container?.kind === 'container' && container.tool === 'ssh') {
+    if (existing) {
+      sessions.delete(sessionId)
+      for (const listener of removedListeners) listener(sessionId)
+    }
+    return
+  }
   if (
     existing &&
     (existing.owner !== owner ||

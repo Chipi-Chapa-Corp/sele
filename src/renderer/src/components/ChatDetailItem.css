@@ -350,6 +350,7 @@
 }
 
 .chat-detail__step > summary,
+.chat-detail__thought > summary,
 .chat-detail__tool-sequence > summary,
 .chat-detail__tool-group > summary {
   display: flex;
@@ -366,24 +367,28 @@
 }
 
 .chat-detail__step > summary:hover,
+.chat-detail__thought > summary:hover,
 .chat-detail__tool-sequence > summary:hover,
 .chat-detail__tool-group > summary:hover {
   color: var(--ink);
 }
 
 .chat-detail__step > summary::-webkit-details-marker,
+.chat-detail__thought > summary::-webkit-details-marker,
 .chat-detail__tool-sequence > summary::-webkit-details-marker,
 .chat-detail__tool-group > summary::-webkit-details-marker {
   display: none;
 }
 
 .chat-detail__step > summary::marker,
+.chat-detail__thought > summary::marker,
 .chat-detail__tool-sequence > summary::marker,
 .chat-detail__tool-group > summary::marker {
   content: '';
 }
 
 details.chat-detail__step:not([open]) > :not(summary),
+details.chat-detail__thought:not([open]) > :not(summary),
 details.chat-detail__tool-sequence:not([open]) > :not(summary),
 details.chat-detail__tool-group:not([open]) > :not(summary) {
   display: none;
@@ -398,6 +403,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 }
 
 .chat-detail__step[open] > summary .chat-detail__summary-chevron,
+.chat-detail__thought[open] > summary .chat-detail__summary-chevron,
 .chat-detail__tool-sequence[open] > summary .chat-detail__summary-chevron,
 .chat-detail__tool-group[open] > summary .chat-detail__summary-chevron {
   transform: rotate(90deg);
@@ -539,6 +545,34 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   max-width: 100%;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.chat-detail__thought {
+  min-width: 0;
+  max-width: 100%;
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.35rem;
+}
+
+.chat-detail__thought > summary {
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  color: var(--quiet);
+}
+
+.chat-detail__thought-content {
+  max-height: 21rem;
+  padding: 0.65rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-top: 0.0625rem solid var(--line);
+}
+
+.chat-detail__thought > summary:focus-visible,
+.chat-detail__thought-content:focus-visible {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: -0.125rem;
+  border-radius: 0.25rem;
 }
 
 .chat-detail__message-markdown {

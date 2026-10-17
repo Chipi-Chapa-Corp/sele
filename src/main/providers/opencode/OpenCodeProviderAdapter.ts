@@ -1,3 +1,18 @@
+import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
+import type {
+  ProviderConnectInput,
+  ProviderConnection,
+  ProviderConnectionAttempt,
+  ProviderConnectionAttemptStatus
+} from '../../../shared/providerConnections'
+import {
+  listOpenCodeConnections,
+  connectOpenCode,
+  getOpenCodeConnectionAttempt,
+  completeOpenCodeConnection,
+  cancelOpenCodeConnection,
+  deleteOpenCodeConnection
+} from './OpenCodeConnections'
 import { TokenUsageReporter } from '../TokenUsageReporter.ts'
 import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
 import { setNativeModelPricing } from '../modelPricing/TokenPricing'
@@ -64,6 +79,7 @@ import {
 } from '../providerResources'
 import {
   getOpenCodeErrorMessage,
+  isOpenCodeAbortError,
   getOpenCodeDisplayTitle,
   renderOpenCodeChatItems,
   renderOpenCodeChatWindow,
@@ -85,7 +101,12 @@ import { getOpenCodePermissionRules } from './OpenCodePermissions'
 import { OpenCodeServerClient } from './OpenCodeServerClient'
 import { getOpenCodeUpdateAvailability, updateOpenCodeProvider } from './OpenCodeProviderUpdate'
 import { parseOpenCodeSessionEvent } from './OpenCodeEvents'
-import { createOpenCodeSubagentSummary, isOpenCodeSubagentSession } from './OpenCodeSubagents'
+import {
+  createOpenCodeSubagentSummary,
+  getOpenCodeSubagentPromptSettings,
+  isOpenCodeSubagentSession
+} from './OpenCodeSubagents'
+import type { BrowserMcpIntegration } from '../../browser/BrowserMcpServer'
 
 type OpenCodeClientEntry = {
   server: OpenCodeServerClient
@@ -99,6 +120,8 @@ type QueuedOpenCodeMessage = ProviderPendingMessage & {
 }
 
 type OpenCodeChatState = {
+  browser: BrowserMcpIntegration | null
+  browserGeneration: number
   id: string
   revision: number
   directory: string
@@ -395,6 +418,46 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private canceledOneShotGenerationIds = new Set<string>()
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
+  getConnections = async (options: ProviderSourceOptions = {}): Promise<ProviderConnection[]> =>
+    listOpenCodeConnections((await this.getClientEntry(options.container)).client, () =>
+      readOpenCodeCredentialTypes(options.container)
+    )
+
+  connectProvider = async (
+    input: ProviderConnectInput,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderConnectionAttempt | null> =>
+    connectOpenCode((await this.getClientEntry(options.container)).client, input)
+
+  getConnectionAttempt = async (
+    attemptId: string,
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderConnectionAttemptStatus> =>
+    getOpenCodeConnectionAttempt((await this.getClientEntry(options.container)).client, attemptId)
+
+  completeConnection = async (
+    attemptId: string,
+    code: string,
+    options: ProviderSourceOptions = {}
+  ): Promise<void> =>
+    completeOpenCodeConnection(
+      (await this.getClientEntry(options.container)).client,
+      attemptId,
+      code
+    )
+
+  cancelConnection = async (
+    attemptId: string,
+    options: ProviderSourceOptions = {}
+  ): Promise<void> =>
+    cancelOpenCodeConnection((await this.getClientEntry(options.container)).client, attemptId)
+
+  deleteConnection = async (
+    credentialId: string,
+    options: ProviderSourceOptions = {}
+  ): Promise<void> =>
+    deleteOpenCodeConnection((await this.getClientEntry(options.container)).client, credentialId)
+
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
     const client = (await this.getClientEntry(options.container)).client
     const providers = requireData(await client.provider.list({}, { throwOnError: true }))
@@ -402,7 +465,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       .filter((provider) => providers.connected.includes(provider.id))
       .map((provider) => provider.name)
     if (connectedNames.length === 0) {
-      throw new Error('OpenCode has no connected model providers. Run `opencode auth login` first.')
+      throw new Error(
+        'OpenCode has no connected model providers. Add a connection in Settings → Providers → OpenCode → Connections.'
+      )
     }
     return {
       status: 'authenticated',
@@ -768,6 +833,40 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       state.active = false
       state.stopped = true
     }
+  }
+
+  sendSubagentMessage = async (
+    chatId: string,
+    subagentId: string,
+    message: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<void> => {
+    const text = message.trim()
+    if (!text) throw new Error('Cannot send an empty OpenCode message.')
+    const rootState = await this.ensureState(chatId, options.container)
+    const entry = await this.getClientEntry(rootState.container)
+    const sessions = await this.loadSubagentSessions(entry.client, rootState.session!)
+    const session = sessions.find((candidate) => candidate.id === subagentId)
+    if (!session) throw new Error('OpenCode subagent was not found.')
+
+    this.rememberSession(session, entry.container)
+    const state = await this.ensureState(subagentId, entry.container)
+    // Unlike root sends, keep the child's own permissions: its task tool scoped them on creation.
+    await entry.client.session.promptAsync(
+      {
+        sessionID: session.id,
+        directory: session.directory,
+        ...getOpenCodeSubagentPromptSettings(state.session ?? session, state.messages),
+        parts: [{ type: 'text', text }]
+      },
+      { throwOnError: true }
+    )
+    state.active = true
+    state.stopped = false
+    state.failed = false
+    state.failureMessage = null
+    this.scheduleUpdate(state.id)
+    this.scheduleUpdate(chatId)
   }
 
   setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {
@@ -1165,6 +1264,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
+    this.closeBrowser(state)
     const client = (await this.getClientEntry(state.container)).client
     state.stopped = true
     const pendingRequestResults = await Promise.allSettled([
@@ -1229,6 +1329,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   private disposeClients = async (): Promise<void> => {
     this.states.forEach((state) => {
+      this.closeBrowser(state)
       state.messagesDirty = true
       state.client = null
     })
@@ -1272,7 +1373,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       const key = getContainerTargetKey(storedContainer)
       if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
       this.states.forEach((state) => {
-        if (state.client === client) state.messagesDirty = true
+        if (state.client === client) {
+          state.messagesDirty = true
+          this.closeBrowser(state)
+        }
       })
       entry.eventAbortController.abort()
     })
@@ -1321,7 +1425,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         const key = getContainerTargetKey(entry.container)
         if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
         this.states.forEach((state) => {
-          if (state.client === entry.client) state.messagesDirty = true
+          if (state.client === entry.client) {
+            state.messagesDirty = true
+            this.closeBrowser(state)
+          }
         })
       }
     }
@@ -1369,6 +1476,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     }
     if (type === 'session.deleted') {
+      this.closeBrowser(state)
       this.completionCoordinator.cancel(sessionID)
       this.states.delete(sessionID)
       this.sessionContainers.delete(sessionID)
@@ -1400,7 +1508,13 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       this.scheduleUpdate(sessionID)
       return
     }
-    if (type === 'session.error') {
+    if (type === 'session.error' && isOpenCodeAbortError(properties.error)) {
+      // An abort the user asked for ends the turn as stopped, not failed.
+      this.closeBrowser(state)
+      state.active = false
+      state.stopped = true
+    } else if (type === 'session.error') {
+      this.closeBrowser(state)
       console.error(
         `[OpenCodeProviderAdapter:handleEvent] Session ${sessionID} failed: ${getOpenCodeErrorMessage(properties.error)}`
       )
@@ -1409,6 +1523,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       state.failureMessage = getOpenCodeErrorMessage(properties.error)
     }
     if (type === 'session.idle') {
+      this.closeBrowser(state)
       state.active = false
       if (state.queuedMessages.length > 0 && !state.stopped) {
         void this.finishTurnAndDrainQueue(state)
@@ -1428,6 +1543,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const existing = this.states.get(sessionId)
     if (existing) return existing
     const state: OpenCodeChatState = {
+      browser: null,
+      browserGeneration: 0,
       id: sessionId,
       revision: 0,
       directory,
@@ -1464,6 +1581,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     )
       state.messagesDirty = true
     state.session = session
+    if (
+      state.directory !== session.directory ||
+      getContainerTargetKey(state.container) !== getContainerTargetKey(container)
+    ) {
+      this.closeBrowser(state)
+    }
     state.directory = session.directory
     state.container = container
     this.sessionContainers.set(session.id, container)
@@ -1835,41 +1958,74 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const parts = await createPromptParts(text, options)
     if (parts.length === 0) throw new Error('Cannot send an empty OpenCode message.')
     this.completionCoordinator.cancel(state.id)
-    const client = (await this.getClientEntry(state.container)).client
+    const entry = await this.getClientEntry(state.container)
+    const client = entry.client
+    this.closeBrowser(state)
+    const generation = state.browserGeneration
+    if (!state.container && options?.sandboxMode !== 'read-only') {
+      const browser = await entry.server.registerBrowser({
+        providerId: 'opencode',
+        sessionId: state.id,
+        cwd: state.directory,
+        containerKey: 'host'
+      })
+      if (generation !== state.browserGeneration || this.states.get(state.id) !== state) {
+        await browser?.close()
+        throw new Error('OpenCode browser startup was canceled')
+      }
+      state.browser = browser
+    }
     const model = parseOpenCodeModelId(options?.model ?? fallbackOpenCodeModels[0]!.id)
-    await client.session.update(
-      {
-        sessionID: state.id,
-        directory: state.directory,
-        permission: getOpenCodePermissionRules(options)
-      },
-      { throwOnError: true }
-    )
-    state.active = true
-    state.stopped = false
-    state.failed = false
-    state.failureMessage = null
-    await client.session.promptAsync(
-      {
-        sessionID: state.id,
-        directory: state.directory,
-        model,
-        variant: options?.reasoningEffort,
-        system: getSelectedSkillsSystemPrompt(options),
-        parts
-      },
-      { throwOnError: true }
-    )
+    try {
+      await client.session.update(
+        {
+          sessionID: state.id,
+          directory: state.directory,
+          permission: getOpenCodePermissionRules(options, Boolean(state.browser))
+        },
+        { throwOnError: true }
+      )
+      state.active = true
+      state.stopped = false
+      state.failed = false
+      state.failureMessage = null
+      await client.session.promptAsync(
+        {
+          sessionID: state.id,
+          directory: state.directory,
+          model,
+          variant: options?.reasoningEffort,
+          system: getSelectedSkillsSystemPrompt(options),
+          parts
+        },
+        { throwOnError: true }
+      )
+    } catch (error) {
+      this.closeBrowser(state)
+      throw error
+    }
     this.scheduleUpdate(state.id)
   }
 
   private abortState = async (state: OpenCodeChatState): Promise<void> => {
+    this.closeBrowser(state)
     const client = (await this.getClientEntry(state.container)).client
     await client.session.abort(
       { sessionID: state.id, directory: state.directory },
       { throwOnError: true }
     )
     state.active = false
+  }
+
+  private closeBrowser = (state: OpenCodeChatState): void => {
+    state.browserGeneration += 1
+    const browser = state.browser
+    state.browser = null
+    // Revoke synchronously; network shutdown must not delay abort or an idle event.
+    browser?.suspend()
+    void browser
+      ?.close()
+      .catch((error) => console.error('Unable to close OpenCode browser.', error))
   }
 
   private queueMessage = (

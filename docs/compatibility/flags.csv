@@ -6,7 +6,7 @@ api_key_model_discovery,stable,true,Dynamic feature editor; runtime behavior unv
 apply_patch_freeform,removed,false,Dynamic feature editor; runtime behavior unverified,
 apply_patch_preserve_line_endings,removed,false,Dynamic feature editor; runtime behavior unverified,
 apply_patch_streaming_events,under development,false,Dynamic feature editor; runtime behavior unverified,
-apps,stable,true,Dynamic feature editor; runtime behavior unverified,src/main/providers/codex/CodexProviderAdapter.ts:1812
+apps,stable,true,Dynamic feature editor; runtime behavior unverified,src/main/providers/codex/CodexProviderAdapter.ts:1821
 apps_mcp_path_override,removed,false,Dynamic feature editor; runtime behavior unverified,
 artifact,under development,false,Dynamic feature editor; runtime behavior unverified,
 async_compaction,under development,false,Dynamic feature editor; runtime behavior unverified,

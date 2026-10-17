@@ -51,6 +51,7 @@ import {
   serializeReviewMessage
 } from './chatControllerUtils'
 import type { ChatMessagingControllerDependencies } from './featureControllerDependencies'
+import type { SubagentChatView } from './controllerTypes'
 
 // Return shape is inferred from the controller declarations below.
 export function useChatMessagingController(dependencies: ChatMessagingControllerDependencies) {
@@ -83,6 +84,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     worktreeBranchGenerationRef,
     providerUpdateInProgress,
     activeSubagentChatView,
+    setSubagentChatView,
     selectedChat,
     newSessionCwd,
     sendInFlightProjectKeyRef,
@@ -279,6 +281,58 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
       })
   }, [])
+  const handleSendSubagentMessage = async (
+    message: string,
+    hasUnsupportedInput: boolean
+  ): Promise<boolean> => {
+    const view = activeSubagentChatView
+    const content = message.trim()
+    if (!view?.summary.canMessage || !selectedProviderId || !selectedChatId || !content) {
+      return false
+    }
+    const subagentId = view.summary.id
+    const rootChatKey = view.rootChatKey
+    const updateView = (update: (current: SubagentChatView) => SubagentChatView): void =>
+      setSubagentChatView((current) =>
+        current?.rootChatKey === rootChatKey && current.summary.id === subagentId
+          ? update(current)
+          : current
+      )
+    if (hasUnsupportedInput) {
+      updateView((current) => ({
+        ...current,
+        error: 'Subagents accept text messages only.'
+      }))
+      return false
+    }
+    sendInFlightRef.current = true
+    setSendState('sending')
+    try {
+      await providerApi.sendSubagentMessage(selectedProviderId, selectedChatId, subagentId, content)
+      updateView((current) => ({
+        ...current,
+        summary: {
+          ...current.summary,
+          status: 'running',
+          updatedAt: Date.now()
+        },
+        error: null,
+        refreshRequest: (current.refreshRequest ?? 0) + 1
+      }))
+      return true
+    } catch (error) {
+      console.error('[caught:useChatMessagingController:handleSendSubagentMessage]', error)
+      updateView((current) => ({
+        ...current,
+        error: getErrorMessage(error, 'Unable to message this subagent.')
+      }))
+      return false
+    } finally {
+      sendInFlightRef.current = false
+      setSendState('idle')
+    }
+  }
+
   const handleSendMessage = async (
     message: string,
     activeMode?: ProviderActiveSendMode,
@@ -294,9 +348,15 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       sendInFlightRef.current ||
       authenticationRequired ||
       (chatDetailRef.current?.authenticationRequired && sendTarget !== 'new') ||
-      (activeSubagentChatView && sendTarget !== 'new')
+      (activeSubagentChatView && sendTarget !== 'new' && !activeSubagentChatView.summary.canMessage)
     ) {
       return false
+    }
+    if (activeSubagentChatView && sendTarget !== 'new') {
+      return handleSendSubagentMessage(
+        message,
+        attachments.length > 0 || Boolean(review) || skills.length > 0 || apps.length > 0
+      )
     }
     const sendProjectKey = getChatCwdGroupKey(
       selectedChat ? (changesProjectCwd ?? getChatProjectCwd(selectedChat)) : newSessionCwd

@@ -154,6 +154,58 @@ export const getCodexTurnSubagents = (
   return [...subagents.values()]
 }
 
+/** The child thread's own latest turn outcome, observed independently of the parent transcript. */
+export type CodexSubagentRunOutcome = {
+  status: ProviderSubagent['status']
+  /** Epoch milliseconds when the child turn reached this status. */
+  at: number | null
+}
+
+export const getCodexSubagentRunOutcome = (turn: CodexTurn): CodexSubagentRunOutcome | null => {
+  const status =
+    turn.status === 'inProgress'
+      ? 'running'
+      : turn.status === 'failed' || turn.error
+        ? 'failed'
+        : turn.status === 'interrupted'
+          ? 'stopped'
+          : turn.status === 'completed'
+            ? 'completed'
+            : null
+  return status ? { status, at: getTurnTime(turn, 'updated') } : null
+}
+
+/** The child thread a parent item hands new work to (spawn or message), if any. */
+export const getCodexSubagentDispatchTarget = (item: CodexTurn['items'][number]): string | null => {
+  if (item.type !== 'subAgentActivity' || !item.agentThreadId) return null
+  const status = getActivityStatus(item.kind)
+  return status && terminalStatuses.has(status) ? null : item.agentThreadId
+}
+
+export const isCodexSubagentUnsettled = (subagent: ProviderSubagent): boolean =>
+  subagent.status === 'pending' || subagent.status === 'running'
+
+/**
+ * Parent transcripts only learn that a child finished when the child reports back. A child whose
+ * turn fails (for example on a usage limit that also kills the parent) never reports, so its parent
+ * marker would stay "working" forever. Settle such markers from the child's own latest turn. The
+ * caller must drop an outcome once the parent interacts with the child again.
+ */
+export const applyCodexSubagentRunOutcomes = (
+  subagents: ProviderSubagent[],
+  getOutcome: (subagentId: string) => CodexSubagentRunOutcome | undefined
+): ProviderSubagent[] =>
+  subagents.map((subagent) => {
+    if (!isCodexSubagentUnsettled(subagent)) return subagent
+    const outcome = getOutcome(subagent.id)
+    if (!outcome || !terminalStatuses.has(outcome.status)) return subagent
+    return {
+      ...subagent,
+      status: outcome.status,
+      updatedAt: outcome.at ?? subagent.updatedAt
+    }
+  })
+
 export const getCodexSubagentTaskDescription = (thread: CodexSubagentThread): string | null => {
   const spawn = getThreadSpawn(thread.source)
   const agentPath = getString(spawn?.agentPath ?? spawn?.agent_path)

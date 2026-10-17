@@ -3,6 +3,8 @@ import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
 import { copilotPriceRates, setNativeModelPricing } from '../modelPricing/TokenPricing'
 import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { randomUUID } from 'node:crypto'
+import { getBrowserAutomationService } from '../../browser/BrowserAutomation'
+import { createBrowserMcpServer, type BrowserMcpIntegration } from '../../browser/BrowserMcpServer'
 import { basename, join } from 'node:path'
 import { homedir } from 'node:os'
 import {
@@ -77,9 +79,12 @@ import {
   type CopilotRenderedPlan
 } from './CopilotItemRenderers'
 import {
+  canMessageCopilotTask,
   createCopilotSubagentSummaries,
   createCopilotSubagentTranscriptItems,
-  renderCopilotSubagentWindow
+  mergeCopilotSubagentFollowUps,
+  renderCopilotSubagentWindow,
+  type CopilotSubagentFollowUp
 } from './CopilotSubagents'
 import { selectCopilotTitleModel } from './CopilotTitleModel'
 import { CopilotEventStore } from './CopilotEventStore.ts'
@@ -121,6 +126,8 @@ type CopilotSessionState = {
   client: CopilotClient | null
   container: AppContainerTarget | null
   session: CopilotSession | null
+  browser: BrowserMcpIntegration | null
+  browserCwd: string | null
   metadata: CopilotSessionMetadata | null
   events: SessionEvent[]
   title: string | null
@@ -654,6 +661,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   private sessionContainers = new Map<string, AppContainerTarget | null>()
   private states = new Map<string, CopilotSessionState>()
   private eventStores = new WeakMap<CopilotSessionState, CopilotEventStore<SessionEvent>>()
+  private subagentFollowUps = new WeakMap<
+    CopilotSessionState,
+    Map<string, CopilotSubagentFollowUp[]>
+  >()
   private sessionLoads = new WeakMap<CopilotSessionState, Promise<CopilotSessionState>>()
   private metadataChecks = new WeakMap<CopilotSessionState, Promise<void>>()
   private chatUpdatedListeners = new Set<
@@ -666,6 +677,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   private canceledOneShotGenerationIds = new Set<string>()
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private hiddenSessionIds = new Set<string>()
+  private browserGeneration = 0
 
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
     const client = await this.ensureClient(options.container)
@@ -1021,12 +1033,20 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (!summary) throw new Error('Copilot subagent was not found.')
 
     this.eventStores.get(state)?.seal()
-    if (window) return { ...summary, ...renderCopilotSubagentWindow(summary, state.events, window) }
+    const events = mergeCopilotSubagentFollowUps(
+      state.events,
+      this.subagentFollowUps.get(state)?.get(subagentId) ?? []
+    )
+    if (window)
+      return {
+        ...summary,
+        ...renderCopilotSubagentWindow(summary, events, window)
+      }
     return {
       ...summary,
       items: createCopilotSubagentTranscriptItems(
         summary,
-        renderCopilotChatItems(state.events, {
+        renderCopilotChatItems(events, {
           agentId: subagentId,
           active: summary.status === 'pending' || summary.status === 'running',
           stopped: summary.status === 'stopped',
@@ -1046,7 +1066,54 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (!tasks.tasks.some((task) => task.type === 'agent' && task.id === subagentId)) {
       throw new Error('Copilot subagent was not found.')
     }
-    await state.session!.rpc.tasks.cancel({ id: subagentId })
+    const result = await state.session!.rpc.tasks.cancel({ id: subagentId })
+    if (!result.cancelled) throw new Error('Copilot could not stop this subagent.')
+    this.emitUpdate(state)
+  }
+
+  sendSubagentMessage = async (
+    chatId: string,
+    subagentId: string,
+    message: string,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<void> => {
+    const content = message.trim()
+    if (!content) throw new Error('Cannot send an empty Copilot message.')
+    const state = await this.ensureSession(chatId, undefined, options.container)
+    const rpc = state.session!.rpc
+    const task = (await rpc.tasks.list()).tasks.find(
+      (candidate) => candidate.type === 'agent' && candidate.id === subagentId
+    )
+    if (!task || task.type !== 'agent') throw new Error('Copilot subagent was not found.')
+    if (!canMessageCopilotTask(task)) {
+      throw new Error('This Copilot subagent no longer accepts messages.')
+    }
+    if (task.executionMode !== 'background') {
+      // Follow-ups are only accepted by background agents; move a synchronous one there first.
+      const { promoted } = await rpc.tasks.promoteToBackground({
+        id: subagentId
+      })
+      if (!promoted) throw new Error('Copilot could not move this subagent to the background.')
+    }
+    const result = await rpc.tasks.sendMessage({
+      id: subagentId,
+      message: content
+    })
+    if (!result.sent) {
+      throw new Error(result.error?.trim() || 'Copilot did not deliver the message.')
+    }
+
+    const followUps = this.subagentFollowUps.get(state) ?? new Map()
+    this.subagentFollowUps.set(state, followUps)
+    followUps.set(subagentId, [
+      ...(followUps.get(subagentId) ?? []),
+      {
+        id: `${subagentId}:follow-up:${randomUUID()}`,
+        agentId: subagentId,
+        content,
+        timestamp: new Date().toISOString()
+      }
+    ])
     this.emitUpdate(state)
   }
 
@@ -1181,6 +1248,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const session = await this.createSession(state, options)
     await onChatCreated?.(sessionId)
     state.active = true
+    state.browser?.resume()
     await session.send(getMessageOptions(message, options))
     this.startChatTitleGeneration(state, message || 'File attachment', options)
     return this.createChatDetail(state)
@@ -1197,6 +1265,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.active = true
     state.stopped = false
     state.failed = false
+    state.browser?.resume()
     await state.session!.send(getMessageOptions(message, options))
     return this.createChatDetail(state)
   }
@@ -1262,9 +1331,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     if (mode === 'interrupt') {
       this.cancelPendingUserInputs(state)
+      state.browser?.suspend()
       await state.session!.abort()
+      state.browser?.resume()
       await state.session!.send(getMessageOptions(message, options, 'enqueue'))
     } else {
+      state.browser?.resume()
       await state.session!.send(
         getMessageOptions(message, options, mode === 'steer' ? 'immediate' : 'enqueue')
       )
@@ -1380,7 +1452,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
     this.cancelPendingUserInputs(state)
-    if (state.active) await state.session!.abort()
+    if (state.active) {
+      state.browser?.suspend()
+      await state.session!.abort()
+    }
     await state.session!.rpc.queue.clear()
     state.pendingMessages = []
 
@@ -1405,6 +1480,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     await this.refreshPendingMessages(state)
     this.emitUpdate(state)
 
+    state.browser?.resume()
     await state.session!.send(getMessageOptions(text, options))
     return this.createChatDetail(state)
   }
@@ -1473,6 +1549,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const state = await this.ensureSession(chatId)
     state.stopped = true
     state.active = false
+    state.browser?.suspend()
     state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
     this.cancelPendingUserInputs(state)
     await state.session!.abort()
@@ -1488,6 +1565,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
+    this.browserGeneration += 1
     this.historicalUsageReader.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
@@ -1502,6 +1580,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationTimers.forEach((timer) => clearTimeout(timer))
     this.canceledOneShotGenerationTimers.clear()
     this.states.forEach((state) => {
+      this.closeBrowserIntegration(state)
       state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
       this.cancelPendingUserInputs(state)
     })
@@ -1628,6 +1707,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       client: null,
       container: storedContainer,
       session: null,
+      browser: null,
+      browserCwd: null,
       metadata: null,
       events: [],
       title: null,
@@ -1656,6 +1737,77 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.sessionContainers.get(sessionId) ??
     null
 
+  private browserServerConfig = (browser: BrowserMcpIntegration) => ({
+    type: 'http' as const,
+    url: browser.url,
+    headers: { Authorization: `Bearer ${browser.token}` },
+    tools: ['*']
+  })
+
+  private browserAllowed = (state: CopilotSessionState): boolean =>
+    !state.container &&
+    normalizeContainerTarget(state.options?.container).kind !== 'container' &&
+    state.options?.sandboxMode !== 'read-only' &&
+    !this.hiddenSessionIds.has(state.id)
+
+  private browserBindingMatches = (state: CopilotSessionState): boolean => {
+    const enabled = this.browserAllowed(state) && Boolean(getBrowserAutomationService())
+    return (
+      Boolean(state.browser) === enabled &&
+      (!state.browser || state.browserCwd === (state.options?.cwd ?? this.getCwd(state) ?? ''))
+    )
+  }
+
+  private closeBrowserIntegration = (state: CopilotSessionState): void => {
+    const browser = state.browser
+    state.browser = null
+    state.browserCwd = null
+    if (browser) {
+      // close revokes synchronously before awaiting socket shutdown.
+      void browser
+        .close()
+        .catch((error) => console.error('Unable to close Copilot browser.', error))
+    }
+  }
+
+  private createBrowserIntegration = async (
+    state: CopilotSessionState,
+    cwd: string,
+    interactive = true
+  ): Promise<BrowserMcpIntegration | null> => {
+    this.closeBrowserIntegration(state)
+    const service = getBrowserAutomationService()
+    if (!interactive || !service || !this.browserAllowed(state)) return null
+    const generation = this.browserGeneration
+    const browser = await createBrowserMcpServer(
+      service,
+      {
+        providerId: 'copilot',
+        sessionId: state.id,
+        cwd,
+        containerKey: getContainerTargetKey(state.container)
+      },
+      {
+        authorizeTool: () => {
+          if (
+            this.states.get(state.id) !== state ||
+            !this.browserAllowed(state) ||
+            (state.options?.cwd ?? this.getCwd(state) ?? '') !== cwd
+          ) {
+            throw new Error('Browser is unavailable for this Copilot session')
+          }
+        }
+      }
+    )
+    if (generation !== this.browserGeneration || this.states.get(state.id) !== state) {
+      await browser.close()
+      throw new Error('Copilot browser startup was canceled')
+    }
+    state.browser = browser
+    state.browserCwd = cwd
+    return browser
+  }
+
   private createSession = async (
     state: CopilotSessionState,
     options?: ProviderTurnOptions | ProviderOneShotOptions,
@@ -1665,34 +1817,43 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const client = await this.ensureClient(state.container)
     state.client = client
     const reasoningEffort = normalizeReasoningEffort(options?.reasoningEffort)
-    const session = await client.createSession({
-      sessionId: state.id,
-      clientName,
-      workingDirectory: options?.cwd,
-      model: options?.model,
-      ...(reasoningEffort ? { reasoningEffort } : {}),
-      streaming: false,
-      enableConfigDiscovery: true,
-      enableSkills: true,
-      onEvent: (event) => this.handleEvent(state.id, event),
-      onPermissionRequest: (request) => this.handlePermission(state.id, request),
-      ...(enableUserInput
-        ? {
-            onUserInputRequest: (request: CopilotUserInputRequest) =>
-              this.handleUserInput(state.id, request)
-          }
-        : {})
-    })
-    await this.addAdditionalDirectories(session, options)
-    state.session = session
-    state.metadata =
-      (await client.getSessionMetadata(state.id).catch((error) => {
-        console.error('[caught:CopilotProviderAdapter:createSession]', error)
-        return undefined
-      })) ?? null
-    await this.loadSessionTitle(state)
-    await this.loadEvents(state)
-    return session
+    const workingDirectory = options?.cwd ?? process.cwd()
+    const browser = await this.createBrowserIntegration(state, workingDirectory, enableUserInput)
+    let session: CopilotSession
+    try {
+      session = await client.createSession({
+        sessionId: state.id,
+        clientName,
+        workingDirectory,
+        ...(browser ? { mcpServers: { Sele_Browser: this.browserServerConfig(browser) } } : {}),
+        model: options?.model,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        streaming: false,
+        enableConfigDiscovery: true,
+        enableSkills: true,
+        onEvent: (event) => this.handleEvent(state.id, event),
+        onPermissionRequest: (request) => this.handlePermission(state.id, request),
+        ...(enableUserInput
+          ? {
+              onUserInputRequest: (request: CopilotUserInputRequest) =>
+                this.handleUserInput(state.id, request)
+            }
+          : {})
+      })
+      await this.addAdditionalDirectories(session, options)
+      state.session = session
+      state.metadata =
+        (await client.getSessionMetadata(state.id).catch((error) => {
+          console.error('[caught:CopilotProviderAdapter:createSession]', error)
+          return undefined
+        })) ?? null
+      await this.loadSessionTitle(state)
+      await this.loadEvents(state)
+      return session
+    } catch (error) {
+      this.closeBrowserIntegration(state)
+      throw error
+    }
   }
 
   private ensureSession = async (
@@ -1705,20 +1866,28 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (options) state.options = options
     const pending = this.sessionLoads.get(state)
     if (pending) return pending
-    if (state.session && state.client === client) {
+    if (state.session && state.client === client && this.browserBindingMatches(state)) {
       if (!state.active) await this.checkSessionMetadata(state)
       return state
     }
 
     const load = (async (): Promise<CopilotSessionState> => {
-      state.client = client
+      const previous = state.session
       state.session = null
+      this.closeBrowserIntegration(state)
+      await previous?.disconnect()
+      state.client = client
       state.metadata = (await client.getSessionMetadata(sessionId)) ?? null
       if (!state.metadata) throw new Error(`Copilot session was not found: ${sessionId}`)
 
       const reasoningEffort = normalizeReasoningEffort(options?.reasoningEffort)
+      const browser = await this.createBrowserIntegration(
+        state,
+        options?.cwd ?? state.metadata.context?.workingDirectory ?? ''
+      )
       const session = await client.resumeSession(sessionId, {
         clientName: 'Sele',
+        ...(browser ? { mcpServers: { Sele_Browser: this.browserServerConfig(browser) } } : {}),
         workingDirectory: options?.cwd ?? state.metadata.context?.workingDirectory,
         model: options?.model,
         ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -1743,6 +1912,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       return await load
     } catch (error) {
       state.session = null
+      this.closeBrowserIntegration(state)
       throw error
     } finally {
       this.sessionLoads.delete(state)
@@ -1756,6 +1926,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       const metadata = (await state.client!.getSessionMetadata(state.id)) ?? null
       if (!metadata) {
         state.session = null
+        this.closeBrowserIntegration(state)
         throw new Error(`Copilot session was not found: ${state.id}`)
       }
       if (
@@ -2007,17 +2178,20 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       state.failed = false
     }
     if (event.type === 'session.error') {
+      state.browser?.suspend()
       console.error(
         `[CopilotProviderAdapter:handleEvent] Session ${state.id} failed: ${event.data.message}`
       )
       state.failed = true
     }
     if (event.type === 'abort') {
+      state.browser?.suspend()
       state.active = false
       state.stopped = true
       this.cancelPendingUserInputs(state)
     }
     if (event.type === 'session.idle') {
+      state.browser?.suspend()
       state.active = false
       state.stopped = Boolean(event.data.aborted)
       const completedTurnGeneration = state.turnGeneration

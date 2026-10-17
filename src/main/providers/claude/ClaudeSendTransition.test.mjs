@@ -4,7 +4,10 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { getClaudeQueueDrainDecision } from './ClaudeQueueDrain.ts'
-import { getClaudeResultLifecycleDecision } from './ClaudeQueryLifecycle.ts'
+import {
+  getClaudeResultLifecycleDecision,
+  getClaudeSessionStateLifecycleDecision
+} from './ClaudeQueryLifecycle.ts'
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
 import { getContainerTargetKey } from '../../containerTarget.ts'
 import { retainClaudeStreamTiming, clearClaudeStreamMessages } from './ClaudeStreaming.ts'
@@ -25,6 +28,9 @@ const methods = new Set([
   'getDrainingMessage',
   'getPendingMessages',
   'handleQueryEvent',
+  'resumeBackgroundTurn',
+  'getOutstandingBackgroundWork',
+  'scheduleBackgroundIdleClose',
   'requireAuthentication',
   'sendMessageRespectingQueue',
   'sendQueuedMessageNow',
@@ -47,6 +53,11 @@ const context = vm.createContext({
   clearClaudeStreamMessages,
   getClaudeQueueDrainDecision,
   getClaudeResultLifecycleDecision,
+  getClaudeSessionStateLifecycleDecision,
+  backgroundIdleCloseGraceMs: 0,
+  setTimeout,
+  randomUUID: () => 'marker',
+  claudeBackgroundTurnSubtype: 'sele_background_turn',
   getTokenBreakdown: (inputTokens, outputTokens, cachedInputTokens) => ({
     inputTokens,
     outputTokens,
@@ -244,4 +255,127 @@ test('a preceding result keeps SDK-queued steering alive until its own result', 
   )
   assert.equal(state.active, false)
   assert.deepEqual(updates.at(-1), { active: false, completed: true })
+})
+
+test('background agent notifications reopen the finished turn until Claude replies', async () => {
+  const instance = new context.Harness()
+  instance.reportResultTokenUsage = () => {}
+  instance.reportLiveTokenUsage = () => false
+  const closed = []
+  instance.closeStateQuery = async (state) => {
+    closed.push(state.id)
+    state.query = null
+  }
+  const control = { getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }) }
+  const state = {
+    id: 'session',
+    query: control,
+    active: true,
+    stopped: false,
+    failed: false,
+    partialMessages: new Map(),
+    backgroundTaskIds: new Set(),
+    taskNotificationPending: false,
+    waitingForSessionIdle: false,
+    queuedMessages: [],
+    queuedMessagesPaused: false,
+    queueDrainInProgress: false,
+    pendingApprovals: [],
+    pendingUserInputs: []
+  }
+  const updates = []
+  instance.addTranscriptMessage = () => {}
+  instance.emitUpdate = (state, completed = false) =>
+    updates.push({ active: state.active, completed })
+  instance.queueUpdate = () => {}
+  instance.refreshSessionMetadata = async () => {}
+  const result = {
+    type: 'result',
+    subtype: 'success',
+    terminal_reason: 'completed',
+    duration_ms: 1000,
+    usage: {
+      input_tokens: 1,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: 1
+    }
+  }
+  const tasks = (...ids) => ({
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: ids.map((task_id) => ({ task_id, task_type: 'local_agent', description: task_id }))
+  })
+  const assistant = (parent_tool_use_id) => ({
+    type: 'assistant',
+    uuid: `assistant-${updates.length}`,
+    session_id: 'session',
+    parent_tool_use_id,
+    message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] }
+  })
+
+  await instance.handleQueryEvent(state, control, tasks('a', 'b'))
+  assert.equal(await instance.handleQueryEvent(state, control, result), false)
+  assert.equal(state.active, false)
+  assert.equal(state.waitingForSessionIdle, true)
+
+  // Subagent output is not the main thread resuming.
+  await instance.handleQueryEvent(state, control, assistant('toolu_agent'))
+  assert.equal(state.active, false)
+
+  // Agent "a" finishes; Claude starts a turn by itself to read its result.
+  await instance.handleQueryEvent(state, control, tasks('b'))
+  await instance.handleQueryEvent(state, control, {
+    type: 'system',
+    subtype: 'session_state_changed',
+    state: 'running'
+  })
+  assert.equal(state.active, true)
+  assert.deepEqual(updates.at(-1), { active: true, completed: false })
+  assert.equal(await instance.handleQueryEvent(state, control, result), false)
+  assert.equal(state.active, false)
+
+  // The last agent finishing must not close the query before its follow-up turn runs.
+  assert.equal(await instance.handleQueryEvent(state, control, tasks()), false)
+  assert.equal(
+    await instance.handleQueryEvent(state, control, {
+      type: 'system',
+      subtype: 'session_state_changed',
+      state: 'idle'
+    }),
+    false
+  )
+  await instance.handleQueryEvent(state, control, assistant(null))
+  assert.equal(state.active, true)
+  assert.equal(await instance.handleQueryEvent(state, control, result), true)
+  assert.equal(state.active, false)
+  assert.deepEqual(updates.at(-1), { active: false, completed: true })
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.deepEqual(closed, [])
+})
+
+test('a finished background task without a follow-up turn closes after the grace period', async () => {
+  const instance = new context.Harness()
+  instance.queueUpdate = () => {}
+  const closed = []
+  instance.closeStateQuery = async (state) => closed.push(state.id)
+  const control = {}
+  const state = {
+    id: 'session',
+    query: control,
+    active: false,
+    backgroundTaskIds: new Set(['a']),
+    taskNotificationPending: false,
+    waitingForSessionIdle: true
+  }
+  assert.equal(
+    await instance.handleQueryEvent(state, control, {
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: []
+    }),
+    false
+  )
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.deepEqual(closed, ['session'])
 })

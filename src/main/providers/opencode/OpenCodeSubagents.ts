@@ -1,5 +1,6 @@
 import type { GlobalSession, Session } from '@opencode-ai/sdk/v2'
 import type { ProviderSubagent } from '../../../shared/provider'
+import type { OpenCodeMessageWithParts } from './OpenCodeItemRenderers.ts'
 
 type OpenCodeSubagentStatus = { type?: string } | undefined
 
@@ -22,5 +23,45 @@ export const createOpenCodeSubagentSummary = (
   description: session.agent?.trim() || null,
   status: status?.type === 'busy' || status?.type === 'retry' ? 'running' : 'completed',
   createdAt: Number.isFinite(session.time.created) ? session.time.created : null,
-  updatedAt: Number.isFinite(session.time.updated) ? session.time.updated : null
+  updatedAt: Number.isFinite(session.time.updated) ? session.time.updated : null,
+  // OpenCode child sessions accept prompts directly; a prompt sent mid-run joins the active loop.
+  canMessage: true
 })
+
+type OpenCodeUserMessageInfo = Extract<OpenCodeMessageWithParts['info'], { role: 'user' }>
+
+/**
+ * Continue a child session with the same agent, model and tool restrictions the parent's task
+ * tool gave it, rather than the root chat's composer settings.
+ */
+export const getOpenCodeSubagentPromptSettings = (
+  session: Session | GlobalSession,
+  messages: OpenCodeMessageWithParts[]
+): {
+  agent?: string
+  model?: { providerID: string; modelID: string }
+  variant?: string
+  tools?: Record<string, boolean>
+} => {
+  const lastUser = messages.findLast(
+    (
+      message
+    ): message is OpenCodeMessageWithParts & {
+      info: OpenCodeUserMessageInfo
+    } => message.info.role === 'user'
+  )?.info
+  const agent = lastUser?.agent?.trim() || session.agent?.trim() || undefined
+  return {
+    ...(agent ? { agent } : {}),
+    ...(lastUser?.model
+      ? {
+          model: {
+            providerID: lastUser.model.providerID,
+            modelID: lastUser.model.modelID
+          },
+          ...(lastUser.model.variant ? { variant: lastUser.model.variant } : {})
+        }
+      : {}),
+    ...(lastUser?.tools ? { tools: lastUser.tools } : {})
+  }
+}

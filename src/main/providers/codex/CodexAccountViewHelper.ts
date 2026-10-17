@@ -31,7 +31,12 @@ install_helper() {
   mkdir_bin=$(find_tool mkdir)
   mv_bin=$(find_tool mv)
   rm_bin=$(find_tool rm)
+  chmod_bin=$(find_tool chmod)
+  # sudo and pkexec keep the caller's umask (the setup script uses 077). Without resetting it,
+  # a newly created libexec directory is root-only and the helper is unreachable for the user.
+  umask 022
   "$mkdir_bin" -p '/usr/local/libexec'
+  "$chmod_bin" 0755 '/usr/local/libexec'
 
   helper_tmp="$helper_path.tmp.$$"
   sudoers_tmp="$sudoers_path.tmp.$$"

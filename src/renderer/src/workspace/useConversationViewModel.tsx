@@ -108,8 +108,11 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       chatLoadState !== 'ready' ||
       chatReadOnly ||
       authenticationRequired ||
-      Boolean(activeSubagentChatView) ||
-      (chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
+      (activeSubagentChatView
+        ? // Subagents that accept input take it directly (steering while they run), independent
+          // of whether the parent turn is still active.
+          !activeSubagentChatView.summary.canMessage || activeSubagentChatView.loadState !== 'ready'
+        : chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
     : providerUpdateInProgress || !newSessionProviderAvailable || authenticationRequired
   const canEditOwnMessages = Boolean(
     selectedChat &&

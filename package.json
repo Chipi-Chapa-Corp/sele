@@ -41,6 +41,7 @@
     "package:linux-tarball": "bash scripts/package-linux-tarball.sh",
     "package:flatpak-repo": "bash scripts/package-flatpak-repository.sh",
     "test:browser-use": "node scripts/tests/test-browser-use.cjs",
+    "test:browser-unit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/browser/*.test.mjs src/main/providers/claude/ClaudeBrowserLifecycle.test.mjs src/main/providers/codex/CodexBrowserSessions.test.mjs",
     "test:chat-goal": "node scripts/tests/test-chat-goal.cjs",
     "test:codex-questions": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/codex/CodexUserQuestions.test.mjs && node scripts/tests/test-codex-user-questions.cjs",
     "test:codex-final-ui": "node scripts/tests/test-codex-final-response.cjs",
@@ -68,6 +69,7 @@
     "@floating-ui/dom": "^1.7.4",
     "@github/copilot-sdk": "^1.0.13",
     "@lydell/node-pty": "^1.1.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@opencode-ai/sdk": "^1.18.29",
     "@react-symbols/icons": "^1.4.1",
     "@xterm/addon-fit": "^0.11.0",
@@ -92,7 +94,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
     "@electron-toolkit/tsconfig": "^2.0.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.1",
     "@types/react": "^19.2.7",

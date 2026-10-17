@@ -6,7 +6,8 @@ const getMutationAction = (
 ): 'allow' | 'ask' => (options?.approvalPolicy === 'never' ? 'allow' : 'ask')
 
 export const getOpenCodePermissionRules = (
-  options?: ProviderTurnOptions | ProviderOneShotOptions
+  options?: ProviderTurnOptions | ProviderOneShotOptions,
+  browserEnabled = false
 ): PermissionRuleset => {
   const sandboxMode = options?.sandboxMode ?? 'workspace-write'
   const mutationAction = sandboxMode === 'read-only' ? 'deny' : getMutationAction(options)
@@ -46,7 +47,12 @@ export const getOpenCodePermissionRules = (
       pattern: '*',
       action: options?.approvalPolicy === 'never' ? 'allow' : 'ask'
     },
-    { permission: 'question', pattern: '*', action: 'allow' }
+    { permission: 'question', pattern: '*', action: 'allow' },
+    {
+      permission: 'sele_browser_*',
+      pattern: '*',
+      action: browserEnabled && sandboxMode !== 'read-only' ? getMutationAction(options) : 'deny'
+    }
   ]
 
   if (sandboxMode !== 'danger-full-access') {

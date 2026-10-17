@@ -275,14 +275,13 @@ export function useChatListController(dependencies: ChatListControllerDependenci
     if (group.kind !== 'cwd') return
 
     try {
-      const providerIds = Array.from(new Set(group.chats.map((chat) => chat.providerId)))
-      const groupCwds = Array.from(new Set(group.chats.map((chat) => chat.cwd ?? null)))
-      const metadataGroups = await Promise.all(
-        providerIds.flatMap((providerId) =>
-          groupCwds.map((cwd) => providerApi.markCwdChatsDone(providerId, cwd))
-        )
+      // Mark exactly the chats shown in the group. Re-listing every provider here would
+      // ignore the selected container and fail entirely when any one provider is unavailable.
+      const metadata = await providerApi.markChatsDone(
+        Array.from(new Set(group.chats.map((chat) => chat.id)))
       )
-      applyChatMetadata(metadataGroups.flat())
+      applyChatMetadata(metadata)
+      group.chats.forEach((chat) => removeRecentChatCacheEntry(chat.providerId, chat.id))
 
       if (
         selectedChat &&

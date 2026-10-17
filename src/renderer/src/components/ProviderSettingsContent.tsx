@@ -1,4 +1,5 @@
-import { CircleAlert, Settings2, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { ProviderConnectionsPanel } from './ProviderConnectionsPanel'
+import { CircleAlert, Plug, Settings2, SlidersHorizontal, Sparkles } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { AppContainerTarget } from '../../../shared/app'
 import type {
@@ -19,10 +20,16 @@ import { configObject, configFieldLabel } from '../providerConfig'
 type Props = {
   providerId: ProviderId
   container: AppContainerTarget
+  onConnectionsChanged?: () => void
   children: [ReactNode, (query: string) => ReactNode]
 }
 
-export function ProviderSettingsContent({ providerId, container, children }: Props): ReactNode {
+export function ProviderSettingsContent({
+  providerId,
+  container,
+  children,
+  onConnectionsChanged
+}: Props): ReactNode {
   const [tab, setTab] = useState('General')
   const [skillsQuery, setSkillsQuery] = useState('')
   return (
@@ -32,6 +39,9 @@ export function ProviderSettingsContent({ providerId, container, children }: Pro
           aria-label="Provider sections"
           options={[
             { value: 'General', label: 'General', icon: <Settings2 aria-hidden="true" /> },
+            ...(providerId === 'opencode'
+              ? [{ value: 'Connections', label: 'Connections', icon: <Plug aria-hidden="true" /> }]
+              : []),
             { value: 'Config', label: 'Config', icon: <SlidersHorizontal aria-hidden="true" /> },
             { value: 'Skills', label: 'Skills', icon: <Sparkles aria-hidden="true" /> }
           ]}
@@ -41,6 +51,12 @@ export function ProviderSettingsContent({ providerId, container, children }: Pro
       </div>
       {tab === 'General' ? (
         children[0]
+      ) : tab === 'Connections' && providerId === 'opencode' ? (
+        <ProviderConnectionsPanel
+          key={JSON.stringify(container)}
+          container={container}
+          onChanged={onConnectionsChanged}
+        />
       ) : tab === 'Skills' ? (
         <>
           <Input

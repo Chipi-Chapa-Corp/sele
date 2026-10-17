@@ -62,6 +62,16 @@ if (!process.versions.electron) {
                 </React.Fragment>)}
               </React.Fragment>))
             }
+            window.renderThought = (stage = 'thinking', unloaded = false) => {
+              const thought = {type:'message', id:'thought', kind:'reasoning', status:stage === 'thinking' ? 'inProgress' : 'completed',
+                content:unloaded ? '' : ('A **careful** thought with enough text to scroll.\\n\\n').repeat(80), contentLoaded:!unloaded}
+              const item = {type:'working', id:'thought-work', status:stage === 'stopped' ? 'stopped' : stage === 'finished' ? 'worked' : 'working', items:[
+                {type:'message', id:'ordinary', content:'Ordinary progress message'}, thought
+              ]}
+              flushSync(() => root.render(<ChatDetailItem key="thought-fixture" item={item}
+                onLoadWorkingItem={async () => {window.thoughtLoads = (window.thoughtLoads || 0) + 1; window.renderThought('finished')}}
+                progressSettings={{expandProgressOnStart:true, collapseProgressOnFinish:false}} />))
+            }
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -255,6 +265,62 @@ if (!process.versions.electron) {
         await steeringOpenStates(),
         [true, true, true],
         'both disabled collapse settings preserve the whole chain'
+      )
+      const settle = () => run('new Promise(resolve => setTimeout(resolve, 80))')
+      const thoughtState = () =>
+        run(`(() => {
+        const thought = document.querySelector('.chat-detail__thought')
+        const body = thought.querySelector('.chat-detail__thought-content')
+        return {label:thought.querySelector('summary').textContent.trim(), open:thought.open,
+          scrollable:body ? body.scrollHeight > body.clientHeight && getComputedStyle(body).overflowY === 'auto' : false,
+          markdown:!!body?.querySelector('strong'), ordinary:document.querySelector('.chat-detail__working-message')?.textContent.trim(),
+          outerOpen:document.querySelector('.chat-detail__working').open}
+      })()`)
+      await run('window.renderThought()')
+      await settle()
+      let thought = await thoughtState()
+      assert.equal(thought.label, 'Thinking')
+      assert.equal(thought.open, false)
+      assert.equal(thought.ordinary, 'Ordinary progress message')
+      await run("document.querySelector('.chat-detail__thought > summary').click()")
+      await settle()
+      thought = await thoughtState()
+      assert.equal(thought.open, true)
+      assert.equal(thought.outerOpen, true, 'nested disclosure preserves the working section')
+      assert.equal(thought.scrollable, true, 'long thoughts scroll inside the bounded body')
+      assert.equal(thought.markdown, true)
+      await run("document.querySelector('.chat-detail__thought-content').scrollTop = 100")
+      assert.ok(await run("document.querySelector('.chat-detail__thought-content').scrollTop > 0"))
+      await run("window.renderThought('thought')")
+      await settle()
+      thought = await thoughtState()
+      assert.equal(thought.label, 'Thought', 'reasoning finishes while the turn remains active')
+      assert.equal(thought.open, true, 'completion preserves the chosen expansion')
+      if (process.env.SELE_THOUGHT_SCREENSHOT) {
+        await fs.writeFile(
+          process.env.SELE_THOUGHT_SCREENSHOT,
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
+      await run("document.querySelector('.chat-detail__thought > summary').click()")
+      await settle()
+      assert.equal((await thoughtState()).open, false)
+      await run("window.renderThought('stopped')")
+      await settle()
+      assert.equal((await thoughtState()).label, 'Thought')
+      await run("window.renderThought('finished', true)")
+      await settle()
+      await run("document.querySelector('.chat-detail__thought > summary').click()")
+      await settle()
+      await run(
+        "document.querySelector('.chat-detail__thought .chat-detail__working-load').click()"
+      )
+      await settle()
+      assert.equal(await run('window.thoughtLoads'), 1)
+      assert.equal(
+        (await thoughtState()).markdown,
+        true,
+        'lazy reasoning loads inside the disclosure'
       )
       console.log('Final response UI checks passed')
     } catch (error) {

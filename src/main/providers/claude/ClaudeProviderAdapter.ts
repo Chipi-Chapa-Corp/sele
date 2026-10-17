@@ -87,6 +87,7 @@ import { isClaudeAuthenticationFailure, isClaudeAuthenticationError } from './Cl
 import { claudeAccounts } from './ClaudeAccounts'
 import {
   ClaudeTranscriptProjection,
+  claudeBackgroundTurnSubtype,
   isClaudeInternalUserMessage,
   renderClaudeChatItems,
   renderClaudeChatWindow,
@@ -181,6 +182,10 @@ type ClaudeSessionState = {
   backgroundTaskIds: Set<string>
   subagentTaskStatuses: Map<string, ProviderSubagent['status']>
   waitingForSessionIdle: boolean
+  /** A background task finished and Claude has not started the turn that reads its result. */
+  taskNotificationPending: boolean
+  /** Set while an interrupt we asked for (to send a queued message) is ending the turn. */
+  interruptRequested: boolean
 }
 
 type ClaudeOneShotGeneration = {
@@ -291,6 +296,8 @@ const emptyUsageSummary = {
 
 const updateDelayMs = 35
 const contextUsageCloseGraceMs = 1_000
+// Time for the last background task's notification to start its main-thread turn.
+const backgroundIdleCloseGraceMs = 15_000
 const interruptCloseGraceMs = 500
 const oneShotCancellationRetentionMs = 60_000
 const sessionTitleRefreshDelayMs = 5_000
@@ -1648,7 +1655,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       queryStartupRevision: 0,
       backgroundTaskIds: new Set(),
       subagentTaskStatuses: new Map(),
-      waitingForSessionIdle: false
+      waitingForSessionIdle: false,
+      taskNotificationPending: false,
+      interruptRequested: false
     }
   }
 
@@ -1940,6 +1949,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           }
         })
       } catch (error) {
+        input.close()
         browser?.close()
         throw error
       }
@@ -1970,6 +1980,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.queryModel = null
     state.backgroundTaskIds.clear()
     state.waitingForSessionIdle = false
+    state.taskNotificationPending = false
+    state.interruptRequested = false
     state.partialMessages.clear()
     try {
       control.close()
@@ -2025,14 +2037,22 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         const answers: Record<string, string> = {}
         for (const question of questions) {
           const response = await new Promise<ProviderUserInputResponse>((resolve) => {
-            state.pendingUserInputs.push({
+            const pending: ClaudePendingUserInput = {
               id: `${permissionOptions.toolUseID}:${state.pendingUserInputs.length}`,
               question: question.question,
               choices: question.choices,
               allowFreeform: question.allowFreeform,
               startedAt: Date.now(),
               resolve
-            })
+            }
+            state.pendingUserInputs.push(pending)
+            this.cancelPendingOnAbort(
+              state,
+              state.pendingUserInputs,
+              pending,
+              permissionOptions,
+              () => resolve({ kind: 'cancel' })
+            )
             this.emitUpdate(state)
           })
           if (response.kind === 'cancel') {
@@ -2045,7 +2065,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       if (action.kind === 'resolve') return action.result
 
       return new Promise<PermissionResult>((resolve) => {
-        state.pendingApprovals.push({
+        const pending: ClaudePendingApproval = {
           id: permissionOptions.toolUseID,
           toolName,
           input,
@@ -2054,10 +2074,37 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           reason: permissionOptions.decisionReason ?? null,
           startedAt: Date.now(),
           resolve
-        })
+        }
+        state.pendingApprovals.push(pending)
+        this.cancelPendingOnAbort(state, state.pendingApprovals, pending, permissionOptions, () =>
+          resolve({ behavior: 'deny', message: 'The tool request was interrupted.' })
+        )
         this.emitUpdate(state)
       })
     }
+
+  /**
+   * Claude Code aborts an in-flight permission prompt when the turn is interrupted (for example
+   * by "Stop & send" on a queued message). Without dropping it here, the stale question stays on
+   * screen, blocks the queue drain, and any answer fails because the SDK no longer waits for it.
+   */
+  private cancelPendingOnAbort = <T>(
+    state: ClaudeSessionState,
+    list: T[],
+    pending: T,
+    permissionOptions: { signal: AbortSignal },
+    resolveCanceled: () => void
+  ): void => {
+    const cancel = (): void => {
+      const index = list.indexOf(pending)
+      if (index < 0) return
+      list.splice(index, 1)
+      resolveCanceled()
+      this.emitUpdate(state)
+    }
+    if (permissionOptions.signal.aborted) cancel()
+    else permissionOptions.signal.addEventListener('abort', cancel, { once: true })
+  }
 
   private consumeStateQuery = async (state: ClaudeSessionState, control: Query): Promise<void> => {
     try {
@@ -2213,11 +2260,56 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     })
   }
 
+  /**
+   * After a result, the query stays open while background agents run. When one finishes, Claude
+   * starts a main-thread turn on its own to handle the task notification. Show that turn as live
+   * so the chat doesn't look finished while Claude keeps working.
+   */
+  private resumeBackgroundTurn = (state: ClaudeSessionState, control: Query): void => {
+    if (state.active || state.query !== control || !state.waitingForSessionIdle) return
+    // The SDK may not stream the task-notification record, so mark where this turn begins.
+    this.addTranscriptMessage(state, {
+      type: 'system',
+      uuid: randomUUID(),
+      session_id: state.id,
+      parent_tool_use_id: null,
+      timestamp: new Date().toISOString(),
+      message: { subtype: claudeBackgroundTurnSubtype }
+    })
+    state.active = true
+    state.stopped = false
+    state.failed = false
+    state.waitingForSessionIdle = false
+    state.taskNotificationPending = false
+    this.emitUpdate(state)
+  }
+
+  /** Background tasks still running, plus a finished one whose follow-up turn hasn't started. */
+  private getOutstandingBackgroundWork = (state: ClaudeSessionState): number =>
+    state.backgroundTaskIds.size + (state.taskNotificationPending ? 1 : 0)
+
+  private scheduleBackgroundIdleClose = (state: ClaudeSessionState, control: Query): void => {
+    const shouldClose = (): boolean =>
+      state.query === control &&
+      state.waitingForSessionIdle &&
+      !state.active &&
+      state.backgroundTaskIds.size === 0
+    setTimeout(() => {
+      if (shouldClose()) void this.closeStateQuery(state)
+    }, backgroundIdleCloseGraceMs).unref?.()
+  }
+
   private handleQueryEvent = async (
     state: ClaudeSessionState,
     control: Query,
     event: SDKMessage
   ): Promise<boolean> => {
+    if (
+      (event.type === 'stream_event' || event.type === 'assistant') &&
+      event.parent_tool_use_id == null
+    ) {
+      this.resumeBackgroundTurn(state, control)
+    }
     if (event.type === 'stream_event') {
       const usageUpdated = this.reportLiveTokenUsage(state, control, event)
       if (applyClaudeStreamEvent(state.partialMessages, event) || usageUpdated)
@@ -2264,11 +2356,17 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return false
     }
     if (event.type === 'system' && event.subtype === 'background_tasks_changed') {
-      state.backgroundTaskIds = new Set(event.tasks.map((task) => task.task_id))
+      const taskIds = new Set(event.tasks.map((task) => task.task_id))
+      // A background task that left the list has finished; Claude follows up with a turn.
+      if ([...state.backgroundTaskIds].some((id) => !taskIds.has(id))) {
+        state.taskNotificationPending = true
+      }
+      state.backgroundTaskIds = taskIds
       this.queueUpdate(state, false)
+      // The last task's notification still has to start a main-thread turn that reads its
+      // result. Closing here would kill that turn, so only close if it never arrives.
       if (state.waitingForSessionIdle && state.backgroundTaskIds.size === 0 && !state.active) {
-        state.waitingForSessionIdle = false
-        return true
+        this.scheduleBackgroundIdleClose(state, control)
       }
       return false
     }
@@ -2289,12 +2387,16 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return false
     }
     if (event.type === 'system' && event.subtype === 'session_state_changed') {
+      if (event.state !== 'idle') {
+        this.resumeBackgroundTurn(state, control)
+        return false
+      }
       // A result completes the visible foreground turn. Session idle only decides when the
       // underlying query can be closed after its background tasks have also finished.
       const lifecycle = getClaudeSessionStateLifecycleDecision(
         state.waitingForSessionIdle,
         event.state,
-        state.backgroundTaskIds.size,
+        this.getOutstandingBackgroundWork(state),
         state.active
       )
       if (lifecycle === 'ignore') return false
@@ -2315,7 +2417,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.partialMessages.clear()
 
     const wasStopped = state.stopped
-    state.failed = !wasStopped && event.subtype !== 'success'
+    // A turn we interrupted to send a queued message ends with error_during_execution; that is
+    // the expected outcome, not a failure.
+    const wasInterrupted = state.interruptRequested && event.subtype === 'error_during_execution'
+    state.interruptRequested = false
+    state.failed = !wasStopped && !wasInterrupted && event.subtype !== 'success'
     if (state.failed) {
       const errors = 'errors' in event ? event.errors : []
       console.error(`Claude session ${state.id} returned ${event.subtype}.`, { errors })
@@ -2399,11 +2505,14 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return false
     } else {
       const lifecycle = getClaudeResultLifecycleDecision(
-        state.backgroundTaskIds.size,
+        this.getOutstandingBackgroundWork(state),
         event.terminal_reason,
         state.failed || wasStopped
       )
       state.waitingForSessionIdle = lifecycle.waitForSessionIdle
+      if (lifecycle.keepQueryAlive && state.taskNotificationPending) {
+        this.scheduleBackgroundIdleClose(state, control)
+      }
       await settleWithin(
         Promise.all([refreshContextUsage, refreshMetadata]),
         contextUsageCloseGraceMs
@@ -2509,8 +2618,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     message: QueuedClaudeMessage
   ): Promise<void> => {
     state.queuedMessages.unshift(message)
+    // Sending a new message supersedes any open question or approval; leaving them pending
+    // would block the queue drain after the interrupted turn ends.
+    this.rejectPendingRequests(state)
     this.emitUpdate(state)
     const control = state.query
+    if (control) state.interruptRequested = true
     const interrupted = control
       ? await control.interrupt().then(
           () => true,
@@ -2588,10 +2701,14 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   private rejectPendingRequests = (state: ClaudeSessionState): void => {
+    if (!state.pendingApprovals.length && !state.pendingUserInputs.length) return
     state.pendingApprovals
       .splice(0)
       .forEach((pending) => pending.resolve({ behavior: 'deny', message: 'The chat was stopped.' }))
     state.pendingUserInputs.splice(0).forEach((pending) => pending.resolve({ kind: 'cancel' }))
+    // Some callers (e.g. a query closing on its own) never emit afterwards; without this the
+    // renderer keeps showing a question that can no longer be answered.
+    this.queueUpdate(state, false)
   }
 
   private getTitle = (state: ClaudeSessionState): string => {

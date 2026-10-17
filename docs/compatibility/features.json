@@ -1,7 +1,7 @@
 {
   "as_of": "2026-10-16",
-  "sele_version": "3.7.0",
-  "sele_commit": "ac152596071be622672efc5c8c97a44a0b912d30",
+  "sele_version": "3.7.1",
+  "sele_commit": "b67832c2a0db9205577d09aeb49897eeabd1b71c+working-tree",
   "codex_version": "0.163.0",
   "scope": "Current ChatGPT desktop (Chat, Work, and Codex), Codex desktop lineage and CLI, plus a separately labelled Classic desktop comparison. Hosted tools are included only at their desktop integration boundary.",
   "features": [
@@ -2598,7 +2598,7 @@
       "feature": "Let Codex automate the built-in browser",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Partial",
-      "assessment": "Compatible OpenAI Browser Use discovers Sele as iab; several browser operations remain unsupported.",
+      "assessment": "Compatible OpenAI Browser Use discovers Sele as iab and supports uploads, downloads, and flattened cross-origin frames; secure authentication UI and remote forwarding remain unavailable.",
       "priority": "P1",
       "evidence": [
         {
@@ -2606,14 +2606,14 @@
           "needle": "## Current limits"
         },
         {
-          "path": "src/renderer/src/components/BrowserPanel.tsx",
-          "needle": "export const BrowserPanel"
+          "path": "scripts/tests/fixtures/browser-runtime-check.mjs",
+          "needle": "export async function checkInstalledBrowserRuntime"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/browser"
       ],
-      "verification": "static limitation"
+      "verification": "isolated Electron + installed Browser Use runtime"
     },
     {
       "id": "browser.dom",
@@ -2758,38 +2758,46 @@
       "category": "Browser and computer use",
       "feature": "Manage downloads through the browser runtime",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "Runtime-managed downloads are explicitly listed as unsupported.",
+      "sele_status": "Implemented",
+      "assessment": "Scoped download authorization, progress events, completed local paths, and shared download tools are implemented and exercised through the installed Browser Use runtime.",
       "priority": "P2",
       "evidence": [
         {
           "path": "docs/browser-use.md",
           "needle": "## Current limits"
+        },
+        {
+          "path": "scripts/tests/fixtures/browser-runtime-check.mjs",
+          "needle": "export async function checkInstalledBrowserRuntime"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/browser"
       ],
-      "verification": "static limitation"
+      "verification": "isolated Electron + installed Browser Use runtime"
     },
     {
       "id": "browser.upload",
       "category": "Browser and computer use",
       "feature": "Upload local files through browser automation",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "The in-app runtime bridge does not implement file upload.",
+      "sele_status": "Implemented",
+      "assessment": "Multiple local files can be uploaded through the native runtime file chooser or shared file-input tools; runtime uploads inside out-of-process frames remain unsupported.",
       "priority": "P1",
       "evidence": [
         {
           "path": "docs/browser-use.md",
           "needle": "## Current limits"
+        },
+        {
+          "path": "scripts/tests/fixtures/browser-runtime-check.mjs",
+          "needle": "export async function checkInstalledBrowserRuntime"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/browser"
       ],
-      "verification": "static limitation"
+      "verification": "isolated Electron + installed Browser Use runtime"
     },
     {
       "id": "browser.auth",
@@ -2862,18 +2870,22 @@
       "feature": "Automate complex cross-process frames",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Partial",
-      "assessment": "Complex out-of-process iframe interaction and non-flattened attachment are unsupported.",
+      "assessment": "Flattened cross-origin iframe reads and clicks are exercised through the installed runtime; non-flattened attachment and runtime file uploads in out-of-process frames remain unsupported.",
       "priority": "P2",
       "evidence": [
         {
           "path": "docs/browser-use.md",
           "needle": "## Current limits"
+        },
+        {
+          "path": "scripts/tests/fixtures/browser-runtime-check.mjs",
+          "needle": "export async function checkInstalledBrowserRuntime"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/browser"
       ],
-      "verification": "static limitation"
+      "verification": "isolated Electron + installed Browser Use runtime"
     },
     {
       "id": "browser.viewport",

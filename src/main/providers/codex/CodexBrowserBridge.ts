@@ -30,6 +30,7 @@ export async function startBrowserUseBridge(
   browser: BrowserAutomationService
 ): Promise<() => Promise<void>> {
   const sockets = new Set<Socket>()
+  const expressionCaches = new WeakMap<BrowserAutomationClient, Map<string, string>>()
   const connections = new Map<Socket, Map<string, BrowserAutomationClient>>()
   const send = (socket: Socket, value: unknown): void => {
     if (socket.destroyed) return
@@ -53,20 +54,26 @@ export async function startBrowserUseBridge(
       client = browser.createClient(scope, (event) => {
         send(
           socket,
-          event.type === 'detach'
-            ? { jsonrpc: '2.0', method: 'onCDPDetach', params: { tabId: event.tabId } }
-            : {
+          event.type === 'download'
+            ? {
                 jsonrpc: '2.0',
-                method: 'onCDPEvent',
-                params: {
-                  source: {
-                    tabId: event.tabId,
-                    ...(event.sessionId ? { sessionId: event.sessionId } : {})
-                  },
-                  method: event.method,
-                  params: event.params
-                }
+                method: 'onDownloadChange',
+                params: { ...event.download, session_id: scope.sessionId }
               }
+            : event.type === 'detach'
+              ? { jsonrpc: '2.0', method: 'onCDPDetach', params: { tabId: event.tabId } }
+              : {
+                  jsonrpc: '2.0',
+                  method: 'onCDPEvent',
+                  params: {
+                    source: {
+                      tabId: event.tabId,
+                      ...(event.sessionId ? { sessionId: event.sessionId } : {})
+                    },
+                    method: event.method,
+                    params: event.params
+                  }
+                }
         )
       })
       clients.set(scope.sessionId, client)
@@ -89,8 +96,24 @@ export async function startBrowserUseBridge(
         return client.listTabs()
       case 'createTab':
         return client.createTab()
+      case 'allowDownload':
+        if (typeof params.url !== 'string') throw new Error('Invalid download URL')
+        await client.allowDownload(positiveId(params.tabId), params.url)
+        return null
       case 'attach':
         await client.attach(positiveId(params.tabId))
+        return null
+      case 'attachTarget':
+      case 'detachTarget':
+        if (typeof params.targetId !== 'string') throw new Error('Invalid iframe target ID')
+        await client.executeCdp(
+          positiveId(params.tabId),
+          request.method === 'attachTarget' ? 'Target.attachToTarget' : 'Target.detachFromTarget',
+          {
+            targetId: params.targetId,
+            ...(request.method === 'attachTarget' ? { flatten: true } : {})
+          }
+        )
         return null
       case 'detach':
         client.detach(positiveId(params.tabId))
@@ -117,6 +140,29 @@ export async function startBrowserUseBridge(
           throw new Error('Invalid mouse coordinates')
         await client.moveMouse(positiveId(params.tabId), params.x, params.y)
         return null
+      case 'executeCdpWithCachedExpression': {
+        const key = params.expressionCacheKey
+        if (typeof key !== 'string' || key.length > 1024 || params.method !== 'Runtime.evaluate')
+          throw new Error('Invalid cached CDP expression request')
+        const command = object(params.commandParams ?? {})
+        let cache = expressionCaches.get(client)
+        if (!cache) expressionCaches.set(client, (cache = new Map()))
+        if (typeof command.expression === 'string') {
+          cache.set(key, command.expression)
+          if (cache.size > 128) cache.delete(cache.keys().next().value!)
+        }
+        const expression = cache.get(key)
+        if (expression === undefined) return { kind: 'cacheMiss' }
+        const target = object(params.target)
+        const result = await client.executeCdp(
+          positiveId(target.tabId),
+          'Runtime.evaluate',
+          { ...command, expression },
+          typeof target.sessionId === 'string' ? target.sessionId : undefined,
+          typeof target.targetId === 'string' ? target.targetId : undefined
+        )
+        return { kind: 'executed', result }
+      }
       case 'executeCdp': {
         const target = object(params.target)
         if (typeof params.method !== 'string') throw new Error('Invalid CDP method')
@@ -124,7 +170,8 @@ export async function startBrowserUseBridge(
           positiveId(target.tabId),
           params.method,
           object(params.commandParams ?? {}),
-          typeof target.sessionId === 'string' ? target.sessionId : undefined
+          typeof target.sessionId === 'string' ? target.sessionId : undefined,
+          typeof target.targetId === 'string' ? target.targetId : undefined
         )
       }
       default:

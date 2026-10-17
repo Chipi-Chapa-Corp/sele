@@ -175,6 +175,7 @@ export type ChatMessagingControllerDependencies = {
   } | null>
   providerUpdateInProgress: boolean
   activeSubagentChatView: SubagentChatView | null
+  setSubagentChatView: React.Dispatch<React.SetStateAction<SubagentChatView | null>>
   selectedChat: ProviderChat | null
   newSessionCwd: string | null
   sendInFlightProjectKeyRef: React.RefObject<string | null>

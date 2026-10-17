@@ -1535,6 +1535,37 @@ const MarkdownMessageComponent: React.FC<{
 
 export const MarkdownMessage = memo(MarkdownMessageComponent)
 
+const ThoughtBlock: React.FC<{
+  streaming: boolean
+  onDisclosureToggle?: () => void
+  children: ReactNode
+}> = ({ streaming, onDisclosureToggle, children }) => {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <details
+      className="chat-detail__thought"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary onClick={onDisclosureToggle}>
+        {streaming ? 'Thinking' : 'Thought'}
+        <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
+      </summary>
+      {open && (
+        <div
+          className="chat-detail__thought-content"
+          role="region"
+          aria-label="Thought text"
+          tabIndex={0}
+        >
+          {children}
+        </div>
+      )}
+    </details>
+  )
+}
+
 const copyTextToClipboard = async (content: string): Promise<void> => {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(content)
@@ -2262,6 +2293,45 @@ const WorkingStep: React.FC<{
                           ))
                         )}
                       </div>
+                    ) : block.item.kind === 'reasoning' ? (
+                      <ThoughtBlock
+                        key={block.item.id}
+                        streaming={
+                          active &&
+                          block.item === lastWorkingItem &&
+                          block.item.status === 'inProgress'
+                        }
+                        onDisclosureToggle={onDisclosureToggle}
+                      >
+                        {!isWorkingItemPayloadLoaded(block.item) ? (
+                          <button
+                            className="chat-detail__working-load"
+                            type="button"
+                            disabled={!onLoadItem}
+                            onClick={() =>
+                              void Promise.resolve(onLoadItem?.(block.item.id)).catch((error) => {
+                                console.error('[caught:ChatDetailItem:WorkingStep]', error)
+                              })
+                            }
+                          >
+                            Load reasoning
+                          </button>
+                        ) : (
+                          <MarkdownMessage
+                            mediaScope={block.item.id}
+                            className="chat-detail__working-message"
+                            content={block.item.content}
+                            localImageContainer={container}
+                            localImageCwd={cwd}
+                            onOpenFileLink={onOpenFileLink}
+                            streaming={
+                              active &&
+                              block.item === lastWorkingItem &&
+                              block.item.status === 'inProgress'
+                            }
+                          />
+                        )}
+                      </ThoughtBlock>
                     ) : !isWorkingItemPayloadLoaded(block.item) ? (
                       <button
                         className="chat-detail__working-load"

@@ -1,3 +1,9 @@
+import type {
+  ProviderConnection,
+  ProviderConnectInput,
+  ProviderConnectionAttempt,
+  ProviderConnectionAttemptStatus
+} from './providerConnections'
 import type { NetworkRetrySettings } from './networkRetry'
 import type { TokenCostSample, TokenUsage, TokenUsageSummary } from './tokenUsage'
 import type { AppContainerTarget } from './app'
@@ -677,6 +683,8 @@ export type ProviderWorkingMessage = {
   type: 'message'
   id: string
   content: string
+  kind?: 'reasoning'
+  status?: 'inProgress' | 'completed'
   contentLoaded?: boolean
   contentCharacterCount?: number
   contentTruncated?: boolean
@@ -852,6 +860,8 @@ export type ProviderSubagent = {
   status: ProviderSubagentStatus
   createdAt: number | null
   updatedAt: number | null
+  /** The user can message (or steer) this subagent directly in its own thread. */
+  canMessage?: boolean
 }
 
 export type ProviderSubagentDetail = ProviderSubagent & {
@@ -1021,6 +1031,36 @@ export type ProviderOneShotOptions = ProviderTurnOptions & {
 export const providerOneShotGenerationCanceledMessage = 'One-shot generation canceled'
 
 export type ProviderApi = {
+  getConnections: (
+    providerId: ProviderId,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderConnection[]>
+  connectProvider: (
+    providerId: ProviderId,
+    input: ProviderConnectInput,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderConnectionAttempt | null>
+  getConnectionAttempt: (
+    providerId: ProviderId,
+    attemptId: string,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderConnectionAttemptStatus>
+  completeConnection: (
+    providerId: ProviderId,
+    attemptId: string,
+    code: string,
+    options?: ProviderSourceOptions
+  ) => Promise<void>
+  cancelConnection: (
+    providerId: ProviderId,
+    attemptId: string,
+    options?: ProviderSourceOptions
+  ) => Promise<void>
+  deleteConnection: (
+    providerId: ProviderId,
+    credentialId: string,
+    options?: ProviderSourceOptions
+  ) => Promise<void>
   reauthenticateAccount: (
     providerId: ProviderId,
     options?: ProviderSourceOptions
@@ -1149,6 +1189,12 @@ export type ProviderApi = {
     window?: { startIndex: number | null; limit: number }
   ) => Promise<ProviderSubagentDetail>
   cancelSubagent: (providerId: ProviderId, chatId: string, subagentId: string) => Promise<void>
+  sendSubagentMessage: (
+    providerId: ProviderId,
+    chatId: string,
+    subagentId: string,
+    message: string
+  ) => Promise<void>
   setChatGoal: (
     providerId: ProviderId,
     chatId: string,
@@ -1244,7 +1290,7 @@ export type ProviderApi = {
     chatId: string,
     done?: boolean
   ) => Promise<ProviderChatMetadata>
-  markCwdChatsDone: (providerId: ProviderId, cwd: string | null) => Promise<ProviderChatMetadata[]>
+  markChatsDone: (chatIds: string[]) => Promise<ProviderChatMetadata[]>
   getCwdNotes: (providerId: ProviderId, cwd: string | null) => Promise<ProviderCwdNote[]>
   setCwdNotes: (
     providerId: ProviderId,
@@ -1345,6 +1391,12 @@ export const providerIpcChannels = {
   getAgentModes: 'provider:get-agent-modes',
   getModels: 'provider:get-models',
   getSkills: 'provider:get-skills',
+  getConnections: 'provider:get-connections',
+  connectProvider: 'provider:connect-provider',
+  getConnectionAttempt: 'provider:get-connection-attempt',
+  completeConnection: 'provider:complete-connection',
+  cancelConnection: 'provider:cancel-connection',
+  deleteConnection: 'provider:delete-connection',
   getConfig: 'provider:get-config',
   setConfigValue: 'provider:set-config-value',
   setConfigFeature: 'provider:set-config-feature',
@@ -1361,6 +1413,7 @@ export const providerIpcChannels = {
   getSubagents: 'provider:get-subagents',
   getSubagent: 'provider:get-subagent',
   cancelSubagent: 'provider:cancel-subagent',
+  sendSubagentMessage: 'provider:send-subagent-message',
   getChatWorkingStepPage: 'provider:get-chat-working-step-page',
   getChatWorkingItem: 'provider:get-chat-working-item',
   getChatWorkingToolPage: 'provider:get-chat-working-tool-page',
@@ -1386,7 +1439,7 @@ export const providerIpcChannels = {
   compactChat: 'provider:compact-chat',
   stopChat: 'provider:stop-chat',
   markChatDone: 'provider:mark-chat-done',
-  markCwdChatsDone: 'provider:mark-cwd-chats-done',
+  markChatsDone: 'provider:mark-chats-done',
   getCwdNotes: 'provider:get-cwd-notes',
   setCwdNotes: 'provider:set-cwd-notes',
   markChatSeen: 'provider:mark-chat-seen',

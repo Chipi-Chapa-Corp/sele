@@ -2,10 +2,40 @@
 // The runtime dependencies below are an isolated test host, not application configuration.
 import assert from 'node:assert/strict'
 import net from 'node:net'
+import http from 'node:http'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export async function checkInstalledBrowserRuntime({ runtimePath, socketPath, url, directory }) {
   const transportSockets = new Set()
+  const artifactServer = http.createServer((request, response) => {
+    if (request.url === '/download') {
+      response.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': 'attachment; filename="runtime-test.txt"'
+      })
+      response.end('Downloaded through native Browser Use')
+    } else if (request.url === '/frame') {
+      response.setHeader('Content-Type', 'text/html')
+      response.end(
+        '<!doctype html><label>Frame field<input id="frame-input"></label><button onclick="document.querySelector(\'#frame-result\').textContent=\'Frame clicked\'">Frame action</button><p id="frame-result"></p>'
+      )
+    } else {
+      response.setHeader('Content-Type', 'text/html')
+      response.end(
+        `<!doctype html><input type="file" id="upload" multiple onchange="document.querySelector('#upload-result').textContent=Array.from(this.files,f=>f.name).join(',')"><p id="upload-result"></p><a href="/download" download>Download test file</a><iframe src="http://localhost:${artifactServer.address().port}/frame"></iframe>`
+      )
+    }
+  })
+  await new Promise((resolve) => artifactServer.listen(0, '127.0.0.1', resolve))
+  const artifactUrl = `http://127.0.0.1:${artifactServer.address().port}`
+  const uploadPath = join(directory, 'runtime-upload.txt')
+  const uploadPath2 = join(directory, 'runtime-upload-2.txt')
+  await Promise.all([
+    writeFile(uploadPath, 'Runtime upload one'),
+    writeFile(uploadPath2, 'Runtime upload two')
+  ])
   globalThis.nodeRepl = {
     cwd: directory,
     env: {
@@ -112,12 +142,76 @@ export async function checkInstalledBrowserRuntime({ runtimePath, socketPath, ur
     await execute('navigate_tab_back', { browser_id: 'iab', tab_id: tab.id })
     await execute('navigate_tab_forward', { browser_id: 'iab', tab_id: tab.id })
     await execute('navigate_tab_reload', { browser_id: 'iab', tab_id: tab.id })
+    await execute('navigate_tab_url', { browser_id: 'iab', tab_id: tab.id, url: artifactUrl })
+    await execute('playwright_wait_for_load_state', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      state: 'load'
+    })
+    const chooserPromise = execute('playwright_wait_for_file_chooser', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      timeout_ms: 10000
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await execute('playwright_locator_click', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      selector: '#upload'
+    })
+    const chooser = await chooserPromise
+    assert.equal(chooser.is_multiple, true)
+    await execute('playwright_file_chooser_set_files', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      file_chooser_id: chooser.file_chooser_id,
+      files: [uploadPath, uploadPath2]
+    })
+    const fileNames = await execute('playwright_locator_inner_text', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      selector: '#upload-result'
+    })
+    assert.match(JSON.stringify(fileNames), /runtime-upload-2.txt/)
+    const downloadPromise = execute('playwright_wait_for_download', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      timeout_ms: 10000
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await execute('playwright_locator_click', { browser_id: 'iab', tab_id: tab.id, selector: 'a' })
+    const download = await downloadPromise
+    const saved = await execute('playwright_download_path', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      download_id: download.download_id
+    })
+    assert.equal(await readFile(saved.path, 'utf8'), 'Downloaded through native Browser Use')
+    await unlink(saved.path)
+    const frame = await execute('playwright_locator_inner_text', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      selector: 'iframe >> internal:control=enter-frame >> body'
+    })
+    assert.match(JSON.stringify(frame), /Frame action/)
+    await execute('playwright_locator_click', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      selector: 'iframe >> internal:control=enter-frame >> button'
+    })
+    const frameResult = await execute('playwright_locator_inner_text', {
+      browser_id: 'iab',
+      tab_id: tab.id,
+      selector: 'iframe >> internal:control=enter-frame >> #frame-result'
+    })
+    assert.match(JSON.stringify(frameResult), /Frame clicked/)
     await execute('close_tab', { browser_id: 'iab', tab_id: tab.id })
     console.log(
-      'PASS: installed Browser Use runtime discovers Sele; accessibility clicks/typing, foreground/background screenshots, handoff, navigation/history/reload and closing work'
+      'PASS: installed Browser Use runtime discovers Sele; accessibility input, screenshots, handoff, history, multiple file uploads, native downloads and cross-origin frame interaction work'
     )
   } finally {
     for (const socket of transportSockets) socket.destroy()
     delete globalThis.nodeRepl
+    await new Promise((resolve) => artifactServer.close(resolve))
   }
 }

@@ -392,7 +392,13 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       active = false
       if (timeoutId !== null) window.clearTimeout(timeoutId)
     }
-  }, [activeSubagentId, selectedChatId, selectedChatKey, selectedProviderId])
+  }, [
+    activeSubagentId,
+    activeSubagentChatView?.refreshRequest,
+    selectedChatId,
+    selectedChatKey,
+    selectedProviderId
+  ])
   useEffect(() => {
     chatDetailResyncRequestIdRef.current += 1
     chatDetailResyncRef.current = null
@@ -519,6 +525,47 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       : effectiveAppSettings.browser.view === 'chat'
         ? `chat:${selectedChatKey ?? `new:${terminalWorkspaceKey}`}`
         : `project:${terminalWorkspaceKey}`
+  // Remember the active sidebar tab per project, like terminal sessions, so switching
+  // projects restores whichever tab (terminal, browser, git, ...) was last used there.
+  const changesPaneViewByWorkspaceRef = useRef(
+    new Map<
+      string,
+      {
+        view: ChangesPaneView
+        lastNonTerminal: Exclude<ChangesPaneView, 'terminal'>
+      }
+    >()
+  )
+  const changesPaneViewWorkspaceKeyRef = useRef(terminalWorkspaceKey)
+  useLayoutEffect(() => {
+    const savedViews = changesPaneViewByWorkspaceRef.current
+    if (changesPaneViewWorkspaceKeyRef.current === terminalWorkspaceKey) {
+      savedViews.set(terminalWorkspaceKey, {
+        view: changesPaneView,
+        lastNonTerminal: lastNonTerminalChangesPaneViewRef.current
+      })
+      return
+    }
+
+    changesPaneViewWorkspaceKeyRef.current = terminalWorkspaceKey
+    const saved = savedViews.get(terminalWorkspaceKey)
+    if (!saved) {
+      savedViews.set(terminalWorkspaceKey, {
+        view: changesPaneView,
+        lastNonTerminal: lastNonTerminalChangesPaneViewRef.current
+      })
+      return
+    }
+
+    const browserEnabled = effectiveAppSettings.browser.enabled
+    const lastNonTerminal =
+      saved.lastNonTerminal === 'browser' && !browserEnabled ? 'git' : saved.lastNonTerminal
+    const view = saved.view === 'browser' && !browserEnabled ? 'git' : saved.view
+    lastNonTerminalChangesPaneViewRef.current = lastNonTerminal
+    if (view === 'terminal') setTerminalOpened(true)
+    if (view === 'browser') setBrowserOpened(true)
+    setChangesPaneView(view)
+  }, [changesPaneView, terminalWorkspaceKey])
   const gitAvailableForCurrentSource =
     gitSourceAvailability?.containerKey === changesContainerKey
       ? gitSourceAvailability.availability.gitAvailable

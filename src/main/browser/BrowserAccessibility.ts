@@ -57,6 +57,10 @@ export class BrowserAccessibility {
     return id
   }
 
+  backendNodeId(ref: string): number {
+    return this.backend(ref)
+  }
+
   async read(options: BrowserTreeOptions = {}, query?: string): Promise<string> {
     const rootBackend = options.ref ? this.backend(options.ref) : undefined
     const { nodes } = await this.cdp<{ nodes: AxNode[] }>('Accessibility.getFullAXTree')

@@ -127,6 +127,11 @@
   margin-top: 0.35rem;
 }
 
+/* Match the spacing of the choices/answer rows so the error isn't squeezed against the input. */
+.chat-user-input .chat-approval__error {
+  margin-top: 0.35rem;
+}
+
 .chat-user-input__input {
   width: auto;
   flex: 1 1 auto;

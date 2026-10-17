@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 export async function checkClaudeBrowserTools({
   createClaudeBrowserIntegration,
@@ -16,6 +19,8 @@ export async function checkClaudeBrowserTools({
     containerKey: 'host'
   }
   const integration = createClaudeBrowserIntegration(browserService, scope)
+  const artifacts = await mkdtemp(join(tmpdir(), 'sele-claude-artifacts-'))
+  const downloaded = []
   const client = new Client({ name: 'sele-browser-test', version: '1.0.0' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await integration.server.instance.connect(serverTransport)
@@ -48,7 +53,13 @@ export async function checkClaudeBrowserTools({
       'computer',
       'javascript_tool',
       'read_console_messages',
-      'read_network_requests'
+      'read_network_requests',
+      'upload_files',
+      'downloads',
+      'handle_dialog',
+      'save_screenshot',
+      'print_pdf',
+      'record_gif'
     ])
       assert.ok(
         tools.some((tool) => tool.name === name),
@@ -120,6 +131,109 @@ export async function checkClaudeBrowserTools({
       requestId: requests[0].requestId
     })
     assert.match(response.body, /Sele browser test/)
+    const uploadPath = join(artifacts, 'upload-fixture.txt')
+    await writeFile(uploadPath, 'Sele browser upload fixture')
+    await evaluate(`(() => {
+      const input = document.createElement('input');
+      input.type = 'file'; input.id = 'browser-upload-fixture'; input.multiple = true;
+      input.setAttribute('aria-label', 'Upload fixture files');
+      document.body.append(input);
+    })()`)
+    await value('upload_files', {
+      tabId: tab.id,
+      paths: [uploadPath],
+      selector: '#browser-upload-fixture'
+    })
+    assert.equal(
+      await evaluate('document.querySelector("#browser-upload-fixture").files[0].name'),
+      'upload-fixture.txt'
+    )
+    assert.equal(
+      await evaluate('document.querySelector("#browser-upload-fixture").files[0].text()'),
+      'Sele browser upload fixture'
+    )
+    await error(
+      'upload_files',
+      { tabId: tab.id, paths: [uploadPath], selector: '#name' },
+      /input\[type=file\]/
+    )
+    await error(
+      'upload_files',
+      {
+        tabId: tab.id,
+        paths: [join(artifacts, 'missing.txt')],
+        selector: '#browser-upload-fixture'
+      },
+      /ENOENT|exist|file/i
+    )
+    const fileRef = (await value('find', { query: 'Upload fixture files', tabId: tab.id })).match(
+      /\[(ref_\d+)\]/
+    )[1]
+    await value('upload_files', { tabId: tab.id, paths: [uploadPath], ref: fileRef })
+
+    assert.equal((await value('handle_dialog', { tabId: tab.id, action: 'status' })).dialog, null)
+    await evaluate(
+      'setTimeout(() => { window.browserConfirmAccepted = confirm("Browser fixture accept"); }, 50); "scheduled"'
+    )
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(
+      (await value('handle_dialog', { tabId: tab.id, action: 'status' })).dialog.message,
+      'Browser fixture accept'
+    )
+    await value('handle_dialog', {
+      tabId: tab.id,
+      action: 'accept',
+      promptText: 'Accepted by browser tools'
+    })
+    assert.equal(await evaluate('window.browserConfirmAccepted'), true)
+    await evaluate(
+      'setTimeout(() => { window.browserConfirmAnswer = confirm("Browser fixture confirm"); }, 50); "scheduled"'
+    )
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await value('handle_dialog', { tabId: tab.id, action: 'dismiss' })
+    assert.equal(await evaluate('window.browserConfirmAnswer'), false)
+
+    for (const endpoint of ['/download-fixture', '/download-redirect']) {
+      const downloadUrl = new URL(endpoint, url).href
+      await value('downloads', { tabId: tab.id, action: 'allow', url: downloadUrl })
+      await evaluate(
+        `(() => { const anchor = document.createElement('a'); anchor.href = ${JSON.stringify(downloadUrl)}; anchor.download = 'fixture.txt'; document.body.append(anchor); anchor.click(); anchor.remove(); })()`
+      )
+      const download = await value('downloads', { tabId: tab.id, action: 'wait', timeoutMs: 5000 })
+      assert.ok(
+        !downloaded.includes(download.filename),
+        'wait returns the newly authorized download'
+      )
+      downloaded.push(download.filename)
+      assert.equal(download.status, 'complete')
+      assert.equal(await readFile(download.filename, 'utf8'), 'Sele browser download fixture\n')
+    }
+
+    await evaluate('document.body.style.minHeight = "1800px"')
+    const screenshot = await value('save_screenshot', {
+      tabId: tab.id,
+      path: join(artifacts, 'full-page.png'),
+      fullPage: true
+    })
+    const fullPagePng = await readFile(screenshot.path)
+    assert.equal(fullPagePng.subarray(1, 4).toString(), 'PNG')
+    assert.ok(
+      fullPagePng.readUInt32BE(20) >= 1800,
+      'full-page screenshot includes offscreen content'
+    )
+    await error('save_screenshot', { tabId: tab.id, path: screenshot.path }, /EEXIST|exist/)
+    const pdf = await value('print_pdf', { tabId: tab.id, path: join(artifacts, 'page.pdf') })
+    assert.equal((await readFile(pdf.path)).subarray(0, 5).toString(), '%PDF-')
+    await value('record_gif', { tabId: tab.id, action: 'start' })
+    await evaluate('document.body.style.background = "rgb(30, 90, 120)"')
+    await value('computer', { tabId: tab.id, action: 'wait', duration: 0.6 })
+    assert.ok((await value('record_gif', { tabId: tab.id, action: 'status' })).frames >= 2)
+    const recording = await value('record_gif', {
+      tabId: tab.id,
+      action: 'stop',
+      path: join(artifacts, 'browser.gif')
+    })
+    assert.equal((await readFile(recording.path)).subarray(0, 6).toString(), 'GIF89a')
     await value('resize_window', { tabId: tab.id, preset: 'mobile' })
     assert.equal(await evaluate('innerWidth'), 375)
     await value('resize_window', { tabId: tab.id, preset: 'desktop' })
@@ -200,12 +314,14 @@ export async function checkClaudeBrowserTools({
       'window.setBrowserTestView("chat"); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
     )
     console.log(
-      'PASS: Claude native-style tools over MCP, shared browser input/accessibility/screenshots, provider isolation, disabled settings, stale refs and query cleanup'
+      'PASS: Claude tools over MCP, uploads/downloads, explicit confirm dialogs, full-page PNG/PDF/GIF artifacts, shared input/accessibility, provider isolation, disabled settings and query cleanup'
     )
   } finally {
     integration.close()
     await client.close()
     await window.webContents.executeJavaScript('window.browserTestDisabled = false')
+    await rm(artifacts, { recursive: true, force: true })
+    for (const path of downloaded) await rm(path, { force: true })
   }
 }
 

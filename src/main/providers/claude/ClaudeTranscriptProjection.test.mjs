@@ -198,3 +198,56 @@ test('Claude partial-to-committed transitions preserve API block ids and earlier
   compare(projection, source)
   assert.equal(JSON.stringify(published), saved)
 })
+
+test('Claude background agents keep each turn reply visible and report into their own turn', () => {
+  const sub = (message) => ({ ...message, parent_tool_use_id: 'agent' })
+  const notification = {
+    type: 'user',
+    uuid: 'notification',
+    message: { content: '<task-notification>\n<task-id>a1</task-id>\n</task-notification>' },
+    parent_tool_use_id: null
+  }
+  const messages = [
+    user('u'),
+    assistant('launch', [{ type: 'tool_use', id: 'agent', name: 'Agent', input: {} }]),
+    result('agent'),
+    assistant('started', [{ type: 'text', text: 'Started the agent.' }]),
+    sub(assistant('sub-1', [{ type: 'text', text: 'Agent looking' }])),
+    sub(tool('sub-tool')),
+    notification,
+    assistant('reply', [{ type: 'text', text: 'The agent is done.' }]),
+    sub(result('sub-tool')),
+    { type: 'system', uuid: 'marker', message: { subtype: 'sele_background_turn' } },
+    assistant('reply-2', [{ type: 'text', text: 'Second follow-up.' }])
+  ]
+  const projection = new ClaudeTranscriptProjection()
+  let source = []
+  for (const message of messages) {
+    const next = [...source, message]
+    projection.acceptSource(source, next, source.length)
+    source = next
+    compare(projection, source)
+    compare(projection, source, [], { active: false, stopped: false })
+  }
+  const items = normalized(projection.read(source, [], { active: false, stopped: false })).items
+  const replies = items.filter((item) => item.type === 'message' && item.role === 'assistant')
+  assert.deepEqual(
+    replies.map((item) => item.content),
+    ['Started the agent.', 'The agent is done.', 'Second follow-up.']
+  )
+  // Agent output stays in the turn that launched it, above that turn's reply, and its tool
+  // finishes there. The follow-up turns only hold their replies.
+  assert.deepEqual(
+    items.map((item) => (item.type === 'message' ? `${item.role}:${item.content}` : item.type)),
+    [
+      'user:u',
+      'working',
+      'assistant:Started the agent.',
+      'assistant:The agent is done.',
+      'assistant:Second follow-up.'
+    ]
+  )
+  const working = JSON.stringify(items[1])
+  assert.match(working, /Agent looking/)
+  assert.match(working, /"status":"finished"/)
+})

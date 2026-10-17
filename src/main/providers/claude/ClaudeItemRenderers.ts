@@ -78,6 +78,7 @@ type Segment = {
   failed: boolean
   failureReason?: 'authentication'
   failureMessage?: string
+  stopped?: boolean
 }
 
 const maxToolOutputLength = 160_000
@@ -368,7 +369,15 @@ const getUserMessagePresentation = (
 const hasToolResults = (blocks: ClaudeContentBlock[]): boolean =>
   blocks.some((block) => block.type === 'tool_result')
 
-const interruptedRequestMarker = '[Request interrupted by user]'
+// Claude Code records an interrupt as a user-role marker; "for tool use" is written when the
+// interrupt lands while a tool (or a permission/question prompt) is in flight.
+const interruptedRequestMarkers = new Set([
+  '[Request interrupted by user]',
+  '[Request interrupted by user for tool use]'
+])
+// After an interrupt Claude Code may append this synthetic assistant reply. It is not model
+// output, so it must not render as Claude's answer.
+const syntheticNoResponseText = 'No response requested.'
 const localCommandOutputPattern =
   /^<local-command-(?:stdout|stderr)>[\s\S]*<\/local-command-(?:stdout|stderr)>$/
 const skillContextPrefix = 'Base directory for this skill:'
@@ -403,7 +412,7 @@ export const isClaudeInternalUserMessage = (message: ClaudeTranscriptMessage): b
       !message.attachments?.length &&
       !hasToolResults(getContentBlocks(message.message)) &&
       message.isCompactSummary === true) ||
-    text === interruptedRequestMarker ||
+    (text != null && interruptedRequestMarkers.has(text)) ||
     (text != null && compactCommandPattern.test(text)) ||
     // Session history returned by the SDK can omit the original isCompactSummary flag.
     (text != null &&
@@ -416,6 +425,22 @@ export const isClaudeInternalUserMessage = (message: ClaudeTranscriptMessage): b
 }
 
 const getModel = (message: unknown): string | null => getString(getMessageRecord(message)?.model)
+
+export const isClaudeInterruptMarker = (message: ClaudeTranscriptMessage): boolean => {
+  const text = getStandaloneUserText(message)
+  return text != null && interruptedRequestMarkers.has(text)
+}
+
+export const isClaudeSyntheticAssistantMessage = (message: ClaudeTranscriptMessage): boolean => {
+  if (message.type !== 'assistant' || getModel(message.message) !== '<synthetic>') return false
+  const blocks = getContentBlocks(message.message)
+  return (
+    blocks.length === 1 &&
+    blocks[0]?.type === 'text' &&
+    typeof blocks[0].text === 'string' &&
+    blocks[0].text.trim() === syntheticNoResponseText
+  )
+}
 
 /**
  * Maps a rendered assistant message id back to the transcript record that produced it, replaying
@@ -443,49 +468,71 @@ export const resolveClaudeAssistantMessageUuid = (
   return null
 }
 
+export const claudeBackgroundTurnSubtype = 'sele_background_turn'
+
+/**
+ * Claude starts a main-thread turn on its own when a background task finishes. Its task
+ * notification (or sele's live marker for that turn) ends the visible turn, so the reply that
+ * follows gets its own working section instead of folding the previous reply into it.
+ */
+export const isClaudeBackgroundTurnBoundary = (message: ClaudeTranscriptMessage): boolean => {
+  if (message.parent_tool_use_id) return false
+  if (message.type === 'system') {
+    return getMessageRecord(message.message)?.subtype === claudeBackgroundTurnSubtype
+  }
+  const text = getStandaloneUserText(message)
+  return text != null && taskNotificationPattern.test(text)
+}
+
+// Subagent output belongs to the turn that started the agent. Background agents keep writing
+// after that turn's final answer, so their work goes before it rather than replacing it.
+const pushBeforeFinalMessage = (
+  entries: ProviderConversationEntry[],
+  entry: ProviderConversationEntry
+): void => {
+  const finalIndex = getTrailingAssistantEntryIndex(entries)
+  if (finalIndex < 0) entries.push(entry)
+  else entries.splice(finalIndex, 0, entry)
+}
+
 export const renderClaudeChatItems = (
   messages: ClaudeTranscriptMessage[],
   options: RenderOptions
 ): ProviderChatItem[] => {
   if (options.turnWindow) return renderClaudeChatWindow(messages, options, options.turnWindow).items
-  const items: ProviderChatItem[] = []
+  const parts: Array<{ item: ProviderChatItem } | { segment: Segment }> = []
   const skillToolIds = new Set<string>()
+  const toolSegments = new Map<string, Segment>()
   const nextBlockId = createClaudeBlockIds()
-  let segment: Segment | null = null
+  let segment = null as Segment | null
+  let backgroundTurnEnded = false
 
-  const ensureSegment = (messageId: string): Segment => {
-    if (!segment) {
-      segment = { id: `${messageId}:working`, entries: [], failed: false }
-    }
-    return segment
+  const startSegment = (next: Segment): Segment => {
+    segment = next
+    parts.push({ segment: next })
+    return next
   }
 
-  const flushSegment = (isLast: boolean): void => {
-    if (!segment) return
-    const current = segment
-    segment = null
-    const failed = current.failed || (isLast && options.failed === true)
-    appendProviderConversationSegment(items, {
-      preserveRawWorkingItems: true,
-      id: current.id,
-      timing: current.timing,
-      entries: current.entries,
-      finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
-      lifecycle: {
-        active: isLast && options.active,
-        completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
-        failed,
-        stopped: isLast && options.stopped
-      },
-      ...(failed && current.failureMessage ? { failureMessage: current.failureMessage } : {}),
-      ...(failed && current.failureReason ? { failureReason: current.failureReason } : {})
-    })
+  const ensureSegment = (messageId: string): Segment =>
+    segment ?? startSegment({ id: `${messageId}:working`, entries: [], failed: false })
+
+  const getOwnerSegment = (message: ClaudeTranscriptMessage): Segment => {
+    const parent = message.parent_tool_use_id
+    return (parent ? toolSegments.get(parent) : undefined) ?? ensureSegment(message.uuid)
   }
 
   for (const message of messages) {
     // Claude persists interrupt markers, task notifications and local command output as user-role
     // transcript records. They are control metadata, not text entered by the person.
-    if (isClaudeInternalUserMessage(message)) continue
+    if (isClaudeInterruptMarker(message)) {
+      if (segment) segment.stopped = true
+      continue
+    }
+    if (isClaudeBackgroundTurnBoundary(message)) {
+      if (segment) backgroundTurnEnded = true
+      continue
+    }
+    if (isClaudeInternalUserMessage(message) || isClaudeSyntheticAssistantMessage(message)) continue
 
     const blocks = getContentBlocks(message.message)
     const isSubagentMessage = Boolean(message.parent_tool_use_id)
@@ -495,31 +542,44 @@ export const renderClaudeChatItems = (
     if (message.type === 'user' && !hasToolResults(blocks)) {
       const { content, attachments } = getUserMessagePresentation(message, blocks)
       if (!content && !attachments?.length) continue
-      flushSegment(false)
-      items.push({
-        type: 'message',
-        id: message.uuid,
-        role: 'user',
-        content,
-        attachments,
-        createdAt: toTimestamp(message.timestamp),
-        kind: message.kind,
-        label: message.label ?? null
+      backgroundTurnEnded = false
+      parts.push({
+        item: {
+          type: 'message',
+          id: message.uuid,
+          role: 'user',
+          content,
+          attachments,
+          createdAt: toTimestamp(message.timestamp),
+          kind: message.kind,
+          label: message.label ?? null
+        }
       })
-      segment = {
+      startSegment({
         id: `${message.uuid}:working`,
         entries: [],
         failed: false,
         timing: includeConversationTime(undefined, toTimestamp(message.timestamp))
-      }
+      })
       continue
     }
 
-    if (segment) segment.timing = includeClaudeMessageTime(segment.timing, message)
+    if (backgroundTurnEnded && !isSubagentMessage && message.type === 'assistant') {
+      backgroundTurnEnded = false
+      segment = null
+    }
+
+    if (segment && !isSubagentMessage) {
+      segment.timing = includeClaudeMessageTime(segment.timing, message)
+    }
 
     if (message.type === 'assistant') {
-      const current = ensureSegment(message.uuid)
-      current.timing = includeClaudeMessageTime(current.timing, message)
+      const current = isSubagentMessage ? getOwnerSegment(message) : ensureSegment(message.uuid)
+      const push = (entry: ProviderConversationEntry): void => {
+        if (isSubagentMessage) pushBeforeFinalMessage(current.entries, entry)
+        else current.entries.push(entry)
+      }
+      if (!isSubagentMessage) current.timing = includeClaudeMessageTime(current.timing, message)
       if (isClaudeAuthenticationFailure(message)) {
         current.failed = true
         current.failureReason = 'authentication'
@@ -539,7 +599,7 @@ export const renderClaudeChatItems = (
           typeof block.thinking === 'string' &&
           block.thinking.trim()
         ) {
-          current.entries.push({
+          push({
             kind: 'working',
             item: {
               type: 'message',
@@ -552,10 +612,11 @@ export const renderClaudeChatItems = (
           // so narration preceding them is not mistaken for the turn's final message.
           const tool = createTool(blockBaseId, block)
           if (isSkillToolBlock(block)) skillToolIds.add(tool.toolId)
-          current.entries.push({ kind: 'working', item: tool })
+          toolSegments.set(tool.toolId, current)
+          push({ kind: 'working', item: tool })
         } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
           if (isSubagentMessage) {
-            current.entries.push({
+            push({
               kind: 'working',
               item: {
                 type: 'message',
@@ -564,7 +625,7 @@ export const renderClaudeChatItems = (
               }
             })
           } else {
-            current.entries.push({
+            push({
               kind: 'assistant',
               message: {
                 type: 'message',
@@ -585,7 +646,7 @@ export const renderClaudeChatItems = (
     }
 
     if (message.type === 'user' && hasToolResults(blocks)) {
-      const current = ensureSegment(message.uuid)
+      const current = isSubagentMessage ? getOwnerSegment(message) : ensureSegment(message.uuid)
       blocks.forEach((block) => {
         if (block.type !== 'tool_result') return
         const toolId = getString(block.tool_use_id)
@@ -613,8 +674,9 @@ export const renderClaudeChatItems = (
     if (message.type === 'system') {
       const record = getMessageRecord(message.message)
       if (record?.subtype === 'compact_boundary') {
-        flushSegment(false)
-        items.push({ type: 'contextCompaction', id: message.uuid })
+        backgroundTurnEnded = false
+        segment = null
+        parts.push({ item: { type: 'contextCompaction', id: message.uuid } })
       } else {
         const content = getString(record?.content) ?? getString(message.message)
         if (message.failed) {
@@ -636,7 +698,33 @@ export const renderClaudeChatItems = (
     }
   }
 
-  flushSegment(true)
+  const lastSegment: Segment | null = segment
+  const items: ProviderChatItem[] = []
+  for (const part of parts) {
+    if ('item' in part) {
+      items.push(part.item)
+      continue
+    }
+    const current = part.segment
+    const isLast = current === lastSegment
+    const failed = current.failed || (isLast && options.failed === true)
+    const stopped = current.stopped === true || (isLast && options.stopped)
+    appendProviderConversationSegment(items, {
+      preserveRawWorkingItems: true,
+      id: current.id,
+      timing: current.timing,
+      entries: current.entries,
+      finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
+      lifecycle: {
+        active: isLast && options.active,
+        completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
+        failed,
+        stopped
+      },
+      ...(failed && current.failureMessage ? { failureMessage: current.failureMessage } : {}),
+      ...(failed && current.failureReason ? { failureReason: current.failureReason } : {})
+    })
+  }
   items.push(...(options.pendingItems ?? []))
   return items
 }
@@ -649,6 +737,7 @@ type ProjectedClaudeSegment = {
   failed: boolean
   failureReason?: 'authentication'
   failureMessage?: string
+  stopped?: boolean
   groups: ProviderWorkingItem[]
   groupCount: number
   payloadCounts: Map<number, number>
@@ -674,7 +763,9 @@ export class ClaudeTranscriptProjection {
         payloadCount: number
       }
     >
-  } = { current: null, tools: new Map() }
+    /** A background task notification ended the turn; the next main-thread reply starts anew. */
+    backgroundTurnEnded: boolean
+  } = { current: null, tools: new Map(), backgroundTurnEnded: false }
   private counters = new Map<string, number>()
   private journal = new ProjectionJournal()
   /** Deterministic work counter for scaling tests; counts native records, including overlays. */
@@ -696,11 +787,12 @@ export class ClaudeTranscriptProjection {
     this.nodes = []
     this.turnStarts = []
     this.state.current = null
+    this.state.backgroundTurnEnded = false
     this.counters.clear()
     this.state.tools.clear()
   }
 
-  private ensureSegment(id: string): ProjectedClaudeSegment {
+  private ensureSegment(id: string, keepTools = false): ProjectedClaudeSegment {
     if (this.state.current) return this.state.current
     const segment: ProjectedClaudeSegment = {
       id: `${id}:working`,
@@ -712,7 +804,7 @@ export class ClaudeTranscriptProjection {
       finalMessage: null
     }
     this.journal.set(this.state, 'current', segment)
-    this.journal.set(this.state, 'tools', new Map())
+    if (!keepTools) this.journal.set(this.state, 'tools', new Map())
     this.journal.push(this.nodes, segment)
     return segment
   }
@@ -770,6 +862,20 @@ export class ClaudeTranscriptProjection {
     this.journal.set(segment, 'groups', groups.slice(-rendererWorkingItemPageSize))
   }
 
+  private clearCurrentSegment(): void {
+    this.journal.set(this.state, 'current', null)
+    if (this.state.backgroundTurnEnded) this.journal.set(this.state, 'backgroundTurnEnded', false)
+  }
+
+  /** Subagent records join the segment holding the Agent call that started them. */
+  private getOwnerSegment(message: ClaudeTranscriptMessage): ProjectedClaudeSegment {
+    const parent = message.parent_tool_use_id
+    return (
+      (parent ? this.state.tools.get(parent)?.segment : undefined) ??
+      this.ensureSegment(message.uuid)
+    )
+  }
+
   private demoteFinal(segment: ProjectedClaudeSegment): void {
     if (!segment.finalMessage) return
     const message = segment.finalMessage
@@ -779,14 +885,22 @@ export class ClaudeTranscriptProjection {
 
   private consume(message: ClaudeTranscriptMessage): void {
     this.processedRecordCount += 1
-    if (isClaudeInternalUserMessage(message)) return
+    if (isClaudeInterruptMarker(message)) {
+      if (this.state.current) this.journal.set(this.state.current, 'stopped', true)
+      return
+    }
+    if (isClaudeBackgroundTurnBoundary(message)) {
+      if (this.state.current) this.journal.set(this.state, 'backgroundTurnEnded', true)
+      return
+    }
+    if (isClaudeInternalUserMessage(message) || isClaudeSyntheticAssistantMessage(message)) return
     const blocks = getContentBlocks(message.message)
     const subagent = Boolean(message.parent_tool_use_id)
     if (subagent && message.type === 'user' && !hasToolResults(blocks)) return
     if (message.type === 'user' && !hasToolResults(blocks)) {
       const { content, attachments } = getUserMessagePresentation(message, blocks)
       if (!content && !attachments?.length) return
-      this.journal.set(this.state, 'current', null)
+      this.clearCurrentSegment()
       this.journal.push(this.turnStarts, this.nodes.length)
       this.journal.push(this.nodes, {
         type: 'message',
@@ -806,15 +920,21 @@ export class ClaudeTranscriptProjection {
       )
       return
     }
-    if (this.state.current)
+    if (this.state.backgroundTurnEnded && !subagent && message.type === 'assistant') {
+      // Agents from the previous turn may still be running; keep their tool lookups.
+      this.clearCurrentSegment()
+      this.ensureSegment(message.uuid, true)
+    }
+    if (this.state.current && !subagent)
       this.journal.set(
         this.state.current,
         'timing',
         includeClaudeMessageTime(this.state.current.timing, message)
       )
     if (message.type === 'assistant') {
-      const segment = this.ensureSegment(message.uuid)
-      this.journal.set(segment, 'timing', includeClaudeMessageTime(segment.timing, message))
+      const segment = this.getOwnerSegment(message)
+      if (!subagent)
+        this.journal.set(segment, 'timing', includeClaudeMessageTime(segment.timing, message))
       if (isClaudeAuthenticationFailure(message)) {
         this.demoteFinal(segment)
         this.journal.set(segment, 'failed', true)
@@ -838,14 +958,14 @@ export class ClaudeTranscriptProjection {
           typeof block.thinking === 'string' &&
           block.thinking.trim()
         ) {
-          this.demoteFinal(segment)
+          if (!subagent) this.demoteFinal(segment)
           this.appendWorking(segment, {
             type: 'message',
             id: this.blockId(message, 'thinking'),
             content: block.thinking.trim()
           })
         } else if (block.type === 'tool_use') {
-          this.demoteFinal(segment)
+          if (!subagent) this.demoteFinal(segment)
           const tool = createTool(getClaudeBlockBaseId(message), block)
           this.appendWorking(segment, tool)
           this.journal.mapSet(this.state.tools, tool.toolId, {
@@ -856,7 +976,7 @@ export class ClaudeTranscriptProjection {
             payloadCount: getWorkingItemPayloadCharacterCount(tool)
           })
         } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-          this.demoteFinal(segment)
+          if (!subagent) this.demoteFinal(segment)
           if (subagent)
             this.appendWorking(segment, {
               type: 'message',
@@ -880,8 +1000,9 @@ export class ClaudeTranscriptProjection {
       return
     }
     if (message.type === 'user' && hasToolResults(blocks)) {
-      const segment = this.ensureSegment(message.uuid)
-      this.journal.set(segment, 'timing', includeClaudeMessageTime(segment.timing, message))
+      const segment = this.getOwnerSegment(message)
+      if (!subagent)
+        this.journal.set(segment, 'timing', includeClaudeMessageTime(segment.timing, message))
       for (const block of blocks) {
         if (block.type !== 'tool_result') continue
         const toolId = getString(block.tool_use_id)
@@ -934,7 +1055,7 @@ export class ClaudeTranscriptProjection {
     if (message.type === 'system') {
       const record = getMessageRecord(message.message)
       if (record?.subtype === 'compact_boundary') {
-        this.journal.set(this.state, 'current', null)
+        this.clearCurrentSegment()
         this.journal.push(this.nodes, { type: 'contextCompaction', id: message.uuid })
       } else {
         const content = getString(record?.content) ?? getString(message.message)
@@ -983,6 +1104,7 @@ export class ClaudeTranscriptProjection {
           }
           const last = node === this.state.current
           const failed = node.failed || (last && options.failed === true)
+          const stopped = node.stopped === true || (last && options.stopped)
           appendProviderConversationSegment(items, {
             id: node.id,
             timing: node.timing,
@@ -1003,7 +1125,7 @@ export class ClaudeTranscriptProjection {
               active: last && options.active,
               completed: !last || (!options.active && !failed && !(last && options.stopped)),
               failed,
-              stopped: last && options.stopped
+              stopped
             },
             ...(failed && node.failureMessage ? { failureMessage: node.failureMessage } : {}),
             ...(failed && node.failureReason ? { failureReason: node.failureReason } : {}),
@@ -1023,7 +1145,10 @@ export class ClaudeTranscriptProjection {
 const classifyClaudeTurnRecord = (
   message: ClaudeTranscriptMessage
 ): 'start' | 'content' | 'ignore' => {
+  if (isClaudeSyntheticAssistantMessage(message)) return 'ignore'
   if (message.type === 'user') {
+    // Interrupt markers still flow into the window so they can mark their turn as stopped.
+    if (isClaudeInterruptMarker(message)) return 'content'
     if (isClaudeInternalUserMessage(message)) return 'ignore'
     const blocks = getContentBlocks(message.message)
     if (hasToolResults(blocks)) return 'content'

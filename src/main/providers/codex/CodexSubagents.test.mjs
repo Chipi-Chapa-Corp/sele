@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  applyCodexSubagentRunOutcomes,
   createCodexSubagentTranscriptItems,
+  getCodexSubagentDispatchTarget,
+  getCodexSubagentRunOutcome,
   getCodexSubagentInstruction,
   getCodexSubagentParentThreadId,
   getCodexTurnSubagents
@@ -183,4 +186,66 @@ test('recovers the instruction from a spawn call for the matching child only', (
   assert.equal(instruction, 'Inspect the UI')
   assert.equal(createCodexSubagentTranscriptItems(summary, [], instruction)[0].role, 'user')
   assert.equal(getCodexSubagentInstruction(turns, 'missing-child'), null)
+})
+
+test('settles a child that failed without reporting back to its parent', () => {
+  const subagents = getCodexTurnSubagents(
+    [
+      {
+        id: 'parent-turn',
+        status: 'failed',
+        error: { message: 'usage limit' },
+        startedAt: 10,
+        completedAt: 20,
+        items: [
+          {
+            type: 'subAgentActivity',
+            id: 'started',
+            kind: 'started',
+            agentThreadId: 'child-chat',
+            agentPath: '/root/opencode_browser'
+          },
+          {
+            type: 'subAgentActivity',
+            id: 'interacted',
+            kind: 'interacted',
+            agentThreadId: 'child-chat',
+            agentPath: '/root/opencode_browser'
+          }
+        ]
+      }
+    ],
+    'root-chat'
+  )
+  assert.equal(subagents[0].status, 'running')
+
+  const outcome = getCodexSubagentRunOutcome({
+    id: 'child-turn',
+    status: 'failed',
+    error: { message: 'usage limit' },
+    startedAt: 12,
+    completedAt: 23,
+    items: []
+  })
+  assert.deepEqual(outcome, { status: 'failed', at: 23_000 })
+
+  const [settled] = applyCodexSubagentRunOutcomes(subagents, (id) =>
+    id === 'child-chat' ? outcome : undefined
+  )
+  assert.equal(settled.status, 'failed')
+  assert.equal(settled.updatedAt, 23_000)
+
+  const [stillRunning] = applyCodexSubagentRunOutcomes(subagents, () => ({
+    status: 'running',
+    at: 23_000
+  }))
+  assert.equal(stillRunning.status, 'running')
+})
+
+test('identifies parent items that hand new work to a child', () => {
+  const activity = (kind) => ({ type: 'subAgentActivity', id: kind, kind, agentThreadId: 'child' })
+  assert.equal(getCodexSubagentDispatchTarget(activity('started')), 'child')
+  assert.equal(getCodexSubagentDispatchTarget(activity('interacted')), 'child')
+  assert.equal(getCodexSubagentDispatchTarget(activity('completed')), null)
+  assert.equal(getCodexSubagentDispatchTarget({ type: 'agentMessage', id: 'm' }), null)
 })

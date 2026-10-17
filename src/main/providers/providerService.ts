@@ -78,12 +78,17 @@ import {
 
 const codexAdapter = new CodexProviderAdapter()
 const claudeAdapter = new ClaudeProviderAdapter()
+const openCodeAdapter = new OpenCodeProviderAdapter()
+const connectionAdapter = (providerId: ProviderId): OpenCodeProviderAdapter => {
+  if (providerId !== 'opencode') throw new Error('Connections are not available for this provider.')
+  return openCodeAdapter
+}
 
 const adapters: Record<ProviderId, ProviderAdapter> = {
   codex: withProviderNetworkRetries(codexAdapter),
   claude: withProviderNetworkRetries(claudeAdapter),
   copilot: withProviderNetworkRetries(new CopilotProviderAdapter()),
-  opencode: withProviderNetworkRetries(new OpenCodeProviderAdapter())
+  opencode: withProviderNetworkRetries(openCodeAdapter)
 }
 
 const providerLabels: Record<ProviderId, string> = {
@@ -455,31 +460,6 @@ export const getChatUpdateSummary = (
   }
 }
 
-const collectProviderChatIdsByCwd = async (
-  providerId: ProviderId,
-  cwd: string | null
-): Promise<string[]> => {
-  const adapter = adapters[providerId]
-  const normalizedCwd = normalizeCwd(cwd)
-  const chatIds = new Set<string>()
-  let cursor: string | null = null
-
-  do {
-    const page = await adapter.getChats({
-      cursor,
-      limit: 100
-    })
-
-    page.chats.forEach((chat) => {
-      if (normalizeCwd(chat.cwd) === normalizedCwd) chatIds.add(chat.id)
-    })
-
-    cursor = page.nextCursor
-  } while (cursor)
-
-  return Array.from(chatIds)
-}
-
 for (const adapter of Object.values(adapters)) {
   adapter.onTokenUsage?.((observation) => recordTokenUsage(adapter.id, observation))
   adapter.onChatUpdated((detail, updateMetadata) => {
@@ -636,6 +616,17 @@ export const providerApi: ProviderApi = {
     adapters[providerId].getAgentModes?.(options) ?? Promise.resolve([]),
   getModels: (providerId, options) => adapters[providerId].getModels(options),
   getSkills: (providerId, cwd, options) => adapters[providerId].getSkills(cwd, options),
+  getConnections: (providerId, options) => connectionAdapter(providerId).getConnections(options),
+  connectProvider: (providerId, input, options) =>
+    connectionAdapter(providerId).connectProvider(input, options),
+  getConnectionAttempt: (providerId, attemptId, options) =>
+    connectionAdapter(providerId).getConnectionAttempt(attemptId, options),
+  completeConnection: (providerId, attemptId, code, options) =>
+    connectionAdapter(providerId).completeConnection(attemptId, code, options),
+  cancelConnection: (providerId, attemptId, options) =>
+    connectionAdapter(providerId).cancelConnection(attemptId, options),
+  deleteConnection: (providerId, credentialId, options) =>
+    connectionAdapter(providerId).deleteConnection(credentialId, options),
   getConfig: (providerId, options) =>
     providerId === 'codex' ? codexAdapter.getConfig(options) : Promise.resolve(null),
   setConfigValue: (providerId, name, path, value, options) => {
@@ -773,6 +764,16 @@ export const providerApi: ProviderApi = {
       container: metadata.container
     })
   },
+  sendSubagentMessage: async (providerId, chatId, subagentId, message): Promise<void> => {
+    const adapter = adapters[providerId]
+    if (!adapter.sendSubagentMessage) {
+      throw new Error('Messaging subagents is not supported by this provider')
+    }
+    const metadata = await getChatMetadata(chatId)
+    return adapter.sendSubagentMessage(chatId, subagentId, message, {
+      container: metadata.container
+    })
+  },
   setChatGoal: async (providerId, chatId, objective) => {
     const adapter = adapters[providerId]
     if (!adapter.setChatGoal) throw new Error('Goals are not supported by this provider')
@@ -895,8 +896,7 @@ export const providerApi: ProviderApi = {
       .stopChat(chatId)
       .then((detail) => applyMetadataToDetail(detail, providerId)),
   markChatDone: (_providerId, chatId, done = true) => setChatDone(chatId, done),
-  markCwdChatsDone: async (providerId, cwd) =>
-    setChatsDone(await collectProviderChatIdsByCwd(providerId, cwd), true),
+  markChatsDone: (chatIds) => setChatsDone(chatIds, true),
   getCwdNotes: (providerId, cwd) => getCwdNotes(providerId, cwd),
   setCwdNotes: (providerId, cwd, notes) => setCwdNotes(providerId, cwd, notes),
   markChatSeen: (_providerId, chatId, seenUpdatedAt) => setChatSeen(chatId, seenUpdatedAt),

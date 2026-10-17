@@ -15,7 +15,7 @@ if (!process.versions.electron) {
       await build({
         stdin: {
           contents:
-            "export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {startBrowserAutomationService} from './src/main/browser/BrowserAutomation';export {startBrowserUseBridge} from './src/main/providers/codex/CodexBrowserBridge';export {registerBrowserUseSession, removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
+            "export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {startBrowserAutomationService} from './src/main/browser/BrowserAutomation';export {startBrowserUseBridge} from './src/main/providers/codex/CodexBrowserBridge';export {registerBrowserUseSession, removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
           resolveDir: process.cwd(),
           loader: 'ts'
         },
@@ -79,6 +79,7 @@ if (!process.versions.electron) {
   const assert = require('node:assert/strict')
   const {
     createClaudeBrowserIntegration,
+    createBrowserMcpServer,
     startBrowserAutomationService,
     startBrowserUseBridge,
     registerBrowserUseSession,
@@ -88,11 +89,27 @@ if (!process.versions.electron) {
   app.whenReady().then(async () => {
     let closeBridge, server, socket
     try {
+      const downloads = path.join(process.argv[2], 'downloads')
+      await fs.mkdir(downloads)
+      app.setPath('downloads', downloads)
       const before = new Set(await fs.readdir('/tmp/codex-browser-use').catch(() => []))
       const browserService = startBrowserAutomationService()
       closeBridge = await startBrowserUseBridge(browserService)
       const codexOwner = {}
       registerBrowserUseSession(codexOwner, 'browser-test-session', '/work', null)
+      const preferences = new Map()
+      ipcMain.on('sele:preferences', (event, request) => {
+        if (request.action === 'set') preferences.set(request.key, request.value)
+        else if (request.action === 'remove') preferences.delete(request.key)
+        event.returnValue = {
+          ok: true,
+          value: request.action === 'get' ? (preferences.get(request.key) ?? null) : null
+        }
+      })
+      ipcMain.handle('sele:preferences', () => ({
+        ok: true,
+        value: Object.fromEntries(preferences)
+      }))
       ipcMain.handle('browser:resolve-page-zoom-scale', () => 100)
       const externalLinks = []
       ipcMain.handle('app:handle-external-link', (_event, options) => {
@@ -182,6 +199,16 @@ if (!process.versions.electron) {
       await cdp('Emulation.setFocusEmulationEnabled', { enabled: true })
       await cdp('Page.enable')
       server = http.createServer((req, res) => {
+        if (req.url === '/download-redirect') {
+          res.writeHead(302, { Location: '/download-fixture' }).end()
+          return
+        }
+        if (req.url === '/download-fixture') {
+          res.setHeader('Content-Type', 'text/plain')
+          res.setHeader('Content-Disposition', 'attachment; filename="fixture.txt"')
+          res.end('Sele browser download fixture\n')
+          return
+        }
         res.setHeader('Content-Type', 'text/html')
         res.end(
           '<!doctype html><title>Sele browser test</title><label>Name <input id="name"></label><button id="go" onclick="document.querySelector(\'#result\').textContent=document.querySelector(\'#name\').value">Go</button><p id="result">Ready</p>'
@@ -254,6 +281,27 @@ if (!process.versions.electron) {
       assert.ok(Buffer.from(shot.data, 'base64').length > 1000)
       assert.ok(events.some((event) => event.method === 'onCDPEvent'))
       await assert.rejects(cdp('Browser.close'), /Unsupported/)
+      for (const target of [
+        { tabId: tab.id, sessionId: 'unowned' },
+        { tabId: tab.id, targetId: 'unowned' }
+      ]) {
+        await assert.rejects(
+          rpc('executeCdp', {
+            target,
+            method: 'Runtime.evaluate',
+            commandParams: { expression: '1' }
+          }),
+          /outside|unknown|not owned/i
+        )
+      }
+      await assert.rejects(
+        cdp('Target.attachToTarget', { targetId: 'unowned', flatten: true }),
+        /outside|unknown|not owned/i
+      )
+      await assert.rejects(
+        cdp('DOM.setFileInputFiles', { files: ['relative-upload.txt'] }),
+        /absolute/i
+      )
       await assert.rejects(
         rpc('executeCdp', {
           target: { tabId: window.webContents.id },
@@ -276,6 +324,20 @@ if (!process.versions.electron) {
         url,
         codexTabId: (await rpc('getTabs'))[0].id
       })
+      const { checkBrowserMcp } = await import('./fixtures/browser-mcp-check.mjs')
+      await checkBrowserMcp({ createBrowserMcpServer, browserService, window, url })
+      if (process.env.SELE_COPILOT_RUNTIME) {
+        const { checkInstalledCopilotBrowser } = await import(
+          './fixtures/copilot-browser-check.mjs'
+        )
+        await checkInstalledCopilotBrowser({
+          createBrowserMcpServer,
+          browserService,
+          runtimePath: process.env.SELE_COPILOT_RUNTIME,
+          directory: process.argv[2],
+          url
+        })
+      }
       if (process.env.SELE_CLAUDE_RUNTIME) {
         await checkInstalledClaudeBrowserSdk({
           createClaudeBrowserIntegration,

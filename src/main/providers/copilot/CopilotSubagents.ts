@@ -12,6 +12,82 @@ export type CopilotAgentTask = {
   completedAt?: string
   agentType: string
   prompt: string
+  toolCallId?: string
+  executionMode?: 'sync' | 'background' | (string & {})
+  canPromoteToBackground?: boolean
+}
+
+/** A message the user delivered to a subagent through `tasks.sendMessage`. */
+export type CopilotSubagentFollowUp = {
+  id: string
+  agentId: string
+  content: string
+  timestamp: string
+}
+
+/**
+ * Copilot only accepts follow-ups for background agents (write_agent semantics); a synchronous
+ * agent qualifies once promoted. Finished agents cannot be resumed.
+ */
+export const canMessageCopilotTask = (task: CopilotAgentTask | undefined): boolean =>
+  Boolean(
+    task &&
+    (task.status === 'running' || task.status === 'idle') &&
+    (task.executionMode === 'background' || task.canPromoteToBackground === true)
+  )
+
+const getPromptArgument = (value: unknown): string | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const prompt = (value as Record<string, unknown>).prompt
+  return typeof prompt === 'string' && prompt.trim() ? prompt.trim() : null
+}
+
+/**
+ * `TaskAgentInfo.prompt` is replaced by every follow-up, so the original instruction comes from the
+ * parent's spawning tool call.
+ */
+const getOriginalInstruction = (events: SessionEvent[], toolCallId: string | undefined) => {
+  if (!toolCallId) return null
+  const start = events.find(
+    (event): event is Extract<SessionEvent, { type: 'tool.execution_start' }> =>
+      event.type === 'tool.execution_start' && event.data.toolCallId === toolCallId
+  )
+  return getPromptArgument(start?.data.arguments)
+}
+
+/**
+ * Show follow-ups the user sent in the subagent transcript. The runtime delivers them out of band,
+ * so a matching native user message (if one is ever recorded) takes precedence.
+ */
+export const mergeCopilotSubagentFollowUps = (
+  events: SessionEvent[],
+  followUps: CopilotSubagentFollowUp[]
+): SessionEvent[] => {
+  const pending = followUps.filter(
+    (followUp) =>
+      !events.some(
+        (event) =>
+          event.type === 'user.message' &&
+          event.agentId === followUp.agentId &&
+          event.data.content.trim() === followUp.content.trim()
+      )
+  )
+  if (pending.length === 0) return events
+  const merged = [...events]
+  pending.forEach((followUp) => {
+    const at = Date.parse(followUp.timestamp)
+    const index = merged.findIndex((event) => Date.parse(event.timestamp) > at)
+    const event = {
+      type: 'user.message',
+      id: followUp.id,
+      parentId: null,
+      agentId: followUp.agentId,
+      timestamp: followUp.timestamp,
+      data: { content: followUp.content }
+    } as unknown as SessionEvent
+    merged.splice(index < 0 ? merged.length : index, 0, event)
+  })
+  return merged
 }
 
 const truncate = (value: string, limit: number): string => {
@@ -77,6 +153,7 @@ export const createCopilotSubagentSummaries = (
       started?.data.agentName.trim() ||
       `Subagent ${agentId}`
     const description =
+      getOriginalInstruction(events, task?.toolCallId ?? started?.data.toolCallId) ||
       task?.description.trim() ||
       task?.prompt.trim() ||
       started?.data.agentDescription.trim() ||
@@ -89,7 +166,8 @@ export const createCopilotSubagentSummaries = (
       description,
       status,
       createdAt,
-      updatedAt
+      updatedAt,
+      canMessage: canMessageCopilotTask(task)
     }
   }).sort(
     (first, second) =>
@@ -122,7 +200,11 @@ export const renderCopilotSubagentWindow = (
   summary: ProviderSubagent,
   events: SessionEvent[],
   window: ProviderChatTurnWindow
-): { items: ProviderChatItem[]; itemsStartTurnIndex: number; turnCount: number } => {
+): {
+  items: ProviderChatItem[]
+  itemsStartTurnIndex: number
+  turnCount: number
+} => {
   const page = renderCopilotChatWindow(
     events,
     {

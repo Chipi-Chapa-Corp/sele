@@ -8,6 +8,10 @@ import { getCurrentContainerHostBridge, isCurrentContainerTarget } from '../../c
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { quotePosixShellArg } from '../../targetShell'
 import { getOpenCodeExecutable, getOpenCodeExecutableError } from './OpenCodeExecutable'
+import { getBrowserAutomationService } from '../../browser/BrowserAutomation'
+import { createOpenCodeBrowserBridge } from './OpenCodeBrowserBridge'
+import type { BrowserAutomationScope } from '../../../shared/browser'
+import type { BrowserMcpIntegration } from '../../browser/BrowserMcpServer'
 
 const serverStartupTimeoutMs = 15_000
 const serverOutputLimit = 4_000
@@ -46,11 +50,21 @@ export class OpenCodeServerClient {
   private exitListeners = new Set<(error: Error) => void>()
   private stderr = ''
   private targetPid: number | null = null
+  private generation = 0
+  private browser: Awaited<ReturnType<typeof createOpenCodeBrowserBridge>> | null = null
+
+  registerBrowser = async (
+    scope: BrowserAutomationScope
+  ): Promise<BrowserMcpIntegration | null> => {
+    await this.getClient()
+    return this.browser?.register(scope) ?? null
+  }
 
   getClient = (): Promise<OpencodeClient> => {
     if (!this.startPromise) {
-      this.startPromise = this.start().catch((error: unknown) => {
-        this.startPromise = null
+      const generation = this.generation
+      this.startPromise = this.start(generation).catch(async (error: unknown) => {
+        if (generation === this.generation) await this.dispose()
         throw error
       })
     }
@@ -63,16 +77,24 @@ export class OpenCodeServerClient {
   }
 
   dispose = async (): Promise<void> => {
+    this.generation += 1
     const child = this.process
     const targetPid = this.targetPid
     this.process = null
     this.startPromise = null
     this.targetPid = null
+    const browser = this.browser
+    this.browser = null
+    await browser?.close()
     if (targetPid != null) await this.stopTargetProcess(targetPid)
     child?.kill()
   }
 
-  private start = async (): Promise<OpencodeClient> => {
+  private start = async (generation: number): Promise<OpencodeClient> => {
+    let ownedBrowser: Awaited<ReturnType<typeof createOpenCodeBrowserBridge>> | null = null
+    const checkCurrent = (): void => {
+      if (generation !== this.generation) throw new Error('OpenCode server startup was canceled')
+    }
     if (!(await supportsOpenCodeServerContainer(this.container))) {
       throw new Error(
         'OpenCode server mode is not available for separately selected Docker, Podman, or SSH targets. Use the host, current container, Distrobox, or Toolbox source.'
@@ -83,6 +105,30 @@ export class OpenCodeServerClient {
       reserveLocalPort(),
       getCurrentContainerHostBridge()
     ])
+    checkCurrent()
+    let serverEnv = process.env
+    const browserService = getBrowserAutomationService()
+    if (!this.container && browserService) {
+      try {
+        // Merge only the ephemeral process environment; never write OpenCode user/project config.
+        const content = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}')
+        ownedBrowser = await createOpenCodeBrowserBridge(browserService)
+        checkCurrent()
+        this.browser = ownedBrowser
+        serverEnv = {
+          ...process.env,
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            ...content,
+            plugin: [...(content.plugin ?? []), ownedBrowser.pluginUrl]
+          })
+        }
+      } catch (error) {
+        console.error('Unable to initialize the OpenCode browser plugin.', error)
+        await ownedBrowser?.close()
+        if (this.browser === ownedBrowser) this.browser = null
+        checkCurrent()
+      }
+    }
     const executable = this.container?.kind === 'container' ? 'opencode' : getOpenCodeExecutable()
     const serverArgs = ['serve', '--hostname', '127.0.0.1', '--port', String(port)]
     const usesCommandWrapper =
@@ -99,10 +145,11 @@ export class OpenCodeServerClient {
     const hostCommand = await getHostCommand(commandFile, commandArgs, {
       container: this.container,
       cwd: homedir(),
-      env: process.env
+      env: serverEnv
     }).catch((error: unknown) => {
       throw getOpenCodeExecutableError(error)
     })
+    checkCurrent()
     const password = randomBytes(24).toString('base64url')
     const child = spawn(hostCommand.file, hostCommand.args, {
       cwd: hostCommand.cwd,
@@ -117,6 +164,7 @@ export class OpenCodeServerClient {
     this.stderr = ''
 
     const url = await new Promise<string>((resolve, reject) => {
+      let ownedTargetPid: number | null = null
       let output = ''
       let settled = false
       const timeout = setTimeout(() => {
@@ -128,9 +176,8 @@ export class OpenCodeServerClient {
         settled = true
         clearTimeout(timeout)
         if (error) {
-          const targetPid = this.targetPid
-          this.targetPid = null
-          if (targetPid != null) void this.stopTargetProcess(targetPid)
+          if (this.process === child) this.targetPid = null
+          if (ownedTargetPid != null) void this.stopTargetProcess(ownedTargetPid)
           child.kill()
           reject(error)
         } else {
@@ -141,7 +188,10 @@ export class OpenCodeServerClient {
         output = `${output}${chunk.toString()}`.slice(-serverOutputLimit)
         const pidMatch = new RegExp(`${serverPidMarker}(\\d+)`).exec(output)
         const targetPid = Number(pidMatch?.[1])
-        if (Number.isSafeInteger(targetPid) && targetPid > 0) this.targetPid = targetPid
+        if (Number.isSafeInteger(targetPid) && targetPid > 0) {
+          ownedTargetPid = targetPid
+          if (this.process === child) this.targetPid = targetPid
+        }
         const match = /opencode server listening on (https?:\/\/[^\s]+)/.exec(output)
         if (match?.[1]) settle(undefined, match[1])
       }
@@ -161,6 +211,10 @@ export class OpenCodeServerClient {
           )
         )
       })
+    }).catch(async (error) => {
+      await ownedBrowser?.close()
+      if (this.browser === ownedBrowser) this.browser = null
+      throw error
     })
 
     child.on('close', (code) => {
@@ -168,6 +222,11 @@ export class OpenCodeServerClient {
       this.process = null
       this.startPromise = null
       this.targetPid = null
+      const browser = this.browser
+      this.browser = null
+      void browser
+        ?.close()
+        .catch((error) => console.error('Unable to close OpenCode browser.', error))
       const error = new Error(
         this.stderr.trim() || `OpenCode server exited with code ${code ?? 'unknown'}.`
       )
@@ -182,9 +241,10 @@ export class OpenCodeServerClient {
     })
     try {
       await client.global.health({ throwOnError: true })
+      checkCurrent()
       return client
     } catch (error) {
-      await this.dispose()
+      if (generation === this.generation) await this.dispose()
       throw error
     }
   }

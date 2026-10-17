@@ -144,9 +144,14 @@ import { getCodexQueueDrainDecision } from './CodexQueueDrain'
 import { CodexSubagentHistory } from './CodexSubagentHistory'
 import { writeCodexSkillEnabled } from './CodexSkillConfig'
 import {
+  applyCodexSubagentRunOutcomes,
   createCodexSubagentSummary,
   createCodexSubagentTranscriptItems,
+  getCodexSubagentDispatchTarget,
+  getCodexSubagentRunOutcome,
   getCodexTurnSubagents,
+  isCodexSubagentUnsettled,
+  type CodexSubagentRunOutcome,
   getCodexSubagentParentThreadId,
   getCodexSubagentInstruction,
   isCodexSubagentThread,
@@ -171,7 +176,12 @@ type AccountReadResponse = {
 type LoginResponse =
   | { type: 'chatgpt'; loginId: string; authUrl: string }
   | { type: 'apiKey' }
-  | { type: 'chatgptDeviceCode'; loginId: string; verificationUrl: string; userCode: string }
+  | {
+      type: 'chatgptDeviceCode'
+      loginId: string
+      verificationUrl: string
+      userCode: string
+    }
   | { type: 'chatgptAuthTokens' }
 
 export type CodexLoginCompletion = {
@@ -385,7 +395,11 @@ type CodexTurnAccessOptions = {
   runtimeWorkspaceRoots?: string[]
   sandboxPolicy:
     | { type: 'readOnly'; networkAccess: boolean }
-    | { type: 'workspaceWrite'; writableRoots?: string[]; networkAccess: boolean }
+    | {
+        type: 'workspaceWrite'
+        writableRoots?: string[]
+        networkAccess: boolean
+      }
     | { type: 'dangerFullAccess' }
 }
 
@@ -1297,6 +1311,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     { pendingTurnId: string; promise: Promise<CodexTurn> }
   >()
   private activeTurnIds = new Map<string, string>()
+  /** Latest turn outcome per thread, used to settle subagents that never reported back. */
+  private subagentRunOutcomes = new Map<string, CodexSubagentRunOutcome>()
+  /** Child thread -> parent marker revision already reconciled against child history. */
+  private subagentOutcomeChecks = new Map<string, string>()
   private activeOneShotGenerations = new Map<string, OneShotGeneration>()
   private canceledOneShotGenerationIds = new Set<string>()
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -1774,7 +1792,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const current = await this.client.request<{
         config: { features?: Record<string, ProviderConfigValue> }
         layers:
-          | { name: { type: string; file?: string; profile?: string | null }; version: string }[]
+          | {
+              name: { type: string; file?: string; profile?: string | null }
+              version: string
+            }[]
           | null
       }>('config/read', { includeLayers: true })
       const updated = updateConfigFeatureValue(
@@ -2636,7 +2657,57 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private getSubagentsInContext = async (chatId: string): Promise<ProviderSubagent[]> => {
     this.rememberThreadContainer(chatId)
     const thread = this.threads.get(chatId)
-    return thread ? getCodexTurnSubagents(this.getRenderableTurns(thread), chatId) : []
+    return thread ? this.getThreadSubagents(thread, this.getRenderableTurns(thread)) : []
+  }
+
+  private recordSubagentRunOutcome = (threadId: string, turn: CodexTurn): void => {
+    const outcome = getCodexSubagentRunOutcome(turn)
+    if (outcome) this.subagentRunOutcomes.set(threadId, outcome)
+  }
+
+  private getThreadSubagents = (thread: CodexThread, turns: CodexTurn[]): ProviderSubagent[] => {
+    const subagents = applyCodexSubagentRunOutcomes(getCodexTurnSubagents(turns, thread.id), (id) =>
+      this.subagentRunOutcomes.get(id)
+    )
+    this.reconcileUnsettledSubagents(thread.id, subagents)
+    return subagents
+  }
+
+  /**
+   * A child that died without reporting back (e.g. usage limit hit by both parent and child) leaves
+   * its parent marker "working" forever. Once the parent is idle, read each such child's latest turn
+   * once per parent marker revision and settle the marker from it.
+   */
+  private reconcileUnsettledSubagents = (chatId: string, subagents: ProviderSubagent[]): void => {
+    if (this.hasActiveOrSubmittingTurn(chatId)) return
+    const container = this.getThreadContainer(chatId)
+    subagents.forEach((subagent) => {
+      if (!isCodexSubagentUnsettled(subagent)) return
+      const revision = `${subagent.turnId ?? ''}\0${subagent.updatedAt ?? ''}`
+      if (this.subagentOutcomeChecks.get(subagent.id) === revision) return
+      this.subagentOutcomeChecks.set(subagent.id, revision)
+
+      void this.runWithContainer(container, async () => {
+        const response = await this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
+          threadId: subagent.id,
+          cursor: null,
+          limit: 1,
+          sortDirection: 'desc',
+          itemsView: 'notLoaded'
+        })
+        const latestTurn = response.data[0]
+        const outcome = latestTurn ? getCodexSubagentRunOutcome(latestTurn) : null
+        // A live notification observed meanwhile is fresher than this history read.
+        if (!outcome || this.subagentRunOutcomes.has(subagent.id)) return
+        this.subagentRunOutcomes.set(subagent.id, outcome)
+        if (outcome.status !== 'running') this.emitChatUpdated(chatId)
+      }).catch((error: unknown) => {
+        if (this.subagentOutcomeChecks.get(subagent.id) === revision) {
+          this.subagentOutcomeChecks.delete(subagent.id)
+        }
+        console.error(`Unable to read Codex subagent ${subagent.id} status`, error)
+      })
+    })
   }
 
   getSubagent = (
@@ -4177,7 +4248,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       pendingApproval: this.getProviderPendingApproval(thread.id),
       pendingUserInput: this.getProviderPendingUserInput(thread.id),
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
-      subagents: getCodexTurnSubagents(renderableTurns, thread.id),
+      subagents: this.getThreadSubagents(thread, renderableTurns),
       goal: this.goals.get(thread.id),
       ...(itemsStartTurnIndex == null ? {} : { itemsStartTurnIndex, turnCount }),
       ...(thread.turnPagination ? { turnPagination: thread.turnPagination } : {}),
@@ -4810,23 +4881,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
             path,
             stat: async () => info,
             read: async (offset, length) => {
-              const chunk = await client.request<{ exitCode: number; stdout: string }>(
-                'command/exec',
-                {
-                  command: [
-                    'sh',
-                    '-c',
-                    'dd if="$1" bs=131072 skip="$2" count="$3" iflag=skip_bytes,count_bytes status=none | base64 -w0',
-                    'sele-metadata',
-                    path,
-                    String(offset),
-                    String(length)
-                  ],
-                  sandboxPolicy: { type: 'readOnly' },
-                  outputBytesCap: 256 * 1024,
-                  timeoutMs: 30_000
-                }
-              )
+              const chunk = await client.request<{
+                exitCode: number
+                stdout: string
+              }>('command/exec', {
+                command: [
+                  'sh',
+                  '-c',
+                  'dd if="$1" bs=131072 skip="$2" count="$3" iflag=skip_bytes,count_bytes status=none | base64 -w0',
+                  'sele-metadata',
+                  path,
+                  String(offset),
+                  String(length)
+                ],
+                sandboxPolicy: { type: 'readOnly' },
+                outputBytesCap: 256 * 1024,
+                timeoutMs: 30_000
+              })
               const bytes = Buffer.from(chunk.stdout.trim(), 'base64')
               if (chunk.exitCode !== 0 || (length && !bytes.length))
                 throw Object.assign(new Error('Ranged Codex transcript read unavailable'), {
@@ -6195,6 +6266,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         status: 'interrupted'
       }
     }
+    this.recordSubagentRunOutcome(threadId, turn)
 
     if (this.isRolledBackTurn(threadId, turn.id)) return
 
@@ -6280,6 +6352,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
       })
     }
 
+    items.forEach((item) => {
+      const childThreadId = getCodexSubagentDispatchTarget(item)
+      // New work for the child supersedes whatever its previous turn ended with.
+      if (childThreadId) this.subagentRunOutcomes.delete(childThreadId)
+    })
     this.upsertItems(threadId, turnId, items)
     if (items.some((item) => item.type === 'agentMessage')) {
       this.clearAgentResponseOverlay(threadId, turnId)

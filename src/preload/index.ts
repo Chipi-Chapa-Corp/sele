@@ -176,6 +176,24 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getModels, providerId, options),
   getSkills: (providerId, cwd, options) =>
     ipcRenderer.invoke(providerIpcChannels.getSkills, providerId, cwd, options),
+  getConnections: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getConnections, providerId, options),
+  connectProvider: (providerId, input, options) =>
+    ipcRenderer.invoke(providerIpcChannels.connectProvider, providerId, input, options),
+  getConnectionAttempt: (providerId, attemptId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getConnectionAttempt, providerId, attemptId, options),
+  completeConnection: (providerId, attemptId, code, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.completeConnection,
+      providerId,
+      attemptId,
+      code,
+      options
+    ),
+  cancelConnection: (providerId, attemptId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.cancelConnection, providerId, attemptId, options),
+  deleteConnection: (providerId, credentialId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.deleteConnection, providerId, credentialId, options),
   getConfig: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getConfig, providerId, options),
   setConfigValue: (providerId, name, path, value, options) =>
@@ -221,6 +239,14 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getSubagent, providerId, chatId, subagentId, window),
   cancelSubagent: (providerId, chatId, subagentId) =>
     ipcRenderer.invoke(providerIpcChannels.cancelSubagent, providerId, chatId, subagentId),
+  sendSubagentMessage: (providerId, chatId, subagentId, message) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.sendSubagentMessage,
+      providerId,
+      chatId,
+      subagentId,
+      message
+    ),
   getChatWorkingStepPage: (providerId, chatId, workingStepId, startIndex, limit, rootChatId) =>
     ipcRenderer.invoke(
       providerIpcChannels.getChatWorkingStepPage,
@@ -368,8 +394,7 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.stopChat, providerId, chatId),
   markChatDone: (providerId, chatId, done) =>
     ipcRenderer.invoke(providerIpcChannels.markChatDone, providerId, chatId, done),
-  markCwdChatsDone: (providerId, cwd) =>
-    ipcRenderer.invoke(providerIpcChannels.markCwdChatsDone, providerId, cwd),
+  markChatsDone: (chatIds) => ipcRenderer.invoke(providerIpcChannels.markChatsDone, chatIds),
   getCwdNotes: (providerId, cwd) =>
     ipcRenderer.invoke(providerIpcChannels.getCwdNotes, providerId, cwd),
   setCwdNotes: (providerId, cwd, notes) =>

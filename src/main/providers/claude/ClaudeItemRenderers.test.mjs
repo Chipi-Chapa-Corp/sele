@@ -72,6 +72,52 @@ test('authentication errors fail only their own turn and ordinary quoted errors 
   }
 })
 
+test('interrupted turns render as stopped without interrupt markers or synthetic replies', () => {
+  const working = {
+    type: 'assistant',
+    uuid: 'working',
+    session_id: 'session',
+    parent_tool_use_id: null,
+    message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Partial answer' }] }
+  }
+  const next = { ...userPrompt, uuid: 'next', message: { content: 'Do something else' } }
+  const synthetic = {
+    ...working,
+    uuid: 'synthetic',
+    message: {
+      model: '<synthetic>',
+      content: [{ type: 'text', text: 'No response requested.' }]
+    }
+  }
+  const options = { active: false, stopped: false }
+  for (const markerText of [
+    '[Request interrupted by user]',
+    '[Request interrupted by user for tool use]'
+  ]) {
+    const marker = {
+      ...userPrompt,
+      uuid: 'marker',
+      message: { role: 'user', content: [{ type: 'text', text: markerText }] }
+    }
+    const source = [userPrompt, working, marker, synthetic, next]
+    for (const items of [
+      renderClaudeChatItems(source, options),
+      renderClaudeChatItems(source, { ...options, turnWindow: { startIndex: null, limit: 10 } }),
+      new ClaudeTranscriptProjection().read(source, [], options).items
+    ]) {
+      assert.deepEqual(
+        items.filter((item) => item.role === 'user').map((item) => item.content),
+        ['Make a chart', 'Do something else']
+      )
+      assert.equal(
+        items.some((item) => item.content === 'No response requested.'),
+        false
+      )
+      assert.equal(items.find((item) => item.type === 'working')?.status, 'stopped')
+    }
+  }
+})
+
 test('keeps Claude failure details in full and projected history', () => {
   const error = {
     type: 'system',

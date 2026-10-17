@@ -42,6 +42,7 @@ type Segment = {
   failed: boolean
   rateLimited: boolean
   failureMessage?: string
+  stopped?: boolean
 }
 
 const maxToolOutputLength = 160_000
@@ -72,6 +73,9 @@ export const getOpenCodeErrorMessage = (error: unknown): string => {
 
   return message
 }
+
+export const isOpenCodeAbortError = (error: unknown): boolean =>
+  isRecord(error) && error.name === 'MessageAbortedError'
 
 const openCodeRateLimitMarkers = [
   'gousagelimiterror',
@@ -306,6 +310,7 @@ export const renderOpenCodeChatItems = (
     const current = segment
     segment = null
     const failed = current.failed || (isLast && options.failed === true)
+    const stopped = current.stopped === true || (isLast && options.stopped)
     if (failed && isLast && options.failureMessage && !current.failureMessage) {
       current.entries.push({
         kind: 'working',
@@ -325,7 +330,7 @@ export const renderOpenCodeChatItems = (
         active: isLast && options.active,
         completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
         failed,
-        stopped: isLast && options.stopped
+        stopped
       },
       ...(failed && current.rateLimited ? { failureReason: 'rateLimit' as const } : {}),
       ...(failed && (current.failureMessage || (isLast && options.failureMessage))
@@ -335,10 +340,18 @@ export const renderOpenCodeChatItems = (
   }
 
   messages.forEach((message, messageIndex) => {
-    if (message.info.role === 'user') {
+    // OpenCode stores compaction boundaries on user records, before a hidden summary
+    // and synthetic continuation prompt. These records do not start new user turns.
+    for (const part of message.parts) {
+      if (part.type !== 'compaction') continue
       flushSegment(false)
+      items.push({ type: 'contextCompaction', id: part.id })
+    }
+    if (message.info.role === 'user') {
       const content = getUserText(message.parts)
       const attachments = getAttachments(message.parts)
+      if (!content && attachments.length === 0) return
+      flushSegment(false)
       if (content || attachments.length > 0) {
         items.push({
           type: 'message',
@@ -358,8 +371,10 @@ export const renderOpenCodeChatItems = (
       }
       return
     }
+    if (message.info.summary === true) return
 
     const current = ensureSegment(message.info.id)
+    const messageCompletedAt = message.info.time.completed
     current.timing = includeConversationTime(
       current.timing,
       message.info.time.created,
@@ -383,7 +398,14 @@ export const renderOpenCodeChatItems = (
       if (part.type === 'reasoning' && part.text.trim()) {
         current.entries.push({
           kind: 'working',
-          item: { type: 'message', id: part.id, content: part.text.trim() }
+          item: {
+            type: 'message',
+            id: part.id,
+            content: part.text.trim(),
+            kind: 'reasoning',
+            status:
+              part.time?.end != null || messageCompletedAt != null ? 'completed' : 'inProgress'
+          }
         })
       } else if (part.type === 'tool') {
         current.entries.push({ kind: 'working', item: renderTool(part) })
@@ -408,9 +430,6 @@ export const renderOpenCodeChatItems = (
             content: `Retry ${part.attempt}: ${getOpenCodeErrorMessage(part.error)}`
           }
         })
-      } else if (part.type === 'compaction') {
-        flushSegment(false)
-        items.push({ type: 'contextCompaction', id: part.id })
       } else if (part.type === 'subtask') {
         current.entries.push({
           kind: 'working',
@@ -435,7 +454,10 @@ export const renderOpenCodeChatItems = (
         })
       }
     })
-    if (message.info.error) {
+    if (isOpenCodeAbortError(message.info.error)) {
+      // A user abort is a stop, not a failure: no error text, just a "Stopped" turn.
+      current.stopped = true
+    } else if (message.info.error) {
       current.failed = true
       current.failureMessage = getOpenCodeErrorMessage(message.info.error)
       if (isOpenCodeRateLimitError(message.info.error)) current.rateLimited = true
@@ -459,9 +481,11 @@ export const renderOpenCodeChatItems = (
 const classifyOpenCodeTurnRecord = (
   message: OpenCodeMessageWithParts
 ): 'start' | 'content' | 'ignore' => {
-  if (message.info.role === 'user')
-    return getUserText(message.parts) || getAttachments(message.parts).length ? 'start' : 'ignore'
-  return 'content'
+  if (message.info.role === 'user') {
+    if (getUserText(message.parts) || getAttachments(message.parts).length) return 'start'
+    return message.parts.some((part) => part.type === 'compaction') ? 'content' : 'ignore'
+  }
+  return message.info.summary === true ? 'ignore' : 'content'
 }
 
 export const renderOpenCodeChatWindow = (

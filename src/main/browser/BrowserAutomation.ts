@@ -1,5 +1,9 @@
 import { app, BrowserWindow, ipcMain, session, webContents, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { stat } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
+import { BrowserDownloads, type BrowserDownload } from './BrowserDownloads'
+export type { BrowserDownload } from './BrowserDownloads'
 import {
   browserIpcChannels,
   isBrowserPageUrl,
@@ -13,6 +17,7 @@ export type BrowserCdpParams = Record<string, unknown>
 export type BrowserCdpEvent =
   | { type: 'message'; tabId: number; method: string; params: BrowserCdpParams; sessionId?: string }
   | { type: 'detach'; tabId: number }
+  | { type: 'download'; download: BrowserDownload }
 
 /** A revocable, workspace-scoped browser capability; no provider or wire protocol here. */
 export interface BrowserAutomationClient {
@@ -30,8 +35,12 @@ export interface BrowserAutomationClient {
     id: number,
     method: string,
     params?: BrowserCdpParams,
-    childSessionId?: string
+    childSessionId?: string,
+    childTargetId?: string
   ): Promise<BrowserCdpParams>
+  allowDownload(id: number, url: string): Promise<void>
+  waitForDownload(id: number, timeoutMs?: number): Promise<BrowserDownload>
+  listDownloads(id: number): Promise<BrowserDownload[]>
   close(): void
 }
 
@@ -172,6 +181,14 @@ export function startBrowserAutomationService(): BrowserAutomationService {
     if (stopped) throw new Error('Browser automation stopped')
     const owner = {}
     let closed = false
+    const childSessions = new Map<number, Map<string, BrowserCdpParams>>()
+    let downloads: BrowserDownloads | undefined
+    const downloadManager = (): BrowserDownloads =>
+      (downloads ??= new BrowserDownloads(
+        appSession(),
+        (guest) => attached.get(guest.id)?.owner === owner,
+        (download) => onEvent({ type: 'download', download })
+      ))
     const assertOpen = (): void => {
       if (closed || stopped) throw new Error('Browser session closed')
     }
@@ -195,6 +212,8 @@ export function startBrowserAutomationService(): BrowserAutomationService {
       if (state?.owner !== owner) return
       attached.delete(id)
       state.cleanup()
+      childSessions.delete(id)
+      downloads?.revoke(id)
       const guest = webContents.fromId(id)
       if (guest && !guest.isDestroyed() && guest.debugger.isAttached()) guest.debugger.detach()
       onEvent({ type: 'detach', tabId: id })
@@ -213,6 +232,25 @@ export function startBrowserAutomationService(): BrowserAutomationService {
         params: BrowserCdpParams,
         sessionId?: string
       ): void => {
+        let children = childSessions.get(id)
+        if (!children) childSessions.set(id, (children = new Map()))
+        if (method === 'Target.attachedToTarget') {
+          const info = params.targetInfo as BrowserCdpParams | undefined
+          if (info?.type !== 'iframe' || typeof params.sessionId !== 'string') {
+            if (typeof params.sessionId === 'string')
+              void guest.debugger
+                .sendCommand('Target.detachFromTarget', { sessionId: params.sessionId }, sessionId)
+                .catch(() => {})
+            return
+          }
+          children.set(params.sessionId, info)
+        } else if (method === 'Target.targetInfoChanged') {
+          const info = params.targetInfo as BrowserCdpParams | undefined
+          for (const [session, target] of children)
+            if (target.targetId === info?.targetId) children.set(session, info!)
+        } else if (method === 'Target.detachedFromTarget' && typeof params.sessionId === 'string') {
+          children.delete(params.sessionId)
+        }
         onEvent({ type: 'message', tabId: id, method, params, ...(sessionId ? { sessionId } : {}) })
       }
       const cleanup = (): void => {
@@ -222,6 +260,8 @@ export function startBrowserAutomationService(): BrowserAutomationService {
       const onDetach = (): void => {
         attached.delete(id)
         cleanup()
+        childSessions.delete(id)
+        downloads?.revoke(id)
         onEvent({ type: 'detach', tabId: id })
       }
       guest.debugger.on('message', onMessage)
@@ -262,14 +302,31 @@ export function startBrowserAutomationService(): BrowserAutomationService {
       detachAll: () => {
         for (const [id, entry] of attached) if (entry.owner === owner) detach(id)
       },
-      executeCdp: async (id, method, command = {}, childSessionId) => {
+      executeCdp: async (id, method, command = {}, childSessionId, childTargetId) => {
         const guest = await attach(id)
+        if (childTargetId) {
+          const entry = [...(childSessions.get(id)?.entries() ?? [])].find(
+            ([, info]) => info.targetId === childTargetId
+          )
+          if (!entry) throw new Error('Target is outside this tab')
+          childSessionId = entry[0]
+        }
+        if (childSessionId && !childSessions.get(id)?.has(childSessionId))
+          throw new Error('Child session is outside this tab')
         // Never expose Electron's shell, other renderers, or browser-global CDP operations.
         if (method === 'Target.getTargets') {
           const info = await guest.debugger.sendCommand('Target.getTargetInfo')
-          return { targetInfos: [{ ...info.targetInfo, tabId: id }] }
+          return {
+            targetInfos: [
+              { ...info.targetInfo, tabId: id },
+              ...[...(childSessions.get(id)?.values() ?? [])].map((target) => ({
+                ...target,
+                tabId: id
+              }))
+            ]
+          }
         }
-        if (method === 'Target.closeTarget' || method === 'Page.close') {
+        if (!childSessionId && (method === 'Target.closeTarget' || method === 'Page.close')) {
           const info = await guest.debugger.sendCommand('Target.getTargetInfo')
           if (command.targetId !== undefined && command.targetId !== info.targetInfo.targetId)
             throw new Error('Target is outside this tab')
@@ -279,12 +336,21 @@ export function startBrowserAutomationService(): BrowserAutomationService {
         }
         // Electron owns guest navigation; use its navigation controller rather than
         // letting browser-level CDP history operations affect the embedder.
-        if (method === 'Page.reload') {
+        if (!childSessionId && method === 'Page.reload') {
           if (command.ignoreCache === true) guest.reloadIgnoringCache()
           else guest.reload()
           return {}
         }
-        if (method === 'Page.getNavigationHistory') {
+        if (!childSessionId && method === 'Page.printToPDF') {
+          const data = await guest.printToPDF({
+            landscape: command.landscape === true,
+            printBackground: command.printBackground !== false,
+            preferCSSPageSize: command.preferCSSPageSize === true
+          })
+          assertOpen()
+          return { data: data.toString('base64') }
+        }
+        if (!childSessionId && method === 'Page.getNavigationHistory') {
           return {
             currentIndex: guest.navigationHistory.getActiveIndex(),
             entries: guest.navigationHistory.getAllEntries().map((entry, index) => ({
@@ -296,7 +362,7 @@ export function startBrowserAutomationService(): BrowserAutomationService {
             }))
           }
         }
-        if (method === 'Page.navigateToHistoryEntry') {
+        if (!childSessionId && method === 'Page.navigateToHistoryEntry') {
           const index = command.entryId
           if (
             typeof index !== 'number' ||
@@ -328,6 +394,7 @@ export function startBrowserAutomationService(): BrowserAutomationService {
           'Page',
           'Input',
           'Network',
+          'Fetch',
           'Emulation',
           'Performance',
           'Log',
@@ -342,17 +409,62 @@ export function startBrowserAutomationService(): BrowserAutomationService {
         if (!domains.has(method.split('.')[0]) && !targetMethods.has(method))
           throw new Error(`Unsupported CDP method: ${method}`)
         if (method === 'Target.getTargetInfo' && command.targetId) {
-          const info = await guest.debugger.sendCommand('Target.getTargetInfo')
-          if (command.targetId !== info.targetInfo.targetId)
+          const info = childSessionId
+            ? { targetInfo: childSessions.get(id)?.get(childSessionId) }
+            : await guest.debugger.sendCommand('Target.getTargetInfo')
+          if (command.targetId !== info.targetInfo?.targetId)
             throw new Error('Target is outside this tab')
         }
-        if (method === 'Target.attachToTarget')
-          throw new Error('Use flattened child sessions for iframe targets')
+        if (method === 'Target.setAutoAttach') {
+          if (command.flatten !== true)
+            throw new Error('Iframe attachment requires flattened sessions')
+          command = { ...command, filter: [{ type: 'iframe', exclude: false }] }
+        }
+        if (method === 'Target.attachToTarget') {
+          if (command.flatten !== true)
+            throw new Error('Iframe attachment requires flattened sessions')
+          if (
+            ![...(childSessions.get(id)?.values() ?? [])].some(
+              (info) => info.targetId === command.targetId
+            )
+          )
+            throw new Error('Target is outside this tab')
+        }
+        if (method === 'Target.detachFromTarget') {
+          const entry = [...(childSessions.get(id)?.entries() ?? [])].find(
+            ([session, info]) => command.sessionId === session || command.targetId === info.targetId
+          )
+          if (!entry) throw new Error('Child session is outside this tab')
+          command = { sessionId: entry[0] }
+        }
+        if (method === 'DOM.setFileInputFiles') {
+          if (
+            !Array.isArray(command.files) ||
+            command.files.some((path) => typeof path !== 'string' || !isAbsolute(path))
+          )
+            throw new Error('File upload requires absolute local file paths')
+          for (const path of command.files) {
+            if (!(await stat(path)).isFile()) throw new Error('File upload requires regular files')
+          }
+        }
         return guest.debugger.sendCommand(method, command, childSessionId)
+      },
+      allowDownload: async (id, url) => {
+        await attach(id)
+        await downloadManager().allow(id, url)
+      },
+      waitForDownload: async (id, timeoutMs) => {
+        await attach(id)
+        return downloadManager().wait(id, timeoutMs)
+      },
+      listDownloads: async (id) => {
+        await guestForId(id)
+        return downloads?.list(id) ?? []
       },
       close: () => {
         if (closed) return
         closed = true
+        downloads?.close()
         client.detachAll()
         for (const [id, entry] of pending)
           if (entry.owner === owner) finishUi(id, new Error('Browser session closed'))
