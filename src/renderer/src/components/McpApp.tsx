@@ -63,7 +63,7 @@ function McpAppContent({ callId, scope }: { callId: string; scope: AppScope }): 
     }
     const bridge = new AppBridge(
       null,
-      { name: 'Sele', version: '3.7.1' },
+      { name: 'Sele', version: '3.8.0' },
       {
         ...(view.canCall ? { serverTools: {} } : {}),
         serverResources: {},
