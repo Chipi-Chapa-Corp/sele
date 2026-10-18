@@ -2657,10 +2657,19 @@ export const useWorkspaceController = () => {
       if (projectCwd !== undefined) setNewSessionCwd(projectCwd)
       if (container !== undefined) {
         const normalizedContainer = normalizeContainerTarget(container)
-        setNewSessionContainer(
-          isContainerTargetAvailable(normalizedContainer, containerSuggestions, sshEnvironments)
-            ? normalizedContainer
-            : { kind: 'host' }
+        const nextContainer = isContainerTargetAvailable(
+          normalizedContainer,
+          containerSuggestions,
+          sshEnvironments
+        )
+          ? normalizedContainer
+          : { kind: 'host' as const }
+        // Keep the existing source identity when completion opens the composer
+        // in the same container; replacing it would reload every provider chat.
+        setNewSessionContainer((currentContainer) =>
+          areContainerTargetsEqual(currentContainer, nextContainer)
+            ? currentContainer
+            : nextContainer
         )
       }
       setNewChatOpen(true)

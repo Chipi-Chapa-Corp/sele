@@ -233,3 +233,52 @@ private software-rendered fixture, not a trace of the live user session.
 Validation: the full-app navigation regression, chat-opening/drag checks, sidebar
 exit and other motion checks, all 110 renderer-state tests, and the full
 typechecked production build passed.
+
+## Marking chats done: source reload and icon invalidation — 2026-10-18
+
+The full-app fixture now clicks the actual completion buttons. The earlier empty
+navigation cases did not exercise completion. Two additional paths were reproduced:
+
+1. `handleMarkChatDone` and `handleMarkCwdChatsDone` open the new-chat composer
+   with a container argument. `showNewChatView` normalized it into a fresh object
+   and replaced `newSessionContainer`, even when its source was unchanged. Effects
+   depending on that object rechecked availability and fetched the chat list again
+   (twice per selected completion in this fixture). Fresh IPC snapshots then
+   invalidated every sidebar row. Ordinary new-chat navigation did not supply this
+   container argument, which is why the previous regression missed it.
+2. Completing the last active chat in a project removes its directory from
+   `projectCwdsKey`. Rebuilding `projectIconsByCwd` recreated every icon element,
+   invalidating unrelated rows even without a history reload.
+
+`showNewChatView` now retains the current container object when the normalized,
+available destination is semantically equal. Genuine source changes still set the
+new container. The icon map reuses each unchanged element by its image URL/glyph;
+its cache contains only current directories and is published in a layout effect
+so discarded concurrent renders cannot replace committed cache entries.
+
+The unchanged final fixture was also run against a temporary archive of revision
+`c4660e1e`. It failed the new no-history-reload assertion. Both runs used private
+software rendering, 400 empty chats, and background summary updates every 100 ms:
+
+| Completion, 300 ms observation | Before: row executions | After: row executions |
+| --- | ---: | ---: |
+| Selected chat, last active chat in a project | 1,198 | 3 |
+| Selected chat, Done section expanded | 803 | 5 |
+| Selected project, 20 chats moved into expanded Done | 1,222 | 43 |
+
+Selected completion/history requests fell from two to zero. Maximum frame gaps
+across these selected-chat/project cases fell from 50–83 ms to 17–33 ms, with no
+renderer long tasks after the fix. An unselected completion preserved the selected
+conversation and already avoided source reloads. Counts include background updates;
+moving 20 chats into expanded Done legitimately mounts those 20 rows.
+
+The regression checks exact affected row identities, bounded render counts,
+zero history reloads, completed chats leaving their active group, selection
+behavior, spinner DOM retention, and renderer errors. It covers both collapsed
+and expanded Done. Frame timings are reported rather than used as machine-specific
+pass/fail thresholds. These controlled results do not identify every possible
+stall in a live provider session.
+
+Validation: the expanded full-app navigation/completion regression, all 110
+renderer-state tests, four Done-state tests, isolated Done database checks,
+sidebar exit/motion checks, and the full typechecked production build passed.

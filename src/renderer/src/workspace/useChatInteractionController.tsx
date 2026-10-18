@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { FolderKanban, FolderTree } from 'lucide-react'
 import type { ProviderMessage } from '../../../shared/provider'
 import { ChatListGroup, type ChatListGroupData } from '../components/ChatListGroup'
@@ -88,24 +88,44 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       ...new Set([...projectRecordsByCwd.keys(), ...activeChatGroups.map((group) => group.cwd)])
     ].sort()
   )
-  const projectIconsByCwd = useMemo(() => {
+  // Removing the last active chat changes the directory set. Reuse each
+  // unchanged icon across that rebuild (and across asynchronous icon replies),
+  // otherwise its new React element defeats every ChatListRow's memoization.
+  const committedProjectIconsRef = useRef(
+    new Map<string, { signature: string; element: React.ReactElement }>()
+  )
+  const { icons: projectIconsByCwd, cache: projectIconCache } = useMemo(() => {
     const cwds = JSON.parse(projectCwdsKey) as (string | null)[]
     const icons = new Map<string, React.ReactElement>()
+    const cache = new Map<string, { signature: string; element: React.ReactElement }>()
     for (const cwd of cwds) {
       const project = cwd ? projectRecordsByCwd.get(cwd) : null
       const projectImage = projectIconsByGroup[getChatCwdGroupKey(cwd)]
-      const icon =
-        (project?.icon === 'image' || project?.icon == null) && projectImage?.dataUrl ? (
-          <img className="chat-list-group__project-icon-image" src={projectImage.dataUrl} alt="" />
-        ) : project?.icon && project.icon !== 'image' ? (
-          renderProjectGlyph(project.icon)
+      const dataUrl =
+        project?.icon === 'image' || project?.icon == null ? projectImage?.dataUrl : null
+      const glyph = project?.icon && project.icon !== 'image' ? project.icon : null
+      const signature = JSON.stringify([dataUrl ?? null, glyph])
+      const previous = committedProjectIconsRef.current.get(cwd ?? '')
+      const element =
+        previous?.signature === signature ? (
+          previous.element
+        ) : dataUrl ? (
+          <img className="chat-list-group__project-icon-image" src={dataUrl} alt="" />
+        ) : glyph ? (
+          renderProjectGlyph(glyph)
         ) : (
           <FolderKanban aria-hidden="true" />
         )
-      icons.set(cwd ?? '', icon)
+      icons.set(cwd ?? '', element)
+      cache.set(cwd ?? '', { signature, element })
     }
-    return icons
+    return { icons, cache }
   }, [projectCwdsKey, projectRecordsByCwd, projectIconsByGroup])
+  // Publish only committed values so an interrupted render cannot replace the
+  // elements used to compare the next update. The cache retains current cwds only.
+  useLayoutEffect(() => {
+    committedProjectIconsRef.current = projectIconCache
+  }, [projectIconCache])
 
   const handleChatContentScroll = (): boolean => {
     const contentElement = contentRef.current

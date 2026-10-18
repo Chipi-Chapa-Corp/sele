@@ -1,4 +1,4 @@
-// Full App/controller navigation with empty chats and synthetic API responses.
+// Full App/controller navigation and completion with empty chats and synthetic API responses.
 // Run through isolated-gui. Never starts provider processes or opens real profiles.
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -27,24 +27,30 @@ if (!process.versions.electron) {
             .observe({type:'longtask',buffered:true});
           let before=performance.now();
           requestAnimationFrame(function frame(now){window.frameGaps.push(now-before);before=now;requestAnimationFrame(frame)});
-          window.measureNavigation=async destination=>{
+          window.measureNavigation=async (destination,action='select')=>{
             await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
             window.frameGaps=[];window.longTasks=[];
             window.fixtureRowRenders=[];window.fixtureMotionRenders=0;
             const spinner=document.querySelector('[data-chat-id="0"] .chat-list-item__loading');
             if(!spinner)throw new Error('Missing background running spinner');
+            const historyRequests=window.fixtureCalls.filter(name=>name==='getChats').length;
+            const selectedBefore=document.querySelector('.chat-list-item--selected')?.dataset.chatId??null;
             const start=performance.now();
-            const button=destination==='new' ? document.querySelector('button[aria-label="New chat"]') :
+            const button=action==='done-project' ? document.querySelector('[data-chat-id="'+destination+'"]')?.closest('.chat-list-group').querySelector('[title="Mark project chats done"]') : action==='done' ? document.querySelector('[data-chat-id="'+destination+'"] [aria-label="Mark chat done"]') : destination==='new' ? document.querySelector('button[aria-label="New chat"]') :
               document.querySelector('[data-chat-id="'+destination+'"] .chat-list-item__main');
             if(!button)throw new Error('No navigation button '+destination);
+            const affectedChatIds=action==='done-project' ? Array.from(button.closest('.chat-list-group').querySelectorAll('[data-chat-id]'),row=>row.dataset.chatId) : [destination];
             button.click();
             const clickMs=performance.now()-start;
             await new Promise(resolve=>setTimeout(resolve,300));
-            return {destination,clickMs,maxFrameGap:Math.max(...window.frameGaps),longTasks:window.longTasks,
+            return {destination,action,selectedBefore,affectedChatIds,clickMs,
+              unexpectedRowIds:[...new Set(window.fixtureRowRenders)].filter(id=>id!=='0'&&id!==selectedBefore&&!affectedChatIds.includes(id)),maxFrameGap:Math.max(...window.frameGaps),longTasks:window.longTasks,
               selected:document.querySelector('.chat-list-item--selected')?.dataset.chatId??null,
               spinnerRetained:spinner===document.querySelector('[data-chat-id="0"] .chat-list-item__loading'),
               rowRenders:window.fixtureRowRenders.length,rowIds:[...new Set(window.fixtureRowRenders)].slice(0,10),uniqueRows:new Set(window.fixtureRowRenders).size,motionRenders:window.fixtureMotionRenders,
-              messages:document.querySelectorAll('[data-chat-message-id]').length};
+              historyRequests:window.fixtureCalls.filter(name=>name==='getChats').length-historyRequests,messages:document.querySelectorAll('[data-chat-message-id]').length,
+              done:window.fixtureChats.find(chat=>chat.id===destination)?.done??false,
+              activeRowPresent:Boolean(document.querySelector('.chat-list-group--cwd [data-chat-id="'+destination+'"]'))};
           };
         `
         },
@@ -92,7 +98,7 @@ if (!process.versions.electron) {
         `
         const now=Date.now();
         window.fixtureChats=Array.from({length:400},(_,i)=>({id:String(i),providerId:'codex',title:'Empty conversation '+i,
-          preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0?'active':null,cwd:'/fixture/project-'+(i%20),
+          preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
           cwdKind:'directory',projectCwd:null,branchName:null,worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,
           done:false,seenUpdatedAt:now,purpose:null,container:null}));
         window.fixtureCalls=[];
@@ -102,7 +108,10 @@ if (!process.versions.electron) {
           pendingApproval:null,pendingUserInput:null,contextUsage:null,items:[],subagents:[],turnCount:0,itemsStartTurnIndex:0});
         const defaults={
           getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
-          getChats:()=>({chats:fixtureChats,nextCursor:null}),getChat:(_provider,id)=>detail(id),
+          // IPC returns fresh objects; sharing the fixture's source objects hides list reloads.
+          getChats:()=>({chats:fixtureChats.map(chat=>({...chat})),nextCursor:null}),getChat:(_provider,id)=>detail(id),
+          markChatDone:(_provider,id,done=true)=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done,doneAt:done?Date.now():null});return {...chat}},
+          markChatsDone:ids=>ids.map(id=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done:true,doneAt:Date.now()});return {...chat}}),
           markChatSeen:(_provider,id,seenUpdatedAt)=>({...fixtureChats.find(chat=>chat.id===id),seenUpdatedAt}),
           getModels:()=>[{id:'fixture',label:'Fixture model',description:'Fixture',isDefault:true,supportedReasoningEfforts:[],defaultReasoningEffort:'medium'}],
           getAccounts:()=>({available:true,unavailableMessage:null,accounts:[]}),getUsage:()=>usage,
@@ -183,6 +192,22 @@ if (!process.versions.electron) {
       for (const destination of ['1', '2', 'new', '1', 'new', '3', 'new']) {
         results.push(await run('window.measureNavigation(' + JSON.stringify(destination) + ')'))
       }
+      for (const id of ['1', '2', '3']) {
+        await run('window.measureNavigation(' + JSON.stringify(id) + ')')
+        results.push(await run('window.measureNavigation(' + JSON.stringify(id) + ',"done")'))
+        if (id === '1') {
+          await run(
+            `document.querySelector('.chat-list-group--done .chat-list-group__toggle').click()`
+          )
+          await run('new Promise(resolve=>setTimeout(resolve,300))')
+        }
+      }
+      // Completing an unselected chat must retain the current conversation.
+      await run('window.measureNavigation("5")')
+      results.push(await run('window.measureNavigation("4","done")'))
+      // Also remove a whole project containing the selected chat.
+      await run('window.measureNavigation("6")')
+      results.push(await run('window.measureNavigation("6","done-project")'))
       const { profile } = await win.webContents.debugger.sendCommand('Profiler.stop')
       const nodes = new Map(profile.nodes.map((n) => [n.id, n]))
       const counts = new Map()
@@ -206,18 +231,38 @@ if (!process.versions.electron) {
       assert.deepEqual(errors, [])
       for (const result of results) {
         assert.equal(result.messages, 0, 'this regression must exercise empty conversations')
-        assert.equal(result.selected, result.destination === 'new' ? null : result.destination)
+        const completing = result.action === 'done' || result.action === 'done-project'
+        const expectedSelection = completing
+          ? result.affectedChatIds.includes(result.selectedBefore)
+            ? null
+            : result.selectedBefore
+          : result.destination === 'new'
+            ? null
+            : result.destination
+        assert.equal(result.selected, expectedSelection)
+        assert.equal(
+          result.historyRequests,
+          0,
+          'navigation/completion must not reload chat history'
+        )
+        if (completing) {
+          assert.equal(result.done, true, 'completion metadata was saved by the fixture API')
+          assert.equal(result.activeRowPresent, false, 'completed chats leave the active project')
+        }
         assert.equal(
           result.spinnerRetained,
           true,
           'navigation preserves the background running spinner'
         )
-        assert.ok(
-          result.uniqueRows <= 3,
-          'only the previous selection, next selection and running chat should render: ' +
-            JSON.stringify(result)
+        assert.deepEqual(
+          result.unexpectedRowIds,
+          [],
+          'only affected chats, the previous selection and running chat should render'
         )
-        assert.ok(result.rowRenders < 40, 'empty navigation must not rerender the whole sidebar')
+        assert.ok(
+          result.rowRenders < 40 + result.affectedChatIds.length * 3,
+          'navigation/completion must not rerender the whole sidebar'
+        )
         assert.ok(
           result.motionRenders < 500,
           'presence context must not rerender all animation wrappers'
