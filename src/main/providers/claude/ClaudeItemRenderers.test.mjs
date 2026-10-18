@@ -577,3 +577,34 @@ test('Claude subagents are named by the description of the call that spawned the
   // Without the delegation call, the prompt start is a whitespace-normalized fallback.
   assert.equal(createClaudeSubagentSummary('orphan', root).title, 'Review the whole port')
 })
+
+test('Claude subagent metadata names and nests subagents read without transcript links', async () => {
+  const { createClaudeSubagentSummary, parseClaudeSubagentMetadataLines } = await import(
+    './ClaudeSubagents.ts'
+  )
+  // A session store returns subagent records without parent_tool_use_id or parent_agent_id.
+  const records = [
+    {
+      type: 'user',
+      uuid: 'user',
+      session_id: 'session',
+      parent_tool_use_id: null,
+      parent_agent_id: null,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      message: { role: 'user', content: 'Repo: /var/home/project (Electron + React) long prompt' }
+    }
+  ]
+  const metadata = parseClaudeSubagentMetadataLines(
+    [
+      'agent-root\t{"agentType":"Explore","description":"Audit rendering","toolUseId":"toolu_1"}',
+      'agent-nested\t{"agentType":"fork","description":"Review daemon","parentAgentId":"root"}',
+      'agent-broken\t{not json',
+      ''
+    ].join('\n')
+  )
+  assert.deepEqual([...metadata.keys()], ['root', 'nested'])
+  const root = createClaudeSubagentSummary('root', records, new Map(), metadata.get('root'))
+  const nested = createClaudeSubagentSummary('nested', records, new Map(), metadata.get('nested'))
+  assert.deepEqual([root.title, root.parentId], ['Audit rendering', null])
+  assert.deepEqual([nested.title, nested.parentId], ['Review daemon', 'root'])
+})

@@ -35,6 +35,12 @@ if (!process.versions.electron) {
       return ts.transpile(`window.${name} = ${expression}`, { target: ts.ScriptTarget.ES2022 })
     }
     const callbacks = [
+      extract('src/renderer/src/useWorkspaceController.tsx', 'scrollChatContentToBottom'),
+      extract(
+        'src/renderer/src/workspace/useWorkspaceSelection.tsx',
+        'applyChatLayout',
+        'const initialLayout = chatInitialLayoutKeyRef.current'
+      ),
       extract(
         'src/renderer/src/workspace/useChatInteractionController.tsx',
         'handleChatContentScroll'
@@ -103,10 +109,12 @@ if (!process.versions.electron) {
   })
 } else {
   const { app, BrowserWindow } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'profile'))
+  app.disableHardwareAcceleration()
   app.whenReady().then(async () => {
     try {
       const win = new BrowserWindow({
-        show: false,
+        show: true,
         webPreferences: { backgroundThrottling: false }
       })
       await win.loadFile(path.join(process.argv[2], 'index.html'))
@@ -134,6 +142,12 @@ if (!process.versions.electron) {
           `${update.provider}: live updates preserve history`
         )
       }
+      for (const growth of result.autoFollow) {
+        if (growth.commitGap != null)
+          assert.ok(growth.commitGap <= 1, 'active tool updates follow before paint')
+        assert.ok(growth.enabled, `${growth.kind}: keep autoscroll enabled`)
+        assert.ok(growth.gap <= 1, `${growth.kind}: follow the growing block (${growth.gap}px gap)`)
+      }
       for (const resize of result.resizes) {
         assert.equal(
           resize.after,
@@ -142,7 +156,7 @@ if (!process.versions.electron) {
         )
       }
       console.log(
-        'Chat scrolling checks passed: cursor navigation, numeric paging, delayed responses, live updates, and content resizing.'
+        'Chat scrolling checks passed: cursor navigation, numeric paging, delayed responses, live updates, content resizing, and growing tool blocks.'
       )
       app.exit(0)
     } catch (error) {

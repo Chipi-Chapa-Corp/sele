@@ -1038,10 +1038,16 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       return
     }
 
-    if (initialLayout || !isActiveChatStatus(chatDetail.status)) {
-      scrollChatContentToBottom(contentElement)
-    }
-  }, [chatDetail, scrollChatContentToBottom, selectedChatCommitMarkers, selectedChatKey])
+    // Tool disclosures can grow by a full viewport in one commit. Follow active
+    // updates before paint; ResizeObserver also covers lazy diffs and media.
+    scrollChatContentToBottom(contentElement)
+  }, [
+    activeSubagentId,
+    chatDetail,
+    scrollChatContentToBottom,
+    selectedChatCommitMarkers,
+    selectedChatKey
+  ])
   useEffect(() => {
     if (!pendingUserInputId) return
 
@@ -1080,8 +1086,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       }
 
       if (chatAutoScrollEnabledRef.current) {
-        // Media resolves asynchronously after the initial chat layout. Correct the bottom
-        // position inside ResizeObserver so the intermediate height never reaches a paint.
+        // Diffs and media resolve asynchronously after the chat commit. Correct the
+        // bottom inside ResizeObserver so the intermediate height never reaches a paint.
         scrollChatContentToBottom(contentElement)
         return
       }
@@ -1104,8 +1110,10 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     observer.observe(contentElement)
     observer.observe(contentInnerElement)
 
+    // Opening/closing a subagent replaces the DOM viewport without changing the
+    // parent chat key. Reconnect instead of observing its detached content.
     return () => observer.disconnect()
-  }, [scrollChatContentToBottom, selectedChatKey])
+  }, [activeSubagentId, scrollChatContentToBottom, selectedChatKey])
   useEffect(() => {
     if (selectedChat) return
 

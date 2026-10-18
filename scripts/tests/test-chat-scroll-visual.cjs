@@ -25,6 +25,7 @@ function expression(file, name) {
   visit(src)
   return value
 }
+let resizeDependencies
 function effect() {
   const src = parse('src/renderer/src/workspace/useWorkspaceSelection.tsx')
   let value
@@ -33,8 +34,10 @@ function effect() {
       ts.isCallExpression(n) &&
       n.expression.getText(src) === 'useEffect' &&
       n.arguments[0]?.getText(src).includes('const observer = new ResizeObserver')
-    )
+    ) {
       value = n.arguments[0].getText(src)
+      resizeDependencies = n.arguments[1].getText(src)
+    }
     ts.forEachChild(n, visit)
   }
   visit(src)
@@ -42,7 +45,7 @@ function effect() {
 }
 if (!process.versions.electron) {
   ;(async () => {
-    const generated = `import {useEffect} from 'react';window.makeInteraction=(dependencies)=>{const {contentRef,chatTurnWindowRef,chatScrollAdjustmentTargetRef,previousChatScrollTopRef,chatTurnScrollDirectionRef,setChatAtConversationBottom,chatViewportAnchorRef,chatAutoScrollEnabledRef,chatUserScrollIntentRef,chatAutoScrollTargetRef,scheduleChatAutoScroll,chatUserScrollIntentFrameRef,chatDetail}=dependencies;const handleChatContentScroll=${expression('src/renderer/src/workspace/useChatInteractionController.tsx', 'handleChatContentScroll')};const handleChatContentWheel=${expression('src/renderer/src/workspace/useChatInteractionController.tsx', 'handleChatContentWheel')};return {handleChatContentScroll,handleChatContentWheel}};window.useResize=(dependencies)=>{const {selectedChatKey,contentRef,chatAutoScrollEnabledRef,scrollChatContentToBottom,chatViewportAnchorRef,pendingChatScrollAnchorRef,chatScrollAdjustmentTargetRef}=dependencies;useEffect(${effect()},[selectedChatKey,scrollChatContentToBottom])};`
+    const generated = `import {useEffect} from 'react';window.makeInteraction=(dependencies)=>{const {contentRef,chatTurnWindowRef,chatScrollAdjustmentTargetRef,previousChatScrollTopRef,chatTurnScrollDirectionRef,setChatAtConversationBottom,chatViewportAnchorRef,chatAutoScrollEnabledRef,chatUserScrollIntentRef,chatAutoScrollTargetRef,scheduleChatAutoScroll,chatUserScrollIntentFrameRef,chatDetail}=dependencies;const handleChatContentScroll=${expression('src/renderer/src/workspace/useChatInteractionController.tsx', 'handleChatContentScroll')};const handleChatContentWheel=${expression('src/renderer/src/workspace/useChatInteractionController.tsx', 'handleChatContentWheel')};return {handleChatContentScroll,handleChatContentWheel}};window.useResize=(dependencies)=>{const {activeSubagentId,selectedChatKey,contentRef,chatAutoScrollEnabledRef,scrollChatContentToBottom,chatViewportAnchorRef,pendingChatScrollAnchorRef,chatScrollAdjustmentTargetRef}=dependencies;useEffect(${effect()},${resizeDependencies})};`
     fs.writeFileSync(path.join(dir, 'generated.ts'), generated)
     await require('esbuild').build({
       stdin: {
@@ -153,6 +156,27 @@ if (!process.versions.electron) {
       await run('document.fonts.ready')
       for (const provider of ['claude', 'codex']) {
         results[provider] = { openings: [], pages: [] }
+        await run(`openProvider('${provider}')`)
+        await waitForHistory()
+        await run("switchViewport('subagent')")
+        await wait()
+        await run('switchViewport(null)')
+        await wait()
+        await run('showDiff()')
+        await run(`new Promise((resolve, reject) => {
+          const deadline = performance.now() + 10000;
+          function check() {
+            if (document.querySelectorAll('.diff-code').length > 100) return resolve();
+            if (performance.now() > deadline) return reject(new Error('Diff did not load'));
+            requestAnimationFrame(check);
+          }
+          check();
+        })`)
+        await wait()
+        const diff = await capture(provider + '-live-diff')
+        assert.ok(diff.autoFollow, provider + ' keeps following a large live diff')
+        assert.ok(diff.gap <= 1, provider + ' follows a large live diff: ' + diff.gap)
+        results[provider].diff = diff
         for (const [zoom, fontSize] of [
           [1, 16],
           [1.25, 15],
@@ -242,7 +266,7 @@ if (!process.versions.electron) {
       }
       fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify(results, null, 2))
       console.log(
-        'Visual scrolling checks passed: stationary text during six progressive openings (including 125% zoom), 10 page transitions with every-frame position checks, delayed response reversals, and Markdown resizing. Screenshots: ' +
+        'Visual scrolling checks passed: stationary text during six progressive openings (including 125% zoom), 10 page transitions with every-frame position checks, delayed response reversals, Markdown resizing, and large live diffs after viewport replacement. Screenshots: ' +
           dir
       )
       app.exit(0)

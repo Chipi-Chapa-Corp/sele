@@ -10,7 +10,11 @@ import {
 } from './ClaudeQueryLifecycle.ts'
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
 import { getContainerTargetKey } from '../../containerTarget.ts'
-import { retainClaudeStreamTiming, clearClaudeStreamMessages } from './ClaudeStreaming.ts'
+import {
+  applyClaudeStreamEvent,
+  retainClaudeStreamTiming,
+  clearClaudeStreamMessages
+} from './ClaudeStreaming.ts'
 
 // Exercise the actual adapter methods without starting Electron or the Claude CLI.
 const source = ts.createSourceFile(
@@ -49,6 +53,7 @@ const code = ts.transpileModule(
 const context = vm.createContext({
   isClaudeAuthenticationFailure,
   getContainerTargetKey,
+  applyClaudeStreamEvent,
   retainClaudeStreamTiming,
   clearClaudeStreamMessages,
   getClaudeQueueDrainDecision,
@@ -257,7 +262,7 @@ test('a preceding result keeps SDK-queued steering alive until its own result', 
   assert.deepEqual(updates.at(-1), { active: false, completed: true })
 })
 
-test('background agent notifications reopen the finished turn until Claude replies', async () => {
+test('background assistant output reopens the finished turn until Claude replies', async () => {
   const instance = new context.Harness()
   instance.reportResultTokenUsage = () => {}
   instance.reportLiveTokenUsage = () => false
@@ -330,6 +335,13 @@ test('background agent notifications reopen the finished turn until Claude repli
     subtype: 'session_state_changed',
     state: 'running'
   })
+  assert.equal(state.active, false)
+  await instance.handleQueryEvent(state, control, {
+    type: 'stream_event',
+    session_id: 'session',
+    parent_tool_use_id: null,
+    event: { type: 'message_start', message: { id: 'follow-up', role: 'assistant', content: [] } }
+  })
   assert.equal(state.active, true)
   assert.deepEqual(updates.at(-1), { active: true, completed: false })
   assert.equal(await instance.handleQueryEvent(state, control, result), false)
@@ -379,6 +391,71 @@ test('a finished background task without a follow-up turn closes after the grace
   await new Promise((resolve) => setTimeout(resolve, 5))
   assert.deepEqual(closed, ['session'])
 })
+
+for (const sessionState of ['running', 'requires_action']) {
+  test(`late ${sessionState} notifications cannot leave a finished chat active`, async () => {
+    const instance = new context.Harness()
+    const control = { getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }) }
+    const state = {
+      id: 'session',
+      query: control,
+      active: true,
+      stopped: false,
+      failed: false,
+      partialMessages: new Map(),
+      backgroundTaskIds: new Set(['agent']),
+      taskNotificationPending: false,
+      waitingForSessionIdle: false,
+      queuedMessages: [],
+      pendingApprovals: [],
+      pendingUserInputs: []
+    }
+    const updates = []
+    const closed = []
+    instance.addTranscriptMessage = () => {}
+    instance.reportResultTokenUsage = () => {}
+    instance.refreshSessionMetadata = async () => {}
+    instance.queueUpdate = () => {}
+    instance.emitUpdate = () => updates.push(state.active)
+    instance.closeStateQuery = async () => closed.push(state.id)
+
+    await instance.handleQueryEvent(state, control, {
+      type: 'result',
+      subtype: 'success',
+      terminal_reason: 'completed',
+      duration_ms: 1000,
+      usage: {
+        input_tokens: 1,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        output_tokens: 1
+      }
+    })
+    await instance.handleQueryEvent(state, control, {
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: []
+    })
+    await instance.handleQueryEvent(state, control, {
+      type: 'system',
+      subtype: 'session_state_changed',
+      state: sessionState
+    })
+    assert.equal(state.active, false, 'session notifications must preserve completion')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    assert.deepEqual(closed, [], 'a follow-up preparing its response must keep the query alive')
+    await instance.handleQueryEvent(state, control, {
+      type: 'system',
+      subtype: 'session_state_changed',
+      state: 'idle'
+    })
+
+    assert.equal(state.active, false, 'only new assistant output should reopen the turn')
+    assert.deepEqual(updates, [false], 'the sidebar must retain the completed status')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    assert.deepEqual(closed, ['session'], 'the background idle cleanup must still run')
+  })
+}
 
 test('a message sent while a finished turn settles is sent instead of racing the close', async () => {
   const { instance, state } = setup()

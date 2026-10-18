@@ -14,7 +14,7 @@
   min-width: 0;
   align-items: center;
   gap: 0.15rem;
-  padding-left: calc(0.6rem + var(--chat-subagent-depth, 0) * 1.1rem);
+  padding-left: calc(1.4rem + var(--chat-subagent-depth, 0) * 1.1rem);
 }
 
 .chat-subagent-list__arrow {

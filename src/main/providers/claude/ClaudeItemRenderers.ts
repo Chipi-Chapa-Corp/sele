@@ -513,9 +513,11 @@ export const resolveClaudeAssistantMessageUuid = (
 export const claudeBackgroundTurnSubtype = 'sele_background_turn'
 
 /**
- * Claude starts a main-thread turn on its own when a background task finishes. Its task
- * notification (or sele's live marker for that turn) ends the visible turn, so the reply that
- * follows gets its own working section instead of folding the previous reply into it.
+ * Claude starts a main-thread turn on its own when a background task (an agent, a command or a
+ * monitor) reports back. Its task notification, or sele's live marker for that turn, is control
+ * metadata: the reply continues the output of the user's last message, so earlier replies become
+ * progress in its working section and only the latest stays the response. A stopped or failed
+ * section keeps its state, so a reply after it starts a new one.
  */
 export const isClaudeBackgroundTurnBoundary = (message: ClaudeTranscriptMessage): boolean => {
   if (message.parent_tool_use_id) return false
@@ -562,7 +564,7 @@ export const renderClaudeChatItems = (
       continue
     }
     if (isClaudeBackgroundTurnBoundary(message)) {
-      if (segment) backgroundTurnEnded = true
+      if (segment?.stopped || segment?.failed) backgroundTurnEnded = true
       continue
     }
     if (isClaudeInternalUserMessage(message) || isClaudeSyntheticAssistantMessage(message)) continue
@@ -777,7 +779,7 @@ export class ClaudeTranscriptProjection {
         payloadCount: number
       }
     >
-    /** A background task notification ended the turn; the next main-thread reply starts anew. */
+    /** A background task woke a stopped or failed turn; the next main-thread reply starts anew. */
     backgroundTurnEnded: boolean
   } = { current: null, tools: new Map(), backgroundTurnEnded: false }
   private counters = new Map<string, number>()
@@ -896,7 +898,8 @@ export class ClaudeTranscriptProjection {
       return
     }
     if (isClaudeBackgroundTurnBoundary(message)) {
-      if (this.state.current) this.journal.set(this.state, 'backgroundTurnEnded', true)
+      if (this.state.current?.stopped || this.state.current?.failed)
+        this.journal.set(this.state, 'backgroundTurnEnded', true)
       return
     }
     if (isClaudeInternalUserMessage(message) || isClaudeSyntheticAssistantMessage(message)) return

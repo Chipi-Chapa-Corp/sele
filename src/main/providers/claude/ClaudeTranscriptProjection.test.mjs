@@ -199,7 +199,7 @@ test('Claude partial-to-committed transitions preserve API block ids and earlier
   assert.equal(JSON.stringify(published), saved)
 })
 
-test('Claude background agents stay out of the parent transcript and keep each turn reply visible', () => {
+test('Claude background agent reports continue the user turn and stay out of the parent transcript', () => {
   const sub = (message) => ({ ...message, parent_tool_use_id: 'agent' })
   const notification = {
     type: 'user',
@@ -237,24 +237,15 @@ test('Claude background agents stay out of the parent transcript and keep each t
     compare(projection, source, [], { active: false, stopped: false })
   }
   const items = normalized(projection.read(source, [], { active: false, stopped: false })).items
-  const replies = items.filter((item) => item.type === 'message' && item.role === 'assistant')
-  assert.deepEqual(
-    replies.map((item) => item.content),
-    ['Started the agent.', 'The agent is done.', 'Second follow-up.']
-  )
-  // The subagent's own records render only in its chat. The parent keeps a compact row for the
-  // delegation, and the follow-up turns only hold their replies.
+  // Replies to background task notifications continue the output of the user's message: one
+  // working section holds the earlier replies as progress and the latest reply is the response.
+  // The subagent's own records render only in its chat; the parent keeps a compact row.
   assert.deepEqual(
     items.map((item) => (item.type === 'message' ? `${item.role}:${item.content}` : item.type)),
-    [
-      'user:u',
-      'working',
-      'assistant:Started the agent.',
-      'assistant:The agent is done.',
-      'assistant:Second follow-up.'
-    ]
+    ['user:u', 'working', 'assistant:Second follow-up.']
   )
   const working = JSON.stringify(items[1])
+  assert.match(working, /Started the agent\.[\s\S]*The agent is done\./)
   assert.doesNotMatch(working, /Agent looking|sub-tool|Read every file/)
   const tools = items[1].items.flatMap((item) =>
     item.type === 'toolGroup' ? item.tools : item.type === 'tool' ? [item] : []
@@ -277,6 +268,44 @@ test('Claude background agents stay out of the parent transcript and keep each t
         stdout: null,
         rawInput: null
       }
+    ]
+  )
+})
+
+test('Claude background reports after a stopped turn start a new section', () => {
+  const notification = {
+    type: 'user',
+    uuid: 'notification',
+    message: { content: '<task-notification>\n<task-id>m1</task-id>\n</task-notification>' },
+    parent_tool_use_id: null
+  }
+  const interrupt = {
+    type: 'user',
+    uuid: 'interrupt',
+    message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] },
+    parent_tool_use_id: null
+  }
+  const source = [
+    user('u'),
+    assistant('partial', [{ type: 'text', text: 'Partial answer.' }]),
+    interrupt,
+    notification,
+    assistant('reply', [{ type: 'text', text: 'Monitor event handled.' }])
+  ]
+  const projection = new ClaudeTranscriptProjection()
+  projection.acceptSource([], source, 0)
+  compare(projection, source, [], { active: false, stopped: false })
+  const items = normalized(projection.read(source, [], { active: false, stopped: false })).items
+  assert.deepEqual(
+    items.map((item) =>
+      item.type === 'message' ? `${item.role}:${item.content}` : `${item.type}:${item.status}`
+    ),
+    [
+      'user:u',
+      'working:stopped',
+      'assistant:Partial answer.',
+      // A text-only reply has no working items, so its new section shows just the reply.
+      'assistant:Monitor event handled.'
     ]
   )
 })

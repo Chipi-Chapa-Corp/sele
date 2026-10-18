@@ -43,8 +43,12 @@ if (!process.versions.electron) {
               pendingApproval:null,pendingUserInput:null,contextUsage:null,items:history,
               subagents:[],turnCount:id==='3'?1:10,itemsStartTurnIndex:0})
             let revision=1
-            window.growTools=count=>window.chatListener?.({providerId:'codex',chatId:'3',sequence:++revision,
-              detail:detail('3',revision,singleTurn(count)),turnCompleted:false,summary:chats[3]})
+            window.growTools=count=>{
+              const snapshot=detail('3',++revision,singleTurn(count))
+              window.chatListener?.({providerId:'codex',chatId:'3',sequence:revision,
+                detail:{...snapshot,baseRevision:null,baseItemIds:null,itemIds:snapshot.items.map(item=>item.id),changedItems:snapshot.items},
+                turnCompleted:false,summary:chats[3]})
+            }
             const usage={updatedAt:now,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,
               rateLimits:[],rateLimitResetCredits:null,errors:[]}
             const defaults={
@@ -126,8 +130,8 @@ if (!process.versions.electron) {
   app.whenReady().then(async () => {
     let code = 0
     let win
+    const errors = []
     try {
-      const errors = []
       win = new BrowserWindow({
         show: true,
         width: 1500,
@@ -242,7 +246,7 @@ if (!process.versions.electron) {
       assert.deepEqual(errors, [])
       console.log('Opening stability checks passed: ' + JSON.stringify(results))
     } catch (error) {
-      console.error(error)
+      console.error(error, errors)
       code = 1
     }
     if (win && !win.webContents.isDestroyed() && win.webContents.debugger.isAttached())

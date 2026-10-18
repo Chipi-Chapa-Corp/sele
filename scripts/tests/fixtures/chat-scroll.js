@@ -55,6 +55,7 @@ const reset = (provider = 'claude') => {
     contentRef: ref(element),
     selectedChatRef: ref({ id: 'chat', providerId: provider }),
     selectedChatKeyRef: ref(`${provider}:chat`),
+    chatInitialLayoutKeyRef: ref(`${provider}:chat`),
     chatDetailRef: ref(state),
     cursorWindowRef: ref(null),
     chatTurnWindowRef: ref({
@@ -75,6 +76,7 @@ const reset = (provider = 'claude') => {
     previousChatScrollTopRef: ref(50),
     chatUserScrollIntentRef: ref(false),
     setChatAtConversationBottom: noop,
+    chatAtConversationBottomRef: ref(true),
     setChatTurnPageLoadDirection: noop,
     setChatTurnWindow: (value) => {
       window.chatTurnWindowRef.current = value
@@ -86,9 +88,6 @@ const reset = (provider = 'claude') => {
     getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
     applyViewedChatDetail: noop,
     scheduleChatAutoScroll: noop,
-    scrollChatContentToBottom: () => {
-      element.scrollTop = element.scrollHeight
-    },
     chatTurnLoadThresholdPx: 100,
     chatTurnPageSize: 10,
     chatTurnWindowSize: 20,
@@ -221,5 +220,47 @@ window.runScrollChecks = async () => {
     resizes.push({ kind: `${kind} shrinking`, before, after: top() })
     stop()
   }
-  return { cursorRequests, cursorAutoFollow, normalPaging, delayedPaging, liveUpdates, resizes }
+  const autoFollow = []
+  for (const kind of ['large block', 'replacing expanded block', 'active commit']) {
+    reset()
+    element.innerHTML =
+      '<div class="chat-detail__messages-inner"><div id="tool" style="height:2000px">Tool output</div></div>'
+    window.chatAutoScrollEnabledRef.current = true
+    window.scrollChatContentToBottom(element)
+    const onScroll = () => window.handleChatContentScroll()
+    element.addEventListener('scroll', onScroll)
+    const stop = window.observeContentResize()
+    await settle()
+    const tool = document.getElementById('tool')
+    if (kind === 'replacing expanded block') {
+      tool.style.height = '100px'
+      // Force the browser to clamp scrollTop when the previous tool collapses.
+      void element.scrollTop
+    }
+    tool.style.height = '4000px'
+    let commitGap
+    if (kind === 'active commit') {
+      window.chatDetail = { ...window.chatDetail, status: 'running' }
+      window.applyChatLayout()
+      commitGap = window.getScrollBottomTop(element) - element.scrollTop
+    }
+    await settle()
+    autoFollow.push({
+      kind,
+      commitGap,
+      enabled: window.chatAutoScrollEnabledRef.current,
+      gap: window.getScrollBottomTop(element) - element.scrollTop
+    })
+    stop()
+    element.removeEventListener('scroll', onScroll)
+  }
+  return {
+    cursorRequests,
+    cursorAutoFollow,
+    normalPaging,
+    delayedPaging,
+    liveUpdates,
+    resizes,
+    autoFollow
+  }
 }

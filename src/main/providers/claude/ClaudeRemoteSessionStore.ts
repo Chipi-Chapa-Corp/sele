@@ -1,5 +1,6 @@
 import type { SessionKey, SessionStore, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
 import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
+import { parseClaudeSubagentMetadataLines } from './ClaudeSubagents.ts'
 
 export type RunClaudeSessionCommand = (script: string, args?: string[]) => Promise<string>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -77,6 +78,27 @@ done
       .split('\n')
       .map((subpath) => subpath.trim())
       .filter(Boolean)
+  }
+
+  /**
+   * Raw `subagents/agent-<id>.meta.json` contents by agent id. The SDK reads these only for local
+   * transcripts, so subagents loaded through this store otherwise lose their name and parent.
+   */
+  loadSubagentMetadata = async (sessionId: string): Promise<Map<string, unknown>> => {
+    const output = await this.run(
+      `
+root=\${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}/projects
+for path in "$root"/*/"$1"/subagents/*.meta.json; do
+  [ -f "$path" ] || continue
+  file=\${path##*/}
+  printf '%s\\t' "\${file%.meta.json}"
+  tr -d '\\n' < "$path"
+  printf '\\n'
+done
+`,
+      [sessionId]
+    )
+    return parseClaudeSubagentMetadataLines(output)
   }
 
   append = async (key: SessionKey, entries: SessionStoreEntry[]): Promise<void> => {

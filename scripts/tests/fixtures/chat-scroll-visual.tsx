@@ -4,6 +4,7 @@ import { flushSync } from 'react-dom'
 import { useConversationViewModel } from '../../../src/renderer/src/workspace/useConversationViewModel'
 import { ConversationMessagesContent } from '../../../src/renderer/src/workspace/components/ConversationMessagesContent'
 import { ChatDetailItem } from '../../../src/renderer/src/components/ChatDetailItem'
+import { defaultAppChatProgressSettings } from '../../../src/renderer/src/settings'
 import * as layout from '../../../src/renderer/src/chatLayout'
 import {
   getChatDetailFromSnapshot,
@@ -71,6 +72,7 @@ function App({ kind }) {
   provider = kind
   const selectedChat = { id: 'chat', providerId: kind }
   const selectedChatKey = kind + ':chat'
+  const [activeSubagentId, setActiveSubagentId] = useState(null)
   const [chatDetail, setDetail] = useState(() => detail())
   const [chatTurnWindow, setChatTurnWindow] = useState(null)
   const [chatAtConversationBottom, setChatAtConversationBottom] = useState(true)
@@ -119,6 +121,7 @@ function App({ kind }) {
   )
   const deps = {
     ...r,
+    activeSubagentId,
     selectedChat,
     selectedChatKey,
     selectedChatId: 'chat',
@@ -186,7 +189,11 @@ function App({ kind }) {
       key={turn.id}
     >
       {turn.items.map((item) => (
-        <ChatDetailItem key={item.id} item={item} />
+        <ChatDetailItem
+          key={item.id}
+          item={item}
+          progressSettings={defaultAppChatProgressSettings}
+        />
       ))}
     </div>
   )
@@ -195,6 +202,8 @@ function App({ kind }) {
     const rect = el.getBoundingClientRect()
     return {
       top: el.scrollTop,
+      gap: layout.getScrollBottomTop(el) - el.scrollTop,
+      autoFollow: r.chatAutoScrollEnabledRef.current,
       window: r.chatTurnWindowRef.current,
       pending: !!window.pendingPage,
       requests: window.pageRequests.length,
@@ -206,6 +215,41 @@ function App({ kind }) {
         }))
         .filter((e) => e.bottom > 0 && e.top < rect.height)
     }
+  }
+  window.switchViewport = (id) => flushSync(() => setActiveSubagentId(id))
+  window.showDiff = (count = 150) => {
+    const tool = {
+      type: 'tool',
+      id: 'diff-tool',
+      toolId: 'apply_patch',
+      status: 'running',
+      activity: 'edit',
+      icon: null,
+      label: 'Editing file',
+      command: null,
+      cwd: null,
+      stdout: null,
+      backgroundSessionId: null,
+      finishedBackgroundSessionId: null,
+      rawInput: null,
+      rawOutput: null,
+      images: [],
+      diffs: [
+        {
+          path: 'large-file.ts',
+          kind: 'edit',
+          diff: `--- a/large-file.ts\n+++ b/large-file.ts\n@@ -1,1 +1,${count} @@\n-old\n${Array.from({ length: count }, (_, i) => '+' + 'const line' + i + ' = true').join('\n')}\n`
+        }
+      ]
+    }
+    setChatDetail({
+      ...detail(),
+      status: 'running',
+      items: [
+        ...detail().items.slice(0, -1),
+        { type: 'working', id: 'live-work', status: 'working', items: [tool] }
+      ]
+    })
   }
   window.release = () => window.pendingPage?.()
   window.applyLive = () => {
@@ -220,6 +264,7 @@ function App({ kind }) {
         {kind.toUpperCase()} · 100-turn scrolling verification
       </header>
       <ConversationMessagesContent
+        key={activeSubagentId ?? 'parent'}
         {...deps}
         {...model}
         renderChatTurn={renderChatTurn}

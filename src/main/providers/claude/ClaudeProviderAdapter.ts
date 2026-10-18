@@ -116,7 +116,11 @@ import {
   clearClaudeStreamMessages,
   retainClaudeStreamTiming
 } from './ClaudeStreaming'
-import { collectClaudeSubagentSpawns, createClaudeSubagentSummary } from './ClaudeSubagents'
+import {
+  collectClaudeSubagentSpawns,
+  createClaudeSubagentSummary,
+  readLocalClaudeSubagentMetadata
+} from './ClaudeSubagents'
 import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import { mapClaudeRateLimits } from './ClaudeUsage'
 import { getClaudeUserQuestions } from './ClaudeUserQuestions'
@@ -189,6 +193,8 @@ type ClaudeSessionState = {
   backgroundTaskIds: Set<string>
   subagentTaskStatuses: Map<string, ProviderSubagent['status']>
   waitingForSessionIdle: boolean
+  /** The SDK may be preparing a follow-up before any assistant output arrives. */
+  sessionBusy: boolean
   /** A background task finished and Claude has not started the turn that reads its result. */
   taskNotificationPending: boolean
   /** Set while an interrupt we asked for (to send a queued message) is ending the turn. */
@@ -987,8 +993,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.messages,
       ...transcripts.map(([, messages]) => messages)
     ])
+    const metadata = await this.loadSubagentMetadata(chatId, sessionStore)
     const subagents = transcripts.map(([agentId, messages]): ProviderSubagent => {
-      const summary = createClaudeSubagentSummary(agentId, messages, spawns)
+      const summary = createClaudeSubagentSummary(agentId, messages, spawns, metadata.get(agentId))
       return {
         ...summary,
         status:
@@ -1000,6 +1007,21 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       (first, second) =>
         (first.createdAt ?? Number.MAX_SAFE_INTEGER) - (second.createdAt ?? Number.MAX_SAFE_INTEGER)
     )
+  }
+
+  private loadSubagentMetadata = async (
+    chatId: string,
+    sessionStore: ClaudeRemoteSessionStore | undefined
+  ): Promise<Map<string, unknown>> => {
+    try {
+      return sessionStore
+        ? await sessionStore.loadSubagentMetadata(chatId)
+        : await readLocalClaudeSubagentMetadata(chatId)
+    } catch (error) {
+      // Names fall back to the transcripts; the list itself must still load.
+      console.error('[caught:ClaudeProviderAdapter:loadSubagentMetadata]', error)
+      return new Map()
+    }
   }
 
   getSubagent = async (
@@ -1018,8 +1040,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (!agentIds.includes(subagentId)) throw new Error('Claude subagent was not found.')
 
     const messages = await getSubagentMessages(chatId, subagentId, listOptions)
+    const metadata = (await this.loadSubagentMetadata(chatId, sessionStore)).get(subagentId)
     // A nested subagent's delegation call is in its parent subagent's transcript.
-    const parentAgentId = messages.find((message) => message.parent_agent_id)?.parent_agent_id
+    const parentAgentId =
+      createClaudeSubagentSummary(subagentId, messages, new Map(), metadata).parentId ?? undefined
     const parentMessages =
       parentAgentId && agentIds.includes(parentAgentId)
         ? await getSubagentMessages(chatId, parentAgentId, listOptions)
@@ -1028,7 +1052,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       ...createClaudeSubagentSummary(
         subagentId,
         messages,
-        collectClaudeSubagentSpawns([state.messages, parentMessages, messages])
+        collectClaudeSubagentSpawns([state.messages, parentMessages, messages]),
+        metadata
       ),
       status:
         state.subagentTaskStatuses.get(subagentId) ??
@@ -1685,6 +1710,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       backgroundTaskIds: new Set(),
       subagentTaskStatuses: new Map(),
       waitingForSessionIdle: false,
+      sessionBusy: false,
       taskNotificationPending: false,
       interruptRequested: false
     }
@@ -2010,6 +2036,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.queryModel = null
     state.backgroundTaskIds.clear()
     state.waitingForSessionIdle = false
+    state.sessionBusy = false
     state.taskNotificationPending = false
     state.interruptRequested = false
     state.partialMessages.clear()
@@ -2348,6 +2375,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const shouldClose = (): boolean =>
       state.query === control &&
       state.waitingForSessionIdle &&
+      !state.sessionBusy &&
       !state.active &&
       !state.queueDrainInProgress &&
       state.backgroundTaskIds.size === 0
@@ -2444,10 +2472,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return false
     }
     if (event.type === 'system' && event.subtype === 'session_state_changed') {
-      if (event.state !== 'idle') {
-        this.resumeBackgroundTurn(state, control)
-        return false
-      }
+      state.sessionBusy = event.state !== 'idle'
+      // These informational notifications can arrive after a result without another turn.
+      // Reopen the foreground only when main-thread assistant output actually arrives;
+      // otherwise a late "running" notification leaves it active and blocks idle cleanup.
+      if (event.state !== 'idle') return false
       // A result completes the visible foreground turn. Session idle only decides when the
       // underlying query can be closed after its background tasks have also finished.
       const lifecycle = getClaudeSessionStateLifecycleDecision(
@@ -2457,7 +2486,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         // A queued message that is preparing to send will use this query.
         state.active || state.queueDrainInProgress
       )
-      if (lifecycle === 'ignore') return false
+      if (lifecycle === 'ignore') {
+        if (state.waitingForSessionIdle && !state.active && state.backgroundTaskIds.size === 0) {
+          // A prior grace timer may have expired while the SDK was preparing a response.
+          this.scheduleBackgroundIdleClose(state, control)
+        }
+        return false
+      }
       state.waitingForSessionIdle = false
       return true
     }
