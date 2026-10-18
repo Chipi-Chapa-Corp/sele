@@ -1,6 +1,10 @@
+import { mcpAppsChannels, type McpAppsApi } from '../shared/mcpApps'
 import { preferencesChannel, type PreferencesApi } from '../shared/preferences'
+import { createPreferenceClient } from './preferenceClient'
 import type { AppUpdateState } from '../shared/appUpdate'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { desktopChannels, type DesktopApi } from '../shared/desktop'
+
 import type { IpcRendererEvent } from 'electron'
 import type { AppApi, AppColorScheme, AppWindowState } from '../shared/app'
 import { appIpcChannels } from '../shared/app'
@@ -14,6 +18,23 @@ import type {
   BrowserRendererApi
 } from '../shared/browser'
 import { browserIpcChannels } from '../shared/browser'
+
+const desktopApi: DesktopApi = {
+  getState: () => ipcRenderer.invoke(desktopChannels.getState),
+  connectComputer: () => ipcRenderer.invoke(desktopChannels.connectComputer),
+  disconnectComputer: () => ipcRenderer.invoke(desktopChannels.disconnectComputer),
+  pairChrome: () => ipcRenderer.invoke(desktopChannels.pairChrome),
+  disconnectChrome: () => ipcRenderer.invoke(desktopChannels.disconnectChrome),
+  openChromeExtension: () => ipcRenderer.invoke(desktopChannels.openChromeExtension)
+}
+contextBridge.exposeInMainWorld('desktopApi', desktopApi)
+
+const mcpAppsApi: McpAppsApi = {
+  open: (scope, callId) => ipcRenderer.invoke(mcpAppsChannels.open, scope, callId),
+  request: (id, method, params) => ipcRenderer.invoke(mcpAppsChannels.request, id, method, params),
+  close: (id) => ipcRenderer.invoke(mcpAppsChannels.close, id)
+}
+contextBridge.exposeInMainWorld('mcpAppsApi', mcpAppsApi)
 
 const appApi: AppApi = {
   getAppUpdate: () => ipcRenderer.invoke(appIpcChannels.getAppUpdate),
@@ -58,6 +79,7 @@ const appApi: AppApi = {
   getFileContents: (options) => ipcRenderer.invoke(appIpcChannels.getFileContents, options),
   openFileInSystemApp: (options) => ipcRenderer.invoke(appIpcChannels.openFileInSystemApp, options),
   downloadFile: (options) => ipcRenderer.invoke(appIpcChannels.downloadFile, options),
+  showFileInFolder: (options) => ipcRenderer.invoke(appIpcChannels.showFileInFolder, options),
   writeFileContents: (options) => ipcRenderer.invoke(appIpcChannels.writeFileContents, options),
   getRecentGitCommitMessages: (options) =>
     ipcRenderer.invoke(appIpcChannels.getRecentGitCommitMessages, options),
@@ -523,14 +545,21 @@ contextBridge.exposeInMainWorld('providerApi', providerApi)
 contextBridge.exposeInMainWorld('terminalApi', terminalApi)
 contextBridge.exposeInMainWorld('browserApi', browserApi)
 
-const preferencesApi: PreferencesApi = {
+const preferenceSourceId = crypto.randomUUID()
+let preferenceRevision = 0
+const preferenceWriteRequest = (values: import('../shared/preferences').PreferenceChanges) => ({
+  action: 'write' as const,
+  sourceId: preferenceSourceId,
+  revision: ++preferenceRevision,
+  values
+})
+const preferencesApi: PreferencesApi = createPreferenceClient({
   initialize: (values) =>
     ipcRenderer.invoke(
       preferencesChannel,
       values === undefined ? { action: 'load' } : { action: 'migrate', values }
     ),
-  getItem: (key) => ipcRenderer.sendSync(preferencesChannel, { action: 'get', key }),
-  setItem: (key, value) => ipcRenderer.sendSync(preferencesChannel, { action: 'set', key, value }),
-  removeItem: (key) => ipcRenderer.sendSync(preferencesChannel, { action: 'remove', key })
-}
+  write: (values) => ipcRenderer.invoke(preferencesChannel, preferenceWriteRequest(values)),
+  commit: (values) => ipcRenderer.sendSync(preferencesChannel, preferenceWriteRequest(values))
+})
 contextBridge.exposeInMainWorld('preferencesApi', preferencesApi)

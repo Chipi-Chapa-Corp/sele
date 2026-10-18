@@ -15,6 +15,7 @@
   --muted: #555552;
   --quiet: #62625e;
   --accent: #7a5638;
+  --accent-highlight: #c28f63;
   --accent-hover: #63442c;
   --accent-ink: #ffffff;
   --accent-soft: rgb(122 86 56 / 12%);
@@ -96,6 +97,7 @@
   --dark-ink: #111110;
   --assistant-message: #f3eee9;
   --user-message-surface: var(--secondary-surface-hover);
+  --user-message-background: var(--primary-surface);
   --activity-bg: #f7f7f5;
   --line: rgb(27 27 24 / 12%);
   --message-border: rgb(122 86 56 / 10%);
@@ -125,6 +127,7 @@
   --muted: #aaaaaa;
   --quiet: #7f7f7f;
   --accent: #7a5638;
+  --accent-highlight: #d0a07d;
   --accent-hover: #63442c;
   --accent-ink: #ffffff;
   --accent-soft: rgb(122 86 56 / 16%);
@@ -203,6 +206,7 @@
   --dark-ink: #f8f8f8;
   --assistant-message: color-mix(in srgb, var(--accent) 7%, #1f1f1f);
   --user-message-surface: var(--assistant-message);
+  --user-message-background: color-mix(in srgb, var(--user-message-surface) 92%, var(--accent));
   --activity-bg: #181818;
   --line: rgb(255 255 255 / 10%);
   --message-border: color-mix(in srgb, var(--accent) 20%, var(--glass-line));

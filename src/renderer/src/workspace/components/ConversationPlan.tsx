@@ -19,7 +19,7 @@ export function ConversationPlan(props: ConversationPlanProps): ReactElement | n
           onSaveObjective={onSaveGoalObjective}
         />
       )}
-      <ChatPlan key={selectedChatKey ?? 'no-chat'} plan={messageBoxPlan} />
+      {messageBoxPlan && <ChatPlan key={selectedChatKey ?? 'no-chat'} plan={messageBoxPlan} />}
     </>
   )
 }

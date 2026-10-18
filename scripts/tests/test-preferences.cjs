@@ -74,7 +74,7 @@ if (process.versions.electron) {
         )
         if (mode === 'first') {
           await window.webContents.executeJavaScript(
-            "fixture.preferences.setItem('sele:test', 'committed')"
+            "fixture.preferences.setItem('sele:test', 'committed'); fixture.flushPreferences()"
           )
           // Terminate without graceful shutdown: successful IPC must already be durable.
           console.log('COMMITTED')
@@ -97,6 +97,9 @@ if (process.versions.electron) {
             })))`)
           }
           console.log('BUILT APP PREFERENCES PASSED', mode)
+          await window.webContents.executeJavaScript(
+            `fixture.stageDeferredPreference(${JSON.stringify(mode)})`
+          )
           clearTimeout(timeout)
           if (mode === 'terminal-close') window.close()
           else app.quit()
@@ -117,6 +120,8 @@ if (process.versions.electron) {
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM preferences').get().n, 0)
     assert.deepEqual(preferences.migrate({ 'sele:valid': 'keep' }), { 'sele:valid': 'keep' })
     assert.deepEqual(preferences.migrate({}), { 'sele:valid': 'keep' })
+    assert.throws(() => preferences.setMany({ 'sele:valid': 'replace', invalid: 'reject' }))
+    assert.equal(preferences.get('sele:valid'), 'keep', 'invalid batches roll back atomically')
     db.pragma('query_only = ON')
     assert.throws(() => preferences.set('sele:valid', 'replace'), /readonly/)
     assert.equal(preferences.get('sele:valid'), 'keep')
@@ -129,7 +134,17 @@ if (process.versions.electron) {
     const children = []
     try {
       await require('esbuild').build({
-        entryPoints: ['src/renderer/src/preferences.ts'],
+        stdin: {
+          contents: `
+            export * from './src/renderer/src/preferences'
+            import { preferences } from './src/renderer/src/preferences'
+            import { createAfterPaintWriter } from './src/renderer/src/afterPaintWriter'
+            const writer = createAfterPaintWriter(value => preferences.setItem('sele:deferred-close', value))
+            export const stageDeferredPreference = value => writer.schedule(value)
+          `,
+          resolveDir: process.cwd(),
+          loader: 'ts'
+        },
         outfile: path.join(directory, 'fixture.js'),
         bundle: true,
         platform: 'browser',
@@ -211,6 +226,27 @@ if (process.versions.electron) {
         } else {
           assert.equal(result.code, 0, output)
           assert.match(output, /BUILT APP PREFERENCES PASSED/)
+          const persisted = require('node:child_process').spawnSync(
+            require('electron'),
+            [
+              '-e',
+              `
+              const db = new (require('better-sqlite3'))(process.env.SELE_DATABASE_PATH, {readonly:true});
+              process.stdout.write(db.prepare("SELECT value FROM preferences WHERE key = 'sele:deferred-close'").get().value);
+              db.close();
+            `
+            ],
+            {
+              env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', SELE_DATABASE_PATH: databasePath },
+              encoding: 'utf8'
+            }
+          )
+          assert.equal(persisted.status, 0, persisted.stderr)
+          assert.equal(
+            persisted.stdout,
+            mode,
+            'close/quit flushes deferred preferences before database disposal'
+          )
         }
         console.log('Passed:', mode)
       }

@@ -1,4 +1,5 @@
 import type { PreferencesApi, PreferenceResult, PreferenceValues } from '../../shared/preferences'
+import { flushAfterPaintWriters } from './afterPaintWriter.ts'
 
 const api = (): PreferencesApi => {
   const api = (window as Window & { preferencesApi?: PreferencesApi }).preferencesApi
@@ -28,7 +29,30 @@ const unwrap = (result: PreferenceResult): PreferenceValues | string | null => {
   throw error
 }
 
+export const flushPreferences = async (): Promise<void> => {
+  flushAfterPaintWriters()
+  unwrap(await api().flush())
+}
+
+let watchingClose = false
 export const initializePreferences = async (): Promise<void> => {
+  if (typeof api().flush !== 'function')
+    throw new Error('Restart Sele to finish updating preference storage.')
+  if (!watchingClose) {
+    watchingClose = true
+    api().onFailure((error) => showPreferenceFailure(new Error(error)))
+    window.addEventListener('beforeunload', (event) => {
+      try {
+        flushAfterPaintWriters()
+        // Only closing/reloading needs a synchronous durability barrier. Normal
+        // navigation, input, and resizing use local reads and asynchronous saves.
+        unwrap(api().commitPending())
+      } catch (error) {
+        event.preventDefault()
+        showPreferenceFailure(error)
+      }
+    })
+  }
   if (unwrap(await api().initialize()) !== null) return
   // Read Chromium only for the first migration. Once migrated, even a completely
   // recreated Chromium profile is irrelevant to these preferences.

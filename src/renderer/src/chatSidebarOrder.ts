@@ -3,7 +3,8 @@ import type { ProviderChat } from '../../shared/provider'
 
 type SidebarOrderedChat = Pick<ProviderChat, 'providerId' | 'id' | 'createdAt' | 'sidebarOrder'>
 
-const getChatKey = (chat: SidebarOrderedChat): string => `${chat.providerId}:${chat.id}`
+const getChatKey = (chat: Pick<ProviderChat, 'providerId' | 'id'>): string =>
+  `${chat.providerId}:${chat.id}`
 
 export const compareChatsBySidebarOrder = (
   firstChat: SidebarOrderedChat,
@@ -28,6 +29,20 @@ export const compareChatsBySidebarOrder = (
 export const sortChatsForSidebarSection = <Chat extends SidebarOrderedChat>(
   chats: Chat[]
 ): Chat[] => [...chats].sort(compareChatsBySidebarOrder)
+
+type DoneChat = Pick<ProviderChat, 'providerId' | 'id' | 'createdAt' | 'doneAt'>
+
+export const sortDoneChats = <Chat extends DoneChat>(chats: Chat[]): Chat[] =>
+  [...chats].sort((first, second) => {
+    // Older installations did not record completion times. Keep those chats below
+    // timestamped completions, with a stable creation-time fallback.
+    const difference = (second.doneAt ?? 0) - (first.doneAt ?? 0)
+    return (
+      difference ||
+      second.createdAt - first.createdAt ||
+      getChatKey(first).localeCompare(getChatKey(second))
+    )
+  })
 
 type SidebarProjectGroup = {
   key: string

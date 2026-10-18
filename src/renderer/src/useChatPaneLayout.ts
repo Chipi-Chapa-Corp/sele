@@ -79,11 +79,6 @@ export const useChatPaneLayout = (changesSidebarExpanded: boolean): ChatPaneLayo
   useEffect(() => () => chatResizeCleanupRef.current?.(), [])
 
   useEffect(() => {
-    if (!panePercents) return
-    writeStoredChatPanePercents(panePercents)
-  }, [panePercents])
-
-  useEffect(() => {
     const resizeHandles = [resizeHandleRef.current, changesResizeHandleRef.current].filter(
       (resizeHandle): resizeHandle is HTMLDivElement => Boolean(resizeHandle)
     )
@@ -139,10 +134,26 @@ export const useChatPaneLayout = (changesSidebarExpanded: boolean): ChatPaneLayo
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
 
+      let nextPercents = displayedPanePercents
+      let frame: number | null = null
+      let moved = false
+      let finished = false
+      const applyWidths = (): void => {
+        frame = null
+        panels.style.setProperty(
+          '--chat-sidebar-width',
+          formatChatPanePercent(nextPercents.sidebar)
+        )
+        panels.style.setProperty(
+          '--chat-changes-width',
+          formatChatPanePercent(nextPercents.changes)
+        )
+      }
       const handlePointerMove = (moveEvent: PointerEvent): void => {
+        if (moveEvent.pointerId !== pointerId) return
         const deltaX = moveEvent.clientX - startX
 
-        setPanePercents(() => {
+        const next = (() => {
           if (edge === 'left') {
             const maxSidebarWidth =
               totalWidth -
@@ -172,10 +183,25 @@ export const useChatPaneLayout = (changesSidebarExpanded: boolean): ChatPaneLayo
             },
             totalWidth
           )
-        })
+        })()
+        if (next.sidebar === nextPercents.sidebar && next.changes === nextPercents.changes) return
+        nextPercents = next
+        moved = true
+        // Resize the CSS tracks without rerendering the workspace for every
+        // pointer event. React receives the final values only when dragging ends.
+        if (frame === null) frame = window.requestAnimationFrame(applyWidths)
       }
 
-      const handlePointerUp = (): void => {
+      const handlePointerUp = (upEvent?: PointerEvent): void => {
+        if (upEvent && upEvent.pointerId !== pointerId) return
+        if (finished) return
+        finished = true
+        if (frame !== null) window.cancelAnimationFrame(frame)
+        applyWidths()
+        if (moved) {
+          setPanePercents(nextPercents)
+          writeStoredChatPanePercents(nextPercents)
+        }
         panels.classList.remove('chat__panels--resizing')
         document.body.style.cursor = previousCursor
         document.body.style.userSelect = previousUserSelect
@@ -183,6 +209,7 @@ export const useChatPaneLayout = (changesSidebarExpanded: boolean): ChatPaneLayo
         window.removeEventListener('pointermove', handlePointerMove)
         window.removeEventListener('pointerup', handlePointerUp)
         window.removeEventListener('pointercancel', handlePointerUp)
+        resizeHandle.removeEventListener('lostpointercapture', handlePointerUp)
         chatResizeCleanupRef.current = null
       }
 
@@ -190,6 +217,7 @@ export const useChatPaneLayout = (changesSidebarExpanded: boolean): ChatPaneLayo
       window.addEventListener('pointermove', handlePointerMove)
       window.addEventListener('pointerup', handlePointerUp)
       window.addEventListener('pointercancel', handlePointerUp)
+      resizeHandle.addEventListener('lostpointercapture', handlePointerUp)
     },
     [changesSidebarExpanded, displayedPanePercents]
   )

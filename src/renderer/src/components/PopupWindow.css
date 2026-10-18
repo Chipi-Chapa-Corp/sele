@@ -1,15 +1,51 @@
+/* Don't position the popup itself: that would make it the containing block of
+   every absolute descendant, so hidden labels deep inside scrolled panels would
+   overflow the popup and scroll the whole window. Anchor the grip instead. */
 .popup-window {
+  anchor-name: --popup-window;
+  anchor-scope: --popup-window;
   box-sizing: border-box;
   min-width: min(16rem, calc(100vw - 1.4rem));
   min-height: min(8rem, calc(100vh - 1.4rem));
   max-width: calc(100vw - 1.4rem);
   max-height: calc(100vh - 1.4rem);
   overflow: auto;
-  resize: both;
+}
+
+.popup-window__resize-handle {
+  position: absolute;
+  z-index: 1;
+  /* Popups that are already positioned (open dialogs, lightbox frames) are the
+     grip's containing block; anchor() can't target that, so fall back to 0. */
+  position-anchor: --popup-window;
+  right: calc(anchor(right, 0px) + 0.15rem);
+  bottom: calc(anchor(bottom, 0px) + 0.15rem);
+  width: 0.9rem;
+  height: 0.9rem;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(
+    135deg,
+    transparent 0 45%,
+    var(--muted) 45% 52%,
+    transparent 52% 68%,
+    var(--muted) 68% 75%,
+    transparent 75%
+  );
+  opacity: 0.5;
+  -webkit-app-region: no-drag;
+}
+
+.popup-window__resize-handle:hover {
+  opacity: 0.9;
+}
+
+dialog.popup-window:not([open]) > .popup-window__resize-handle,
+.popup-window.file-editor-dialog--expanded > .popup-window__resize-handle {
+  display: none;
 }
 
 .popup-window.file-editor-dialog--expanded {
   max-width: none;
   max-height: none;
-  resize: none;
 }

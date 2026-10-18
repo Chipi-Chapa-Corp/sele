@@ -1,6 +1,7 @@
 import {
   Check,
   Folder,
+  FolderKanban,
   GitCommitHorizontal,
   GitFork,
   GripVertical,
@@ -22,7 +23,8 @@ import {
   useState,
   type FocusEvent,
   type FormEvent,
-  type KeyboardEvent
+  type KeyboardEvent,
+  type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
@@ -32,11 +34,13 @@ import { getDefaultProjectName } from '../projectPresentation'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { Button } from './Button'
 import { Input } from './Input'
+import { ProviderIcon } from './ProviderIcon'
 import './ChatListItem.css'
 
 type ChatListItemProps = {
   chat: ProviderChat
   projectDisplayName?: string | null
+  projectIcon?: ReactNode
   selected: boolean
   committing?: boolean
   latestCommitFinishedAt?: number | null
@@ -104,6 +108,7 @@ type DetailCardPosition = {
 export const ChatListItem = memo(function ChatListItem({
   chat,
   projectDisplayName,
+  projectIcon,
   selected,
   committing = false,
   latestCommitFinishedAt = null,
@@ -424,7 +429,11 @@ export const ChatListItem = memo(function ChatListItem({
                 icon={<Check aria-hidden="true" />}
                 size="small"
                 theme="primary"
-                title="Approve"
+                title={
+                  pendingApproval.type === 'permissions'
+                    ? `Allow for this turn\n${pendingApproval.permissionDetails?.join('\n') ?? ''}`
+                    : 'Approve'
+                }
               />
             </>
           )}
@@ -487,8 +496,15 @@ export const ChatListItem = memo(function ChatListItem({
                 </time>
               )}
             </div>
+            {chat.done && (
+              <div className="chat-list-item__detail-location">
+                <span className="chat-list-item__detail-project-icon" aria-hidden="true">
+                  {projectIcon ?? <FolderKanban />}
+                </span>
+                <span className="chat-list-item__detail-project">{projectName}</span>
+              </div>
+            )}
             <div className="chat-list-item__detail-location">
-              <span className="chat-list-item__detail-project">{projectName}</span>
               <LocationIcon
                 aria-label={isGitWorktree ? 'Worktree' : 'Folder'}
                 className="chat-list-item__detail-location-icon"
@@ -496,6 +512,11 @@ export const ChatListItem = memo(function ChatListItem({
               <span className="chat-list-item__detail-branch">{branchName}</span>
             </div>
             <span className="chat-list-item__detail-provider">
+              <ProviderIcon
+                providerId={chat.providerId}
+                className="chat-list-item__detail-location-icon"
+                aria-hidden="true"
+              />
               {providerLabels[chat.providerId]}
             </span>
           </div>,

@@ -23,6 +23,7 @@ const getDefaultChatMetadata = (id: string): ProviderChatMetadata => ({
   pinned: false,
   sidebarOrder: null,
   done: false,
+  doneAt: null,
   seenUpdatedAt: null,
   purpose: null,
   container: null
@@ -54,6 +55,7 @@ const mapChatMetadataRow = (row: {
   pinned: number
   pinned_order: number | null
   done: number
+  done_at: number | null
   seen_updated_at: number | null
   purpose: ProviderChatPurpose | null
 }): ProviderChatMetadata => ({
@@ -61,6 +63,7 @@ const mapChatMetadataRow = (row: {
   pinned: toBoolean(row.pinned),
   sidebarOrder: toNumberOrNull(row.pinned_order),
   done: toBoolean(row.done),
+  doneAt: toNumberOrNull(row.done_at),
   seenUpdatedAt: toNumberOrNull(row.seen_updated_at),
   purpose: row.purpose === 'commit' ? row.purpose : null,
   container: mapContainerTarget(
@@ -87,6 +90,7 @@ export const getChatMetadata = async (chatId: string): Promise<ProviderChatMetad
       'pinned',
       'pinned_order',
       'done',
+      'done_at',
       'seen_updated_at',
       'purpose'
     ])
@@ -118,6 +122,7 @@ export const getChatMetadataByIds = async (
         'pinned',
         'pinned_order',
         'done',
+        'done_at',
         'seen_updated_at',
         'purpose'
       ])
@@ -157,13 +162,15 @@ export const getChatContainers = async (): Promise<AppContainerTarget[]> => {
 export const setChatDone = async (chatId: string, done = true): Promise<ProviderChatMetadata> => {
   const db = await getDatabase()
   const doneValue = done ? 1 : 0
+  const doneAt = done ? Date.now() : null
 
   await db
     .insertInto('chat')
-    .values({ id: chatId, pinned: 0, pinned_order: null, done: doneValue })
+    .values({ id: chatId, pinned: 0, pinned_order: null, done: doneValue, done_at: doneAt })
     .onConflict((conflict) =>
       conflict.column('id').doUpdateSet({
         done: doneValue,
+        done_at: doneAt,
         pinned_order: null
       })
     )
@@ -299,16 +306,20 @@ export const setChatsDone = async (
 
   const db = await getDatabase()
   const doneValue = done ? 1 : 0
+  const doneAt = done ? Date.now() : null
 
   for (let index = 0; index < ids.length; index += chatMetadataChunkSize) {
     const chunk = ids.slice(index, index + chatMetadataChunkSize)
 
     await db
       .insertInto('chat')
-      .values(chunk.map((id) => ({ id, pinned: 0, pinned_order: null, done: doneValue })))
+      .values(
+        chunk.map((id) => ({ id, pinned: 0, pinned_order: null, done: doneValue, done_at: doneAt }))
+      )
       .onConflict((conflict) =>
         conflict.column('id').doUpdateSet({
           done: doneValue,
+          done_at: doneAt,
           pinned_order: null
         })
       )

@@ -73,7 +73,6 @@ const setup = (providerId, initial = null) => {
     getProviderChatKey: (provider, id) => `${provider}:${id}`,
     setSelectedChat: () => {},
     setChats: () => {},
-    setDoneProjectFilterChats: () => {},
     setNewChatOpen: () => {}
   })
   vm.runInContext(loadCode, context)

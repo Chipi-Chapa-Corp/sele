@@ -1,5 +1,9 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { getSubagentPageNavigationEpoch, refreshSubagentDetail } from '../subagentUi'
+import {
+  getSubagentPageNavigationEpoch,
+  getSubagentToolSignature,
+  refreshSubagentDetail
+} from '../subagentUi'
 import { chatWorkingItemPageSize, chatWorkingItemWindowSize } from './controllerTypes'
 import {
   startTransition,
@@ -75,6 +79,9 @@ const areSubagentSummariesEqual = (first: ProviderSubagent, second: ProviderSuba
   first.status === second.status &&
   first.createdAt === second.createdAt &&
   first.updatedAt === second.updatedAt
+
+// Fallback for status changes no delegation row reports, such as a background subagent finishing.
+const subagentListPollInterval = 15000
 
 const areSubagentListsEqual = (first: ProviderSubagent[], second: ProviderSubagent[]): boolean =>
   first.length === second.length &&
@@ -211,6 +218,11 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   const activeSubagentChatView =
     subagentChatView?.rootChatKey === selectedChatKey ? subagentChatView : null
   const activeSubagentId = activeSubagentChatView?.summary.id ?? null
+  const chatDetailActive = isActiveChatStatus(chatDetail?.status)
+  const subagentToolSignature = useMemo(
+    () => getSubagentToolSignature(chatDetail?.items ?? []),
+    [chatDetail?.items]
+  )
   const selectedChatSubagents = useMemo(
     () => (subagentListState?.rootChatKey === selectedChatKey ? subagentListState.items : []),
     [selectedChatKey, subagentListState]
@@ -254,30 +266,42 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     }
 
     let active = true
+    let timeoutId: number | null = null
     setSubagentListState((currentState) =>
       currentState?.rootChatKey === selectedChatKey
         ? currentState
         : { rootChatKey: selectedChatKey, items: [], loadState: 'loading', error: null }
     )
 
-    const timeoutId = window.setTimeout(() => {
+    // Providers without subagents in their chat detail reload the list when a delegation row
+    // starts or finishes and when the parent turn starts or ends, plus a slow poll while it runs.
+    const load = (): void => {
       void providerApi
         .getSubagents(selectedProviderId, selectedChatId)
         .then((subagents) => {
           if (!active || selectedChatKeyRef.current !== selectedChatKey) return
 
-          setSubagentListState({
-            rootChatKey: selectedChatKey,
-            items: subagents,
-            loadState: 'ready',
-            error: null
-          })
+          setSubagentListState((currentState) =>
+            currentState?.rootChatKey === selectedChatKey &&
+            currentState.loadState === 'ready' &&
+            currentState.error === null &&
+            areSubagentListsEqual(currentState.items, subagents)
+              ? currentState
+              : {
+                  rootChatKey: selectedChatKey,
+                  items: subagents,
+                  loadState: 'ready',
+                  error: null
+                }
+          )
           setSubagentChatView((currentView) => {
             if (currentView?.rootChatKey !== selectedChatKey) return currentView
             const updatedSummary = subagents.find(
               (subagent) => subagent.id === currentView.summary.id
             )
-            return updatedSummary ? { ...currentView, summary: updatedSummary } : currentView
+            return updatedSummary && !areSubagentSummariesEqual(currentView.summary, updatedSummary)
+              ? { ...currentView, summary: updatedSummary }
+              : currentView
           })
         })
         .catch((error) => {
@@ -292,16 +316,24 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
             error: getErrorMessage(error, 'Unable to load subagent chats.')
           }))
         })
-    }, 120)
+        .finally(() => {
+          if (active && chatDetailActive) {
+            timeoutId = window.setTimeout(load, subagentListPollInterval)
+          }
+        })
+    }
+    timeoutId = window.setTimeout(load, 120)
 
     return () => {
       active = false
-      window.clearTimeout(timeoutId)
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
     }
   }, [
     chatDetail?.id,
     chatDetail?.purpose,
     chatDetail?.subagents,
+    chatDetailActive,
+    subagentToolSignature,
     selectedChatId,
     selectedChatKey,
     selectedProviderId

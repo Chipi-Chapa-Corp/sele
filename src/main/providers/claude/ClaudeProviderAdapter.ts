@@ -1,3 +1,4 @@
+import { createProviderElicitation, getProviderElicitationResult } from '../ProviderElicitation'
 import { ClaudeLiveTokenUsage } from './ClaudeLiveTokenUsage.ts'
 import { TokenUsageReporter } from '../TokenUsageReporter.ts'
 import { normalizeTokenUsage, addTokenUsage, emptyTokenUsage } from '../../../shared/tokenUsage.ts'
@@ -115,7 +116,7 @@ import {
   clearClaudeStreamMessages,
   retainClaudeStreamTiming
 } from './ClaudeStreaming'
-import { createClaudeSubagentSummary } from './ClaudeSubagents'
+import { collectClaudeSubagentSpawns, createClaudeSubagentSummary } from './ClaudeSubagents'
 import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import { mapClaudeRateLimits } from './ClaudeUsage'
 import { getClaudeUserQuestions } from './ClaudeUserQuestions'
@@ -138,6 +139,7 @@ type ClaudePendingUserInput = {
   choices: ProviderPendingUserInput['choices']
   allowFreeform: boolean
   startedAt: number
+  elicitation?: ProviderPendingUserInput['elicitation']
   resolve: (response: ProviderUserInputResponse) => void
 }
 
@@ -175,6 +177,11 @@ type ClaudeSessionState = {
   queuedMessages: QueuedClaudeMessage[]
   queuedMessagesPaused: boolean
   queueDrainInProgress: boolean
+  /**
+   * Set while a finished turn waits briefly for context usage before its query may close. A
+   * message sent then must wait for that decision; draining it would race the close.
+   */
+  resultSettling: boolean
   contextUsage: ProviderChatContextUsage | null
   queryReadOnly: boolean | null
   queryModel: string | undefined | null
@@ -964,23 +971,31 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       ...(state.cwd ? { dir: state.cwd } : {}),
       ...(sessionStore ? { sessionStore } : {})
     })
-    const subagents = await Promise.all(
-      agentIds.map(async (agentId) => {
-        const summary = createClaudeSubagentSummary(
-          agentId,
-          await getSubagentMessages(chatId, agentId, {
-            ...(state.cwd ? { dir: state.cwd } : {}),
-            ...(sessionStore ? { sessionStore } : {})
-          })
-        )
-        return {
-          ...summary,
-          status:
-            state.subagentTaskStatuses.get(agentId) ??
-            (state.backgroundTaskIds.has(agentId) ? 'running' : 'completed')
-        }
-      })
+    const transcripts = await Promise.all(
+      agentIds.map(
+        async (agentId) =>
+          [
+            agentId,
+            await getSubagentMessages(chatId, agentId, {
+              ...(state.cwd ? { dir: state.cwd } : {}),
+              ...(sessionStore ? { sessionStore } : {})
+            })
+          ] as const
+      )
     )
+    const spawns = collectClaudeSubagentSpawns([
+      state.messages,
+      ...transcripts.map(([, messages]) => messages)
+    ])
+    const subagents = transcripts.map(([agentId, messages]): ProviderSubagent => {
+      const summary = createClaudeSubagentSummary(agentId, messages, spawns)
+      return {
+        ...summary,
+        status:
+          state.subagentTaskStatuses.get(agentId) ??
+          (state.backgroundTaskIds.has(agentId) ? 'running' : 'completed')
+      }
+    })
     return subagents.sort(
       (first, second) =>
         (first.createdAt ?? Number.MAX_SAFE_INTEGER) - (second.createdAt ?? Number.MAX_SAFE_INTEGER)
@@ -1003,8 +1018,18 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (!agentIds.includes(subagentId)) throw new Error('Claude subagent was not found.')
 
     const messages = await getSubagentMessages(chatId, subagentId, listOptions)
+    // A nested subagent's delegation call is in its parent subagent's transcript.
+    const parentAgentId = messages.find((message) => message.parent_agent_id)?.parent_agent_id
+    const parentMessages =
+      parentAgentId && agentIds.includes(parentAgentId)
+        ? await getSubagentMessages(chatId, parentAgentId, listOptions)
+        : []
     const summary = {
-      ...createClaudeSubagentSummary(subagentId, messages),
+      ...createClaudeSubagentSummary(
+        subagentId,
+        messages,
+        collectClaudeSubagentSpawns([state.messages, parentMessages, messages])
+      ),
       status:
         state.subagentTaskStatuses.get(subagentId) ??
         (state.backgroundTaskIds.has(subagentId) ? ('running' as const) : ('completed' as const))
@@ -1387,6 +1412,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (!pending || pending.id !== requestId) {
       throw new Error('There is no matching pending Claude question.')
     }
+    if (pending.elicitation) getProviderElicitationResult(pending, response)
+    else if (response.kind === 'elicitation')
+      throw new Error('This request is not an MCP interaction.')
     if (response.kind === 'answer') {
       const answer = response.wasFreeform ? response.answer.trim() : response.answer
       if (!answer.trim()) throw new Error('An answer is required.')
@@ -1649,6 +1677,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       queuedMessages: [],
       queuedMessagesPaused: false,
       queueDrainInProgress: false,
+      resultSettling: false,
       contextUsage: null,
       queryReadOnly: null,
       queryModel: null,
@@ -1940,6 +1969,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
             ...this.getBaseQueryOptions(state.options, runtime),
             ...(browser ? { mcpServers: { [claudeBrowserServerName]: browser.server } } : {}),
             canUseTool: this.createPermissionHandler(state),
+            onElicitation: this.createElicitationHandler(state),
             ...(isNew ? { sessionId: state.id } : { resume: startOptions.forkFrom ?? state.id }),
             ...(startOptions.forkFrom ? { forkSession: true, sessionId: state.id } : {}),
             ...(startOptions.resumeAt ? { resumeSessionAt: startOptions.resumeAt } : {}),
@@ -2028,6 +2058,32 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (modelChanged && state.query === control) state.queryModel = model
   }
 
+  private createElicitationHandler =
+    (state: ClaudeSessionState): NonNullable<ClaudeQueryOptions['onElicitation']> =>
+    (request, options) => {
+      const existing = state.pendingUserInputs.find(
+        (pending) => pending.id === `elicitation:${options.requestId}`
+      )
+      if (existing) return Promise.reject(new Error('This MCP interaction is already pending.'))
+      const presentation = createProviderElicitation(`elicitation:${options.requestId}`, request)
+      return new Promise((resolve) => {
+        const pending: ClaudePendingUserInput = {
+          ...presentation,
+          resolve: (response) =>
+            resolve(
+              getProviderElicitationResult(presentation, response) as NonNullable<
+                Awaited<ReturnType<NonNullable<ClaudeQueryOptions['onElicitation']>>>
+              >
+            )
+        }
+        state.pendingUserInputs.push(pending)
+        this.cancelPendingOnAbort(state, state.pendingUserInputs, pending, options, () =>
+          pending.resolve({ kind: 'cancel' })
+        )
+        this.emitUpdate(state)
+      })
+    }
+
   private createPermissionHandler =
     (state: ClaudeSessionState): CanUseTool =>
     async (toolName, input, permissionOptions): Promise<PermissionResult> => {
@@ -2055,7 +2111,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
             )
             this.emitUpdate(state)
           })
-          if (response.kind === 'cancel') {
+          if (response.kind !== 'answer') {
             return { behavior: 'deny', message: 'The user canceled the question.' }
           }
           answers[question.question] = response.answer
@@ -2293,6 +2349,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.query === control &&
       state.waitingForSessionIdle &&
       !state.active &&
+      !state.queueDrainInProgress &&
       state.backgroundTaskIds.size === 0
     setTimeout(() => {
       if (shouldClose()) void this.closeStateQuery(state)
@@ -2397,7 +2454,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         state.waitingForSessionIdle,
         event.state,
         this.getOutstandingBackgroundWork(state),
-        state.active
+        // A queued message that is preparing to send will use this query.
+        state.active || state.queueDrainInProgress
       )
       if (lifecycle === 'ignore') return false
       state.waitingForSessionIdle = false
@@ -2513,12 +2571,23 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       if (lifecycle.keepQueryAlive && state.taskNotificationPending) {
         this.scheduleBackgroundIdleClose(state, control)
       }
-      await settleWithin(
-        Promise.all([refreshContextUsage, refreshMetadata]),
-        contextUsageCloseGraceMs
-      )
-      if (state.query === control) {
-        this.emitUpdate(state, true)
+      state.resultSettling = true
+      try {
+        await settleWithin(
+          Promise.all([refreshContextUsage, refreshMetadata]),
+          contextUsageCloseGraceMs
+        )
+      } finally {
+        state.resultSettling = false
+      }
+      if (state.query !== control) return !lifecycle.keepQueryAlive
+      this.emitUpdate(state, true)
+      // A message sent while the result settled was held in the queue; send it on this query
+      // instead of closing the query underneath it.
+      if (this.getQueueDrainDecision(state) === 'start') {
+        state.waitingForSessionIdle = false
+        await this.drainNextQueuedMessage(state)
+        return false
       }
       return !lifecycle.keepQueryAlive
     }
@@ -2564,7 +2633,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     getClaudeQueueDrainDecision({
       hasQueuedMessage: state.queuedMessages.length > 0,
       paused: state.queuedMessagesPaused,
-      drainInProgress: state.queueDrainInProgress,
+      drainInProgress: state.queueDrainInProgress || state.resultSettling,
       foregroundActive: state.active,
       hasPendingRequest: state.pendingApprovals.length > 0 || state.pendingUserInputs.length > 0
     })
@@ -2742,7 +2811,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           question: pending.question,
           choices: pending.choices,
           allowFreeform: pending.allowFreeform,
-          startedAt: pending.startedAt
+          startedAt: pending.startedAt,
+          elicitation: pending.elicitation,
+          isBlocking: true
         }
       : null
   }

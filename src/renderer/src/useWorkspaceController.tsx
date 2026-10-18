@@ -4,7 +4,16 @@ import {
   selectionsEqual
 } from './chatModelPreferences'
 import { useSidebarSearch } from './workspace/useSidebarSearch'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   Bot,
   FolderKanban,
@@ -82,6 +91,8 @@ import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
 import { getChatWriteAccessPresentation } from './chatWriteAccess'
 import { type ChatListGroupData } from './components/ChatListGroup'
+import { ChatSubagentList } from './components/ChatSubagentList'
+import { getRenderableText } from './renderableText'
 import { Button } from './components/Button'
 import type { ChatPlanData } from './components/ChatPlan'
 import type { DropdownOption } from './components/Dropdown'
@@ -159,6 +170,7 @@ import {
 } from './chatTurnWindow'
 import { type PatchFilterScope } from './changeTree'
 import {
+  alignChatContentToBottom,
   clamp,
   getScrollBottomTop,
   readChatScrollAnchor,
@@ -376,6 +388,7 @@ export const useWorkspaceController = () => {
   const [providerAccountUpdatingId, setProviderAccountUpdatingId] = useState<string | null>(null)
   const [accountDialogOpen, setAccountDialogOpen] = useState(false)
   const [reauthenticationTarget, setReauthenticationTarget] = useState<{
+    providerId: 'codex' | 'claude'
     container: AppContainerTarget | null
   } | null>(null)
   const [providerResourcesLoadState, setProviderResourcesLoadState] =
@@ -635,8 +648,6 @@ export const useWorkspaceController = () => {
     Record<string, number>
   >({})
   const [doneProjectFilterValue, setDoneProjectFilterValue] = useState(allDoneProjectsValue)
-  const [doneProjectFilterChats, setDoneProjectFilterChats] = useState<ProviderChat[]>([])
-  const [doneProjectFilterLoadState, setDoneProjectFilterLoadState] = useState<LoadState>('ready')
   const [cwdNotesByGroup, setCwdNotesByGroup] = useState<Record<string, ProviderCwdNote[]>>({})
   const [projectIconsByGroup, setProjectIconsByGroup] = useState<
     Record<string, AppProjectIcon | null>
@@ -786,7 +797,6 @@ export const useWorkspaceController = () => {
   const draggedProjectGroupKeyRef = useRef<string | null>(null)
   const projectDropInsertionIndexRef = useRef<number | null>(null)
   const projectCollapseFrameRef = useRef<number | null>(null)
-  const doneProjectFilterRequestIdRef = useRef(0)
   const changesCwdRef = useRef<string | null>(null)
   const changesContainerRef = useRef<AppContainerTarget | null>(null)
   const changeSourceRef = useRef(changeSource)
@@ -860,10 +870,7 @@ export const useWorkspaceController = () => {
   )
 
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
-    const top = getScrollBottomTop(contentElement)
-    if (Math.abs(contentElement.scrollTop - top) >= 0.5) {
-      contentElement.scrollTop = top
-    }
+    alignChatContentToBottom(contentElement)
     if (!chatAtConversationBottomRef.current) {
       chatAtConversationBottomRef.current = true
       setChatAtConversationBottom(true)
@@ -2550,11 +2557,6 @@ export const useWorkspaceController = () => {
             (chat) => chat.providerId !== providerId || chat.id !== appliedDetail.id
           )
         )
-        setDoneProjectFilterChats((currentChats) =>
-          currentChats.filter(
-            (chat) => chat.providerId !== providerId || chat.id !== appliedDetail.id
-          )
-        )
         if (!options.select && selectedChatKeyRef.current !== detailKey) return
       }
 
@@ -2577,15 +2579,6 @@ export const useWorkspaceController = () => {
       }
 
       if (hiddenCommit) return
-
-      setDoneProjectFilterChats((currentChats) =>
-        currentChats.flatMap((chat) => {
-          if (chat.providerId !== providerId || chat.id !== appliedDetail.id) return [chat]
-
-          const nextChat = getChatFromDetail(providerId, appliedDetail, chat, updatedAt)
-          return nextChat.done ? [nextChat] : []
-        })
-      )
 
       setChats((currentChats) => {
         const existingChat =
@@ -2698,15 +2691,6 @@ export const useWorkspaceController = () => {
       currentChats.map((chat) => {
         const metadata = metadataById.get(chat.id)
         return metadata ? mergeChatMetadata(chat, metadata) : chat
-      })
-    )
-    setDoneProjectFilterChats((currentChats) =>
-      currentChats.flatMap((chat) => {
-        const metadata = metadataById.get(chat.id)
-        if (!metadata) return [chat]
-
-        const nextChat = mergeChatMetadata(chat, metadata)
-        return nextChat.done ? [nextChat] : []
       })
     )
     setSelectedChat((currentChat) => {
@@ -3264,7 +3248,10 @@ export const useWorkspaceController = () => {
     [filteredChats, projectRecordsByCwd]
   )
   const pinnedChatGroup = chatGroups.find((group) => group.kind === 'pinned') ?? null
-  const activeChatGroups = chatGroups.filter((group) => group.kind === 'cwd')
+  const activeChatGroups = useMemo(
+    () => chatGroups.filter((group) => group.kind === 'cwd'),
+    [chatGroups]
+  )
   const displayedActiveChatGroups =
     chatGroupingPreference === 'grouped' || activeChatGroups.length === 0
       ? activeChatGroups
@@ -3278,23 +3265,21 @@ export const useWorkspaceController = () => {
           }
         ]
   const unfilteredDoneChatGroup = chatGroups.find((group) => group.kind === 'done') ?? null
-  const doneChatGroup =
-    doneProjectFilterValue !== allDoneProjectsValue
-      ? {
-          key: doneGroupKey,
-          cwd: null,
-          label: 'Done',
-          kind: 'done' as const,
-          chats: sortChatsForGroup(
-            mergeChats(
-              doneProjectFilterChats,
-              filteredChats.filter(
-                (chat) => chat.done && getChatProjectCwd(chat) === doneProjectFilterValue
-              )
+  const doneChatGroup = useMemo(
+    () =>
+      doneProjectFilterValue === allDoneProjectsValue
+        ? unfilteredDoneChatGroup
+        : {
+            key: doneGroupKey,
+            cwd: null,
+            label: 'Done',
+            kind: 'done' as const,
+            chats: (unfilteredDoneChatGroup?.chats ?? []).filter(
+              (chat) => getChatProjectCwd(chat) === doneProjectFilterValue
             )
-          ).filter(matchesChatSearch)
-        }
-      : unfilteredDoneChatGroup
+          },
+    [doneProjectFilterValue, unfilteredDoneChatGroup]
+  )
   const messageBoxNotesCwd = selectedChat ? changesProjectCwd : newSessionCwd
   const messageBoxNotesVisible = Boolean(selectedChat) || newChatOpen
   const messageBoxNotesGroup = useMemo(
@@ -3716,9 +3701,9 @@ export const useWorkspaceController = () => {
   }
   const handleCreateProviderAccount = async (
     name: string,
-    reauthentication?: { container: AppContainerTarget | null }
+    reauthentication?: { providerId: 'codex' | 'claude'; container: AppContainerTarget | null }
   ): Promise<AccountAuthorizationSession> => {
-    const providerId = reauthentication ? 'claude' : newSessionProvider
+    const providerId = reauthentication?.providerId ?? newSessionProvider
     const container = normalizeContainerTarget(
       reauthentication ? reauthentication.container : newSessionContainer
     )
@@ -4285,91 +4270,15 @@ export const useWorkspaceController = () => {
   }
 
   const resetDoneProjectFilter = (): void => {
-    doneProjectFilterRequestIdRef.current += 1
     setDoneProjectFilterValue(allDoneProjectsValue)
-    setDoneProjectFilterChats([])
-    setDoneProjectFilterLoadState('ready')
     resetDoneChatPagination()
   }
 
   const handleDoneProjectFilterChange = (projectCwd: string): void => {
-    const requestId = ++doneProjectFilterRequestIdRef.current
+    // All sources already load into chats. Re-listing their complete histories on
+    // every selection blocks provider work and repeats metadata hydration.
     setDoneProjectFilterValue(projectCwd)
-    setDoneProjectFilterChats([])
     resetDoneChatPagination()
-
-    if (projectCwd === allDoneProjectsValue) {
-      setDoneProjectFilterLoadState('ready')
-      return
-    }
-
-    setDoneProjectFilterLoadState('loading')
-    const sourcesByKey = new Map<
-      string,
-      { providerId: ProviderId; container: AppContainerTarget }
-    >()
-    const addSource = (
-      providerId: ProviderId,
-      container: AppContainerTarget | null | undefined
-    ): void => {
-      const normalizedContainer = normalizeContainerTarget(container)
-      const sourceKey = `${providerId}:${getContainerTargetKey(normalizedContainer)}`
-      if (!sourcesByKey.has(sourceKey)) {
-        sourcesByKey.set(sourceKey, { providerId, container: normalizedContainer })
-      }
-    }
-
-    chatsRef.current.forEach((chat) => addSource(chat.providerId, chat.container))
-    newSessionAvailableProviderIds.forEach((providerId) =>
-      addSource(providerId, newSessionContainer)
-    )
-
-    const loadSourceDoneChats = async ({
-      providerId,
-      container
-    }: {
-      providerId: ProviderId
-      container: AppContainerTarget
-    }): Promise<ProviderChat[]> => {
-      const loadedChats: ProviderChat[] = []
-      const seenCursors = new Set<string>()
-      let cursor: string | null = null
-
-      do {
-        const page = await providerApi.getChats(providerId, {
-          container,
-          cursor,
-          done: true,
-          limit: chatListFetchPageSize,
-          projectCwd
-        })
-        loadedChats.push(...page.chats)
-        cursor = page.nextCursor
-        if (cursor && seenCursors.has(cursor)) break
-        if (cursor) seenCursors.add(cursor)
-      } while (cursor)
-
-      return loadedChats
-    }
-
-    void Promise.allSettled(Array.from(sourcesByKey.values()).map(loadSourceDoneChats)).then(
-      (results) => {
-        results.forEach((result) => {
-          if (result.status === 'rejected') {
-            console.error('Unable to load completed chats for the project filter.', result.reason)
-          }
-        })
-        if (doneProjectFilterRequestIdRef.current !== requestId) return
-
-        const successfulChatGroups = results.flatMap((result) =>
-          result.status === 'fulfilled' ? [result.value] : []
-        )
-        setDoneProjectFilterChats(sortChatsForGroup(mergeChats(...successfulChatGroups)))
-        setDoneProjectFilterLoadState(
-          results.length > 0 && successfulChatGroups.length === 0 ? 'error' : 'ready'
-        )
-      }
-    )
   }
 
   const handleToggleCwdGroup = (groupKey: string): void => {
@@ -4499,7 +4408,10 @@ export const useWorkspaceController = () => {
     selectedChatUpdatedAtRef.current = chat.updatedAt
     chatDetailRef.current = nextCachedDetail
     setSelectedChat(seenChat)
-    setChatDetail(nextCachedDetail)
+    // Cached content can be as expensive to mount as a freshly loaded page.
+    // Let sidebar selection paint before rendering the new conversation.
+    setChatDetail(null)
+    if (nextCachedDetail) startTransition(() => setChatDetail(nextCachedDetail))
     setChatLoadState(nextCachedDetail ? 'ready' : 'loading')
     markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
 
@@ -4712,9 +4624,13 @@ export const useWorkspaceController = () => {
   }, [selectedChat, changesContainer, newSessionProvider])
 
   const handleOpenChatReauthentication = useCallback((): void => {
-    if ((selectedChat?.providerId ?? newSessionProvider) !== 'claude') return
+    const providerId = selectedChat?.providerId ?? newSessionProvider
+    if (providerId !== 'claude' && providerId !== 'codex') return
     const container = normalizeContainerTarget(changesContainer)
-    setReauthenticationTarget({ container: container.kind === 'container' ? container : null })
+    setReauthenticationTarget({
+      providerId,
+      container: container.kind === 'container' ? container : null
+    })
   }, [selectedChat, changesContainer, newSessionProvider])
 
   const handleRetryChatWriteAccess = (): void => {
@@ -4744,8 +4660,6 @@ export const useWorkspaceController = () => {
     applyChatDetail,
     chatOrderMutationsRef,
     setChats,
-    doneProjectFilterActive: doneProjectFilterValue !== allDoneProjectsValue,
-    setDoneProjectFilterChats,
     projectCollapseFrameRef,
     expandedProjectGroupsBeforeDragRef,
     draggedProjectGroupKeyRef,
@@ -4888,7 +4802,6 @@ export const useWorkspaceController = () => {
     projectIconsByGroup,
     activeChatGroups,
     chatGroupingPreference,
-    doneProjectFilterLoadState,
     doneProjectFilterValue,
     projectOptions,
     projectDropInsertionIndex,
@@ -4954,7 +4867,6 @@ export const useWorkspaceController = () => {
     streamingChatItemId,
     subagentChatConversationModel,
     subagentChatItemIndexesById,
-    subagentMarkersByWorkingStepId,
     subagentVisibleChatItems,
     trailingChatCommitMarkers,
     visibleChatItems,
@@ -5370,7 +5282,8 @@ export const useWorkspaceController = () => {
     handleLoadSubagentWorkingToolPage,
     handleReturnFromSubagentChat,
     renderChatCommitMarker,
-    renderChatSubagentMarker
+    handleOpenSubagentChat,
+    handleCancelSubagent
   } = useSubagentController({
     activeSubagentChatView,
     selectedProviderId,
@@ -5394,6 +5307,36 @@ export const useWorkspaceController = () => {
     handleCancelAiCommit,
     handleOpenAiCommitChat
   })
+  const selectedChatSubagentList =
+    selectedChat && selectedChatSubagents.length > 0 ? (
+      <ChatSubagentList
+        activeSubagentId={activeSubagentChatView?.summary.id ?? null}
+        cancelingSubagentIds={cancelingSubagentIds}
+        parentTitle={getRenderableText(selectedChat.title, 'Untitled chat')}
+        subagents={selectedChatSubagents}
+        onCancel={(subagent) => void handleCancelSubagent(subagent)}
+        onOpen={(subagent) => void handleOpenSubagentChat(subagent)}
+      />
+    ) : null
+  // Only the group holding the selected chat receives the subagent list, so other groups keep
+  // their memoized rows.
+  const renderSidebarChatGroup = (
+    group: ChatListGroupData,
+    contentId: string
+  ): React.ReactElement => {
+    const holdsSelectedChat = Boolean(
+      selectedChatKey &&
+        group.chats.some(
+          (chat) => getChatKey({ providerId: chat.providerId, id: chat.id }) === selectedChatKey
+        )
+    )
+    return renderChatGroup(
+      group,
+      contentId,
+      holdsSelectedChat ? selectedChatSubagentList : null,
+      holdsSelectedChat && Boolean(activeSubagentChatView)
+    )
+  }
 
   const handleMinimizeWindow = (): void => {
     void appApi.minimizeWindow()
@@ -5612,6 +5555,11 @@ export const useWorkspaceController = () => {
               {item.id === firstPendingChatItemId &&
                 trailingChatCommitMarkers.map(renderChatCommitMarker)}
               <ChatDetailItem
+                mcpAppScope={
+                  selectedChat
+                    ? { providerId: selectedChat.providerId, chatId: selectedChat.id }
+                    : undefined
+                }
                 motionChatKey={selectedChatKey}
                 authenticationRequired={authenticationRequired}
                 availableRateLimitResets={
@@ -5683,11 +5631,6 @@ export const useWorkspaceController = () => {
                 selectedModelId={model}
                 streaming={item.id === streamingChatItemId}
                 turnIndex={turnIndex}
-                workingStepContent={
-                  item.type === 'working'
-                    ? subagentMarkersByWorkingStepId.get(item.id)?.map(renderChatSubagentMarker)
-                    : undefined
-                }
               />
               {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
             </Fragment>
@@ -5827,7 +5770,7 @@ export const useWorkspaceController = () => {
       handleProjectStackDragOver,
       loadState,
       pinnedChatGroup,
-      renderChatGroup,
+      renderChatGroup: renderSidebarChatGroup,
       renderChatGroupingButton,
       renderSettingsButton,
       renderWindowControls,
@@ -5854,6 +5797,8 @@ export const useWorkspaceController = () => {
     },
     conversationMessages: {
       visible: Boolean(selectedChat),
+      chatAutoScrollEnabledRef,
+      scrollChatContentToBottom,
       changesContainer,
       changesCwd,
       chatMediaTotalCount: activeSubagentChatView
@@ -6094,6 +6039,7 @@ export const useWorkspaceController = () => {
       currentProjectKey,
       currentProjectSyncError,
       directProjectCommitInProgress,
+      navigationKey: `${selectedChatKey ?? ''}|${currentProjectKey}`,
       getAiCommitActionDisabled,
       getGitRecoveryActionIcon,
       getGitRecoveryRememberLabel,

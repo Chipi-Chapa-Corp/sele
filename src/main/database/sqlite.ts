@@ -72,6 +72,7 @@ export type LocalDatabase = {
     pinned: SqliteBooleanColumn
     pinned_order: SqliteNullableNumberColumn
     done: SqliteBooleanColumn
+    done_at: SqliteNullableNumberColumn
     seen_updated_at: SqliteNullableNumberColumn
     purpose: SqliteNullableChatPurposeColumn
   }
@@ -170,6 +171,7 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('pinned', 'integer', (column) => column.notNull().defaultTo(0))
     .addColumn('pinned_order', 'integer')
     .addColumn('done', 'integer', (column) => column.notNull().defaultTo(0))
+    .addColumn('done_at', 'integer')
     .addColumn('seen_updated_at', 'integer')
     .addColumn('purpose', 'text')
     .execute()
@@ -270,6 +272,9 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   )
   await ensureColumn(db, 'cwd_metadata', 'worktree_base_branch_name', () =>
     db.schema.alterTable('cwd_metadata').addColumn('worktree_base_branch_name', 'text').execute()
+  )
+  await ensureColumn(db, 'chat', 'done_at', () =>
+    db.schema.alterTable('chat').addColumn('done_at', 'integer').execute()
   )
   await ensureColumn(db, 'chat', 'seen_updated_at', () =>
     db.schema.alterTable('chat').addColumn('seen_updated_at', 'integer').execute()

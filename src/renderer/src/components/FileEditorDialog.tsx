@@ -18,6 +18,7 @@ import {
   FileCode2,
   FileDiff,
   FileText,
+  FolderOpen,
   Image as ImageIcon,
   LoaderCircle,
   Maximize2,
@@ -544,6 +545,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const showDownload =
     target.kind !== 'delete' &&
     (isFileOutsideProject(target) || Boolean(visibleFileTreeResult && !isProjectFile))
+  const showRevealInFolder =
+    target.kind !== 'delete' &&
+    !(fileContainer?.kind === 'container' && fileContainer.tool === 'ssh')
   const showOpenRetry = visibleLoadState !== 'error' || !isExpectedFileOpenError(editorError)
   const defaultCollapsedFileFolders = useMemo(() => {
     const expandedFolders = new Set(getFileTreeAncestorPaths(activeFileTreePath))
@@ -1282,6 +1286,19 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     }
   }, [fileContainer, target.cwd, target.path])
 
+  const handleRevealInFolder = useCallback(async (): Promise<void> => {
+    try {
+      await appApi.showFileInFolder({
+        container: fileContainer,
+        cwd: target.cwd,
+        path: target.path
+      })
+    } catch (revealError) {
+      console.error('[caught:FileEditorDialog:handleRevealInFolder]', revealError)
+      setEditorError(getErrorMessage(revealError, 'Unable to show this file in the file manager.'))
+    }
+  }, [fileContainer, target.cwd, target.path])
+
   const handleDownload = useCallback(async (): Promise<void> => {
     if (downloadState === 'downloading') return
 
@@ -1358,6 +1375,16 @@ export const FileEditorDialog = memo(function FileEditorDialog({
               <span title={directoryName}>{directoryName}</span>
             </div>
             <div className="file-editor-dialog__actions">
+              {showRevealInFolder && (
+                <Button
+                  aria-label={`Show ${displayPath} in file manager`}
+                  callback={handleRevealInFolder}
+                  icon={<FolderOpen />}
+                  size="small"
+                  theme="secondary"
+                  title="Show in file manager"
+                />
+              )}
               {showDownload && (
                 <Button
                   aria-label={`Download ${displayPath}`}

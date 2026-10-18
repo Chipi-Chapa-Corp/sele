@@ -17,9 +17,9 @@ if (!process.versions.electron) {
             import {copyRenderedImage} from './src/renderer/src/imageClipboard'
             const root = createRoot(document.getElementById('root'))
             let key = 0
-            window.renderEditor = (path = 'docs/README.md') => flushSync(() => root.render(
+            window.renderEditor = (path = 'docs/README.md', container = {kind: 'container', tool: 'ssh', name: 'test'}) => flushSync(() => root.render(
               <FileEditorDialog key={++key} target={{cwd: '/project/subfolder', path, displayPath: path,
-                container: {kind: 'container', tool: 'ssh', name: 'test'}}}
+                container}}
                 onClose={() => { window.closedCount++; root.render(null) }} />
             ))
             window.renderEditor()
@@ -70,8 +70,13 @@ if (!process.versions.electron) {
         <link rel="stylesheet" href="test.css"><style>:root { --floating-bg: white; --control-height: 32px; }</style>
         <div id="root"></div><script>
           window.closedCount = 0; window.writes = []; window.images = []; window.failSave = false;
+          window.reveals = []; window.revealError = null;
           window.appApi = {
             ...window.clipboardApi,
+            showFileInFolder: async options => {
+              window.reveals.push(options);
+              if (window.revealError) throw new Error(window.revealError);
+            },
             getFileContents: async () => ({contents: '# README\\n![Local](./images/a%20b.svg)\\n<img src="../logo.svg" alt="Logo">\\n![Remote](https://example.com/image.png)',
               version: 'v1', editable: true, gitRepositoryRoot: '/project'}),
             getFileTree: async () => ({repositoryRoot: '/project/subfolder', branchName: 'main', files: []}),
@@ -354,8 +359,34 @@ if (!process.versions.electron) {
         beforeInvalidCopy,
         'invalid data preserves clipboard'
       )
+      // Files on SSH hosts are not on this computer, so only local targets offer the reveal button.
+      const revealSelector = '[title="Show in file manager"]'
+      await run('window.renderEditor()')
+      await settle()
+      assert.equal(await run(`Boolean(document.querySelector('${revealSelector}'))`), false)
+      const toolbox = { kind: 'container', tool: 'toolbox', name: 'dev' }
+      await run(`window.renderEditor('docs/README.md', ${JSON.stringify(toolbox)})`)
+      await settle()
+      await click(revealSelector)
+      assert.deepEqual(await run('window.reveals'), [
+        { container: toolbox, cwd: '/project/subfolder', path: 'docs/README.md' }
+      ])
+      await run(
+        "window.renderLightbox('data:image/png;base64,iVBORw0KGgo=', '/tmp/shot.png'); window.reveals = []"
+      )
+      await settle()
+      await click(revealSelector)
+      assert.deepEqual(await run('window.reveals'), [{ path: '/tmp/shot.png' }])
+      await run("window.revealError = 'Not on this host'")
+      await click('[aria-label="Show Clipboard fixture in file manager"]')
+      assert.equal(
+        await run(
+          `document.querySelector('[aria-label="Show Clipboard fixture in file manager"]').title`
+        ),
+        'Not on this host'
+      )
       console.log(
-        'File editor checks passed: Markdown images, resizing, saving, save/discard/cancel, and real clipboard round trips for SVG, PNG, WebP, JPEG in the editor and lightbox.'
+        'File editor checks passed: Markdown images, resizing, saving, save/discard/cancel, file manager reveal, and real clipboard round trips for SVG, PNG, WebP, JPEG in the editor and lightbox.'
       )
     } catch (error) {
       console.error(error)

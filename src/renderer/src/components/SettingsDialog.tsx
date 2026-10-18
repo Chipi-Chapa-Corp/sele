@@ -30,7 +30,7 @@ const settingsTabOptions = [
   },
   {
     value: 'browser',
-    label: 'Browser',
+    label: 'Browser & desktop',
     icon: <Globe2 aria-hidden="true" />
   },
   {

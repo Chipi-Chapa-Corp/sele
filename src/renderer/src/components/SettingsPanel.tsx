@@ -4,6 +4,7 @@ import {
   networkRetryDelaySecondsMax
 } from '../../../shared/networkRetry'
 import { ProviderSettingsContent } from './ProviderSettingsContent'
+import { DesktopAutomationSettings } from './DesktopAutomationSettings'
 import type { Dispatch, SetStateAction } from 'react'
 import {
   Apple,
@@ -1928,6 +1929,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
           </div>
         </section>
         <BrowserImportSettings key={changesContainerKey} currentEnvironment={changesContainer} />
+        <DesktopAutomationSettings />
       </section>
     )
   }

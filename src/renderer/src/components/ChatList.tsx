@@ -1,6 +1,15 @@
 import { AnimatePresence } from 'motion/react'
 import { MotionListItem } from '../motion/MotionListItem'
-import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  forwardRef,
+  memo,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode
+} from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { ChatListItem } from './ChatListItem'
 import './ChatList.css'
@@ -15,6 +24,7 @@ type ChatListProps = {
   canMarkUndone?: boolean
   reorderable?: boolean
   projectNamesByCwd?: ReadonlyMap<string, string>
+  projectIconsByCwd?: ReadonlyMap<string, ReactNode>
   onMarkDone: (chat: ProviderChat, done?: boolean) => void
   onRename: (chat: ProviderChat, title: string) => Promise<void>
   onResolveApproval: (chat: ProviderChat, decision: ProviderApprovalDecision) => void
@@ -22,10 +32,32 @@ type ChatListProps = {
   onReorder?: (chats: ProviderChat[]) => void
   onTogglePinned: (chat: ProviderChat) => void
   resolvingApprovalId?: string | null
+  /** Rendered directly below the selected chat, e.g. its subagent chats. */
+  selectedChatChildren?: ReactNode
+  /** One of the selected chat's children is open, so the chat row itself is not highlighted. */
+  selectedChatChildOpen?: boolean
 }
 
 const getChatKey = (chat: Pick<ProviderChat, 'providerId' | 'id'>): string =>
   `${chat.providerId}:${chat.id}`
+
+// Memoize the animation wrapper as well as the row. Otherwise selecting one
+// chat rerenders every MotionListItem even when its chat and position are unchanged.
+const ChatListRow = memo(
+  forwardRef<
+    HTMLDivElement,
+    ComponentProps<typeof ChatListItem> & {
+      order: string
+      layoutDisabled: boolean
+    }
+  >(function ChatListRow({ order, layoutDisabled, ...props }, ref) {
+    return (
+      <MotionListItem ref={ref} order={order} disabled={layoutDisabled}>
+        <ChatListItem {...props} />
+      </MotionListItem>
+    )
+  })
+)
 
 export const ChatList = memo(function ChatList({
   ariaLabel = 'Chats',
@@ -37,13 +69,16 @@ export const ChatList = memo(function ChatList({
   canMarkUndone = false,
   reorderable = false,
   projectNamesByCwd,
+  projectIconsByCwd,
   onMarkDone,
   onRename,
   onResolveApproval,
   onSelect,
   onReorder,
   onTogglePinned,
-  resolvingApprovalId = null
+  resolvingApprovalId = null,
+  selectedChatChildren = null,
+  selectedChatChildOpen = false
 }: ChatListProps) {
   const [draggedChatKey, setDraggedChatKey] = useState<string | null>(null)
   const [dropInsertionIndex, setDropInsertionIndex] = useState<number | null>(null)
@@ -135,7 +170,14 @@ export const ChatList = memo(function ChatList({
     []
   )
 
-  const order = chats.map(getChatKey).join('\n')
+  const showSelectedChatChildren =
+    selectedChatChildren != null &&
+    selectedChatKey != null &&
+    chats.some((chat) => getChatKey(chat) === selectedChatKey)
+  const order = chats
+    .map(getChatKey)
+    .join('\n')
+    .concat(showSelectedChatChildren ? `\n${selectedChatKey}:children` : '')
 
   return (
     <section
@@ -148,7 +190,8 @@ export const ChatList = memo(function ChatList({
       }}
       onDrop={handleDrop}
     >
-      <AnimatePresence initial={false} mode="popLayout">
+      {/* Row order explicitly drives layout; selection must not invalidate every presence consumer. */}
+      <AnimatePresence initial={false} mode="popLayout" presenceAffectsLayout={false}>
         {chats.map((chat, index) => {
           const chatKey = getChatKey(chat)
           const dropPosition =
@@ -158,28 +201,42 @@ export const ChatList = memo(function ChatList({
                 ? 'after'
                 : null
 
-          return (
-            <MotionListItem key={chatKey} order={order} disabled={Boolean(draggedChatKey)}>
-              <ChatListItem
-                chat={chat}
-                projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
-                selected={chatKey === selectedChatKey}
-                committing={committingChatKeys?.has(chatKey)}
-                latestCommitFinishedAt={latestCommitFinishedAtByChatKey?.get(chatKey)}
-                canMarkDone={canMarkDone}
-                canMarkUndone={canMarkUndone}
-                draggable={reorderable}
-                dragging={chatKey === draggedChatKey}
-                dropPosition={dropPosition}
-                approvalDecisionInFlight={
-                  chat.pendingApproval && chat.pendingApproval.id === resolvingApprovalId
-                    ? 'allow'
-                    : null
-                }
-                {...rowActions}
-              />
-            </MotionListItem>
+          const row = (
+            <ChatListRow
+              key={chatKey}
+              order={order}
+              layoutDisabled={Boolean(draggedChatKey)}
+              chat={chat}
+              projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
+              projectIcon={projectIconsByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
+              selected={chatKey === selectedChatKey && !selectedChatChildOpen}
+              committing={committingChatKeys?.has(chatKey)}
+              latestCommitFinishedAt={latestCommitFinishedAtByChatKey?.get(chatKey)}
+              canMarkDone={canMarkDone}
+              canMarkUndone={canMarkUndone}
+              draggable={reorderable}
+              dragging={chatKey === draggedChatKey}
+              dropPosition={dropPosition}
+              approvalDecisionInFlight={
+                chat.pendingApproval && chat.pendingApproval.id === resolvingApprovalId
+                  ? 'allow'
+                  : null
+              }
+              {...rowActions}
+            />
           )
+          return showSelectedChatChildren && chatKey === selectedChatKey
+            ? [
+                row,
+                <MotionListItem
+                  key={`${chatKey}:children`}
+                  order={order}
+                  disabled={Boolean(draggedChatKey)}
+                >
+                  {selectedChatChildren}
+                </MotionListItem>
+              ]
+            : row
         })}
       </AnimatePresence>
     </section>

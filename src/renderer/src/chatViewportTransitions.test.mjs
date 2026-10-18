@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { alignChatContentToBottom } from './chatLayout.ts'
 
 const extract = (path, name, effectMarker) => {
   const source = ts.createSourceFile(
@@ -162,7 +163,21 @@ test('bottom following skips detailed measurements and captures anchors after us
 
 test('initial bottom positioning retains its offset without walking message descendants', () => {
   const code = extract('./useWorkspaceController.tsx', 'scrollChatContentToBottom')
-  const element = { scrollTop: 0, scrollHeight: 4000, clientHeight: 300 }
+  let scrollTop = 0
+  const element = {
+    get scrollTop() {
+      return scrollTop
+    },
+    set scrollTop(top) {
+      scrollTop = Math.max(0, Math.min(top, this.scrollHeight - this.clientHeight))
+    },
+    scrollHeight: 4000,
+    clientHeight: 300,
+    querySelector: (selector) => {
+      assert.equal(selector, '.chat-detail__messages-inner')
+      return null
+    }
+  }
   const context = vm.createContext({
     useCallback: (fn) => fn,
     chatAtConversationBottomRef: { current: false },
@@ -170,7 +185,7 @@ test('initial bottom positioning retains its offset without walking message desc
     chatViewportAnchorRef: { current: {} },
     selectedChatKeyRef: { current: 'codex:chat' },
     setChatAtConversationBottom: (value) => assert.equal(value, true),
-    getScrollBottomTop: (element) => element.scrollHeight - element.clientHeight,
+    alignChatContentToBottom,
     readChatScrollAnchor: () => assert.fail('bottom positioning must not measure individual blocks')
   })
   vm.runInContext(code, context)

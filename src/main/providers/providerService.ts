@@ -1,4 +1,6 @@
+import type { McpAppScope } from '../../shared/mcpApps'
 import { applyTurnTokenUsage, emptyTokenUsage } from '../../shared/tokenUsage'
+import { randomUUID } from 'node:crypto'
 import {
   getAccountUsageCosts,
   getChatTokenUsage,
@@ -91,6 +93,9 @@ const adapters: Record<ProviderId, ProviderAdapter> = {
   opencode: withProviderNetworkRetries(openCodeAdapter)
 }
 
+export const getProviderMcpApp = (scope: McpAppScope, callId: string) =>
+  adapters[scope.providerId].getMcpApp?.(scope.chatId, callId) ?? Promise.resolve(null)
+
 const providerLabels: Record<ProviderId, string> = {
   codex: 'Codex',
   claude: 'Claude',
@@ -137,6 +142,7 @@ const applyMetadataToChat = (
   pinned: metadata?.pinned ?? false,
   sidebarOrder: metadata?.sidebarOrder ?? null,
   done: metadata?.done ?? false,
+  doneAt: metadata?.doneAt ?? null,
   seenUpdatedAt: metadata?.seenUpdatedAt ?? null,
   purpose: metadata?.purpose ?? null,
   container: metadata?.container ?? chat.container ?? null
@@ -203,6 +209,7 @@ const applyMetadataToDetail = async (
     pinned: metadata.pinned,
     sidebarOrder: metadata.sidebarOrder,
     done: metadata.done,
+    doneAt: metadata.doneAt ?? null,
     seenUpdatedAt: metadata.seenUpdatedAt,
     purpose: metadata.purpose,
     container: metadata.container ?? detail.container ?? null,
@@ -453,6 +460,7 @@ export const getChatUpdateSummary = (
     pinned: detail.pinned,
     sidebarOrder: detail.sidebarOrder,
     done: detail.done,
+    doneAt: detail.doneAt ?? null,
     seenUpdatedAt: detail.seenUpdatedAt,
     purpose: detail.purpose,
     container: detail.container,
@@ -467,8 +475,26 @@ for (const adapter of Object.values(adapters)) {
   })
 }
 
+const codexReauthentications = new Map<string, { source: string; loginId: string | null }>()
+
 export const providerApi: ProviderApi = {
   reauthenticateAccount: async (providerId, options) => {
+    if (providerId === 'codex') {
+      const source = getContainerTargetKey(options?.container)
+      if (Array.from(codexReauthentications.values()).some((value) => value.source === source))
+        throw new Error('Codex sign-in is already in progress for this environment.')
+      const accountId = `reauth-${randomUUID()}`
+      const pending = { source, loginId: null as string | null }
+      codexReauthentications.set(accountId, pending)
+      try {
+        const login = await codexAdapter.reauthenticate(options)
+        pending.loginId = login.status === 'pending' ? login.loginId : null
+        return { accountId, login }
+      } catch (error) {
+        codexReauthentications.delete(accountId)
+        throw error
+      }
+    }
     if (providerId !== 'claude')
       throw new Error('Reauthentication is not available for this provider.')
     return claudeAccounts.reauthenticate(options)
@@ -490,6 +516,29 @@ export const providerApi: ProviderApi = {
     return creation
   },
   completeAccountCreation: async (providerId, accountId, loginId, options) => {
+    if (providerId === 'codex' && accountId.startsWith('reauth-')) {
+      const pending = codexReauthentications.get(accountId)
+      if (
+        !pending ||
+        pending.source !== getContainerTargetKey(options?.container) ||
+        pending.loginId !== loginId
+      )
+        throw new Error('This Codex sign-in is no longer pending.')
+      try {
+        const completion = loginId
+          ? await codexAdapter.waitForLogin(loginId, options)
+          : { success: true, error: null }
+        if (codexReauthentications.get(accountId) !== pending)
+          throw new Error('Codex sign-in was canceled.')
+        if (completion.success) {
+          codexAdapter.clearAuthenticationFailure(options?.container)
+          codexAdapter.resetClientsForContainer(options?.container)
+        }
+        return { ...completion, configuration: await getCodexAccounts(options?.container) }
+      } finally {
+        codexReauthentications.delete(accountId)
+      }
+    }
     if (providerId === 'claude') {
       try {
         await claudeAccounts.waitForLogin(accountId, loginId, options)
@@ -542,6 +591,18 @@ export const providerApi: ProviderApi = {
     }
   },
   cancelAccountCreation: async (providerId, accountId, loginId, options) => {
+    if (providerId === 'codex' && accountId.startsWith('reauth-')) {
+      const pending = codexReauthentications.get(accountId)
+      if (
+        pending &&
+        pending.source === getContainerTargetKey(options?.container) &&
+        pending.loginId === loginId
+      ) {
+        codexReauthentications.delete(accountId)
+        if (loginId) await codexAdapter.cancelLogin(loginId, options)
+      }
+      return getCodexAccounts(options?.container)
+    }
     if (providerId === 'claude') return claudeAccounts.cancel(accountId, options)
     if (providerId !== 'codex') {
       throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
@@ -565,6 +626,7 @@ export const providerApi: ProviderApi = {
     }
     if (providerId !== 'codex') return getUnavailableAccountConfiguration(providerId)
     const configuration = await selectCodexAccount(accountId, options?.container)
+    codexAdapter.clearAuthenticationFailure(options?.container)
     codexAdapter.resetClientsForContainer(options?.container)
     return configuration
   },
@@ -584,7 +646,10 @@ export const providerApi: ProviderApi = {
       (account) => account.id === accountId && account.active
     )
     const configuration = await deleteCodexAccount(accountId, options?.container)
-    if (deletedAccountWasActive) codexAdapter.resetClientsForContainer(options?.container)
+    if (deletedAccountWasActive) {
+      codexAdapter.clearAuthenticationFailure(options?.container)
+      codexAdapter.resetClientsForContainer(options?.container)
+    }
     return configuration
   },
   submitAccountLoginCode: async (providerId, loginId, code, options) => {

@@ -664,14 +664,10 @@
 }
 
 .message-box__usage-control {
-  --message-box-usage-accent: #c28f63;
+  --message-box-usage-accent: var(--accent-highlight);
   position: relative;
   display: inline-flex;
   flex: none;
-}
-
-:root[data-color-scheme="dark"] .message-box__usage-control {
-  --message-box-usage-accent: #d0a07d;
 }
 
 .message-box__usage-control > .ui-button {

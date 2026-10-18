@@ -51,6 +51,14 @@ export const mapOpenCodeModels = (
     })
     .find((id): id is string => Boolean(id))
   const defaultId = configuredModel?.trim() || fallbackDefaultId || null
+  // Several providers can serve the same model, each with its own credential and billing,
+  // so name the provider wherever a label alone would be ambiguous.
+  const labelProviders = new Map<string, Set<string>>()
+  for (const provider of providers)
+    for (const model of Object.values(provider.models)) {
+      const label = model.name || model.id
+      labelProviders.set(label, (labelProviders.get(label) ?? new Set()).add(provider.id))
+    }
 
   return providers.flatMap((provider) =>
     Object.values(provider.models).map((modelValue): ProviderModel => {
@@ -58,11 +66,14 @@ export const mapOpenCodeModels = (
       const id = `${provider.id}/${model.id}`
       const reasoning = getReasoningEfforts(model)
       const status = model.status === 'deprecated' ? ' Deprecated.' : ''
+      const name = model.name || model.id
+      const providerName = provider.name || provider.id
 
       return {
         id,
-        label: model.name || model.id,
-        description: `${formatContextWindow(model.limit.context)}${status}`.trim(),
+        label: (labelProviders.get(name)?.size ?? 0) > 1 ? `${name} (${providerName})` : name,
+        description:
+          `${providerName} · ${formatContextWindow(model.limit.context)}${status}`.trim(),
         isDefault: id === defaultId,
         supportedReasoningEfforts: reasoning.options,
         defaultReasoningEffort: reasoning.defaultEffort

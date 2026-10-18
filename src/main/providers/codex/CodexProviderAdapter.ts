@@ -1,7 +1,12 @@
+import type { McpAppConnection } from '../../../shared/mcpApps'
+import { isAppVisibleTool } from '../../mcpApps/McpAppHost'
+import { record as mcpRecord } from '../../../shared/elicitation'
 import { TokenUsageReporter } from '../TokenUsageReporter.ts'
 import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
 import { CodexMessageDelivery } from './CodexMessageDelivery'
 import { CodexUserQuestions } from './CodexUserQuestions'
+import { isCodexAuthenticationFailure } from './CodexAuthentication'
+import { parseCodexPermissions } from './CodexPermissionRequests'
 import { CodexCommandStartAnchors } from './CodexCommandStartAnchors.ts'
 import { CodexGoals } from './CodexGoals.ts'
 import { CodexGoalPrompts, getCodexGoalPrompt } from './CodexGoalPrompts.ts'
@@ -457,7 +462,7 @@ type ServerRequestResolvedParams = {
   requestId?: unknown
 }
 
-type CodexPendingApprovalProtocol = 'commandExecution' | 'fileChange' | 'browserUse'
+type CodexPendingApprovalProtocol = 'commandExecution' | 'fileChange' | 'browserUse' | 'permissions'
 
 type CodexPendingApproval = {
   requestId: number
@@ -471,6 +476,8 @@ type CodexPendingApproval = {
   cwd: string | null
   reason: string | null
   startedAt: number
+  permissions?: Record<string, unknown>
+  permissionDetails?: string[]
 }
 
 type QueuedTurn = {
@@ -1276,6 +1283,32 @@ const getTurnAccessOptions = (options?: ProviderTurnOptions): CodexTurnAccessOpt
 }
 
 export class CodexProviderAdapter implements ProviderAdapter {
+  private authenticationFailures = new Set<string>()
+
+  reauthenticate = (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> =>
+    this.runWithContainer(options.container, async () => {
+      const login = await this.client.request<LoginResponse>('account/login/start', {
+        type: 'chatgptDeviceCode'
+      })
+      if (login.type === 'chatgptDeviceCode')
+        return {
+          status: 'pending',
+          loginId: login.loginId,
+          authUrl: login.verificationUrl,
+          userCode: login.userCode
+        }
+      if (login.type === 'chatgpt')
+        return { status: 'pending', loginId: login.loginId, authUrl: login.authUrl }
+      throw new Error(`Unsupported Codex login response: ${login.type}`)
+    })
+
+  clearAuthenticationFailure = (container: AppContainerTarget | null | undefined): void => {
+    this.authenticationFailures.delete(getContainerTargetKey(container))
+    for (const [threadId, target] of this.threadContainers) {
+      if (getContainerTargetKey(target) === getContainerTargetKey(container))
+        this.emitChatUpdated(threadId)
+    }
+  }
   id = 'codex' as const
   private tokenUsageReporter = new TokenUsageReporter()
   onTokenUsage = this.tokenUsageReporter.subscribe
@@ -1368,6 +1401,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (existingClient) return existingClient
 
     const client = new CodexAppServerClient(storedContainer)
+    client.onRequestFailed((method, _params, error) => {
+      if (!/^(?:account|thread|turn|model)\//.test(method) || !isCodexAuthenticationFailure(error))
+        return
+      this.authenticationFailures.add(key)
+      for (const [threadId, target] of this.threadContainers)
+        if (getContainerTargetKey(target) === key) this.emitChatUpdated(threadId)
+    })
     client.onNotification((notification) => {
       this.clientContainerContext.run(storedContainer, () => this.handleNotification(notification))
     })
@@ -1816,6 +1856,57 @@ export class CodexProviderAdapter implements ProviderAdapter {
       return this.getConfigInContext()
     })
 
+  getMcpApp = async (chatId: string, callId: string): Promise<McpAppConnection | null> => {
+    const thread = this.threads.get(chatId)
+    const item = thread?.turns
+      .flatMap((turn) => turn.items)
+      .find((item) => item.id === callId && item.type === 'mcpToolCall')
+    const resourceUri =
+      item?.mcpAppUi?.resourceUri || item?.mcpAppResourceUri || item?.appContext?.resourceUri
+    if (!item?.server || !resourceUri?.startsWith('ui://')) return null
+    const server = item.server
+    const container = this.getThreadContainer(chatId)
+    const client = this.getClient(container)
+    const identity = client.connectionIdentity
+    if (!identity) return null
+    const isCurrent = () =>
+      this.clients.get(getContainerTargetKey(container)) === client &&
+      client.connectionIdentity === identity &&
+      this.threads.has(chatId)
+    const listTools = async () => {
+      const response = await client.request<{
+        data: Array<{ name: string; tools: Record<string, Record<string, unknown>> }>
+      }>('mcpServerStatus/list', { threadId: chatId, serverName: server, limit: 100 })
+      return {
+        tools: Object.values(
+          response.data.find((value) => value.name === server)?.tools ?? {}
+        ).filter(isAppVisibleTool)
+      }
+    }
+    return {
+      serverName: server,
+      resourceUri,
+      input: mcpRecord(item.arguments) ?? {},
+      result: mcpRecord(item.result) ?? { content: [] },
+      isCurrent,
+      canCall: () =>
+        isCurrent() &&
+        client.ownsThread(chatId) &&
+        !client.dynamicTools.isReadOnly(chatId) &&
+        !this.externallyOwnedThreadIds.has(chatId),
+      readResource: (uri) =>
+        client.request('mcpServer/resource/read', {
+          threadId: chatId,
+          originCallId: callId,
+          server,
+          uri
+        }),
+      listTools,
+      callTool: (tool, args) =>
+        client.request('mcpServer/tool/call', { threadId: chatId, server, tool, arguments: args })
+    }
+  }
+
   getApps = async (options: ProviderSourceOptions = {}): Promise<ProviderApp[]> =>
     this.runWithContainer(options.container, () =>
       this.getAppsInContext(options.forceRefresh ?? false)
@@ -2009,7 +2100,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
       )
     }
 
+    const authenticationRequired = [usageResult, rateLimitsResult].some(
+      (result) => result.status === 'rejected' && isCodexAuthenticationFailure(result.reason)
+    )
     if (
+      !authenticationRequired &&
       rateLimitsResult.status === 'rejected' &&
       (!includeStatistics || usageResult.status === 'rejected')
     ) {
@@ -2021,6 +2116,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     return {
       updatedAt: Date.now(),
+      authenticationRequired,
       statisticsLoaded: includeStatistics && usageResult.status === 'fulfilled',
       summary: normalizeAccountUsageSummary(usage?.summary),
       dailyUsageBuckets: normalizeAccountUsageDailyBuckets(usage?.dailyUsageBuckets),
@@ -3686,6 +3782,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const approval = this.pendingApprovalsByThread.get(chatId)?.[0]
     if (!approval) throw new Error('No pending approval to resolve')
+    if (decision === 'allowSession' && approval.protocol !== 'permissions')
+      throw new Error('Session permission grants are not supported for this request')
 
     this.getClient(approval.container).resolveServerRequest(
       approval.requestId,
@@ -3708,6 +3806,19 @@ export class CodexProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     this.getProviderPendingUserInput(chatId)
     await this.userQuestions.resolve(chatId, requestId, response, {
+      verification: async (request, signal) => {
+        if (!request.verification) throw new Error('Missing device verification challenge.')
+        const result = await this.getClient(request.container).request<{
+          proof: Record<string, unknown>
+        }>('userVerification/verify', request.verification, { signal })
+        if (
+          !result.proof ||
+          typeof result.proof.credentialId !== 'string' ||
+          typeof result.proof.signature !== 'string'
+        )
+          throw new Error('The device verifier returned an invalid proof.')
+        return result.proof
+      },
       server: (request, result) =>
         this.getClient(request.container).resolveServerRequest(request.requestId, result),
       asynchronous: async (question, answer) => {
@@ -4125,7 +4236,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const turnId = this.getActiveTurnId(chatId)
     this.cancelPendingApprovals(chatId)
     this.userQuestions.cancel(chatId, (request) =>
-      this.getClient(request.container).resolveServerRequest(request.requestId, { answers: {} })
+      this.getClient(request.container).resolveServerRequest(
+        request.requestId,
+        request.elicitation ? { action: 'cancel', content: null } : { answers: {} }
+      )
     )
 
     if (!turnId) {
@@ -4247,6 +4361,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
         : codexCapabilities,
       pendingApproval: this.getProviderPendingApproval(thread.id),
       pendingUserInput: this.getProviderPendingUserInput(thread.id),
+      authenticationRequired: this.authenticationFailures.has(
+        getContainerTargetKey(this.threadContainers.get(thread.id))
+      ),
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
       subagents: this.getThreadSubagents(thread, renderableTurns),
       goal: this.goals.get(thread.id),
@@ -5071,7 +5188,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
       command: approval.command,
       cwd: approval.cwd,
       reason: approval.reason,
-      startedAt: approval.startedAt
+      startedAt: approval.startedAt,
+      ...(approval.permissionDetails ? { permissionDetails: approval.permissionDetails } : {})
     }
   }
 
@@ -5138,6 +5256,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     approval: CodexPendingApproval,
     decision: ProviderApprovalDecision | 'cancel'
   ): unknown => {
+    if (approval.protocol === 'permissions')
+      return {
+        permissions:
+          decision === 'allow' || decision === 'allowSession' ? approval.permissions : {},
+        scope: decision === 'allowSession' ? 'session' : 'turn'
+      }
     const action = decision === 'allow' ? 'accept' : decision === 'cancel' ? 'cancel' : 'decline'
     return approval.protocol === 'browserUse'
       ? { action, content: decision === 'allow' ? {} : null, _meta: null }
@@ -6293,6 +6417,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'turn/completed') {
+      if (isCodexAuthenticationFailure(turn.error)) {
+        this.authenticationFailures.add(getContainerTargetKey(this.getCurrentContainer()))
+      }
       if (turn.status === 'failed' || turn.error) {
         console.error(
           `Codex turn ${turn.id} failed in thread ${threadId}`,
@@ -6624,7 +6751,46 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
     if (request.method === 'mcpServer/elicitation/request') {
       const params = getRecordValue(request.params)
-      if (!params || !isBrowserPermissionRequest(params)) return false
+      if (!params) throw new Error('Invalid MCP interaction')
+      if (!isBrowserPermissionRequest(params)) {
+        const container = this.getCurrentContainer()
+        const threadId = this.userQuestions.addElicitation(request, container)
+        this.rememberThreadContainer(threadId, container)
+        this.setThreadActiveFlag(threadId, 'waitingOnUserInput', true)
+        this.emitChatUpdated(threadId)
+        if (params.mode === 'openai/userVerification') {
+          void this.client
+            .request<{
+              credentialId?: string | null
+              unavailableReason?: unknown
+              unavailableMessage?: string
+            }>('userVerification/status', {})
+            .then((status) => {
+              const available = !!status.credentialId && status.unavailableReason == null
+              if (
+                this.userQuestions.setVerificationAvailability(threadId, request.id, {
+                  available,
+                  reason: available
+                    ? undefined
+                    : (status.unavailableMessage ??
+                      'Device verification is unavailable or this device has not been enrolled with the provider.')
+                })
+              )
+                this.emitChatUpdated(threadId)
+            })
+            .catch((error) => {
+              console.error('Unable to inspect device verification availability.', error)
+              if (
+                this.userQuestions.setVerificationAvailability(threadId, request.id, {
+                  available: false,
+                  reason: 'This Codex runtime does not support device verification on this device.'
+                })
+              )
+                this.emitChatUpdated(threadId)
+            })
+        }
+        return true
+      }
       this.addPendingApproval({
         requestId: request.id,
         container: this.getCurrentContainer(),
@@ -6637,6 +6803,28 @@ export class CodexProviderAdapter implements ProviderAdapter {
         cwd: null,
         reason: requireStringValue(params.message, 'message'),
         startedAt: Date.now()
+      })
+      return true
+    }
+
+    if (request.method === 'item/permissions/requestApproval') {
+      const params = getRecordValue(request.params)
+      if (!params) throw new Error('Invalid permission request')
+      const { permissions, details } = parseCodexPermissions(params.permissions)
+      this.addPendingApproval({
+        requestId: request.id,
+        container: this.getCurrentContainer(),
+        protocol: 'permissions',
+        type: 'permissions',
+        threadId: requireStringValue(params.threadId, 'threadId'),
+        turnId: requireStringValue(params.turnId, 'turnId'),
+        itemId: requireStringValue(params.itemId, 'itemId'),
+        command: null,
+        cwd: getOptionalStringValue(params.cwd),
+        reason: getOptionalStringValue(params.reason) ?? 'Additional access requested',
+        startedAt: getOptionalNumberValue(params.startedAtMs) ?? Date.now(),
+        permissions,
+        permissionDetails: details
       })
       return true
     }

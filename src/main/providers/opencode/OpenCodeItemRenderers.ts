@@ -195,9 +195,46 @@ const getToolDiffs = (
   ]
 }
 
+/**
+ * Delegation is a compact row in the parent. The subagent's prompt and report belong to its own
+ * chat (a child session), listed under the parent in the sidebar.
+ */
+const renderSubagentTool = (
+  id: string,
+  toolId: string,
+  finished: boolean,
+  label: string
+): ProviderWorkingTool => ({
+  type: 'tool',
+  id,
+  toolId,
+  status: finished ? 'finished' : 'running',
+  compact: true,
+  activity: 'other',
+  icon: 'subagent',
+  label,
+  command: null,
+  cwd: null,
+  stdout: null,
+  diffs: [],
+  backgroundSessionId: null,
+  finishedBackgroundSessionId: null,
+  rawInput: null,
+  rawOutput: null,
+  images: []
+})
+
 const renderTool = (part: Extract<Part, { type: 'tool' }>): ProviderWorkingTool => {
   const state = part.state
   const finished = state.status === 'completed' || state.status === 'error'
+  if (part.tool === 'task') {
+    return renderSubagentTool(
+      part.id,
+      part.callID,
+      finished,
+      getArgument(state.input, 'description', 'subagent_type') ?? 'Subagent'
+    )
+  }
   const input = state.input
   const output =
     state.status === 'completed' ? state.output : state.status === 'error' ? state.error : null
@@ -433,24 +470,7 @@ export const renderOpenCodeChatItems = (
       } else if (part.type === 'subtask') {
         current.entries.push({
           kind: 'working',
-          item: {
-            type: 'tool',
-            id: part.id,
-            toolId: part.id,
-            status: 'finished',
-            activity: 'other',
-            icon: null,
-            label: part.description || `Run ${part.agent}`,
-            command: null,
-            cwd: null,
-            stdout: null,
-            diffs: [],
-            backgroundSessionId: null,
-            finishedBackgroundSessionId: null,
-            rawInput: { prompt: part.prompt, agent: part.agent },
-            rawOutput: null,
-            images: []
-          }
+          item: renderSubagentTool(part.id, part.id, true, part.description || `Run ${part.agent}`)
         })
       }
     })
@@ -458,6 +478,10 @@ export const renderOpenCodeChatItems = (
       // A user abort is a stop, not a failure: no error text, just a "Stopped" turn.
       current.stopped = true
     } else if (message.info.error) {
+      // session.error reaches Sele before the failed message, so the turn first renders its
+      // error from session state (see flushSegment). Reuse that ID for the turn's first error:
+      // a different key would remount the error block when the message arrives.
+      const errorId = current.failed ? `${message.info.id}:error` : `${current.id}:error`
       current.failed = true
       current.failureMessage = getOpenCodeErrorMessage(message.info.error)
       if (isOpenCodeRateLimitError(message.info.error)) current.rateLimited = true
@@ -465,7 +489,7 @@ export const renderOpenCodeChatItems = (
         kind: 'working',
         item: {
           type: 'message',
-          id: `${message.info.id}:error`,
+          id: errorId,
           content: getOpenCodeErrorMessage(message.info.error)
         }
       })

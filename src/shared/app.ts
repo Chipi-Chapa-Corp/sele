@@ -581,6 +581,7 @@ export type AppApi = {
   getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
   openFileInSystemApp: (options: AppFileContentsOptions) => Promise<void>
   downloadFile: (options: AppFileContentsOptions) => Promise<string | null>
+  showFileInFolder: (options: AppLocalMediaOptions) => Promise<void>
   writeFileContents: (options: AppWriteFileContentsOptions) => Promise<AppWriteFileContentsResult>
   getRecentGitCommitMessages: (
     options?: AppGitRecentCommitMessagesOptions
@@ -656,6 +657,7 @@ export const appIpcChannels = {
   getFileContents: 'app:get-file-contents',
   openFileInSystemApp: 'app:open-file-in-system-app',
   downloadFile: 'app:download-file',
+  showFileInFolder: 'app:show-file-in-folder',
   writeFileContents: 'app:write-file-contents',
   getRecentGitCommitMessages: 'app:get-recent-git-commit-messages',
   getUncommittedGitDiff: 'app:get-uncommitted-git-diff',

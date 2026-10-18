@@ -586,7 +586,8 @@ const requireCwdNotes = (value: unknown): ProviderCwdNote[] => {
 }
 
 const requireApprovalDecision = (value: unknown): ProviderApprovalDecision => {
-  if (value !== 'allow' && value !== 'deny') throw new Error('Invalid approval decision')
+  if (value !== 'allow' && value !== 'allowSession' && value !== 'deny')
+    throw new Error('Invalid approval decision')
   return value
 }
 
@@ -599,8 +600,29 @@ const requireUserInputResponse = (value: unknown): ProviderUserInputResponse => 
     kind?: unknown
     answer?: unknown
     wasFreeform?: unknown
+    action?: unknown
+    content?: unknown
   }
   if (response.kind === 'cancel') return { kind: 'cancel' }
+  if (response.kind === 'elicitation') {
+    if (response.action !== 'accept' && response.action !== 'decline')
+      throw new Error('Invalid elicitation action')
+    if (
+      response.content !== undefined &&
+      (!response.content ||
+        typeof response.content !== 'object' ||
+        Array.isArray(response.content) ||
+        JSON.stringify(response.content).length > 100_000)
+    )
+      throw new Error('Invalid elicitation content')
+    return {
+      kind: 'elicitation',
+      action: response.action,
+      ...(response.content === undefined
+        ? {}
+        : { content: response.content as Record<string, unknown> })
+    }
+  }
   if (
     response.kind !== 'answer' ||
     typeof response.answer !== 'string' ||

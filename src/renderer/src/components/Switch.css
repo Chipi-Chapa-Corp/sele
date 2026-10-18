@@ -2,8 +2,8 @@
   position: relative;
   display: inline-grid;
   min-width: 0;
-  width: 2.3rem;
-  height: 1.3rem;
+  width: calc(var(--control-height) * 1.75);
+  height: var(--control-height);
   place-items: center;
 }
 
@@ -11,7 +11,7 @@
   display: grid;
   width: 100%;
   height: auto;
-  min-height: 1.7rem;
+  min-height: var(--control-height);
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.6rem;
@@ -20,6 +20,10 @@
 
 :where(.ui-switch:has(input:not(:disabled))) {
   cursor: pointer;
+}
+
+:where(.ui-switch:has(input:disabled)) {
+  cursor: default;
 }
 
 :where(.ui-switch__label) {
@@ -37,46 +41,91 @@
 :where(.ui-switch__control) {
   position: relative;
   display: block;
-  width: 2.3rem;
-  height: 1.3rem;
-  border: 0.0625rem solid var(--control-border);
+  width: calc(var(--control-height) * 1.75);
+  height: var(--control-height);
+  border: 0.0625rem solid var(--field-border);
   border-radius: 49.95rem;
-  background: var(--control-surface);
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    box-shadow 140ms ease;
+  background: var(--tab-track-surface);
+  box-shadow: var(--field-shadow);
 }
 
 :where(.ui-switch__control)::after {
-  content: '';
+  content: "";
+  box-sizing: border-box;
   position: absolute;
-  top: 0.15rem;
-  left: 0.15rem;
-  width: 0.9rem;
-  height: 0.9rem;
-  border-radius: 49.95rem;
-  background: var(--quiet);
-  box-shadow: 0 0.0625rem 0.125rem rgb(0 0 0 / 18%);
+  top: 50%;
+  left: 0.0625rem;
+  width: calc(var(--control-height) - 0.25rem);
+  height: calc(var(--control-height) - 0.25rem);
+  aspect-ratio: 1;
+  border: 0.0625rem solid;
+  border-color: var(--secondary-border-colors);
+  border-radius: 50%;
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
+  transform: translateY(-50%);
   transition:
     background 140ms ease,
-    transform 140ms ease;
-}
-
-:where(.ui-switch input:checked + .ui-switch__control) {
-  border-color: var(--accent);
-  background: var(--accent);
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease,
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 :where(.ui-switch input:checked + .ui-switch__control)::after {
-  background: var(--accent-ink);
-  transform: translateX(1rem);
+  border-color: var(--primary-border-colors);
+  background: var(--primary-surface);
+  box-shadow: var(--primary-shadow);
+  transform: translate(calc(var(--control-height) * 0.75), -50%);
 }
 
-:where(.ui-switch input:checked:disabled + .ui-switch__control)::after {
-  background: color-mix(in srgb, var(--accent-ink) 56%, var(--quiet));
+:where(.ui-switch:has(input:not(:disabled)):hover .ui-switch__control)::after {
+  border-color: var(--secondary-border-colors-hover);
+  background: var(--secondary-surface-hover);
+  box-shadow: var(--secondary-shadow-hover);
+}
+
+:where(.ui-switch:has(input:checked:not(:disabled)):hover .ui-switch__control)::after {
+  border-color: var(--primary-border-colors-hover);
+  background: var(--primary-surface-hover);
+  box-shadow: var(--primary-shadow-hover);
+}
+
+:where(.ui-switch:has(input:not(:disabled)):active .ui-switch__control)::after {
+  background: var(--secondary-surface-active);
+  box-shadow: var(--control-shadow-active);
+}
+
+:where(.ui-switch:has(input:checked:not(:disabled)):active .ui-switch__control)::after {
+  background: var(--primary-surface-active);
+}
+
+:where(.ui-switch input:disabled + .ui-switch__control)::after {
+  opacity: 0.5;
+}
+
+:where(.ui-switch:has(input:disabled) .ui-switch__label) {
+  color: var(--control-disabled-color);
 }
 
 :where(.ui-switch input:focus-visible + .ui-switch__control) {
-  box-shadow: 0 0 0 0.1875rem var(--focus-ring);
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.125rem;
+}
+
+@media (forced-colors: active) {
+  :where(.ui-switch__control) {
+    background: Canvas;
+    border-color: ButtonText;
+  }
+
+  :where(.ui-switch__control)::after {
+    background: ButtonFace;
+    border-color: ButtonText;
+  }
+
+  :where(.ui-switch input:checked + .ui-switch__control)::after {
+    background: Highlight;
+    border-color: Highlight;
+  }
 }

@@ -532,3 +532,48 @@ test('fork targets resolve a rendered assistant id back to its transcript uuid',
   assert.equal(resolveClaudeAssistantMessageUuid(messages, 'msg_stream:text:1'), null)
   assert.equal(resolveClaudeAssistantMessageUuid(messages, 'persisted-1'), null)
 })
+
+test('Claude subagents are named by the description of the call that spawned them', async () => {
+  const { collectClaudeSubagentSpawns, createClaudeSubagentSummary } = await import(
+    './ClaudeSubagents.ts'
+  )
+  const spawn = (id, description, subagentType) => ({
+    type: 'assistant',
+    message: {
+      content: [
+        {
+          type: 'tool_use',
+          id,
+          name: 'Agent',
+          input: { description, subagent_type: subagentType, prompt: 'Long\n  instructions' }
+        }
+      ]
+    }
+  })
+  const record = (spawnId, parentAgentId, text) => ({
+    type: 'user',
+    uuid: `${spawnId}:user`,
+    session_id: 'session',
+    parent_tool_use_id: spawnId,
+    parent_agent_id: parentAgentId,
+    timestamp: '2026-01-01T00:00:00.000Z',
+    message: { role: 'user', content: text }
+  })
+  const root = [record('spawn-root', null, 'Review   the\nwhole port')]
+  // Nested agents are spawned from the parent subagent's transcript.
+  const rootTranscript = [...root, spawn('spawn-nested', 'Review daemon/db', 'fork')]
+  const nested = [record('spawn-nested', 'agent-root', 'Copied parent context')]
+  const spawns = collectClaudeSubagentSpawns([
+    [spawn('spawn-root', 'Review Rust port', 'general-purpose')],
+    rootTranscript,
+    nested
+  ])
+  const rootSummary = createClaudeSubagentSummary('agent-root', rootTranscript, spawns)
+  const nestedSummary = createClaudeSubagentSummary('agent-nested', nested, spawns)
+  assert.equal(rootSummary.title, 'Review Rust port')
+  assert.equal(rootSummary.parentId, null)
+  assert.equal(nestedSummary.title, 'Review daemon/db')
+  assert.equal(nestedSummary.parentId, 'agent-root')
+  // Without the delegation call, the prompt start is a whitespace-normalized fallback.
+  assert.equal(createClaudeSubagentSummary('orphan', root).title, 'Review the whole port')
+})

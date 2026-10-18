@@ -12,7 +12,8 @@ import type {
   ProviderReview,
   ProviderAppInput,
   ProviderSkillInput,
-  ProviderTurnOptions
+  ProviderTurnOptions,
+  ProviderUserInputResponse
 } from '../../../shared/provider'
 import { unloadWorkingStepItems } from '../../../shared/chatTurns'
 import { providerOneShotGenerationCanceledMessage } from '../../../shared/provider'
@@ -954,10 +955,15 @@ export function useChatMessagingController(dependencies: ChatMessagingController
 
     await resolveChatApproval(chat, approval, decision, { markViewed: false })
   }
-  const resolveSelectedUserInput = async (
-    response: { kind: 'answer'; answer: string; wasFreeform: boolean } | { kind: 'cancel' }
-  ): Promise<void> => {
-    if (!selectedChat || !pendingUserInput || userInputResolving || providerUpdateInProgress) return
+  const resolveSelectedUserInput = async (response: ProviderUserInputResponse): Promise<void> => {
+    if (
+      !selectedChat ||
+      !pendingUserInput ||
+      (userInputResolving &&
+        !(response.kind === 'cancel' && pendingUserInput.elicitation?.mode === 'verification')) ||
+      providerUpdateInProgress
+    )
+      return
 
     const requestId = pendingUserInput.id
     setUserInputResolution({ requestId, resolving: true, error: null })

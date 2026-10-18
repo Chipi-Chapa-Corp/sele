@@ -13,7 +13,7 @@
 
 .settings-dialog__section {
   display: flex;
-  width: min(100%, 34rem);
+  width: 100%;
   min-width: 0;
   flex-direction: column;
   gap: 0.4rem;
@@ -37,7 +37,7 @@
 
 .settings-dialog__provider-configuration {
   display: flex;
-  width: min(100%, 34rem);
+  width: 100%;
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
@@ -57,7 +57,7 @@
 }
 
 .settings-dialog__skills-search {
-  width: min(100%, 34rem);
+  width: 100%;
   margin-bottom: 1.2rem;
 }
 
@@ -76,7 +76,7 @@
 
 .settings-dialog__field {
   display: grid;
-  width: min(100%, 34rem);
+  width: 100%;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -156,6 +156,10 @@
   color: var(--muted);
   font: inherit;
   line-height: 1.35;
+}
+
+.settings-dialog__field-header p.settings-dialog__connection-rejected {
+  color: var(--error);
 }
 
 .settings-dialog__skill-title {

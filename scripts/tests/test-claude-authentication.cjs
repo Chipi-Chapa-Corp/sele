@@ -188,6 +188,15 @@ if (!process.versions.electron) {
         await run('document.querySelector(\'[aria-label="Retry failed turn"]\').disabled'),
         true
       )
+      assert.deepEqual(
+        await run(`({
+          prompt: document.querySelector('#message-input').disabled || document.querySelector('#message-input').readOnly,
+          attach: document.querySelector('[aria-label="Attach files"]').disabled,
+          usage: document.querySelector('.message-box__usage-control > button').disabled
+        })`),
+        { prompt: false, attach: false, usage: false },
+        'only sending is blocked; the prompt, attachments and usage stay usable'
+      )
       await run(
         "[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Manage accounts').click()"
       )
@@ -302,7 +311,9 @@ if (!process.versions.electron) {
         true
       )
       if (process.env.SELE_AUTH_SCREENSHOT) {
-        await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        await run(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+        )
         await fs.writeFile(
           process.env.SELE_AUTH_SCREENSHOT,
           (await win.webContents.capturePage()).toPNG()

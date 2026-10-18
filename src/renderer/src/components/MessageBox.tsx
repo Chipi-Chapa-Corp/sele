@@ -118,6 +118,7 @@ import { ProviderIcon } from './ProviderIcon'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { RateLimitResetButton } from './RateLimitResetButton'
 import { SegmentedControl } from './SegmentedControl'
+import { useSwitchSettledDisabled } from '../useSwitchSettledDisabled'
 import './MessageBox.css'
 
 type MessageBoxProps = {
@@ -133,6 +134,10 @@ type MessageBoxProps = {
   draftScopeKey: string
   chatId?: string | null
   draftProjectKey: string
+  /**
+   * Gates sending and actions only, like `operationsDisabled` and `pending`. The prompt,
+   * attachments, usage, chat settings and notes remain usable in every state.
+   */
   disabled?: boolean
   editSession?: {
     id: string
@@ -311,7 +316,6 @@ type ChatConfigSection = {
 }
 
 type ChatConfigDropdownProps = {
-  disabled: boolean
   id: string
   modelsError?: string | null
   modelLabel: string
@@ -389,7 +393,6 @@ const getChatConfigMenuStyle = (buttonRect: DOMRect): ChatConfigMenuStyle => {
 }
 
 const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
-  disabled,
   id,
   modelsError,
   modelLabel,
@@ -456,13 +459,13 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   }, [])
 
   const openMenu = useCallback((): void => {
-    if (disabled || sections.length === 0) return
+    if (sections.length === 0) return
 
     updateMenuPosition()
     setActiveSectionId(null)
     setOpen(true)
     focusFirstMenuButton()
-  }, [disabled, focusFirstMenuButton, sections.length, updateMenuPosition])
+  }, [focusFirstMenuButton, sections.length, updateMenuPosition])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -541,7 +544,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       {sections.map((section) => (
         <button
           className="message-box__chat-config-section-button"
-          disabled={disabled || section.disabled}
+          disabled={section.disabled}
           key={section.id}
           type="button"
           onClick={() => {
@@ -589,7 +592,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
                   ]
                     .filter(Boolean)
                     .join(' ')}
-                  disabled={disabled || option.disabled}
+                  disabled={option.disabled}
                   key={option.value}
                   type="button"
                   aria-pressed={selected}
@@ -699,7 +702,7 @@ const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
         aria-controls={menuOpen ? menuId : undefined}
         aria-expanded={menuOpen}
         aria-haspopup="dialog"
-        disabled={(disabled && !menuOpen) || sections.length === 0}
+        disabled={sections.length === 0}
         title={title}
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
@@ -1242,7 +1245,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const skillsBeforeEditRef = useRef<ProviderSkill[] | null>(null)
   const appsBeforeEditRef = useRef<ProviderApp[] | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const focusAfterSendRef = useRef(false)
   const textareaWrapRef = useRef<HTMLDivElement>(null)
   const mentionMenuRef = useRef<HTMLDivElement>(null)
   const attachmentDragDepthRef = useRef(0)
@@ -1393,8 +1395,8 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     ? `${selectedApprovalMode.label}: ${selectedApprovalMode.description}`
     : (selectedApprovalMode?.label ?? formatOptionLabel(effectiveApprovalMode))
   const selectedReasoningEffortLabel = selectedReasoningEffortPresentation.label
-  const selectorsDisabled = operationsDisabled || pending || (!active && disabled)
-  const approvalSelectorDisabled = selectorsDisabled || fullAccessSelected
+  // Chat settings stay editable in every composer state; only sending is gated.
+  const approvalSelectorDisabled = fullAccessSelected
   const selectedServiceTierValue = selectedServiceTier ?? standardServiceTierValue
   const selectedModelLabel = modelSelectionUnavailable
     ? unavailableModelLabel
@@ -1414,9 +1416,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 options: displayedModelOptions.map((option) => ({
                   ...option,
                   disabled:
-                    modelSelectionUnavailable ||
-                    selectorsDisabled ||
-                    ('disabled' in option ? option.disabled : false)
+                    modelSelectionUnavailable || ('disabled' in option ? option.disabled : false)
                 })),
                 selectedValue: model,
                 onChange: (value: string) => onModelChange(value as ProviderModelId)
@@ -1608,8 +1608,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   ]
     .filter(Boolean)
     .join(' ')
-  const textareaUnavailable = operationsDisabled || (!active && disabled)
-  const textareaDisabled = textareaUnavailable || pending
   const modifiedActiveSendMode = getModifiedActiveSendMode(
     activePrimaryMode,
     activeSteeringEnabled,
@@ -1618,15 +1616,17 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const activePrimaryLabel =
     modifiedActiveSendMode === 'queue' ? 'Queue message' : 'Steer current turn'
   const editingPendingMessage = editSession?.type === 'pending'
-  // Usage is read-only information: keep the ring painted while a send is in flight instead of
-  // flashing the disabled (empty) ring until the provider acknowledges the message.
-  const usageDisabled = operationsDisabled || (!active && disabled)
-  const usageMenuOpen = usageOpen && !usageDisabled
+  // The prompt, attachments, usage, chat settings and notes stay usable in every state; only
+  // the send button and actions are gated by pending, unavailable or read-only states.
+  const usageMenuOpen = usageOpen
+  // Chat switches briefly report the next chat as loading; only show Send as blocked when that
+  // outlasts the switch. submitMessage still checks the real `disabled` and `operationsDisabled`.
+  const sendBlockedDisplay = useSwitchSettledDisabled(
+    operationsDisabled || (!active && disabled),
+    draftScopeKey
+  )
   const fileMentionMenuOpen = Boolean(
-    fileMention &&
-      !textareaDisabled &&
-      !editing &&
-      selectedAttachments.length < maxSelectedAttachmentCount
+    fileMention && !editing && selectedAttachments.length < maxSelectedAttachmentCount
   )
   const composerSourceKey = useMemo(() => JSON.stringify(container ?? null), [container])
   const fileMentionResults = useMemo(
@@ -1644,7 +1644,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const skillScope = `${providerId}\0${cwd ?? ''}\0${composerSourceKey}`
   const skillMentionMenuOpen = Boolean(
     skillMention &&
-      !textareaDisabled &&
       (selectedSkills.length < maxSelectedSkillCount || selectedApps.length < maxSelectedAppCount)
   )
   const composerResults = useMemo(
@@ -2013,14 +2012,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [editing, quoteRequest, setMessage])
 
   useEffect(() => {
-    if (!autoFocus || operationsDisabled || disabled || pending) return
+    if (!autoFocus) return
 
     const animationFrame = window.requestAnimationFrame(() => {
       textareaRef.current?.focus({ preventScroll: true })
     })
 
     return () => window.cancelAnimationFrame(animationFrame)
-  }, [autoFocus, operationsDisabled, disabled, pending])
+  }, [autoFocus])
 
   useEffect(() => {
     const handleControlChange = (event: KeyboardEvent): void => {
@@ -2046,20 +2045,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     )
     return () => window.cancelAnimationFrame(frame)
   }, [editing, selectedReview])
-
-  useEffect(() => {
-    if (!focusAfterSendRef.current || textareaDisabled) return
-
-    const frame = window.requestAnimationFrame(() => {
-      const textarea = textareaRef.current
-      if (!textarea || textarea.disabled) return
-
-      focusAfterSendRef.current = false
-      textarea.focus({ preventScroll: true })
-    })
-
-    return () => window.cancelAnimationFrame(frame)
-  }, [textareaDisabled])
 
   const submitMessage = (activeMode: ProviderActiveSendMode = activePrimaryMode): void => {
     const nextMessage = message.trim()
@@ -2103,7 +2088,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       return
     }
 
-    focusAfterSendRef.current = true
     textareaRef.current?.focus({ preventScroll: true })
 
     if (editing) {
@@ -2203,7 +2187,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleSelectAttachments = async (): Promise<void> => {
-    if (attachmentSelectionPending || textareaDisabled) return
+    if (attachmentSelectionPending) return
+    if (selectedAttachments.length >= maxSelectedAttachmentCount) {
+      setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
+      return
+    }
 
     setAttachmentSelectionPending(true)
     setAttachmentSelectionError(null)
@@ -2245,7 +2233,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
     event.preventDefault()
     attachmentDragDepthRef.current += 1
-    if (!attachmentSelectionPending && !textareaDisabled) {
+    if (!attachmentSelectionPending) {
       setAttachmentDragActive(true)
     }
   }
@@ -2254,7 +2242,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     if (!Array.from(event.dataTransfer.types).includes('Files')) return
 
     event.preventDefault()
-    event.dataTransfer.dropEffect = attachmentSelectionPending || textareaDisabled ? 'none' : 'copy'
+    event.dataTransfer.dropEffect = attachmentSelectionPending ? 'none' : 'copy'
   }
 
   const handleAttachmentDragLeave = (event: React.DragEvent<HTMLDivElement>): void => {
@@ -2272,7 +2260,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     attachmentDragDepthRef.current = 0
     setAttachmentDragActive(false)
 
-    if (attachmentSelectionPending || textareaDisabled) return
+    if (attachmentSelectionPending) return
 
     const files = Array.from(event.dataTransfer.files)
     if (files.length === 0) return
@@ -2325,7 +2313,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     if (!hasImage) return
 
     event.preventDefault()
-    if (attachmentSelectionPending || textareaDisabled) return
+    if (attachmentSelectionPending) return
     if (selectedAttachments.length >= maxSelectedAttachmentCount) {
       setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
       return
@@ -2749,8 +2737,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   )
 
   const handleUsageToggle = (): void => {
-    if (usageDisabled) return
-
     const nextOpen = !usageMenuOpen
     setUsageOpen(nextOpen)
     if (nextOpen) {
@@ -2907,7 +2893,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                     <Button
                       aria-label={`Remove ${attachment.name}`}
                       callback={() => handleRemoveAttachment(attachment.path)}
-                      disabled={textareaDisabled}
                       icon={<X aria-hidden="true" />}
                       size="small"
                       theme="secondary"
@@ -2947,7 +2932,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                       label={skill.displayName || skill.name}
                       removeAriaLabel={`Remove ${skill.name} skill`}
                       removeCallback={() => handleRemoveSkill(skill.path)}
-                      removeDisabled={textareaDisabled}
                       removeTitle={`Remove ${skill.name} skill`}
                       title={disabledByCopilot ? copilotMultipleSkillsTooltip : undefined}
                     />
@@ -2964,7 +2948,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                     label={`$${app.name}`}
                     removeAriaLabel={`Remove ${app.name} app`}
                     removeCallback={() => handleRemoveApp(app.id)}
-                    removeDisabled={textareaDisabled}
                     removeTitle={`Remove ${app.name} app`}
                   />
                 ))}
@@ -2979,14 +2962,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                     label={attachment.name}
                     removeAriaLabel={`Remove ${attachment.name}`}
                     removeCallback={() => handleRemoveAttachment(attachment.path)}
-                    removeDisabled={textareaDisabled}
                     removeTitle={`Remove ${attachment.name}`}
                   />
                 ))}
                 {selectedReview && showSelectedReview && (
                   <ReviewCommentsButton
                     comments={selectedReview.comments}
-                    disabled={textareaDisabled || editing}
                     onOpenFileLink={onOpenFileLink}
                     onRemove={() => onSelectedReviewChange?.(null)}
                     projectCwd={projectCwd}
@@ -3029,8 +3010,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           <textarea
             ref={textareaRef}
             id="message-input"
-            disabled={textareaUnavailable}
-            readOnly={pending}
             rows={1}
             value={message}
             placeholder="Use @ for files and $ for skills"
@@ -3075,11 +3054,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   ? `${selectedAttachments.length} file${selectedAttachments.length === 1 ? '' : 's'} attached`
                   : 'Attach files'
               }
-              disabled={
-                textareaDisabled ||
-                attachmentSelectionPending ||
-                selectedAttachments.length >= maxSelectedAttachmentCount
-              }
               callback={handleSelectAttachments}
               icon={<Paperclip aria-hidden="true" />}
               theme="secondary"
@@ -3089,7 +3063,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             <div className="message-box__selectors">
               {selectorsVisible && (
                 <ChatConfigDropdown
-                  disabled={selectorsDisabled}
                   id="chat-config-mode"
                   modelsError={modelsError}
                   modelLabel={selectedModelLabel}
@@ -3138,7 +3111,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             {promptDrafts.length > 0 && (
               <PromptDraftsButton
                 drafts={promptDrafts}
-                disabled={textareaDisabled || editing}
+                disabled={editing}
                 onPop={handlePopPromptDraft}
                 onRemove={handleRemovePromptDraft}
               />
@@ -3150,7 +3123,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 aria-expanded={usageMenuOpen}
                 callback={handleUsageToggle}
                 data-pressed={usageMenuOpen ? 'true' : undefined}
-                disabled={usageDisabled}
                 icon={<UsageStrip usedPercent={displayedUsagePercent} />}
                 size="small"
                 theme="transparent"
@@ -3435,9 +3407,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               aria-label={buttonLabel}
               title={buttonLabel}
               disabled={
-                operationsDisabled ||
+                (activeWithContent ? operationsDisabled : sendBlockedDisplay) ||
                 (attachmentSelectionPending && (!active || activeWithContent)) ||
-                (activeWithContent ? pending : active ? false : disabled || pending || !hasContent)
+                (activeWithContent ? pending : active ? false : pending || !hasContent)
               }
               callback={activeWithContent ? submitMessage : active ? handleStop : submitMessage}
               onClick={

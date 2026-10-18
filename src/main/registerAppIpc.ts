@@ -91,6 +91,7 @@ import {
 } from './database/sshEnvironments'
 import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
+import { showFileInFileManager } from './fileManager'
 import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
 import { parseTargetFileTree, readLocalFileTree, targetFileTreeScript } from './fileTree'
 import { commitAllGitChanges } from './gitCommit'
@@ -2449,6 +2450,15 @@ const downloadFile = async (
   }
 }
 
+const showFileInFolder = async (options: AppLocalImageOptions): Promise<void> => {
+  const cwd = options.cwd ?? process.cwd()
+  const absolutePath =
+    isAbsolute(options.path) || options.relativeTo === 'cwd'
+      ? resolve(cwd, options.path)
+      : (await resolveFileTarget(cwd, options.path)).absolutePath
+  await showFileInFileManager(options.container, absolutePath)
+}
+
 const getRecentGitCommitMessages = async (
   cwd: string,
   limit = 3
@@ -3377,6 +3387,11 @@ export const registerAppIpc = (): void => {
   handleLoggedIpc(appIpcChannels.downloadFile, async (event, value: unknown) => {
     const options = getFileContentsOptions(value)
     return runWithGitContainer(options.container, () => downloadFile(event, options))
+  })
+
+  handleLoggedIpc(appIpcChannels.showFileInFolder, async (_event, value: unknown) => {
+    const options = getLocalMediaOptions(value)
+    return runWithGitContainer(options.container, () => showFileInFolder(options))
   })
 
   handleLoggedIpc(appIpcChannels.writeFileContents, async (_event, value: unknown) => {

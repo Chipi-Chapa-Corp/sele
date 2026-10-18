@@ -1,8 +1,7 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react'
 import type { AppContainerTarget } from '../../shared/app'
-import { appApi } from './appApi'
 import { getContainerTargetKey } from './containerSelection'
-import { createLocalImageUrl } from './localImage'
+import { localMediaCache } from './useLocalMedia'
 
 type RetainedImage = {
   key: string
@@ -11,9 +10,9 @@ type RetainedImage = {
   dispose: () => void
 }
 
-// Markdown owns its HTML, so text updates replace even unchanged image elements.
+// Markdown rebuilds changed elements, which can replace unchanged images inside them.
 // Restore those elements before paint, retaining their decoded pixels and any
-// in-progress local file read. Resources live only as long as their image does.
+// in-progress local file read. A bounded cache also retains media across remounts.
 export function useMarkdownImages(
   ref: RefObject<HTMLDivElement | null>,
   html: string,
@@ -64,7 +63,7 @@ export function useMarkdownImages(
         continue
       }
 
-      let objectUrl: string | null = null
+      let releaseMedia: (() => void) | undefined
       const handleError = (): void => {
         if (node.classList.contains('chat-detail__link-favicon')) node.hidden = true
       }
@@ -75,7 +74,7 @@ export function useMarkdownImages(
         dispose: () => {
           entry.active = false
           node.removeEventListener('error', handleError)
-          if (objectUrl) URL.revokeObjectURL(objectUrl)
+          releaseMedia?.()
         }
       }
       next.push(entry)
@@ -84,31 +83,36 @@ export function useMarkdownImages(
         continue
       }
       const video = node.dataset.mediaType === 'video'
-      const loadMedia = video ? appApi.getLocalVideo : appApi.getLocalImage
-      void loadMedia({ container, cwd, path, relativeTo: 'cwd' })
-        .then((image) => {
-          if (!entry.active) return
-          objectUrl = createLocalImageUrl(image)
-          if (video) {
-            const videoElement = document.createElement('video')
-            videoElement.src = objectUrl
-            videoElement.muted = true
-            videoElement.playsInline = true
-            videoElement.preload = 'auto'
-            videoElement.setAttribute('aria-hidden', 'true')
-            const playIcon = document.createElement('span')
-            playIcon.className = 'chat-detail__markdown-video-play'
-            playIcon.setAttribute('aria-hidden', 'true')
-            playIcon.textContent = '▶'
-            node.replaceChildren(videoElement, playIcon)
-          } else {
-            const imageElement = document.createElement('img')
-            imageElement.src = objectUrl
-            imageElement.alt = name
-            node.replaceChildren(imageElement)
-          }
-        })
-        .catch((error) => {
+      const media = localMediaCache.acquire(
+        { container, cwd, path, relativeTo: 'cwd' },
+        video ? 'video' : 'image'
+      )
+      releaseMedia = media.release
+      const showMedia = (objectUrl: string): void => {
+        if (!entry.active) return
+        if (video) {
+          const videoElement = document.createElement('video')
+          videoElement.src = objectUrl
+          videoElement.muted = true
+          videoElement.playsInline = true
+          videoElement.preload = 'auto'
+          videoElement.setAttribute('aria-hidden', 'true')
+          const playIcon = document.createElement('span')
+          playIcon.className = 'chat-detail__markdown-video-play'
+          playIcon.setAttribute('aria-hidden', 'true')
+          playIcon.textContent = '▶'
+          node.replaceChildren(videoElement, playIcon)
+        } else {
+          const imageElement = document.createElement('img')
+          imageElement.src = objectUrl
+          imageElement.alt = name
+          node.replaceChildren(imageElement)
+        }
+      }
+      // Cached media must replace the placeholder before the first paint.
+      if (media.url) showMedia(media.url)
+      else
+        void media.ready.then(showMedia).catch((error) => {
           if (!entry.active) return
           console.error('[caught:useMarkdownImages]', error)
           const placeholder = document.createElement('span')

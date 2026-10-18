@@ -4,7 +4,6 @@ import { flushSync } from 'react-dom'
 import { buildChatConversationModel } from '../chatConversationModel'
 import { extendChatCursorWindow, type ChatCursorWindow } from '../chatCursorWindow'
 import { getRecentChatReferences, type PinnedChatTextReference } from '../chatRecents'
-import { getSubagentMarkerPlacements } from '../subagentUi'
 import { providerApi } from '../providerApi'
 import { getDisplayedRecentChatReferences } from '../recentReferencePins'
 import { getDisplayedRecentlyOpenedFiles } from '../recentlyOpenedFiles'
@@ -58,7 +57,6 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     chatDetail,
     sendState,
     editingMessage,
-    selectedChatSubagents,
     effectiveAppSettings,
     selectedChatId,
     selectedChatKey,
@@ -139,10 +137,6 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     [subagentVisibleChatItems]
   )
   const subagentChatItemIndexesById = subagentChatConversationModel.itemIndexesById
-  const { workingStepId: subagentMarkersByWorkingStepId } = useMemo(
-    () => getSubagentMarkerPlacements(selectedChatSubagents, visibleChatItems),
-    [selectedChatSubagents, visibleChatItems]
-  )
   const loadedChatTurnStartIndex = getChatDetailItemsStartTurnIndex(chatDetail)
   const loadedChatTurnEndIndex = getLoadedChatDetailTurnEndIndex(chatDetail)
   const totalChatTurnCount = getChatDetailTurnCount(chatDetail)
@@ -764,7 +758,6 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     streamingChatItemId,
     subagentChatConversationModel,
     subagentChatItemIndexesById,
-    subagentMarkersByWorkingStepId,
     subagentVisibleChatItems,
     trailingChatCommitMarkers,
     visibleChatItems,

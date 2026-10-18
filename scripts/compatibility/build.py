@@ -111,9 +111,11 @@ def build():
             note = 'Static reference only; assess behavior in the feature table.'
             if kind == 'ServerRequest':
                 if method == 'mcpServer/elicitation/request':
-                    status, note = 'Partial handler', 'Only ordinary empty-schema browser permission prompts.'
+                    status, note = 'Partial handler', 'Forms, URLs and verification through supported enrolled runtimes are handled; enrollment, specialized empty browser authentication, and strict automated review remain unavailable.'
+                elif method in ['currentTime/read', 'item/tool/call']:
+                    status, note = 'Handler present', 'Explicit dispatch in CodexAppServerClient; dynamic tools require registered host implementations.'
                 elif method in ['item/tool/requestUserInput', 'item/commandExecution/requestApproval',
-                                 'item/fileChange/requestApproval']:
+                                 'item/fileChange/requestApproval', 'item/permissions/requestApproval']:
                     status, note = 'Handler present', 'Explicit dispatch in CodexProviderAdapter.'
                 else:
                     status, note = 'No handler', 'Falls through to Unsupported server request (-32601).'
@@ -152,10 +154,11 @@ def build():
               '“Full” is bounded by this dated public corpus and the feature granularity below. It cannot prove coverage of undocumented/private flags, experiments, every OS/plan rollout, every third-party plugin, or every operation exposed by a changing connector catalog. Page mapping is a topic-level crosswalk, not proof that every sentence/subheading has a distinct feature row. Historical changelogs are not treated as proof that a feature is still available.', '',
               'Desktop-app and CLI differences are identified in the Surface column. Mobile, standalone web-only features, IDE extension UX, cloud-service administration, enterprise provisioning/compliance, API/SDK development, pricing promotions, model retunes, bug fixes, and documentation-only changes are excluded. Desktop entry points to hosted services remain listed. Hosted service execution is conditional, not a native Sele implementation.', '',
               'Feature audit method: static code inspection and schema export. No model inference, Sele launch, sign-in changes, or connector writes. The generated HTML report was separately rendered in an isolated Electron fixture on a private display; search, filters, reset, row counts, and narrow layout passed. This verifies the report UI, not feature execution. Existing application tests are not newly executed certification. Negative findings were checked against the provider adapter, shared API contract, app lifecycle, settings, composer, browser documentation, and workspace components. Links identify the implementation or relevant control surface; absence is a scoped code-search conclusion.', '',
+              'Integration update (2026-10-17): form/URL interactions, permission grants, dynamic host-tool dispatch, current-time callbacks, native verification dispatch, managed-account re-login, Linux native control, Chrome attachment, and native search were checked against current code and focused tests. See [interaction protocol and boundaries](../codex-interactions.md). Public-source discovery remains the dated snapshot described above.', '',
               '## Most consequential gaps', '',
-              '1. **Protocol completeness:** general MCP forms/auth challenges, permission-scope requests, client-executed tools, user verification/attestation, and external-token refresh. Unsupported server requests are explicitly rejected by Sele; installed tools can therefore fail despite appearing in a catalog.',
-              '2. **Daily workflows:** plan mode, native review mode, archive/delete/full-history search, plugin installation/OAuth, memory controls, and goal lifecycle controls.',
-              '3. **Multimodal work:** dictation/live voice, native appshots, office/PDF review and annotation, and browser uploads/downloads.',
+              '1. **Protocol completeness:** specialized authentication, new device enrollment, and some provider widget bridges remain incomplete. Attestation is disabled; external-token refresh is not part of Sele’s managed account login. Registered host tools, general forms, URL interactions, permission requests, and the clock callback are wired; private Desktop tool implementations remain separate.',
+              '2. **Daily workflows:** plan mode, native review mode, archive/delete, plugin installation/OAuth, memory controls, and goal lifecycle controls.',
+              '3. **Multimodal work:** dictation/live voice, native appshots, office/PDF review and annotation. Browser uploads/downloads are supported with documented runtime limits.',
               '4. **Background work:** scheduling/event triggers, OS notifications, worktree setup/handoff, remote pairing, and hosted Work coordination.', '',
               'P0 marks a transport/interaction blocker; P1 marks a common workflow gap; P2 is a general comparison item. Priorities are audit recommendations, not an implementation commitment.', '']
     for category in dict.fromkeys(r['category'] for r in rows):

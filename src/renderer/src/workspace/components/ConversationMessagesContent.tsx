@@ -1,32 +1,21 @@
-import { useMemo, type ReactElement } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, type ReactElement } from 'react'
 import { getProviderChatTurns } from '../../../../shared/chatTurns'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import { ArrowLeft, ChevronDown, CircleAlert, LoaderCircle } from 'lucide-react'
+import { ArrowLeft, ChevronDown, CircleAlert } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { ChatWorkingPlaceholder } from '../../components/ChatDetailItem'
 import { getConversationTailWorkingStep } from '../../chatConversationModel'
 import { ChatMediaGallery } from '../../components/ChatMediaGallery'
+import { DeferredChatTurn } from '../../components/DeferredChatTurn'
 
 type ConversationMessagesContentProps = WorkspaceController['conversationMessages']
 
-const ConversationMessagesState: React.FC<{
-  kind: 'loading' | 'error'
+const ConversationMessagesError: React.FC<{
   label: string
   title?: string
-}> = ({ kind, label, title }) => (
-  <div
-    className="chat-detail__messages-status"
-    role={kind === 'error' ? 'alert' : 'status'}
-    title={title}
-  >
-    {kind === 'loading' ? (
-      <LoaderCircle
-        className="app-loading-spinner chat-detail__messages-status-icon chat-detail__messages-status-icon--loading"
-        aria-hidden="true"
-      />
-    ) : (
-      <CircleAlert className="chat-detail__messages-status-icon" aria-hidden="true" />
-    )}
+}> = ({ label, title }) => (
+  <div className="chat-detail__messages-status" role="alert" title={title}>
+    <CircleAlert className="chat-detail__messages-status-icon" aria-hidden="true" />
     <span>{label}</span>
   </div>
 )
@@ -37,6 +26,7 @@ export function ConversationMessagesContent(
   const {
     activeSubagentChatView,
     chatHasActiveTurn,
+    chatAutoScrollEnabledRef,
     changesContainer,
     changesCwd,
     chatMediaStartIndex,
@@ -61,6 +51,7 @@ export function ConversationMessagesContent(
     selectedChatCommitMarkers,
     selectedChatKey,
     selectedChatSubagents,
+    scrollChatContentToBottom,
     sendState,
     showChatTurnDownButton,
     subagentChatConversationModel,
@@ -70,6 +61,10 @@ export function ConversationMessagesContent(
   } = props
 
   const mediaItems = activeSubagentChatView ? subagentVisibleChatItems : visibleChatItems
+  const handleTurnMount = useCallback(() => {
+    const element = contentRef.current
+    if (element && chatAutoScrollEnabledRef.current) scrollChatContentToBottom(element)
+  }, [contentRef, chatAutoScrollEnabledRef, scrollChatContentToBottom])
   const chatMediaTurns = useMemo(() => getProviderChatTurns(mediaItems), [mediaItems])
   const mediaOptions = useMemo(
     () => ({
@@ -79,6 +74,28 @@ export function ConversationMessagesContent(
     }),
     [changesContainer, changesCwd]
   )
+
+  const displayedTurns = activeSubagentChatView
+    ? subagentChatConversationModel.turns
+    : renderedChatTurns
+  const mountKey = `${selectedChatKey}:${activeSubagentChatView?.summary.id ?? ''}`
+  const windowSignature = displayedTurns.map((turn) => turn.id).join('\n')
+  const initialWindow = useRef<{ key: string; signature: string; changed: boolean } | null>(null)
+  const deferHistory =
+    !initialWindow.current ||
+    initialWindow.current.key !== mountKey ||
+    (!initialWindow.current.changed && initialWindow.current.signature === windowSignature)
+  useLayoutEffect(() => {
+    if (!displayedTurns.length) {
+      initialWindow.current = null
+    } else if (initialWindow.current?.key !== mountKey) {
+      initialWindow.current = { key: mountKey, signature: windowSignature, changed: false }
+    } else if (initialWindow.current.signature !== windowSignature) {
+      // Paging and new live turns must retain the existing immediate scroll-anchor
+      // behavior. Only the first loaded window is mounted progressively.
+      initialWindow.current.changed = true
+    }
+  }, [mountKey, windowSignature, displayedTurns.length])
 
   if (!selectedChat) return null
 
@@ -92,20 +109,30 @@ export function ConversationMessagesContent(
         true
       )
     : null
-  const displayedTurns = activeSubagentChatView
-    ? subagentChatConversationModel.turns
-    : renderedChatTurns
   const firstPendingTurnIndex = displayedTurns.findIndex((turn) =>
     turn.items.some((item) => item.type === 'pendingMessage')
   )
-  const renderedConversation = displayedTurns.map((turn, index) =>
-    activeSubagentChatView
-      ? renderSubagentChatTurn(
-          (activeSubagentChatView.detail?.itemsStartTurnIndex ?? 0) + index,
-          turn
-        )
-      : renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)
-  )
+  const renderedConversation = displayedTurns.map((turn, index) => (
+    <DeferredChatTurn
+      key={`${selectedChatKey}:${activeSubagentChatView?.summary.id ?? ''}:${turn.id}`}
+      priority={index}
+      onMount={!activeSubagentChatView && deferHistory ? handleTurnMount : undefined}
+      eager={
+        !deferHistory ||
+        Boolean(activeSubagentChatView) ||
+        index === displayedTurns.length - 1 ||
+        Boolean(chatTurnPageLoadDirection) ||
+        Boolean(activeSubagentChatView?.pageLoading)
+      }
+    >
+      {activeSubagentChatView
+        ? renderSubagentChatTurn(
+            (activeSubagentChatView.detail?.itemsStartTurnIndex ?? 0) + index,
+            turn
+          )
+        : renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)}
+    </DeferredChatTurn>
+  ))
   if (workingPlaceholderStep) {
     renderedConversation.splice(
       firstPendingTurnIndex < 0 ? renderedConversation.length : firstPendingTurnIndex,
@@ -157,6 +184,11 @@ export function ConversationMessagesContent(
         <div
           className="chat-detail__messages"
           id="chat-search-content"
+          aria-busy={
+            activeSubagentChatView
+              ? activeSubagentChatView.loadState === 'loading' || activeSubagentChatView.pageLoading
+              : chatLoadState === 'loading' || Boolean(chatTurnPageLoadDirection)
+          }
           key={
             activeSubagentChatView
               ? `${selectedChatKey}:subagent:${activeSubagentChatView.summary.id}`
@@ -217,11 +249,8 @@ export function ConversationMessagesContent(
             <div className="chat-detail__messages-footer" />
           </div>
         </div>
-        {!activeSubagentChatView && chatLoadState === 'loading' && (
-          <ConversationMessagesState kind="loading" label="Loading messages…" />
-        )}
         {!activeSubagentChatView && chatLoadState === 'error' && visibleChatItems.length === 0 && (
-          <ConversationMessagesState kind="error" label="Unable to load messages." />
+          <ConversationMessagesError label="Unable to load messages." />
         )}
         {!activeSubagentChatView &&
           !editingMessage &&
@@ -233,32 +262,20 @@ export function ConversationMessagesContent(
           selectedChatSubagents.length === 0 && (
             <p className="chat__status chat-detail__messages-status">No messages found.</p>
           )}
-        {activeSubagentChatView?.loadState === 'loading' && !activeSubagentChatView.detail && (
-          <ConversationMessagesState kind="loading" label="Loading subagent chat…" />
-        )}
         {activeSubagentChatView?.loadState === 'error' && (
-          <ConversationMessagesState
-            kind="error"
+          <ConversationMessagesError
             label="Unable to load this subagent chat."
             title={activeSubagentChatView.error ?? undefined}
           />
         )}
-        {activeSubagentChatView?.pageLoading && (
-          <ConversationMessagesState kind="loading" label="Loading subagent messages…" />
-        )}
         {activeSubagentChatView?.loadState === 'ready' && activeSubagentChatView.error && (
-          <ConversationMessagesState kind="error" label={activeSubagentChatView.error} />
+          <ConversationMessagesError label={activeSubagentChatView.error} />
         )}
         {activeSubagentChatView?.loadState === 'ready' && subagentVisibleChatItems.length === 0 && (
           <p className="chat__status chat-detail__messages-status">
             No messages found in this subagent chat.
           </p>
         )}
-        {!activeSubagentChatView &&
-          chatTurnPageLoadDirection &&
-          chatTurnPageLoadDirection !== 'latest' && (
-            <ConversationMessagesState kind="loading" label="Loading messages…" />
-          )}
         {showChatTurnDownButton && (
           <div className="chat-detail__down-button">
             <Button

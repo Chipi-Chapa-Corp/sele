@@ -34,6 +34,21 @@ export const clamp = (value: number, min: number, max: number): number =>
 export const getScrollBottomTop = (element: HTMLElement): number =>
   Math.max(0, element.scrollHeight - element.clientHeight)
 
+export const alignChatContentToBottom = (element: HTMLElement): void => {
+  const inner = element.querySelector<HTMLElement>('.chat-detail__messages-inner')
+  if (inner) {
+    if (inner.style.translate) inner.style.removeProperty('translate')
+    // Round turn heights, gaps and the viewport to physical pixels. A transform
+    // can keep DOM bounds steady while Chromium still paints text a pixel apart.
+    const pixel = `${1 / window.devicePixelRatio}px`
+    if (element.style.getPropertyValue('--chat-layout-pixel') !== pixel) {
+      element.style.setProperty('--chat-layout-pixel', pixel)
+    }
+  }
+  // Let the browser clamp to its true maximum, including at fractional zoom.
+  element.scrollTop = element.scrollHeight
+}
+
 export const isScrolledToBottom = (element: HTMLElement): boolean =>
   getScrollBottomTop(element) - element.scrollTop <= 1
 

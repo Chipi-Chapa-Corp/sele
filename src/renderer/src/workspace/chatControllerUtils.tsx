@@ -30,7 +30,11 @@ import { type ChatListGroupData } from '../components/ChatListGroup'
 
 import type { ChatPlanData, ChatPlanItem } from '../components/ChatPlan'
 
-import { sortChatsForSidebarSection, sortProjectGroupsForSidebar } from '../chatSidebarOrder'
+import {
+  sortChatsForSidebarSection,
+  sortDoneChats,
+  sortProjectGroupsForSidebar
+} from '../chatSidebarOrder'
 
 import { type AppGitCommitPromptSettings, type AppGitWorktreeSettings } from '../settings'
 
@@ -282,7 +286,7 @@ export const groupChatsForSidebar = (
             key: doneGroupKey,
             cwd: null,
             label: 'Done',
-            chats: sortChatsForGroup(doneChats),
+            chats: sortDoneChats(doneChats),
             kind: 'done' as const
           }
         ])
@@ -318,6 +322,7 @@ export const getChatFromDetail = (
   pinned: detail.pinned ?? existingChat?.pinned ?? false,
   sidebarOrder: detail.sidebarOrder ?? existingChat?.sidebarOrder ?? null,
   done: detail.done ?? existingChat?.done ?? false,
+  doneAt: detail.doneAt === undefined ? (existingChat?.doneAt ?? null) : detail.doneAt,
   purpose: detail.purpose ?? existingChat?.purpose ?? null,
   container: detail.container ?? existingChat?.container ?? null
 })
@@ -542,7 +547,8 @@ export const arePendingApprovalsEqual = (
     first?.command === second?.command &&
     first?.cwd === second?.cwd &&
     first?.reason === second?.reason &&
-    first?.startedAt === second?.startedAt)
+    first?.startedAt === second?.startedAt &&
+    JSON.stringify(first?.permissionDetails) === JSON.stringify(second?.permissionDetails))
 
 export const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.id === second.id &&
@@ -561,6 +567,7 @@ export const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolea
   first.pinned === second.pinned &&
   first.sidebarOrder === second.sidebarOrder &&
   first.done === second.done &&
+  first.doneAt === second.doneAt &&
   first.seenUpdatedAt === second.seenUpdatedAt &&
   first.purpose === second.purpose &&
   areContainerTargetsEqual(first.container, second.container)
@@ -585,6 +592,7 @@ export const getChatFromUpdateSummary = (
     existingChat.pinned !== summary.pinned ||
     existingChat.sidebarOrder !== summary.sidebarOrder ||
     existingChat.done !== summary.done ||
+    existingChat.doneAt !== summary.doneAt ||
     existingChat.seenUpdatedAt !== summary.seenUpdatedAt ||
     existingChat.purpose !== summary.purpose ||
     !areContainerTargetsEqual(existingChat.container, container)
@@ -607,6 +615,7 @@ export const getChatFromUpdateSummary = (
     pinned: summary.pinned,
     sidebarOrder: summary.sidebarOrder,
     done: summary.done,
+    doneAt: summary.doneAt ?? null,
     seenUpdatedAt:
       existingChat?.seenUpdatedAt == null
         ? summary.seenUpdatedAt

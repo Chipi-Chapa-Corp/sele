@@ -1,8 +1,11 @@
+import { registerMcpApps } from './mcpApps/registerMcpApps'
+import { getProviderMcpApp } from './providers/providerService'
 import { stopPtys } from './pty'
 import { registerPreferences } from './registerPreferences'
 import { registerAppUpdate } from './appUpdate'
 import './logging'
 import { startBrowserUseBridge } from './providers/codex/CodexBrowserBridge'
+import { registerDesktopIpc } from './desktop/registerDesktopIpc'
 import { startBrowserAutomationService } from './browser/BrowserAutomation'
 import { registerVisualizationProtocol } from './visualizationProtocol'
 import { app, BrowserWindow, dialog, nativeTheme, type WebContents } from 'electron'
@@ -337,12 +340,14 @@ const startApp = (): void => {
       await registerPreferences()
       startModelPricingRefresh()
       registerVisualizationProtocol()
+      registerMcpApps(getProviderMcpApp)
       nativeTheme.themeSource = 'system'
       nativeTheme.on('updated', () => updateAppColorScheme(getColorScheme()))
       electronApp.setAppUserModelId('com.sele')
       registerAppIpc()
       registerAppUpdate()
       registerBrowserIpc()
+      registerDesktopIpc()
       void startBrowserUseBridge(startBrowserAutomationService()).catch((error: unknown) =>
         console.error('Unable to start browser-use bridge:', error)
       )
@@ -387,13 +392,29 @@ app.on('before-quit', (event) => {
   void stopPtys()
     .then(stopModelPricingRefresh)
     .then(flushTokenUsage)
-    .then(disposeDatabase)
     .catch((error: unknown) => {
       console.error('Unable to finish shutdown.', error)
     })
     .finally(() => {
       quitReady = true
       app.quit()
+    })
+})
+
+// Keep preferences available through renderer beforeunload save barriers.
+// will-quit runs after the windows have closed; before-quit runs before them.
+let closingDatabase = false
+let databaseClosed = false
+app.on('will-quit', (event) => {
+  if (databaseClosed) return
+  event.preventDefault()
+  if (closingDatabase) return
+  closingDatabase = true
+  void disposeDatabase()
+    .catch((error: unknown) => console.error('Unable to close the database.', error))
+    .finally(() => {
+      databaseClosed = true
+      setImmediate(() => app.quit())
     })
 })
 

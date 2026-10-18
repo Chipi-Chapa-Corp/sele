@@ -1,0 +1,45 @@
+.chat-subagent-list {
+  /* A flex column, like the chat list: a grid's auto column would widen to the longest title. */
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The arrow sits outside the row, slightly indented; nested subagents step further in. */
+.chat-subagent-list__item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.15rem;
+  padding-left: calc(0.6rem + var(--chat-subagent-depth, 0) * 1.1rem);
+}
+
+.chat-subagent-list__arrow {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: none;
+  color: var(--quiet);
+}
+
+.chat-subagent-list__item > .chat-list-item {
+  min-width: 0;
+  flex: 1;
+}
+
+/* Subagent rows have a single hover action (cancel), not the chat row's three. */
+.chat-subagent-list .chat-list-item:hover:not(:has(.ui-input)) .chat-list-item__header,
+.chat-subagent-list
+  .chat-list-item:has(:focus-visible):not(:has(.ui-input))
+  .chat-list-item__header {
+  padding-right: 0;
+}
+
+.chat-subagent-list .chat-subagent-list__row--cancelable:hover .chat-list-item__header,
+.chat-subagent-list
+  .chat-subagent-list__row--cancelable:has(:focus-visible)
+  .chat-list-item__header {
+  padding-right: 2rem;
+}

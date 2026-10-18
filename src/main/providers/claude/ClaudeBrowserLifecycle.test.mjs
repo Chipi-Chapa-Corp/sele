@@ -73,6 +73,7 @@ function setup({ remote = false, readOnly = false, failQuery = false } = {}) {
   instance.pinState = instance.unpinState = instance.trimIdleStates = () => {}
   instance.getQueryRuntime = async () => ({})
   instance.getBaseQueryOptions = () => ({ permissionMode: 'default' })
+  instance.createElicitationHandler = () => async () => ({ action: 'cancel' })
   instance.createPermissionHandler = () => permissionHandler
   instance.consumeStateQuery = () => events.push('consume')
   instance.rejectPendingRequests = () => events.push('rejectPending')

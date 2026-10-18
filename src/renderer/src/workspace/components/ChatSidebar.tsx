@@ -134,7 +134,8 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           onDragOver={handleProjectStackDragOver}
           onDrop={handleProjectDrop}
         >
-          <AnimatePresence initial={false} mode="popLayout">
+          {/* groupOrder drives layout changes without broadcasting each workspace render to all rows. */}
+          <AnimatePresence initial={false} mode="popLayout" presenceAffectsLayout={false}>
             {groups.map((group) => (
               <MotionListItem key={group.key} order={groupOrder}>
                 {renderChatGroup(group, `chat-group-${encodeURIComponent(group.key)}`)}

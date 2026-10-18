@@ -27,6 +27,15 @@ export const openPreferences = (db: Database.Database) => {
             }[]
           ).map(({ key, value }) => [key, value])
         )
+  const set = (key: string, value: string | null): void => {
+    validateKey(key)
+    if (read('') === null) throw new Error('Preferences have not been migrated.')
+    if (value === null) remove.run(key)
+    else {
+      if (typeof value !== 'string') throw new Error('Invalid preference value.')
+      put.run(key, value)
+    }
+  }
   return {
     load,
     migrate: db.transaction((values: PreferenceValues): PreferenceValues => {
@@ -46,14 +55,11 @@ export const openPreferences = (db: Database.Database) => {
       validateKey(key)
       return read(key)
     },
-    set: (key: string, value: string | null): void => {
-      validateKey(key)
-      if (read('') === null) throw new Error('Preferences have not been migrated.')
-      if (value === null) remove.run(key)
-      else {
-        if (typeof value !== 'string') throw new Error('Invalid preference value.')
-        put.run(key, value)
-      }
-    }
+    set,
+    setMany: db.transaction((values: Record<string, string | null>): void => {
+      if (!values || typeof values !== 'object' || Array.isArray(values))
+        throw new Error('Invalid preferences.')
+      for (const [key, value] of Object.entries(values)) set(key, value)
+    })
   }
 }

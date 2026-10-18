@@ -46,13 +46,23 @@ const getPromptArgument = (value: unknown): string | null => {
  * `TaskAgentInfo.prompt` is replaced by every follow-up, so the original instruction comes from the
  * parent's spawning tool call.
  */
-const getOriginalInstruction = (events: SessionEvent[], toolCallId: string | undefined) => {
+const getSpawnArguments = (events: SessionEvent[], toolCallId: string | undefined) => {
   if (!toolCallId) return null
   const start = events.find(
     (event): event is Extract<SessionEvent, { type: 'tool.execution_start' }> =>
       event.type === 'tool.execution_start' && event.data.toolCallId === toolCallId
   )
-  return getPromptArgument(start?.data.arguments)
+  return start?.data.arguments
+}
+
+const getOriginalInstruction = (events: SessionEvent[], toolCallId: string | undefined) =>
+  getPromptArgument(getSpawnArguments(events, toolCallId))
+
+const getSpawnDescription = (events: SessionEvent[], toolCallId: string | undefined) => {
+  const args = getSpawnArguments(events, toolCallId)
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null
+  const description = (args as Record<string, unknown>).description
+  return typeof description === 'string' && description.trim() ? description.trim() : null
 }
 
 /**
@@ -147,13 +157,17 @@ export const createCopilotSubagentSummaries = (
           : started
             ? 'running'
             : 'unknown'
+    const toolCallId = task?.toolCallId ?? started?.data.toolCallId
+    // The delegation's short description names the subagent; the agent type is generic.
     const title =
-      task?.agentType.trim() ||
+      task?.description.trim() ||
+      getSpawnDescription(events, toolCallId) ||
       started?.data.agentDisplayName.trim() ||
+      task?.agentType.trim() ||
       started?.data.agentName.trim() ||
       `Subagent ${agentId}`
     const description =
-      getOriginalInstruction(events, task?.toolCallId ?? started?.data.toolCallId) ||
+      getOriginalInstruction(events, toolCallId) ||
       task?.description.trim() ||
       task?.prompt.trim() ||
       started?.data.agentDescription.trim() ||
@@ -161,8 +175,8 @@ export const createCopilotSubagentSummaries = (
 
     return {
       id: agentId,
-      parentId: null,
-      title: truncate(title, 80),
+      parentId: started?.data.parentId?.trim() || null,
+      title: truncate(title, 60),
       description,
       status,
       createdAt,

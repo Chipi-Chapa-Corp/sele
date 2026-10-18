@@ -199,7 +199,6 @@
 }
 
 .chat-detail__message--user {
-  --user-message-background: color-mix(in srgb, var(--user-message-surface) 92%, var(--accent));
   --user-message-border-colors: var(--secondary-border-colors);
   --user-message-color: var(--lead);
   --user-message-shadow: var(--secondary-shadow);
@@ -219,7 +218,6 @@
 }
 
 :root:not([data-color-scheme='dark']) .chat-detail__message--user {
-  --user-message-background: var(--primary-surface);
   --user-message-border-colors: var(--primary-border-colors);
   --user-message-color: var(--accent-ink);
   --user-message-shadow: var(--primary-shadow);

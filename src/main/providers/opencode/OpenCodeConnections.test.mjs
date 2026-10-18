@@ -68,6 +68,23 @@ test('catalog includes saved, disabled, unknown and environment connections with
   assert.ok(!JSON.stringify(list).includes('secret-value'))
 })
 
+test('connections carry the last known status of their provider credential', async () => {
+  const { client, readCredentials } = fixture()
+  const failed = { state: 'failed', message: 'Key expired', checkedAt: 1 }
+  const list = await listOpenCodeConnections(client, readCredentials, (id) =>
+    id === 'openai' ? failed : undefined
+  )
+  assert.deepEqual(
+    list.find((entry) => entry.id === 'openai').connections.map((connection) => connection.status),
+    [failed, failed]
+  )
+  assert.ok(
+    list
+      .filter((entry) => entry.id !== 'openai')
+      .every((entry) => entry.connections.every((connection) => !('status' in connection)))
+  )
+})
+
 test('keys and removal use the same credential store as OpenCode /connect', async () => {
   const { client, calls } = fixture()
   assert.equal(

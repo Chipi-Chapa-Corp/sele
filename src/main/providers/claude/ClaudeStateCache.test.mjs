@@ -129,6 +129,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
     rejectPendingRequests: () => {},
     getQueryRuntime: async () => ({ container: null }),
     getBaseQueryOptions: () => ({}),
+    createElicitationHandler: () => async () => ({ action: 'cancel' }),
     createPermissionHandler: () => () => ({})
   })
   return {

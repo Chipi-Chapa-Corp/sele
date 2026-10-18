@@ -12,11 +12,7 @@ import type {
 } from '../../../shared/provider'
 import { providerSubagentTurnPageSize } from '../../../shared/provider'
 import { providerApi } from '../providerApi'
-import {
-  ChatCommitMarkerItem,
-  ChatSubagentMarkerItem,
-  type ChatCommitMarker
-} from '../components/AppStatusStates'
+import { ChatCommitMarkerItem, type ChatCommitMarker } from '../components/AppStatusStates'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
 import type { SubagentControllerDependencies } from './controllerDependencies'
 import { beginSubagentPageNavigation } from '../subagentUi'
@@ -375,19 +371,6 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
       />
     )
   }
-  const renderChatSubagentMarker = (subagent: ProviderSubagent): React.ReactElement => (
-    <ChatSubagentMarkerItem
-      canceling={cancelingSubagentIds.has(subagent.id)}
-      key={subagent.id}
-      onCancel={
-        subagent.status === 'pending' || subagent.status === 'running'
-          ? () => handleCancelSubagent(subagent)
-          : undefined
-      }
-      subagent={subagent}
-      onOpen={() => handleOpenSubagentChat(subagent)}
-    />
-  )
 
   return {
     handleNavigateSubagentTurns,
@@ -396,6 +379,7 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
     handleLoadSubagentWorkingToolPage,
     handleReturnFromSubagentChat,
     renderChatCommitMarker,
-    renderChatSubagentMarker
+    handleOpenSubagentChat,
+    handleCancelSubagent
   }
 }

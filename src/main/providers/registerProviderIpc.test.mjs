@@ -376,6 +376,30 @@ test('question answer IPC forwards selected turn settings and validates permissi
   assert.equal(calls[1][4], undefined)
 })
 
+test('elicitation IPC preserves structured values and rejects invalid actions and content', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.resolveUserInput = async (...args) => {
+    calls.push(args)
+    return { id: 'chat', revision: 1, items: [] }
+  }
+  const handler = h.harness.handlers.get(channels.resolveUserInput)
+  const content = { enabled: false, count: 3, sections: ['summary'], nested: { value: 'x' } }
+  await handler({}, 'codex', 'chat', 'form', { kind: 'elicitation', action: 'accept', content })
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0][3])), {
+    kind: 'elicitation',
+    action: 'accept',
+    content
+  })
+  for (const response of [
+    { kind: 'elicitation', action: 'unknown' },
+    { kind: 'elicitation', action: 'accept', content: [] },
+    { kind: 'elicitation', action: 'accept', content: { text: 'x'.repeat(100_001) } }
+  ])
+    await assert.rejects(handler({}, 'codex', 'chat', 'form', response), /Invalid elicitation/)
+  assert.equal(calls.length, 1)
+})
+
 test('sidebar search IPC forwards native queries and opaque cursors and rejects invalid input', async () => {
   const h = setup()
   const requests = []

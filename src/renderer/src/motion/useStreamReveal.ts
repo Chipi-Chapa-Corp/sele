@@ -6,7 +6,31 @@ const maxRevealSpans = 48
 
 type RevealRange = { start: number; end: number; time: number }
 
-// Markdown replaces its innerHTML on each commit. Remember arrival times in text
+// Wrapping and unwrapping move text nodes, and moving a node resets any selection
+// endpoint inside it. The nodes and offsets survive the move, so restore them.
+const preservingSelection = (root: HTMLElement, move: () => void): void => {
+  const selection = document.getSelection()
+  const anchor = selection?.anchorNode
+  const focus = selection?.focusNode
+  if (!selection || !anchor || !focus || !(root.contains(anchor) || root.contains(focus))) {
+    move()
+    return
+  }
+  const { anchorOffset, focusOffset } = selection
+  move()
+  if (
+    anchor.isConnected &&
+    focus.isConnected &&
+    (selection.anchorNode !== anchor ||
+      selection.anchorOffset !== anchorOffset ||
+      selection.focusNode !== focus ||
+      selection.focusOffset !== focusOffset)
+  ) {
+    selection.setBaseAndExtent(anchor, anchorOffset, focus, focusOffset)
+  }
+}
+
+// Markdown patches changed text on each commit. Remember arrival times in text
 // coordinates so a new chunk doesn't cut the previous chunk's fade short.
 export function useStreamReveal(
   ref: RefObject<HTMLDivElement | null>,
@@ -82,27 +106,34 @@ export function useStreamReveal(
     const animations: Animation[] = []
     const spans: HTMLSpanElement[] = []
     // Split from right to left within each text node to keep offsets stable.
-    for (const addition of additions.reverse()) {
-      const { node, start, end, time } = addition
+    // splitText carries selections along; only the later moves need restoring.
+    const tails = additions.reverse().map((addition) => {
+      const { node, start, end } = addition
       if (end < node.length) node.splitText(end)
-      const tail = start ? node.splitText(start) : node
-      const span = document.createElement('span')
-      span.dataset.streamReveal = ''
-      tail.replaceWith(span)
-      span.append(tail)
-      spans.push(span)
-      const animation = span.animate([{ opacity: 0.05 }, { opacity: 1 }], {
-        duration: revealDuration,
-        easing: 'ease-out'
-      })
-      animation.currentTime = now - time
-      animations.push(animation)
-    }
+      return { tail: start ? node.splitText(start) : node, time: addition.time }
+    })
+    preservingSelection(root, () => {
+      for (const { tail, time } of tails) {
+        const span = document.createElement('span')
+        span.dataset.streamReveal = ''
+        tail.replaceWith(span)
+        span.append(tail)
+        spans.push(span)
+        const animation = span.animate([{ opacity: 0.05 }, { opacity: 1 }], {
+          duration: revealDuration,
+          easing: 'ease-out'
+        })
+        animation.currentTime = now - time
+        animations.push(animation)
+      }
+    })
     const cleanup = (): void => {
       animations.forEach((animation) => animation.cancel())
-      spans.forEach((span) => {
-        if (span.parentNode) span.replaceWith(...span.childNodes)
-      })
+      preservingSelection(root, () =>
+        spans.forEach((span) => {
+          if (span.parentNode) span.replaceWith(...span.childNodes)
+        })
+      )
     }
     const remaining = revealDuration - (now - ranges.current.at(-1)!.time)
     const timer = window.setTimeout(cleanup, remaining + 20)

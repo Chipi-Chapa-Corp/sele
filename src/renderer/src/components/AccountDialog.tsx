@@ -251,7 +251,9 @@ export const AccountDialog = ({
               )}
             </div>
           ) : reauthenticate ? (
-            <p>Your Claude session expired. Sign in again to continue this conversation.</p>
+            <p>
+              Your {providerLabel} session expired. Sign in again to continue this conversation.
+            </p>
           ) : (
             <Input
               id="account-dialog-name"

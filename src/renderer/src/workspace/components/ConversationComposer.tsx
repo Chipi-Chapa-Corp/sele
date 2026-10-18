@@ -1,11 +1,13 @@
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { getComposerDraftScopeKey } from '../../composerDraft'
-import { BellOff, Check, Download, FolderPlus, PackagePlus, X } from 'lucide-react'
+import { BellOff, Download, FolderPlus, PackagePlus, X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { Dropdown } from '../../components/Dropdown'
 import { MessageBox } from '../../components/MessageBox'
 import { ProviderIcon } from '../../components/ProviderIcon'
+import { ApprovalRequestBox } from '../../components/ApprovalRequestBox'
+import { ElicitationRequestBox } from '../../components/ElicitationRequestBox'
 import { UserInputRequestBox } from '../../components/UserInputRequestBox'
 import { appChatManualDropdownValue } from '../../settings'
 import { getContainerTargetKey } from '../../containerSelection'
@@ -29,7 +31,6 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     approvalDecisionInFlight,
     approvalError,
     approvalModes,
-    approvalTypeLabels,
     changesContainer,
     changesCwd,
     changesProjectCwd,
@@ -47,7 +48,6 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     effectiveReasoningEffort,
     effectiveSandboxMode,
     effectiveServiceTier,
-    getApprovalSummary,
     getProviderUpdateSummary,
     handleActionsChange,
     handleApprovalModeChange,
@@ -140,11 +140,16 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           <section
             className="chat-approval chat-request-error"
             role="alert"
-            aria-label="Claude sign-in required"
+            aria-label="Account sign-in required"
           >
             <div className="chat-approval__main">
               <span className="chat-approval__summary">
-                Your Claude session expired. Sign in again to send messages.
+                Your{' '}
+                {selectedChat?.providerId === 'codex' ||
+                (!selectedChat && newSessionProvider === 'codex')
+                  ? 'Codex'
+                  : 'Claude'}{' '}
+                session expired. Sign in again to send messages.
               </span>
             </div>
             <div className="chat-approval__actions">
@@ -297,55 +302,36 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           </section>
         )}
         {selectedChat && !activeSubagentChatView && pendingApproval && (
-          <section className="chat-approval" aria-label="Approval request">
-            <div className="chat-approval__main">
-              <span className="chat-approval__label">
-                {approvalTypeLabels[pendingApproval.type]}
-              </span>
-              <span className="chat-approval__summary" title={getApprovalSummary(pendingApproval)}>
-                {getApprovalSummary(pendingApproval)}
-              </span>
-              {pendingApproval.cwd && pendingApproval.command && (
-                <span className="chat-approval__cwd" title={pendingApproval.cwd}>
-                  {pendingApproval.cwd}
-                </span>
-              )}
-              {approvalError && (
-                <span className="chat-approval__error" role="status">
-                  {approvalError}
-                </span>
-              )}
-            </div>
-            <div className="chat-approval__actions">
-              <Button
-                disabled={providerUpdateInProgress || Boolean(approvalDecisionInFlight)}
-                callback={() => void handleResolveApproval('deny')}
-                icon={<X aria-hidden="true" />}
-                label={<span>Deny</span>}
-                theme="secondary"
-              />
-              <Button
-                disabled={providerUpdateInProgress || Boolean(approvalDecisionInFlight)}
-                callback={() => void handleResolveApproval('allow')}
-                icon={<Check aria-hidden="true" />}
-                label={<span>Allow</span>}
-                theme="primary"
-              />
-            </div>
-          </section>
-        )}
-        {selectedChat && !activeSubagentChatView && pendingUserInput && (
-          <UserInputRequestBox
-            disabled={providerUpdateInProgress || userInputResolving}
-            error={userInputError}
-            key={pendingUserInput.id}
-            request={pendingUserInput}
-            onCancel={() => resolveSelectedUserInput({ kind: 'cancel' })}
-            onSubmit={(answer, wasFreeform) =>
-              resolveSelectedUserInput({ kind: 'answer', answer, wasFreeform })
-            }
+          <ApprovalRequestBox
+            approval={pendingApproval}
+            disabled={providerUpdateInProgress || Boolean(approvalDecisionInFlight)}
+            error={approvalError}
+            onResolve={handleResolveApproval}
           />
         )}
+        {selectedChat &&
+          !activeSubagentChatView &&
+          pendingUserInput &&
+          (pendingUserInput.elicitation ? (
+            <ElicitationRequestBox
+              key={pendingUserInput.id}
+              request={pendingUserInput}
+              disabled={providerUpdateInProgress || userInputResolving}
+              error={userInputError}
+              onRespond={resolveSelectedUserInput}
+            />
+          ) : (
+            <UserInputRequestBox
+              disabled={providerUpdateInProgress || userInputResolving}
+              error={userInputError}
+              key={pendingUserInput.id}
+              request={pendingUserInput}
+              onCancel={() => resolveSelectedUserInput({ kind: 'cancel' })}
+              onSubmit={(answer, wasFreeform) =>
+                resolveSelectedUserInput({ kind: 'answer', answer, wasFreeform })
+              }
+            />
+          ))}
       </div>
       {!selectedChat && newChatOpen && (
         <div className="chat-panel__new-session">

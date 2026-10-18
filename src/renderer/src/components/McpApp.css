@@ -1,0 +1,39 @@
+.mcp-app {
+  min-width: 0;
+  margin-block: 0.5rem;
+}
+.mcp-app iframe {
+  display: block;
+  width: 100%;
+  border: 0.0625rem solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--bg);
+}
+.mcp-app__header,
+.mcp-app__actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-block: 0.4rem;
+}
+.mcp-app__header {
+  justify-content: space-between;
+}
+.mcp-app__confirmation {
+  padding: 0.8rem;
+  border: 0.0625rem solid var(--control-border);
+  background: var(--control-bg);
+  border-radius: var(--control-radius);
+}
+.mcp-app pre {
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--code-font-family);
+}
+.mcp-app [role="alert"] {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}

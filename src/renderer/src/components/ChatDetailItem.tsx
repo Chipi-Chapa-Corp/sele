@@ -1,3 +1,5 @@
+import { McpApp, McpAppScope } from './McpApp'
+import type { McpAppScope as McpAppScopeValue } from '../../../shared/mcpApps'
 import { getVideoMimeType } from '../../../shared/video'
 import { useMarkdownImages } from '../useMarkdownImages'
 import { WorkingElapsedTime } from './WorkingElapsedTime'
@@ -97,11 +99,10 @@ import type {
   ProviderWorkingStep,
   ProviderWorkingTool
 } from '../../../shared/provider'
-import { appApi } from '../appApi'
 import { getChatMessagePresentation, type ChatMessageResource } from '../chatMessageResources'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
 import { renderMarkdownCodeBlock } from '../codeHighlighting'
-import { createLocalImageUrl } from '../localImage'
+import { useLocalMedia } from '../useLocalMedia'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from '../markdownFileLink'
 import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { getBrowserFaviconUrl } from '../../../shared/browser'
@@ -131,6 +132,7 @@ const workingItemPageSize = 50
 const workingToolPageSize = 50
 
 type ChatDetailItemProps = {
+  mcpAppScope?: McpAppScopeValue
   authenticationRequired?: boolean
   motionChatKey?: string | null
   availableRateLimitResets?: number
@@ -211,6 +213,8 @@ const areChatDetailItemPropsEqual = (
   first: ChatDetailItemProps,
   second: ChatDetailItemProps
 ): boolean =>
+  first.mcpAppScope?.providerId === second.mcpAppScope?.providerId &&
+  first.mcpAppScope?.chatId === second.mcpAppScope?.chatId &&
   first.motionChatKey === second.motionChatKey &&
   first.authenticationRequired === second.authenticationRequired &&
   first.canEditOwnMessages === second.canEditOwnMessages &&
@@ -783,40 +787,10 @@ const GeneratedImageThumbnail: React.FC<{
   mediaId: string
 }> = ({ path, initialDataUrl, name = 'Generated image', mediaId }) => {
   const { open: openGallery } = useChatMedia()
-  const [loadedImage, setLoadedImage] = useState<{ path: string; url: string } | null>(null)
-  const [failedPath, setFailedPath] = useState<string | null>(null)
+  const loaded = useLocalMedia(path ? { path } : null)
   const [open, setOpen] = useState(false)
-  const imageUrl = path
-    ? loadedImage?.path === path
-      ? loadedImage.url
-      : null
-    : (initialDataUrl ?? null)
-  const failed = path ? failedPath === path : !initialDataUrl
-
-  useEffect(() => {
-    if (!path) return undefined
-
-    let current = true
-    let objectUrl: string | null = null
-
-    void appApi
-      .getLocalImage({ path })
-      .then((image) => {
-        if (!current) return
-        objectUrl = createLocalImageUrl(image)
-        setLoadedImage({ path, url: objectUrl })
-      })
-      .catch((error) => {
-        console.error('[caught:ChatDetailItem:GeneratedImageThumbnail]', error)
-
-        if (current) setFailedPath(path)
-      })
-
-    return () => {
-      current = false
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [path])
+  const imageUrl = path ? loaded?.url : (initialDataUrl ?? null)
+  const failed = path ? Boolean(loaded?.error) : !initialDataUrl
 
   if (failed) {
     return (
@@ -1235,6 +1209,24 @@ const ToolItem: React.FC<{
       ? `${baseLabel} · showing ${item.tools.length} of ${item.toolCount}`
       : baseLabel
   const label = getToolDisplayLabel(rawLabel, activity, active)
+
+  const apps = tools.filter((tool) => tool.status === 'finished' && tool.mcpApp?.resourceUri)
+  if (apps.length)
+    return (
+      <div>
+        <Activity
+          label={rawLabel}
+          tools={tools}
+          active={active}
+          expanded={expanded}
+          onDisclosureToggle={onDisclosureToggle}
+          projectCwd={projectCwd}
+        />
+        {apps.map((tool) => (
+          <McpApp key={tool.mcpApp!.callId} callId={tool.mcpApp!.callId} />
+        ))}
+      </div>
+    )
 
   // These status rows need no payload disclosure, including unloaded history rows.
   if (
@@ -2733,7 +2725,9 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
 export const ChatDetailItem = memo(
   (props: ChatDetailItemProps) => (
     <ChatMediaScope id={props.item.id}>
-      <ChatDetailItemComponent {...props} />
+      <McpAppScope value={props.mcpAppScope}>
+        <ChatDetailItemComponent {...props} />
+      </McpAppScope>
     </ChatMediaScope>
   ),
   areChatDetailItemPropsEqual

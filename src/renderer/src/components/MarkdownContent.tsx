@@ -1,5 +1,6 @@
 import { createElement, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import type { AppContainerTarget } from '../../../shared/app'
+import { usePatchedHtml } from '../markdownDomPatch'
 import { decodeVisualizationReference } from '../visualizationReference'
 import { Visualization } from './Visualization'
 
@@ -13,8 +14,11 @@ function MarkdownElement({
   children?: ReactNode
 }): React.JSX.Element {
   const ref = useRef<HTMLElement>(null)
-  const html = element.innerHTML
-  const markup = useMemo(() => ({ __html: html }), [html])
+  const tag = element.localName
+  const voidElement =
+    /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/.test(tag)
+  const ownsChildren = children === undefined && !voidElement
+  usePatchedHtml(ref, ownsChildren ? element.innerHTML : null)
   useLayoutEffect(() => {
     const node = ref.current
     if (!node) return
@@ -26,17 +30,7 @@ function MarkdownElement({
     }
   }, [element])
 
-  const tag = element.localName
-  const voidElement =
-    /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/.test(tag)
-  return createElement(
-    tag,
-    {
-      ref,
-      ...(children === undefined && !voidElement ? { dangerouslySetInnerHTML: markup } : {})
-    },
-    children
-  )
+  return createElement(tag, { ref }, children)
 }
 
 export function MarkdownContent({
@@ -73,18 +67,26 @@ export function MarkdownContent({
           </div>
         )
       }
+      const hasVisualization = Boolean(node.querySelector('[data-visualization]'))
       return (
-        <MarkdownElement key={`${node.localName}:${index}`} element={node}>
-          {node.querySelector('[data-visualization]') ? renderNodes(node) : undefined}
+        // React must not reconcile children into an element whose DOM it does not own.
+        <MarkdownElement
+          key={`${node.localName}:${index}:${hasVisualization ? 'react' : 'html'}`}
+          element={node}
+        >
+          {hasVisualization ? renderNodes(node) : undefined}
         </MarkdownElement>
       )
     })
   }
 
-  const markup = useMemo(() => ({ __html: html }), [html])
+  const ref = useRef<HTMLDivElement>(null)
+  usePatchedHtml(ref, content ? null : html)
   return content ? (
-    <div className="chat-detail__message-markdown">{renderNodes(content)}</div>
+    <div key="react" className="chat-detail__message-markdown">
+      {renderNodes(content)}
+    </div>
   ) : (
-    <div className="chat-detail__message-markdown" dangerouslySetInnerHTML={markup} />
+    <div key="html" className="chat-detail__message-markdown" ref={ref} />
   )
 }

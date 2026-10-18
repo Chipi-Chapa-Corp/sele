@@ -1,9 +1,11 @@
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
+import { OpenCodeCredentialHealth, checkOpenCodeCredential } from './OpenCodeCredentialHealth'
 import type {
   ProviderConnectInput,
   ProviderConnection,
   ProviderConnectionAttempt,
-  ProviderConnectionAttemptStatus
+  ProviderConnectionAttemptStatus,
+  ProviderConnectionStatus
 } from '../../../shared/providerConnections'
 import {
   listOpenCodeConnections,
@@ -417,46 +419,120 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private oneShotSessionIds = new Set<string>()
   private canceledOneShotGenerationIds = new Set<string>()
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private credentialHealth = new OpenCodeCredentialHealth()
+  private connectionAttemptProviders = new Map<string, string>()
+  private connectionChecks = new Map<string, Promise<ProviderConnectionStatus>>()
 
-  getConnections = async (options: ProviderSourceOptions = {}): Promise<ProviderConnection[]> =>
-    listOpenCodeConnections((await this.getClientEntry(options.container)).client, () =>
-      readOpenCodeCredentialTypes(options.container)
+  /** `forceRefresh` (the Refresh button) tests every listed connection with a real request. */
+  getConnections = async (options: ProviderSourceOptions = {}): Promise<ProviderConnection[]> => {
+    const targetKey = getContainerTargetKey(options.container)
+    const list = (): Promise<ProviderConnection[]> =>
+      listOpenCodeConnections(
+        client,
+        () => readOpenCodeCredentialTypes(options.container),
+        (providerId) => this.credentialHealth.get(targetKey, providerId)
+      )
+    const client = (await this.getClientEntry(options.container)).client
+    const providers = await list()
+    if (!options.forceRefresh) return providers
+    await Promise.all(
+      providers
+        .filter((provider) => provider.connections.length > 0)
+        .map((provider) => this.checkConnection(provider.id, options))
     )
+    return list()
+  }
 
+  /** Saves the credential, then tests it so the result reflects what the provider says. */
   connectProvider = async (
     input: ProviderConnectInput,
     options: ProviderSourceOptions = {}
-  ): Promise<ProviderConnectionAttempt | null> =>
-    connectOpenCode((await this.getClientEntry(options.container)).client, input)
+  ): Promise<ProviderConnectionAttempt | null> => {
+    const result = await connectOpenCode(
+      (await this.getClientEntry(options.container)).client,
+      input
+    )
+    if (result) this.connectionAttemptProviders.set(result.attemptId, input.integrationId)
+    else await this.checkConnection(input.integrationId, options)
+    return result
+  }
 
   getConnectionAttempt = async (
     attemptId: string,
     options: ProviderSourceOptions = {}
-  ): Promise<ProviderConnectionAttemptStatus> =>
-    getOpenCodeConnectionAttempt((await this.getClientEntry(options.container)).client, attemptId)
+  ): Promise<ProviderConnectionAttemptStatus> => {
+    const status = await getOpenCodeConnectionAttempt(
+      (await this.getClientEntry(options.container)).client,
+      attemptId
+    )
+    if (status.status !== 'pending') await this.finishConnectionAttempt(attemptId, status, options)
+    return status
+  }
 
   completeConnection = async (
     attemptId: string,
     code: string,
     options: ProviderSourceOptions = {}
-  ): Promise<void> =>
-    completeOpenCodeConnection(
+  ): Promise<void> => {
+    await completeOpenCodeConnection(
       (await this.getClientEntry(options.container)).client,
       attemptId,
       code
     )
+    await this.finishConnectionAttempt(attemptId, { status: 'complete' }, options)
+  }
+
+  private finishConnectionAttempt = async (
+    attemptId: string,
+    status: ProviderConnectionAttemptStatus,
+    options: ProviderSourceOptions
+  ): Promise<void> => {
+    const providerId = this.connectionAttemptProviders.get(attemptId)
+    this.connectionAttemptProviders.delete(attemptId)
+    if (providerId && status.status === 'complete') await this.checkConnection(providerId, options)
+  }
+
+  private checkConnection = (
+    providerId: string,
+    options: ProviderSourceOptions
+  ): Promise<ProviderConnectionStatus> => {
+    const targetKey = getContainerTargetKey(options.container)
+    const key = `${targetKey}\0${providerId}`
+    const running = this.connectionChecks.get(key)
+    if (running) return running
+    const check = (async () => {
+      const entry = await this.getClientEntry(options.container)
+      const status = await checkOpenCodeCredential({
+        client: entry.client,
+        directory: homedir(),
+        providerId,
+        onSession: (sessionId) => this.oneShotSessionIds.add(sessionId)
+      })
+      this.credentialHealth.set(targetKey, providerId, status)
+      return status
+    })().finally(() => this.connectionChecks.delete(key))
+    this.connectionChecks.set(key, check)
+    return check
+  }
 
   cancelConnection = async (
     attemptId: string,
     options: ProviderSourceOptions = {}
-  ): Promise<void> =>
-    cancelOpenCodeConnection((await this.getClientEntry(options.container)).client, attemptId)
+  ): Promise<void> => {
+    this.connectionAttemptProviders.delete(attemptId)
+    await cancelOpenCodeConnection((await this.getClientEntry(options.container)).client, attemptId)
+  }
 
   deleteConnection = async (
     credentialId: string,
     options: ProviderSourceOptions = {}
-  ): Promise<void> =>
-    deleteOpenCodeConnection((await this.getClientEntry(options.container)).client, credentialId)
+  ): Promise<void> => {
+    await deleteOpenCodeConnection(
+      (await this.getClientEntry(options.container)).client,
+      credentialId
+    )
+    this.credentialHealth.clear(getContainerTargetKey(options.container), credentialId)
+  }
 
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
     const client = (await this.getClientEntry(options.container)).client
@@ -1214,6 +1290,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     requestId: string,
     response: ProviderUserInputResponse
   ): Promise<ProviderChatDetail> => {
+    if (response.kind === 'elicitation')
+      throw new Error('MCP interaction responses are not supported by this provider.')
     const state = await this.ensureState(chatId)
     const pending = state.pendingQuestions.find((request) => request.id === requestId)
     if (!pending) throw new Error('There is no matching OpenCode question.')
@@ -1439,6 +1517,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (!event) return
     const { type, properties, sessionID } = event
     const sessionInfo = isRecord(properties.info) ? (properties.info as unknown as Session) : null
+    // Title and one-shot sessions count too: they use the same stored credentials.
+    if (type === 'message.updated')
+      this.credentialHealth.record(getContainerTargetKey(entry.container), properties.info)
     if (sessionInfo && isOneShotSession(sessionInfo)) {
       this.completionCoordinator.cancel(sessionID)
       this.states.delete(sessionID)
@@ -1489,7 +1570,18 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       type === 'session.status'
     ) {
       const status = isRecord(properties.status) ? properties.status : null
-      if (type !== 'session.status' || status?.type === 'busy' || status?.type === 'retry') {
+      // OpenCode publishes a failed or stopped reply's final message.updated after session.error
+      // and session.idle. That record ends the turn; treating it as activity flashed the
+      // finished turn back to working until the next idle.
+      const info = type === 'message.updated' && isRecord(properties.info) ? properties.info : null
+      const finishedReply =
+        info?.role === 'assistant' &&
+        (Boolean(info.error) || (isRecord(info.time) && typeof info.time.completed === 'number'))
+      if (
+        type === 'session.status'
+          ? status?.type === 'busy' || status?.type === 'retry'
+          : !finishedReply
+      ) {
         this.completionCoordinator.cancel(sessionID)
         state.active = true
         state.stopped = false

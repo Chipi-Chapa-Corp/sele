@@ -48,14 +48,19 @@ if (!process.versions.electron) {
       </style></head><body><div id="root"></div><script>
         window.changed = 0; window.calls = []; window.failLoad = false; window.status = 'pending'; window.nextMode = 'auto';
         window.catalog = [
-          {id:'openai',name:'OpenAI',methods:[{type:'key',label:'API key'}],connections:[{type:'credential',id:'saved-one',label:'Personal key'},{type:'env',name:'OPENAI_API_KEY'}]},
+          {id:'openai',name:'OpenAI',methods:[{type:'key',label:'API key'}],connections:[{type:'credential',id:'saved-one',label:'Personal key',status:{state:'failed',message:'This API key has expired.',checkedAt:1}},{type:'env',name:'OPENAI_API_KEY',status:{state:'verified',checkedAt:1}}]},
           {id:'copilot',name:'GitHub Copilot',methods:[{type:'oauth',id:'0',label:'Browser sign-in',prompts:[{type:'select',key:'account',message:'Account type',options:[{label:'Personal',value:'personal'},{label:'Enterprise',value:'enterprise'}]},{type:'text',key:'domain',message:'Enterprise domain',when:{key:'account',op:'eq',value:'enterprise'}}]},{type:'key',label:'API key'}],connections:[]}
         ];
         window.providerApi = {
           getConnections: async (provider, options) => { calls.push(['list',options]); if(failLoad) throw new Error('Fixture load failed'); return structuredClone(catalog) },
           connectProvider: async (provider,input,options) => {
             calls.push(['connect',input,options]);
-            if(input.method === 'key') { catalog.find(p=>p.id===input.integrationId).connections.push({type:'credential',id:'saved-two',label:'New key'}); return null }
+            if(input.method === 'key') {
+              const entry = catalog.find(p=>p.id===input.integrationId);
+              const status = input.key === 'bad-key' ? {state:'failed',message:'invalid x-api-key',checkedAt:2} : {state:'verified',checkedAt:2};
+              entry.connections = [{type:'credential',id:'saved-one',label:'New key',status}, ...entry.connections.filter(c=>c.type!=='credential')];
+              return null
+            }
             if(window.deferStart) return new Promise(resolve => window.resolveStart = resolve)
             return {attemptId:'oauth-one',url:'https://example.test/auth',instructions:'Enter device code TEST-CODE',mode:nextMode}
           },
@@ -122,9 +127,18 @@ if (!process.versions.electron) {
           ),
           1
         )
+        // The fixture's results are old, so opening the panel re-tests the connections once.
+        assert.equal(await run('calls.filter(c=>c[0]==="list"&&c[1].forceRefresh).length'), 1)
         assert.match(
           await run('document.getElementById("root").textContent'),
           /Environment variable · OPENAI_API_KEY/
+        )
+        // Only the rejected saved key is flagged, in the error color; the working env variable is not.
+        assert.deepEqual(
+          await run(
+            '[...document.querySelectorAll(".settings-dialog__connection-rejected")].map(e=>[e.textContent,e.getAttribute("role"),getComputedStyle(e).color===getComputedStyle(e.previousElementSibling).color])'
+          ),
+          [['Rejected by the provider: This API key has expired.', 'alert', false]]
         )
         await pick('Model provider', 'OpenAI')
         assert.equal(
@@ -137,10 +151,27 @@ if (!process.versions.electron) {
           await run('document.querySelector(\'input[type="password"]\').autocomplete'),
           'off'
         )
+        await run('window.setInput(\'input[type="password"]\',"bad-key")')
+        await tick()
+        await click('Connect')
+        assert.equal(
+          await run('document.querySelector("[role=alert]").textContent'),
+          'Saved, but OpenAI rejected it: invalid x-api-key'
+        )
+        assert.match(
+          await run('document.getElementById("root").textContent'),
+          /Rejected by the provider: invalid x-api-key/
+        )
         await run('window.setInput(\'input[type="password"]\',"fixture-key")')
         await tick()
         await click('Connect')
-        assert.equal(await run('window.changed'), 1)
+        assert.equal(await run('window.changed'), 2)
+        assert.equal(await run('!!document.querySelector("[role=alert]")'), false)
+        assert.equal(
+          await run('document.querySelector("[role=status]").textContent'),
+          'Connected and verified.'
+        )
+        assert.match(await run('document.getElementById("root").textContent'), /Working\./)
         assert.equal(await run('document.querySelector(\'input[type="password"]\').value'), '')
         assert.match(await run('document.getElementById("root").textContent'), /New key/)
         await run('document.querySelector(\'[aria-label="Remove OpenAI connection"]\').click()')
@@ -171,24 +202,28 @@ if (!process.versions.electron) {
         await tick()
         await click('Complete connection')
         assert.equal(await run('calls.find(c=>c[0]==="complete")[2]'), 'fixture-code')
-        assert.match(
-          await run('document.getElementById("root").textContent'),
-          /Connected successfully/
-        )
+        assert.match(await run('document.getElementById("root").textContent'), /Connected\./)
         await run('window.status="pending";window.nextMode="auto"')
         await click('Connect')
         await run('window.status="complete"')
         await run('new Promise(resolve=>setTimeout(resolve,1300))')
-        assert.match(
-          await run('document.getElementById("root").textContent'),
-          /Connected successfully/
-        )
+        assert.match(await run('document.getElementById("root").textContent'), /Connected\./)
         await run('window.status="pending"')
         await click('Connect')
+        await run(
+          'catalog.forEach(p=>p.connections.forEach(c=>{c.status={state:"verified",checkedAt:Date.now()}}));window.checksBefore=calls.filter(c=>c[0]==="list"&&c[1].forceRefresh).length'
+        )
         await run('window.render("opencode", {kind:"container",tool:"toolbox",name:"fixture"})')
         await tick()
         assert.equal(await run('calls.filter(c=>c[0]==="cancel").length'), 2)
         await click('Connections')
+        // Recent results are shown as they are; opening the panel does not spend another check.
+        assert.equal(
+          await run(
+            'calls.filter(c=>c[0]==="list"&&c[1].forceRefresh).length - window.checksBefore'
+          ),
+          0
+        )
         assert.deepEqual(await run('calls.filter(c=>c[0]==="list").at(-1)[1].container'), {
           kind: 'container',
           tool: 'toolbox',
@@ -203,6 +238,8 @@ if (!process.versions.electron) {
         await run('window.failLoad=false')
         await click('Refresh')
         assert.equal(await run('!!document.querySelector("[role=alert]")'), false)
+        // Refresh asks main to test every saved connection, not just reread the list.
+        assert.equal(await run('calls.filter(c=>c[0]==="list").at(-1)[1].forceRefresh'), true)
         if (process.env.SELE_CONNECTIONS_SCREENSHOT)
           await fs.writeFile(
             process.env.SELE_CONNECTIONS_SCREENSHOT,

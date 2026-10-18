@@ -83,7 +83,6 @@ export type ChatInteractionControllerDependencies = {
   projectIconsByGroup: Record<string, AppProjectIcon | null>
   activeChatGroups: ChatListGroupData[]
   chatGroupingPreference: ChatGroupingPreference
-  doneProjectFilterLoadState: 'loading' | 'ready' | 'error'
   doneProjectFilterValue: string
   projectOptions: DropdownOption<string>[]
   projectDropInsertionIndex: number | null
@@ -240,8 +239,6 @@ export type ChatListControllerDependencies = {
   ) => void
   chatOrderMutationsRef: React.RefObject<Map<string, number>>
   setChats: React.Dispatch<React.SetStateAction<ProviderChat[]>>
-  doneProjectFilterActive: boolean
-  setDoneProjectFilterChats: React.Dispatch<React.SetStateAction<ProviderChat[]>>
   projectCollapseFrameRef: React.RefObject<number | null>
   expandedProjectGroupsBeforeDragRef: React.RefObject<Set<string> | null>
   draggedProjectGroupKeyRef: React.RefObject<string | null>

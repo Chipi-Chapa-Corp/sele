@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Copy, Download, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Copy, Download, FolderOpen, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { AppLocalImageOptions } from '../../../shared/app'
 import { appApi } from '../appApi'
@@ -42,6 +42,7 @@ export const ImageLightbox = ({
 }: ImageLightboxProps): React.ReactElement => {
   const [copyState, setCopyState] = useState<CopyState>('idle')
   const [saveState, setSaveState] = useState<SaveState>('idle')
+  const [revealError, setRevealError] = useState<string | null>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef(true)
@@ -151,6 +152,27 @@ export const ImageLightbox = ({
     }
   }
 
+  const container = localImageOptions?.container
+  const canReveal = Boolean(path) && !(container?.kind === 'container' && container.tool === 'ssh')
+
+  const handleReveal = async (): Promise<void> => {
+    if (!path) return
+
+    setRevealError(null)
+    try {
+      await appApi.showFileInFolder({ ...localImageOptions, path })
+    } catch (error) {
+      console.error('[caught:ImageLightbox:handleReveal]', error)
+      if (activeRef.current) {
+        setRevealError(
+          (error instanceof Error &&
+            error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')) ||
+            `Unable to show this ${mediaType} in the file manager`
+        )
+      }
+    }
+  }
+
   return createPortal(
     <div
       className="image-lightbox"
@@ -173,8 +195,12 @@ export const ImageLightbox = ({
           <PopupWindow>
             <div className="image-lightbox__frame">
               {loading || error ? (
-                <div className="image-lightbox__status" role={error ? 'alert' : 'status'}>
-                  {error ?? `Loading ${name}…`}
+                <div
+                  className="image-lightbox__status"
+                  role={error ? 'alert' : 'status'}
+                  aria-label={error ? undefined : `Loading ${name}`}
+                >
+                  {error}
                 </div>
               ) : mediaType === 'video' ? (
                 <video
@@ -207,6 +233,16 @@ export const ImageLightbox = ({
                         copyState === 'error' ? `Unable to copy ${mediaType}` : `Copy ${mediaType}`
                       }
                     />
+                    {canReveal && (
+                      <Button
+                        aria-label={`Show ${name} in file manager`}
+                        callback={handleReveal}
+                        icon={<FolderOpen aria-hidden="true" />}
+                        size="small"
+                        theme="secondary"
+                        title={revealError ?? 'Show in file manager'}
+                      />
+                    )}
                     {path && (
                       <Button
                         disabled={saveState === 'saving'}

@@ -532,11 +532,12 @@ export type ProviderChatCwdMetadata = {
   worktreeBaseBranchName: string | null
 }
 
-export type ProviderApprovalDecision = 'allow' | 'deny'
+export type ProviderApprovalDecision = 'allow' | 'allowSession' | 'deny'
 
 export type ProviderPendingApproval = {
   id: string
-  type: 'command' | 'fileChange' | 'browser'
+  type: 'command' | 'fileChange' | 'browser' | 'permissions'
+  permissionDetails?: string[]
   command: string | null
   cwd: string | null
   reason: string | null
@@ -556,9 +557,25 @@ export type ProviderPendingUserInput = {
   isBlocking?: boolean
   isSecret?: boolean
   startedAt: number
+  elicitation?:
+    | { mode: 'form'; serverName: string; schema: Record<string, unknown> }
+    | { mode: 'url'; serverName: string; url: string }
+    | {
+        mode: 'verification'
+        serverName: string
+        title: string
+        availability: 'checking' | 'available' | 'unavailable'
+        reason?: string
+      }
+    | { mode: 'unsupported'; serverName: string; reason: string }
 }
 
 export type ProviderUserInputResponse =
+  | {
+      kind: 'elicitation'
+      action: 'accept' | 'decline'
+      content?: Record<string, unknown>
+    }
   | {
       kind: 'answer'
       answer: string
@@ -573,6 +590,8 @@ export type ProviderChatMetadata = {
   pinned: boolean
   sidebarOrder: number | null
   done: boolean
+  /** Milliseconds since epoch when marked done; absent for older chats. */
+  doneAt?: number | null
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
   container: AppContainerTarget | null
@@ -601,6 +620,8 @@ export type ProviderChat = {
   pinned: boolean
   sidebarOrder: number | null
   done: boolean
+  /** Milliseconds since epoch when marked done; absent for older chats. */
+  doneAt?: number | null
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
   container: AppContainerTarget | null
@@ -748,6 +769,7 @@ export type ProviderWorkingTool = {
   finishedBackgroundSessionId: string | null
   rawInput: unknown
   rawOutput: unknown
+  mcpApp?: { callId: string; serverName: string; resourceUri?: string }
   images: ProviderToolImage[]
   imageCount?: number
   imagesStartIndex?: number
@@ -899,6 +921,8 @@ export type ProviderChatDetail = {
   pinned: boolean
   sidebarOrder: number | null
   done: boolean
+  /** Milliseconds since epoch when marked done; absent for older chats. */
+  doneAt?: number | null
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
   container: AppContainerTarget | null

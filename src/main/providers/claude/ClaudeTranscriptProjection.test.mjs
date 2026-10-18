@@ -199,7 +199,7 @@ test('Claude partial-to-committed transitions preserve API block ids and earlier
   assert.equal(JSON.stringify(published), saved)
 })
 
-test('Claude background agents keep each turn reply visible and report into their own turn', () => {
+test('Claude background agents stay out of the parent transcript and keep each turn reply visible', () => {
   const sub = (message) => ({ ...message, parent_tool_use_id: 'agent' })
   const notification = {
     type: 'user',
@@ -209,7 +209,14 @@ test('Claude background agents keep each turn reply visible and report into thei
   }
   const messages = [
     user('u'),
-    assistant('launch', [{ type: 'tool_use', id: 'agent', name: 'Agent', input: {} }]),
+    assistant('launch', [
+      {
+        type: 'tool_use',
+        id: 'agent',
+        name: 'Agent',
+        input: { description: 'Explore the repo', prompt: 'Read every file and report back.' }
+      }
+    ]),
     result('agent'),
     assistant('started', [{ type: 'text', text: 'Started the agent.' }]),
     sub(assistant('sub-1', [{ type: 'text', text: 'Agent looking' }])),
@@ -235,8 +242,8 @@ test('Claude background agents keep each turn reply visible and report into thei
     replies.map((item) => item.content),
     ['Started the agent.', 'The agent is done.', 'Second follow-up.']
   )
-  // Agent output stays in the turn that launched it, above that turn's reply, and its tool
-  // finishes there. The follow-up turns only hold their replies.
+  // The subagent's own records render only in its chat. The parent keeps a compact row for the
+  // delegation, and the follow-up turns only hold their replies.
   assert.deepEqual(
     items.map((item) => (item.type === 'message' ? `${item.role}:${item.content}` : item.type)),
     [
@@ -248,6 +255,28 @@ test('Claude background agents keep each turn reply visible and report into thei
     ]
   )
   const working = JSON.stringify(items[1])
-  assert.match(working, /Agent looking/)
-  assert.match(working, /"status":"finished"/)
+  assert.doesNotMatch(working, /Agent looking|sub-tool|Read every file/)
+  const tools = items[1].items.flatMap((item) =>
+    item.type === 'toolGroup' ? item.tools : item.type === 'tool' ? [item] : []
+  )
+  assert.deepEqual(
+    tools.map(({ compact, icon, label, status, stdout, rawInput }) => ({
+      compact,
+      icon,
+      label,
+      status,
+      stdout,
+      rawInput
+    })),
+    [
+      {
+        compact: true,
+        icon: 'subagent',
+        label: 'Explore the repo',
+        status: 'finished',
+        stdout: null,
+        rawInput: null
+      }
+    ]
+  )
 })

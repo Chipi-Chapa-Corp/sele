@@ -34,7 +34,13 @@ export const App: React.FC = () => {
             quoteAction={<ConversationQuoteAction {...workspace.conversationQuote} />}
             emptyState={<ConversationEmptyState {...workspace.conversationEmptyState} />}
             plan={<ConversationPlan {...workspace.conversationPlan} />}
-            composer={<ConversationComposer {...workspace.conversationComposer} />}
+            composer={
+              // A subagent chat only takes input when its provider can message it directly.
+              workspace.conversationComposer.activeSubagentChatView &&
+              !workspace.conversationComposer.activeSubagentChatView.summary.canMessage ? null : (
+                <ConversationComposer {...workspace.conversationComposer} />
+              )
+            }
           />
         }
         changesSidebar={

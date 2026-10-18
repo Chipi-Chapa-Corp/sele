@@ -43,6 +43,7 @@ type ChatListGroupProps = {
   headerAction?: ReactNode
   projectIcon?: ReactNode
   projectNamesByCwd?: ReadonlyMap<string, string>
+  projectIconsByCwd?: ReadonlyMap<string, ReactNode>
   onLoadMoreChats?: (group: ChatListGroupData) => void
   onShowLessChats?: (group: ChatListGroupData) => void
   onMarkChatDone: (chat: ProviderChat, done?: boolean) => void
@@ -59,6 +60,8 @@ type ChatListGroupProps = {
   onToggleChatPinned: (chat: ProviderChat) => void
   onUnpinPinnedChats: (group: ChatListGroupData) => void
   resolvingApprovalId?: string | null
+  selectedChatChildren?: ReactNode
+  selectedChatChildOpen?: boolean
 }
 
 export const ChatListGroup: React.FC<ChatListGroupProps> = ({
@@ -79,6 +82,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   headerAction = null,
   projectIcon = null,
   projectNamesByCwd,
+  projectIconsByCwd,
   onLoadMoreChats,
   onShowLessChats,
   onMarkChatDone,
@@ -94,7 +98,9 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   onToggle,
   onToggleChatPinned,
   onUnpinPinnedChats,
-  resolvingApprovalId = null
+  resolvingApprovalId = null,
+  selectedChatChildren = null,
+  selectedChatChildOpen = false
 }) => {
   const groupLabel =
     group.kind === 'cwd'
@@ -233,6 +239,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
                   canMarkUndone={group.kind === 'done'}
                   reorderable={canReorderChats}
                   projectNamesByCwd={projectNamesByCwd}
+                  projectIconsByCwd={projectIconsByCwd}
                   onMarkDone={onMarkChatDone}
                   onRename={onRenameChat}
                   onResolveApproval={onResolveApproval}
@@ -245,6 +252,8 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
                   onSelect={onSelectChat}
                   onTogglePinned={onToggleChatPinned}
                   resolvingApprovalId={resolvingApprovalId}
+                  selectedChatChildren={selectedChatChildren}
+                  selectedChatChildOpen={selectedChatChildOpen}
                 />
               )}
               {showChatPaginationActions && (

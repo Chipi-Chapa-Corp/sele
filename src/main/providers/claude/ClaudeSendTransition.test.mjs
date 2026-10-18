@@ -379,3 +379,66 @@ test('a finished background task without a follow-up turn closes after the grace
   await new Promise((resolve) => setTimeout(resolve, 5))
   assert.deepEqual(closed, ['session'])
 })
+
+test('a message sent while a finished turn settles is sent instead of racing the close', async () => {
+  const { instance, state } = setup()
+  let releaseUsage
+  const control = {
+    getContextUsage: () =>
+      new Promise((resolve) => {
+        releaseUsage = () => resolve({ totalTokens: 10, maxTokens: 100 })
+      })
+  }
+  Object.assign(state, {
+    id: 'session',
+    container: null,
+    query: control,
+    active: true,
+    stopped: false,
+    failed: false,
+    resultSettling: false,
+    partialMessages: new Map(),
+    backgroundTaskIds: new Set(),
+    taskNotificationPending: false,
+    waitingForSessionIdle: false,
+    queuedMessages: []
+  })
+  instance.queueUpdate = () => {}
+  instance.refreshSessionMetadata = async () => {}
+  instance.createQueuedMessage = (content) => ({ id: content })
+  const prepared = []
+  instance.applyTurnOptions = async () => prepared.push(state.query)
+  const sent = []
+  instance.sendQueuedMessageNow = (_state, message) => {
+    sent.push(message.id)
+    state.active = true
+  }
+
+  const handled = instance.handleQueryEvent(state, control, {
+    type: 'result',
+    subtype: 'success',
+    terminal_reason: 'completed',
+    duration_ms: 1000,
+    usage: {
+      input_tokens: 1,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: 1
+    }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(state.active, false)
+  assert.equal(state.resultSettling, true)
+
+  // The queued message arrives before the result handler decides whether to close the query.
+  await instance.sendMessageRespectingQueue(state, 'follow-up')
+  assert.deepEqual(prepared, [], 'no control request may start on a query about to close')
+  assert.deepEqual(sent, [])
+
+  releaseUsage()
+  assert.equal(await handled, false, 'the query must stay open for the follow-up')
+  assert.equal(state.resultSettling, false)
+  assert.deepEqual(prepared, [control])
+  assert.deepEqual(sent, ['follow-up'])
+  assert.deepEqual(state.queuedMessages, [])
+})

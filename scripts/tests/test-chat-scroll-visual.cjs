@@ -88,6 +88,8 @@ if (!process.versions.electron) {
   })
 } else {
   const { app, BrowserWindow } = require('electron')
+  app.setPath('userData', path.join(dir, 'profile'))
+  app.disableHardwareAcceleration()
   app.whenReady().then(async () => {
     try {
       const win = new BrowserWindow({
@@ -104,6 +106,16 @@ if (!process.versions.electron) {
       const run = (s) => win.webContents.executeJavaScript(s)
       const wait = async () =>
         run('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+      const waitForHistory = () =>
+        run(`new Promise((resolve, reject) => {
+          const deadline = performance.now() + 5000;
+          function check() {
+            if (window.openingSamples?.at(-1)?.turns === 10) return resolve();
+            if (performance.now() > deadline) return reject(new Error('History did not finish mounting'));
+            requestAnimationFrame(check);
+          }
+          check();
+        })`)
       win.webContents.debugger.attach('1.3')
       const wheel = async (deltaY) => {
         await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
@@ -138,10 +150,31 @@ if (!process.versions.electron) {
           )
         )
       }
+      await run('document.fonts.ready')
       for (const provider of ['claude', 'codex']) {
-        await run(`openProvider('${provider}')`)
-        await wait()
-        results[provider] = { pages: [] }
+        results[provider] = { openings: [], pages: [] }
+        for (const [zoom, fontSize] of [
+          [1, 16],
+          [1.25, 15],
+          [1, 16]
+        ]) {
+          win.webContents.setZoomFactor(zoom)
+          await run(
+            `document.documentElement.style.setProperty('--chat-font-size', '${fontSize}px')`
+          )
+          await run(`openProvider('${provider}')`)
+          await waitForHistory()
+          const samples = await run('window.openingSamples')
+          results[provider].openings.push({ zoom, fontSize, samples })
+          assert.ok(samples.length >= 5, 'measure progressive history mounting')
+          const bottoms = samples.map((sample) => sample.bottom)
+          assert.ok(
+            Math.max(...bottoms) - Math.min(...bottoms) <= 0.05,
+            provider +
+              ' keeps latest text stationary throughout opening: ' +
+              JSON.stringify(samples)
+          )
+        }
         for (const direction of ['older', 'older', 'older', 'newer', 'newer']) {
           let iterations = 0
           while (!(await run('!!window.pendingPage')) && iterations++ < 65)
@@ -172,7 +205,7 @@ if (!process.versions.electron) {
         }
         // Reverse scrolling while a response is in flight, then release that response.
         await run(`openProvider('${provider}')`)
-        await wait()
+        await waitForHistory()
         while (!(await run('!!window.pendingPage'))) await wheel(-400)
         await wheel(800)
         const before = await capture(provider + '-delayed-before')
@@ -183,7 +216,7 @@ if (!process.versions.electron) {
         results[provider].delayed = { before, after }
         // Real Markdown blocks and the production ResizeObserver.
         await run(`openProvider('${provider}')`)
-        await wait()
+        await waitForHistory()
         await run('prepareResize()')
         let offset = await run('targetOffset()')
         for (let attempt = 0; Math.abs(offset) > 1 && attempt < 10; attempt++) {
@@ -209,7 +242,7 @@ if (!process.versions.electron) {
       }
       fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify(results, null, 2))
       console.log(
-        'Visual scrolling checks passed: 10 page transitions with every-frame position checks, delayed response reversals, and Markdown resizing. Screenshots: ' +
+        'Visual scrolling checks passed: stationary text during six progressive openings (including 125% zoom), 10 page transitions with every-frame position checks, delayed response reversals, and Markdown resizing. Screenshots: ' +
           dir
       )
       app.exit(0)

@@ -3,15 +3,19 @@ import type { ProviderPendingUserInput, ProviderUserInputResponse } from '../../
 import type { RpcRequest } from './CodexAppServerClient'
 import type { CodexThreadItem, CodexTurn } from './CodexItemRenderers'
 import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
+import { validateElicitation } from './CodexElicitationValidation.ts'
 
 type Question = ProviderPendingUserInput & { questionId: string }
 type ServerQuestions = {
   requestId: number
-  turnId: string
+  turnId: string | null
   container: AppContainerTarget | null
   questions: Question[]
   index: number
   answers: Record<string, { answers: string[] }>
+  elicitation?: ProviderPendingUserInput['elicitation']
+  verification?: { challenge: string; title: string; description: string }
+  verificationAbort?: AbortController
 }
 type AsyncQuestions = {
   turnId: string
@@ -34,7 +38,108 @@ export class CodexUserQuestions {
   private server = new Map<string, ServerQuestions[]>()
   private asynchronous = new Map<string, AsyncQuestions>()
   private expectedReplies = new Map<string, Set<string>>()
-  private resolving = new Set<string>()
+  private resolving = new Map<string, symbol>()
+
+  addElicitation(request: RpcRequest, container: AppContainerTarget | null): string {
+    const params = record(request.params)
+    const threadId = requiredString(params?.threadId)
+    const serverName = requiredString(params?.serverName)
+    const meta = record(params?._meta)
+    let elicitation: NonNullable<ProviderPendingUserInput['elicitation']>
+    if (
+      meta?.codex_strict_auto_review === true ||
+      (meta?.codex_approval_kind === 'browser_auth' &&
+        params?.mode !== 'url' &&
+        !Object.keys(record(record(params?.requestedSchema)?.properties) ?? {}).length)
+    ) {
+      elicitation = {
+        mode: 'unsupported',
+        serverName,
+        reason:
+          meta.codex_strict_auto_review === true
+            ? 'This request requires strict automated review and cannot be approved as an ordinary form.'
+            : 'This request requires a specialized browser authentication flow that Sele does not support.'
+      }
+    } else if (params?.mode === 'openai/userVerification') {
+      const challenge = requiredString(params.challenge)
+      const title = requiredString(params.title)
+      if (
+        !/^[A-Za-z0-9_-]+$/.test(challenge) ||
+        Buffer.from(challenge, 'base64url').length > 4096 ||
+        Buffer.byteLength(title) > 256 ||
+        Buffer.byteLength(requiredString(params.description)) > 4096
+      )
+        throw new Error('Invalid device verification request')
+      elicitation = { mode: 'verification', serverName, title, availability: 'checking' }
+    } else if (['form', 'openai/form', 'openaiForm'].includes(String(params?.mode))) {
+      const schema = record(params?.requestedSchema)
+      if (!schema) throw new Error('Invalid MCP form schema')
+      elicitation = { mode: 'form', serverName, schema }
+    } else if (params?.mode === 'url') {
+      const url = new URL(requiredString(params.url))
+      if (!['https:', 'http:'].includes(url.protocol))
+        throw new Error('Invalid MCP interaction URL')
+      requiredString(params.elicitationId)
+      elicitation = { mode: 'url', serverName, url: url.href }
+    } else {
+      elicitation = {
+        mode: 'unsupported',
+        serverName,
+        reason:
+          params?.mode === 'openai/userVerification'
+            ? 'This service requires device verification. Sele cannot produce a device verification proof.'
+            : 'This service requested an interaction that Sele does not support.'
+      }
+    }
+    const pending: Question = {
+      id: `elicitation:${threadId}:${request.id}`,
+      questionId: String(request.id),
+      question: requiredString(params?.message ?? params?.description),
+      choices: [],
+      allowFreeform: false,
+      isBlocking: true,
+      startedAt: Date.now(),
+      elicitation
+    }
+    const requests = this.server.get(threadId) ?? []
+    if (!requests.some((value) => value.requestId === request.id))
+      requests.push({
+        requestId: request.id,
+        turnId: typeof params?.turnId === 'string' ? params.turnId : null,
+        container,
+        questions: [pending],
+        index: 0,
+        answers: {},
+        elicitation,
+        ...(elicitation.mode === 'verification'
+          ? {
+              verification: {
+                challenge: String(params?.challenge),
+                title: elicitation.title,
+                description: pending.question
+              }
+            }
+          : {})
+      })
+    this.server.set(threadId, requests)
+    return threadId
+  }
+
+  setVerificationAvailability(
+    threadId: string,
+    requestId: number,
+    status: { available: boolean; reason?: string }
+  ): boolean {
+    const request = this.server.get(threadId)?.find((value) => value.requestId === requestId)
+    if (request?.elicitation?.mode !== 'verification') return false
+    request.elicitation = {
+      ...request.elicitation,
+      availability: status.available ? 'available' : 'unavailable',
+      reason: status.reason
+    }
+    request.questions[0] = { ...request.questions[0], elicitation: request.elicitation }
+    return true
+  }
 
   addServerRequest(request: RpcRequest, container: AppContainerTarget | null): string {
     const params = record(request.params)
@@ -160,16 +265,67 @@ export class CodexUserQuestions {
     id: string,
     response: ProviderUserInputResponse,
     handlers: {
-      server: (request: ServerQuestions, result: { answers: ServerQuestions['answers'] }) => void
+      server: (
+        request: ServerQuestions,
+        result:
+          | { answers: ServerQuestions['answers'] }
+          | {
+              action: 'accept' | 'decline' | 'cancel'
+              content: Record<string, unknown> | null
+            }
+      ) => void
       asynchronous: (question: ProviderPendingUserInput, answer: string) => Promise<void>
+      verification?: (
+        request: ServerQuestions,
+        signal: AbortSignal
+      ) => Promise<Record<string, unknown>>
     }
   ): Promise<void> {
     const pending = this.getPending(threadId)
     if (!pending || pending.id !== id) throw new Error('This question is no longer pending.')
-    if (this.resolving.has(threadId)) throw new Error('An answer is already being submitted.')
-    this.resolving.add(threadId)
+    if (this.resolving.has(threadId)) {
+      const active = this.server.get(threadId)?.[0]
+      if (response.kind === 'cancel' && active?.verificationAbort) {
+        active.verificationAbort.abort()
+        handlers.server(active, { action: 'cancel', content: null })
+        this.removeServerRequest(threadId, active.requestId)
+        return
+      }
+      throw new Error('An answer is already being submitted.')
+    }
+    const resolution = Symbol(threadId)
+    this.resolving.set(threadId, resolution)
     try {
       const request = this.server.get(threadId)?.[0]
+      if (request?.elicitation) {
+        if (response.kind !== 'elicitation' && response.kind !== 'cancel')
+          throw new Error('Invalid MCP interaction response')
+        const action = response.kind === 'cancel' ? 'cancel' : response.action
+        let content: Record<string, unknown> | null = null
+        if (action === 'accept') {
+          if (request.elicitation.mode === 'unsupported')
+            throw new Error('This interaction cannot be accepted in Sele.')
+          if (request.elicitation.mode === 'form') {
+            content = response.kind === 'elicitation' ? record(response.content) : null
+            if (!content) throw new Error('Missing form answers')
+            const error = validateElicitation(request.elicitation.schema, content)
+            if (error) throw new Error(error)
+          }
+          if (request.elicitation.mode === 'verification') {
+            if (request.elicitation.availability !== 'available' || !handlers.verification)
+              throw new Error(request.elicitation.reason ?? 'Device verification is unavailable.')
+            request.verificationAbort = new AbortController()
+            content = await handlers.verification(request, request.verificationAbort.signal)
+            if (!this.server.get(threadId)?.includes(request))
+              throw new Error('This verification request has been canceled or resolved.')
+          }
+        }
+        handlers.server(request, { action, content })
+        this.removeServerRequest(threadId, request.requestId)
+        return
+      }
+      if (response.kind === 'elicitation')
+        throw new Error('This request is not an MCP interaction.')
       if (request) {
         const question = request.questions[request.index]
         const answers = { ...request.answers }
@@ -198,11 +354,15 @@ export class CodexUserQuestions {
         this.asynchronous.get(threadId)?.pending.delete(id)
       }
     } finally {
-      this.resolving.delete(threadId)
+      if (this.resolving.get(threadId) === resolution) this.resolving.delete(threadId)
     }
   }
 
   removeServerRequest(threadId: string, requestId: number): void {
+    this.server
+      .get(threadId)
+      ?.find((value) => value.requestId === requestId)
+      ?.verificationAbort?.abort()
     const next = this.server.get(threadId)?.filter((request) => request.requestId !== requestId)
     if (next?.length) this.server.set(threadId, next)
     else this.server.delete(threadId)
@@ -234,6 +394,8 @@ export class CodexUserQuestions {
   removeContainer(matchesContainer: (container: AppContainerTarget | null) => boolean): string[] {
     const affected: string[] = []
     for (const [threadId, requests] of this.server) {
+      for (const request of requests)
+        if (matchesContainer(request.container)) request.verificationAbort?.abort()
       const next = requests.filter((request) => !matchesContainer(request.container))
       if (next.length === requests.length) continue
       if (next.length) this.server.set(threadId, next)
@@ -244,7 +406,10 @@ export class CodexUserQuestions {
   }
 
   cancel(threadId: string, resolve: (request: ServerQuestions) => void): void {
-    for (const request of this.server.get(threadId) ?? []) resolve(request)
+    for (const request of this.server.get(threadId) ?? []) {
+      request.verificationAbort?.abort()
+      resolve(request)
+    }
     this.server.delete(threadId)
     const state = this.asynchronous.get(threadId)
     state?.pending.clear()
@@ -252,6 +417,8 @@ export class CodexUserQuestions {
   }
 
   clear(): void {
+    for (const requests of this.server.values())
+      for (const request of requests) request.verificationAbort?.abort()
     this.server.clear()
     this.asynchronous.clear()
     this.expectedReplies.clear()

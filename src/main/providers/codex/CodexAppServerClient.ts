@@ -5,10 +5,13 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
 import { getCodexAccountViewCommand } from './CodexAccountView'
+import { CodexDynamicTools } from './CodexDynamicTools'
+import { registerCodexDesktopTools } from './CodexDesktopTools'
 
 type RpcError = {
   code: number
   message: string
+  data?: unknown
 }
 
 type RpcResponse = {
@@ -32,6 +35,7 @@ type PendingRequest = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
+  cleanup?: () => void
 }
 
 const requestTimeoutMs = 30_000
@@ -88,7 +92,10 @@ const getAppServerCommand = (
 }
 
 export class CodexAppServerClient {
-  constructor(private readonly container: AppContainerTarget | null = null) {}
+  constructor(private readonly container: AppContainerTarget | null = null) {
+    if (!container) this.desktopTools = registerCodexDesktopTools(this.dynamicTools)
+  }
+  private desktopTools: ReturnType<typeof registerCodexDesktopTools> | null = null
 
   private process: ChildProcessWithoutNullStreams | null = null
   private startPromise: Promise<void> | null = null
@@ -100,13 +107,42 @@ export class CodexAppServerClient {
   private stderr = ''
   private browserSessionCwds = new Map<string, string>()
   private ownedThreadIds = new Set<string>()
+  readonly dynamicTools = new CodexDynamicTools()
+  private requestFailureListeners = new Set<
+    (method: string, params: unknown, error: unknown) => void
+  >()
+  onRequestFailed = (
+    listener: (method: string, params: unknown, error: unknown) => void
+  ): (() => void) => {
+    this.requestFailureListeners.add(listener)
+    return () => this.requestFailureListeners.delete(listener)
+  }
+
+  get connectionIdentity(): object | null {
+    return this.process
+  }
 
   ownsThread = (threadId: string): boolean => this.ownedThreadIds.has(threadId)
 
-  request = async <Result>(method: string, params: unknown): Promise<Result> => {
+  request = async <Result>(
+    method: string,
+    params: unknown,
+    options?: { signal?: AbortSignal }
+  ): Promise<Result> => {
     await this.start()
     const input = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
+    if (
+      (method === 'thread/start' || method === 'thread/resume') &&
+      input.ephemeral !== true &&
+      input.sandbox !== 'read-only' &&
+      input.dynamicTools === undefined &&
+      this.dynamicTools.specs.length > 0
+    ) {
+      params = { ...input, dynamicTools: this.dynamicTools.specs }
+    }
     if (method === 'turn/start' && typeof input.threadId === 'string') {
+      const sandbox = input.sandboxPolicy as { type?: string } | undefined
+      if (sandbox?.type) this.dynamicTools.setReadOnly(input.threadId, sandbox.type === 'readOnly')
       registerBrowserUseSession(
         this,
         input.threadId,
@@ -114,11 +150,29 @@ export class CodexAppServerClient {
         this.container
       )
     }
-    const result = await this.sendRequest<Result>(method, params)
+    let result: Result
+    try {
+      result = await this.sendRequest<Result>(method, params, options)
+    } catch (error) {
+      for (const listener of this.requestFailureListeners) {
+        try {
+          listener(method, params, error)
+        } catch (notificationError) {
+          console.error('Unable to report Codex request failure.', notificationError)
+        }
+      }
+      throw error
+    }
     if (method === 'thread/start' || method === 'thread/resume' || method === 'thread/fork') {
       const thread = (result as { thread?: { id?: string; cwd?: string } })?.thread
       if (typeof thread?.id === 'string') {
         this.ownedThreadIds.add(thread.id)
+        if (method === 'thread/fork' && typeof input.threadId === 'string')
+          this.dynamicTools.inherit(thread.id, input.threadId)
+        else {
+          this.dynamicTools.bind(thread.id, (params as Record<string, unknown>)?.dynamicTools)
+          this.dynamicTools.setReadOnly(thread.id, input.sandbox === 'read-only')
+        }
         const cwd = thread.cwd ?? (typeof input.cwd === 'string' ? input.cwd : '')
         this.browserSessionCwds.set(thread.id, cwd)
         registerBrowserUseSession(this, thread.id, cwd, this.container)
@@ -151,6 +205,8 @@ export class CodexAppServerClient {
   }
 
   dispose = (): void => {
+    this.desktopTools?.close()
+    this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
     this.process?.kill()
@@ -221,6 +277,8 @@ export class CodexAppServerClient {
       clientInfo: { name: 'sele', title: 'Sele', version: '1.0.0' },
       capabilities: {
         experimentalApi: true,
+        mcpServerOpenaiFormElicitation: true,
+        extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } },
         requestAttestation: false
       }
     })
@@ -228,26 +286,58 @@ export class CodexAppServerClient {
     this.sendNotification('initialized')
   }
 
-  private sendRequest = <Result>(method: string, params: unknown): Promise<Result> => {
+  private sendRequest = <Result>(
+    method: string,
+    params: unknown,
+    options?: { signal?: AbortSignal }
+  ): Promise<Result> => {
+    if (options?.signal?.aborted) return Promise.reject(new Error('Request canceled.'))
     const id = this.nextRequestId++
 
     return new Promise<Result>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const abort = (): void => {
+        const pending = this.pendingRequests.get(id)
+        if (!pending) return
+        clearTimeout(pending.timeout)
+        pending.cleanup?.()
         this.pendingRequests.delete(id)
-        reject(new Error(`Codex app-server request timed out: ${method}`))
-      }, method === 'thread/list' ? threadListRequestTimeoutMs : requestTimeoutMs)
+        reject(new Error('Request canceled.'))
+        if (method === 'userVerification/verify')
+          void this.sendRequest('userVerification/cancel', { requestId: id }).catch((error) =>
+            console.error('Unable to cancel device verification.', error)
+          )
+      }
+      const timeout = setTimeout(
+        () => {
+          this.pendingRequests.get(id)?.cleanup?.()
+          this.pendingRequests.delete(id)
+          reject(new Error(`Codex app-server request timed out: ${method}`))
+          if (method === 'userVerification/verify')
+            void this.sendRequest('userVerification/cancel', { requestId: id }).catch((error) =>
+              console.error('Unable to cancel device verification.', error)
+            )
+        },
+        method === 'userVerification/verify'
+          ? 120_000
+          : method === 'thread/list'
+            ? threadListRequestTimeoutMs
+            : requestTimeoutMs
+      )
 
       this.pendingRequests.set(id, {
         resolve: (value) => resolve(value as Result),
         reject,
-        timeout
+        timeout,
+        cleanup: () => options?.signal?.removeEventListener('abort', abort)
       })
+      options?.signal?.addEventListener('abort', abort, { once: true })
 
       try {
         this.write({ id, method, params })
       } catch (error) {
         console.error(`Unable to send Codex app-server request ${method}`, error)
         clearTimeout(timeout)
+        this.pendingRequests.get(id)?.cleanup?.()
         this.pendingRequests.delete(id)
         reject(error instanceof Error ? error : new Error(String(error)))
       }
@@ -300,11 +390,17 @@ export class CodexAppServerClient {
     if (!pending) return
 
     clearTimeout(pending.timeout)
+    pending.cleanup?.()
     this.pendingRequests.delete(response.id)
 
     if (response.error) {
       console.error('Codex app-server request failed', response.error)
-      pending.reject(new Error(response.error.message))
+      pending.reject(
+        Object.assign(new Error(response.error.message), {
+          code: response.error.code,
+          data: response.error.data
+        })
+      )
       return
     }
 
@@ -312,6 +408,22 @@ export class CodexAppServerClient {
   }
 
   private handleServerRequest = (request: RpcRequest): void => {
+    if (request.method === 'item/tool/call') {
+      const owner = this.process
+      void this.dynamicTools
+        .call(request.params)
+        .then((result) => {
+          if (owner && this.process === owner && owner.stdin.writable)
+            this.resolveServerRequest(request.id, result)
+        })
+        .catch((error) => console.error('Unable to return a client tool result', error))
+      return
+    }
+    if (request.method === 'currentTime/read') {
+      this.resolveServerRequest(request.id, { currentTimeAt: Math.floor(Date.now() / 1_000) })
+      return
+    }
+
     for (const listener of this.serverRequestListeners) {
       try {
         if (listener(request)) return
@@ -330,6 +442,8 @@ export class CodexAppServerClient {
   }
 
   private handleProcessEnd = (error: Error): void => {
+    this.desktopTools?.close()
+    this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
     const hadProcess = Boolean(this.process)
@@ -345,6 +459,7 @@ export class CodexAppServerClient {
   private rejectPending = (error: Error): void => {
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timeout)
+      pending.cleanup?.()
       pending.reject(error)
     }
 

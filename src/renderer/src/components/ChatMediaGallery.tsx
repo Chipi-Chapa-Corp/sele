@@ -10,9 +10,8 @@ import {
   type ReactNode
 } from 'react'
 import type { ProviderChatTurn } from '../../../shared/chatTurns'
-import { appApi } from '../appApi'
 import { getChatItemMedia, type ChatMediaSource } from '../chatMedia'
-import { createLocalImageUrl } from '../localImage'
+import { useLocalMedia } from '../useLocalMedia'
 import { ImageLightbox } from './ImageLightbox'
 
 const ChatMediaContext = createContext<((source: ChatMediaSource) => void) | null>(null)
@@ -46,37 +45,20 @@ const GalleryPreview = ({
   position: number
   count: number
 }): React.ReactElement => {
-  const [loaded, setLoaded] = useState<{ url?: string; error?: string } | null>(null)
-  useEffect(() => {
-    if (source.url || !source.path) return
-    let active = true
-    let objectUrl: string | null = null
-    const load = source.mediaType === 'video' ? appApi.getLocalVideo : appApi.getLocalImage
-    void load({ ...source.localImageOptions, path: source.path })
-      .then((media) => {
-        if (!active) return
-        objectUrl = createLocalImageUrl(media)
-        setLoaded({ url: objectUrl })
-      })
-      .catch((error) => {
-        console.error('[caught:ChatMediaGallery:load]', error)
-        if (active) setLoaded({ error: `Unable to load ${source.name}` })
-      })
-    return () => {
-      active = false
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [source])
+  const loaded = useLocalMedia(
+    source.path ? { ...source.localImageOptions, path: source.path } : null,
+    source.mediaType
+  )
 
   return (
     <ImageLightbox
       mediaType={source.mediaType}
-      imageUrl={source.url ?? loaded?.url ?? ''}
+      imageUrl={loaded?.url ?? source.url ?? ''}
       name={source.name}
       path={source.path}
       localImageOptions={source.localImageOptions}
       loading={!source.url && !loaded}
-      error={loaded?.error}
+      error={loaded?.error ? `Unable to load ${source.name}` : undefined}
       onClose={onClose}
       onPrevious={onPrevious}
       onNext={onNext}
@@ -100,7 +82,7 @@ export function ChatMediaGallery({
   children: ReactNode
 }): React.ReactElement {
   // Retain source metadata when older transcript pages leave the rendered window.
-  // Blob URLs belong to their thumbnails and are never kept in this index.
+  // Blob URLs are leased from the media cache and never kept in this index.
   const history = useRef(new Map<string, { index: number; sources: ChatMediaSource[] }>())
   const currentTurns = useMemo(
     () =>

@@ -5,6 +5,7 @@ import { GitCommitHorizontalIcon as AnimatedGitCommitHorizontalIcon } from 'luci
 import { Button, type ButtonDropdownAction } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { AnimatedStatusIcon, GitSyncCountsLabel } from '../../components/AppStatusStates'
+import { useSwitchSettledDisabled } from '../../useSwitchSettledDisabled'
 
 type ChangesFooterContentProps = WorkspaceController['changesFooter']
 
@@ -37,6 +38,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
     handleSyncChanges,
     handleUnclassifiedGitSyncAiResolution,
     hasSyncChanges,
+    navigationKey,
     primarySyncAction,
     projectCommitInProgress,
     providerUpdateInProgress,
@@ -55,6 +57,18 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
     visibleSyncRecovery,
     visibleSyncRecoveryActions
   } = props
+  // Switching chats or projects briefly reloads changes and chat state. Keep these buttons as
+  // they were unless a check is still blocking once the switch settles; the handlers re-check.
+  const commitDisplayDisabled = useSwitchSettledDisabled(commitDisabled, navigationKey)
+  const commitMessageGenerationDisplayDisabled = useSwitchSettledDisabled(
+    commitMessageGenerationDisabled,
+    navigationKey
+  )
+  const aiChatCommitDisplayDisabled = useSwitchSettledDisabled(
+    getAiCommitActionDisabled(),
+    navigationKey
+  )
+  const syncDisplayDisabled = useSwitchSettledDisabled(syncDisabled, navigationKey)
 
   return (
     <footer className="changes-sidebar__footer">
@@ -101,7 +115,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
                   ? 'Generating commit name…'
                   : 'Generate commit name with AI'
               }
-              disabled={commitMessageGenerationDisabled}
+              disabled={commitMessageGenerationDisplayDisabled}
               callback={() => void handleGenerateCommitMessage()}
               icon={<Sparkles aria-hidden="true" />}
               theme="secondary"
@@ -112,7 +126,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
       {showManualCommit && (
         <div className="changes-sidebar__commit-row changes-sidebar__commit-row--manual">
           <Button
-            disabled={commitDisabled}
+            disabled={commitDisplayDisabled}
             callback={() => void handleManualCommitChangedFiles()}
             icon={
               directProjectCommitInProgress ? (
@@ -134,7 +148,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
         }`}
       >
         <Button
-          disabled={commitMessageGenerationDisabled}
+          disabled={commitMessageGenerationDisplayDisabled}
           callback={() => void handleQuickCommitChangedFiles(pushAfterCommit)}
           icon={<Sparkles aria-hidden="true" />}
           label={<span>AI Commit</span>}
@@ -142,7 +156,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
           fill
         />
         <Button
-          disabled={getAiCommitActionDisabled()}
+          disabled={aiChatCommitDisplayDisabled}
           callback={() => void handleAiCommitChangedFiles(pushAfterCommit)}
           icon={<MessageSquare aria-hidden="true" />}
           label={<span>AI Chat Commit</span>}
@@ -155,7 +169,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
         <div className="changes-sidebar__sync-row">
           <Button
             title={syncButtonTitle}
-            disabled={syncDisabled}
+            disabled={syncDisplayDisabled}
             callback={() => void handleSyncChanges(primarySyncAction)}
             dropdownActions={primarySyncAction === 'push' ? undefined : syncDropdownActions}
             dropdownLabel="Sync actions"

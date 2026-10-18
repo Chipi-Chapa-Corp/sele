@@ -269,3 +269,82 @@ test('keeps a completed final response when a late working event follows it', ()
     true
   )
 })
+
+test('MCP app resources survive completion projection without embedding HTML in the descriptor', () => {
+  const start = toolStart('start', 'call', 'mcp_display')
+  start.data.mcpServerName = 'source'
+  const end = {
+    id: 'end',
+    type: 'tool.execution_complete',
+    timestamp: '2026-01-01T00:00:03.000Z',
+    data: {
+      toolCallId: 'call',
+      success: true,
+      result: {
+        content: 'Done',
+        uiResource: {
+          uri: 'ui://source/app',
+          mimeType: 'text/html;profile=mcp-app',
+          text: '<b>App</b>'
+        }
+      }
+    }
+  }
+  const items = render([userMessage('user', 'Show widget'), start, end])
+  const tools = items.flatMap((item) =>
+    item.type === 'working'
+      ? item.items.flatMap((tool) =>
+          tool.type === 'tool' ? [tool] : tool.type === 'toolGroup' ? tool.tools : []
+        )
+      : []
+  )
+  assert.deepEqual(tools[0].mcpApp, {
+    callId: 'call',
+    serverName: 'source',
+    resourceUri: 'ui://source/app'
+  })
+})
+
+test('renders Copilot subagent delegation as a compact row without its prompt or report', () => {
+  const items = render([
+    userMessage('user', 'Map the repo'),
+    assistantMessage('assistant', '', [{ toolCallId: 'task-call', name: 'task' }]),
+    toolStart('task-start', 'task-call', 'task', {
+      description: 'Map the repo',
+      prompt: 'Read every file and summarize.'
+    }),
+    {
+      type: 'subagent.started',
+      id: 'sub-start',
+      agentId: 'agent-1',
+      parentId: null,
+      timestamp: '2026-01-01T00:00:02.000Z',
+      data: { toolCallId: 'task-call', agentName: 'explore', agentDisplayName: 'Explore' }
+    },
+    {
+      type: 'tool.execution_partial_result',
+      id: 'task-partial',
+      parentId: null,
+      timestamp: '2026-01-01T00:00:02.500Z',
+      data: { toolCallId: 'task-call', partialOutput: 'Reading files' }
+    },
+    {
+      type: 'tool.execution_complete',
+      id: 'task-complete',
+      parentId: null,
+      timestamp: '2026-01-01T00:00:02.800Z',
+      data: { toolCallId: 'task-call', success: true, result: { content: 'Full subagent report' } }
+    },
+    assistantMessage('final', 'The repo is mapped.'),
+    turnEnd('turn')
+  ])
+  const working = items.find((item) => item.type === 'working')
+  assert.doesNotMatch(JSON.stringify(working), /Read every file|Reading files|Full subagent report/)
+  const tools = working.items.flatMap((item) =>
+    item.type === 'toolGroup' ? item.tools : item.type === 'tool' ? [item] : []
+  )
+  assert.deepEqual(
+    tools.map(({ compact, icon, label, status }) => ({ compact, icon, label, status })),
+    [{ compact: true, icon: 'subagent', label: 'Map the repo', status: 'finished' }]
+  )
+})

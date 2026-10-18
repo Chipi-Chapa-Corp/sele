@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { CodexDynamicTools } from './CodexDynamicTools.ts'
 
 const extract = (file, className, names, globals = {}) => {
   const source = ts.createSourceFile(
@@ -130,8 +131,8 @@ test('client ownership lasts through idle turns and clears on disposal or proces
   const client = extract(
     './CodexAppServerClient.ts',
     'CodexAppServerClient',
-    ['ownedThreadIds', 'ownsThread', 'request', 'dispose', 'handleProcessEnd'],
-    { registerBrowserUseSession() {}, removeBrowserUseSessions() {} }
+    ['ownedThreadIds', 'dynamicTools', 'ownsThread', 'request', 'dispose', 'handleProcessEnd'],
+    { CodexDynamicTools, registerBrowserUseSession() {}, removeBrowserUseSessions() {} }
   )
   Object.assign(client, {
     start: async () => {},

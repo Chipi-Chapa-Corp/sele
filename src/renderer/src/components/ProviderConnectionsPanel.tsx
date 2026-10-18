@@ -5,6 +5,7 @@ import {
   isConnectionPromptVisible,
   type ProviderConnection,
   type ProviderConnectionAttempt,
+  type ProviderConnectionStatus,
   type ProviderConnectInput
 } from '../../../shared/providerConnections'
 import { providerApi } from '../providerApi'
@@ -12,6 +13,22 @@ import { appApi } from '../appApi'
 import { Button } from './Button'
 import { Dropdown } from './Dropdown'
 import { Input } from './Input'
+
+const describeStatus = (status: ProviderConnectionStatus): string =>
+  status.state === 'verified'
+    ? 'Working.'
+    : status.state === 'failed'
+      ? `Rejected by the provider: ${status.message}`
+      : `Couldn't verify: ${status.message}`
+
+// Opening the panel re-tests connections whose last result is missing or older than this.
+const statusMaxAgeMs = 15 * 60_000
+const needsCheck = (providers: ProviderConnection[], now = Date.now()): boolean =>
+  providers.some((entry) =>
+    entry.connections.some(
+      (connection) => !connection.status || now - connection.status.checkedAt > statusMaxAgeMs
+    )
+  )
 
 type Props = {
   container: AppContainerTarget
@@ -21,6 +38,7 @@ type Props = {
 export function ProviderConnectionsPanel({ container, onChanged }: Props): ReactNode {
   const [providers, setProviders] = useState<ProviderConnection[]>([])
   const [loading, setLoading] = useState(true)
+  const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -32,6 +50,7 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
   const [code, setCode] = useState('')
   const alive = useRef(false)
   const pendingAttempt = useRef<ProviderConnectionAttempt | null>(null)
+  const attemptProvider = useRef('')
   const changed = useRef(onChanged)
   changed.current = onChanged
   const sourceKey = JSON.stringify(container)
@@ -47,21 +66,29 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
     if (alive.current)
       setError(error instanceof Error ? error.message : 'Unable to update connections.')
   }, [])
-  const reload = useCallback(async (): Promise<void> => {
-    const result = await providerApi.getConnections('opencode', {
-      container: JSON.parse(sourceKey)
-    })
-    if (alive.current) setProviders(result)
-  }, [sourceKey])
+  const reload = useCallback(
+    async (check = false): Promise<ProviderConnection[]> => {
+      const result = await providerApi.getConnections('opencode', {
+        container: JSON.parse(sourceKey),
+        ...(check ? { forceRefresh: true } : {})
+      })
+      if (alive.current) setProviders(result)
+      return result
+    },
+    [sourceKey]
+  )
+  // Refresh sends a tiny request with every saved connection, so the list shows what each
+  // provider actually says about its credential.
   const refresh = async (): Promise<void> => {
-    setLoading(true)
+    setChecking(true)
     setError(null)
+    setNotice('')
     try {
-      await reload()
+      await reload(true)
     } catch (error) {
       fail(error)
     } finally {
-      if (alive.current) setLoading(false)
+      if (alive.current) setChecking(false)
     }
   }
 
@@ -69,18 +96,30 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
     alive.current = true
     let active = true
     const source = { container: JSON.parse(sourceKey) }
-    void providerApi
-      .getConnections('opencode', source)
-      .then((result) => {
-        if (active) setProviders(result)
-      })
-      .catch((error) => {
+    // Show saved connections at once, then test any without a recent result in the background.
+    void (async () => {
+      try {
+        const result = await providerApi.getConnections('opencode', source)
+        if (!active) return
+        setProviders(result)
+        setLoading(false)
+        if (!needsCheck(result)) return
+        setChecking(true)
+        const checked = await providerApi.getConnections('opencode', {
+          ...source,
+          forceRefresh: true
+        })
+        if (active) setProviders(checked)
+      } catch (error) {
         console.error('[ProviderConnectionsPanel:load]', error)
         if (active) setError(error instanceof Error ? error.message : 'Unable to load connections.')
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
+      } finally {
+        if (active) {
+          setLoading(false)
+          setChecking(false)
+        }
+      }
+    })()
     return () => {
       active = false
       alive.current = false
@@ -93,16 +132,29 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
     }
   }, [sourceKey])
 
-  const finish = useCallback(async (): Promise<void> => {
-    pendingAttempt.current = null
-    setAttempt(null)
-    setCode('')
-    setKey('')
-    setInputs({})
-    setNotice('Connected successfully.')
-    changed.current?.()
-    await reload()
-  }, [reload])
+  // Connecting already tested the credential in the main process; report what the provider said.
+  const finish = useCallback(
+    async (providerId: string): Promise<void> => {
+      pendingAttempt.current = null
+      setAttempt(null)
+      setCode('')
+      setKey('')
+      setInputs({})
+      changed.current?.()
+      const result = await reload()
+      const entry = result.find((candidate) => candidate.id === providerId)
+      const status = entry?.connections.find(
+        (connection) => connection.type === 'credential'
+      )?.status
+      if (!alive.current) return
+      if (status?.state === 'failed')
+        setError(`Saved, but ${entry?.name ?? 'the provider'} rejected it: ${status.message}`)
+      else if (status?.state === 'unverified')
+        setNotice(`Saved, but the connection couldn't be verified: ${status.message}`)
+      else setNotice(status?.state === 'verified' ? 'Connected and verified.' : 'Connected.')
+    },
+    [reload]
+  )
 
   useEffect(() => {
     if (!attempt) return
@@ -115,7 +167,7 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
         })
         if (!active) return
         if (result.status === 'complete') {
-          await finish()
+          await finish(attemptProvider.current)
         } else if (result.status === 'pending') {
           timer = setTimeout(() => void poll(), 1500)
         } else {
@@ -174,8 +226,9 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
       setInputs({})
       if (result) {
         pendingAttempt.current = result
+        attemptProvider.current = provider.id
         setAttempt(result)
-      } else await finish()
+      } else await finish(provider.id)
     } catch (error) {
       fail(error)
     } finally {
@@ -205,7 +258,8 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
     setError(null)
     try {
       await providerApi.completeConnection('opencode', attempt.attemptId, code.trim(), options)
-      if (alive.current && pendingAttempt.current?.attemptId === attempt.attemptId) await finish()
+      if (alive.current && pendingAttempt.current?.attemptId === attempt.attemptId)
+        await finish(attemptProvider.current)
     } catch (error) {
       fail(error)
     } finally {
@@ -237,9 +291,9 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
         <h2 className="settings-dialog__section-heading">Connections</h2>
         <Button
           icon={<RefreshCw />}
-          label="Refresh"
+          label={checking ? 'Checking…' : 'Refresh'}
           size="small"
-          disabled={loading || busy || Boolean(attempt)}
+          disabled={loading || checking || busy || Boolean(attempt)}
           callback={refresh}
         />
       </div>
@@ -266,6 +320,22 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
                         : `Environment variable · ${connection.name}`}
                     </p>
                     {connection.type === 'env' && <p>Managed in your environment.</p>}
+                    {checking ? (
+                      <p role="status">Checking…</p>
+                    ) : (
+                      connection.status && (
+                        <p
+                          className={
+                            connection.status.state === 'failed'
+                              ? 'settings-dialog__connection-rejected'
+                              : undefined
+                          }
+                          role={connection.status.state === 'failed' ? 'alert' : undefined}
+                        >
+                          {describeStatus(connection.status)}
+                        </p>
+                      )
+                    )}
                   </div>
                   {connection.type === 'credential' && (
                     <Button
@@ -378,7 +448,7 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
                   </label>
                 )}
                 <Button
-                  label={busy ? 'Connecting…' : 'Connect'}
+                  label={busy ? 'Connecting and checking…' : 'Connect'}
                   theme="primary"
                   disabled={busy || !method || (method.type === 'key' && !key.trim())}
                   callback={connect}

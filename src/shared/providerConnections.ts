@@ -15,8 +15,17 @@ export type ProviderConnection = {
   id: string
   name: string
   methods: ProviderConnectionMethod[]
-  connections: ({ type: 'credential'; id: string; label: string } | { type: 'env'; name: string })[]
+  connections: (
+    | { type: 'credential'; id: string; label: string; status?: ProviderConnectionStatus }
+    | { type: 'env'; name: string; status?: ProviderConnectionStatus }
+  )[]
 }
+
+/** Result of the last real request or connection check that used this credential. */
+export type ProviderConnectionStatus =
+  | { state: 'verified'; checkedAt: number }
+  | { state: 'failed'; message: string; checkedAt: number }
+  | { state: 'unverified'; message: string; checkedAt: number }
 
 export type ProviderConnectInput = {
   integrationId: string

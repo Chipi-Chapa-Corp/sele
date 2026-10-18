@@ -62,7 +62,9 @@ if (!process.versions.electron) {
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
-      const result = spawnSync(require('electron'), [__filename, directory, '--no-sandbox'], {
+      const args = [__filename, directory, '--no-sandbox']
+      if (process.argv.includes('--cache-only')) args.push('--cache-only')
+      const result = spawnSync(require('electron'), args, {
         env,
         encoding: 'utf8',
         timeout: 45000
@@ -157,6 +159,85 @@ if (!process.versions.electron) {
       await waitFor(
         "document.querySelector('[data-local-image-path=\"./missing.webm\"]')?.getAttribute('aria-disabled') === 'true'"
       )
+      await waitFor('document.querySelector(\'[aria-label="Open Attachment two"] img\')?.complete')
+      assert.equal(
+        calls.filter(
+          (call) => call.name === 'getLocalImage' && call.options.path === './attachment.png'
+        ).length,
+        1,
+        'duplicate thumbnails share a single media read'
+      )
+      const videoReads = calls.filter(
+        (call) => call.name === 'getLocalVideo' && call.options.path === './demo.webm'
+      ).length
+      if (process.argv.includes('--cache-only')) {
+        await waitFor(
+          'document.querySelector(\'[data-local-image-path="./image.png"] img\')?.complete'
+        )
+        await waitFor(
+          'document.querySelector(\'[data-local-image-path="./later.png"] img\')?.complete'
+        )
+        await js(
+          `window.attachmentUrl = document.querySelector('[aria-label="Open Attachment one"] img').src`
+        )
+        const readCount = calls.filter(
+          (call) =>
+            ['getLocalImage', 'getLocalVideo'].includes(call.name) &&
+            call.options.path !== './missing.webm'
+        ).length
+        await js("document.querySelector('.chat-detail__markdown-video').click()", true)
+        await waitFor("document.querySelector('.image-lightbox video')?.readyState >= 2")
+        assert.equal(
+          await js(
+            `document.querySelector('.image-lightbox video').src === document.querySelector('.chat-detail__markdown-video video').src`
+          ),
+          true
+        )
+        await js('document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))')
+        const opened = await js(`new Promise(resolve => {
+          document.querySelector('[data-local-image-path="./image.png"]').click();
+          requestAnimationFrame(() => resolve({
+            src: document.querySelector('.image-lightbox img')?.src,
+            thumbnail: document.querySelector('[data-local-image-path="./image.png"] img').src,
+            status: Boolean(document.querySelector('.image-lightbox__status'))
+          }));
+        })`)
+        assert.equal(opened.src, opened.thumbnail, 'viewer reuses the thumbnail URL before paint')
+        assert.equal(opened.status, false, 'cached viewer has no loading flash')
+        await js('document.querySelector(\'[aria-label="Next media"]\').click()')
+        await waitFor(
+          'document.querySelector(\'.image-lightbox[aria-label="Later image preview"] img\')'
+        )
+        await js('document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))')
+        await js('document.querySelector("#later-page").click()')
+        await waitFor('!document.querySelector(\'[aria-label="Open Attachment one"]\')')
+        const returned = await js(`new Promise(resolve => {
+          document.querySelector('#all-pages').click();
+          requestAnimationFrame(() => resolve({
+            attachment: document.querySelector('[aria-label="Open Attachment one"] img')?.src,
+            markdown: Boolean(document.querySelector('[data-local-image-path="./image.png"] img')),
+            loading: Boolean(document.querySelector('.chat-detail__generated-image-loading, .chat-detail__markdown-image-loading'))
+          }));
+        })`)
+        assert.equal(returned.attachment, await js('window.attachmentUrl'))
+        assert.equal(returned.markdown, true)
+        assert.equal(returned.loading, false, 'returning to history restores images before paint')
+        assert.equal(
+          calls.filter(
+            (call) =>
+              ['getLocalImage', 'getLocalVideo'].includes(call.name) &&
+              call.options.path !== './missing.webm'
+          ).length,
+          readCount,
+          'gallery navigation and history remounts perform no additional file reads'
+        )
+        window.destroy()
+        console.log(
+          'Media cache: duplicate reads, shared viewer URLs, gallery navigation, and history remounts before paint passed.'
+        )
+        app.quit()
+        return
+      }
       for (const close of ['button', 'escape', 'backdrop']) {
         await js("document.querySelector('.chat-detail__markdown-video').click()", true)
         await waitFor("document.querySelector('.image-lightbox video')?.currentTime > 0")
@@ -206,6 +287,12 @@ if (!process.versions.electron) {
         }
         await waitFor("!document.querySelector('.image-lightbox')")
       }
+      assert.equal(
+        calls.filter((call) => call.name === 'getLocalVideo' && call.options.path === './demo.webm')
+          .length,
+        videoReads,
+        'reopening the viewer reuses the thumbnail resource'
+      )
       for (const name of ['copyLocalVideo', 'saveLocalVideo']) {
         const call = calls.find((call) => call.name === name)
         assert.deepEqual(call.options, {
@@ -287,6 +374,19 @@ if (!process.versions.electron) {
       await waitFor('document.querySelector(".image-lightbox__position")?.textContent === "7 / 8"')
       await js('document.querySelector(\'[aria-label="Previous media"]\').click()')
       await waitFor('document.querySelector(\'.image-lightbox[aria-label="Image preview"] img\')')
+      await js('document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))')
+      const attachmentReads = calls.filter(
+        (call) => call.name === 'getLocalImage' && call.options.path === './attachment.png'
+      ).length
+      await js('document.querySelector("#all-pages").click()')
+      await waitFor('document.querySelector(\'[aria-label="Open Attachment one"] img\')?.complete')
+      assert.equal(
+        calls.filter(
+          (call) => call.name === 'getLocalImage' && call.options.path === './attachment.png'
+        ).length,
+        attachmentReads,
+        'paging back restores attachments without another file read'
+      )
       await js('document.querySelector("#switch-chat").click()')
       await waitFor('!document.querySelector(".image-lightbox")')
       await js('document.querySelector(\'[aria-label="Open Later image"]\').click()')

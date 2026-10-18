@@ -62,9 +62,17 @@ export const restoreFailedComposerMessage = (
   scopeKey: string,
   message: string
 ): ReadonlyMap<string, ComposerDraft> => {
-  if (!message || getComposerDraft(drafts, scopeKey).message) return drafts
+  if (!message) return drafts
 
-  return updateComposerDraft(drafts, scopeKey, 'message', message)
+  // The prompt stays editable while a send is in flight, so keep anything typed meanwhile
+  // after the restored message instead of dropping either text.
+  const currentMessage = getComposerDraft(drafts, scopeKey).message
+  return updateComposerDraft(
+    drafts,
+    scopeKey,
+    'message',
+    currentMessage.trim() ? `${message}\n\n${currentMessage.trimStart()}` : message
+  )
 }
 
 export const getPromptDrafts = (

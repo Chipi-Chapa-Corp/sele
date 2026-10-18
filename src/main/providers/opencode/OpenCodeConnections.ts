@@ -4,7 +4,8 @@ import type {
   ProviderConnection,
   ProviderConnectInput,
   ProviderConnectionAttempt,
-  ProviderConnectionAttemptStatus
+  ProviderConnectionAttemptStatus,
+  ProviderConnectionStatus
 } from '../../../shared/providerConnections'
 import type { OpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
 
@@ -28,8 +29,13 @@ const attempts = new WeakMap<OpencodeClient, Map<string, Attempt>>()
 
 export const listOpenCodeConnections = async (
   client: OpencodeClient,
-  readCredentials: () => Promise<OpenCodeCredentialTypes>
+  readCredentials: () => Promise<OpenCodeCredentialTypes>,
+  getStatus: (providerId: string) => ProviderConnectionStatus | undefined = () => undefined
 ): Promise<ProviderConnection[]> => {
+  const status = (id: string): { status?: ProviderConnectionStatus } => {
+    const value = getStatus(id)
+    return value ? { status: value } : {}
+  }
   const [catalog, auth, credentials] = await Promise.all([
     request('load connections', () => client.provider.list({}, { throwOnError: true })),
     request('load connection methods', () => client.provider.auth({}, { throwOnError: true })),
@@ -52,12 +58,19 @@ export const listOpenCodeConnections = async (
               {
                 type: 'credential' as const,
                 id: provider.id,
-                label: credentials[provider.id] === 'oauth' ? 'Signed in' : 'API key'
+                label: credentials[provider.id] === 'oauth' ? 'Signed in' : 'API key',
+                ...status(provider.id)
               }
             ]
           : []),
         ...(catalog.data.connected.includes(provider.id) && provider.source === 'env'
-          ? [{ type: 'env' as const, name: provider.env.join(', ') }]
+          ? [
+              {
+                type: 'env' as const,
+                name: provider.env.join(', '),
+                ...status(provider.id)
+              }
+            ]
           : [])
       ]
     })
@@ -69,7 +82,12 @@ export const listOpenCodeConnections = async (
         name: id,
         methods: [{ type: 'key', label: 'API key' }],
         connections: [
-          { type: 'credential', id, label: credentials[id] === 'oauth' ? 'Signed in' : 'API key' }
+          {
+            type: 'credential',
+            id,
+            label: credentials[id] === 'oauth' ? 'Signed in' : 'API key',
+            ...status(id)
+          }
         ]
       })
   }

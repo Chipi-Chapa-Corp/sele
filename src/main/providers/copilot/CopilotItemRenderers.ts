@@ -233,9 +233,42 @@ const getToolLabel = (event: ToolStartEvent): string => {
   )
 }
 
+/**
+ * The delegation call is a compact row in the parent. The subagent's prompt and report belong to
+ * its own chat, listed under the parent in the sidebar.
+ */
+const createSubagentTool = (event: ToolStartEvent): ProviderWorkingTool => ({
+  type: 'tool',
+  id: event.id,
+  toolId: event.data.toolCallId,
+  status: 'running',
+  compact: true,
+  activity: 'other',
+  icon: 'subagent',
+  label: getArgument(event.data.arguments, 'description', 'agent_type', 'agentType') ?? 'Subagent',
+  command: null,
+  cwd: null,
+  stdout: null,
+  diffs: [],
+  backgroundSessionId: null,
+  finishedBackgroundSessionId: null,
+  rawInput: null,
+  rawOutput: null,
+  images: []
+})
+
 const createTool = (event: ToolStartEvent): ProviderWorkingTool => ({
   type: 'tool',
   id: event.id,
+  ...(event.data.mcpServerName
+    ? {
+        mcpApp: {
+          callId: event.data.toolCallId,
+          serverName: event.data.mcpServerName,
+          resourceUri: event.data.toolDescription?._meta?.ui?.resourceUri
+        }
+      }
+    : {}),
   toolId: event.data.toolCallId,
   status: 'running',
   activity: classifyTool(event),
@@ -562,6 +595,14 @@ export const renderCopilotChatItems = (
     })
   }
 
+  // Copilot delegates through its task tool; subagent.started links any other spawning call.
+  const subagentToolCallIds = new Set(
+    events.flatMap((event) => (event.type === 'subagent.started' ? [event.data.toolCallId] : []))
+  )
+  const isSubagentToolCall = (event: ToolStartEvent): boolean =>
+    event.data.toolName === 'task' || subagentToolCallIds.has(event.data.toolCallId)
+  const hiddenOutputToolCallIds = new Set<string>()
+
   for (const event of events) {
     if (!isScopedEvent(event, options.agentId)) continue
     eventTimestamp = toTimestamp(event.timestamp)
@@ -646,12 +687,21 @@ export const renderCopilotChatItems = (
 
     if (event.type === 'tool.execution_start') {
       if (event.data.toolName === 'ask_user') askUserToolCallIds.add(event.data.toolCallId)
-      appendWorkingItem(ensureSegment(event.id), createTool(event))
+      const subagent = isSubagentToolCall(event)
+      if (subagent) hiddenOutputToolCallIds.add(event.data.toolCallId)
+      appendWorkingItem(
+        ensureSegment(event.id),
+        subagent ? createSubagentTool(event) : createTool(event)
+      )
       continue
     }
 
     if (event.type === 'tool.execution_partial_result') {
-      if (askUserToolCallIds.has(event.data.toolCallId)) continue
+      if (
+        askUserToolCallIds.has(event.data.toolCallId) ||
+        hiddenOutputToolCallIds.has(event.data.toolCallId)
+      )
+        continue
       updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         stdout: appendCopilotToolOutput(tool.stdout, event.data.partialOutput)
@@ -660,7 +710,11 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'tool.execution_progress') {
-      if (askUserToolCallIds.has(event.data.toolCallId)) continue
+      if (
+        askUserToolCallIds.has(event.data.toolCallId) ||
+        hiddenOutputToolCallIds.has(event.data.toolCallId)
+      )
+        continue
       updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         label: event.data.progressMessage.trim() || tool.label
@@ -669,6 +723,13 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'tool.execution_complete') {
+      if (hiddenOutputToolCallIds.has(event.data.toolCallId)) {
+        updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
+          ...tool,
+          status: 'finished'
+        }))
+        continue
+      }
       const askedQuestion = askUserToolCallIds.has(event.data.toolCallId)
       const images = askedQuestion ? [] : getToolImages(event, binaryAssets)
       updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
@@ -681,7 +742,18 @@ export const renderCopilotChatItems = (
         rawOutput: askedQuestion
           ? null
           : getBoundedCopilotRawToolValue(event.data.result ?? event.data.error ?? null),
-        images
+        images,
+        ...(tool.mcpApp
+          ? {
+              mcpApp: {
+                ...tool.mcpApp,
+                resourceUri:
+                  event.data.toolDescription?._meta?.ui?.resourceUri ||
+                  event.data.result?.uiResource?.uri ||
+                  tool.mcpApp.resourceUri
+              }
+            }
+          : {})
       }))
       continue
     }

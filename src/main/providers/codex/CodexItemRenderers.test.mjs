@@ -239,10 +239,7 @@ test('group headings describe image viewing instead of generic tool use', async 
   assert.equal(group.type, 'toolGroup')
   assert.deepEqual(group.toolActivities, ['read', 'image-view'])
   assert.equal(group.dominantActivity, 'image-view')
-  assert.equal(
-    getToolSequenceDisplayLabel(group.toolActivities, false),
-    'Read files, read images'
-  )
+  assert.equal(getToolSequenceDisplayLabel(group.toolActivities, false), 'Read files, read images')
   assert.equal(
     getToolSequenceDisplayLabel(group.toolActivities, true),
     'Reading files, Reading images'
@@ -700,4 +697,77 @@ test('skill usage retains its activity in grouped headings and paged summaries',
     )
   }
   assert.equal(getToolSequenceDisplayLabel(['skill', 'read'], false), 'Used skills, read files')
+})
+
+test('MCP Apps retain their original call ID and resource association in tool projections', () => {
+  const items = getChatItems([
+    {
+      id: 'turn',
+      status: 'completed',
+      items: [
+        {
+          id: 'call',
+          type: 'mcpToolCall',
+          server: 'source',
+          tool: 'display',
+          status: 'completed',
+          arguments: {},
+          result: { content: [] },
+          mcpAppUi: { resourceUri: 'ui://source/app' }
+        }
+      ]
+    }
+  ])
+  const tools = items.flatMap((item) =>
+    item.type === 'working'
+      ? item.items.flatMap((tool) =>
+          tool.type === 'tool' ? [tool] : tool.type === 'toolGroup' ? tool.tools : []
+        )
+      : []
+  )
+  assert.deepEqual(tools[0].mcpApp, {
+    callId: 'call',
+    serverName: 'source',
+    resourceUri: 'ui://source/app'
+  })
+})
+
+test('renders Codex subagent spawn and wait as compact rows without the delegated prompt', () => {
+  const items = getChatItems([
+    {
+      id: 'parent-turn',
+      status: 'completed',
+      items: [
+        { type: 'userMessage', id: 'question', content: [{ type: 'text', text: 'Delegate' }] },
+        {
+          type: 'collabAgentToolCall',
+          id: 'spawn',
+          tool: 'spawnAgent',
+          status: 'completed',
+          prompt: 'Read every file and summarize.',
+          receiverThreadIds: ['child-thread']
+        },
+        {
+          type: 'collabAgentToolCall',
+          id: 'wait',
+          tool: 'wait',
+          status: 'completed',
+          receiverThreadIds: ['child-thread']
+        },
+        { type: 'agentMessage', id: 'answer', phase: 'final_answer', text: 'Done.' }
+      ]
+    }
+  ])
+  const working = items.find((item) => item.type === 'working')
+  assert.doesNotMatch(JSON.stringify(working), /Read every file/)
+  const tools = working.items.flatMap((item) =>
+    item.type === 'toolGroup' ? item.tools : item.type === 'tool' ? [item] : []
+  )
+  assert.deepEqual(
+    tools.map(({ compact, icon, label }) => ({ compact, icon, label })),
+    [
+      { compact: true, icon: 'subagent', label: 'Started subagent' },
+      { compact: true, icon: 'subagent', label: 'Waited for subagent' }
+    ]
+  )
 })

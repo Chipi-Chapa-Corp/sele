@@ -1,0 +1,107 @@
+:where(.ui-checkbox-field) {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+:where(.ui-checkbox__label) {
+  min-width: 0;
+}
+
+:where(.ui-checkbox) {
+  appearance: none;
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  place-content: center;
+  vertical-align: -0.2em;
+  border: 0.0625rem solid;
+  border-color: var(--secondary-border-colors);
+  border-radius: 0.35rem;
+  color: var(--accent-ink);
+  background: var(--secondary-surface);
+  box-shadow: var(--secondary-shadow);
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+:where(.ui-checkbox)::after {
+  content: "";
+  width: 0.28rem;
+  height: 0.5rem;
+  border: solid currentColor;
+  border-width: 0 0.125rem 0.125rem 0;
+  transform: translateY(-0.0625rem) rotate(45deg) scale(0);
+  transition: transform 140ms ease;
+}
+
+:where(.ui-checkbox:is(:checked, :indeterminate)) {
+  border-color: var(--primary-border-colors);
+  background: var(--primary-surface);
+  box-shadow: var(--primary-shadow);
+}
+
+:where(.ui-checkbox:checked)::after {
+  transform: translateY(-0.0625rem) rotate(45deg) scale(1);
+}
+
+:where(.ui-checkbox:indeterminate)::after {
+  width: 0.5rem;
+  height: 0;
+  border-width: 0.125rem 0 0;
+  transform: none;
+}
+
+:where(.ui-checkbox:not(:disabled):hover, .ui-checkbox-field:hover .ui-checkbox:not(:disabled)) {
+  border-color: var(--secondary-border-colors-hover);
+  background: var(--secondary-surface-hover);
+  box-shadow: var(--secondary-shadow-hover);
+}
+
+:where(
+  .ui-checkbox:is(:checked, :indeterminate):not(:disabled):hover,
+  .ui-checkbox-field:hover .ui-checkbox:is(:checked, :indeterminate):not(:disabled)
+) {
+  border-color: var(--primary-border-colors-hover);
+  background: var(--primary-surface-hover);
+  box-shadow: var(--primary-shadow-hover);
+}
+
+:where(.ui-checkbox:not(:disabled):active, .ui-checkbox-field:active .ui-checkbox:not(:disabled)) {
+  box-shadow: var(--control-shadow-active);
+  transform: scale(0.94);
+}
+
+:where(.ui-checkbox:focus-visible) {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.125rem;
+}
+
+:where(.ui-checkbox:disabled) {
+  cursor: default;
+  opacity: 0.5;
+}
+
+:where(.ui-checkbox-field:has(.ui-checkbox:disabled)) {
+  color: var(--control-disabled-color);
+  cursor: default;
+}
+
+@media (forced-colors: active) {
+  :where(.ui-checkbox) {
+    appearance: auto;
+  }
+
+  :where(.ui-checkbox)::after {
+    content: none;
+  }
+}

@@ -1,3 +1,6 @@
+import type { McpAppConnection } from '../../../shared/mcpApps'
+import { record as mcpRecord } from '../../../shared/elicitation'
+import { createProviderElicitation, getProviderElicitationResult } from '../ProviderElicitation'
 import { TokenUsageReporter } from '../TokenUsageReporter.ts'
 import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
 import { copilotPriceRates, setNativeModelPricing } from '../modelPricing/TokenPricing'
@@ -112,7 +115,9 @@ type PendingUserInput = {
   id: string
   request: CopilotUserInputRequest
   startedAt: number
-  resolve: (response: CopilotUserInputResponse) => void
+  elicitation?: ProviderPendingUserInput
+  nativeRequestId?: string
+  resolve: (response: ProviderUserInputResponse) => void
 }
 
 type CopilotSessionMetadata = SessionMetadata & {
@@ -781,6 +786,70 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     const disabledSkills = await listDisabledProviderSkills('copilot', options.container)
     return mergeProviderSkills(discoveredSkills, disabledSkills)
+  }
+
+  getMcpApp = async (chatId: string, callId: string): Promise<McpAppConnection | null> => {
+    const state = this.states.get(chatId)
+    const session = state?.session
+    if (!state || !session || !session.capabilities.ui?.mcpApps) return null
+    const start = state.events.find(
+      (event) => event.type === 'tool.execution_start' && event.data.toolCallId === callId
+    )
+    const complete = state.events.find(
+      (event) => event.type === 'tool.execution_complete' && event.data.toolCallId === callId
+    )
+    if (
+      start?.type !== 'tool.execution_start' ||
+      complete?.type !== 'tool.execution_complete' ||
+      !start.data.mcpServerName
+    )
+      return null
+    const serverName = start.data.mcpServerName
+    const resourceUri =
+      complete.data.result?.uiResource?.uri ||
+      complete.data.toolDescription?._meta?.ui?.resourceUri ||
+      start.data.toolDescription?._meta?.ui?.resourceUri
+    if (!resourceUri?.startsWith('ui://')) return null
+    const client = state.client
+    const clientRpc = client?.rpc
+    const isCurrent = () => {
+      try {
+        return (
+          !!client &&
+          this.clientEntries.get(getContainerTargetKey(state.container))?.client === client &&
+          client.rpc === clientRpc &&
+          this.states.get(chatId) === state &&
+          state.session === session
+        )
+      } catch {
+        return false
+      }
+    }
+    const resource = complete.data.result?.uiResource
+    return {
+      serverName,
+      resourceUri,
+      input: mcpRecord(start.data.arguments) ?? {},
+      result: {
+        content: complete.data.result?.contents ?? [],
+        structuredContent: complete.data.result?.structuredContent,
+        isError: !complete.data.success
+      },
+      isCurrent,
+      canCall: () => isCurrent() && state.options?.sandboxMode !== 'read-only',
+      readResource: async (uri) =>
+        resource && uri === resourceUri
+          ? { contents: [resource] }
+          : session.rpc.mcp.apps.readResource({ serverName, uri }),
+      listTools: () => session.rpc.mcp.apps.listTools({ serverName, originServerName: serverName }),
+      callTool: (toolName, args) =>
+        session.rpc.mcp.apps.callTool({
+          serverName,
+          originServerName: serverName,
+          toolName,
+          arguments: args as Parameters<typeof session.rpc.mcp.apps.callTool>[0]['arguments']
+        })
+    }
   }
 
   getApps = async (): Promise<ProviderApp[]> => []
@@ -1508,7 +1577,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       throw new Error('There is no matching pending Copilot question.')
     }
 
-    if (response.kind === 'answer') {
+    if (pending.elicitation) {
+      getProviderElicitationResult(pending.elicitation, response)
+      state.pendingUserInputs.shift()
+      pending.resolve(response)
+    } else if (response.kind === 'elicitation')
+      throw new Error('This request is not an MCP interaction.')
+    else if (response.kind === 'answer') {
       const answer = response.wasFreeform ? response.answer.trim() : response.answer
       if (!answer.trim()) throw new Error('An answer is required.')
       const presentation = getUserInputPresentation(state, pending.request)
@@ -1524,10 +1599,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       }
 
       state.pendingUserInputs.shift()
-      pending.resolve({ answer, wasFreeform: response.wasFreeform })
+      pending.resolve({ kind: 'answer', answer, wasFreeform: response.wasFreeform })
     } else {
       state.pendingUserInputs.shift()
-      pending.resolve({ answer: '', wasFreeform: true })
+      pending.resolve({ kind: 'cancel' })
     }
 
     this.emitUpdate(state)
@@ -1831,12 +1906,14 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         streaming: false,
         enableConfigDiscovery: true,
         enableSkills: true,
+        enableMcpApps: enableUserInput,
         onEvent: (event) => this.handleEvent(state.id, event),
         onPermissionRequest: (request) => this.handlePermission(state.id, request),
         ...(enableUserInput
           ? {
               onUserInputRequest: (request: CopilotUserInputRequest) =>
-                this.handleUserInput(state.id, request)
+                this.handleUserInput(state.id, request),
+              onElicitationRequest: this.createElicitationHandler(state.id)
             }
           : {})
       })
@@ -1894,10 +1971,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         streaming: false,
         enableConfigDiscovery: true,
         enableSkills: true,
+        enableMcpApps: true,
         suppressResumeEvent: true,
         onEvent: (event) => this.handleEvent(sessionId, event),
         onPermissionRequest: (request) => this.handlePermission(sessionId, request),
-        onUserInputRequest: (request) => this.handleUserInput(sessionId, request)
+        onUserInputRequest: (request) => this.handleUserInput(sessionId, request),
+        onElicitationRequest: this.createElicitationHandler(sessionId)
       })
       state.session = session
       await this.addAdditionalDirectories(session, options)
@@ -2159,6 +2238,26 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.storeEvent(state, event)
     this.reportEventTokenUsage(state, event)
 
+    if (event.type === 'elicitation.requested') {
+      const pending = state.pendingUserInputs.findLast(
+        (value) =>
+          value.elicitation &&
+          !value.nativeRequestId &&
+          value.request.question === event.data.message
+      )
+      if (pending) pending.nativeRequestId = event.data.requestId
+    }
+    if (event.type === 'elicitation.completed') {
+      const index = state.pendingUserInputs.findIndex(
+        (value) => value.nativeRequestId === event.data.requestId
+      )
+      if (index >= 0) {
+        const [pending] = state.pendingUserInputs.splice(index, 1)
+        pending.resolve({ kind: 'cancel' })
+        this.emitUpdate(state)
+      }
+    }
+
     if (event.type === 'session.title_changed') {
       state.title = event.data.title.trim() || null
       if (state.metadata) {
@@ -2265,6 +2364,33 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     })
   }
 
+  private createElicitationHandler =
+    (sessionId: string): NonNullable<SessionConfig['onElicitationRequest']> =>
+    async (request) => {
+      const state = this.createState(sessionId)
+      const presentation = createProviderElicitation(`elicitation:${randomUUID()}`, {
+        ...request,
+        serverName: request.elicitationSource
+      })
+      return new Promise<Awaited<ReturnType<NonNullable<SessionConfig['onElicitationRequest']>>>>(
+        (resolve) => {
+          state.pendingUserInputs.push({
+            id: presentation.id,
+            request: { question: request.message },
+            startedAt: presentation.startedAt!,
+            elicitation: presentation,
+            resolve: (response) =>
+              resolve(
+                getProviderElicitationResult(presentation, response) as Awaited<
+                  ReturnType<NonNullable<SessionConfig['onElicitationRequest']>>
+                >
+              )
+          })
+          this.emitUpdate(state)
+        }
+      )
+    }
+
   private handleUserInput = (
     sessionId: string,
     request: CopilotUserInputRequest
@@ -2276,16 +2402,19 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         id: randomUUID(),
         request,
         startedAt: Date.now(),
-        resolve
+        resolve: (response) =>
+          resolve(
+            response.kind === 'answer'
+              ? { answer: response.answer, wasFreeform: response.wasFreeform }
+              : { answer: '', wasFreeform: true }
+          )
       })
       this.emitUpdate(state)
     })
   }
 
   private cancelPendingUserInputs = (state: CopilotSessionState): void => {
-    state.pendingUserInputs
-      .splice(0)
-      .forEach((pending) => pending.resolve({ answer: '', wasFreeform: true }))
+    state.pendingUserInputs.splice(0).forEach((pending) => pending.resolve({ kind: 'cancel' }))
   }
 
   private refreshPendingMessages = async (state: CopilotSessionState): Promise<void> => {
@@ -2407,6 +2536,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   private getPendingUserInput = (state: CopilotSessionState): ProviderPendingUserInput | null => {
     const pending = state.pendingUserInputs[0]
     if (!pending) return null
+    if (pending.elicitation) return pending.elicitation
     const presentation = getUserInputPresentation(state, pending.request)
 
     return {

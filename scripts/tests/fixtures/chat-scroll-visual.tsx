@@ -112,7 +112,7 @@ function App({ kind }) {
     })
   const scrollChatContentToBottom = React.useCallback(
     (el) => {
-      el.scrollTop = layout.getScrollBottomTop(el)
+      layout.alignChatContentToBottom(el)
       r.chatAutoScrollTargetRef.current = { element: el, top: el.scrollTop }
     },
     [r.chatAutoScrollTargetRef]
@@ -160,6 +160,24 @@ function App({ kind }) {
   const handlers = window.makeInteraction(deps)
   const model = useConversationViewModel({ ...deps, ...handlers })
   window.useResize(deps)
+  useEffect(() => {
+    const element = r.contentRef.current
+    const inner = element.querySelector('.chat-detail__messages-inner')
+    window.openingSamples = []
+    const observer = new ResizeObserver(() => {
+      const message = element.querySelector('[data-chat-message-id="answer-99"]')
+      if (!message) return
+      window.openingSamples.push({
+        turns: element.querySelectorAll('[data-chat-turn-id]').length,
+        bottom: message.getBoundingClientRect().bottom,
+        layoutBottom: element.querySelector('.chat-detail__messages-layout').getBoundingClientRect()
+          .bottom,
+        scrollTop: element.scrollTop
+      })
+    })
+    observer.observe(inner)
+    return () => observer.disconnect()
+  }, [r])
   const renderChatTurn = (index, turn) => (
     <div
       className="chat-detail__turn"

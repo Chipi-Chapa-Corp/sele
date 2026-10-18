@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Sele Browser Connection",
+  "version": "1.0.0",
+  "minimum_chrome_version": "125",
+  "description": "Share selected Chrome tabs with your local Sele conversations.",
+  "permissions": ["debugger", "tabs", "downloads"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Share tabs with Sele" }
+}

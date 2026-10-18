@@ -55,6 +55,9 @@ export type CodexThreadItem = {
   }[]
   aggregatedOutput?: string | null
   result?: unknown
+  mcpAppUi?: { resourceUri: string; preferredModelDisplayMode?: string } | null
+  mcpAppResourceUri?: string
+  appContext?: { resourceUri?: string | null } | null
   savedPath?: string
   error?: unknown
   customToolName?: string
@@ -116,6 +119,7 @@ type WorkingItemRenderResult =
       finishedBackgroundSessionId: string | null
       rawInput: unknown
       rawOutput: unknown
+      mcpApp?: { callId: string; serverName: string; resourceUri?: string }
       images: ProviderToolImage[]
     }
 
@@ -1120,7 +1124,22 @@ const renderTool = (
           rawOutput === defaultRawToolOutput ? getRawToolOutput(item) : rawOutput
         )
       : null,
-    images
+    images,
+    ...(item.type === 'mcpToolCall' &&
+    item.server &&
+    (item.mcpAppUi?.resourceUri || item.mcpAppResourceUri || item.appContext?.resourceUri)
+      ? {
+          mcpApp: {
+            callId: item.id,
+            serverName: item.server,
+            resourceUri:
+              item.mcpAppUi?.resourceUri ||
+              item.mcpAppResourceUri ||
+              item.appContext?.resourceUri ||
+              undefined
+          }
+        }
+      : {})
   }
 }
 
@@ -1564,23 +1583,32 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
     }
   },
   {
+    // Spawning and waiting are compact rows; the subagent's prompt and work are in its own chat,
+    // listed under the parent in the sidebar. Other collaboration calls render nothing.
     matches: (item) => item.type === 'collabAgentToolCall',
-    render: (item) =>
-      item.tool === 'wait'
+    render: (item) => {
+      const label =
+        item.tool === 'wait'
+          ? 'Waited for subagent'
+          : item.tool === 'spawnAgent' || item.tool === 'spawn_agent'
+            ? 'Started subagent'
+            : null
+      return label
         ? renderTool(
             item,
             'other',
-            'Waited for subagent',
+            label,
             null,
             null,
             [],
-            'wait',
+            item.tool === 'wait' ? 'wait' : getToolId(item),
             null,
             [],
             'subagent',
             true
           )
         : null
+    }
   },
   {
     matches: (item) => getMappedToolPresentation(item) !== null,

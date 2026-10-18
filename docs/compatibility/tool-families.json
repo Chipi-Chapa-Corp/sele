@@ -57,7 +57,7 @@
   {
     "family": "clock.*; sleep",
     "feature_id": "agent.sleep",
-    "boundary": "Provider tool availability is conditional; the separate currentTime/read client callback is currently unsupported."
+    "boundary": "Provider clock/sleep tools depend on runtime availability; Sele answers the separate currentTime/read client callback."
   },
   {
     "family": "web.*; web__*; web search",
@@ -72,7 +72,7 @@
   {
     "family": "MCP connector tools; mcp__*",
     "feature_id": "plugin.tools",
-    "boundary": "Generic tool output can render, but arbitrary elicitation/auth/tool approval flows are incomplete."
+    "boundary": "Provider-owned MCP invocation; generic forms, URLs and supported native verification have UI. Specialized strict review, credential enrollment and custom widgets remain incomplete."
   },
   {
     "family": "MCP resources and resource templates",
@@ -82,7 +82,7 @@
   {
     "family": "MCP custom UI; Apps SDK widgets",
     "feature_id": "plugin.widgets",
-    "boundary": "No general widget host. Sele visualizations are a separate supported format."
+    "boundary": "Shared isolated MCP Apps host and Codex/Copilot bridges are implemented. Other runtime bridges and proprietary widget APIs remain unavailable."
   },
   {
     "family": "Browser Use; unified browser automation",
@@ -92,7 +92,7 @@
   {
     "family": "Native computer-use operations",
     "feature_id": "computer.native",
-    "boundary": "May be exposed by separately installed tools; Sele itself only implements the browser bridge."
+    "boundary": "Sele provides Linux native screenshot/input tools with explicit Settings connection. X11 is tested privately; live Wayland and other OS native backends remain limited."
   },
   {
     "family": "Hosted Sites, Space, office and other plugin tools",
@@ -102,6 +102,6 @@
   {
     "family": "Dynamic client-side tools: item/tool/call",
     "feature_id": "security.dynamic-tool",
-    "boundary": "Provider-requested client tool execution is unsupported, even though dynamicToolCall transcript items can render."
+    "boundary": "Explicitly registered host tools can execute through item/tool/call with argument validation and structured results. Private Desktop implementations are not included."
   }
 ]

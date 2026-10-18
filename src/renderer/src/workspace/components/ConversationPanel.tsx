@@ -13,6 +13,15 @@ type ConversationPanelProps = WorkspaceController['conversationPanel'] & {
   composer: ReactNode
 }
 
+// Fade the conversation content on navigation, but never the composer: a faded prompt box
+// reads as disabled while switching chats.
+const selectConversationMotionTargets = (panel: HTMLDivElement): Element[] =>
+  Array.from(
+    panel.querySelectorAll(
+      ':scope > :not(.chat-panel), :scope > .chat-panel > :not(.chat-panel__composer)'
+    )
+  )
+
 export function ConversationPanel(props: ConversationPanelProps): ReactElement {
   const {
     activeSubagentChatView,
@@ -31,7 +40,8 @@ export function ConversationPanel(props: ConversationPanelProps): ReactElement {
   useFeedbackMotion(
     panelRef,
     `${selectedChat?.providerId}:${selectedChat?.id}:${activeSubagentChatView?.summary.id}:${newChatOpen}`,
-    'panel'
+    'panel',
+    selectConversationMotionTargets
   )
 
   return (

@@ -6,7 +6,7 @@ api_key_model_discovery,stable,true,Dynamic feature editor; runtime behavior unv
 apply_patch_freeform,removed,false,Dynamic feature editor; runtime behavior unverified,
 apply_patch_preserve_line_endings,removed,false,Dynamic feature editor; runtime behavior unverified,
 apply_patch_streaming_events,under development,false,Dynamic feature editor; runtime behavior unverified,
-apps,stable,true,Dynamic feature editor; runtime behavior unverified,src/main/providers/codex/CodexProviderAdapter.ts:1821
+apps,stable,true,Dynamic feature editor; runtime behavior unverified,src/main/providers/codex/CodexProviderAdapter.ts:1924
 apps_mcp_path_override,removed,false,Dynamic feature editor; runtime behavior unverified,
 artifact,under development,false,Dynamic feature editor; runtime behavior unverified,
 async_compaction,under development,false,Dynamic feature editor; runtime behavior unverified,
@@ -149,7 +149,7 @@ terminal_resize_reflow,removed,true,Dynamic feature editor; runtime behavior unv
 terminal_visualization_instructions,under development,false,Dynamic feature editor; runtime behavior unverified,
 token_budget,under development,false,Dynamic feature editor; runtime behavior unverified,
 tool_call_mcp_elicitation,stable,true,Dynamic feature editor; runtime behavior unverified,
-tool_search,removed,false,Dynamic feature editor; runtime behavior unverified,src/main/providers/codex/CodexItemRenderers.ts:1369
+tool_search,removed,false,Dynamic feature editor; runtime behavior unverified,src/main/providers/codex/CodexItemRenderers.ts:1388
 tool_search_always_defer_mcp_tools,removed,true,Dynamic feature editor; runtime behavior unverified,
 tool_suggest,stable,true,Dynamic feature editor; runtime behavior unverified,
 transcript_v2,deprecated,false,Dynamic feature editor; runtime behavior unverified,
@@ -166,7 +166,7 @@ use_agent_identity,under development,false,Dynamic feature editor; runtime behav
 use_legacy_landlock,deprecated,false,Dynamic feature editor; runtime behavior unverified,
 use_linux_sandbox_bwrap,removed,false,Dynamic feature editor; runtime behavior unverified,
 use_xaa,under development,false,Dynamic feature editor; runtime behavior unverified,
-view_image,stable,true,Dynamic feature editor; runtime behavior unverified,src/main/providers/codex/CodexItemRenderers.ts:1168; src/main/providers/codex/CodexItemRenderers.ts:1184; src/main/providers/codex/CodexToolCalls.ts:15
+view_image,stable,true,Dynamic feature editor; runtime behavior unverified,src/main/providers/codex/CodexItemRenderers.ts:1187; src/main/providers/codex/CodexItemRenderers.ts:1203; src/main/providers/codex/CodexToolCalls.ts:15
 web_search_cached,deprecated,false,Dynamic feature editor; runtime behavior unverified,
 web_search_request,deprecated,false,Dynamic feature editor; runtime behavior unverified,
 windows_sandbox_service,under development,false,Dynamic feature editor; runtime behavior unverified,

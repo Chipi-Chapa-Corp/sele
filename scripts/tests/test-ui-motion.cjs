@@ -397,7 +397,7 @@ if (!process.versions.electron) {
         1,
         'a different file source reloads the image'
       )
-      assert.equal(await run(`window.revokedImageUrls.includes(window.loadedImageUrl)`), true)
+      assert.equal(await run(`window.revokedImageUrls.includes(window.loadedImageUrl)`), false)
       await run(
         `window.loadedImageUrl = document.querySelector('.chat-detail__markdown-image img').src`
       )
@@ -405,9 +405,19 @@ if (!process.versions.electron) {
       await frames()
       assert.equal(
         await run(`window.revokedImageUrls.includes(window.loadedImageUrl)`),
-        true,
-        'removing an image releases its object URL'
+        false,
+        'removing an image retains its URL in the bounded cache'
       )
+      assert.equal(
+        await run(`(() => {
+          window.imageReads = [];
+          window.renderFixture({content:'![Existing image](/tmp/existing.png)'});
+          return document.querySelector('.chat-detail__markdown-image img')?.src === window.loadedImageUrl;
+        })()`),
+        true,
+        'returning to an unmounted image restores its URL before the next paint'
+      )
+      assert.equal(await run(`window.imageReads.length`), 0, 'returning does not reread the image')
       // A chunk received during a file read must reuse the pending read, too.
       await run(
         `window.imageReads = []; window.renderFixture({content:'![Pending](/tmp/pending.png)'})`
@@ -460,6 +470,18 @@ if (!process.versions.electron) {
         ),
         true
       )
+      await run(`window.savedWorking = window.state.working; window.renderFixture({working:null})`)
+      await frames()
+      assert.equal(
+        await run(`(() => {
+          window.imageReads = [];
+          window.renderFixture({working:window.savedWorking});
+          return document.querySelector('.chat-detail__generated-image-thumbnail img')?.src === window.generatedImage.src;
+        })()`),
+        true,
+        'generated images also return before paint after unmounting'
+      )
+      assert.equal(await run(`window.imageReads.length`), 0)
       await run(`window.renderFixture({working:null})`)
       await frames()
       for (const [id, kind] of [

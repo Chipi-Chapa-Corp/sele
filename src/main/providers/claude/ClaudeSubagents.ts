@@ -7,8 +7,49 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const getString = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null
 
-const truncate = (value: string, limit: number): string =>
-  value.length <= limit ? value : `${value.slice(0, limit - 1)}…`
+const truncate = (value: string, limit: number): string => {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  return normalized.length <= limit ? normalized : `${normalized.slice(0, limit - 1)}…`
+}
+
+export type ClaudeSubagentSpawn = { description: string | null; agentType: string | null }
+
+// Claude renamed its delegation tool from Task to Agent; transcripts contain both.
+const subagentToolNames = new Set(['Agent', 'Task'])
+
+/**
+ * Maps each delegation call id to the short description and agent type it was given. Every record
+ * of a subagent carries the id of that call as `parent_tool_use_id`. Root agents are spawned from
+ * the main transcript, nested ones from their parent subagent's transcript.
+ */
+export const collectClaudeSubagentSpawns = (
+  transcripts: Iterable<readonly { message?: unknown }[]>
+): Map<string, ClaudeSubagentSpawn> => {
+  const spawns = new Map<string, ClaudeSubagentSpawn>()
+  for (const transcript of transcripts) {
+    for (const record of transcript) {
+      const content = isRecord(record.message) ? record.message.content : null
+      if (!Array.isArray(content)) continue
+      for (const block of content) {
+        if (
+          !isRecord(block) ||
+          block.type !== 'tool_use' ||
+          typeof block.name !== 'string' ||
+          !subagentToolNames.has(block.name)
+        )
+          continue
+        const id = getString(block.id)
+        const input = isRecord(block.input) ? block.input : {}
+        if (id && !spawns.has(id))
+          spawns.set(id, {
+            description: getString(input.description),
+            agentType: getString(input.subagent_type)
+          })
+      }
+    }
+  }
+  return spawns
+}
 
 const getText = (message: unknown): string => {
   if (!isRecord(message)) return ''
@@ -32,7 +73,8 @@ const getTimestamp = (message: SessionMessage): number | null => {
 
 export const createClaudeSubagentSummary = (
   agentId: string,
-  messages: SessionMessage[]
+  messages: SessionMessage[],
+  spawns: ReadonlyMap<string, ClaudeSubagentSpawn> = new Map()
 ): ProviderSubagent => {
   const extendedMessages = messages as Array<
     SessionMessage & { subagent_type?: unknown; task_description?: unknown }
@@ -53,11 +95,26 @@ export const createClaudeSubagentSummary = (
   const parentId = messages
     .map((message) => message.parent_agent_id)
     .find((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0)
+  const spawnId = messages
+    .map((message) => message.parent_tool_use_id)
+    .find((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0)
+  const spawn = spawnId ? spawns.get(spawnId) : undefined
 
   return {
     id: agentId,
     parentId: parentId ?? null,
-    title: agentType || truncate(taskDescription || description || `Subagent ${agentId}`, 80),
+    // The delegation's short description names the subagent. Without it, fall back to the agent
+    // type, then the start of the prompt; forks copy the parent's context, so that is the least
+    // specific.
+    title: truncate(
+      spawn?.description ||
+        taskDescription ||
+        spawn?.agentType ||
+        agentType ||
+        description ||
+        `Subagent ${agentId}`,
+      60
+    ),
     description: taskDescription || description || null,
     status: 'unknown',
     createdAt: timestamps.length > 0 ? Math.min(...timestamps) : null,

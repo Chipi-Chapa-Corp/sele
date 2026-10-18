@@ -89,7 +89,7 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
       {reauthenticationTarget && (
         <AccountDialog
           key="reauthentication"
-          providerLabel="Claude"
+          providerLabel={reauthenticationTarget.providerId === 'codex' ? 'Codex' : 'Claude'}
           reauthenticate
           onClose={() => setReauthenticationTarget(null)}
           onLogin={handleReauthenticateChatAccount}

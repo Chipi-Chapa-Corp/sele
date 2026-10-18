@@ -4,12 +4,13 @@
   max-width: calc(var(--chat-content-max-width) + 2 * var(--chat-content-padding));
   min-width: 0;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: round(up, 0.7rem, var(--chat-layout-pixel, 1px));
   margin: 0 auto;
   padding: 0 var(--chat-content-padding);
 }
 
 .chat-detail__turn {
+  height: calc-size(auto, round(up, size, var(--chat-layout-pixel, 1px)));
   display: flex;
   width: 100%;
   min-width: 0;
@@ -163,38 +164,6 @@ button.chat-detail__commit-marker-open:disabled {
   border-style: solid;
   border-color: color-mix(in srgb, var(--error) 42%, var(--message-border));
   color: var(--error);
-}
-
-/* Subagent bubbles share the raised surface and bevel of user messages. */
-.chat-detail__subagent-marker {
-  --chat-detail-commit-marker-background: color-mix(
-    in srgb,
-    var(--user-message-surface) 92%,
-    var(--accent)
-  );
-
-  border-style: solid;
-  border-color: var(--chat-detail-commit-marker-background);
-  color: var(--lead);
-  box-shadow: var(--secondary-shadow);
-}
-
-:root:not([data-color-scheme="dark"]) .chat-detail__subagent-marker {
-  --chat-detail-commit-marker-background: var(--primary-surface);
-
-  border-color: var(--primary-border-colors);
-  color: var(--accent-ink);
-  box-shadow: var(--primary-shadow);
-}
-
-:root:not([data-color-scheme="dark"])
-  .chat-detail__subagent-marker
-  .chat-detail__commit-marker-icon,
-:root:not([data-color-scheme="dark"])
-  .chat-detail__subagent-marker
-  .chat-detail__commit-marker-cancel
-  .ui-button {
-  color: inherit;
 }
 
 .chat-detail__commit-marker-icon {

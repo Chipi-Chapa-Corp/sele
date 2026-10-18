@@ -1,7 +1,7 @@
 {
-  "as_of": "2026-10-16",
+  "as_of": "2026-10-17",
   "sele_version": "3.7.1",
-  "sele_commit": "b67832c2a0db9205577d09aeb49897eeabd1b71c+working-tree",
+  "sele_commit": "df5277ea+working-tree",
   "codex_version": "0.163.0",
   "scope": "Current ChatGPT desktop (Chat, Work, and Codex), Codex desktop lineage and CLI, plus a separately labelled Classic desktop comparison. Hosted tools are included only at their desktop integration boundary.",
   "features": [
@@ -240,27 +240,19 @@
       "category": "Core chat and projects",
       "feature": "Search all past conversation content",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Partial",
-      "assessment": "Sidebar filtering and find-in-chat exist; no Codex thread/search or full-history content index.",
+      "sele_status": "Implemented",
+      "assessment": "Native thread/search queries return conversation content snippets with opaque-cursor pagination.",
       "priority": "P1",
       "evidence": [
         {
-          "path": "src/renderer/src/workspace/useChatListController.tsx",
-          "needle": "export function useChatListController"
-        },
-        {
-          "path": "src/renderer/src/chatSearch.ts",
-          "needle": "export const findChatSearchMatches"
-        },
-        {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
-          "needle": "export class CodexProviderAdapter"
+          "needle": "private getChatsInContext"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/reference/commands"
       ],
-      "verification": "static limitation"
+      "verification": "static implementation and unit tests"
     },
     {
       "id": "chat.find",
@@ -391,7 +383,7 @@
     {
       "id": "chat.queue.persist",
       "category": "Core chat and projects",
-      "feature": "Use the provider’s durable queue API",
+      "feature": "Use the provider\u2019s durable queue API",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Partial",
       "assessment": "Sele has its own queue; no thread/queue/* RPC integration.",
@@ -968,7 +960,7 @@
     {
       "id": "plan.mode",
       "category": "Goals, plans, and agents",
-      "feature": "Toggle the provider’s dedicated planning mode",
+      "feature": "Toggle the provider\u2019s dedicated planning mode",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Missing",
       "assessment": "Plan display exists, but ProviderTurnOptions has no collaborationMode and Sele sends no plan-mode settings.",
@@ -1032,7 +1024,7 @@
       "feature": "Let Codex delegate to subagents",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Runtime",
-      "assessment": "Delegation comes from enabled Codex multi-agent capabilities, not Sele’s own agent executor.",
+      "assessment": "Delegation comes from enabled Codex multi-agent capabilities, not Sele\u2019s own agent executor.",
       "priority": "P2",
       "evidence": [
         {
@@ -1246,7 +1238,7 @@
       "feature": "Approve shell-command execution",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Implemented",
-      "assessment": "Command requests enter Sele’s pending-approval flow.",
+      "assessment": "Command requests enter Sele\u2019s pending-approval flow.",
       "priority": "P2",
       "evidence": [
         {
@@ -1314,8 +1306,8 @@
       "category": "Approvals and security",
       "feature": "Answer arbitrary MCP elicitation forms",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "Non-browser MCP forms are not handled by handleServerRequest.",
+      "sele_status": "Implemented",
+      "assessment": "General MCP forms have typed fields, structured responses, main-process JSON Schema validation, decline/cancel, and a JSON editor for custom schemas. Remote schema references are not fetched.",
       "priority": "P0",
       "evidence": [
         {
@@ -1326,15 +1318,15 @@
       "sources": [
         "https://learn.chatgpt.com/codex/app-server"
       ],
-      "verification": "static limitation"
+      "verification": "protocol and isolated fixture checks"
     },
     {
       "id": "security.auth-challenge",
       "category": "Approvals and security",
       "feature": "Complete specialized authentication challenges",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "Browser authentication challenges are deliberately excluded from ordinary allow/deny routing.",
+      "sele_status": "Partial",
+      "assessment": "General form/URL authentication interactions and proofs from supported enrolled devices have UI. Specialized empty browser-auth, strict review, new device enrollment and attestation issuing remain limited.",
       "priority": "P0",
       "evidence": [
         {
@@ -1349,15 +1341,15 @@
       "sources": [
         "https://learn.chatgpt.com/codex/browser"
       ],
-      "verification": "static limitation"
+      "verification": "protocol and isolated fixture checks"
     },
     {
       "id": "security.permissions-request",
       "category": "Approvals and security",
       "feature": "Grant tool-requested permission scopes",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "item/permissions/requestApproval is not handled.",
+      "sele_status": "Implemented",
+      "assessment": "Permission requests display file/network access and use existing sidebar/composer approval controls for turn grants, session grants, or denial.",
       "priority": "P0",
       "evidence": [
         {
@@ -1368,26 +1360,26 @@
       "sources": [
         "https://learn.chatgpt.com/codex/app-server"
       ],
-      "verification": "static limitation"
+      "verification": "protocol and isolated fixture checks"
     },
     {
       "id": "security.dynamic-tool",
       "category": "Approvals and security",
       "feature": "Handle client-executed dynamic tool requests",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "item/tool/call is not handled; normal provider/MCP tool execution is separate.",
+      "sele_status": "Partial",
+      "assessment": "Explicit registered standalone/namespaced host tools are validated and dispatched. Local clients include native Linux computer and attached Chrome tools; private Desktop implementations remain separate.",
       "priority": "P0",
       "evidence": [
         {
-          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "path": "src/main/providers/codex/CodexAppServerClient.ts",
           "needle": "private handleServerRequest"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/app-server"
       ],
-      "verification": "static limitation"
+      "verification": "focused protocol/unit tests and isolated UI; live platform limitations documented"
     },
     {
       "id": "security.tool-approval",
@@ -1533,7 +1525,7 @@
     {
       "id": "security.os",
       "category": "Approvals and security",
-      "feature": "Use the provider’s OS sandbox implementation",
+      "feature": "Use the provider\u2019s OS sandbox implementation",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Runtime",
       "assessment": "Codex supplies Linux/macOS/Windows isolation; not implemented by the Sele renderer.",
@@ -1573,8 +1565,8 @@
       "category": "Approvals and security",
       "feature": "Complete provider user verification and attestation",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "No userVerification/* UI or attestation/generate request handler.",
+      "sele_status": "Partial",
+      "assessment": "Device verification checks availability, forwards native proofs from supported enrolled runtimes, and cancels signing on stop/disconnect. New credential registration/enrollment and attestation issuing remain unavailable.",
       "priority": "P0",
       "evidence": [
         {
@@ -1589,7 +1581,7 @@
       "sources": [
         "https://learn.chatgpt.com/codex/app-server"
       ],
-      "verification": "static limitation"
+      "verification": "focused protocol/unit tests and isolated UI; live platform limitations documented"
     },
     {
       "id": "security.otel",
@@ -1597,7 +1589,7 @@
       "feature": "Export runtime telemetry through OpenTelemetry",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Runtime",
-      "assessment": "Available through provider configuration; Sele’s diagnostic log is separate.",
+      "assessment": "Available through provider configuration; Sele\u2019s diagnostic log is separate.",
       "priority": "P2",
       "evidence": [
         {
@@ -2028,23 +2020,23 @@
       "category": "Skills, plugins, and MCP",
       "feature": "Render plugin-provided interactive UI",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "Text, images, and Sele visualizations render, but no Apps/MCP UI widget host is implemented.",
+      "sele_status": "Partial",
+      "assessment": "Shared MCP Apps AppBridge and isolated renderer; Codex/Copilot resource and tool bridges use live originating sessions and user-confirmed actions. Claude/OpenCode public runtime bridges and proprietary window.openai APIs remain unavailable.",
       "priority": "P1",
       "evidence": [
         {
-          "path": "src/renderer/src/components/ChatDetailItem.tsx",
-          "needle": "export const ChatDetailItem"
+          "path": "src/main/mcpApps/McpAppHost.ts",
+          "needle": "export class McpAppHost"
         },
         {
-          "path": "src/renderer/src/components/Visualization.tsx",
-          "needle": "export function Visualization"
+          "path": "src/renderer/src/components/McpApp.tsx",
+          "needle": "export function McpApp"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/plugins"
       ],
-      "verification": "static limitation"
+      "verification": "focused protocol tests and isolated Electron test using the official view SDK"
     },
     {
       "id": "plugin.extensions",
@@ -2949,47 +2941,51 @@
       "category": "Browser and computer use",
       "feature": "Use the external Chrome side-chat extension",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "Sele provides its own browser; no external-extension integration.",
+      "sele_status": "Partial",
+      "assessment": "Sele bundles its own paired Chrome extension for explicitly shared tabs and exposes browser automation to Codex/Claude. Real extension-loaded Chrome testing and a side-chat extension UI remain absent.",
       "priority": "P2",
       "evidence": [
         {
-          "path": "docs/browser-use.md",
-          "needle": "## Current limits"
+          "path": "src/main/desktop/ChromeAutomation.ts",
+          "needle": "export class ChromeAutomation"
+        },
+        {
+          "path": "resources/sele-chrome-extension/background.js",
+          "needle": "async function handle"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/chrome-extension"
       ],
-      "verification": "static limitation"
+      "verification": "focused protocol/unit tests and isolated UI; live platform limitations documented"
     },
     {
       "id": "computer.native",
       "category": "Browser and computer use",
       "feature": "Let the agent operate native desktop apps",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Unverified",
-      "assessment": "Sele implements a browser bridge only; separately installed computer-use tools may work without Sele integration.",
+      "sele_status": "Partial",
+      "assessment": "Linux screenshot/input backend with explicit connection controls: X11 typing/capture tested privately; Wayland portal/PipeWire implementation has protocol checks but no live compositor validation. macOS/Windows native backends are absent.",
       "priority": "P1",
       "evidence": [
         {
-          "path": "docs/browser-use.md",
-          "needle": "## Current limits"
+          "path": "src/main/desktop/ComputerAutomation.ts",
+          "needle": "export class ComputerAutomation"
         },
         {
-          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
-          "needle": "private handleServerRequest"
+          "path": "resources/computer-helper.py",
+          "needle": "class Portal:"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/computer-use"
       ],
-      "verification": "runtime dependency; not exercised"
+      "verification": "focused protocol/unit tests and isolated UI; live platform limitations documented"
     },
     {
       "id": "computer.appshots",
       "category": "Browser and computer use",
-      "feature": "Capture another app’s screenshot and accessible text",
+      "feature": "Capture another app\u2019s screenshot and accessible text",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Missing",
       "assessment": "No native appshot capture flow or app/window picker. Clipboard image attachment is separate.",
@@ -3014,23 +3010,19 @@
       "category": "Browser and computer use",
       "feature": "Manage native-app permissions and locked use",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "No always-allowed apps UI, locked desktop session, or system-permission onboarding.",
+      "sele_status": "Partial",
+      "assessment": "Explicit connection/disconnect UI, Wayland system consent, revocation and read-only/remote admission boundaries exist. Per-app allowlists and locked desktop sessions are absent.",
       "priority": "P2",
       "evidence": [
         {
-          "path": "src/renderer/src/components/SettingsPanel.tsx",
-          "needle": "export const renderSettingsPanel"
-        },
-        {
-          "path": "src/main/application.ts",
-          "needle": "export const startApplication"
+          "path": "src/renderer/src/components/DesktopAutomationSettings.tsx",
+          "needle": "export function DesktopAutomationSettings"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/computer-use"
       ],
-      "verification": "static limitation"
+      "verification": "focused protocol/unit tests and isolated UI; live platform limitations documented"
     },
     {
       "id": "voice.dictation",
@@ -3597,7 +3589,7 @@
       "feature": "Preview PDF pages inside the artifact pane",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Unverified",
-      "assessment": "Electron’s browser can potentially open PDFs; a dedicated generated-PDF viewer workflow is not established.",
+      "assessment": "Electron\u2019s browser can potentially open PDFs; a dedicated generated-PDF viewer workflow is not established.",
       "priority": "P2",
       "evidence": [
         {
@@ -3968,7 +3960,7 @@
     {
       "id": "code.review-agent",
       "category": "Coding workspace and Git",
-      "feature": "Start the provider’s structured review mode",
+      "feature": "Start the provider\u2019s structured review mode",
       "baseline_surface": "Codex desktop / CLI",
       "sele_status": "Missing",
       "assessment": "Sele review comments are input context; no review/start call or dedicated /review mode.",
@@ -4125,7 +4117,7 @@
     {
       "id": "terminal.background",
       "category": "Coding workspace and Git",
-      "feature": "Inspect and terminate the agent’s background terminals",
+      "feature": "Inspect and terminate the agent\u2019s background terminals",
       "baseline_surface": "Codex desktop / CLI",
       "sele_status": "Missing",
       "assessment": "Sele terminal sessions are separate; no thread/backgroundTerminals list/terminate controls.",
@@ -4220,7 +4212,7 @@
       "feature": "Hand a chat and changes between Local and Worktree",
       "baseline_surface": "Codex desktop / CLI",
       "sele_status": "Missing",
-      "assessment": "Creating or forking into a worktree is not the provider’s bidirectional Handoff operation.",
+      "assessment": "Creating or forking into a worktree is not the provider\u2019s bidirectional Handoff operation.",
       "priority": "P2",
       "evidence": [
         {
@@ -4327,7 +4319,7 @@
       "feature": "Read and share Codex local-environment definitions",
       "baseline_surface": "Codex desktop / CLI",
       "sele_status": "Missing",
-      "assessment": "Sele actions use a different settings model, not the provider’s .codex environment definition.",
+      "assessment": "Sele actions use a different settings model, not the provider\u2019s .codex environment definition.",
       "priority": "P2",
       "evidence": [
         {
@@ -4802,7 +4794,7 @@
     {
       "id": "desktop.slash",
       "category": "Automation and companion experiences",
-      "feature": "Discover and dispatch the app’s slash command set",
+      "feature": "Discover and dispatch the app\u2019s slash command set",
       "baseline_surface": "ChatGPT / Codex desktop",
       "sele_status": "Missing",
       "assessment": "Sele has file/skill mentions; literal /commands are not dispatched as desktop or CLI actions.",
@@ -5040,7 +5032,7 @@
       "feature": "Sign out and reauthenticate",
       "baseline_surface": "Desktop + CLI",
       "sele_status": "Partial",
-      "assessment": "Linux account removal and login exist; no general account/logout RPC or Codex reauthentication flow. Reauthentication is currently Claude-only.",
+      "assessment": "Codex authentication failures now offer Sign in again with managed device-code recovery; existing accounts survive cancellation/failure. General account/logout RPC and cross-platform account management remain incomplete.",
       "priority": "P2",
       "evidence": [
         {
@@ -5050,12 +5042,16 @@
         {
           "path": "src/main/providers/codex/CodexProviderAdapter.ts",
           "needle": "export class CodexProviderAdapter"
+        },
+        {
+          "path": "src/main/providers/codex/CodexAuthentication.ts",
+          "needle": "export function isCodexAuthenticationFailure"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/auth"
       ],
-      "verification": "static limitation"
+      "verification": "focused protocol/unit tests and isolated UI; live platform limitations documented"
     },
     {
       "id": "account.external-token",
@@ -5327,10 +5323,10 @@
     {
       "id": "cli.tui",
       "category": "CLI-specific interfaces",
-      "feature": "Use Codex’s native terminal interface inside Sele",
+      "feature": "Use Codex\u2019s native terminal interface inside Sele",
       "baseline_surface": "Codex CLI",
       "sele_status": "Runtime",
-      "assessment": "It can be launched in Sele’s terminal; the graphical chat is a separate app-server client.",
+      "assessment": "It can be launched in Sele\u2019s terminal; the graphical chat is a separate app-server client.",
       "priority": "P2",
       "evidence": [
         {
@@ -5508,7 +5504,7 @@
       "id": "hosted.sites-build",
       "category": "Hosted tools reached from desktop",
       "feature": "Build and deploy a hosted Site",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Runtime",
       "assessment": "Possible through a connected Sites plugin; not a native Sele hosting service.",
       "priority": "P2",
@@ -5531,7 +5527,7 @@
       "id": "hosted.sites-data",
       "category": "Hosted tools reached from desktop",
       "feature": "Use Site storage, auth, and connected data",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Runtime",
       "assessment": "Depends on hosted Sites tools, account access, and supported authorization flows.",
       "priority": "P2",
@@ -5554,7 +5550,7 @@
       "id": "hosted.sites-manage",
       "category": "Hosted tools reached from desktop",
       "feature": "Manage Site domains, analytics, and deployments",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Runtime",
       "assessment": "Configured tools may perform operations; no dedicated Sele site-management UI.",
       "priority": "P2",
@@ -5577,7 +5573,7 @@
       "id": "hosted.sites-share",
       "category": "Hosted tools reached from desktop",
       "feature": "Publish Site updates and manage access",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Runtime",
       "assessment": "Requires the hosting service and connected tool permissions; no native publishing controls.",
       "priority": "P2",
@@ -5600,7 +5596,7 @@
       "id": "hosted.space",
       "category": "Hosted tools reached from desktop",
       "feature": "Create or edit Space Pages through connected tools",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Runtime",
       "assessment": "A configured Space plugin can expose APIs; Sele has no native Pages workspace.",
       "priority": "P2",
@@ -5623,7 +5619,7 @@
       "id": "hosted.space-ui",
       "category": "Hosted tools reached from desktop",
       "feature": "Use the collaborative Space block editor",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Missing",
       "assessment": "No native block editor, sharing UI, page comments, or collaborative presence.",
       "priority": "P2",
@@ -5647,7 +5643,7 @@
       "id": "hosted.dots",
       "category": "Hosted tools reached from desktop",
       "feature": "Set up and supervise an ongoing dot assistant",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Missing",
       "assessment": "No dot identity, messaging channel setup, supervision, or persistent task UI.",
       "priority": "P2",
@@ -5670,7 +5666,7 @@
       "id": "hosted.security",
       "category": "Hosted tools reached from desktop",
       "feature": "Use the Codex Security plugin",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Runtime",
       "assessment": "Connected security tools may execute; permissions and rich workbench flows remain conditional.",
       "priority": "P2",
@@ -5693,7 +5689,7 @@
       "id": "hosted.security-ui",
       "category": "Hosted tools reached from desktop",
       "feature": "Review findings in the Security workbench",
-      "baseline_surface": "Desktop plugin → hosted service",
+      "baseline_surface": "Desktop plugin \u2192 hosted service",
       "sele_status": "Missing",
       "assessment": "No native findings inbox, triage UI, or security workbench.",
       "priority": "P2",
@@ -5787,7 +5783,7 @@
       "feature": "Edit code inside an external IDE from Classic",
       "baseline_surface": "ChatGPT Classic, where available",
       "sele_status": "Missing",
-      "assessment": "Sele’s built-in editor is separate from external-app patch application.",
+      "assessment": "Sele\u2019s built-in editor is separate from external-app patch application.",
       "priority": "P2",
       "evidence": [
         {
@@ -5847,19 +5843,19 @@
       "category": "Approvals and security",
       "feature": "Answer provider requests for the current time",
       "baseline_surface": "Desktop + CLI",
-      "sele_status": "Missing",
-      "assessment": "The exported currentTime/read server callback has no handler and is rejected as unsupported.",
+      "sele_status": "Implemented",
+      "assessment": "CodexAppServerClient answers currentTime/read with fresh whole Unix seconds for regular and one-shot sessions.",
       "priority": "P0",
       "evidence": [
         {
-          "path": "src/main/providers/codex/CodexProviderAdapter.ts",
+          "path": "src/main/providers/codex/CodexAppServerClient.ts",
           "needle": "private handleServerRequest"
         }
       ],
       "sources": [
         "https://learn.chatgpt.com/codex/app-server"
       ],
-      "verification": "static limitation"
+      "verification": "protocol and isolated fixture checks"
     },
     {
       "id": "security.legacy-callbacks",

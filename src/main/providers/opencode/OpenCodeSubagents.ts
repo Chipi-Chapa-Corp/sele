@@ -9,6 +9,11 @@ const truncate = (value: string, limit: number): string => {
   return normalized.length <= limit ? normalized : `${normalized.slice(0, limit - 1)}…`
 }
 
+// The task tool titles child sessions "<description> (@<agent> subagent)"; the agent type is
+// already the generic part, so the sidebar shows the description alone.
+const getOpenCodeSubagentTitle = (title: string | undefined): string =>
+  title?.replace(/\s*\(@[^()]+ subagent\)\s*$/, '').trim() ?? ''
+
 export const isOpenCodeSubagentSession = (session: Session | GlobalSession): boolean =>
   Boolean(session.agent?.trim())
 
@@ -19,7 +24,10 @@ export const createOpenCodeSubagentSummary = (
 ): ProviderSubagent => ({
   id: session.id,
   parentId: session.parentID && session.parentID !== rootChatId ? session.parentID : null,
-  title: truncate(session.title || session.agent || `Subagent ${session.id}`, 80),
+  title: truncate(
+    getOpenCodeSubagentTitle(session.title) || session.agent || `Subagent ${session.id}`,
+    60
+  ),
   description: session.agent?.trim() || null,
   status: status?.type === 'busy' || status?.type === 'retry' ? 'running' : 'completed',
   createdAt: Number.isFinite(session.time.created) ? session.time.created : null,

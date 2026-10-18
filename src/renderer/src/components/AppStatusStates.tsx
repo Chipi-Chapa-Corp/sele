@@ -6,7 +6,6 @@ import {
   useRef
 } from 'react'
 import {
-  Bot,
   Check,
   Download,
   GitBranch,
@@ -26,9 +25,8 @@ import {
   UploadIcon as AnimatedUploadIcon
 } from 'lucide-animated'
 import type { AppGitCommitAction } from '../../../shared/app'
-import type { ProviderId, ProviderSubagent } from '../../../shared/provider'
+import type { ProviderId } from '../../../shared/provider'
 import type { ChatCommitMarkerStatus } from '../chatCommitMarker'
-import { getSubagentMarkerPresentation } from '../subagentUi'
 import { Button } from './Button'
 
 type AnimatedIconHandle = {
@@ -172,67 +170,6 @@ export const ChatCommitMarkerItem: React.FC<{
         <span className="chat-detail__commit-marker-open">{markerContent}</span>
       )}
       {marker.status === 'pending' && onCancel && (
-        <span className="chat-detail__commit-marker-cancel">
-          <Button
-            aria-label={cancelLabel}
-            callback={onCancel}
-            disabled={canceling}
-            icon={<X aria-hidden="true" />}
-            size="small"
-            theme="transparent"
-            title={cancelLabel}
-          />
-        </span>
-      )}
-    </div>
-  )
-}
-
-export const ChatSubagentMarkerItem: React.FC<{
-  canceling?: boolean
-  onCancel?: () => Promise<void> | void
-  subagent: ProviderSubagent
-  onOpen: () => Promise<void> | void
-}> = ({ canceling = false, onCancel, subagent, onOpen }) => {
-  const presentation = getSubagentMarkerPresentation(subagent)
-  const cancelLabel = `Cancel ${subagent.title}`
-  const openLabel = `Open ${subagent.title} chat`
-
-  return (
-    <div
-      className={`chat-detail__commit-marker chat-detail__subagent-marker chat-detail__commit-marker--${presentation.status}`}
-      role="status"
-      aria-live={presentation.status === 'pending' ? 'polite' : undefined}
-    >
-      <button
-        aria-label={openLabel}
-        className="chat-detail__commit-marker-open"
-        title={openLabel}
-        type="button"
-        onClick={() => void onOpen()}
-      >
-        {presentation.status === 'pending' ? (
-          <AnimatedStatusIcon
-            Icon={AnimatedMessageSquareMoreIcon}
-            active
-            className="chat-detail__commit-marker-icon"
-          />
-        ) : (
-          <span className="chat-detail__commit-marker-icon" aria-hidden="true">
-            {presentation.status === 'failed' ? (
-              <X />
-            ) : presentation.status === 'stopped' ? (
-              <Minus />
-            ) : subagent.status === 'completed' ? (
-              <Check />
-            ) : (
-              <Bot />
-            )}
-          </span>
-        )}
-        <span>{presentation.label}</span>
-      </button>
-      {presentation.status === 'pending' && onCancel && (
         <span className="chat-detail__commit-marker-cancel">
           <Button
             aria-label={cancelLabel}

@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { FolderKanban, FolderTree } from 'lucide-react'
 import type { ProviderMessage } from '../../../shared/provider'
 import { ChatListGroup, type ChatListGroupData } from '../components/ChatListGroup'
@@ -9,6 +9,7 @@ import { renderProjectGlyph } from '../projectPresentation'
 import { isScrolledToBottom, readChatScrollAnchor } from '../chatLayout'
 import {
   getChatKey,
+  getChatCwdGroupKey,
   getCollapsedGroupState,
   hasActiveWorkingStep,
   hasPendingSteeringMessage,
@@ -40,7 +41,6 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     projectIconsByGroup,
     activeChatGroups,
     chatGroupingPreference,
-    doneProjectFilterLoadState,
     doneProjectFilterValue,
     projectOptions,
     projectDropInsertionIndex,
@@ -79,6 +79,33 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     runPromptActionRef,
     handleSendMessage
   } = dependencies
+
+  // Chat summaries and selection change far more often than project icons.
+  // Depend on the directory set, not the freshly grouped chat objects: new icon
+  // elements otherwise invalidate every memoized sidebar row on every update.
+  const projectCwdsKey = JSON.stringify(
+    [
+      ...new Set([...projectRecordsByCwd.keys(), ...activeChatGroups.map((group) => group.cwd)])
+    ].sort()
+  )
+  const projectIconsByCwd = useMemo(() => {
+    const cwds = JSON.parse(projectCwdsKey) as (string | null)[]
+    const icons = new Map<string, React.ReactElement>()
+    for (const cwd of cwds) {
+      const project = cwd ? projectRecordsByCwd.get(cwd) : null
+      const projectImage = projectIconsByGroup[getChatCwdGroupKey(cwd)]
+      const icon =
+        (project?.icon === 'image' || project?.icon == null) && projectImage?.dataUrl ? (
+          <img className="chat-list-group__project-icon-image" src={projectImage.dataUrl} alt="" />
+        ) : project?.icon && project.icon !== 'image' ? (
+          renderProjectGlyph(project.icon)
+        ) : (
+          <FolderKanban aria-hidden="true" />
+        )
+      icons.set(cwd ?? '', icon)
+    }
+    return icons
+  }, [projectCwdsKey, projectRecordsByCwd, projectIconsByGroup])
 
   const handleChatContentScroll = (): boolean => {
     const contentElement = contentRef.current
@@ -166,7 +193,12 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       chatUserScrollIntentRef.current = false
     })
   }
-  const renderChatGroup = (group: ChatListGroupData, contentId: string): React.ReactElement => {
+  const renderChatGroup = (
+    group: ChatListGroupData,
+    contentId: string,
+    selectedChatChildren: React.ReactNode = null,
+    selectedChatChildOpen = false
+  ): React.ReactElement => {
     const groupOpen =
       searchTerms.length > 0 || !getCollapsedGroupState(group.key, collapsedCwdGroups)
     const chatPageSize = effectiveAppSettings.performance.maxChatsRendered
@@ -174,16 +206,6 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       group.kind === 'pinned'
         ? group.chats.length
         : (visibleChatPageCountsByGroup[group.key] ?? 1) * chatPageSize
-    const project = group.cwd ? projectRecordsByCwd.get(group.cwd) : null
-    const projectImage = projectIconsByGroup[group.key]
-    const projectIcon =
-      (project?.icon === 'image' || project?.icon == null) && projectImage?.dataUrl ? (
-        <img className="chat-list-group__project-icon-image" src={projectImage.dataUrl} alt="" />
-      ) : project?.icon && project.icon !== 'image' ? (
-        renderProjectGlyph(project.icon)
-      ) : (
-        <FolderKanban aria-hidden="true" />
-      )
     const projectGroupIndex = activeChatGroups.findIndex((candidate) => candidate.key === group.key)
     const projectDraggable =
       group.kind === 'cwd' &&
@@ -234,13 +256,9 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     const doneProjectFilterEmptyContent =
       group.kind !== 'done' || group.chats.length > 0 ? null : (
         <p className="chat-list-group__empty">
-          {doneProjectFilterLoadState === 'loading'
-            ? 'Loading done chats…'
-            : doneProjectFilterLoadState === 'error'
-              ? 'Unable to load done chats.'
-              : searchTerms.length > 0
-                ? 'No matching done chats in this project.'
-                : 'No done chats in this project.'}
+          {searchTerms.length > 0
+            ? 'No matching done chats in this project.'
+            : 'No done chats in this project.'}
         </p>
       )
 
@@ -253,7 +271,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         selectedChatKey={selectedChat ? getChatKey(selectedChat) : null}
         committingChatKeys={committingChatKeys}
         latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
-        canReorderChats={searchTerms.length === 0}
+        canReorderChats={group.kind !== 'done' && searchTerms.length === 0}
         projectDraggable={projectDraggable}
         projectDragging={group.key === draggedProjectGroupKey}
         projectDropPosition={projectDropPosition}
@@ -263,9 +281,10 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         emptyContent={doneProjectFilterEmptyContent}
         headerAction={doneProjectFilter}
         projectNamesByCwd={projectNamesByCwd}
+        projectIconsByCwd={projectIconsByCwd}
         onLoadMoreChats={group.kind === 'pinned' ? undefined : handleLoadMoreChatsInGroup}
         onShowLessChats={group.kind === 'pinned' ? undefined : handleShowLessChatsInGroup}
-        projectIcon={projectIcon}
+        projectIcon={projectIconsByCwd.get(group.cwd ?? '')}
         onMarkChatDone={handleMarkChatDone}
         onProjectDragEnd={projectDraggable ? restoreExpandedProjectsAfterDrag : undefined}
         onProjectDragStart={projectDraggable ? handleProjectDragStart : undefined}
@@ -280,6 +299,8 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         onToggleChatPinned={handleToggleChatPinned}
         onUnpinPinnedChats={(nextGroup) => void handleUnpinPinnedChats(nextGroup)}
         resolvingApprovalId={resolvingApprovalId}
+        selectedChatChildren={selectedChatChildren}
+        selectedChatChildOpen={selectedChatChildOpen}
       />
     )
   }

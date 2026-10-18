@@ -1,3 +1,4 @@
+import type { McpAppConnection } from '../../shared/mcpApps'
 import type { TokenUsageSummary } from '../../shared/tokenUsage'
 import type { TokenUsageObservation } from './TokenUsageReporter'
 import type {
@@ -49,6 +50,7 @@ export type HistoricalTokenUsageSnapshot = TokenUsageSummary & { sourceIdentity?
 
 export type ProviderAdapter = {
   id: ProviderId
+  getMcpApp?: (chatId: string, callId: string) => Promise<McpAppConnection | null>
   /** Read retained, dated native consumption without hydrating chat transcripts. */
   getHistoricalTokenUsage?: (
     chatId: string | null,
