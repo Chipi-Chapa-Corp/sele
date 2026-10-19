@@ -221,12 +221,23 @@ test('subagent IPC bounds a long transcript and serves exact older windows', asy
   assert.equal(calls[2][3].startIndex, 0)
 })
 
-test('a missing first acknowledgment holds completion and logs delivery state without content', () => {
+test('a missing first acknowledgment recovers the latest full completion without content in logs', () => {
   const h = setup()
   h.publish(1)
   h.publish(2, true)
   h.expire()
-  assert.equal(h.sent.length, 1)
+  assert.equal(h.sent.length, 2)
+  const recovered = h.sent[1].event
+  assert.equal(recovered.detail.revision, 2)
+  assert.equal(recovered.detail.baseRevision, null)
+  assert.equal(recovered.turnCompleted, true)
+  assert.equal(recovered.detail.changedItems.length, 2)
+  h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, true)
+  h.publish(3)
+  assert.equal(h.sent.length, 2, 'late acknowledgment must not release a newer packet')
+  h.emit(channels.chatUpdateAcknowledged, recovered.sequence, true)
+  assert.equal(h.sent.length, 3)
+  assert.equal(h.sent[2].event.detail.baseRevision, 2)
   const [level, source, diagnostic] = h.harness.logs[0]
   assert.equal(level, 'warn')
   assert.equal(source, 'chat-update-delivery')
@@ -234,6 +245,69 @@ test('a missing first acknowledgment holds completion and logs delivery state wi
   assert.equal(diagnostic.pending[0].revision, 2)
   assert.equal(diagnostic.pending[0].turnCompleted, true)
   assert.doesNotMatch(JSON.stringify(diagnostic), /PRIVATE/)
+})
+
+test('recovery discards an older delta base and stays bounded across repeated missing acknowledgments', () => {
+  const h = setup()
+  h.publish(1)
+  h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, true)
+  h.publish(2)
+  assert.equal(h.sent[1].event.detail.baseRevision, 1)
+  for (const revision of [3, 4, 5]) h.publish(revision)
+  h.expire()
+  assert.equal(h.sent.length, 3)
+  assert.equal(h.sent[2].event.detail.revision, 5)
+  assert.equal(h.sent[2].event.detail.baseRevision, null)
+  assert.equal(h.timers.size, 1)
+  h.publish(6, true)
+  h.expire()
+  assert.equal(h.sent.length, 4)
+  assert.equal(h.sent[3].event.detail.revision, 6)
+  assert.equal(h.sent[3].event.detail.baseRevision, null)
+  assert.equal(h.sent[3].event.turnCompleted, true)
+  h.emit(channels.chatUpdateAcknowledged, h.sent[3].event.sequence, true)
+  assert.equal(h.timers.size, 0)
+})
+
+test('recovery preserves completion when the same chat has already started another turn', () => {
+  const h = setup()
+  h.emit(channels.viewedChatChanged, 'codex', 'other-chat')
+  h.publish(1, true) // A summary-only completion is now in flight.
+  assert.equal(h.sent[0].event.detail, null)
+  h.emit(channels.viewedChatChanged, 'claude', 'first-chat')
+  h.harness.publish({
+    providerId: 'claude',
+    chatId: 'first-chat',
+    turnCompleted: false,
+    summary: { id: 'first-chat', status: 'active' },
+    detail: { id: 'first-chat', revision: 2, status: 'active', items: [] }
+  })
+  h.expire()
+  assert.equal(h.sent.length, 2)
+  assert.equal(h.sent[1].event.detail.revision, 2)
+  assert.equal(h.sent[1].event.turnCompleted, true, 'coalescing must retain the completion signal')
+})
+
+test('a stalled background chat cannot block the viewed Claude chat or lose its own completion', () => {
+  const h = setup()
+  h.harness.publish({
+    providerId: 'codex',
+    chatId: 'background',
+    turnCompleted: true,
+    summary: { id: 'background', status: null },
+    detail: { id: 'background', revision: 1, status: null, items: [] }
+  })
+  assert.equal(h.sent[0].event.detail, null)
+  h.publish(1)
+  h.expire()
+  assert.equal(h.sent.length, 2)
+  assert.equal(h.sent[1].event.chatId, 'first-chat')
+  assert.equal(h.sent[1].event.detail.baseRevision, null)
+  h.emit(channels.chatUpdateAcknowledged, h.sent[1].event.sequence, true)
+  assert.equal(h.sent.length, 3)
+  assert.equal(h.sent[2].event.chatId, 'background')
+  assert.equal(h.sent[2].event.turnCompleted, true)
+  assert.equal(h.sent[2].event.detail, null)
 })
 
 test('an unacknowledged update with no queued successor does not report a streaming stall', () => {

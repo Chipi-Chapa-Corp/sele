@@ -5,10 +5,12 @@ import test from 'node:test'
 import ts from 'typescript'
 import { getClaudeQueueDrainDecision } from './ClaudeQueueDrain.ts'
 import {
+  getClaudeResultError,
   getClaudeResultLifecycleDecision,
   getClaudeSessionStateLifecycleDecision
 } from './ClaudeQueryLifecycle.ts'
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
+import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors.ts'
 import { getContainerTargetKey } from '../../containerTarget.ts'
 import {
   applyClaudeStreamEvent,
@@ -40,10 +42,16 @@ const methods = new Set([
   'sendQueuedMessageNow',
   'continueChat',
   'editMessage',
+  'stopChat',
+  'closeStateQuery',
+  'deletePendingMessage',
+  'editPendingMessage',
+  'generateOneShot',
   'sendActiveChatMessage'
 ])
 const code = ts.transpileModule(
-  `${source.statements.find((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((declaration) => declaration.name.getText(source) === 'toTranscriptMessage')).getText(source)}
+  `${source.statements.find((node) => ts.isClassDeclaration(node) && node.name.text === 'AsyncMessageQueue').getText(source)}
+  ${source.statements.find((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((declaration) => declaration.name.getText(source) === 'toTranscriptMessage')).getText(source)}
   class Harness { ${adapter.members
     .filter((member) => methods.has(member.name?.getText(source)))
     .map((member) => member.getText(source))
@@ -52,11 +60,13 @@ const code = ts.transpileModule(
 ).outputText
 const context = vm.createContext({
   isClaudeAuthenticationFailure,
+  isExpectedClaudeQueryShutdownError,
   getContainerTargetKey,
   applyClaudeStreamEvent,
   retainClaudeStreamTiming,
   clearClaudeStreamMessages,
   getClaudeQueueDrainDecision,
+  getClaudeResultError,
   getClaudeResultLifecycleDecision,
   getClaudeSessionStateLifecycleDecision,
   backgroundIdleCloseGraceMs: 0,
@@ -69,7 +79,17 @@ const context = vm.createContext({
     cachedInputTokens
   }),
   settleWithin: (promise) => promise,
-  contextUsageCloseGraceMs: 0
+  contextUsageCloseGraceMs: 0,
+  interruptCloseGraceMs: 0,
+  query: (...args) => context.queryFactory(...args),
+  getPrompt: (message) => message,
+  createSdkUserMessage: (session_id, uuid, content) => ({
+    type: 'user',
+    session_id,
+    uuid,
+    message: { role: 'user', content }
+  }),
+  providerOneShotGenerationCanceledMessage: 'Generation canceled'
 })
 vm.runInContext(code, context)
 
@@ -79,7 +99,23 @@ const setup = () => {
   instance.authenticatedSources = new Set()
   instance.states = new Map()
   instance.reportResultTokenUsage = () => {}
+  instance.oneShotGenerations = new Map()
+  instance.hiddenSessionIds = new Set()
+  instance.takeCanceledOneShotGeneration = () => false
+  instance.getQueryRuntime = async () => ({})
+  instance.getBaseQueryOptions = () => ({})
   const state = {
+    id: 'session',
+    container: null,
+    query: null,
+    input: null,
+    queryStartupRevision: 0,
+    resultSettling: false,
+    partialMessages: new Map(),
+    backgroundTaskIds: new Set(),
+    waitingForSessionIdle: false,
+    stopped: false,
+    failed: false,
     queuedMessages: [{ id: 'first' }],
     queuedMessagesPaused: false,
     queueDrainInProgress: false,
@@ -102,12 +138,43 @@ const setup = () => {
   }
   instance.ensureStateQuery = async () => {}
   instance.applyTurnOptions = async () => {}
+  instance.ensureState = async () => state
+  instance.pinState = () => {}
+  instance.unpinState = () => {}
+  instance.trimIdleStates = () => {}
+  instance.rejectPendingRequests = () => {}
+  instance.createChatDetail = () => state
   instance.sendQueuedMessageNow = () => {
     state.active = true
     instance.emitUpdate(state)
   }
-  return { instance, state, updates }
+  return { instance, state, updates, transcript }
 }
+
+const deferred = () => {
+  let resolve
+  const promise = new Promise((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+const successfulResult = (overrides = {}) => ({
+  type: 'result',
+  subtype: 'success',
+  uuid: 'result',
+  session_id: 'session',
+  is_error: false,
+  terminal_reason: 'completed',
+  duration_ms: 1000,
+  usage: {
+    input_tokens: 1,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    output_tokens: 1
+  },
+  ...overrides
+})
 
 test('live expired OAuth errors finish the turn and pause queued messages for recovery', async () => {
   const { instance, state } = setup()
@@ -178,6 +245,102 @@ test('unauthenticated sends and retries are rejected before changing transcript 
   assert.equal(JSON.stringify(state), before)
 })
 
+const setupEditing = (messages, supportsResumeDropsTurn) => {
+  const { instance, state } = setup()
+  Object.assign(state, {
+    id: 'session',
+    messages,
+    messageIds: new Set(messages.map((message) => message.uuid))
+  })
+  instance.ensureState = async () => state
+  instance.pinState = () => {}
+  instance.unpinState = () => {}
+  instance.trimIdleStates = () => {}
+  instance.rejectPendingRequests = () => {}
+  instance.closeStateQuery = async () => {
+    state.query = null
+    state.active = false
+  }
+  instance.supportsResumeDropsTurn = async () => supportsResumeDropsTurn
+  const starts = []
+  instance.startStateQuery = async (_state, options, startOptions) => {
+    starts.push({ options, ...startOptions })
+  }
+  instance.sendMessageNow = (_state, text) => {
+    const message = { type: 'user', uuid: `edit-${starts.length}`, message: { content: text } }
+    state.messages.push(message)
+    state.messageIds.add(message.uuid)
+    state.active = true
+    state.stopped = false
+  }
+  instance.createChatDetail = () => state
+  return { instance, state, starts }
+}
+
+for (const supportsResumeDropsTurn of [false, true]) {
+  test(`edit, stop, and edit again skips display-only resume points (guard=${supportsResumeDropsTurn})`, async () => {
+    const messages = [
+      { type: 'user', uuid: 'first' },
+      { type: 'assistant', uuid: 'answer' },
+      { type: 'system', uuid: 'result:timing', message: { subtype: 'sele_turn_timing' } },
+      { type: 'system', uuid: 'background', message: { subtype: 'sele_background_turn' } },
+      { type: 'assistant', uuid: 'subagent-answer', parent_tool_use_id: 'tool-agent' },
+      { type: 'system', uuid: 'failure', message: { content: 'Disconnected' }, failed: true },
+      { type: 'user', uuid: 'original' },
+      { type: 'assistant', uuid: 'discarded-answer' }
+    ]
+    const { instance, state, starts } = setupEditing(messages, supportsResumeDropsTurn)
+    const options = { model: 'claude-opus', clientMessageId: 'client-edit' }
+    await instance.editMessage('session', 'original', 'first edit', options)
+    assert.equal(starts[0].resumeAt, 'answer')
+    assert.equal(starts[0].resumeDropsTurn, supportsResumeDropsTurn ? 'original' : undefined)
+    assert.equal(starts[0].options, options)
+    assert.equal(state.messageIds.has('discarded-answer'), false)
+    assert.equal(state.messageIds.has('original'), false)
+
+    state.messages.push({ type: 'assistant', uuid: 'interrupted-answer' })
+    state.messageIds.add('interrupted-answer')
+    await instance.stopChat('session')
+    assert.equal(state.stopped, true)
+    await instance.editMessage('session', 'edit-1', 'second edit', options)
+    assert.equal(starts[1].resumeAt, 'answer')
+    assert.equal(starts[1].resumeDropsTurn, supportsResumeDropsTurn ? 'edit-1' : undefined)
+    assert.equal(state.messageIds.has('interrupted-answer'), false)
+    assert.equal(state.messageIds.has('edit-1'), false)
+    assert.equal(state.messages.at(-1).message.content, 'second edit')
+    assert.equal(state.active, true)
+    assert.equal(state.stopped, false)
+  })
+}
+
+test('editing keeps the preceding tool result as the resume point', async () => {
+  const { instance, starts } = setupEditing(
+    [
+      { type: 'assistant', uuid: 'tool-use' },
+      { type: 'user', uuid: 'tool-result', message: { content: [{ type: 'tool_result' }] } },
+      { type: 'system', uuid: 'result:timing', message: { subtype: 'sele_turn_timing' } },
+      { type: 'user', uuid: 'original' }
+    ],
+    true
+  )
+  await instance.editMessage('session', 'original', 'edited')
+  assert.equal(starts[0].resumeAt, 'tool-result')
+})
+
+test('editing the first message rejects before mutating history, even after a system record', async () => {
+  const { instance, state, starts } = setupEditing(
+    [
+      { type: 'system', uuid: 'display-marker', message: { subtype: 'sele_background_turn' } },
+      { type: 'user', uuid: 'first' }
+    ],
+    true
+  )
+  const before = JSON.stringify(state.messages)
+  await assert.rejects(instance.editMessage('session', 'first', 'edited'), /first message/)
+  assert.equal(JSON.stringify(state.messages), before)
+  assert.equal(starts.length, 0)
+})
+
 test('startup presents the submitted message as sent and preserves usage', async () => {
   const { instance, state, updates } = setup()
   const usage = state.contextUsage
@@ -206,6 +369,146 @@ test('startup failure publishes the paused queued message for recovery', async (
   assert.equal(updates.at(-1).sent, null)
   assert.deepEqual(updates.at(-1).pending, ['first'])
   assert.equal(updates.at(-1).draining, false)
+})
+
+test('deleting the queued head during startup still sends the next message', async () => {
+  const { instance, state } = setup()
+  const gate = deferred()
+  state.queuedMessages.push({ id: 'second' })
+  instance.ensureStateQuery = async () => gate.promise
+  const sent = []
+  instance.sendQueuedMessageNow = (_state, message) => {
+    sent.push(message.id)
+    state.active = true
+  }
+  const drain = instance.drainNextQueuedMessage(state)
+  await instance.deletePendingMessage('session', 'first')
+  gate.resolve()
+  await drain
+  assert.deepEqual(sent, ['second'])
+  assert.equal(state.queuedMessages.length, 0)
+})
+
+test('editing the queued head during option application sends the edited message with its options', async () => {
+  const { instance, state } = setup()
+  const original = { id: 'first', content: 'old', options: { model: 'old-model' } }
+  state.queuedMessages = [original]
+  const gate = deferred()
+  const prepared = []
+  instance.applyTurnOptions = async (_state, options) => {
+    prepared.push(options)
+    if (prepared.length === 1) await gate.promise
+  }
+  const editedOptions = { model: 'new-model' }
+  instance.createQueuedMessage = (content, options, id) => ({ id, content, options })
+  const sent = []
+  instance.sendQueuedMessageNow = (_state, message) => {
+    sent.push(message)
+    state.active = true
+  }
+  const drain = instance.drainNextQueuedMessage(state)
+  await new Promise((resolve) => setImmediate(resolve))
+  await instance.editPendingMessage('session', 'first', 'edited', editedOptions)
+  gate.resolve()
+  await drain
+  assert.equal(sent[0].content, 'edited')
+  assert.equal(sent[0].options, editedOptions)
+  assert.equal(prepared.at(-1), editedOptions)
+})
+
+test('API failures with a success subtype publish their error text as a failed turn', async () => {
+  const { instance, state, transcript } = setup()
+  state.queuedMessages = []
+  state.active = true
+  const control = { getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }) }
+  state.query = control
+  instance.queueUpdate = () => {}
+  instance.refreshSessionMetadata = async () => {}
+  assert.equal(
+    await instance.handleQueryEvent(
+      state,
+      control,
+      successfulResult({
+        is_error: true,
+        api_error_status: 529,
+        terminal_reason: 'api_error',
+        result: 'Overloaded. Try again later.'
+      })
+    ),
+    true
+  )
+  assert.equal(state.active, false)
+  assert.equal(state.failed, true)
+  assert.equal(transcript.at(-1).failed, true)
+  assert.equal(transcript.at(-1).message.content, 'Overloaded. Try again later.')
+})
+
+for (const outcome of ['success', 'api-error', 'error-result', 'disconnect']) {
+  test(`one-shot generation handles ${outcome} and closes the query`, async () => {
+    const { instance } = setup()
+    let closed = 0
+    context.queryFactory = () => ({
+      close: () => {
+        closed += 1
+      },
+      async *[Symbol.asyncIterator]() {
+        if (outcome === 'disconnect') return
+        yield successfulResult(
+          outcome === 'api-error'
+            ? { is_error: true, result: 'Overloaded. Try again later.' }
+            : outcome === 'error-result'
+              ? { subtype: 'error_max_turns', is_error: true, errors: ['Too many turns.'] }
+              : { result: ' Answer ' }
+        )
+      }
+    })
+    if (outcome === 'success') assert.equal(await instance.generateOneShot('prompt'), 'Answer')
+    else
+      await assert.rejects(
+        instance.generateOneShot('prompt'),
+        outcome === 'api-error'
+          ? /Overloaded/
+          : outcome === 'error-result'
+            ? /Too many turns/
+            : /disconnected/i
+      )
+    assert.equal(closed, 1)
+    assert.equal(instance.oneShotGenerations.size, 0)
+    assert.equal(instance.hiddenSessionIds.size, 0)
+  })
+}
+
+test('stop during result settlement cannot leave the next send blocked on a retired query', async () => {
+  const { instance, state } = setup()
+  const usage = deferred()
+  const old = { getContextUsage: () => usage.promise, interrupt: async () => {}, close() {} }
+  state.query = old
+  state.queuedMessages = []
+  state.active = true
+  instance.queueUpdate = () => {}
+  instance.refreshSessionMetadata = async () => {}
+  const handled = instance.handleQueryEvent(state, old, successfulResult())
+  assert.equal(state.resultSettling, true)
+  await instance.stopChat('session')
+  const replacement = { getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }) }
+  instance.ensureStateQuery = async () => {
+    state.query = replacement
+  }
+  instance.createQueuedMessage = (content) => ({ id: content })
+  const sent = []
+  instance.sendQueuedMessageNow = (_state, message) => {
+    sent.push(message.id)
+    state.active = true
+  }
+  await instance.sendMessageRespectingQueue(state, 'next')
+  assert.deepEqual(sent, ['next'])
+
+  // The old handler must not clear a newer query's own settlement lock either.
+  state.resultSettling = true
+  usage.resolve({ totalTokens: 10, maxTokens: 100 })
+  await handled
+  assert.equal(state.resultSettling, true)
+  assert.equal(state.query, replacement)
 })
 
 test('a preceding result keeps SDK-queued steering alive until its own result', async () => {

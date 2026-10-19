@@ -72,6 +72,7 @@ export function startBrowserAutomationService(): BrowserAutomationService {
   const ready = new Set<number>()
   const clients = new Set<BrowserAutomationClient>()
   const attached = new Map<number, { owner: object; cleanup: () => void }>()
+  const focusQueues = new Map<number, Promise<BrowserCdpParams>>()
   let stopped = false
   const finishUi = (id: string, error?: Error, result?: unknown): void => {
     const entry = pending.get(id)
@@ -117,6 +118,9 @@ export function startBrowserAutomationService(): BrowserAutomationService {
     if (!response || typeof response.id !== 'string') return
     const entry = pending.get(response.id)
     if (entry?.renderer !== event.sender) return
+    if (response.restoreFocus && BrowserWindow.fromWebContents(event.sender)?.isFocused()) {
+      event.sender.focus()
+    }
     finishUi(response.id, response.error ? new Error(response.error) : undefined, response.result)
   }
   const onVisibility = (event: Electron.IpcMainEvent, visible: unknown): void => {
@@ -127,11 +131,14 @@ export function startBrowserAutomationService(): BrowserAutomationService {
   const ui = (
     scope: BrowserAutomationScope,
     command: Omit<BrowserAutomationRequest, 'id' | 'scope'>,
-    owner: object
+    owner: object,
+    targetRenderer?: WebContents
   ): Promise<unknown> => {
     const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    if (!window || window.isDestroyed()) return Promise.reject(new Error('Sele has no open window'))
-    const renderer = window.webContents
+    const renderer = targetRenderer ?? window?.webContents
+    if (!renderer || renderer.isDestroyed())
+      return Promise.reject(new Error('Sele has no open window'))
+    const focusRequest = command.method === 'preserve-focus' || command.method === 'release-focus'
     const id = randomUUID()
     return new Promise((resolve, reject) => {
       const entry: PendingUi = {
@@ -139,13 +146,13 @@ export function startBrowserAutomationService(): BrowserAutomationService {
         owner,
         request: { ...command, scope, id },
         sent: false,
-        accepted: false,
+        accepted: focusRequest,
         resolve,
         reject,
         timer: setTimeout(() => finishUi(id, new Error('Sele browser did not respond')), 15000)
       }
       pending.set(id, entry)
-      renderer.send(browserIpcChannels.automationOpen, id)
+      if (!focusRequest) renderer.send(browserIpcChannels.automationOpen, id)
       if (ready.has(renderer.id)) sendUi(entry)
     })
   }
@@ -447,7 +454,44 @@ export function startBrowserAutomationService(): BrowserAutomationService {
             if (!(await stat(path)).isFile()) throw new Error('File upload requires regular files')
           }
         }
-        return guest.debugger.sendCommand(method, command, childSessionId)
+        if (!method.startsWith('Input.') && method !== 'DOM.focus') {
+          return guest.debugger.sendCommand(method, command, childSessionId)
+        }
+        const renderer = guest.hostWebContents
+        const run = async (): Promise<BrowserCdpParams> => {
+          assertOpen()
+          const focusToken = randomUUID()
+          try {
+            await ui(
+              scope,
+              {
+                method: 'preserve-focus',
+                focusToken,
+                tabId: id,
+                focusGuest: method.startsWith('Input.')
+              },
+              owner,
+              renderer
+            )
+            assertOpen()
+            return await guest.debugger.sendCommand(method, command, childSessionId)
+          } finally {
+            // Focus cleanup belongs to the original renderer, including on failure
+            // or revocation. It must not reopen a pane or require browser permission.
+            if (!stopped && !renderer.isDestroyed()) {
+              await ui(scope, { method: 'release-focus', focusToken }, owner, renderer)
+            }
+          }
+        }
+        // Concurrent tools must not capture another command's temporary guest focus.
+        const previous = focusQueues.get(renderer.id) ?? Promise.resolve({})
+        const task = previous.then(run, run)
+        focusQueues.set(renderer.id, task)
+        const cleanup = (): void => {
+          if (focusQueues.get(renderer.id) === task) focusQueues.delete(renderer.id)
+        }
+        void task.then(cleanup, cleanup)
+        return task
       },
       allowDownload: async (id, url) => {
         await attach(id)

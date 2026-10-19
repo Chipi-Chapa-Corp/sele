@@ -15,7 +15,7 @@ import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/c
 const harness = (provider, name, globals, state) => {
   const source = ts.createSourceFile(`${name}ProviderAdapter.ts`, readFileSync(new URL(`./${provider}/${name}ProviderAdapter.ts`, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true)
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name.text === `${name}ProviderAdapter`)
-  const selected = new Set(['getChat', 'getChatWindow', 'createChatDetail', 'createChatDetailFromState'])
+  const selected = new Set(['detailRevision', 'getChat', 'getChatWindow', 'createChatDetail', 'createChatDetailFromState'])
   const code = ts.transpileModule(`class Harness { ${declaration.members.filter(member => selected.has(member.name?.getText(source))).map(member => member.getText(source)).join('\n')} }; globalThis.Harness = Harness`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
   const context = vm.createContext({ ...globals, getPendingApproval: () => null, getPendingUserInput: () => null, getContextUsage: () => null })
   vm.runInContext(code, context)

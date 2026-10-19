@@ -132,6 +132,7 @@ import {
 } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { selectCodexTitleModel } from './CodexTitleModel'
+import { isTransientNetworkFailure } from '../ProviderNetworkRetry.ts'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
 import {
   assertUniqueCodexSnapshotIds,
@@ -965,6 +966,17 @@ const reduceCodexThread = (thread: CodexThread, action: CodexThreadAction): Code
 }
 
 const titleGenerationTimeoutMs = 30_000
+const titleGenerationAttempts = 3
+const titleGenerationRetryDelayMs = 2_000
+const isRetryableTitleGenerationFailure = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    isTransientNetworkFailure(message) ||
+    /\bat capacity\b|\bserver overloaded\b|\bserverOverloaded\b|^Timed out waiting for thread title generation$/i.test(
+      message
+    )
+  )
+}
 const oneShotGenerationTimeoutMs = 120_000
 const oneShotCancellationRetentionMs = 120_000
 const titleGenerationPromptLimit = 2_000
@@ -4610,16 +4622,30 @@ export class CodexProviderAdapter implements ProviderAdapter {
     prompt: string,
     cwd: string | null
   ): Promise<void> => {
-    const currentThread = this.threads.get(threadId)
-    if (currentThread && getThreadName(currentThread)) return
+    for (let attempt = 0; attempt < titleGenerationAttempts; attempt++) {
+      // Recheck after backoff: a rename or disposal must stop background retries.
+      const currentThread = this.threads.get(threadId)
+      if (!currentThread || getThreadName(currentThread)) return
 
-    const generatedTitle = await this.generateThreadTitle(prompt, cwd).catch((error: unknown) => {
-      console.warn('Unable to generate a Codex thread title', error)
-      return null
-    })
-    if (!generatedTitle) return
-
-    await this.setThreadNameIfUntitled(threadId, generatedTitle)
+      let generatedTitle: string | null
+      try {
+        generatedTitle = await this.generateThreadTitle(prompt, cwd)
+      } catch (error) {
+        if (attempt + 1 >= titleGenerationAttempts || !isRetryableTitleGenerationFailure(error)) {
+          console.warn(`Unable to generate a title for Codex thread ${threadId}`, error)
+          return
+        }
+        const delayMs = titleGenerationRetryDelayMs * 2 ** attempt
+        console.warn(
+          `Retrying title generation for Codex thread ${threadId} in ${delayMs}ms (attempt ${attempt + 2}/${titleGenerationAttempts})`,
+          error
+        )
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
+        continue
+      }
+      if (generatedTitle) await this.setThreadNameIfUntitled(threadId, generatedTitle)
+      return
+    }
   }
 
   private generateThreadTitle = async (
@@ -4772,7 +4798,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private setThreadNameIfUntitled = async (threadId: string, title: string): Promise<void> => {
     const normalizedTitle = normalizeGeneratedTitle(title, 60)
     const currentThread = this.threads.get(threadId)
-    if (!normalizedTitle || (currentThread && getThreadName(currentThread))) return
+    if (!normalizedTitle || !currentThread || getThreadName(currentThread)) return
 
     await this.client.request('thread/name/set', {
       threadId,

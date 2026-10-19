@@ -105,6 +105,7 @@ import {
 } from './ClaudePermissions'
 import { getClaudeUpdateAvailability, updateClaudeProvider } from './ClaudeProviderUpdate'
 import {
+  getClaudeResultError,
   getClaudeResultLifecycleDecision,
   getClaudeSessionStateLifecycleDecision
 } from './ClaudeQueryLifecycle'
@@ -566,6 +567,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   onTokenUsage = this.tokenUsageReporter.subscribe
 
   private states = new Map<string, ClaudeSessionState>()
+  // Delivery and renderer caches outlive idle transcript eviction. A reloaded session must
+  // never restart below a revision those consumers have already seen.
+  private detailRevision = 0
   private stateLoads = new Map<string, Promise<ClaudeSessionState>>()
   private stateGeneration = 0
   private disposed = false
@@ -1159,7 +1163,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       })
       generation.query = control
       input.push(createSdkUserMessage(sessionId, randomUUID(), getPrompt(message, options)))
-      let result = ''
+      let result: string | null = null
       for await (const event of control) {
         if (generation.canceled) throw new Error(providerOneShotGenerationCanceledMessage)
         if (event.type === 'result') {
@@ -1168,12 +1172,14 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
             control,
             event
           )
+          const error = getClaudeResultError(event)
+          if (error) throw new Error(error)
           if (event.subtype === 'success') result = event.result.trim()
-          else throw new Error(event.errors.join('\n') || 'Claude generation failed.')
           break
         }
       }
       if (generation.canceled) throw new Error(providerOneShotGenerationCanceledMessage)
+      if (result === null) throw new Error('Claude disconnected before completing the generation.')
       return result
     } catch (error) {
       if (generation.canceled) throw new Error(providerOneShotGenerationCanceledMessage)
@@ -1386,7 +1392,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         (entry) => entry.type === 'user' && entry.uuid === messageId
       )
       if (targetIndex < 0) throw new Error('Message cannot be edited')
-      const previous = state.messages[targetIndex - 1]
+      // Display history also contains local timing/error/background records and
+      // streamed subagent output. Their UUIDs are not resume points in this session.
+      // Keep user records eligible: a completed tool result may end the kept turn.
+      const previous = state.messages
+        .slice(0, targetIndex)
+        .findLast(
+          (entry) =>
+            (entry.type === 'user' || entry.type === 'assistant') && !entry.parent_tool_use_id
+        )
       if (!previous) throw new Error('Claude cannot edit the first message in a session.')
 
       const resumeDropsTurn = (await this.supportsResumeDropsTurn(state)) ? messageId : undefined
@@ -1871,7 +1885,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (this.disposed) throw new Error('Claude provider was disposed.')
     const existing = this.states.get(chatId)
     if (existing) {
-      if (options) existing.options = options
+      // Incoming settings belong to that send, which may be queued. Permission callbacks
+      // must retain the running turn's settings until the next turn is actually prepared.
       this.touchState(existing)
       this.leaseStateForAdmission(existing)
       return existing
@@ -1880,7 +1895,6 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const loading = this.stateLoads.get(chatId)
     if (loading) {
       const state = await loading
-      if (options) state.options = options
       this.touchState(state)
       this.leaseStateForAdmission(state)
       return state
@@ -2023,6 +2037,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private closeStateQuery = async (state: ClaudeSessionState): Promise<void> => {
     state.queryStartupRevision += 1
+    state.resultSettling = false
     const control = state.query
     state.browser?.close()
     state.browser = null
@@ -2514,16 +2529,18 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     // the expected outcome, not a failure.
     const wasInterrupted = state.interruptRequested && event.subtype === 'error_during_execution'
     state.interruptRequested = false
-    state.failed = !wasStopped && !wasInterrupted && event.subtype !== 'success'
+    const resultError = getClaudeResultError(event)
+    state.failed = !wasStopped && !wasInterrupted && resultError !== null
     if (state.failed) {
-      const errors = 'errors' in event ? event.errors : []
-      console.error(`Claude session ${state.id} returned ${event.subtype}.`, { errors })
-      const content = errors.join('\n').trim() || `Claude reported ${event.subtype}.`
+      // API failures can use subtype "success" with is_error=true and the error in result.
+      const reason = event.subtype === 'success' ? 'api_error' : event.subtype
+      const errors = 'errors' in event ? event.errors : [event.result]
+      console.error(`Claude session ${state.id} returned ${reason}.`, { errors })
       this.addTranscriptMessage(state, {
         type: 'system',
         uuid: event.uuid,
         session_id: event.session_id,
-        message: { content },
+        message: { content: resultError },
         parent_tool_use_id: null,
         failed: true
       })
@@ -2613,7 +2630,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           contextUsageCloseGraceMs
         )
       } finally {
-        state.resultSettling = false
+        // Stop/edit may have replaced this query while metadata requests were pending.
+        if (state.query === control) state.resultSettling = false
       }
       if (state.query !== control) return !lifecycle.keepQueryAlive
       this.emitUpdate(state, true)
@@ -2675,22 +2693,27 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private drainNextQueuedMessage = async (state: ClaudeSessionState): Promise<boolean> => {
     if (this.getQueueDrainDecision(state) !== 'start') return false
-    const queued = state.queuedMessages[0]
-    if (!queued) return false
 
     state.queueDrainInProgress = true
     this.emitUpdate(state)
     try {
-      await this.ensureStateQuery(state, queued.options)
-      await this.applyTurnOptions(state, queued.options)
-      if (state.queuedMessagesPaused || state.active || state.queuedMessages[0]?.id !== queued.id) {
-        if (state.stopped && state.queuedMessagesPaused) await this.closeStateQuery(state)
-        return false
-      }
+      while (true) {
+        const queued = state.queuedMessages[0]
+        if (!queued) return false
+        await this.ensureStateQuery(state, queued.options)
+        await this.applyTurnOptions(state, queued.options)
+        if (state.queuedMessagesPaused || state.active) {
+          if (state.stopped && state.queuedMessagesPaused) await this.closeStateQuery(state)
+          return false
+        }
+        // An edit replaces the object but retains its id. Re-prepare the current head after
+        // edits/deletions during startup so neither an old payload nor an abandoned queue wins.
+        if (state.queuedMessages[0] !== queued) continue
 
-      state.queuedMessages.shift()
-      this.sendQueuedMessageNow(state, queued)
-      return true
+        state.queuedMessages.shift()
+        this.sendQueuedMessageNow(state, queued)
+        return true
+      }
     } catch (error) {
       state.queuedMessagesPaused = true
       throw error
@@ -2914,7 +2937,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         markTranscriptRecordsChanged(state.messages, records, state.messages.length)
       projected = renderClaudeChatWindow(records, renderOptions, windowed)
     }
-    state.revision += 1
+    state.revision = ++this.detailRevision
     return {
       id: state.id,
       revision: state.revision,

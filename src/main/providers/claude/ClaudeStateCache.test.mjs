@@ -6,7 +6,12 @@ import ts from 'typescript'
 import { normalizeContainerTarget, getContainerTargetKey } from '../../containerTarget.ts'
 import { ProviderConversationCompletionCoordinator } from '../ProviderConversationEngine.ts'
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
-import { isClaudeInternalUserMessage } from './ClaudeItemRenderers.ts'
+import { getClaudePermissionAction } from './ClaudePermissions.ts'
+import {
+  ClaudeTranscriptProjection,
+  isClaudeInternalUserMessage,
+  renderClaudeChatItems
+} from './ClaudeItemRenderers.ts'
 
 const source = ts.createSourceFile(
   'ClaudeProviderAdapter.ts',
@@ -19,6 +24,10 @@ const adapter = source.statements.find(
 )
 const methods = new Set([
   'createState',
+  'detailRevision',
+  'createChatDetail',
+  'getDrainingMessage',
+  'getPendingMessages',
   'rememberStateTranscriptSize',
   'pinState',
   'unpinState',
@@ -61,6 +70,8 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
   const context = vm.createContext({
     isClaudeAuthenticationFailure,
     isClaudeInternalUserMessage,
+    ClaudeTranscriptProjection,
+    renderClaudeChatItems,
     normalizeContainerTarget,
     getContainerTargetKey,
     maxIdleSessionStates: 8,
@@ -94,6 +105,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
   })
   vm.runInContext(code, context)
   const instance = new context.Harness()
+  const readDetail = instance.createChatDetail
   Object.assign(instance, {
     states: new Map(),
     authenticationFailures: new Set(),
@@ -113,6 +125,9 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
     completionCoordinator: new ProviderConversationCompletionCoordinator(),
     chatUpdatedListeners: new Set(),
     hiddenSessionIds: new Set(),
+    getTitle: () => 'Saved title',
+    getPendingApproval: () => null,
+    getPendingUserInput: () => null,
     sessionDiscovery: { dispose() {} },
     oneShotGenerations: new Map(),
     canceledOneShotGenerationTimers: new Map(),
@@ -134,6 +149,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
   })
   return {
     instance,
+    readDetail,
     loads,
     context,
     get queryCreations() {
@@ -199,6 +215,44 @@ test('real getChat admission bounds visited transcripts and reopens the least re
   h.dispose()
 })
 
+test('Claude revisions survive eviction so resumed tools and completion remain deliverable', async () => {
+  const { instance: h, readDetail } = makeHarness({ records: (id) => [record(id)] })
+  h.createChatDetail = readDetail
+  const first = await h.getChat('returning')
+  const original = h.states.get('returning')
+  let previous = first
+  for (let i = 0; i < 100; i++) previous = readDetail(original)
+  for (let i = 0; i < 9; i++) await h.getChat(`other-${i}`)
+  await settleAdmissions()
+  assert.equal(h.states.has('returning'), false)
+
+  const reopened = await h.getChat('returning')
+  assert.ok(reopened.revision > previous.revision, 'cached renderer snapshots must accept reopen')
+  const resumed = h.states.get('returning')
+  assert.notEqual(resumed, original)
+  const delivered = []
+  h.chatUpdatedListeners.add((detail, metadata) => delivered.push({ detail, metadata }))
+  resumed.active = true
+  resumed.messages.push({
+    type: 'assistant',
+    uuid: 'tool',
+    session_id: resumed.id,
+    parent_tool_use_id: null,
+    message: { content: [{ type: 'tool_use', id: 'tool', name: 'Bash', input: { command: 'ls' } }] }
+  })
+  h.publishUpdate(resumed, false, true)
+  resumed.active = false
+  h.emitUpdate(resumed, true)
+  await Promise.resolve()
+  assert.equal(delivered.length, 2)
+  assert.ok(delivered[0].detail.revision > reopened.revision)
+  assert.ok(delivered[1].detail.revision > delivered[0].detail.revision)
+  assert.equal(delivered[0].detail.status, 'active')
+  assert.equal(delivered[1].detail.status, null)
+  assert.equal(delivered[1].metadata.turnCompleted, true)
+  h.dispose()
+})
+
 test('simultaneous admissions stay current through reads and sends, then trim after callers resume', async () => {
   const { instance: h } = makeHarness({ records: (id) => [record(id)] })
   h.createChatDetail = (state) => {
@@ -216,6 +270,41 @@ test('simultaneous admissions stay current through reads and sends, then trim af
   }
   await Promise.all(Array.from({ length: 16 }, (_, i) => h.continueChat(`send-${i}`, 'go')))
   for (let i = 0; i < 16; i++) assert.equal(h.states.get(`send-${i}`).queuedMessages.length, 1)
+  h.dispose()
+})
+
+test('queueing new settings preserves the running turn permission policy', async () => {
+  const { instance: h } = makeHarness()
+  const runningOptions = { approvalPolicy: 'on-request', sandboxMode: 'workspace-write' }
+  const queuedOptions = { approvalPolicy: 'never', sandboxMode: 'danger-full-access' }
+  const state = h.createState('running', runningOptions)
+  state.active = true
+  h.states.set(state.id, state)
+  h.sendMessageRespectingQueue = async (current, content, options) => {
+    current.queuedMessages.push({ content, options })
+  }
+  await h.continueChat(state.id, 'next', queuedOptions)
+  assert.equal(state.options, runningOptions)
+  assert.equal(getClaudePermissionAction(state.options, 'Bash', {}).kind, 'requestApproval')
+  assert.equal(state.queuedMessages[0].options, queuedOptions)
+  h.dispose()
+})
+
+test("a concurrent history admission cannot replace another send's settings", async () => {
+  const gate = deferred()
+  const { instance: h } = makeHarness({
+    records: async (id) => {
+      await gate.promise
+      return [record(id)]
+    }
+  })
+  const firstOptions = { approvalPolicy: 'on-request' }
+  const first = h.ensureState('loading', firstOptions)
+  const second = h.ensureState('loading', { approvalPolicy: 'never' })
+  gate.resolve()
+  const [one, two] = await Promise.all([first, second])
+  assert.equal(one, two)
+  assert.equal(one.options, firstOptions)
   h.dispose()
 })
 

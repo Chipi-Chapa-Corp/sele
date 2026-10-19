@@ -83,6 +83,7 @@ type InFlightChatUpdate = {
   sequence: number
   chatKey: string
   detail: ProviderChatDetail | null
+  update: QueuedWindowChatUpdate
 }
 
 type AcknowledgedChatDetail = {
@@ -268,6 +269,20 @@ const watchChatAcknowledgment = (
         turnCompleted: update.turnCompleted
       }))
     })
+    // A lost acknowledgment must not block every chat in this window indefinitely. Retry
+    // the latest coalesced snapshot with a fresh sequence and no delta base. A late ack for
+    // the superseded sequence is ignored by the normal acknowledgment handler.
+    const stalled = state.inFlightUpdate
+    const pending = state.pendingByChatKey.get(stalled.chatKey)
+    const latest = pending ?? stalled.update
+    state.pendingByChatKey.set(stalled.chatKey, {
+      ...latest,
+      detail: state.viewedChatKey === stalled.chatKey ? latest.detail : null,
+      turnCompleted: latest.turnCompleted || stalled.update.turnCompleted
+    })
+    state.acknowledgedDetail = null
+    state.inFlightUpdate = null
+    sendNextChatUpdate(webContents, state)
   }, 2_000)
   state.acknowledgmentTimer.unref?.()
 }
@@ -289,7 +304,12 @@ const sendChatUpdate = (
   const detailUpdate = rendererDetail
     ? createChatDetailUpdate(rendererDetail, previousDetail)
     : null
-  state.inFlightUpdate = { sequence, chatKey, detail: rendererDetail }
+  state.inFlightUpdate = {
+    sequence,
+    chatKey,
+    detail: rendererDetail,
+    update: { ...update, detail: rendererDetail }
+  }
   webContents.send(providerIpcChannels.chatUpdated, {
     ...update,
     detail: detailUpdate,

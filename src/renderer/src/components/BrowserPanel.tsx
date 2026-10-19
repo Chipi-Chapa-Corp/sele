@@ -325,13 +325,6 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
     }
   }, [applicationZoomFactor, defaultScale, hasPage])
 
-  useEffect(() => {
-    if (!visible) return
-
-    const frame = requestAnimationFrame(() => webviewRef.current?.focus())
-    return () => cancelAnimationFrame(frame)
-  }, [visible])
-
   const webviewAttributes = {
     partition: 'persist:sele-browser',
     src: tab.initialUrl

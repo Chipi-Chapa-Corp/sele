@@ -35,6 +35,22 @@ export function useBrowserAutomation(options: Options): void {
   useEffect(() => {
     let mounted = true
     const inFlight = new Set<string>()
+    const focusGuards = new Map<string, () => boolean>()
+    const captureHostFocus = (): (() => boolean) => {
+      const focused = document.activeElement
+      return () => {
+        if (!(focused instanceof HTMLElement) || ['BODY', 'WEBVIEW'].includes(focused.tagName))
+          return false
+        const target = document.activeElement
+        // Do not overwrite an intervening user choice of another host control.
+        if (focused.isConnected && (target?.tagName === 'WEBVIEW' || target === focused)) {
+          // Electron can transfer native keyboard focus without changing DOM focus.
+          focused.focus({ preventScroll: true })
+          return true
+        }
+        return false
+      }
+    }
     const workspaceKey = (request: BrowserAutomationRequest): string => {
       const { scope } = request
       switch (current.current.view) {
@@ -85,8 +101,30 @@ export function useBrowserAutomation(options: Options): void {
       throw new Error('Browser tab did not attach')
     }
     const handle = async (
-      request: BrowserAutomationRequest
+      request: BrowserAutomationRequest,
+      restoreNativeFocus: () => void
     ): Promise<BrowserAutomationResponse['result']> => {
+      if (request.method === 'preserve-focus' || request.method === 'release-focus') {
+        const token = request.focusToken
+        if (!token) throw new Error('Missing browser focus token')
+        if (focusGuards.get(token)?.()) restoreNativeFocus()
+        focusGuards.delete(token)
+        if (request.method === 'preserve-focus') {
+          focusGuards.set(token, captureHostFocus())
+          if (request.focusGuest) {
+            let found = false
+            for (const element of current.current.webviews.current.values()) {
+              if (element.getWebContentsId() === request.tabId) {
+                element.focus()
+                found = true
+                break
+              }
+            }
+            if (!found) throw new Error('Browser input target is no longer attached')
+          }
+        }
+        return null
+      }
       const key = workspaceKey(request)
       const state = current.current
       if (request.method === 'visibility') {
@@ -167,16 +205,32 @@ export function useBrowserAutomation(options: Options): void {
     const unsubscribe = browserApi.onAutomationRequest((request) => {
       if (inFlight.has(request.id)) return
       inFlight.add(request.id)
-      void handle(request)
+      const restoreFocus =
+        request.method === 'preserve-focus' || request.method === 'release-focus'
+          ? undefined
+          : captureHostFocus()
+      let restoreNativeFocus = false
+      void handle(request, () => {
+        restoreNativeFocus = true
+      })
+        .finally(() => {
+          if (focusGuards.size === 0 && restoreFocus?.()) restoreNativeFocus = true
+        })
         .then(
           (result) => {
-            if (mounted) browserApi.automationRespond({ id: request.id, result })
+            if (mounted)
+              browserApi.automationRespond({
+                id: request.id,
+                result,
+                restoreFocus: restoreNativeFocus
+              })
           },
           (error: unknown) => {
             console.error('[useBrowserAutomation:handle] Automation request failed', error)
             if (mounted)
               browserApi.automationRespond({
                 id: request.id,
+                restoreFocus: restoreNativeFocus,
                 error: error instanceof Error ? error.message : String(error)
               })
           }
@@ -186,6 +240,7 @@ export function useBrowserAutomation(options: Options): void {
     browserApi.automationReady(true)
     return () => {
       mounted = false
+      focusGuards.clear()
       unsubscribe()
       browserApi.automationReady(false)
     }

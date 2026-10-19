@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserPanel } from '../../../src/renderer/src/components/BrowserPanel'
 import { browserApi } from '../../../src/renderer/src/browserApi'
+import { initializePreferences } from '../../../src/renderer/src/preferences'
 import '../../../src/renderer/src/assets/main.css'
 
 export function Fixture(): React.JSX.Element {
@@ -29,6 +30,7 @@ export function Fixture(): React.JSX.Element {
   useEffect(() => browserApi.onAutomationVisibility(setActive), [])
   return (
     <div style={{ width: 850, height: 650 }}>
+      <textarea id="prompt" aria-label="Prompt" autoFocus defaultValue="Draft prompt" />
       {opened && (
         <BrowserPanel
           active={active}
@@ -47,8 +49,10 @@ export function Fixture(): React.JSX.Element {
     </div>
   )
 }
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Fixture />
-  </StrictMode>
-)
+void initializePreferences().then(() => {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <Fixture />
+    </StrictMode>
+  )
+})

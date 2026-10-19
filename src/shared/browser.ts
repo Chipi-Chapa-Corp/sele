@@ -107,7 +107,16 @@ export type BrowserAutomationTab = {
 export type BrowserAutomationRequest = {
   id: string
   scope: BrowserAutomationScope
-  method: 'list' | 'create' | 'activate' | 'close' | 'visibility'
+  method:
+    | 'list'
+    | 'create'
+    | 'activate'
+    | 'close'
+    | 'visibility'
+    | 'preserve-focus'
+    | 'release-focus'
+  focusToken?: string
+  focusGuest?: boolean
   tabId?: number
   visible?: boolean
   foreground?: boolean
@@ -115,6 +124,7 @@ export type BrowserAutomationRequest = {
 
 export type BrowserAutomationResponse = {
   id: string
+  restoreFocus?: boolean
   result?: BrowserAutomationTab[] | BrowserAutomationTab | { visible: boolean } | null
   error?: string
 }

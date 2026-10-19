@@ -47,7 +47,7 @@ if (!process.versions.electron) {
       )
       const environment = { ...process.env }
       delete environment.ELECTRON_RUN_AS_NODE
-      // Electron offscreen input on Wayland is unreliable; use XWayland for this fixture.
+      // Use X11 for deterministic native keyboard focus in the isolated Linux fixture.
       const displayArgs =
         process.platform === 'linux' && environment.DISPLAY ? ['--ozone-platform=x11'] : []
       const result = spawnSync(
@@ -117,11 +117,11 @@ if (!process.versions.electron) {
         return { action: 'open', always: false }
       })
       const window = new BrowserWindow({
-        show: false,
+        show: true,
         width: 900,
         height: 700,
         webPreferences: {
-          offscreen: true,
+          backgroundThrottling: false,
           webviewTag: true,
           preload: path.join(process.argv[2], 'preload.cjs'),
           contextIsolation: true,
@@ -186,13 +186,36 @@ if (!process.versions.electron) {
       assert.equal(info.type, 'iab')
       assert.equal(info.metadata.codexSessionId, 'browser-test-session')
       await assert.rejects(rpc('getInfo', { session_id: 'unrelated-session' }), /not owned/)
+      let promptSelection
+      const assertPromptFocus = async (action) => {
+        await window.webContents.executeJavaScript(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+        )
+        assert.equal(
+          await window.webContents.executeJavaScript('document.activeElement.id'),
+          'prompt',
+          `prompt retains focus after ${action}`
+        )
+        assert.equal(
+          window.webContents.isFocused(),
+          true,
+          `host keeps keyboard focus after ${action}`
+        )
+        if (promptSelection) {
+          assert.deepEqual(
+            await window.webContents.executeJavaScript(
+              '(() => { const prompt = document.querySelector("#prompt"); return [prompt.selectionStart, prompt.selectionEnd] })()'
+            ),
+            promptSelection,
+            `prompt selection survives ${action}`
+          )
+        }
+      }
       assert.equal((await rpc('getTabs')).length, 1)
+      await assertPromptFocus('lazy browser mount')
       const tab = await rpc('createTab')
       assert.ok(tab.id > 0)
-      // Let BrowserPanel finish its animation-frame focus when lazily mounted.
-      await window.webContents.executeJavaScript(
-        'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
-      )
+      await assertPromptFocus('agent tab creation')
       const cdp = (method, commandParams = {}) =>
         rpc('executeCdp', { target: { tabId: tab.id }, method, commandParams })
       await rpc('attach', { tabId: tab.id })
@@ -230,6 +253,7 @@ if (!process.versions.electron) {
           'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
         awaitPromise: true
       })
+      await assertPromptFocus('agent navigation')
       const hostButton = await window.webContents.executeJavaScript(`(() => {
         const button = document.querySelector('[aria-label="Open in host browser"]')
         if (!button || button.disabled) throw new Error('Host browser button is not enabled')
@@ -252,6 +276,10 @@ if (!process.versions.electron) {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
       assert.deepEqual(externalLinks, [{ url: url + '/', action: 'open' }])
+      await window.webContents.executeJavaScript(
+        'document.querySelector("#prompt").focus(); document.querySelector("#prompt").setSelectionRange(2, 5)'
+      )
+      promptSelection = [2, 5]
       const click = async (selector) => {
         const box = await cdp('Runtime.evaluate', {
           expression: `(()=>{const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2}})()`,
@@ -266,7 +294,9 @@ if (!process.versions.electron) {
           })
       }
       await click('#name')
+      await assertPromptFocus('agent click')
       await cdp('Input.insertText', { text: 'From browser use' })
+      await assertPromptFocus('agent typing')
       await click('#go')
       assert.equal(
         (
@@ -279,6 +309,66 @@ if (!process.versions.electron) {
       )
       const shot = await cdp('Page.captureScreenshot', { format: 'png' })
       assert.ok(Buffer.from(shot.data, 'base64').length > 1000)
+      await assertPromptFocus('agent screenshot')
+      await cdp('Runtime.evaluate', { expression: 'document.querySelector("#name").focus()' })
+      await assertPromptFocus('agent JavaScript focus')
+      const background = await rpc('createTab')
+      await assertPromptFocus('second tab creation')
+      await rpc('executeCdp', {
+        target: { tabId: background.id },
+        method: 'Page.bringToFront'
+      })
+      await assertPromptFocus('agent tab activation')
+      await rpc('executeCdp', { target: { tabId: background.id }, method: 'Page.close' })
+      await assertPromptFocus('agent tab closure')
+      for (const visible of [false, true]) {
+        await rpc('executeUnhandledCommand', { type: 'browser_visibility_set', visible })
+        if (!visible) {
+          await cdp('Input.insertText', { text: ' hidden' })
+          assert.equal(
+            (
+              await cdp('Runtime.evaluate', {
+                expression: 'document.querySelector("#name").value',
+                returnByValue: true
+              })
+            ).result.value,
+            'From browser use hidden',
+            'agent can type into a hidden browser without editing the prompt'
+          )
+        }
+        await assertPromptFocus(`agent visibility change (${visible})`)
+      }
+      await assert.rejects(cdp('Input.unsupportedFocusTest'), /./)
+      await assertPromptFocus('failed agent command')
+      await Promise.all([
+        cdp('Input.insertText', { text: ' A' }),
+        cdp('Input.insertText', { text: ' B' })
+      ])
+      assert.match(
+        (
+          await cdp('Runtime.evaluate', {
+            expression: 'document.querySelector("#name").value',
+            returnByValue: true
+          })
+        ).result.value,
+        /^From browser use hidden (A B|B A)$/
+      )
+      await assertPromptFocus('concurrent agent input')
+      assert.equal(
+        await window.webContents.executeJavaScript('document.querySelector("#prompt").value'),
+        'Draft prompt',
+        'browser typing never changes the prompt draft'
+      )
+      window.webContents.sendInputEvent({ type: 'char', keyCode: '!' })
+      promptSelection = undefined
+      await assertPromptFocus('user typing after browser actions')
+      assert.equal(
+        await window.webContents.executeJavaScript('document.querySelector("#prompt").value'),
+        'Dr! prompt'
+      )
+      console.log(
+        'PASS: prompt focus, selection and user typing survive browser tabs, visible/hidden input, concurrent commands and failures'
+      )
       assert.ok(events.some((event) => event.method === 'onCDPEvent'))
       await assert.rejects(cdp('Browser.close'), /Unsupported/)
       for (const target of [

@@ -5,6 +5,19 @@ export type ClaudeResultLifecycleDecision = {
 
 export type ClaudeSessionStateLifecycleDecision = 'ignore' | 'complete'
 
+/** SDK API failures may have subtype "success"; is_error owns the success decision. */
+export const getClaudeResultError = (result: {
+  subtype: string
+  is_error?: boolean
+  result?: string
+  errors?: readonly string[]
+}): string | null => {
+  if (result.subtype === 'success' && result.is_error !== true) return null
+  const reason = result.subtype === 'success' ? 'api_error' : result.subtype
+  const content = result.subtype === 'success' ? result.result : result.errors?.join('\n')
+  return content?.trim() || `Claude reported ${reason}.`
+}
+
 export const getClaudeResultLifecycleDecision = (
   backgroundTaskCount: number,
   terminalReason?: string,
