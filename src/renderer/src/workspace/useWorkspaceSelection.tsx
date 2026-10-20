@@ -227,6 +227,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     () => (subagentListState?.rootChatKey === selectedChatKey ? subagentListState.items : []),
     [selectedChatKey, subagentListState]
   )
+  const subagentTreeActive = selectedChatSubagents.some(
+    (agent) => agent.status === 'pending' || agent.status === 'running'
+  )
   useEffect(() => {
     if (
       !selectedProviderId ||
@@ -264,7 +267,16 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       })
       return
     }
-
+  }, [chatDetail?.id, chatDetail?.purpose, chatDetail?.subagents, selectedChatKey])
+  useEffect(() => {
+    if (
+      !selectedProviderId ||
+      !selectedChatId ||
+      !selectedChatKey ||
+      chatDetail?.id !== selectedChatId ||
+      chatDetail.purpose === 'commit'
+    )
+      return
     let active = true
     let timeoutId: number | null = null
     setSubagentListState((currentState) =>
@@ -273,14 +285,18 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         : { rootChatKey: selectedChatKey, items: [], loadState: 'loading', error: null }
     )
 
-    // Providers without subagents in their chat detail reload the list when a delegation row
-    // starts or finishes and when the parent turn starts or ends, plus a slow poll while it runs.
+    // Child activity can change without a parent transcript item (including nested agents).
+    // Refresh metadata for every provider, even when the chat detail embeds a snapshot.
+    let hasWorkingSubagent = false
     const load = (): void => {
       void providerApi
         .getSubagents(selectedProviderId, selectedChatId)
         .then((subagents) => {
           if (!active || selectedChatKeyRef.current !== selectedChatKey) return
 
+          hasWorkingSubagent = subagents.some(
+            (agent) => agent.status === 'pending' || agent.status === 'running'
+          )
           setSubagentListState((currentState) =>
             currentState?.rootChatKey === selectedChatKey &&
             currentState.loadState === 'ready' &&
@@ -317,8 +333,13 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           }))
         })
         .finally(() => {
-          if (active && chatDetailActive) {
-            timeoutId = window.setTimeout(load, subagentListPollInterval)
+          if (active) {
+            timeoutId = window.setTimeout(
+              load,
+              chatDetailActive || subagentTreeActive || hasWorkingSubagent
+                ? 1_500
+                : subagentListPollInterval
+            )
           }
         })
     }
@@ -331,8 +352,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   }, [
     chatDetail?.id,
     chatDetail?.purpose,
-    chatDetail?.subagents,
     chatDetailActive,
+    subagentTreeActive,
     subagentToolSignature,
     selectedChatId,
     selectedChatKey,
@@ -391,7 +412,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
                         currentView.detail,
                         detail,
                         chatWorkingItemPageSize,
-                        chatWorkingItemWindowSize
+                        chatWorkingItemWindowSize,
+                        currentView.followLatest ?? true
                       ),
                 loadState: 'ready',
                 error: null
@@ -975,7 +997,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         if (!active) return
         const currentDetail = chatDetailRef.current
         if (isChatDetailSnapshotStale(detail, currentDetail)) {
-          setChatLoadState('ready')
+          startTransition(() => setChatLoadState('ready'))
           return
         }
         const loadedDetail =
@@ -1006,7 +1028,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         // Cached history or a live update may already have supplied this chat. A failed
         // background read must not discard it or leave an error over usable messages.
         if (chatDetailRef.current?.id === selectedChatId) {
-          setChatLoadState('ready')
+          startTransition(() => setChatLoadState('ready'))
           return
         }
         chatDetailRef.current = null

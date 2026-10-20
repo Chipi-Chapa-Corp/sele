@@ -9,6 +9,7 @@ import * as opencode from './opencode/OpenCodeItemRenderers.ts'
 import * as codex from './codex/CodexItemRenderers.ts'
 import { getCodexTurnSubagents } from './codex/CodexSubagents.ts'
 import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns.ts'
+import { getContainerTargetKey } from '../containerTarget.ts'
 
 // Execute the real adapter navigation/detail methods, isolating only session transport and
 // unrelated metadata.
@@ -17,16 +18,16 @@ const harness = (provider, name, globals, state) => {
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name.text === `${name}ProviderAdapter`)
   const selected = new Set(['detailRevision', 'getChat', 'getChatWindow', 'createChatDetail', 'createChatDetailFromState'])
   const code = ts.transpileModule(`class Harness { ${declaration.members.filter(member => selected.has(member.name?.getText(source))).map(member => member.getText(source)).join('\n')} }; globalThis.Harness = Harness`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-  const context = vm.createContext({ ...globals, getPendingApproval: () => null, getPendingUserInput: () => null, getContextUsage: () => null })
+  const context = vm.createContext({ ...globals, getContainerTargetKey, getPendingApproval: () => null, getPendingUserInput: () => null, getContextUsage: () => null })
   vm.runInContext(code, context)
   const instance = new context.Harness()
   Object.assign(instance, {
-    ensureState: async () => state, ensureSession: async () => state,
+    ensureState: async () => state, ensureCompleteState: async () => state, ensureSession: async () => state,
     loadEvents: async () => {}, getClientEntry: async () => ({ client: {} }), refreshState: async () => {},
     getDrainingMessage: () => null, getPendingMessages: () => [],
     getTitle: () => 'Saved title', getCwd: () => '/tmp', getChatStatus: () => null,
     getPendingApproval: () => null, getPendingUserInput: () => null, getContextUsage: () => null,
-    transcriptProjections: new Map(), eventStores: new WeakMap()
+    transcriptProjections: new Map(), eventStores: new WeakMap(), authenticationFailures: new Set(), getThreadSubagents: () => []
   })
   return instance
 }
@@ -37,7 +38,7 @@ for (const [provider, name, globals] of [['claude', 'Claude', claude], ['copilot
     const records = Array.from({ length: 2000 }, (_, i) => {
       if (provider === 'claude') return [
         { type: 'user', uuid: `u${i}`, message: { content: 'prompt' }, parent_tool_use_id: null },
-        { type: 'assistant', uuid: `a${i}`, parent_tool_use_id: null, get message() { visits++; return { content: [{ type: 'text', text: 'answer' }] } } }
+        { type: 'assistant', uuid: `a${i}`, parent_tool_use_id: null, message: { model: 'fixture', get content() { visits++; return [{ type: 'text', text: 'answer' }] } } }
       ]
       if (provider === 'copilot') return [
         { type: 'user.message', id: `u${i}`, data: { content: 'prompt' } },

@@ -1,4 +1,6 @@
 import type { McpAppConnection } from '../../../shared/mcpApps'
+import { encodeCopilotHistory } from '../NativeHistoryImport'
+import { nativeHistoryFile } from '../NativeHistoryFile'
 import { record as mcpRecord } from '../../../shared/elicitation'
 import { createProviderElicitation, getProviderElicitationResult } from '../ProviderElicitation'
 import { TokenUsageReporter } from '../TokenUsageReporter.ts'
@@ -1305,6 +1307,50 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       this.canceledOneShotGenerationTimers.delete(generationId)
     }
     return canceled
+  }
+
+  importHistory: NonNullable<ProviderAdapter['importHistory']> = async (
+    chatId,
+    messages,
+    options,
+    onChatCreated
+  ) => {
+    const id = chatId ?? randomUUID()
+    await onChatCreated?.(id)
+    const state = chatId ? await this.ensureSession(id, options) : this.createState(id, options)
+    if (state.active) throw new Error('Copilot is still working in this conversation.')
+    const session = state.session ?? (await this.createSession(state, options))
+    const native = await session.getEvents()
+    await session.disconnect()
+    state.session = null
+    this.closeBrowserIntegration(state)
+    const file = await nativeHistoryFile(
+      'copilot',
+      id,
+      options.cwd ?? process.cwd(),
+      options.container
+    )
+    let entries = await file.read()
+    if (!entries.length) {
+      await file.append(native)
+      entries = native as unknown as Record<string, unknown>[]
+    }
+    const parent = entries.at(-1)?.id
+    const nextTurn = entries.reduce((next, entry) => {
+      const turn = Number((entry.data as { turnId?: unknown } | undefined)?.turnId)
+      return Number.isSafeInteger(turn) ? Math.max(next, turn + 1) : next
+    }, 0)
+    const added = encodeCopilotHistory(
+      messages,
+      typeof parent === 'string' ? parent : null,
+      new Set(entries.map((entry) => String(entry.id))),
+      nextTurn
+    )
+    await file.append(added)
+    if ((await file.read()).length < entries.length + added.length)
+      throw new Error('Copilot did not persist the complete imported conversation.')
+
+    return id
   }
 
   startChat = async (

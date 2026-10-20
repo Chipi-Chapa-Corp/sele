@@ -31,9 +31,9 @@ export const isViewedChatCompletion = (
 ): boolean =>
   Boolean(
     turnCompleted &&
-    viewedPreview &&
-    viewedPreview.preview === updatePreview &&
-    viewedPreview.length === updatePreviewLength
+      viewedPreview &&
+      viewedPreview.preview === updatePreview &&
+      viewedPreview.length === updatePreviewLength
   )
 
 export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
@@ -45,7 +45,10 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
   sidebarOrder: metadata.sidebarOrder,
   done: metadata.done,
   doneAt: metadata.doneAt ?? null,
-  seenUpdatedAt: metadata.seenUpdatedAt,
+  seenUpdatedAt:
+    target.seenUpdatedAt == null
+      ? metadata.seenUpdatedAt
+      : Math.max(target.seenUpdatedAt, metadata.seenUpdatedAt ?? 0),
   purpose: metadata.purpose,
   container: metadata.container ?? target.container
 })

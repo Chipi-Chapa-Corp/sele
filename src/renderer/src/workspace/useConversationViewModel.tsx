@@ -449,6 +449,15 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       const canApplyPage = (): boolean =>
         chatTurnPageLoadRequestRef.current === requestId &&
         selectedChatKeyRef.current === currentWindow.chatKey &&
+        // A refresh or branch change may replace this boundary while the request is pending.
+        (direction === 'latest' ||
+          !cursorPagination ||
+          (direction === 'older'
+            ? chatDetailRef.current?.turnPagination?.olderCursor
+            : chatDetailRef.current?.turnPagination?.newerCursor) ===
+            (direction === 'older'
+              ? cursorPagination.olderCursor
+              : cursorPagination.newerCursor)) &&
         (direction === 'latest' ||
           Boolean(
             contentRef.current &&
@@ -579,6 +588,9 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
         if (!pendingChatScrollAnchorRef.current && contentElement) {
           chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, latestWindow.chatKey)
         }
+      } catch (error) {
+        // Leave the current page and its anchor intact; another scroll can retry.
+        console.error('Unable to load conversation history page.', error)
       } finally {
         if (chatTurnPageLoadRequestRef.current === requestId) {
           chatTurnPageLoadInFlightRef.current = false

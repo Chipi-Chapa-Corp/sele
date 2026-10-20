@@ -1,5 +1,5 @@
 import type { Worker } from 'node:worker_threads'
-import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk'
+import type { ClaudeSessionListPage } from './ClaudeSessionCatalog'
 import type { AppContainerTarget } from '../../../shared/app'
 import { getContainerTargetKey } from '../../containerTarget'
 import { getHostCommand } from '../../hostProcess'
@@ -13,34 +13,37 @@ export class ClaudeSessionDiscovery {
     number,
     {
       container: AppContainerTarget | null
-      resolve: (sessions: SDKSessionInfo[]) => void
+      resolve: (page: ClaudeSessionListPage) => void
       reject: (error: Error) => void
     }
   >()
-  private requests = new Map<string, Promise<SDKSessionInfo[]>>()
-  private snapshots = new Map<string, { expiresAt: number; sessions: SDKSessionInfo[] }>()
+  private requests = new Map<string, Promise<ClaudeSessionListPage>>()
 
-  list(container: AppContainerTarget | null, reuseSnapshot = false): Promise<SDKSessionInfo[]> {
+  list(
+    container: AppContainerTarget | null,
+    cursor: string | null = null,
+    limit = 50,
+    hiddenSessionIds: string[] = []
+  ): Promise<ClaudeSessionListPage> {
     if (this.disposed) return Promise.reject(new Error('Claude session discovery disposed'))
-    const key = getContainerTargetKey(container)
+    const scope = getContainerTargetKey(container)
+    const key = JSON.stringify([scope, cursor, limit, hiddenSessionIds.toSorted()])
     const existing = this.requests.get(key)
     if (existing) return existing
-    const cached = this.snapshots.get(key)
-    if (reuseSnapshot && cached && cached.expiresAt > Date.now())
-      return Promise.resolve(cached.sessions)
-    this.snapshots.delete(key)
     const worker = this.getWorker()
     const id = ++this.nextId
-    const request = new Promise<SDKSessionInfo[]>((resolve, reject) => {
+    const request = new Promise<ClaudeSessionListPage>((resolve, reject) => {
       this.pending.set(id, { container, resolve, reject })
-      worker.postMessage({ type: 'list', id, remote: Boolean(container) })
-    })
-      .then((sessions) => {
-        // Reuse one discovery snapshot across pages and simultaneous background refreshes.
-        this.snapshots.set(key, { sessions, expiresAt: Date.now() + 30_000 })
-        return sessions
+      worker.postMessage({
+        type: 'list',
+        id,
+        scope,
+        remote: Boolean(container),
+        cursor,
+        limit,
+        hiddenSessionIds
       })
-      .finally(() => this.requests.delete(key))
+    }).finally(() => this.requests.delete(key))
     this.requests.set(key, request)
     return request
   }
@@ -75,7 +78,7 @@ export class ClaudeSessionDiscovery {
         const pending = this.pending.get(message.id)
         this.pending.delete(message.id)
         if (message.error) pending?.reject(new Error(message.error))
-        else pending?.resolve(message.sessions)
+        else pending?.resolve(message.page)
       }
     })
     worker.on('error', (error) => this.fail(worker, error))
@@ -98,6 +101,6 @@ export class ClaudeSessionDiscovery {
       this.fail(worker, new Error('Claude session discovery disposed'))
       void worker.terminate()
     }
-    this.snapshots.clear()
+    this.requests.clear()
   }
 }

@@ -146,6 +146,12 @@ const appApi: AppApi = {
 }
 
 const providerApi: ProviderRendererApi = {
+  exportChat: (providerId, chatId) =>
+    ipcRenderer.invoke(providerIpcChannels.exportChat, providerId, chatId),
+  openChatImport: () => ipcRenderer.invoke(providerIpcChannels.openChatImport),
+  importChat: (id, providerId, container) =>
+    ipcRenderer.invoke(providerIpcChannels.importChat, id, providerId, container),
+  cancelChatImport: (id) => ipcRenderer.invoke(providerIpcChannels.cancelChatImport, id),
   login: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.login, providerId, options),
   reauthenticateAccount: (providerId, options) =>

@@ -217,7 +217,8 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     group: ChatListGroupData,
     contentId: string,
     selectedChatChildren: React.ReactNode = null,
-    selectedChatChildOpen = false
+    selectedChatChildOpen = false,
+    workingSubagentChatKeys?: ReadonlySet<string>
   ): React.ReactElement => {
     const groupOpen =
       searchTerms.length > 0 || !getCollapsedGroupState(group.key, collapsedCwdGroups)
@@ -289,6 +290,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         key={group.key}
         open={groupOpen}
         selectedChatKey={selectedChat ? getChatKey(selectedChat) : null}
+        workingSubagentChatKeys={workingSubagentChatKeys}
         committingChatKeys={committingChatKeys}
         latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
         canReorderChats={group.kind !== 'done' && searchTerms.length === 0}

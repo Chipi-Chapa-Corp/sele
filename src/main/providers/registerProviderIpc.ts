@@ -1822,7 +1822,8 @@ export const registerProviderIpc = (): void => {
         items: prepareChatItemsForRenderer(pageDetail.items),
         subagents: detail.subagents,
         startIndex: detail.itemsStartTurnIndex ?? 0,
-        totalCount
+        totalCount,
+        turnPagination: detail.turnPagination
       }
     }
   )

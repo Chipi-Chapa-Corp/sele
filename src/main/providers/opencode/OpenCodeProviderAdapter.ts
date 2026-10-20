@@ -1,4 +1,5 @@
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
+import { encodeOpenCodeHistory, importOpenCodeHistory } from './OpenCodeHistoryImport'
 import { OpenCodeCredentialHealth, checkOpenCodeCredential } from './OpenCodeCredentialHealth'
 import type {
   ProviderConnectInput,
@@ -1072,6 +1073,48 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           console.error('[caught:OpenCodeProviderAdapter:cancelOneShot]', error)
         })
     }
+  }
+
+  importHistory: NonNullable<ProviderAdapter['importHistory']> = async (
+    chatId,
+    messages,
+    options,
+    onChatCreated
+  ) => {
+    const entry = await this.getClientEntry(options.container)
+    const model = parseOpenCodeModelId(options.model)
+    const state = chatId
+      ? await this.ensureState(chatId, options.container)
+      : this.rememberSession(
+          requireData(
+            await entry.client.session.create(
+              {
+                directory: options.cwd ?? homedir(),
+                model: {
+                  providerID: model.providerID,
+                  id: model.modelID,
+                  variant: options.reasoningEffort
+                },
+                metadata: { sele: { client: 'Sele' } },
+                permission: getOpenCodePermissionRules(options)
+              },
+              { throwOnError: true }
+            )
+          ),
+          entry.container
+        )
+    if (state.active) throw new Error('OpenCode is still working in this conversation.')
+    if (!state.session) throw new Error('OpenCode session is unavailable.')
+    const id = state.session.id
+    await onChatCreated?.(id)
+    const imported = encodeOpenCodeHistory(state.session, messages, model)
+    if (imported.length) await importOpenCodeHistory(state.session, imported, entry.container)
+    state.messagesDirty = true
+    await this.refreshState(state, entry.client)
+    const ids = new Set(state.messages.map((message) => message.info.id))
+    if (imported.some((message) => !ids.has(message.info.id)))
+      throw new Error('OpenCode did not load the imported conversation history.')
+    return id
   }
 
   startChat = async (

@@ -31,6 +31,7 @@ export type CodexUserInput =
 
 export type CodexThreadItem = {
   startedAtMs?: number
+  durationMs?: number
   type: string
   id: string
   local?: boolean
@@ -921,6 +922,11 @@ const getToolId = (item: CodexThreadItem): string =>
   item.tool ??
   item.type
 
+const getSubagentStartLabel = (item: CodexThreadItem): string => {
+  const task = item.agentPath?.split('/').filter(Boolean).at(-1)?.replace(/[-_]+/g, ' ').trim()
+  return task ? `Started subagent for ${task}` : 'Started subagent'
+}
+
 const getOutputFromText = (text: string): string | null => {
   const outputMarker = '\nOutput:\n'
   const outputIndex = text.lastIndexOf(outputMarker)
@@ -1583,6 +1589,45 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
     }
   },
   {
+    matches: (item) => item.type === 'sleep',
+    render: (item) => {
+      const duration =
+        typeof item.durationMs === 'number' && Number.isFinite(item.durationMs)
+          ? ` ${Math.max(0, item.durationMs) / 1_000}s`
+          : ''
+      return renderTool(
+        item,
+        'other',
+        `Waited${duration}`,
+        null,
+        null,
+        [],
+        'sleep',
+        null,
+        [],
+        null,
+        true
+      )
+    }
+  },
+  {
+    matches: (item) => item.type === 'subAgentActivity' && item.kind === 'started',
+    render: (item) =>
+      renderTool(
+        item,
+        'other',
+        getSubagentStartLabel(item),
+        null,
+        null,
+        [],
+        getToolId(item),
+        null,
+        [],
+        'subagent',
+        true
+      )
+  },
+  {
     // Spawning and waiting are compact rows; the subagent's prompt and work are in its own chat,
     // listed under the parent in the sidebar. Other collaboration calls render nothing.
     matches: (item) => item.type === 'collabAgentToolCall',
@@ -1591,7 +1636,7 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
         item.tool === 'wait'
           ? 'Waited for subagent'
           : item.tool === 'spawnAgent' || item.tool === 'spawn_agent'
-            ? 'Started subagent'
+            ? getSubagentStartLabel(item)
             : null
       return label
         ? renderTool(
@@ -1616,9 +1661,38 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
   }
 ]
 
-const renderWorkingItems = (item: CodexThreadItem, turnId: string): ProviderWorkingItem[] => {
+// These are transcript content or lifecycle records, rather than tool invocations. Preserve
+// deliberate omissions while giving new native tool item types a generic presentation.
+const nonToolItemTypes = new Set([
+  'userMessage',
+  'hookPrompt',
+  'functionCallOutput',
+  'plan',
+  'reasoning',
+  'subAgentActivity',
+  'enteredReviewMode',
+  'exitedReviewMode'
+])
+
+const renderWorkingItems = (
+  item: CodexThreadItem,
+  turnId: string,
+  active: boolean
+): ProviderWorkingItem[] => {
   const matcher = workingItemRenderMatchers.find((candidate) => candidate.matches(item))
-  const result = matcher?.render(item)
+  if (!matcher && nonToolItemTypes.has(item.type)) return []
+  // Some native records have no status in history. A following item or terminal turn
+  // establishes completion; live notifications can explicitly finish the latest item too.
+  const toolItem =
+    !matcher || item.type === 'sleep'
+      ? ({
+          ...item,
+          status: active ? (item.status ?? 'running') : 'finished'
+        } satisfies CodexThreadItem)
+      : item
+  const result = matcher
+    ? matcher.render(toolItem)
+    : renderTool(toolItem, 'other', `Used tool ${getToolId(item)}`)
   if (!result) return []
 
   const results = Array.isArray(result) ? result : [result]
@@ -2077,7 +2151,13 @@ const renderChatItems = (
         continue
       }
 
-      appendWorkingItems(renderWorkingItems(item, turn.id))
+      appendWorkingItems(
+        renderWorkingItems(
+          item,
+          turn.id,
+          !isFinishedTurn(turn) && itemIndex === turn.items.length - 1
+        )
+      )
     }
 
     if (workingStatus === 'failed') {

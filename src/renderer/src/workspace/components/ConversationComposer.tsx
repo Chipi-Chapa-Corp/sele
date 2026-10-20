@@ -134,7 +134,14 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
   const requestErrorPresentation = getRequestErrorPresentation(requestErrorSummary)
 
   return (
-    <div className="chat-panel__composer">
+    <div
+      className="chat-panel__composer"
+      style={
+        activeSubagentChatView && !activeSubagentChatView.summary.canMessage
+          ? { display: 'none' }
+          : undefined
+      }
+    >
       <div className="chat-panel__composer-inner chat-panel__composer-notices">
         {!activeSubagentChatView && authenticationRequired && (
           <section
@@ -463,7 +470,12 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             contextUsage={messageBoxContextUsage}
             displayUsage={effectiveAppSettings.chat.displayUsage}
             draftProjectKey={terminalWorkspaceKey}
-            draftScopeKey={getComposerDraftScopeKey(selectedChatKey, terminalWorkspaceKey)}
+            draftScopeKey={getComposerDraftScopeKey(
+              activeSubagentChatView
+                ? `${selectedChat?.providerId}:${activeSubagentChatView.summary.id}`
+                : selectedChatKey,
+              terminalWorkspaceKey
+            )}
             lastActionId={appSettings.lastActionId}
             model={effectiveModel}
             models={models}

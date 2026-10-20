@@ -1140,7 +1140,7 @@ export class ClaudeTranscriptProjection {
   }
 }
 
-const classifyClaudeTurnRecord = (
+export const classifyClaudeTurnRecord = (
   message: ClaudeTranscriptMessage
 ): 'start' | 'content' | 'ignore' => {
   if (isClaudeSyntheticAssistantMessage(message)) return 'ignore'

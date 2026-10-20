@@ -124,6 +124,8 @@ export type SubagentChatView = {
   loadState: LoadState
   error: string | null
   pageLoading?: boolean
+  /** Only explicit history navigation pauses following the child's live tail. */
+  followLatest?: boolean
   /** Bumped after the user messages the subagent so a settled transcript resumes polling. */
   refreshRequest?: number
 }

@@ -39,6 +39,7 @@ const activeLabelReplacements: Array<[RegExp, string]> = [
   [/^Viewed\b/, 'Viewing'],
   [/^Ran\b/, 'Running'],
   [/^Used\b/, 'Using'],
+  [/^Started\b/, 'Starting'],
   [/^(?:Edit|Edited|Changed)\b/, 'Changing'],
   [/^(?:Create|Created)\b/, 'Creating'],
   [/^(?:Delete|Deleted)\b/, 'Deleting'],

@@ -850,7 +850,10 @@ export const Dropdown = <TValue extends string>({
         </span>
         <ChevronDown className="ui-dropdown__chevron" aria-hidden="true" />
       </button>
-      {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
+      {createPortal(
+        <AnimatePresence>{menu}</AnimatePresence>,
+        rootRef.current?.closest('dialog[open]') ?? document.body
+      )}
     </div>
   )
 }

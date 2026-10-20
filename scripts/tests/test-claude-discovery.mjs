@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { Worker } from 'node:worker_threads'
-import { mkdtemp, mkdir, writeFile, rm, readdir } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, readdir, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -49,38 +49,62 @@ try {
         .map((value) => JSON.stringify(value))
         .join('\n') + '\n'
     )
+    await utimes(join(project, `${id}.jsonl`), 1000 + i, 1000 + i)
   }
   worker = new Worker(resolve('out/main', bundle), {
     env: { ...process.env, CLAUDE_CONFIG_DIR: root }
   })
   const results = new Map()
+  const commands = []
+  let blockedCommand
+  let blockedRequest
+  const resolveCommand = (message) => {
+    worker.postMessage({
+      type: 'commandResult',
+      id: message.id,
+      command: {
+        file: '/bin/sh',
+        args: ['-lc', message.script, 'sele-test', ...message.args],
+        env: { ...process.env, CLAUDE_CONFIG_DIR: root }
+      }
+    })
+  }
   worker.on('message', (message) => {
     if (message.type === 'command') {
-      worker.postMessage({
-        type: 'commandResult',
-        id: message.id,
-        command: {
-          file: '/bin/sh',
-          args: ['-lc', message.script, 'sele-test', ...message.args],
-          env: { ...process.env, CLAUDE_CONFIG_DIR: root }
-        }
-      })
+      commands.push(message)
+      if (message.requestId === blockedRequest && !blockedCommand) blockedCommand = message
+      else resolveCommand(message)
     } else if (message.type === 'result') {
       const pending = results.get(message.id)
+      clearTimeout(pending.timer)
       results.delete(message.id)
       if (message.error) pending.reject(new Error(message.error))
-      else pending.resolve(message.sessions)
+      else pending.resolve(message.page)
     }
   })
   worker.on('error', (error) => {
-    for (const pending of results.values()) pending.reject(error)
+    for (const pending of results.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(error)
+    }
   })
   let requestId = 0
-  const list = (remote) =>
+  const list = (remote, cursor = null) =>
     new Promise((resolve, reject) => {
       const id = ++requestId
-      results.set(id, { resolve, reject })
-      worker.postMessage({ type: 'list', id, remote })
+      const timer = setTimeout(
+        () => reject(new Error('Claude discovery worker request timed out')),
+        10_000
+      )
+      results.set(id, { resolve, reject, timer })
+      worker.postMessage({
+        type: 'list',
+        id,
+        remote,
+        scope: remote ? 'remote' : 'local',
+        cursor,
+        limit: 2
+      })
     })
   let last = performance.now()
   const gaps = []
@@ -89,23 +113,62 @@ try {
     gaps.push(now - last)
     last = now
   }, 5)
-  let remote, local
   try {
-    ;[remote, local] = await Promise.all([list(true), list(false)])
+    // Withhold a remote command entirely: local results must not queue behind it.
+    blockedRequest = 1
+    const remotePending = list(true)
+    const local = await list(false)
+    assert.equal(local.sessions.length, 2)
+    assert.ok(blockedCommand, 'remote is still waiting for command resolution')
+    resolveCommand(blockedCommand)
+    const remote = await remotePending
+    assert.equal(commands.length, 3, 'only enumerate + two remote summaries before the first page')
+    assert.ok(commands.every((command) => !command.script.includes('cat ')))
+    const expected = ids.toReversed()
+    assert.deepEqual(
+      local.sessions.map((s) => s.sessionId),
+      expected.slice(0, 2)
+    )
+    assert.deepEqual(
+      remote.sessions.map((s) => s.sessionId),
+      expected.slice(0, 2)
+    )
+    assert.deepEqual(
+      remote.sessions.map((s) => s.summary),
+      ['Session 5', 'Session 4']
+    )
+    // Reordering the underlying directory cannot change an already-issued cursor.
+    await utimes(join(project, `${ids[0]}.jsonl`), 2000, 2000)
+    const collected = { local: [...local.sessions], remote: [...remote.sessions] }
+    for (const [name, first, isRemote] of [
+      ['local', local, false],
+      ['remote', remote, true]
+    ]) {
+      let cursor = first.nextCursor
+      while (cursor) {
+        const page = await list(isRemote, cursor)
+        collected[name].push(...page.sessions)
+        cursor = page.nextCursor
+      }
+      assert.deepEqual(
+        collected[name].map((s) => s.sessionId),
+        expected
+      )
+      assert.equal(new Set(collected[name].map((s) => s.sessionId)).size, ids.length)
+    }
+    const refreshed = await list(false)
+    assert.equal(refreshed.sessions[0].sessionId, ids[0], 'new listing picks up changed order')
+    assert.ok(
+      JSON.stringify(collected.remote).length < 10000,
+      'Only summaries cross back to the app'
+    )
   } finally {
     clearInterval(heartbeat)
   }
-  assert.deepEqual(remote.map((s) => s.sessionId).sort(), ids.toSorted())
-  assert.deepEqual(local.map((s) => s.sessionId).sort(), ids.toSorted())
-  assert.deepEqual(
-    remote.map((s) => s.summary).sort(),
-    Array.from({ length: 6 }, (_, i) => `Session ${i}`)
-  )
-  assert.ok(JSON.stringify(remote).length < 10000, 'Only summaries cross back to the app')
-  assert.ok(gaps.length > 10, 'The main event loop ran while the worker processed transcripts')
+  assert.ok(gaps.length > 0, 'The caller event loop ran during discovery')
   assert.ok(Math.max(...gaps) < 200, `Discovery blocked the caller for ${Math.max(...gaps)} ms`)
   console.log(
-    `Claude discovery passed: 96 MiB remote/local history, ${gaps.length} heartbeats, max gap ${Math.max(...gaps).toFixed(1)} ms`
+    `Claude discovery passed: 96 MiB history, two-summary first pages, stable pagination, independent local/remote; max caller gap ${Math.max(...gaps).toFixed(1)} ms`
   )
 } finally {
   await worker?.terminate()

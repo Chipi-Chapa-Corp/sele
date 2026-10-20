@@ -98,6 +98,16 @@ summary:focus-visible {
   outline: none;
 }
 
+.app-loading-spinner {
+  animation: app-loading-spin 900ms linear infinite;
+}
+
+@keyframes app-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -15,7 +15,10 @@ const extract = (path, predicate) => {
   )
   let result
   const visit = (node) => {
-    if (predicate(node, source)) result = node.arguments[0].getText(source)
+    if (predicate(node, source))
+      result = ts.isVariableDeclaration(node)
+        ? node.initializer.getText(source)
+        : node.arguments[0].getText(source)
     ts.forEachChild(node, visit)
   }
   visit(source)
@@ -38,6 +41,11 @@ const updateCode = extract(
     node.expression.getText(source) === 'useCallback' &&
     ts.isVariableDeclaration(node.parent) &&
     node.parent.name.getText(source) === 'applyChatDetail'
+)
+const selectCode = extract(
+  './useWorkspaceController.tsx',
+  (node, source) =>
+    ts.isVariableDeclaration(node) && node.name.getText(source) === 'handleSelectChat'
 )
 
 const setup = (providerId, initial = null) => {
@@ -155,4 +163,86 @@ test('a failed request from a closed chat is logged without changing the view', 
   assert.equal(h.state.loadState, 'loading')
   assert.equal(h.state.errors.length, 1)
   assert.match(h.state.errors[0][0], /Unable to load messages/)
+})
+
+test('cached selection stays loading until the deferred messages and ready state commit together', () => {
+  const cached = detail()
+  const state = { detail: null, loadState: 'ready' }
+  const transitions = []
+  const context = vm.createContext({
+    selectedChat: null,
+    chatLoadState: 'ready',
+    chatDetail: null,
+    getRecentCachedChatDetail: () => cached,
+    getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
+    subagentChatLoadRequestRef: { current: 0 },
+    sendInFlightRef: { current: false },
+    recentlyViewedActiveChatPreviewsRef: { current: new Map() },
+    selectedChatKeyRef: { current: null },
+    selectedChatUpdatedAtRef: { current: null },
+    chatDetailRef: { current: null },
+    startTransition: (callback) => transitions.push(callback),
+    setChatDetail: (value) => {
+      state.detail = value
+    },
+    setChatLoadState: (value) => {
+      state.loadState = value
+    }
+  })
+  for (const name of [
+    'resetChatSearch',
+    'setCommitChatReturnTarget',
+    'setSubagentChatView',
+    'setSendState',
+    'setEditingMessage',
+    'setNewChatOpen',
+    'setSearchOpen',
+    'setSearchQuery',
+    'markSelectedChatSeen',
+    'setSelectedChat',
+    'markChatSeenAt',
+    'setChatLoadRequest'
+  ])
+    context[name] = () => {}
+  vm.runInContext(selectCode, context)
+  context.callback({ providerId: 'claude', id: 'chat', updatedAt: 1 })
+  assert.equal(state.detail, null)
+  assert.equal(state.loadState, 'loading')
+  assert.equal(transitions.length, 1)
+  transitions[0]()
+  assert.equal(state.detail.id, 'chat')
+  assert.equal(state.loadState, 'ready')
+})
+
+for (const outcome of ['stale response', 'failed refresh']) {
+  test(`${outcome} cannot clear loading ahead of the pending cached render`, async () => {
+    const cached = detail(3)
+    const h = setup('claude', cached)
+    h.state.detail = null
+    h.state.loadState = 'loading'
+    const transitions = [
+      () => {
+        h.context.setChatDetail(cached)
+        h.context.setChatLoadState('ready')
+      }
+    ]
+    h.context.startTransition = (callback) => transitions.push(callback)
+    h.startLoad()
+    if (outcome === 'stale response') h.resolve(detail(2))
+    else h.reject(new Error('Fixture background refresh failure'))
+    await settle()
+    assert.equal(h.state.detail, null)
+    assert.equal(h.state.loadState, 'loading')
+    transitions.forEach((callback) => callback())
+    assert.equal(h.state.detail, cached)
+    assert.equal(h.state.loadState, 'ready')
+  })
+}
+
+test('delayed metadata cannot make a viewed chat unread again', async () => {
+  const { mergeChatMetadata } = await import('./chatMetadata.ts')
+  const current = { id: 'parent', seenUpdatedAt: 500, updatedAt: 400 }
+  assert.equal(mergeChatMetadata(current, { id: 'parent', seenUpdatedAt: 300 }).seenUpdatedAt, 500)
+  assert.equal(mergeChatMetadata(current, { id: 'parent', seenUpdatedAt: null }).seenUpdatedAt, 500)
+  assert.equal(mergeChatMetadata(current, { id: 'parent', seenUpdatedAt: 600 }).seenUpdatedAt, 600)
 })

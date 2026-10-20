@@ -27,6 +27,16 @@ export const loadClaudeHistory = async (
     )
   }
 
+  return restoreClaudeHistory(sessionId, sessionStore ?? localEntries)
+}
+
+/** Apply the SDK's branch/sibling recovery to a bounded set of display records. */
+export const restoreClaudeHistory = async (
+  sessionId: string,
+  entries: SessionStoreEntry[] | SessionStore,
+  leafUuid?: string | null
+): Promise<ClaudeTranscriptMessage[]> => {
+  const anchorUuid = `sele-history-page:${sessionId}`
   const originals = new Map<string, SessionStoreEntry>()
   const messages = await getSessionMessages(sessionId, {
     includeSystemMessages: true,
@@ -35,9 +45,21 @@ export const loadClaudeHistory = async (
         throw new Error('Claude display history is read-only')
       },
       load: async (key) => {
-        const entries = sessionStore ? await sessionStore.load(key) : localEntries
-        if (!entries) return null
-        return entries
+        const records = Array.isArray(entries) ? entries : ((await entries.load(key)) ?? [])
+        const source =
+          leafUuid === undefined
+            ? records
+            : [
+                ...records,
+                {
+                  type: 'user',
+                  uuid: anchorUuid,
+                  sessionId,
+                  parentUuid: leafUuid,
+                  message: { role: 'user', content: '' }
+                } as SessionStoreEntry
+              ]
+        return source
           .filter((entry) => !entry.isSidechain && !entry.teamName)
           .map((entry) => {
             if (typeof entry.uuid === 'string') originals.set(entry.uuid, entry)
@@ -57,23 +79,25 @@ export const loadClaudeHistory = async (
     }
   })
 
-  return messages.map((message): ClaudeTranscriptMessage => {
-    const original = originals.get(message.uuid)
-    return {
-      type: message.type,
-      uuid: message.uuid,
-      session_id: message.session_id,
-      parent_tool_use_id: message.parent_tool_use_id,
-      // SDK SessionMessage omits top-level system payloads and internal user flags.
-      message: original?.type === 'system' ? original : message.message,
-      ...(typeof original?.error === 'string' ? { error: original.error } : {}),
-      ...(original?.isMeta === true ? { isMeta: true } : {}),
-      ...(original?.isSynthetic === true ? { isSynthetic: true } : {}),
-      ...(original?.isCompactSummary === true ? { isCompactSummary: true } : {}),
-      ...(typeof original?.timestamp === 'string' ? { timestamp: original.timestamp } : {}),
-      ...(original && 'tool_use_result' in original
-        ? { tool_use_result: original.tool_use_result }
-        : {})
-    }
-  })
+  return messages
+    .filter((message) => message.uuid !== anchorUuid)
+    .map((message): ClaudeTranscriptMessage => {
+      const original = originals.get(message.uuid)
+      return {
+        type: message.type,
+        uuid: message.uuid,
+        session_id: message.session_id,
+        parent_tool_use_id: message.parent_tool_use_id,
+        // SDK SessionMessage omits top-level system payloads and internal user flags.
+        message: original?.type === 'system' ? original : message.message,
+        ...(typeof original?.error === 'string' ? { error: original.error } : {}),
+        ...(original?.isMeta === true ? { isMeta: true } : {}),
+        ...(original?.isSynthetic === true ? { isSynthetic: true } : {}),
+        ...(original?.isCompactSummary === true ? { isCompactSummary: true } : {}),
+        ...(typeof original?.timestamp === 'string' ? { timestamp: original.timestamp } : {}),
+        ...(original && 'tool_use_result' in original
+          ? { tool_use_result: original.tool_use_result }
+          : {})
+      }
+    })
 }

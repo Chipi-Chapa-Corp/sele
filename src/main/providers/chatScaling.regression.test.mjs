@@ -22,7 +22,7 @@ const fixture = (provider, count, visit) => {
     ] }]
     if (provider === 'claude') return [
       { type: 'user', uuid: `u${id}`, message: { content: `prompt ${id}` }, parent_tool_use_id: null },
-      { type: 'assistant', uuid: `a${id}`, parent_tool_use_id: null, get message() { visit(); return { content: [{ type: 'text', text: `answer ${id}` }] } } }
+      { type: 'assistant', uuid: `a${id}`, parent_tool_use_id: null, message: { model: 'fixture', get content() { visit(); return [{ type: 'text', text: `answer ${id}` }] } } }
     ]
     if (provider === 'copilot') return [
       { type: 'user.message', id: `u${id}`, data: { content: `prompt ${id}` } },

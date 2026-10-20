@@ -5,6 +5,8 @@ import {
   CodexCommandStartAnchors,
   readCodexItemStartTimes
 } from './CodexCommandStartAnchors.ts'
+import { getChatItems } from './CodexItemRenderers.ts'
+import { getToolSequenceDisplayLabel } from '../../../renderer/src/toolDisplayLabel.ts'
 
 const command = (id, status = 'completed') => ({
   id,
@@ -209,6 +211,60 @@ test('missing rollout leaves usable history untouched', async () => {
     false
   )
   assert.equal(store.project(turn), turn)
+})
+
+test('fresh snapshots retain scripts in their original group before optional metadata reloads', () => {
+  const store = new CodexCommandStartAnchors()
+  const intro = message('intro')
+  const read = { ...command('read'), command: 'cat build.log' }
+  const run = command('run')
+  const commentary = { ...message('commentary'), phase: 'commentary' }
+  const script = { ...command('script'), command: 'python3 build.py' }
+  const history = {
+    id: 'history',
+    status: 'inProgress',
+    // The history API places the long-running script at its completion position.
+    items: [intro, read, run, commentary, script]
+  }
+  const metadata = {
+    prompts: new Map(),
+    version: 1,
+    starts: new Map([
+      [
+        'history',
+        new Map([
+          ['intro', 1],
+          ['script', 2],
+          ['read', 3],
+          ['run', 4],
+          ['commentary', 5]
+        ])
+      ]
+    ])
+  }
+  const headings = (snapshot) =>
+    getChatItems([store.project(snapshot)])
+      .filter((item) => item.type === 'working')
+      .flatMap((step) => step.items)
+      .filter((item) => item.type === 'toolGroup')
+      .map((group) => getToolSequenceDisplayLabel(group.toolActivities, false))
+
+  store.apply({ turns: [history] }, metadata)
+  assert.deepEqual(headings(history), ['Ran scripts, read files, ran commands'])
+  const refreshed = { ...history, items: [...history.items, command('poll')] }
+  assert.deepEqual(
+    headings(refreshed),
+    ['Ran scripts, read files, ran commands'],
+    'a replacement snapshot must not move the script into the next group'
+  )
+  assert.equal(store.project(refreshed), store.project(refreshed), 'cache the recovered projection')
+  assert.deepEqual(
+    history.items,
+    [intro, read, run, commentary, script],
+    'leave native order untouched'
+  )
+  store.clear()
+  assert.equal(store.project(refreshed), refreshed, 'clearing drops retained timing metadata')
 })
 
 test('live completion updates the original command slot after the final response arrives', async () => {

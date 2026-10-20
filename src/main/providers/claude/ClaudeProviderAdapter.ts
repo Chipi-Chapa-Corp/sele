@@ -1,5 +1,7 @@
 import { createProviderElicitation, getProviderElicitationResult } from '../ProviderElicitation'
 import { ClaudeLiveTokenUsage } from './ClaudeLiveTokenUsage.ts'
+import { encodeClaudeHistory, historyMessageId } from '../NativeHistoryImport'
+import { nativeHistoryFile } from '../NativeHistoryFile'
 import { TokenUsageReporter } from '../TokenUsageReporter.ts'
 import { normalizeTokenUsage, addTokenUsage, emptyTokenUsage } from '../../../shared/tokenUsage.ts'
 import { ClaudeSessionDiscovery } from './ClaudeSessionDiscovery'
@@ -69,6 +71,7 @@ import { getHostCommand, getHostExecutableCommand, type HostCommand } from '../.
 import type {
   ProviderAdapter,
   ProviderChatUpdateMetadata,
+  ProviderChatTurnCursorWindow,
   ProviderChatTurnWindow
 } from '../ProviderAdapter'
 import {
@@ -84,10 +87,13 @@ import {
 } from '../providerResources'
 import { getClaudeExecutable } from './ClaudeExecutable'
 import { loadClaudeHistory } from './ClaudeHistory'
+import { ClaudeHistoryPages, type ClaudeHistoryPage } from './ClaudeHistoryPages'
+import { openClaudeHistorySource } from './ClaudeHistorySource'
 import { isClaudeAuthenticationFailure, isClaudeAuthenticationError } from './ClaudeAuthentication'
 import { claudeAccounts } from './ClaudeAccounts'
 import {
   ClaudeTranscriptProjection,
+  classifyClaudeTurnRecord,
   claudeBackgroundTurnSubtype,
   isClaudeInternalUserMessage,
   renderClaudeChatItems,
@@ -168,6 +174,10 @@ type ClaudeSessionState = {
   cwd: string | null
   metadata: SDKSessionInfo | null
   messages: ClaudeTranscriptMessage[]
+  /** The stored prefix is retrieved through cursors, independently of the live tail. */
+  historyPagination?: ProviderChatDetail['turnPagination']
+  /** Live records may reach Sele before the CLI finishes persisting them. */
+  historyDirty?: boolean
   messageIds: Set<string>
   partialMessages: Map<string, ClaudeTranscriptMessage>
   query: Query | null
@@ -571,6 +581,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   // never restart below a revision those consumers have already seen.
   private detailRevision = 0
   private stateLoads = new Map<string, Promise<ClaudeSessionState>>()
+  private historyPages = new ClaudeHistoryPages()
   private stateGeneration = 0
   private disposed = false
   private pinnedStates = new Map<ClaudeSessionState, number>()
@@ -578,6 +589,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private stateTranscriptBytes = new WeakMap<ClaudeSessionState, number>()
   private admissionLeases = new Map<ClaudeSessionState, ReturnType<typeof setTimeout>>()
   private sessionContainers = new Map<string, StoredClaudeContainer | null>()
+  private sessionMetadata = new Map<string, SDKSessionInfo>()
   private sessionOptions = new Map<string, ProviderTurnOptions>()
   private transcriptProjections = new Map<ClaudeSessionState, ClaudeTranscriptProjection>()
   private chatUpdatedListeners = new Set<
@@ -917,17 +929,20 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {
     const normalizedContainer = normalizeContainerTarget(options.container)
     const container = isStoredContainer(normalizedContainer) ? normalizedContainer : null
-    const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0)
     const limit = Math.max(1, Math.min(options.limit ?? 50, 100))
-
-    const sessions = (await this.sessionDiscovery.list(container, offset > 0))
-      .filter((session) => !this.hiddenSessionIds.has(session.sessionId))
-      .sort((first, second) => second.lastModified - first.lastModified)
-    const page = sessions.slice(offset, offset + limit)
-    page.forEach((session) => this.sessionContainers.set(session.sessionId, container))
+    const { sessions: page, nextCursor } = await this.sessionDiscovery.list(
+      container,
+      options.cursor ?? null,
+      limit,
+      [...this.hiddenSessionIds]
+    )
+    page.forEach((session) => {
+      this.sessionContainers.set(session.sessionId, container)
+      this.sessionMetadata.set(session.sessionId, session)
+    })
     return {
       chats: page.map((session) => this.createChatFromMetadata(session)),
-      nextCursor: offset + page.length < sessions.length ? String(offset + page.length) : null
+      nextCursor
     }
   }
 
@@ -944,8 +959,62 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     window: ProviderChatTurnWindow,
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> => {
+    if (window.startIndex == null) {
+      const existing = this.states.get(chatId)
+      const state = await this.ensureState(chatId, undefined, options.container)
+      if (existing === state) await this.refreshIdleHistory(state)
+      if (state.historyPagination && window.limit !== 10) {
+        const page = await this.readHistoryPage(chatId, state.container, {
+          cursor: null,
+          direction: 'older',
+          limit: window.limit
+        })
+        return this.createChatDetail(
+          { ...state, messages: page.messages, historyPagination: page.pagination },
+          window
+        )
+      }
+      return this.createChatDetail(state, window)
+    }
+    // Explicit full-history consumers (export/edit) are separate from opening and scrolling.
     const state = await this.ensureState(chatId, undefined, options.container)
-    return this.createChatDetail(state, window)
+    const messages = state.historyPagination?.olderCursor
+      ? await this.readCompleteHistory(state)
+      : state.messages
+    // Export/numeric compatibility reads must not replace a live cursor view's state.
+    return this.createChatDetail({ ...state, messages, historyPagination: undefined }, window)
+  }
+
+  getChatCursorWindow = async (
+    chatId: string,
+    window: ProviderChatTurnCursorWindow,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    if (!window.cursor)
+      return this.getChatWindow(chatId, { startIndex: null, limit: window.limit }, options)
+    const state = await this.ensureState(chatId, undefined, options.container)
+    const page = await this.readHistoryPage(chatId, state.container, window)
+    const detail = this.createChatDetail({
+      ...state,
+      messages: [],
+      partialMessages: new Map(),
+      historyPagination: undefined
+    })
+    const first = state.messages.findIndex((message) => message.uuid === page.messages[0]?.uuid)
+    const messages =
+      !page.pagination.newerCursor &&
+      first >= 0 &&
+      page.messages.every((message, index) => state.messages[first + index]?.uuid === message.uuid)
+        ? state.messages.slice(first)
+        : page.messages
+    const items = renderClaudeChatItems(messages, { active: false, stopped: false })
+    return {
+      ...detail,
+      items,
+      itemsStartTurnIndex: 0,
+      turnCount: getProviderChatTurns(items).length,
+      turnPagination: page.pagination
+    }
   }
 
   getChatWindowForItem = async (
@@ -955,6 +1024,20 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, undefined, options.container)
+    if (state.historyPagination) {
+      // Jump/tool expansion seeks page by page, retaining no historical message bodies.
+      let detail = this.createChatDetail(state)
+      while (!detail.items.some((item) => item.id === itemId || itemId.startsWith(`${item.id}:`))) {
+        const cursor = detail.turnPagination?.olderCursor
+        if (!cursor) throw new Error('Chat item not found')
+        detail = await this.getChatCursorWindow(
+          chatId,
+          { cursor, direction: 'older', limit: 10 },
+          options
+        )
+      }
+      return detail
+    }
     const window = findClaudeItemTurnWindow(state.messages, itemId, limit)
     if (window) return this.createChatDetail(state, window)
     // Some synthetic message IDs have no native record ID. Preserve that uncommon lookup.
@@ -1205,6 +1288,57 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     generation.query?.close()
   }
 
+  importHistory: NonNullable<ProviderAdapter['importHistory']> = async (
+    chatId,
+    messages,
+    options,
+    onChatCreated
+  ) => {
+    const id = chatId ?? randomUUID()
+    await onChatCreated?.(id)
+    const previous = this.states.get(id)
+    if (previous) {
+      if (
+        previous.active ||
+        previous.waitingForSessionIdle ||
+        previous.queueDrainInProgress ||
+        previous.queuedMessages.length ||
+        previous.pendingApprovals.length ||
+        previous.pendingUserInputs.length ||
+        previous.backgroundTaskIds.size
+      )
+        throw new Error('Claude is still working in this conversation.')
+      const control = previous.query
+      await this.closeStateQuery(previous)
+      if (control) await control.return(undefined)
+    }
+    const cwd = options.cwd ?? previous?.cwd ?? process.cwd()
+    const file = await nativeHistoryFile('claude', id, cwd, options.container)
+    const entries = await file.read()
+    // Internal attachments also extend the resume chain.
+    const parent = entries.findLast(
+      (entry) => typeof entry.uuid === 'string' && !entry.isSidechain && !entry.teamName
+    )?.uuid
+    await file.append(
+      encodeClaudeHistory(
+        id,
+        cwd,
+        messages,
+        typeof parent === 'string' ? parent : null,
+        new Set(entries.map((entry) => String(entry.uuid)))
+      )
+    )
+    const imported = await file.read()
+    const importedIds = new Set(imported.map((entry) => entry.uuid))
+    if (messages.some((message, index) => !importedIds.has(historyMessageId(id, message, index))))
+      throw new Error('Claude did not persist the complete imported conversation.')
+    this.states.delete(id)
+    this.sessionOptions.set(id, options)
+    const normalized = normalizeContainerTarget(options.container)
+    this.sessionContainers.set(id, normalized.kind === 'container' ? normalized : null)
+    return id
+  }
+
   startChat = async (
     message: string,
     options?: ProviderTurnOptions,
@@ -1238,7 +1372,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions,
     onForkCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
-    const source = await this.ensureState(chatId, options)
+    const source = await this.ensureCompleteState(chatId, options)
     this.requireAuthentication(source)
     const id = randomUUID()
     const state = this.createState(id, options, source.container)
@@ -1258,7 +1392,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     messageId: string,
     onForkCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
-    const source = await this.ensureState(chatId)
+    const source = await this.ensureCompleteState(chatId)
     if (source.active) throw new Error('Cannot fork a chat with an active response.')
 
     // Rendered assistant ids derive from the API message id, not the transcript uuid.
@@ -1384,7 +1518,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     message: string,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
-    const state = await this.ensureState(chatId, options)
+    const state = await this.ensureCompleteState(chatId, options)
     this.requireAuthentication(state)
     this.pinState(state)
     try {
@@ -1511,6 +1645,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.disposed = true
     this.stateGeneration += 1
     this.sessionDiscovery.dispose()
+    this.historyPages.clear()
     claudeAccounts.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
@@ -1540,6 +1675,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.controlQueries.dispose()
     this.hiddenSessionIds.clear()
     this.sessionContainers.clear()
+    this.sessionMetadata.clear()
     this.sessionOptions.clear()
   }
 
@@ -1906,13 +2042,21 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const state = this.createState(chatId, rememberedOptions, rememberedContainer)
     const generation = this.stateGeneration
     const pending = (async (): Promise<ClaudeSessionState> => {
-      const sessionStore = state.container
-        ? new ClaudeRemoteSessionStore(state.container)
-        : undefined
-      const [metadata, messages] = await Promise.all([
-        getSessionInfo(chatId, { sessionStore }),
-        loadClaudeHistory(chatId, sessionStore)
-      ])
+      const page = await this.readHistoryPage(chatId, state.container, {
+        cursor: null,
+        direction: 'older',
+        limit: 10
+      })
+      // Local SDK metadata uses bounded head/tail reads. A remote SessionStore's metadata
+      // API loads the whole file, so use metadata from the range read there.
+      const metadata = state.container
+        ? {
+            ...page.metadata,
+            ...this.sessionMetadata.get(chatId),
+            lastModified: page.metadata.lastModified
+          }
+        : ((await getSessionInfo(chatId)) ?? page.metadata)
+      const messages = page.messages
       if (this.disposed || generation !== this.stateGeneration)
         throw new Error('Claude provider was disposed.')
       const current = this.states.get(chatId)
@@ -1923,6 +2067,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.updatedAt = metadata?.lastModified ?? state.updatedAt
       state.cwd = metadata?.cwd ?? rememberedOptions?.cwd ?? null
       state.messages = messages
+      state.historyPagination = page.pagination
       state.failed = isClaudeAuthenticationFailure(
         messages.findLast(
           (message) =>
@@ -1957,6 +2102,138 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     }
   }
 
+  private readHistoryPage = (
+    chatId: string,
+    container: StoredClaudeContainer | null,
+    window: ProviderChatTurnCursorWindow
+  ): Promise<ClaudeHistoryPage> =>
+    this.historyPages.read(chatId, getContainerTargetKey(container), window, () =>
+      openClaudeHistorySource(
+        chatId,
+        container
+          ? async (script, args = []) =>
+              runHostCommand(
+                await getHostCommand('sh', ['-lc', script, 'sele-claude-history-page', ...args], {
+                  container,
+                  env: process.env
+                })
+              )
+          : undefined
+      )
+    )
+
+  private refreshIdleHistory = async (state: ClaudeSessionState): Promise<void> => {
+    const busy = (): boolean =>
+      state.query !== null ||
+      state.active ||
+      state.queueDrainInProgress ||
+      state.queuedMessages.length > 0 ||
+      state.pendingApprovals.length > 0 ||
+      state.pendingUserInputs.length > 0
+    if (busy()) return
+    const previous = state.messages
+    const page = await this.readHistoryPage(state.id, state.container, {
+      cursor: null,
+      direction: 'older',
+      limit: 10
+    })
+    if (
+      this.disposed ||
+      this.states.get(state.id) !== state ||
+      state.messages !== previous ||
+      busy()
+    )
+      return
+    if (state.historyDirty) {
+      const latest = previous.findLast(
+        (message) =>
+          !message.parent_tool_use_id &&
+          (message.type === 'assistant' ||
+            (message.type === 'user' && !isClaudeInternalUserMessage(message)))
+      )
+      const identity = (message: ClaudeTranscriptMessage): string => {
+        const record = message.message as { id?: unknown } | null
+        return record && typeof record.id === 'string' ? record.id : message.uuid
+      }
+      // Persisted assistant blocks have different UUIDs from the live aggregate, but the
+      // API message ID is stable. Do not replace a completed response with a lagging file.
+      if (latest && !page.messages.some((message) => identity(message) === identity(latest))) return
+      if (state.failed && previous.at(-1)?.failed) return
+    }
+    state.messages = page.messages
+    state.historyDirty = false
+    state.messageIds = new Set(page.messages.map((message) => message.uuid))
+    state.historyPagination = page.pagination
+    state.failed = isClaudeAuthenticationFailure(
+      page.messages.findLast(
+        (message) =>
+          !message.parent_tool_use_id &&
+          (message.type === 'assistant' ||
+            (message.type === 'user' && !isClaudeInternalUserMessage(message)))
+      ) ?? { type: 'system' }
+    )
+    state.metadata = {
+      ...state.metadata,
+      ...Object.fromEntries(
+        Object.entries(page.metadata).filter(([, value]) => value !== undefined)
+      )
+    } as SDKSessionInfo
+    state.cwd = page.metadata.cwd ?? state.cwd
+    state.updatedAt = page.metadata.lastModified
+    this.transcriptProjections.delete(state)
+    this.rememberStateTranscriptSize(state)
+  }
+
+  private readCompleteHistory = async (
+    state: ClaudeSessionState
+  ): Promise<ClaudeTranscriptMessage[]> => {
+    const messages = await loadClaudeHistory(
+      state.id,
+      state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
+    )
+    if (this.disposed || this.states.get(state.id) !== state)
+      throw new Error('Claude session changed.')
+    if (state.historyDirty) {
+      const persisted = new Set(messages.map((message) => message.uuid))
+      const start = state.messages.findIndex(
+        (message) => classifyClaudeTurnRecord(message) === 'start' && persisted.has(message.uuid)
+      )
+      if (start >= 0) {
+        // Replace whole overlapping turns. A live aggregate and its persisted split blocks
+        // can have different UUIDs; merging them individually would duplicate the answer.
+        const prefixEnd = messages.findIndex(
+          (message) => message.uuid === state.messages[start].uuid
+        )
+        return [...messages.slice(0, prefixEnd), ...state.messages.slice(start)]
+      }
+    }
+    const current = new Map(state.messages.map((message) => [message.uuid, message]))
+    const ids = new Set(messages.map((message) => message.uuid))
+    return [
+      ...messages.map((message) => current.get(message.uuid) ?? message),
+      ...state.messages.filter((message) => !ids.has(message.uuid))
+    ]
+  }
+
+  private ensureCompleteState = async (
+    chatId: string,
+    options?: ProviderTurnOptions,
+    container?: AppContainerTarget | null
+  ): Promise<ClaudeSessionState> => {
+    const state = await this.ensureState(chatId, options, container)
+    if (!state.historyPagination) return state
+    const previous = state.messages
+    state.messages = state.historyPagination.olderCursor
+      ? await this.readCompleteHistory(state)
+      : state.messages
+    state.messageIds = new Set(state.messages.map((message) => message.uuid))
+    state.historyPagination = undefined
+    markTranscriptRecordsChanged(previous, state.messages, 0)
+    this.transcriptProjections.delete(state)
+    this.rememberStateTranscriptSize(state)
+    return state
+  }
+
   private ensureStateQuery = async (
     state: ClaudeSessionState,
     options?: ProviderTurnOptions
@@ -1989,7 +2266,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         throw new Error('Claude session startup was canceled.')
       }
       const queryReadOnly = state.options?.sandboxMode === 'read-only'
-      const isNew = state.messages.length === 0 && !startOptions.forkFrom && !startOptions.resumeAt
+      const isNew =
+        !state.historyPagination &&
+        state.metadata === null &&
+        state.messages.length === 0 &&
+        !startOptions.forkFrom &&
+        !startOptions.resumeAt
       const browserService = getBrowserAutomationService()
       // Do not connect remote/container or restricted queries to an unrelated host browser.
       const browser =
@@ -2671,13 +2953,28 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<void> => {
     this.requireAuthentication(state)
-    state.queuedMessages.push(this.createQueuedMessage(message, options))
+    const queued = this.createQueuedMessage(message, options)
+    const immediate =
+      !state.active && !state.queueDrainInProgress && state.queuedMessages.length === 0
+    state.queuedMessages.push(queued)
     state.queuedMessagesPaused = false
     if (this.getQueueDrainDecision(state) !== 'start') {
       this.emitUpdate(state)
       return
     }
-    await this.drainNextQueuedMessage(state)
+    try {
+      await this.drainNextQueuedMessage(state)
+    } catch (error) {
+      // A rejected idle send stays in the composer's draft, rather than becoming an unseen retry.
+      // Explicit queued messages and other submissions must remain untouched.
+      if (immediate && !state.active) {
+        const index = state.queuedMessages.indexOf(queued)
+        if (index >= 0) state.queuedMessages.splice(index, 1)
+        if (!state.queuedMessages.length) state.queuedMessagesPaused = false
+        this.emitUpdate(state)
+      }
+      throw error
+    }
   }
 
   private getQueueDrainDecision = (
@@ -2825,6 +3122,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       .get(state)
       ?.acceptSource(previousMessages, state.messages, changedIndex)
     state.messageIds.add(message.uuid)
+    state.historyDirty = true
   }
 
   private rejectPendingRequests = (state: ClaudeSessionState): void => {
@@ -2929,13 +3227,24 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       while (this.transcriptProjections.size > 8) {
         this.transcriptProjections.delete(this.transcriptProjections.keys().next().value!)
       }
-      projected = projection.read(state.messages, overlays, renderOptions)
+      // The older cursor is anchored before the retained live tail. Keep that tail whole,
+      // including newly streamed turns, so a live publication cannot leave a paging gap.
+      projected = projection.read(
+        state.messages,
+        overlays,
+        renderOptions,
+        state.historyPagination ? Number.MAX_SAFE_INTEGER : 10
+      )
     }
     if (typeof windowed === 'object') {
       const records = overlays.length ? [...state.messages, ...overlays] : state.messages
       if (records !== state.messages)
         markTranscriptRecordsChanged(state.messages, records, state.messages.length)
-      projected = renderClaudeChatWindow(records, renderOptions, windowed)
+      projected = renderClaudeChatWindow(
+        records,
+        renderOptions,
+        state.historyPagination ? { startIndex: 0, limit: Number.MAX_SAFE_INTEGER } : windowed
+      )
     }
     state.revision = ++this.detailRevision
     return {
@@ -2972,7 +3281,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       contextUsage: state.contextUsage,
       ...(projected ?? {
         items: renderClaudeChatItems([...state.messages, ...overlays], renderOptions)
-      })
+      }),
+      ...(state.historyPagination ? { turnPagination: state.historyPagination } : {})
     }
   }
 

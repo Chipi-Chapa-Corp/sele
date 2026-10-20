@@ -42,6 +42,7 @@ const methods = new Set([
   'sendQueuedMessageNow',
   'continueChat',
   'editMessage',
+  'ensureCompleteState',
   'stopChat',
   'closeStateQuery',
   'deletePendingMessage',
@@ -821,4 +822,26 @@ test('a message sent while a finished turn settles is sent instead of racing the
   assert.deepEqual(prepared, [control])
   assert.deepEqual(sent, ['follow-up'])
   assert.deepEqual(state.queuedMessages, [])
+})
+
+
+test('a rejected idle send does not remain queued while its text stays in the composer draft', async () => {
+  const { instance, state } = setup()
+  state.queuedMessages = []
+  instance.createQueuedMessage = content => ({ id: content, content })
+  instance.ensureStateQuery = async () => { throw new Error('No conversation found') }
+  await assert.rejects(instance.sendMessageRespectingQueue(state, 'test'), /No conversation found/)
+  assert.equal(state.queuedMessages.length, 0)
+  assert.equal(state.queuedMessagesPaused, false)
+})
+
+test('startup failure preserves earlier explicit queued messages', async () => {
+  const { instance, state } = setup()
+  const original = state.queuedMessages[0]
+  instance.createQueuedMessage = content => ({ id: content, content })
+  instance.ensureStateQuery = async () => { throw new Error('No conversation found') }
+  await assert.rejects(instance.sendMessageRespectingQueue(state, 'next'), /No conversation found/)
+  assert.equal(state.queuedMessages[0], original)
+  assert.equal(state.queuedMessages.length, 2)
+  assert.equal(state.queuedMessagesPaused, true)
 })

@@ -43,3 +43,20 @@
   .chat-list-item__header {
   padding-right: 2rem;
 }
+
+/* Stopping a running agent is always available, including without hover. */
+.chat-subagent-list .chat-subagent-list__row--cancelable .chat-list-item__actions {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.chat-subagent-list .chat-subagent-list__row--cancelable .chat-list-item__header {
+  padding-right: 2rem;
+}
+
+.chat-subagent-list__error {
+  margin: 0.3rem 0 0.3rem 1.4rem;
+  color: var(--error);
+  font-size: 0.85rem;
+}

@@ -1,7 +1,7 @@
-import { CornerDownRight, LoaderCircle, X } from 'lucide-react'
+import { CornerDownRight, LoaderCircle, Square } from 'lucide-react'
 import { memo, type CSSProperties, type ReactElement } from 'react'
 import type { ProviderSubagent } from '../../../shared/provider'
-import { orderSubagentTree } from '../subagentUi'
+import { getVisibleSubagentRows, getWorkingSubagentIds } from '../subagentUi'
 import { Button } from './Button'
 import './ChatListItem.css'
 import './ChatSubagentList.css'
@@ -9,6 +9,7 @@ import './ChatSubagentList.css'
 type ChatSubagentListProps = {
   activeSubagentId: string | null
   cancelingSubagentIds: ReadonlySet<string>
+  error?: string | null
   parentTitle: string
   subagents: readonly ProviderSubagent[]
   onCancel: (subagent: ProviderSubagent) => void
@@ -50,58 +51,74 @@ function SubagentStatus({ subagent }: { subagent: ProviderSubagent }): ReactElem
 export const ChatSubagentList = memo(function ChatSubagentList({
   activeSubagentId,
   cancelingSubagentIds,
+  error,
   parentTitle,
   subagents,
   onCancel,
   onOpen
 }: ChatSubagentListProps): ReactElement | null {
-  if (subagents.length === 0) return null
+  const rows = getVisibleSubagentRows(subagents, activeSubagentId)
+  const workingIds = getWorkingSubagentIds(subagents)
+  if (rows.length === 0 && !error) return null
 
   return (
-    <ul className="chat-subagent-list" aria-label={`Subagent chats of ${parentTitle}`}>
-      {orderSubagentTree(subagents).map(({ subagent, depth }) => {
-        const active = subagent.id === activeSubagentId
-        const working = isSubagentActive(subagent)
-        const cancelLabel = `Cancel ${subagent.title}`
-        return (
-          <li
-            key={subagent.id}
-            className="chat-subagent-list__item"
-            style={{ '--chat-subagent-depth': depth } as CSSProperties}
-          >
-            <CornerDownRight className="chat-subagent-list__arrow" aria-hidden="true" />
-            <article
-              className={`chat-list-item${working ? ' chat-list-item--working' : ''}${active ? ' chat-list-item--selected' : ''}${working ? ' chat-subagent-list__row--cancelable' : ''}`}
+    <>
+      <ul className="chat-subagent-list" aria-label={`Subagent chats of ${parentTitle}`}>
+        {rows.map(({ subagent, depth }) => {
+          const active = subagent.id === activeSubagentId
+          const working = workingIds.has(subagent.id)
+          const cancelLabel = `Stop ${subagent.title}`
+          return (
+            <li
+              key={subagent.id}
+              className="chat-subagent-list__item"
+              style={{ '--chat-subagent-depth': depth } as CSSProperties}
             >
-              <button
-                type="button"
-                className="chat-list-item__main"
-                aria-current={active ? 'true' : undefined}
-                title={subagent.title}
-                onClick={() => onOpen(subagent)}
+              <CornerDownRight className="chat-subagent-list__arrow" aria-hidden="true" />
+              <article
+                className={`chat-list-item${working ? ' chat-list-item--working' : ''}${active ? ' chat-list-item--selected' : ''}${working ? ' chat-subagent-list__row--cancelable' : ''}`}
               >
-                <span className="chat-list-item__header">
-                  <SubagentStatus subagent={subagent} />
-                  <span className="chat-list-item__title">{subagent.title}</span>
-                </span>
-              </button>
-              {working && (
-                <span className="chat-list-item__actions">
-                  <Button
-                    theme="transparent"
-                    size="small"
-                    aria-label={cancelLabel}
-                    title={cancelLabel}
-                    disabled={cancelingSubagentIds.has(subagent.id)}
-                    callback={() => onCancel(subagent)}
-                    icon={<X aria-hidden="true" />}
-                  />
-                </span>
-              )}
-            </article>
-          </li>
-        )
-      })}
-    </ul>
+                <button
+                  type="button"
+                  className="chat-list-item__main"
+                  aria-current={active ? 'true' : undefined}
+                  title={subagent.title}
+                  onClick={() => onOpen(subagent)}
+                >
+                  <span className="chat-list-item__header">
+                    <SubagentStatus
+                      subagent={
+                        working && !isSubagentActive(subagent)
+                          ? { ...subagent, status: 'running' }
+                          : subagent
+                      }
+                    />
+                    <span className="chat-list-item__title">{subagent.title}</span>
+                  </span>
+                </button>
+                {working && (
+                  <span className="chat-list-item__actions">
+                    <Button
+                      theme="transparent"
+                      size="small"
+                      aria-label={cancelLabel}
+                      title={cancelLabel}
+                      disabled={cancelingSubagentIds.has(subagent.id)}
+                      callback={() => onCancel(subagent)}
+                      icon={<Square aria-hidden="true" />}
+                    />
+                  </span>
+                )}
+              </article>
+            </li>
+          )
+        })}
+      </ul>
+      {error && (
+        <p className="chat-subagent-list__error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
   )
 })

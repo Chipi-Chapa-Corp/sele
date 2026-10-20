@@ -196,9 +196,10 @@ export const applyCodexSubagentRunOutcomes = (
   getOutcome: (subagentId: string) => CodexSubagentRunOutcome | undefined
 ): ProviderSubagent[] =>
   subagents.map((subagent) => {
-    if (!isCodexSubagentUnsettled(subagent)) return subagent
+    if (!isCodexSubagentUnsettled(subagent) && subagent.status !== 'unknown') return subagent
     const outcome = getOutcome(subagent.id)
-    if (!outcome || !terminalStatuses.has(outcome.status)) return subagent
+    if (!outcome || (subagent.status !== 'unknown' && !terminalStatuses.has(outcome.status)))
+      return subagent
     return {
       ...subagent,
       status: outcome.status,
@@ -237,7 +238,9 @@ export const createCodexSubagentSummary = (
   return {
     id: thread.id,
     parentId:
-      thread.parentThreadId && thread.parentThreadId !== rootChatId ? thread.parentThreadId : null,
+      getCodexSubagentParentThreadId(thread) === rootChatId
+        ? null
+        : getCodexSubagentParentThreadId(thread),
     ...(afterItemId ? { afterItemId } : {}),
     title:
       thread.agentNickname?.trim() ||

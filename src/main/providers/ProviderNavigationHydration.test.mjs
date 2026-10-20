@@ -73,6 +73,10 @@ const copilotHarness = (state, client) => {
     loadSessionTitle: async () => {},
     refreshPendingMessages: async () => {},
     refreshPlan: async () => {},
+    browserBindingMatches: () => true,
+    closeBrowserIntegration: () => {},
+    createBrowserIntegration: async () => null,
+    createElicitationHandler: () => async () => ({ action: 'cancel' }),
     createChatDetail: (current) => ({ count: current.events.length })
   })
   return adapter

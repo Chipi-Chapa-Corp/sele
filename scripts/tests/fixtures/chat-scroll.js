@@ -40,8 +40,8 @@ const render = () => {
     )
     .join('')}</div>`
 }
-const reset = (provider = 'claude') => {
-  const cursor = provider === 'codex'
+const reset = (provider = 'legacy') => {
+  const cursor = provider === 'claude' || provider === 'codex'
   state = makeDetail(cursor ? 30 : 20, cursor)
   render()
   requests = []
@@ -143,10 +143,10 @@ window.runScrollChecks = async () => {
   }
 
   const delayedPaging = []
-  for (const provider of ['claude', 'codex']) {
+  for (const provider of ['legacy', 'claude', 'codex']) {
     for (const direction of ['older', 'newer']) {
       reset(provider)
-      if (provider === 'codex') {
+      if (provider !== 'legacy') {
         state = makeDetail(20, true)
         window.chatDetailRef.current = state
         render()
@@ -172,10 +172,10 @@ window.runScrollChecks = async () => {
   }
 
   const liveUpdates = []
-  for (const provider of ['claude', 'codex']) {
-    const history = makeDetail(20, provider === 'codex')
+  for (const provider of ['legacy', 'claude', 'codex']) {
+    const history = makeDetail(20, provider !== 'legacy')
     const latest = {
-      ...makeDetail(provider === 'codex' ? 30 : 40, provider === 'codex'),
+      ...makeDetail(provider !== 'legacy' ? 30 : 40, provider !== 'legacy'),
       revision: 2
     }
     const snapshot = window.getChatDetailFromSnapshot(latest, history, {
@@ -194,6 +194,85 @@ window.runScrollChecks = async () => {
       before: history.items.map((x) => x.id),
       after: next.items.map((x) => x.id)
     })
+  }
+
+  const cursorAnchors = []
+  const replacedBoundaries = []
+  const failedPages = []
+  for (const provider of ['claude', 'codex']) {
+    for (const direction of ['older', 'newer']) {
+      reset(provider)
+      state = makeDetail(20, true)
+      window.chatDetailRef.current = state
+      render()
+      element.scrollTop = direction === 'older' ? 20 : element.scrollHeight - element.clientHeight
+      const before = firstVisible()
+      const top = () =>
+        document.querySelector(`[data-chat-turn-id="${before}"]`).getBoundingClientRect().top
+      const beforeTop = top()
+      await window.loadChatTurnPage(direction)
+      cursorAnchors.push({
+        provider,
+        direction,
+        before,
+        after: firstVisible(),
+        beforeTop,
+        afterTop: top()
+      })
+
+      reset(provider)
+      state = makeDetail(20, true)
+      window.chatDetailRef.current = state
+      render()
+      element.scrollTop = direction === 'older' ? 20 : element.scrollHeight - element.clientHeight
+      const currentItems = state.items.map((item) => item.id)
+      const page = {
+        ...makeDetail(direction === 'older' ? 10 : 30, true),
+        startIndex: 0,
+        totalCount: 10
+      }
+      window.providerApi.getChatTurnCursorPage = () =>
+        new Promise((resolve) => {
+          resolvePage = () => resolve(page)
+        })
+      const pending = window.loadChatTurnPage(direction)
+      state = {
+        ...state,
+        turnPagination: {
+          ...state.turnPagination,
+          [direction === 'older' ? 'olderCursor' : 'newerCursor']: 'changed-boundary'
+        }
+      }
+      window.chatDetailRef.current = state
+      resolvePage()
+      await pending
+      replacedBoundaries.push({
+        provider,
+        direction,
+        before: currentItems,
+        after: state.items.map((item) => item.id)
+      })
+
+      reset(provider)
+      element.scrollTop = 20
+      const beforeFailure = firstVisible()
+      window.providerApi.getChatTurnCursorPage = async () => {
+        throw new Error('Fixture transport failure')
+      }
+      const originalError = console.error
+      console.error = noop
+      try {
+        await window.loadChatTurnPage('older')
+      } finally {
+        console.error = originalError
+      }
+      failedPages.push({
+        provider,
+        before: beforeFailure,
+        after: firstVisible(),
+        inFlight: window.chatTurnPageLoadInFlightRef.current
+      })
+    }
   }
 
   const resizes = []
@@ -260,6 +339,9 @@ window.runScrollChecks = async () => {
     normalPaging,
     delayedPaging,
     liveUpdates,
+    cursorAnchors,
+    replacedBoundaries,
+    failedPages,
     resizes,
     autoFollow
   }

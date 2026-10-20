@@ -1,3 +1,4 @@
+import { registerChatArchiveIpc } from './providers/ChatArchiveIpc'
 import { registerMcpApps } from './mcpApps/registerMcpApps'
 import { getProviderMcpApp } from './providers/providerService'
 import { stopPtys } from './pty'
@@ -352,6 +353,7 @@ const startApp = (): void => {
         console.error('Unable to start browser-use bridge:', error)
       )
       registerProviderIpc()
+      registerChatArchiveIpc()
       registerTerminalIpc()
 
       app.on('browser-window-created', (_, window) => {

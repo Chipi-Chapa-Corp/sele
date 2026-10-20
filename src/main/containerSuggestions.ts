@@ -241,28 +241,53 @@ const getDistroboxContainers = async (
   )
 }
 
-const getToolboxContainers = async (
-  container?: AppContainerTarget | null
-): Promise<ContainerEntry[]> => {
-  const output = await runHostTextCommand('toolbox', ['list', '--containers'], container)
-  if (!output) return []
+const parsePodmanContainers = (output: string): ContainerEntry[] => {
+  // Even `toolbox list` can run `podman system migrate` and stop running containers.
+  // Read the same labels directly, with Distrobox ownership taking precedence over
+  // Toolbx labels inherited from an image.
+  const rows: unknown = JSON.parse(output)
+  if (!Array.isArray(rows)) throw new Error('Invalid Podman container list')
 
-  return parseContainerTable(output, 'toolbox', ['container name', 'name'], (fields) =>
-    fields.length > 1 ? 1 : 0
-  )
+  return rows.flatMap((row) => {
+    if (!row || typeof row !== 'object') return []
+    const labels = row.Labels ?? {}
+    const tool: AppContainerTool =
+      labels.manager === 'distrobox'
+        ? 'distrobox'
+        : labels['com.github.containers.toolbox'] === 'true' ||
+            labels['com.github.debarshiray.toolbox'] === 'true'
+          ? 'toolbox'
+          : 'podman'
+    // Wrapper tools can start stopped containers; generic Podman targets use exec.
+    if (tool === 'podman' && row.State !== 'running') return []
+    const name = Array.isArray(row.Names) ? row.Names[0] : null
+    if (typeof name !== 'string' || !name.trim()) return []
+    const runtimeId = row.Id ?? row.ID
+
+    return [
+      {
+        tool,
+        runtimeId: normalizeRuntimeId(typeof runtimeId === 'string' ? runtimeId : null),
+        name: name.trim(),
+        image: typeof row.Image === 'string' ? row.Image : null,
+        status: typeof row.Status === 'string' ? row.Status : null
+      }
+    ]
+  })
 }
 
 const getPodmanContainers = async (
   container?: AppContainerTarget | null
 ): Promise<ContainerEntry[]> => {
-  const output = await runHostTextCommand(
-    'podman',
-    ['ps', '--format', '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'],
-    container
-  )
+  const output = await runHostTextCommand('podman', ['ps', '--all', '--format', 'json'], container)
   if (!output) return []
 
-  return parseFormattedContainers(output, 'podman')
+  try {
+    return parsePodmanContainers(output)
+  } catch (error) {
+    console.error('[containerSuggestions:getPodmanContainers] Invalid container list', error)
+    return []
+  }
 }
 
 const getDockerContainers = async (
@@ -316,7 +341,8 @@ const withCurrentContainer = (
 }
 
 const getContainerEntryDedupeKey = (entry: ContainerEntry): string => {
-  if (entry.runtimeId) return `id:${entry.runtimeId}`
+  // Distrobox's table uses short IDs; Podman's JSON returns full IDs.
+  if (entry.runtimeId) return `id:${entry.runtimeId.slice(0, 12)}`
   if (entry.tool === 'distrobox' || entry.tool === 'toolbox') return `wrapped:${entry.name}`
 
   return `${entry.tool}:${entry.name}`
@@ -396,14 +422,9 @@ const getRemoteContainers = async (container: AppContainerTarget): Promise<Conta
     ['name'],
     (fields) => (fields.length >= 4 ? 1 : 0)
   )
-  const toolboxContainers = parseContainerTable(
-    toolOutputs.toolbox ?? '',
-    'toolbox',
-    ['container name', 'name'],
-    (fields) => (fields.length > 1 ? 1 : 0)
-  )
+  const podmanContainers = parsePodmanContainers(toolOutputs.podman || '[]')
   const wrappedContainers = dedupeContainerEntries(
-    [...distroboxContainers, ...toolboxContainers],
+    [...distroboxContainers, ...podmanContainers.filter(({ tool }) => tool !== 'podman')],
     null
   )
   const wrappedContainerNames = new Set(wrappedContainers.map(({ name }) => name))
@@ -411,9 +432,7 @@ const getRemoteContainers = async (container: AppContainerTarget): Promise<Conta
   return dedupeContainerEntries(
     [
       ...wrappedContainers,
-      ...parseFormattedContainers(toolOutputs.podman ?? '', 'podman').filter(
-        ({ name }) => !wrappedContainerNames.has(name)
-      ),
+      ...podmanContainers.filter(({ name }) => !wrappedContainerNames.has(name)),
       ...parseFormattedContainers(toolOutputs.docker ?? '', 'docker').filter(
         ({ name }) => !wrappedContainerNames.has(name)
       )
@@ -454,20 +473,18 @@ export const getContainerSuggestions = async (
     return (await getRemoteContainers(container)).map(toSuggestion)
   }
 
-  const [currentContainer, distroboxContainers, toolboxContainers] = await Promise.all([
-    getCurrentContainerTarget(),
-    getDistroboxContainers(container),
-    getToolboxContainers(container)
-  ])
+  const [currentContainer, distroboxContainers, podmanContainers, dockerContainers] =
+    await Promise.all([
+      getCurrentContainerTarget(),
+      getDistroboxContainers(container),
+      getPodmanContainers(container),
+      getDockerContainers(container)
+    ])
   const wrappedContainers = dedupeContainerEntries(
-    [...distroboxContainers, ...toolboxContainers],
+    [...distroboxContainers, ...podmanContainers.filter(({ tool }) => tool !== 'podman')],
     currentContainer
   )
   const wrappedContainerNames = new Set(wrappedContainers.map((container) => container.name))
-  const [podmanContainers, dockerContainers] = await Promise.all([
-    getPodmanContainers(container),
-    getDockerContainers(container)
-  ])
   const entries = dedupeContainerEntries(
     withCurrentContainer(
       [

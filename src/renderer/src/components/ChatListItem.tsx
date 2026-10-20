@@ -8,6 +8,8 @@ import {
   LoaderCircle,
   Pencil,
   Pin,
+  Ellipsis,
+  Download,
   PinOff,
   Save,
   ShieldQuestionMark,
@@ -36,12 +38,16 @@ import { Button } from './Button'
 import { Input } from './Input'
 import { ProviderIcon } from './ProviderIcon'
 import './ChatListItem.css'
+import { Dropdown } from './Dropdown'
+import { providerApi } from '../providerApi'
 
 type ChatListItemProps = {
   chat: ProviderChat
   projectDisplayName?: string | null
   projectIcon?: ReactNode
   selected: boolean
+  childOpen?: boolean
+  descendantWorking?: boolean
   committing?: boolean
   latestCommitFinishedAt?: number | null
   canMarkDone?: boolean
@@ -110,6 +116,8 @@ export const ChatListItem = memo(function ChatListItem({
   projectDisplayName,
   projectIcon,
   selected,
+  childOpen = false,
+  descendantWorking = false,
   committing = false,
   latestCommitFinishedAt = null,
   canMarkDone = true,
@@ -127,6 +135,19 @@ export const ChatListItem = memo(function ChatListItem({
   onTogglePinned,
   approvalDecisionInFlight = null
 }: ChatListItemProps) {
+  const [exporting, setExporting] = useState(false)
+  const [exportResult, setExportResult] = useState<string | null>(null)
+  const exportChat = async (): Promise<void> => {
+    setExporting(true)
+    setExportResult(null)
+    try {
+      await providerApi.exportChat(chat.providerId, chat.id)
+    } catch (error) {
+      setExportResult(`Export failed: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setExporting(false)
+    }
+  }
   const chatTitle = getRenderableText(chat.title, 'Untitled chat')
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(chatTitle)
@@ -151,13 +172,19 @@ export const ChatListItem = memo(function ChatListItem({
     getRenderableText(projectDisplayName, '').trim() ||
     getChatProjectName(chat.projectCwd ?? chat.cwd)
   const LocationIcon = isGitWorktree ? GitFork : Folder
-  const workingStatus = chat.status && workingStatuses.has(chat.status) ? chat.status : null
+  const workingStatus =
+    chat.status && workingStatuses.has(chat.status)
+      ? chat.status
+      : descendantWorking
+        ? 'active'
+        : null
   const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
   const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
   const errorStatus = chat.status === 'error' ? chat.status : null
   const pendingApproval = chat.pendingApproval
   const unreadUpdatedAt = Math.max(chat.updatedAt, latestCommitFinishedAt ?? 0)
-  const unread = !selected && !chat.done && unreadUpdatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
+  const unread =
+    !selected && !childOpen && !chat.done && unreadUpdatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()
@@ -465,14 +492,45 @@ export const ChatListItem = memo(function ChatListItem({
               icon={<Undo2 aria-hidden="true" />}
             />
           )}
-          <Button
-            theme={chat.pinned ? 'secondary' : 'transparent'}
+          <Dropdown
+            appearance="inline"
             size="small"
-            aria-label={chat.pinned ? 'Unpin chat' : 'Pin chat'}
-            title={chat.pinned ? 'Unpin chat' : 'Pin chat'}
-            callback={() => onTogglePinned(chat)}
-            icon={chat.pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+            menuAlign="end"
+            value=""
+            valueDisplay="icon"
+            aria-label="Chat menu"
+            title="Chat menu"
+            icon={
+              exporting ? (
+                <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
+              ) : (
+                <Ellipsis aria-hidden="true" />
+              )
+            }
+            disabled={exporting}
+            menuActions={[
+              {
+                id: 'pin',
+                label: chat.pinned ? 'Unpin' : 'Pin',
+                icon: chat.pinned ? <PinOff /> : <Pin />,
+                callback: () => onTogglePinned(chat)
+              },
+              { id: 'export', label: 'Export', icon: <Download />, callback: exportChat }
+            ]}
+            onChange={() => {}}
           />
+        </span>
+      )}
+      {exportResult && (
+        <span className="chat-list-item__export-result" role="status" title={exportResult}>
+          {exportResult}
+          <button
+            type="button"
+            aria-label="Dismiss export result"
+            onClick={() => setExportResult(null)}
+          >
+            <X aria-hidden="true" />
+          </button>
         </span>
       )}
       {detailOpen &&

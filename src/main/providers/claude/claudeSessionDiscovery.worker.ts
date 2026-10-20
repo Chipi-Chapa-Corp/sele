@@ -1,9 +1,12 @@
-import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
 import { parentPort } from 'node:worker_threads'
 import { execFile } from 'node:child_process'
-import { listSessions } from '@anthropic-ai/claude-agent-sdk'
+import { readLocalClaudeSessionInfo } from './ClaudeSessionSummary'
 import type { HostCommand } from '../../hostProcess'
-import { ClaudeRemoteSessionStore } from './ClaudeRemoteSessionStore'
+import { ClaudeSessionCatalog, listLocalClaudeSessionCandidates } from './ClaudeSessionCatalog'
+import {
+  listRemoteClaudeSessionCandidates,
+  readRemoteClaudeSessionInfo
+} from './ClaudeRemoteSessionDiscovery'
 
 const port = parentPort!
 let commandId = 0
@@ -39,9 +42,7 @@ const execute = (command: HostCommand): Promise<string> =>
     child.stdin?.end()
   })
 
-// Serialize discovery, and bound transcript reads within one SDK listing. Only compact
-// session metadata crosses back to Electron; JSON parsing/SDK serialization/GC stay here.
-let queue = Promise.resolve()
+const catalog = new ClaudeSessionCatalog()
 port.on('message', (message) => {
   if (message.type === 'commandResult') {
     const pending = pendingCommands.get(message.id)
@@ -51,27 +52,24 @@ port.on('message', (message) => {
     return
   }
   if (message.type !== 'list') return
-  queue = queue.then(async () => {
-    let commands = Promise.resolve()
-    const store = message.remote
-      ? new ClaudeRemoteSessionStore((script, args = []) => {
-          const result = commands.then(async () =>
-            execute(await resolveCommand(message.id, script, args))
-          )
-          commands = result.then(
-            () => undefined,
-            (error) => {
-              if (!isExpectedCommandAbsenceError(error, [4])) {
-                console.error('Unable to read Claude discovery transcript.', error)
-              }
-            }
-          )
-          return result
-        })
-      : undefined
+  // Independent environments must not queue behind a slow remote host.
+  void (async () => {
+    const run = async (script: string, args: string[] = []): Promise<string> =>
+      execute(await resolveCommand(message.id, script, args))
     try {
-      const sessions = await listSessions({ includeProgrammatic: true, sessionStore: store })
-      port.postMessage({ type: 'result', id: message.id, sessions })
+      const page = await catalog.list(
+        message.scope,
+        message.cursor ?? null,
+        Math.max(1, Math.min(message.limit ?? 50, 100)),
+        new Set<string>(message.hiddenSessionIds ?? []),
+        message.remote
+          ? () => listRemoteClaudeSessionCandidates(run)
+          : listLocalClaudeSessionCandidates,
+        message.remote
+          ? (candidate) => readRemoteClaudeSessionInfo(candidate, run)
+          : readLocalClaudeSessionInfo
+      )
+      port.postMessage({ type: 'result', id: message.id, page })
     } catch (error) {
       console.error('Unable to discover Claude sessions.', error)
       port.postMessage({
@@ -80,5 +78,5 @@ port.on('message', (message) => {
         error: error instanceof Error ? error.message : String(error)
       })
     }
-  })
+  })()
 })

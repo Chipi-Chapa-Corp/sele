@@ -771,3 +771,119 @@ test('renders Codex subagent spawn and wait as compact rows without the delegate
     ]
   )
 })
+
+test('native Codex start activity renders a compact delegation row before completion', () => {
+  const items = getChatItems([
+    {
+      id: 'turn',
+      status: 'inProgress',
+      items: [
+        {
+          type: 'subAgentActivity',
+          id: 'spawn',
+          kind: 'started',
+          agentThreadId: 'child',
+          agentPath: '/root/nested_live_demo',
+          prompt: 'Private delegated instruction'
+        }
+      ]
+    }
+  ])
+  const tool = items.find((item) => item.type === 'working').items[0]
+  assert.equal(tool.label, 'Started subagent for nested live demo')
+  assert.equal(
+    getToolDisplayLabel(tool.label, tool.activity, false),
+    'Started subagent for nested live demo'
+  )
+  assert.equal(
+    getToolDisplayLabel(tool.label, tool.activity, true),
+    'Starting subagent for nested live demo'
+  )
+  assert.equal(tool.compact, true)
+  assert.equal(tool.icon, 'subagent')
+  assert.equal(JSON.stringify(items).includes('Private delegated instruction'), false)
+})
+
+test('native sleep-only child turns show their wait while running and retain it after completion', async () => {
+  const { CodexTranscriptProjection } = await import('./CodexItemRenderers.ts')
+  const projection = new CodexTranscriptProjection()
+  const turn = {
+    id: 'child-turn',
+    status: 'inProgress',
+    startedAt: 100,
+    items: [{ type: 'sleep', id: 'native-sleep', durationMs: 30_000 }]
+  }
+  const live = getChatItems([turn], 100, {}, projection)
+  const working = live.find((item) => item.type === 'working')
+  assert.equal(working.status, 'working')
+  assert.equal(working.items[0].type, 'tool')
+  assert.equal(working.items[0].label, 'Waited 30s')
+  assert.equal(working.items[0].status, 'running')
+  assert.equal(working.items[0].compact, true)
+
+  const completed = {
+    ...turn,
+    status: 'completed',
+    completedAt: 131,
+    items: [
+      ...turn.items,
+      { type: 'agentMessage', id: 'answer', text: 'Nested child finished.', phase: 'final_answer' }
+    ]
+  }
+  const finished = getChatItems([completed], 100, {}, projection)
+  assert.deepEqual(finished, getChatItems([completed], 100))
+  assert.equal(finished.find((item) => item.type === 'working').items[0].label, 'Waited 30s')
+  assert.equal(finished.at(-1).content, 'Nested child finished.')
+})
+
+test('unrecognized native tools get a generic row in live and completed transcripts', async () => {
+  const { getToolDisplayLabel } = await import('../../../renderer/src/toolDisplayLabel.ts')
+  const tool = {
+    type: 'futureNativeTool',
+    id: 'new-tool',
+    tool: 'inspect_runtime',
+    arguments: { target: 'fixture' }
+  }
+  const live = getChatItems([{ id: 'turn', status: 'inProgress', items: [tool] }])
+  const row = live.find((item) => item.type === 'working').items[0]
+  assert.equal(row.toolId, 'inspect_runtime')
+  assert.equal(row.status, 'running')
+  assert.equal(getToolDisplayLabel(row.label, row.activity, true), 'Using tool inspect_runtime')
+  assert.deepEqual(row.rawInput, { target: 'fixture' })
+
+  const completed = getChatItems([{ id: 'turn', status: 'completed', items: [tool] }])
+  const finished = completed.find((item) => item.type === 'working').items[0]
+  assert.equal(finished.id, row.id)
+  assert.equal(finished.status, 'finished')
+  assert.equal(
+    getToolDisplayLabel(finished.label, finished.activity, false),
+    'Used tool inspect_runtime'
+  )
+})
+
+test('generic fallback preserves intentionally hidden transcript content and collaboration metadata', () => {
+  const items = getChatItems([
+    {
+      id: 'turn',
+      status: 'completed',
+      items: [
+        { type: 'userMessage', id: 'empty-user' },
+        { type: 'agentMessage', id: 'empty-agent', text: '' },
+        ...[
+          'hookPrompt',
+          'functionCallOutput',
+          'plan',
+          'reasoning',
+          'enteredReviewMode',
+          'exitedReviewMode'
+        ].map((type) => ({ type, id: type, text: 'Metadata' })),
+        { type: 'subAgentActivity', id: 'interaction', kind: 'interacted', agentThreadId: 'child' },
+        { type: 'collabAgentToolCall', id: 'send', tool: 'sendMessage' }
+      ]
+    }
+  ])
+  assert.equal(
+    items.some((item) => item.type === 'working'),
+    false
+  )
+})

@@ -604,6 +604,7 @@ export type ProviderCwdNote = {
 }
 
 export type ProviderChat = {
+  imported?: { providerId: ProviderId; chatId: string }
   id: string
   providerId: ProviderId
   title: string
@@ -907,6 +908,7 @@ export type ProviderChatGoal = {
 }
 
 export type ProviderChatDetail = {
+  imported?: { providerId: ProviderId; chatId: string }
   id: string
   /** Monotonic per-chat snapshot revision used to reject out-of-order delivery. */
   revision: number
@@ -1336,6 +1338,14 @@ export type ProviderApi = {
 }
 
 export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
+  exportChat: (providerId: ProviderId, chatId: string) => Promise<string | null>
+  openChatImport: () => Promise<import('./chatArchive').ChatImportPreview | null>
+  importChat: (
+    id: string,
+    providerId: ProviderId,
+    container?: AppContainerTarget | null
+  ) => Promise<ProviderChatUpdateSummary | null>
+  cancelChatImport: (id: string) => Promise<void>
   getChatWorkingStepPage: (
     providerId: ProviderId,
     chatId: string,
@@ -1398,6 +1408,10 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
 }
 
 export const providerIpcChannels = {
+  exportChat: 'provider:export-chat',
+  openChatImport: 'provider:open-chat-import',
+  importChat: 'provider:import-chat',
+  cancelChatImport: 'provider:cancel-chat-import',
   reauthenticateAccount: 'provider:reauthenticate-account',
   login: 'provider:login',
   getAccounts: 'provider:get-accounts',

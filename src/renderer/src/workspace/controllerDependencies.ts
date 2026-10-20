@@ -1,3 +1,4 @@
+import type { ProviderSubagent } from '../../../shared/provider'
 import type * as React from 'react'
 
 import { type CSSProperties } from 'react'
@@ -125,6 +126,12 @@ export type GitSyncControllerDependencies = {
 }
 
 export type SubagentControllerDependencies = {
+  chatAutoScrollEnabledRef: React.RefObject<boolean>
+  chatViewportAnchorRef: React.RefObject<import('../chatLayout').ChatScrollAnchor | null>
+  chatScrollAdjustmentTargetRef: React.RefObject<{ element: HTMLElement; top: number } | null>
+  previousChatScrollTopRef: React.RefObject<number | null>
+  markSelectedChatSeen: () => void
+  subagents: readonly ProviderSubagent[]
   activeSubagentChatView: SubagentChatView | null
   selectedProviderId: 'codex' | 'claude' | 'copilot' | 'opencode' | undefined
   selectedChatId: string | undefined

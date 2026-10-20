@@ -1,5 +1,4 @@
 import { mergeWorkingStepPage } from './chatDetailWindow.ts'
-import { getProviderChatTurnCount } from '../../shared/chatTurns.ts'
 
 const subagentPageNavigationEpochs = new WeakMap<object, number>()
 export const getSubagentPageNavigationEpoch = (requestRef: object): number =>
@@ -36,6 +35,42 @@ export const getSubagentToolSignature = (items: readonly ProviderChatItem[]): st
 }
 
 export type OrderedSubagent = { subagent: ProviderSubagent; depth: number }
+
+export const getWorkingSubagentIds = (subagents: readonly ProviderSubagent[]): Set<string> => {
+  const parents = new Map(subagents.map((agent) => [agent.id, agent.parentId]))
+  const working = new Set<string>()
+  for (const agent of subagents) {
+    if (agent.status !== 'pending' && agent.status !== 'running') continue
+    let id: string | null = agent.id
+    const visited = new Set<string>()
+    while (id && parents.has(id) && !visited.has(id)) {
+      visited.add(id)
+      working.add(id)
+      id = parents.get(id) ?? null
+    }
+  }
+  return working
+}
+
+/** Expand the selected branch, keeping other agents' descendants inside their own chats. */
+export const getVisibleSubagentRows = (
+  subagents: readonly ProviderSubagent[],
+  openSubagentId: string | null
+): OrderedSubagent[] => {
+  const parents = new Map(subagents.map((agent) => [agent.id, agent.parentId]))
+  const expanded = new Set<string>()
+  let id = openSubagentId
+  while (id && parents.has(id) && !expanded.has(id)) {
+    expanded.add(id)
+    id = parents.get(id) ?? null
+  }
+  const working = getWorkingSubagentIds(subagents)
+  return orderSubagentTree(subagents).filter(
+    ({ subagent }) =>
+      (working.has(subagent.id) || expanded.has(subagent.id)) &&
+      (!subagent.parentId || !parents.has(subagent.parentId) || expanded.has(subagent.parentId))
+  )
+}
 
 const getSubagentStartTime = (subagent: ProviderSubagent): number =>
   subagent.createdAt ?? subagent.updatedAt ?? Number.MAX_SAFE_INTEGER
@@ -86,18 +121,18 @@ export const refreshSubagentDetail = (
   current: ProviderSubagentDetail | null,
   incoming: ProviderSubagentDetail,
   tailLimit: number,
-  historyLimit: number
+  historyLimit: number,
+  followLatest = true
 ): ProviderSubagentDetail => {
   if (current?.id !== incoming.id) return incoming
-  const currentEnd = (current.itemsStartTurnIndex ?? 0) + getProviderChatTurnCount(current.items)
-  if (current.turnCount !== undefined && currentEnd < current.turnCount) {
+  if (!followLatest) {
     // Polls always fetch the newest page. Keep the reader's historical page in place.
     return {
       ...current,
       ...incoming,
       items: current.items,
       itemsStartTurnIndex: current.itemsStartTurnIndex,
-      turnCount: Math.max(current.turnCount, incoming.turnCount ?? 0)
+      turnCount: Math.max(current.turnCount ?? 0, incoming.turnCount ?? 0)
     }
   }
   const previousItems = new Map(current.items.map((item) => [item.id, item]))

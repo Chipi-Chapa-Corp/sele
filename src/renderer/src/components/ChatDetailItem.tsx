@@ -2576,14 +2576,6 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
             icon={<Trash2 aria-hidden="true" />}
           />
         )}
-        {!canEdit &&
-        !canEditPending &&
-        !canSteer &&
-        !canInterrupt &&
-        !canDelete &&
-        role === 'user' ? (
-          <span className="chat-detail__message-action-placeholder" aria-hidden="true" />
-        ) : null}
         {canForkMessage && !pending && (
           <Button
             theme="secondary"

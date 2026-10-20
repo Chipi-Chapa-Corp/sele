@@ -22,7 +22,7 @@ export type ChatListGroupData = {
   label: string
   projectName?: string | null
   chats: ProviderChat[]
-  kind: 'pinned' | 'cwd' | 'active' | 'done'
+  kind: 'pinned' | 'cwd' | 'active' | 'done' | 'imported'
 }
 
 type ChatListGroupProps = {
@@ -30,6 +30,7 @@ type ChatListGroupProps = {
   group: ChatListGroupData
   open: boolean
   selectedChatKey: string | null
+  workingSubagentChatKeys?: ReadonlySet<string>
   committingChatKeys?: ReadonlySet<string>
   latestCommitFinishedAtByChatKey?: ReadonlyMap<string, number>
   canReorderChats?: boolean
@@ -69,6 +70,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   group,
   open,
   selectedChatKey,
+  workingSubagentChatKeys,
   committingChatKeys,
   latestCommitFinishedAtByChatKey,
   canReorderChats = true,
@@ -102,6 +104,7 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   selectedChatChildren = null,
   selectedChatChildOpen = false
 }) => {
+  const projectLike = group.kind === 'cwd' || group.kind === 'imported'
   const groupLabel =
     group.kind === 'cwd'
       ? group.projectName?.trim() || formatProjectLabel(group.label)
@@ -121,45 +124,44 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
         aria-hidden="true"
       />
       <span
-        className={`ui-disclosure-toggle__content${group.kind === 'cwd' ? ' chat-list-group__toggle-content--project' : ''}`}
+        className={`ui-disclosure-toggle__content${projectLike ? ' chat-list-group__toggle-content--project' : ''}`}
       >
         <span className="chat-list-group__title">{groupLabel}</span>
       </span>
     </>
   )
-  const toggle =
-    group.kind === 'cwd' ? (
-      <div
-        className={`ui-disclosure-toggle chat-list-group__toggle${open ? ' ui-disclosure-toggle--open' : ''}`}
-        role="button"
-        tabIndex={0}
-        aria-controls={contentId}
-        aria-expanded={open}
-        draggable={projectDraggable}
-        title={group.cwd ?? groupLabel}
-        onClick={() => onToggle(group.key)}
-        onDragEnd={onProjectDragEnd}
-        onDragStart={(event) => onProjectDragStart?.(event, group)}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return
-          event.preventDefault()
-          onToggle(group.key)
-        }}
-      >
-        {toggleContent}
-      </div>
-    ) : (
-      <DisclosureToggle
-        className="chat-list-group__toggle"
-        chevronClassName="chat-list-group__chevron"
-        aria-controls={contentId}
-        open={open}
-        title={group.cwd ?? groupLabel}
-        onClick={() => onToggle(group.key)}
-      >
-        <span className="chat-list-group__title">{groupLabel}</span>
-      </DisclosureToggle>
-    )
+  const toggle = projectLike ? (
+    <div
+      className={`ui-disclosure-toggle chat-list-group__toggle${open ? ' ui-disclosure-toggle--open' : ''}`}
+      role="button"
+      tabIndex={0}
+      aria-controls={contentId}
+      aria-expanded={open}
+      draggable={projectDraggable}
+      title={group.cwd ?? groupLabel}
+      onClick={() => onToggle(group.key)}
+      onDragEnd={onProjectDragEnd}
+      onDragStart={(event) => onProjectDragStart?.(event, group)}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        onToggle(group.key)
+      }}
+    >
+      {toggleContent}
+    </div>
+  ) : (
+    <DisclosureToggle
+      className="chat-list-group__toggle"
+      chevronClassName="chat-list-group__chevron"
+      aria-controls={contentId}
+      open={open}
+      title={group.cwd ?? groupLabel}
+      onClick={() => onToggle(group.key)}
+    >
+      <span className="chat-list-group__title">{groupLabel}</span>
+    </DisclosureToggle>
+  )
 
   return (
     <section
@@ -168,13 +170,14 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
       aria-label={`${groupLabel} chats`}
     >
       <div className="chat-list-group__header">
-        {group.kind === 'cwd' ? (
+        {projectLike ? (
           <span className="chat-list-group__project-toggle">
             <button
               className="chat-list-group__project-icon-button"
               type="button"
               aria-label={`Project: ${groupLabel}`}
-              title="Choose project image"
+              title={group.kind === 'imported' ? 'Imported chats' : 'Choose project image'}
+              disabled={group.kind === 'imported'}
               onClick={() => onSelectProjectIcon?.(group)}
             >
               {projectIcon ?? <FolderKanban aria-hidden="true" />}
@@ -233,10 +236,11 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
                   ariaLabel={`${groupLabel} chats`}
                   chats={visibleChats}
                   selectedChatKey={selectedChatKey}
+                  workingSubagentChatKeys={workingSubagentChatKeys}
                   committingChatKeys={committingChatKeys}
                   latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
                   canMarkDone={group.kind !== 'done'}
-                  canMarkUndone={group.kind === 'done'}
+                  canMarkUndone={group.kind === 'done' || group.kind === 'imported'}
                   reorderable={canReorderChats}
                   projectNamesByCwd={projectNamesByCwd}
                   projectIconsByCwd={projectIconsByCwd}

@@ -1,0 +1,49 @@
+.chat-import-dialog {
+  width: min(28rem, calc(100vw - 3rem));
+  padding: 1.5rem;
+  border: 0.0625rem solid var(--panel-border);
+  border-radius: 0.8rem;
+  color: var(--ink);
+  background: var(--floating-bg);
+  box-shadow: var(--panel-shadow);
+  font: inherit;
+}
+.chat-import-dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+.chat-import-dialog h2 {
+  margin: 0 0 1.25rem;
+  font-size: 1.2rem;
+}
+.chat-import-dialog h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.chat-import-dialog__provider,
+.chat-import-dialog__progress {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.chat-import-dialog__provider svg,
+.chat-import-dialog__progress svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}
+.chat-import-dialog [role="alert"] {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+.chat-import-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.chat-import-dialog__field {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}

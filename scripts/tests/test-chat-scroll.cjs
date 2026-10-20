@@ -142,6 +142,24 @@ if (!process.versions.electron) {
           `${update.provider}: live updates preserve history`
         )
       }
+      for (const page of result.cursorAnchors) {
+        assert.equal(
+          page.after,
+          page.before,
+          `${page.provider}/${page.direction}: preserve visible turn`
+        )
+        assert.ok(
+          Math.abs(page.afterTop - page.beforeTop) <= 1,
+          `${page.provider}/${page.direction}: preserve pixel position`
+        )
+      }
+      for (const page of result.replacedBoundaries) {
+        assert.deepEqual(page.after, page.before, `${page.provider}: discard a superseded boundary`)
+      }
+      for (const page of result.failedPages) {
+        assert.equal(page.after, page.before, `${page.provider}: failed reads preserve the view`)
+        assert.equal(page.inFlight, false, `${page.provider}: failed reads release loading state`)
+      }
       for (const growth of result.autoFollow) {
         if (growth.commitGap != null)
           assert.ok(growth.commitGap <= 1, 'active tool updates follow before paint')

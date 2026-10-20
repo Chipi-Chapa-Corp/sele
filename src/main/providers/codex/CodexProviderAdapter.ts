@@ -1,4 +1,5 @@
 import type { McpAppConnection } from '../../../shared/mcpApps'
+import { withMigrationNote } from '../ChatTranscript'
 import { isAppVisibleTool } from '../../mcpApps/McpAppHost'
 import { record as mcpRecord } from '../../../shared/elicitation'
 import { TokenUsageReporter } from '../TokenUsageReporter.ts'
@@ -2765,7 +2766,54 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private getSubagentsInContext = async (chatId: string): Promise<ProviderSubagent[]> => {
     this.rememberThreadContainer(chatId)
     const thread = this.threads.get(chatId)
-    return thread ? this.getThreadSubagents(thread, this.getRenderableTurns(thread)) : []
+    if (!thread) return []
+    // The native ancestor filter discovers all depths without opening child transcripts.
+    let cursor: string | null = null
+    do {
+      const response: ThreadListResponse = await this.client.request('thread/list', {
+        ancestorThreadId: chatId,
+        sourceKinds: ['subAgentThreadSpawn'],
+        cursor,
+        limit: 100,
+        useStateDbOnly: true
+      })
+      for (const metadata of response.data) {
+        const cached = this.threads.get(metadata.id)
+        this.rememberThreadContainer(metadata.id)
+        this.cacheThread({ ...metadata, turns: cached?.turns ?? [] })
+      }
+      cursor = response.nextCursor
+    } while (cursor)
+    // Metadata can say notLoaded for finished external agents. A shell gives their current
+    // status without loading prompt/tool/message payloads.
+    const agents = this.getThreadSubagents(thread, this.getRenderableTurns(thread))
+    await Promise.all(
+      agents
+        .filter((agent) => agent.status === 'unknown' || isCodexSubagentUnsettled(agent))
+        .map(async (agent) => {
+          try {
+            const revision = this.threadRevisions.get(agent.id)
+            const response = await this.client.request<ThreadTurnsListResponse>(
+              'thread/turns/list',
+              {
+                threadId: agent.id,
+                cursor: null,
+                limit: 1,
+                sortDirection: 'desc',
+                itemsView: 'notLoaded'
+              }
+            )
+            const latest = response.data[0]
+            if (latest && this.threadRevisions.get(agent.id) === revision) {
+              this.recordSubagentRunOutcome(agent.id, latest)
+            }
+          } catch (error) {
+            console.error(`Unable to refresh Codex subagent ${agent.id} status`, error)
+          }
+        })
+    )
+    const current = this.threads.get(chatId) ?? thread
+    return this.getThreadSubagents(current, this.getRenderableTurns(current))
   }
 
   private recordSubagentRunOutcome = (threadId: string, turn: CodexTurn): void => {
@@ -2774,7 +2822,45 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private getThreadSubagents = (thread: CodexThread, turns: CodexTurn[]): ProviderSubagent[] => {
-    const subagents = applyCodexSubagentRunOutcomes(getCodexTurnSubagents(turns, thread.id), (id) =>
+    const agents = new Map<string, ProviderSubagent>()
+    const visited = new Set<string>()
+    const queue = [{ thread, turns }]
+    for (const entry of queue) {
+      if (visited.has(entry.thread.id)) continue
+      visited.add(entry.thread.id)
+      const direct = new Map(
+        getCodexTurnSubagents(entry.turns, thread.id).map((agent) => [
+          agent.id,
+          {
+            ...agent,
+            parentId: agent.parentId ?? (entry.thread.id === thread.id ? null : entry.thread.id)
+          }
+        ])
+      )
+      for (const child of this.threads.values()) {
+        if (getCodexSubagentParentThreadId(child) !== entry.thread.id) continue
+        const marker = direct.get(child.id)
+        const summary = createCodexSubagentSummary(child, thread.id, marker?.afterItemId)
+        direct.set(child.id, {
+          ...marker,
+          ...summary,
+          parentId: entry.thread.id === thread.id ? null : entry.thread.id,
+          description: marker?.description ?? summary.description,
+          status:
+            this.subagentRunOutcomes.get(child.id)?.status ??
+            (summary.status === 'unknown' || (summary.status === 'completed' && marker)
+              ? (marker?.status ?? summary.status)
+              : summary.status)
+        })
+      }
+      for (const agent of direct.values()) {
+        if (agent.id === thread.id) continue
+        agents.set(agent.id, agent)
+        const child = this.threads.get(agent.id)
+        if (child) queue.push({ thread: child, turns: this.getRenderableTurns(child) })
+      }
+    }
+    const subagents = applyCodexSubagentRunOutcomes([...agents.values()], (id) =>
       this.subagentRunOutcomes.get(id)
     )
     this.reconcileUnsettledSubagents(thread.id, subagents)
@@ -2844,9 +2930,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     window?: ProviderChatTurnWindow,
     itemId?: string
   ): Promise<ProviderSubagentDetail> => {
-    const cachedSummary = (await this.getSubagentsInContext(chatId)).find(
-      (candidate) => candidate.id === subagentId
-    )
+    const root = this.threads.get(chatId)
+    const cachedSummary = root
+      ? this.getThreadSubagents(root, this.getRenderableTurns(root)).find(
+          (candidate) => candidate.id === subagentId
+        )
+      : undefined
 
     const response = await this.readThread(subagentId, false)
     if (isLegacyCodexHistory(response.thread.historyMode)) {
@@ -2894,6 +2983,26 @@ export class CodexProviderAdapter implements ProviderAdapter {
       window,
       itemId
     })
+    const liveChild = this.threads.get(subagentId)
+    if (!itemId && window?.startIndex == null && liveChild) {
+      const liveTurns = liveChild.turns.filter(
+        (turn) =>
+          turn.status !== 'queued' &&
+          ((typeof turn.startedAt === 'number' && turn.startedAt >= response.thread.createdAt) ||
+            this.activeTurnIds.get(subagentId) === turn.id)
+      )
+      const byId = new Map(liveTurns.map((turn) => [turn.id, turn]))
+      const persistedIds = new Set(page.turns.map((turn) => turn.id))
+      const appended = liveTurns.filter((turn) => !persistedIds.has(turn.id))
+      page.turns = [
+        ...page.turns.map((turn) => {
+          const live = byId.get(turn.id)
+          return live ? this.mergeTurn(subagentId, turn, live) : turn
+        }),
+        ...appended
+      ]
+      page.turnCount += appended.length
+    }
     const [cwd, name] = await Promise.all([
       this.resolveThreadCwd(response.thread),
       this.resolveThreadName(response.thread)
@@ -2907,6 +3016,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
     this.rememberThreadContainer(thread.id)
     const refreshedSummary = createCodexSubagentSummary(thread, chatId, cachedSummary?.afterItemId)
+    const latestTurn = page.turns.at(-1)
+    if (latestTurn && refreshedSummary.status === 'unknown') {
+      const outcome = getCodexSubagentRunOutcome(latestTurn)
+      if (outcome) refreshedSummary.status = outcome.status
+    }
     if (page.instruction) refreshedSummary.description = page.instruction
 
     return {
@@ -2931,17 +3045,24 @@ export class CodexProviderAdapter implements ProviderAdapter {
     )
 
   private cancelSubagentInContext = async (_chatId: string, subagentId: string): Promise<void> => {
-    const response = await this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
-      threadId: subagentId,
-      cursor: null,
-      limit: 1,
-      sortDirection: 'desc',
-      itemsView: 'notLoaded'
-    })
-    const activeTurnId = response.data.find((turn) => turn.status === 'inProgress')?.id
+    let activeTurnId = this.activeTurnIds.get(subagentId)
+    if (!activeTurnId) {
+      const response = await this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
+        threadId: subagentId,
+        cursor: null,
+        limit: 1,
+        sortDirection: 'desc',
+        itemsView: 'notLoaded'
+      })
+      activeTurnId = response.data.find((turn) => turn.status === 'inProgress')?.id
+    }
     if (!activeTurnId) return
-
-    await this.interruptTurnWithClient(this.client, subagentId, activeTurnId)
+    const result = await this.interruptTurnWithClient(this.client, subagentId, activeTurnId)
+    this.activeTurnIds.delete(subagentId)
+    this.subagentRunOutcomes.set(subagentId, { status: 'stopped', at: Date.now() })
+    this.markTurnInterrupted(subagentId, result.turnId)
+    this.setThreadStatus(subagentId, { type: 'idle' })
+    this.emitChatUpdated(subagentId)
   }
 
   setChatGoal = (
@@ -3148,6 +3269,45 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     await this.interruptTurnWithClient(generation.client, generation.threadId, generation.turnId)
   }
+
+  importHistory: NonNullable<ProviderAdapter['importHistory']> = (
+    chatId,
+    messages,
+    options,
+    onChatCreated
+  ) =>
+    this.runWithContainer(this.getThreadContainer(chatId ?? '', options), async () => {
+      let id = chatId
+      if (!id) {
+        const response = await this.client.request<ThreadStartResponse>('thread/start', {
+          cwd: options.cwd,
+          historyMode: 'paginated',
+          ...getThreadAccessOptions(options),
+          ...getThreadModelOptions(options)
+        })
+        id = response.thread.id
+        this.rememberThreadContainer(id)
+        this.cacheThread(response.thread)
+      } else {
+        await this.resumeThread(id, options, options.cwd ?? null, 'mutation')
+      }
+      await onChatCreated?.(id)
+      if (messages.length)
+        await this.client.request('thread/inject_items', {
+          threadId: id,
+          items: messages.map((message) => ({
+            type: 'message',
+            role: message.role,
+            content: [
+              {
+                type: message.role === 'user' ? 'input_text' : 'output_text',
+                text: message.role === 'user' ? withMigrationNote(message.content) : message.content
+              }
+            ]
+          }))
+        })
+      return id
+    })
 
   startChat = (
     message: string,
@@ -5120,7 +5280,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
     const thread = this.threads.get(threadId)
-    if (!thread || isCodexSubagentThread(thread)) return
+    if (!thread) return
+    if (isCodexSubagentThread(thread)) {
+      // Descendant events update the root's sidebar without publishing a separate root chat.
+      const visited = new Set<string>([threadId])
+      let parentId = getCodexSubagentParentThreadId(thread)
+      while (parentId && !visited.has(parentId)) {
+        visited.add(parentId)
+        const parent = this.threads.get(parentId)
+        if (!parent) return
+        if (!isCodexSubagentThread(parent)) {
+          this.scheduleChatUpdated(parent.id)
+          return
+        }
+        parentId = getCodexSubagentParentThreadId(parent)
+      }
+      return
+    }
     this.bumpThreadRevision(threadId)
     const detail = this.createChatDetail(thread, {
       workingItemTailLimit: rendererWorkingItemTailLimit,
@@ -6423,7 +6599,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const pendingTurnId = this.getPendingTurnIdForLiveTurn(threadId, turn)
     const currentThread = this.threads.get(threadId)
     const turnExists = currentThread?.turns.some((candidate) => candidate.id === turn.id) ?? false
-    const belongsToLiveTurn = pendingTurnId !== null || this.activeTurnIds.get(threadId) === turn.id
+    const belongsToLiveTurn =
+      pendingTurnId !== null ||
+      this.activeTurnIds.get(threadId) === turn.id ||
+      (notification.method === 'turn/started' &&
+        Boolean(currentThread && isCodexSubagentThread(currentThread)))
     if (currentThread && !turnExists && !belongsToLiveTurn) {
       // turn/started can precede the response that correlates this server ID with our submitted
       // client ID. The response owns that association; do not guess or trigger a history fetch.
@@ -6871,6 +7051,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private handleNotification = (notification: RpcNotification): void => {
     const params = notification.params
     if (!params || typeof params !== 'object') return
+
+    if (notification.method === 'thread/started') {
+      const thread = (params as { thread?: CodexThread }).thread
+      if (thread && isCodexSubagentThread(thread)) {
+        this.rememberThreadContainer(thread.id)
+        this.cacheThread({ ...thread, turns: thread.turns ?? [] })
+        this.scheduleChatUpdated(thread.id)
+      }
+      return
+    }
 
     if (
       notification.method === 'thread/goal/updated' ||

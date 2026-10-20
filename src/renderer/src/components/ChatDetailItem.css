@@ -309,12 +309,6 @@
   gap: 0.3rem;
 }
 
-.chat-detail__message-action-placeholder {
-  width: var(--control-height-small);
-  height: var(--control-height-small);
-  flex: none;
-}
-
 .chat-detail__message-date {
   display: inline-flex;
   min-width: 0;

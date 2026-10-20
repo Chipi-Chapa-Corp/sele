@@ -50,6 +50,13 @@ export type HistoricalTokenUsageSnapshot = TokenUsageSummary & { sourceIdentity?
 
 export type ProviderAdapter = {
   id: ProviderId
+  /** Import text exchanges while idle, preserving the session's own tool history. */
+  importHistory?: (
+    chatId: string | null,
+    messages: Array<{ id?: string; role: 'user' | 'assistant'; content: string }>,
+    options: ProviderTurnOptions,
+    onChatCreated?: (chatId: string) => Promise<void>
+  ) => Promise<string>
   getMcpApp?: (chatId: string, callId: string) => Promise<McpAppConnection | null>
   /** Read retained, dated native consumption without hydrating chat transcripts. */
   getHistoricalTokenUsage?: (

@@ -1,9 +1,12 @@
 import { AnimatePresence } from 'motion/react'
 import { MotionListItem } from '../../motion/MotionListItem'
 import { AppUpdatePrompt } from './AppUpdatePrompt'
-import type { ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
+import type { ChatImportPreview } from '../../../../shared/chatArchive'
+import { providerApi } from '../../providerApi'
+import { ChatImportDialog } from '../../components/ChatImportDialog'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import { LoaderCircle, Search, SquarePen, X } from 'lucide-react'
+import { Download, LoaderCircle, Search, SquarePen, X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { ChatSidebarLoadingState } from '../../components/AppStatusStates'
@@ -12,6 +15,8 @@ type ChatSidebarProps = WorkspaceController['chatSidebar']
 
 export function ChatSidebar(props: ChatSidebarProps): ReactElement {
   const {
+    handleImportedChat,
+    importedChatGroup,
     chats,
     chromeControlTheme,
     displayedActiveChatGroups,
@@ -33,13 +38,30 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     setSearchOpen,
     setSearchQuery
   } = props
+  const [preview, setPreview] = useState<ChatImportPreview | null>(null)
+  const [openingImport, setOpeningImport] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const openImport = async (): Promise<void> => {
+    setOpeningImport(true)
+    setImportError(null)
+    try {
+      setPreview(await providerApi.openChatImport())
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setOpeningImport(false)
+    }
+  }
   const hasVisibleGroups = Boolean(
-    pinnedChatGroup || displayedActiveChatGroups.length > 0 || doneChatGroup
+    pinnedChatGroup || importedChatGroup || displayedActiveChatGroups.length > 0 || doneChatGroup
   )
 
-  const groups = [pinnedChatGroup, ...displayedActiveChatGroups, doneChatGroup].filter(
-    (group) => group !== null && group !== undefined
-  )
+  const groups = [
+    pinnedChatGroup,
+    importedChatGroup,
+    ...displayedActiveChatGroups,
+    doneChatGroup
+  ].filter((group) => group !== null && group !== undefined)
   const groupOrder = groups
     .map(
       (group) =>
@@ -104,6 +126,20 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
               />
               <Button
                 theme={chromeControlTheme}
+                aria-label="Import chat"
+                title="Import chat"
+                disabled={openingImport || preview !== null}
+                callback={openImport}
+                icon={
+                  openingImport ? (
+                    <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
+                  ) : (
+                    <Download aria-hidden="true" />
+                  )
+                }
+              />
+              <Button
+                theme={chromeControlTheme}
                 aria-label="Search conversations"
                 aria-expanded={false}
                 title="Search conversations"
@@ -114,7 +150,22 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           </div>
         )}
       </header>
+      {preview && (
+        <ChatImportDialog
+          preview={preview}
+          onClose={() => setPreview(null)}
+          onImported={(providerId, summary) => {
+            setPreview(null)
+            handleImportedChat(providerId, summary)
+          }}
+        />
+      )}
       <div className="chat-sidebar__body">
+        {importError && (
+          <p className="chat__status" role="alert">
+            {importError}
+          </p>
+        )}
         {loadState === 'loading' && chats.length === 0 && (
           <ChatSidebarLoadingState label="Loading conversations" />
         )}

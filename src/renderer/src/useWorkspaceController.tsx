@@ -1,3 +1,7 @@
+import { getWorkingSubagentIds } from './subagentUi'
+import { SubagentCompletionTimeline, type SubagentCompletion } from './subagentTimeline'
+import { SubagentCompletionBubble } from './components/SubagentCompletionBubble'
+import type { ProviderSubagent } from '../../shared/provider'
 import {
   selectChatPreferences,
   updateChatPreferences,
@@ -728,6 +732,23 @@ export const useWorkspaceController = () => {
   const [openingAiCommitChatIds, setOpeningAiCommitChatIds] = useState<Set<string>>(() => new Set())
   const [commitChatReturnTarget, setCommitChatReturnTarget] =
     useState<CommitChatReturnTarget | null>(null)
+  const [workingSubagentChatKeys, setWorkingSubagentChatKeys] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  const subagentCompletionTimelines = useRef(new Map<string, SubagentCompletionTimeline>())
+  const updateSubagentWorkingChat = useCallback(
+    (chatKey: string, agents: readonly ProviderSubagent[]) => {
+      const working = getWorkingSubagentIds(agents).size > 0
+      setWorkingSubagentChatKeys((current) => {
+        if (current.has(chatKey) === working) return current
+        const next = new Set(current)
+        if (working) next.add(chatKey)
+        else next.delete(chatKey)
+        return next
+      })
+    },
+    []
+  )
   const [subagentListState, setSubagentListState] = useState<SubagentListState | null>(null)
   const [subagentChatView, setSubagentChatView] = useState<SubagentChatView | null>(null)
   const [cancelingSubagentIds, setCancelingSubagentIds] = useState<Set<string>>(() => new Set())
@@ -2532,7 +2553,8 @@ export const useWorkspaceController = () => {
         currentDetail?.id === detail.id &&
         currentDetail.revision === detail.revision
       if (isChatDetailSnapshotStale(detail, currentDetail) && !replacesEqualRevision) {
-        if (options.select || selectedChatKeyRef.current === detailKey) setChatLoadState('ready')
+        if (options.select || selectedChatKeyRef.current === detailKey)
+          startTransition(() => setChatLoadState('ready'))
         return
       }
       const appliedDetail =
@@ -2815,6 +2837,8 @@ export const useWorkspaceController = () => {
     () =>
       providerApi.onChatUpdated((event) => {
         const updatedChatKey = getChatKey({ providerId: event.providerId, id: event.chatId })
+        if (event.detail?.subagents)
+          updateSubagentWorkingChat(updatedChatKey, event.detail.subagents)
         const viewingUpdatedChat = selectedChatKeyRef.current === updatedChatKey
         const recentlyViewedPreview =
           recentlyViewedActiveChatPreviewsRef.current.get(updatedChatKey)
@@ -3010,7 +3034,7 @@ export const useWorkspaceController = () => {
           })
         }
       }),
-    [applyChatDetail, applyChatSummary, markChatSeenAt]
+    [applyChatDetail, applyChatSummary, markChatSeenAt, updateSubagentWorkingChat]
   )
 
   useEffect(() => {
@@ -3256,6 +3280,7 @@ export const useWorkspaceController = () => {
       }),
     [filteredChats, projectRecordsByCwd]
   )
+  const importedChatGroup = chatGroups.find((group) => group.kind === 'imported') ?? null
   const pinnedChatGroup = chatGroups.find((group) => group.kind === 'pinned') ?? null
   const activeChatGroups = useMemo(
     () => chatGroups.filter((group) => group.kind === 'cwd'),
@@ -3418,7 +3443,9 @@ export const useWorkspaceController = () => {
     }
 
     projects.forEach((project) => addProject(project.cwd, 0, project))
-    chats.forEach((chat) => addProject(getChatProjectCwd(chat), chat.createdAt))
+    chats.forEach((chat) => {
+      if (!chat.imported) addProject(getChatProjectCwd(chat), chat.createdAt)
+    })
     addProject(newSessionCwd, 0)
 
     const getProjectOptionIcon = (
@@ -4379,6 +4406,10 @@ export const useWorkspaceController = () => {
   const handleSelectChat = (chat: ProviderChat): void => {
     const selectingCurrentChat =
       selectedChat?.providerId === chat.providerId && selectedChat.id === chat.id
+    if (selectingCurrentChat && activeSubagentChatView) {
+      handleReturnToRootChat()
+      return
+    }
     const seenUpdatedAt = chat.updatedAt
     const cachedDetail = getRecentCachedChatDetail(chat)
     const seenChat = {
@@ -4420,8 +4451,12 @@ export const useWorkspaceController = () => {
     // Cached content can be as expensive to mount as a freshly loaded page.
     // Let sidebar selection paint before rendering the new conversation.
     setChatDetail(null)
-    if (nextCachedDetail) startTransition(() => setChatDetail(nextCachedDetail))
-    setChatLoadState(nextCachedDetail ? 'ready' : 'loading')
+    setChatLoadState('loading')
+    if (nextCachedDetail)
+      startTransition(() => {
+        setChatDetail(nextCachedDetail)
+        setChatLoadState('ready')
+      })
     markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
 
     if (selectingCurrentChat && !cachedDetail) {
@@ -4456,7 +4491,8 @@ export const useWorkspaceController = () => {
         ? chatDetail
         : selectedChat
       : null
-    const projectCwd = currentChat ? getChatProjectCwd(currentChat) : undefined
+    const projectCwd =
+      currentChat && !currentChat.imported ? getChatProjectCwd(currentChat) : undefined
     const projectContainer = currentChat?.container ?? undefined
     markSelectedChatSeen(true)
     selectedChatKeyRef.current = null
@@ -5290,10 +5326,16 @@ export const useWorkspaceController = () => {
     handleLoadSubagentWorkingItem,
     handleLoadSubagentWorkingToolPage,
     handleReturnFromSubagentChat,
+    handleReturnToRootChat,
     renderChatCommitMarker,
     handleOpenSubagentChat,
     handleCancelSubagent
   } = useSubagentController({
+    chatAutoScrollEnabledRef,
+    chatViewportAnchorRef,
+    chatScrollAdjustmentTargetRef,
+    previousChatScrollTopRef,
+    markSelectedChatSeen,
     activeSubagentChatView,
     selectedProviderId,
     selectedChatId,
@@ -5314,13 +5356,61 @@ export const useWorkspaceController = () => {
     cancelingAiCommitKeys,
     openingAiCommitChatIds,
     handleCancelAiCommit,
-    handleOpenAiCommitChat
+    handleOpenAiCommitChat,
+    subagents: selectedChatSubagents
   })
+  useEffect(() => {
+    if (
+      selectedChatKey &&
+      subagentListState?.rootChatKey === selectedChatKey &&
+      subagentListState.loadState === 'ready'
+    ) {
+      updateSubagentWorkingChat(selectedChatKey, selectedChatSubagents)
+    }
+  }, [selectedChatKey, selectedChatSubagents, subagentListState, updateSubagentWorkingChat])
+  const getSubagentCompletionPlacements = (
+    scope: string,
+    items: readonly ProviderChatItem[],
+    parentId: string | null,
+    atLatest: boolean
+  ) => {
+    let timeline = subagentCompletionTimelines.current.get(scope)
+    if (!timeline) {
+      timeline = new SubagentCompletionTimeline()
+      subagentCompletionTimelines.current.set(scope, timeline)
+    }
+    return timeline.reconcile(items, selectedChatSubagents, parentId, atLatest)
+  }
+  const rootSubagentCompletions = getSubagentCompletionPlacements(
+    selectedChatKey ?? '',
+    visibleChatItems,
+    null,
+    !chatDetail?.turnPagination?.newerCursor &&
+      (!effectiveChatTurnWindow ||
+        effectiveChatTurnWindow.endIndex === effectiveChatTurnWindow.totalCount)
+  )
+  const childSubagentCompletions = getSubagentCompletionPlacements(
+    `${selectedChatKey}:${activeSubagentChatView?.summary.id ?? ''}`,
+    subagentVisibleChatItems,
+    activeSubagentChatView?.summary.id ?? null,
+    !activeSubagentChatView?.detail?.turnCount ||
+      (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) +
+        subagentChatConversationModel.turns.length >=
+        activeSubagentChatView.detail.turnCount
+  )
+  const renderSubagentCompletion = (completion: SubagentCompletion): React.ReactElement => (
+    <SubagentCompletionBubble
+      key={completion.id}
+      subagent={completion.subagent}
+      onOpen={(agent) => void handleOpenSubagentChat(agent)}
+    />
+  )
   const selectedChatSubagentList =
     selectedChat && selectedChatSubagents.length > 0 ? (
       <ChatSubagentList
         activeSubagentId={activeSubagentChatView?.summary.id ?? null}
         cancelingSubagentIds={cancelingSubagentIds}
+        error={subagentListState?.rootChatKey === selectedChatKey ? subagentListState.error : null}
         parentTitle={getRenderableText(selectedChat.title, 'Untitled chat')}
         subagents={selectedChatSubagents}
         onCancel={(subagent) => void handleCancelSubagent(subagent)}
@@ -5343,7 +5433,8 @@ export const useWorkspaceController = () => {
       group,
       contentId,
       holdsSelectedChat ? selectedChatSubagentList : null,
-      holdsSelectedChat && Boolean(activeSubagentChatView)
+      holdsSelectedChat && Boolean(activeSubagentChatView),
+      workingSubagentChatKeys
     )
   }
 
@@ -5560,6 +5651,7 @@ export const useWorkspaceController = () => {
 
           return (
             <Fragment key={item.id}>
+              {rootSubagentCompletions.before.get(item.id)?.map(renderSubagentCompletion)}
               {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
               {item.id === firstPendingChatItemId &&
                 trailingChatCommitMarkers.map(renderChatCommitMarker)}
@@ -5642,6 +5734,7 @@ export const useWorkspaceController = () => {
                 turnIndex={turnIndex}
               />
               {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
+              {rootSubagentCompletions.after.get(item.id)?.map(renderSubagentCompletion)}
             </Fragment>
           )
         })}
@@ -5675,36 +5768,40 @@ export const useWorkspaceController = () => {
           )
 
           return (
-            <ChatDetailItem
-              container={changesContainer}
-              followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
-              followingWorkingStepStatus={followingWorkingStep?.status}
-              hasNextWorkingStep={subagentChatConversationModel.workingStepIdsWithNextWorkingStep.has(
-                item.id
-              )}
-              item={item}
-              key={item.id}
-              cwd={changesCwd}
-              modelLabelsById={modelLabelsById}
-              resolvedModelIdsById={resolvedModelIdsById}
-              onLoadWorkingStep={handleLoadSubagentWorkingStep}
-              onLoadWorkingItem={handleLoadSubagentWorkingItem}
-              onLoadWorkingToolPage={handleLoadSubagentWorkingToolPage}
-              onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
-              previousItem={itemIndex > 0 ? subagentVisibleChatItems[itemIndex - 1] : null}
-              projectCwd={changesProjectCwd}
-              progressPolicy={
-                item.type === 'working'
-                  ? getWorkingStepProgressPolicy(item, turn.items, nextTurnStartItem)
-                  : undefined
-              }
-              progressSettings={effectiveAppSettings.chat}
-              progressDisclosureTarget={subagentChatConversationModel.steeredWorkingStepDisclosureTargets.get(
-                item.id
-              )}
-              selectedModelId={model}
-              turnIndex={turnIndex}
-            />
+            <Fragment key={item.id}>
+              {childSubagentCompletions.before.get(item.id)?.map(renderSubagentCompletion)}
+              <ChatDetailItem
+                container={changesContainer}
+                followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
+                followingWorkingStepStatus={followingWorkingStep?.status}
+                hasNextWorkingStep={subagentChatConversationModel.workingStepIdsWithNextWorkingStep.has(
+                  item.id
+                )}
+                item={item}
+                key={item.id}
+                cwd={changesCwd}
+                modelLabelsById={modelLabelsById}
+                resolvedModelIdsById={resolvedModelIdsById}
+                onLoadWorkingStep={handleLoadSubagentWorkingStep}
+                onLoadWorkingItem={handleLoadSubagentWorkingItem}
+                onLoadWorkingToolPage={handleLoadSubagentWorkingToolPage}
+                onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
+                previousItem={itemIndex > 0 ? subagentVisibleChatItems[itemIndex - 1] : null}
+                projectCwd={changesProjectCwd}
+                progressPolicy={
+                  item.type === 'working'
+                    ? getWorkingStepProgressPolicy(item, turn.items, nextTurnStartItem)
+                    : undefined
+                }
+                progressSettings={effectiveAppSettings.chat}
+                progressDisclosureTarget={subagentChatConversationModel.steeredWorkingStepDisclosureTargets.get(
+                  item.id
+                )}
+                selectedModelId={model}
+                turnIndex={turnIndex}
+              />
+              {childSubagentCompletions.after.get(item.id)?.map(renderSubagentCompletion)}
+            </Fragment>
           )
         })}
       </div>
@@ -5768,6 +5865,13 @@ export const useWorkspaceController = () => {
       handleStartChatResize
     },
     chatSidebar: {
+      importedChatGroup,
+      handleImportedChat: (providerId: ProviderId, summary: ProviderChatUpdateSummary): void => {
+        const chat = getChatFromUpdateSummary(providerId, summary, null, false)
+        setChats((current) => mergeChats(current, [chat]))
+        setCollapsedCwdGroups((current) => ({ ...current, imported: false }))
+        handleSelectChat(chat)
+      },
       chats,
       chromeControlTheme,
       displayedActiveChatGroups,

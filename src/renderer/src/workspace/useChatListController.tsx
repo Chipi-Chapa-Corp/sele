@@ -52,7 +52,7 @@ export function useChatListController(dependencies: ChatListControllerDependenci
       if (done && selectedChat?.providerId === chat.providerId && selectedChat.id === chat.id) {
         const currentChat = chatDetail?.id === selectedChat.id ? chatDetail : selectedChat
         showNewChatView(
-          getChatProjectCwd(currentChat),
+          currentChat.imported ? undefined : getChatProjectCwd(currentChat),
           currentChat.container ?? newSessionContainer
         )
       }

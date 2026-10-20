@@ -118,6 +118,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
     stateTranscriptBytes: new WeakMap(),
     admissionLeases: new Map(),
     sessionContainers: new Map(),
+    sessionMetadata: new Map(),
     sessionOptions: new Map(),
     transcriptProjections: new Map(),
     updateTimers: new Map(),
@@ -129,6 +130,16 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
     getPendingApproval: () => null,
     getPendingUserInput: () => null,
     sessionDiscovery: { dispose() {} },
+    historyPages: { clear() {} },
+    readHistoryPage: async (id, container) => {
+      loads.set(id, (loads.get(id) ?? 0) + 1)
+      const store = container ? { container } : undefined
+      return {
+        messages: await records(id, store),
+        metadata: await metadata(id, { sessionStore: store }) ?? { sessionId: id, summary: '', lastModified: 0 },
+        pagination: { kind: 'cursor', olderCursor: null, newerCursor: null }
+      }
+    },
     oneShotGenerations: new Map(),
     canceledOneShotGenerationTimers: new Map(),
     canceledOneShotGenerationIds: new Set(),

@@ -225,8 +225,13 @@ export const groupChatsForSidebar = (
   const groupsByCwd = new Map<string, ChatListGroupData>()
   const pinnedChats: ProviderChat[] = []
   const doneChats: ProviderChat[] = []
+  const importedChats: ProviderChat[] = []
 
   for (const chat of chats) {
+    if (chat.imported) {
+      ;(chat.done ? doneChats : importedChats).push(chat)
+      continue
+    }
     const projectCwd = getChatProjectCwd(chat)
     const key = getChatCwdGroupKey(projectCwd)
 
@@ -278,6 +283,17 @@ export const groupChatsForSidebar = (
 
   return [
     ...pinnedGroups,
+    ...(importedChats.length
+      ? [
+          {
+            key: 'imported',
+            cwd: null,
+            label: 'Imported',
+            kind: 'imported' as const,
+            chats: sortChatsForGroup(importedChats)
+          }
+        ]
+      : []),
     ...cwdGroups,
     ...(doneChats.length === 0
       ? []
@@ -305,6 +321,7 @@ export const getChatFromDetail = (
   updatedAt: number
 ): ProviderChat => ({
   id: detail.id,
+  imported: detail.imported ?? existingChat?.imported,
   providerId,
   title: detail.title,
   preview: getChatPreview(detail) ?? existingChat?.preview ?? '',
@@ -553,6 +570,8 @@ export const arePendingApprovalsEqual = (
 export const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.id === second.id &&
   first.providerId === second.providerId &&
+  first.imported?.providerId === second.imported?.providerId &&
+  first.imported?.chatId === second.imported?.chatId &&
   first.title === second.title &&
   first.preview === second.preview &&
   first.cwd === second.cwd &&
@@ -599,6 +618,7 @@ export const getChatFromUpdateSummary = (
 
   return {
     id: summary.id,
+    imported: summary.imported ?? existingChat?.imported,
     providerId,
     title: summary.title,
     preview: !existingChat || turnCompleted ? summary.preview : existingChat.preview,

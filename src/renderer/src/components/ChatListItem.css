@@ -393,3 +393,7 @@
     padding-right: 9.3rem;
   }
 }
+
+.chat-list-item__export-result { position: relative; z-index: 1; display: flex; gap: 0.4rem; padding: 0.4rem; font-size: 0.75rem; overflow-wrap: anywhere; grid-column: 1 / -1; }
+.chat-list-item__export-result button { flex: none; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.chat-list-item__export-result svg { width: 0.8rem; height: 0.8rem; }

@@ -8,13 +8,8 @@ const remoteContainerCommands = [
     command: 'distrobox list --no-color 2>/dev/null || distrobox list 2>/dev/null || true'
   },
   {
-    tool: 'toolbox',
-    command: 'toolbox list --containers 2>/dev/null || true'
-  },
-  {
     tool: 'podman',
-    command:
-      "podman ps --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}' 2>/dev/null || true"
+    command: 'podman ps --all --format json 2>/dev/null || true'
   },
   {
     tool: 'docker',

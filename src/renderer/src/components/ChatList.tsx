@@ -18,6 +18,7 @@ type ChatListProps = {
   ariaLabel?: string
   chats: ProviderChat[]
   selectedChatKey: string | null
+  workingSubagentChatKeys?: ReadonlySet<string>
   committingChatKeys?: ReadonlySet<string>
   latestCommitFinishedAtByChatKey?: ReadonlyMap<string, number>
   canMarkDone?: boolean
@@ -63,6 +64,7 @@ export const ChatList = memo(function ChatList({
   ariaLabel = 'Chats',
   chats,
   selectedChatKey,
+  workingSubagentChatKeys,
   committingChatKeys,
   latestCommitFinishedAtByChatKey,
   canMarkDone = true,
@@ -210,6 +212,8 @@ export const ChatList = memo(function ChatList({
               projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
               projectIcon={projectIconsByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
               selected={chatKey === selectedChatKey && !selectedChatChildOpen}
+              childOpen={chatKey === selectedChatKey && selectedChatChildOpen}
+              descendantWorking={workingSubagentChatKeys?.has(chatKey)}
               committing={committingChatKeys?.has(chatKey)}
               latestCommitFinishedAt={latestCommitFinishedAtByChatKey?.get(chatKey)}
               canMarkDone={canMarkDone}

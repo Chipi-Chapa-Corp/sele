@@ -7,6 +7,7 @@ const path = require('node:path')
 if (!process.versions.electron) {
   ;(async () => {
     const root = path.resolve(__dirname, '../..')
+    const provider = process.env.SELE_TEST_PROVIDER === 'claude' ? 'claude' : 'codex'
     const directory = await fs.mkdtemp(
       path.join(require('node:os').tmpdir(), 'sele-opening-stability-')
     )
@@ -21,7 +22,7 @@ if (!process.versions.electron) {
             import './src/renderer/src/assets/main.css'
             const noop = () => {}
             const now = Date.now()
-            const chats = Array.from({length:20}, (_,i) => ({id:String(i),providerId:'codex',
+            const chats = Array.from({length:20}, (_,i) => ({id:String(i),providerId:'${provider}',
               title:'Conversation '+i,preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,
               status:null,cwd:'/fixture',cwdKind:'directory',projectCwd:null,branchName:null,
               worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,done:false,
@@ -41,20 +42,23 @@ if (!process.versions.electron) {
             const detail=(id,revision=1,history=id==='3'?singleTurn(1):items)=>({
               ...chats.find(chat=>chat.id===id),revision,capabilities:{editMessages:true,activeMessages:true},
               pendingApproval:null,pendingUserInput:null,contextUsage:null,items:history,
-              subagents:[],turnCount:id==='3'?1:10,itemsStartTurnIndex:0})
+              subagents:[],turnCount:history.length===0?0:id==='3'?1:10,itemsStartTurnIndex:0,
+              ...('${provider}'==='claude'?{turnPagination:{kind:'cursor',olderCursor:null,newerCursor:null}}:{})})
             let revision=1
             window.growTools=count=>{
               const snapshot=detail('3',++revision,singleTurn(count))
-              window.chatListener?.({providerId:'codex',chatId:'3',sequence:revision,
+              window.chatListener?.({providerId:'${provider}',chatId:'3',sequence:revision,
                 detail:{...snapshot,baseRevision:null,baseItemIds:null,itemIds:snapshot.items.map(item=>item.id),changedItems:snapshot.items},
                 turnCompleted:false,summary:chats[3]})
             }
             const usage={updatedAt:now,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,
               rateLimits:[],rateLimitResetCredits:null,errors:[]}
             const defaults={
-              getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
+              getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'${provider}',available:true}]}),
               getChats:()=>({chats,nextCursor:null}),
-              getChat:(_provider,id)=>detail(id),
+              getChat:(_provider,id)=>['4','5'].includes(id)?new Promise(resolve=>{
+                window.pendingChatReads??={};window.pendingChatReads[id]=()=>resolve(detail(id,1,id==='5'?[]:items))
+              }):detail(id),
               markChatSeen:(_provider,id,seenUpdatedAt)=>({...chats.find(chat=>chat.id===id),seenUpdatedAt}),
               getModels:()=>[{id:'fixture',label:'Fixture model',description:'Fixture',isDefault:true,
                 supportedReasoningEfforts:[],defaultReasoningEffort:'medium'}],
@@ -155,6 +159,73 @@ if (!process.versions.electron) {
       })`)
       await ready(`document.querySelector('[data-chat-id="1"] .chat-list-item__main')`)
       await run('document.fonts.ready')
+      await run(`document.querySelector('[data-chat-id="4"] .chat-list-item__main').click()`)
+      await ready(
+        `window.pendingChatReads?.['4'] && document.querySelector('[role="status"][aria-label="Loading messages"]')`
+      )
+      assert.equal(
+        await run(`document.querySelector('#chat-search-content').getAttribute('aria-busy')`),
+        'true'
+      )
+      assert.equal(await run(`document.querySelectorAll('[data-chat-message-id]').length`), 0)
+      assert.equal(
+        await run(
+          `document.querySelector('.chat-detail__messages-shell').textContent.includes('No messages found.')`
+        ),
+        false
+      )
+      assert.equal(
+        await run(`new Promise(resolve=>{let frames=0;function check(){
+        if(!document.querySelector('[role="status"][aria-label="Loading messages"]'))return resolve(false);
+        if(++frames===8)return resolve(true);requestAnimationFrame(check)}check()})`),
+        true,
+        'show a loader throughout a delayed initial history read'
+      )
+      await run(`window.pendingChatReads['4']()`)
+      await ready(`document.querySelector('[data-chat-message-id="answer-9"] p:last-child')`)
+      assert.equal(
+        await run(
+          `Boolean(document.querySelector('[role="status"][aria-label="Loading messages"]'))`
+        ),
+        false
+      )
+
+      await run(`document.querySelector('[data-chat-id="5"] .chat-list-item__main').click()`)
+      await ready(
+        `window.pendingChatReads?.['5'] && document.querySelector('[role="status"][aria-label="Loading messages"]')`
+      )
+      await run(`window.pendingChatReads['5']()`)
+      await ready(
+        `document.querySelector('.chat-detail__messages-shell')?.textContent.includes('No messages found.')`
+      )
+      assert.equal(
+        await run(
+          `Boolean(document.querySelector('[role="status"][aria-label="Loading messages"]'))`
+        ),
+        false
+      )
+
+      const cachedOpening = await run(`new Promise(resolve=>{
+        const frames=[];const deadline=performance.now()+3000;
+        document.querySelector('[data-chat-id="4"] .chat-list-item__main').click();
+        function check(){
+          if(document.querySelector('[data-chat-id="4"].chat-list-item--selected')){
+            const messages=Boolean(document.querySelector('[data-chat-message-id="answer-9"]'));
+            frames.push({messages,loading:Boolean(document.querySelector('[role="status"][aria-label="Loading messages"]'))});
+            if(messages)return resolve(frames)
+          }
+          if(performance.now()>deadline)return resolve(frames);requestAnimationFrame(check)
+        }check()
+      })`)
+      assert.ok(
+        cachedOpening.some((frame) => frame.messages),
+        'cached messages mount'
+      )
+      assert.ok(
+        cachedOpening.every((frame) => frame.messages || frame.loading),
+        'cached opening never paints empty without a loader'
+      )
+      await run(`window.pendingChatReads['4']()`)
       const results = []
       for (const [zoom, id] of [
         [1, '1'],

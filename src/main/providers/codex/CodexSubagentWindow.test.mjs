@@ -9,6 +9,7 @@ import {
   createCodexSubagentSummary,
   createCodexSubagentTranscriptItems,
   getCodexSubagentInstruction,
+  getCodexSubagentRunOutcome,
   selectCodexSubagentTurns
 } from './CodexSubagents.ts'
 
@@ -68,6 +69,7 @@ test('Codex adapter keeps child status and synthetic instruction while polling b
     isLegacyCodexHistory: () => false,
     assertSupportedCodexHistory: () => {},
     getCodexSubagentInstruction,
+    getCodexSubagentRunOutcome,
     createCodexSubagentSummary,
     createCodexSubagentTranscriptItems,
     getChatItems,
@@ -85,7 +87,8 @@ test('Codex adapter keeps child status and synthetic instruction while polling b
         turns: []
       }
     }),
-    threads: new Map(),
+    threads: new Map([['root', { id: 'root', turns: [] }]]),
+    getThreadSubagents: () => [{ id: 'child', afterItemId: 'anchor' }],
     subagentHistory: new CodexSubagentHistory(),
     client: { request },
     getCurrentContainer: () => null,
@@ -171,4 +174,52 @@ test('legacy Codex child history retains inherited filtering and instruction', a
     detail.items.some((item) => item.id.startsWith('parent-copy:')),
     false
   )
+})
+
+test('child polling includes streamed items before the persisted turn appears', async () => {
+  const adapter = vm.runInNewContext(code, {
+    isLegacyCodexHistory: () => false,
+    assertSupportedCodexHistory: () => {},
+    getCodexSubagentInstruction,
+    getCodexSubagentRunOutcome,
+    createCodexSubagentSummary,
+    createCodexSubagentTranscriptItems,
+    getChatItems,
+    getContainerTargetKey: () => 'host'
+  })
+  const child = {
+    id: 'child',
+    historyMode: 'paginated',
+    createdAt: 100,
+    updatedAt: 100,
+    status: { type: 'notLoaded' },
+    turns: [
+      {
+        id: 'live',
+        status: 'inProgress',
+        startedAt: null,
+        items: [
+          { id: 'reply', type: 'agentMessage', phase: 'commentary', text: 'Live child progress' }
+        ]
+      }
+    ]
+  }
+  Object.assign(adapter, {
+    threads: new Map([['child', child]]),
+    activeTurnIds: new Map([['child', 'live']]),
+    readThread: async () => ({ thread: { ...child, turns: [] } }),
+    subagentHistory: {
+      read: async () => ({ turns: [], instruction: null, itemsStartTurnIndex: 0, turnCount: 0 })
+    },
+    getCurrentContainer: () => null,
+    getRenderableTurns: (thread) => thread.turns,
+    resolveThreadCwd: async () => '/fixture',
+    resolveThreadName: async () => 'child',
+    loadTranscriptMetadata: async () => false,
+    rememberThreadContainer: () => {}
+  })
+  const detail = await adapter.getSubagentInContext('root', 'child')
+  assert.equal(detail.status, 'running')
+  assert.equal(detail.turnCount, 1)
+  assert.equal(JSON.stringify(detail.items).includes('Live child progress'), true)
 })

@@ -18,6 +18,7 @@ type SqliteNullableChatPurposeColumn = ColumnType<
 >
 
 export type LocalDatabase = {
+  imported_conversation: { id: string; payload: string; summary: string }
   model_pricing_cache: {
     id: string
     fetched_at: number
@@ -151,6 +152,13 @@ const ensureColumn = async (
 
 const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   if (schemaReady) return
+  await db.schema
+    .createTable('imported_conversation')
+    .ifNotExists()
+    .addColumn('id', 'text', (column) => column.primaryKey())
+    .addColumn('payload', 'text', (column) => column.notNull())
+    .addColumn('summary', 'text', (column) => column.notNull())
+    .execute()
 
   await db.schema
     .createTable('browser_hostname_zoom')

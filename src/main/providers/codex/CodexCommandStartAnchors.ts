@@ -225,17 +225,43 @@ export const anchorCodexCommandsByStart = (turn: CodexTurn, times: StartTimes): 
 /** Recover missing start anchors only for history containing post-answer command completions. */
 export class CodexCommandStartAnchors {
   private snapshots = new WeakMap<CodexTurn, CodexTurn>()
+  private retainedStarts = new Map<string, StartTimes>()
+  private inheritedSnapshots = new WeakMap<
+    CodexTurn,
+    { starts: StartTimes; projected: CodexTurn }
+  >()
   private versions = new WeakMap<CodexTurn, number>()
   private pending = new Map<string, Promise<boolean>>()
 
   clear(): void {
     this.snapshots = new WeakMap()
+    this.retainedStarts.clear()
+    this.inheritedSnapshots = new WeakMap()
     this.versions = new WeakMap()
     this.pending.clear()
   }
 
   project(turn: CodexTurn): CodexTurn {
-    return this.snapshots.get(turn) ?? turn
+    const snapshot = this.snapshots.get(turn)
+    if (snapshot) return snapshot
+    // History refreshes and live updates replace turn objects. Keep already-known
+    // start positions while optional metadata for the new snapshot is loading.
+    const starts = this.retainedStarts.get(turn.id)
+    if (!starts) return turn
+    const inherited = this.inheritedSnapshots.get(turn)
+    if (inherited?.starts === starts) return inherited.projected
+    const projected = anchorCodexCommandsByStart(turn, starts)
+    this.inheritedSnapshots.set(turn, { starts, projected })
+    return projected
+  }
+
+  private rememberStarts(turnId: string, starts: StartTimes | undefined): void {
+    this.retainedStarts.delete(turnId)
+    if (!starts) return
+    this.retainedStarts.set(turnId, starts)
+    // Retain timing only for a bounded set of recently hydrated turns.
+    while (this.retainedStarts.size > 256)
+      this.retainedStarts.delete(this.retainedStarts.keys().next().value!)
   }
 
   /** Project fresh API snapshots from the shared index without reopening the transcript. */
@@ -245,6 +271,7 @@ export class CodexCommandStartAnchors {
       if (!hasTrailingCommand(turn)) continue
       if (this.versions.get(turn) === metadata.version) continue
       const starts = metadata.starts.get(turn.id)
+      this.rememberStarts(turn.id, starts)
       const projected = starts ? anchorCodexCommandsByStart(turn, starts) : turn
       const previous = this.snapshots.get(turn)
       this.snapshots.set(turn, projected)
@@ -276,6 +303,7 @@ export class CodexCommandStartAnchors {
         let changed = false
         for (const turn of candidates) {
           const starts = times.get(turn.id)
+          this.rememberStarts(turn.id, starts)
           const projected = starts ? anchorCodexCommandsByStart(turn, starts) : turn
           this.snapshots.set(turn, projected)
           changed ||= projected !== turn

@@ -1,3 +1,5 @@
+import { ImportedConversations } from './ImportedConversations'
+import { importedConversationStore } from '../database/importedConversations'
 import type { McpAppScope } from '../../shared/mcpApps'
 import { applyTurnTokenUsage, emptyTokenUsage } from '../../shared/tokenUsage'
 import { randomUUID } from 'node:crypto'
@@ -86,12 +88,20 @@ const connectionAdapter = (providerId: ProviderId): OpenCodeProviderAdapter => {
   return openCodeAdapter
 }
 
-const adapters: Record<ProviderId, ProviderAdapter> = {
+const nativeAdapters: Record<ProviderId, ProviderAdapter> = {
   codex: withProviderNetworkRetries(codexAdapter),
   claude: withProviderNetworkRetries(claudeAdapter),
   copilot: withProviderNetworkRetries(new CopilotProviderAdapter()),
   opencode: withProviderNetworkRetries(openCodeAdapter)
 }
+
+export const importedConversations = new ImportedConversations(
+  nativeAdapters,
+  importedConversationStore
+)
+const adapters = Object.fromEntries(
+  Object.keys(nativeAdapters).map((id) => [id, importedConversations.wrap(id as ProviderId)])
+) as Record<ProviderId, ProviderAdapter>
 
 export const getProviderMcpApp = (scope: McpAppScope, callId: string) =>
   adapters[scope.providerId].getMcpApp?.(scope.chatId, callId) ?? Promise.resolve(null)
@@ -444,6 +454,7 @@ export const getChatUpdateSummary = (
   const preview = detail.items.findLast((item) => item.type === 'message')?.content.trim() ?? ''
   return {
     id: detail.id,
+    imported: detail.imported,
     revision: detail.revision,
     createdAt: detail.createdAt,
     title: detail.title,

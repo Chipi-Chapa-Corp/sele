@@ -1,4 +1,7 @@
+import { useLayoutEffect, useRef } from 'react'
 import { mergeWorkingStepPage, mergeWorkingToolPage } from '../chatDetailWindow'
+import { readChatScrollAnchor, restoreChatScrollAnchor, type ChatScrollAnchor } from '../chatLayout'
+import type { SubagentChatView } from './controllerTypes'
 import {
   chatWorkingItemPageSize,
   chatWorkingItemWindowSize,
@@ -15,7 +18,7 @@ import { providerApi } from '../providerApi'
 import { ChatCommitMarkerItem, type ChatCommitMarker } from '../components/AppStatusStates'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
 import type { SubagentControllerDependencies } from './controllerDependencies'
-import { beginSubagentPageNavigation } from '../subagentUi'
+import { beginSubagentPageNavigation, getWorkingSubagentIds } from '../subagentUi'
 
 const subagentPageRequests = new WeakMap<object, number>()
 
@@ -23,6 +26,7 @@ const subagentPageRequests = new WeakMap<object, number>()
 export function useSubagentController(dependencies: SubagentControllerDependencies) {
   const {
     activeSubagentChatView,
+    subagents = [],
     selectedProviderId,
     selectedChatId,
     selectedChatKey,
@@ -37,6 +41,11 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
     setCancelingSubagentIds,
     setSubagentListState,
     contentRef,
+    chatAutoScrollEnabledRef,
+    chatViewportAnchorRef,
+    chatScrollAdjustmentTargetRef,
+    previousChatScrollTopRef,
+    markSelectedChatSeen,
     scopedCommitActivitiesByMarkerId,
     providerUpdateInProgress,
     cancelingAiCommitKeys,
@@ -45,9 +54,62 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
     handleOpenAiCommitChat
   } = dependencies
 
+  // Navigation belongs to the root conversation. Keep each opened viewport (and
+  // a child's loaded history page) until the user leaves that conversation.
+  const navigation = useRef({
+    root: selectedChatKey,
+    positions: new Map<
+      string,
+      {
+        top: number
+        anchor: ChatScrollAnchor | null
+        autoScroll: boolean
+        view: SubagentChatView | null
+      }
+    >(),
+    restore: null as string | null
+  })
+  if (navigation.current.root !== selectedChatKey) {
+    navigation.current = { root: selectedChatKey, positions: new Map(), restore: null }
+  }
+  const rememberViewport = (): void => {
+    if (!selectedChatKey) return
+    const element = activeSubagentChatView ? subagentContentRef.current : contentRef.current
+    if (!element) return
+    navigation.current.positions.set(activeSubagentChatView?.summary.id ?? '', {
+      top: element.scrollTop,
+      anchor: readChatScrollAnchor(element, selectedChatKey),
+      autoScroll: chatAutoScrollEnabledRef.current,
+      view: activeSubagentChatView
+    })
+  }
+  useLayoutEffect(() => {
+    const scope = activeSubagentChatView?.summary.id ?? ''
+    if (
+      navigation.current.restore !== scope ||
+      (activeSubagentChatView && activeSubagentChatView.loadState !== 'ready')
+    )
+      return
+    const saved = navigation.current.positions.get(scope)
+    const element = activeSubagentChatView ? subagentContentRef.current : contentRef.current
+    if (!saved || !element || !selectedChatKey) return
+    navigation.current.restore = null
+    element.scrollTop = saved.top
+    if (saved.anchor) restoreChatScrollAnchor(element, saved.anchor)
+    if (!activeSubagentChatView) {
+      chatAutoScrollEnabledRef.current = saved.autoScroll
+      chatViewportAnchorRef.current = readChatScrollAnchor(element, selectedChatKey)
+      chatScrollAdjustmentTargetRef.current = { element, top: element.scrollTop }
+      previousChatScrollTopRef.current = element.scrollTop
+    }
+  }, [activeSubagentChatView?.summary.id, activeSubagentChatView?.loadState, selectedChatKey])
+
   const handleOpenSubagentChat = async (subagent: ProviderSubagent): Promise<void> => {
     if (!selectedProviderId || !selectedChatId || !selectedChatKey) return
 
+    rememberViewport()
+    navigation.current.restore = null
+    markSelectedChatSeen()
     const requestId = subagentChatLoadRequestRef.current + 1
     subagentChatLoadRequestRef.current = requestId
     resetChatSearch()
@@ -201,7 +263,8 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
               ...view,
               summary: page,
               detail: page,
-              pageLoading: false,
+              followLatest: nextStart === null || nextStart + pageSize >= (page.turnCount ?? 0),
+              pageLoading: true,
               loadState: 'ready',
               error: null
             }
@@ -210,6 +273,15 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
       window.requestAnimationFrame(() => {
         const element = subagentContentRef.current
         if (element) element.scrollTop = direction === 'older' ? element.scrollHeight : 0
+        // Native scroll events from positioning the replacement page must not load it back.
+        window.requestAnimationFrame(() => {
+          if (subagentChatLoadRequestRef.current !== requestId) return
+          setSubagentChatView((view) =>
+            view?.summary.id === subagentId && view.rootChatKey === selectedChatKey
+              ? { ...view, pageLoading: false }
+              : view
+          )
+        })
       })
     } catch (error) {
       console.error('[caught:useSubagentController:handleNavigateSubagentTurns]', error)
@@ -295,65 +367,80 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
       return
     }
 
-    setCancelingSubagentIds((currentIds) => new Set(currentIds).add(subagent.id))
-    try {
-      await providerApi.cancelSubagent(selectedProviderId, selectedChatId, subagent.id)
-      const stoppedSubagent: ProviderSubagent = {
-        ...subagent,
-        status: 'stopped',
-        updatedAt: Date.now()
+    const descendants = new Set<string>([subagent.id])
+    for (let changed = true; changed; ) {
+      changed = false
+      for (const agent of subagents) {
+        if (agent.parentId && descendants.has(agent.parentId) && !descendants.has(agent.id)) {
+          descendants.add(agent.id)
+          changed = true
+        }
       }
-      setSubagentListState((currentState) =>
-        currentState?.rootChatKey === selectedChatKey
-          ? {
-              ...currentState,
-              items: currentState.items.map((item) =>
-                item.id === subagent.id ? stoppedSubagent : item
-              ),
-              loadState: 'ready',
-              error: null
-            }
-          : currentState
+    }
+    const working = getWorkingSubagentIds(subagents)
+    const targets = [...descendants].filter((id) => id === subagent.id || working.has(id))
+    setCancelingSubagentIds((currentIds) => new Set([...currentIds, ...targets]))
+    try {
+      const results = await Promise.allSettled(
+        targets.map((id) => providerApi.cancelSubagent(selectedProviderId, selectedChatId, id))
       )
-      setSubagentChatView((currentView) =>
-        currentView?.rootChatKey === selectedChatKey && currentView.summary.id === subagent.id
-          ? {
-              ...currentView,
-              summary: stoppedSubagent,
-              detail: currentView.detail
-                ? { ...currentView.detail, ...stoppedSubagent }
-                : currentView.detail
-            }
-          : currentView
+      const stopped = new Set(targets.filter((_, index) => results[index].status === 'fulfilled'))
+      const failure = results.find((result) => result.status === 'rejected')
+      const error =
+        failure?.status === 'rejected'
+          ? getErrorMessage(failure.reason, 'Unable to stop this subagent.')
+          : null
+      const stopAgent = (agent: ProviderSubagent): ProviderSubagent =>
+        stopped.has(agent.id) ? { ...agent, status: 'stopped', updatedAt: Date.now() } : agent
+      setSubagentListState((state) =>
+        state?.rootChatKey === selectedChatKey
+          ? { ...state, items: state.items.map(stopAgent), loadState: 'ready', error }
+          : state
       )
-    } catch (error) {
-      console.error('[caught:useSubagentController:handleCancelSubagent]', error)
-      setSubagentListState((currentState) =>
-        currentState?.rootChatKey === selectedChatKey
+      setSubagentChatView((view) =>
+        view?.rootChatKey === selectedChatKey && stopped.has(view.summary.id)
           ? {
-              ...currentState,
-              error: getErrorMessage(error, 'Unable to cancel this subagent.')
+              ...view,
+              summary: stopAgent(view.summary),
+              detail: view.detail ? { ...view.detail, ...stopAgent(view.detail) } : null
             }
-          : currentState
+          : view
       )
     } finally {
       setCancelingSubagentIds((currentIds) => {
-        if (!currentIds.has(subagent.id)) return currentIds
-        const nextIds = new Set(currentIds)
-        nextIds.delete(subagent.id)
-        return nextIds
+        const next = new Set(currentIds)
+        targets.forEach((id) => next.delete(id))
+        return next
       })
     }
   }
-  const handleReturnFromSubagentChat = (): void => {
+  const returnToParent = (toRoot: boolean): void => {
+    const parent = toRoot
+      ? undefined
+      : subagents.find((agent) => agent.id === activeSubagentChatView?.summary.parentId)
+    rememberViewport()
+    const scope = parent?.id ?? ''
+    const saved = navigation.current.positions.get(scope)
+    if (parent) {
+      if (saved?.view) {
+        subagentChatLoadRequestRef.current += 1
+        resetChatSearch()
+        navigation.current.restore = scope
+        setSubagentChatView({ ...saved.view, summary: parent, pageLoading: false })
+        return
+      }
+      void handleOpenSubagentChat(parent)
+      return
+    }
     subagentChatLoadRequestRef.current += 1
     resetChatSearch()
+    markSelectedChatSeen()
+    navigation.current.restore = saved ? '' : null
+    if (saved) chatAutoScrollEnabledRef.current = saved.autoScroll
     setSubagentChatView(null)
-    window.requestAnimationFrame(() => {
-      const contentElement = contentRef.current
-      if (contentElement) scrollChatContentToBottom(contentElement)
-    })
   }
+  const handleReturnFromSubagentChat = (): void => returnToParent(false)
+  const handleReturnToRootChat = (): void => returnToParent(true)
   const renderChatCommitMarker = (marker: ChatCommitMarker): React.ReactElement => {
     const activity = scopedCommitActivitiesByMarkerId.get(marker.id)
     const activityKey = activity ? getProviderChatKey(activity.providerId, activity.chatId) : null
@@ -378,6 +465,7 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
     handleLoadSubagentWorkingItem,
     handleLoadSubagentWorkingToolPage,
     handleReturnFromSubagentChat,
+    handleReturnToRootChat,
     renderChatCommitMarker,
     handleOpenSubagentChat,
     handleCancelSubagent

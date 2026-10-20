@@ -7,7 +7,8 @@ import * as merges from './chatDetailWindow.ts'
 import {
   beginSubagentPageNavigation,
   getSubagentPageNavigationEpoch,
-  refreshSubagentDetail
+  refreshSubagentDetail,
+  getWorkingSubagentIds
 } from './subagentUi.ts'
 
 const code = ts.transpileModule(
@@ -20,16 +21,17 @@ const code = ts.transpileModule(
     }
   }
 ).outputText
-const setup = (api, items, detailFields = {}) => {
+const setup = (api, items, detailFields = {}, dependencies = {}) => {
   const module = { exports: {} }
   vm.runInNewContext(code, {
     console: { error() {} },
     exports: module.exports,
     window: { requestAnimationFrame: (callback) => callback() },
     require: (name) => {
+      if (name === 'react') return { useRef: (current) => ({ current }), useLayoutEffect() {} }
       if (name === '../providerApi') return { providerApi: api }
       if (name === '../chatDetailWindow') return merges
-      if (name === '../subagentUi') return { beginSubagentPageNavigation }
+      if (name === '../subagentUi') return { beginSubagentPageNavigation, getWorkingSubagentIds }
       if (name === './chatControllerUtils')
         return {
           getErrorMessage: (error, fallback) => (error instanceof Error ? error.message : fallback)
@@ -60,8 +62,9 @@ const setup = (api, items, detailFields = {}) => {
     subagentChatLoadRequestRef: request,
     subagentContentRef: { current: { scrollTop: 0, scrollHeight: 1000 } },
     setSubagentChatView: (update) => {
-      view = update(view)
-    }
+      view = typeof update === 'function' ? update(view) : update
+    },
+    ...dependencies
   })
   return { controller, request, view: () => view }
 }
@@ -184,7 +187,7 @@ test('older child turns remain visible while a poll advances the live tail', () 
     turnCount: 41,
     items: [{ type: 'message', id: 'new', role: 'user', content: 'latest' }]
   }
-  const refreshed = refreshSubagentDetail(current, incoming, 50, 100)
+  const refreshed = refreshSubagentDetail(current, incoming, 50, 100, false)
   assert.equal(refreshed.items[0].id, 'old')
   assert.equal(refreshed.itemsStartTurnIndex, 10)
   assert.equal(refreshed.turnCount, 41)
@@ -247,4 +250,102 @@ test('child turn navigation ignores overlapping requests and reports page errors
   assert.equal(state.view().pageLoading, false)
   assert.equal(state.view().detail.items[0].id, 'u20')
   assert.match(state.view().error, /read failed/)
+})
+
+test('an initializing empty child page follows the live tail when messages arrive', () => {
+  const current = {
+    id: 'child',
+    status: 'running',
+    items: [],
+    itemsStartTurnIndex: 0,
+    turnCount: 1
+  }
+  const incoming = {
+    ...current,
+    items: [{ type: 'message', id: 'answer', role: 'assistant', content: 'Still working' }]
+  }
+  const refreshed = refreshSubagentDetail(current, incoming, 50, 100)
+  assert.equal(refreshed.items[0].id, 'answer')
+})
+
+test('a latest page with an unrendered live turn does not become historical', () => {
+  const current = {
+    id: 'child',
+    items: [{ type: 'message', id: 'instruction', role: 'user', content: 'Task' }],
+    itemsStartTurnIndex: 0,
+    turnCount: 2
+  }
+  const incoming = {
+    ...current,
+    items: [
+      ...current.items,
+      { type: 'message', id: 'answer', role: 'assistant', content: 'Progress' }
+    ]
+  }
+  assert.equal(refreshSubagentDetail(current, incoming, 50, 100).items.at(-1).id, 'answer')
+})
+
+test('stopping an agent interrupts its active subtree and keeps other agents running', async () => {
+  const agents = [
+    { id: 'child', parentId: null, title: 'Parent agent', status: 'completed' },
+    { id: 'grandchild', parentId: 'child', title: 'Nested agent', status: 'running' },
+    { id: 'unrelated', parentId: null, title: 'Unrelated agent', status: 'running' }
+  ]
+  const calls = []
+  let list = { rootChatKey: 'codex:parent', items: agents }
+  let canceling = new Set()
+  const state = setup(
+    { cancelSubagent: async (...args) => calls.push(args) },
+    [],
+    {},
+    {
+      subagents: agents,
+      cancelingSubagentIds: canceling,
+      setCancelingSubagentIds: (update) => {
+        canceling = update(canceling)
+      },
+      setSubagentListState: (update) => {
+        list = update(list)
+      }
+    }
+  )
+  await state.controller.handleCancelSubagent(agents[0])
+  assert.deepEqual(
+    calls.map((args) => args[2]),
+    ['child', 'grandchild']
+  )
+  assert.deepEqual(
+    Array.from(list.items, (agent) => agent.status),
+    ['stopped', 'stopped', 'running']
+  )
+  assert.equal(canceling.size, 0)
+})
+
+test('a failed interrupt leaves that child running and reports the error', async () => {
+  const agents = [{ id: 'child', parentId: null, title: 'Child', status: 'running' }]
+  let list = { rootChatKey: 'codex:parent', items: agents }
+  let canceling = new Set()
+  const state = setup(
+    {
+      cancelSubagent: async () => {
+        throw new Error('Interrupt failed')
+      }
+    },
+    [],
+    {},
+    {
+      subagents: agents,
+      cancelingSubagentIds: canceling,
+      setCancelingSubagentIds: (update) => {
+        canceling = update(canceling)
+      },
+      setSubagentListState: (update) => {
+        list = update(list)
+      }
+    }
+  )
+  await state.controller.handleCancelSubagent(agents[0])
+  assert.equal(list.items[0].status, 'running')
+  assert.ok(list.error)
+  assert.equal(canceling.size, 0)
 })
