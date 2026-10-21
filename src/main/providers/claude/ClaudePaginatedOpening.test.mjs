@@ -109,6 +109,7 @@ const harness = () => {
     getPendingMessages: () => [],
     getPendingApproval: () => null,
     getPendingUserInput: () => null,
+    scheduleSessionMetadataRefresh: () => {},
     getTitle: (s) => getClaudeSessionTitle(s.metadata),
     loadSubagentMetadata: async () => new Map(),
     pinState: () => {},
@@ -198,6 +199,39 @@ test('uncached opening, subagent listing and scrolling use bounded disk reads th
       'u990',
       'paging must not replace the runtime tail'
     )
+  }))
+
+test('first open uses page and catalog metadata without waiting for an SDK metadata lookup', async () =>
+  fixture(async ({ id, path }) => {
+    const h = harness(),
+      a = h.instance
+    let metadataReads = 0
+    const refreshes = []
+    h.context.getSessionInfo = async () => {
+      metadataReads++
+      throw new Error('SDK metadata is unavailable')
+    }
+    a.scheduleSessionMetadataRefresh = (state) => refreshes.push(state.id)
+    a.sessionMetadata.set(id, {
+      sessionId: id,
+      summary: 'Old title',
+      customTitle: 'Old title',
+      cwd: '/stale',
+      gitBranch: 'catalog-branch',
+      lastModified: 1
+    })
+    await appendFile(
+      path,
+      JSON.stringify({ type: 'custom-title', customTitle: 'Current title', sessionId: id }) + '\n'
+    )
+    const detail = await a.getChatWindow(id, { startIndex: null, limit: 10 })
+    assert.equal(detail.items[0].id, 'u990')
+    assert.equal(detail.title, 'Current title', 'fresh page fields override catalog fields')
+    assert.equal(detail.cwd, '/fixture')
+    assert.equal(detail.branchName, 'catalog-branch', 'missing page fields retain catalog data')
+    assert.ok(a.states.get(id).updatedAt > 1)
+    assert.equal(metadataReads, 0, 'SDK enrichment must not block the first page')
+    assert.deepEqual(refreshes, [id], 'local enrichment is scheduled after state admission')
   }))
 
 test('live turns retain the cursor boundary; export does not change the viewed state', async () =>

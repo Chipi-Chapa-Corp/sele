@@ -13,6 +13,7 @@ import { createClaudeAccountStorage, runClaudeAccountCommand } from './ClaudeAcc
 import { getClaudeExecutable } from './ClaudeExecutable'
 import { parseClaudeVersion } from './ClaudeVersion'
 import { fetchClaudeRateLimits } from './ClaudeUsage'
+import { claudeAccountDisplayName } from '../AccountDisplayName'
 
 type Login = {
   id: string
@@ -105,9 +106,30 @@ export class ClaudeAccounts {
     return (await this.store(options)).get()
   }
 
-  create = async (name: string, options: ProviderSourceOptions = {}) => {
+  getWithDisplayNames = async (
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderAccountConfiguration> => {
+    const version = await this.ensureSupported(options)
+    const store = await this.store(options)
+    const configuration = await store.get()
+    const accounts = await Promise.all(
+      configuration.accounts.map(async (account) => {
+        const token = await store
+          .getAccountAccessToken(
+            account.id,
+            options.container?.kind === 'container' ? {} : process.env
+          )
+          .catch(() => null)
+        const displayName = token ? await claudeAccountDisplayName(token, version) : null
+        return { ...account, displayName }
+      })
+    )
+    return { ...configuration, accounts }
+  }
+
+  create = async (options: ProviderSourceOptions = {}) => {
     await this.ensureSupported(options)
-    return (await this.store(options)).create(name)
+    return (await this.store(options)).create()
   }
 
   getEnvironment = async (container?: AppContainerTarget | null): Promise<NodeJS.ProcessEnv> => {
@@ -117,9 +139,6 @@ export class ClaudeAccounts {
     await this.ensureSupported({ container })
     return getClaudeAccountEnvironment(process.env, store.credentialDirectory(account.id))
   }
-
-  getAccountLabel = async (options: ProviderSourceOptions = {}): Promise<string | null> =>
-    (await (await this.store(options)).getSelection())?.name ?? null
 
   // Only the non-chat usage probe gets its own config. Claude keys its persisted
   // usage cache by oauthAccount in .claude.json, which stays stale when only the

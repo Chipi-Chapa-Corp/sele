@@ -53,7 +53,7 @@ const ChatListRow = memo(
     }
   >(function ChatListRow({ order, layoutDisabled, ...props }, ref) {
     return (
-      <MotionListItem ref={ref} order={order} disabled={layoutDisabled}>
+      <MotionListItem ref={ref} order={order} popLayout disabled={layoutDisabled}>
         <ChatListItem {...props} />
       </MotionListItem>
     )
@@ -193,7 +193,7 @@ export const ChatList = memo(function ChatList({
       onDrop={handleDrop}
     >
       {/* Row order explicitly drives layout; selection must not invalidate every presence consumer. */}
-      <AnimatePresence initial={false} mode="popLayout" presenceAffectsLayout={false}>
+      <AnimatePresence initial={false} mode="sync" presenceAffectsLayout={false}>
         {chats.map((chat, index) => {
           const chatKey = getChatKey(chat)
           const dropPosition =
@@ -235,6 +235,7 @@ export const ChatList = memo(function ChatList({
                 <MotionListItem
                   key={`${chatKey}:children`}
                   order={order}
+                  popLayout
                   disabled={Boolean(draggedChatKey)}
                 >
                   {selectedChatChildren}

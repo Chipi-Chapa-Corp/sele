@@ -21,6 +21,7 @@ import type {
   ProviderId,
   ProviderImageInput,
   ProviderOneShotOptions,
+  ProviderPermissionOptions,
   ProviderApp,
   ProviderResourceUpdateOptions,
   ProviderReview,
@@ -1256,14 +1257,8 @@ export const registerProviderIpc = (): void => {
     providerApi.getAccounts(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  handleLoggedIpc(
-    providerIpcChannels.createAccount,
-    (_, providerId: unknown, name: unknown, options: unknown) =>
-      providerApi.createAccount(
-        requireProviderId(providerId),
-        requireProviderResourceString(name, 'account name', 80),
-        requireSourceOptions(options)
-      )
+  handleLoggedIpc(providerIpcChannels.createAccount, (_, providerId: unknown, options: unknown) =>
+    providerApi.createAccount(requireProviderId(providerId), requireSourceOptions(options))
   )
 
   handleLoggedIpc(
@@ -2064,6 +2059,42 @@ export const registerProviderIpc = (): void => {
     getRendererChatDetail(() =>
       providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))
     )
+  )
+
+  handleLoggedIpc(
+    providerIpcChannels.updateChatPermissions,
+    (_, providerId: unknown, chatId: unknown, value: unknown) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Invalid permission options')
+      }
+      const options = value as ProviderPermissionOptions
+      if (!isProviderApprovalPolicy(options.approvalPolicy))
+        throw new Error('Invalid approval policy')
+      if (!isProviderApprovalsReviewer(options.approvalsReviewer))
+        throw new Error('Invalid approvals reviewer')
+      if (!isProviderSandboxMode(options.sandboxMode)) throw new Error('Invalid sandbox mode')
+      const directories = options.additionalDirectories
+      if (
+        directories !== undefined &&
+        (!Array.isArray(directories) ||
+          directories.length > 32 ||
+          directories.some(
+            (directory) =>
+              typeof directory !== 'string' || !isAbsolute(directory) || directory.includes('\0')
+          ))
+      )
+        throw new Error('Invalid additional directories')
+      return providerApi.updateChatPermissions(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        {
+          approvalPolicy: options.approvalPolicy,
+          approvalsReviewer: options.approvalsReviewer,
+          sandboxMode: options.sandboxMode,
+          additionalDirectories: directories
+        }
+      )
+    }
   )
 
   handleLoggedIpc(

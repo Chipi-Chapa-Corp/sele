@@ -1,12 +1,13 @@
 import type { PermissionRuleset } from '@opencode-ai/sdk/v2'
-import type { ProviderOneShotOptions, ProviderTurnOptions } from '../../../shared/provider'
+import type { ProviderPermissionOptions } from '../../../shared/provider'
 
-const getMutationAction = (
-  options?: ProviderTurnOptions | ProviderOneShotOptions
-): 'allow' | 'ask' => (options?.approvalPolicy === 'never' ? 'allow' : 'ask')
+const getMutationAction = (options?: ProviderPermissionOptions): 'allow' | 'ask' =>
+  options?.sandboxMode === 'danger-full-access' || options?.approvalPolicy === 'never'
+    ? 'allow'
+    : 'ask'
 
 export const getOpenCodePermissionRules = (
-  options?: ProviderTurnOptions | ProviderOneShotOptions,
+  options?: ProviderPermissionOptions,
   browserEnabled = false
 ): PermissionRuleset => {
   const sandboxMode = options?.sandboxMode ?? 'workspace-write'
@@ -17,8 +18,7 @@ export const getOpenCodePermissionRules = (
       : options?.approvalPolicy === 'never'
         ? 'deny'
         : 'ask'
-  const defaultAction =
-    sandboxMode === 'read-only' ? 'deny' : options?.approvalPolicy === 'never' ? 'allow' : 'ask'
+  const defaultAction = mutationAction
   const rules: PermissionRuleset = [
     { permission: '*', pattern: '*', action: defaultAction },
     ...[
@@ -45,7 +45,7 @@ export const getOpenCodePermissionRules = (
     {
       permission: 'doom_loop',
       pattern: '*',
-      action: options?.approvalPolicy === 'never' ? 'allow' : 'ask'
+      action: getMutationAction(options)
     },
     { permission: 'question', pattern: '*', action: 'allow' },
     {

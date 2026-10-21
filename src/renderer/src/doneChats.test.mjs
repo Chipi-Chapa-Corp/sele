@@ -129,3 +129,22 @@ test('switching Done projects filters loaded chats without provider history requ
   }
   assert.deepEqual(ids(group().chats), ['discovered', 'recent', 'old'])
 })
+
+test('unchanged projects reuse their sorted history while completion or manual ordering invalidates it', () => {
+  const a = chat('a', 10, 20)
+  const b = chat('b', 20, 30)
+  for (const sort of [sortDoneChats, sortChatsForSidebarSection]) {
+    const previous = sort([a, b])
+    assert.equal(sort([b, a], previous), previous, 'same records reuse their established order')
+    assert.notEqual(
+      sort([a, { ...b, doneAt: 40, sidebarOrder: 0 }], previous),
+      previous,
+      'updated metadata must not reuse old records'
+    )
+    assert.notEqual(sort([a], previous), previous)
+    assert.deepEqual(
+      previous.map((item) => item.id),
+      ['b', 'a']
+    )
+  }
+})

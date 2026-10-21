@@ -1,4 +1,7 @@
 import { ImportedConversations } from './ImportedConversations'
+import { app } from 'electron'
+import { join } from 'node:path'
+import { AccountDisplayNameCache } from './AccountDisplayNameCache'
 import { importedConversationStore } from '../database/importedConversations'
 import type { McpAppScope } from '../../shared/mcpApps'
 import { applyTurnTokenUsage, emptyTokenUsage } from '../../shared/tokenUsage'
@@ -53,6 +56,7 @@ import {
   sliceProviderChatTurns
 } from '../../shared/chatTurns'
 import { withProviderNetworkRetries } from './ProviderNetworkRetry'
+import { withLiveChatPermissions } from './ProviderLivePermissions'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
 import {
   cancelCodexAccountCreation as removePendingCodexAccount,
@@ -60,6 +64,7 @@ import {
   deleteCodexAccount,
   finalizeCodexAccount,
   getCodexAccounts,
+  getCodexAccountsWithDisplayNames,
   useCodexAccount as selectCodexAccount
 } from './codex/CodexAccounts'
 import { ClaudeProviderAdapter } from './claude/ClaudeProviderAdapter'
@@ -81,6 +86,9 @@ import {
 } from './providerUpdate'
 
 const codexAdapter = new CodexProviderAdapter()
+const accountDisplayNameCache = new AccountDisplayNameCache(() =>
+  join(app.getPath('userData'), 'account-display-names.json')
+)
 const claudeAdapter = new ClaudeProviderAdapter()
 const openCodeAdapter = new OpenCodeProviderAdapter()
 const connectionAdapter = (providerId: ProviderId): OpenCodeProviderAdapter => {
@@ -89,10 +97,10 @@ const connectionAdapter = (providerId: ProviderId): OpenCodeProviderAdapter => {
 }
 
 const nativeAdapters: Record<ProviderId, ProviderAdapter> = {
-  codex: withProviderNetworkRetries(codexAdapter),
-  claude: withProviderNetworkRetries(claudeAdapter),
-  copilot: withProviderNetworkRetries(new CopilotProviderAdapter()),
-  opencode: withProviderNetworkRetries(openCodeAdapter)
+  codex: withLiveChatPermissions(withProviderNetworkRetries(codexAdapter)),
+  claude: withLiveChatPermissions(withProviderNetworkRetries(claudeAdapter)),
+  copilot: withLiveChatPermissions(withProviderNetworkRetries(new CopilotProviderAdapter())),
+  opencode: withLiveChatPermissions(withProviderNetworkRetries(openCodeAdapter))
 }
 
 export const importedConversations = new ImportedConversations(
@@ -511,18 +519,40 @@ export const providerApi: ProviderApi = {
     return claudeAccounts.reauthenticate(options)
   },
   login: (providerId, options) => adapters[providerId].login(options),
-  getAccounts: (providerId, options) =>
-    providerId === 'codex'
-      ? getCodexAccounts(options?.container)
-      : providerId === 'claude'
-        ? claudeAccounts.get(options)
-        : Promise.resolve(getUnavailableAccountConfiguration(providerId)),
-  createAccount: async (providerId, name, options) => {
-    if (providerId === 'claude') return claudeAccounts.create(name, options)
+  getAccounts: async (providerId, options) => {
+    const load = async (): Promise<ProviderAccountConfiguration> => {
+      if (providerId === 'codex') return getCodexAccountsWithDisplayNames(options?.container)
+      if (providerId === 'claude') return claudeAccounts.getWithDisplayNames(options)
+      const configuration = getUnavailableAccountConfiguration(providerId)
+      if (providerId === 'opencode')
+        return {
+          ...configuration,
+          accounts: [{ id: 'default', displayName: 'Default Account', active: true }]
+        }
+      const login = await adapters[providerId].login(options)
+      return {
+        ...configuration,
+        accounts: [
+          {
+            id: 'default',
+            login: login.status === 'authenticated' ? login.account.label : null,
+            displayName: login.status === 'authenticated' ? login.account.displayName : null,
+            active: true
+          }
+        ]
+      }
+    }
+    return accountDisplayNameCache.merge(
+      JSON.stringify([providerId, getContainerTargetKey(options?.container)]),
+      await load()
+    )
+  },
+  createAccount: async (providerId, options) => {
+    if (providerId === 'claude') return claudeAccounts.create(options)
     if (providerId !== 'codex') {
       throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
     }
-    const creation = await createCodexAccount(name, options?.container)
+    const creation = await createCodexAccount(options?.container)
     codexAdapter.resetClientsForContainer(options?.container)
     return creation
   },
@@ -955,6 +985,13 @@ export const providerApi: ProviderApi = {
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].editMessage(chatId, messageId, message, options)
     ).then((detail) => applyMetadataToDetail(detail, providerId)),
+  updateChatPermissions: async (providerId, chatId, options) => {
+    const metadata = await getChatMetadata(chatId)
+    await adapters[providerId].updateChatPermissions!(chatId, {
+      ...options,
+      container: metadata.container
+    })
+  },
   resolveApproval: (providerId, chatId, decision) =>
     adapters[providerId]
       .resolveApproval(chatId, decision)

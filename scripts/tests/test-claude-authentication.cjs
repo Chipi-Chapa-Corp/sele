@@ -44,7 +44,7 @@ if (!process.versions.electron) {
               return { userCode: null, completion, authorize: async () => { window.authorized++ }, cancel: async () => { window.canceled++ }, submitCode: async () => {} }
             }
             const noop = () => {}
-            const settings = { ...defaultAppSettings, chat: { ...defaultAppSettings.chat, enableActions: false, enableNotesButton: false } }
+            const settings = { ...defaultAppSettings, chat: { ...defaultAppSettings.chat, enableActions: false, enableNotesButton: false, displayUsage: {context:true,short:false,long:false} } }
             window.renderFailure = (authentication = true, replacementCallback = false) => flushSync(() => root.render(<React.StrictMode>
               {!window.newChatMode && <>
               <ChatDetailItem item={prompt} />
@@ -79,7 +79,7 @@ if (!process.versions.electron) {
                 effectiveReasoningEffort="medium" effectiveServiceTier={null} effectiveSandboxMode="danger-full-access" sandboxModes={fallbackProviderSandboxModes}
                 accountUsage={null} accountUsageError={null} accountUsageState="ready"
                 terminalWorkspaceKey="auth-fixture" selectedChatKey="claude:fixture"
-                messageBoxContextUsage={{source: 'unavailable', usedTokens: null, maxTokens: null}}
+                messageBoxContextUsage={{source: 'exact', usedTokens: 1000, maxTokens: 100000}}
                 handleActionsChange={noop} setAgentMode={noop} handleApprovalModeChange={noop} handleModelChange={noop}
                 handleReasoningEffortChange={noop} setServiceTier={noop} handleSandboxModeChange={noop}
                 handleSendMessage={async (...args) => { window.sends.push(args); return true }}
@@ -151,14 +151,20 @@ if (!process.versions.electron) {
   app.whenReady().then(async () => {
     const win = new BrowserWindow({
       show: false,
-      width: 850,
+      width: 750,
       height: 720,
       webPreferences: { offscreen: true, backgroundThrottling: false }
     })
     let code = 0
     try {
       await win.loadFile(path.join(process.argv[2], 'test.html'))
-      const run = (source) => win.webContents.executeJavaScript(source)
+      const run = async (source) => {
+        try {
+          return await win.webContents.executeJavaScript(source)
+        } catch (error) {
+          throw new Error(source + ': ' + error.message)
+        }
+      }
       const state = await run(`({
         assistantCount: document.querySelectorAll('.chat-detail__message--assistant').length,
         failure: document.querySelector('.chat-detail__failure-label')?.textContent,
@@ -177,7 +183,7 @@ if (!process.versions.electron) {
       assert.ok(state.buttons.includes('Sign in again'))
       assert.ok(state.buttons.includes('Retry'))
       assert.equal(
-        await run('!!document.querySelector(\'[aria-label="Claude sign-in required"]\')'),
+        await run('!!document.querySelector(\'[aria-label="Account sign-in required"]\')'),
         true
       )
       assert.equal(
@@ -258,7 +264,7 @@ if (!process.versions.electron) {
       await run('window.confirmSignIn()')
       await run('new Promise(resolve => setTimeout(resolve, 80))')
       assert.equal(
-        await run('!!document.querySelector(\'[aria-label="Claude sign-in required"]\')'),
+        await run('!!document.querySelector(\'[aria-label="Account sign-in required"]\')'),
         false
       )
       assert.equal(
@@ -293,7 +299,7 @@ if (!process.versions.electron) {
         'window.newChatMode = true; window.authenticationRequired = true; window.renderFailure()'
       )
       assert.equal(
-        await run('document.querySelectorAll(\'[aria-label="Claude sign-in required"]\').length'),
+        await run('document.querySelectorAll(\'[aria-label="Account sign-in required"]\').length'),
         1
       )
       assert.equal(

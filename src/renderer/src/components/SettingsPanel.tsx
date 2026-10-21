@@ -9,18 +9,15 @@ import type { Dispatch, SetStateAction } from 'react'
 import {
   Apple,
   AppWindow,
-  Check,
   EyeOff,
   Monitor,
   Moon,
   PackagePlus,
   PanelLeft,
   PanelRight,
-  Plus,
   RefreshCw,
   Sparkles,
   Sun,
-  Trash2,
   X
 } from 'lucide-react'
 import type { AppContainerTarget, AppSshEnvironment } from '../../../shared/app'
@@ -30,7 +27,6 @@ import type {
   ProviderId,
   ProviderSandboxMode
 } from '../../../shared/provider'
-import { providerDefaultAccountId } from '../../../shared/provider'
 import {
   areAnySettingsProviderSkillsEnabled,
   groupSettingsProviderResources,
@@ -87,10 +83,19 @@ import { SegmentedControl } from './SegmentedControl'
 import { SettingsSkillPathAction } from './SettingsSkillPathAction'
 import { Switch } from './Switch'
 
-export type SettingsTab = 'appearance' | 'chat' | 'providers' | 'browser' | 'performance' | 'git'
+export type SettingsTab =
+  | 'appearance'
+  | 'chat'
+  | 'chatSidebar'
+  | 'providers'
+  | 'browser'
+  | 'performance'
+  | 'git'
 export type ProviderResourcesLoadState = 'idle' | 'loading' | 'ready'
 
 export type SettingsPanelProps = {
+  groupChatsByProject: boolean
+  handleGroupChatsByProjectChange: (enabled: boolean) => void
   appearanceFontSizeInputDraft: { key: string; value: string } | null
   appearanceZoomLevelInput: string
   browserDefaultScaleInput: string
@@ -303,22 +308,10 @@ const appearanceControlStyleOptions = [
 }[]
 
 const chatUsageDisplayOptions = [
-  {
-    value: 'chatContext',
-    label: 'Context'
-  },
-  {
-    value: 'short',
-    label: 'Short'
-  },
-  {
-    value: 'weekly',
-    label: 'Weekly'
-  }
-] satisfies readonly {
-  value: AppChatUsageDisplay
-  label: string
-}[]
+  { value: 'context', label: 'Context' },
+  { value: 'short', label: 'Short' },
+  { value: 'long', label: 'Long' }
+] satisfies readonly { value: keyof AppChatUsageDisplay; label: string }[]
 
 const gitCommitPromptFieldOptions = [
   {
@@ -383,7 +376,6 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     handleCodexRecommendedPluginsChange,
     handleNetworkRetrySettingChange,
     handleContinuePromptChange,
-    handleDeleteProviderAccount,
     handleProviderConnectionsChanged,
     handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange,
@@ -402,7 +394,6 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     handleRecentlyOpenedFilesLimitChange,
     handleRecentsMessageLimitChange,
     handleThemePreferenceChange,
-    handleUseProviderAccount,
     installedFontFamilies,
     installedFontOptions,
     installedFontsLoaded,
@@ -413,22 +404,17 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     newSessionProviderValueContent,
     newSessionSourceAvailabilityReady,
     providerAccountUpdatingId,
-    providerAccountsError,
-    providerAccountsLoadState,
     providerResourceUpdatingKey,
     providerResourcesError,
     providerResourcesLoadState,
     renderProjectSettingAction,
-    setAccountDialogOpen,
     setBrowserDefaultScaleInputDraft,
     setEditingSshEnvironment,
     setNewSessionProvider,
-    setProviderAccountsRefresh,
     setProviderResourcesRefresh,
     setSshEnvironmentDialogOpen,
     setSshEnvironmentError,
     settingsPanelSettings,
-    settingsProviderAccounts,
     settingsProviderApps,
     settingsProviderSkills,
     settingsScopeKey,
@@ -606,7 +592,6 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
 
   if (settingsTab === 'providers') {
     const providerResourcesLoading = providerResourcesLoadState !== 'ready'
-    const providerAccountsLoading = providerAccountsLoadState !== 'ready'
     const { appGroups, unparentedSkills } = groupSettingsProviderResources(
       settingsProviderSkills,
       settingsProviderApps
@@ -690,98 +675,6 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
           container={props.newSessionContainer}
         >
           <>
-            <section
-              className="settings-dialog__section"
-              aria-labelledby="settings-providers-accounts"
-            >
-              <h2 className="settings-dialog__section-heading" id="settings-providers-accounts">
-                Accounts
-              </h2>
-              <div className="settings-dialog__section-cards">
-                {providerAccountsLoading ? (
-                  <div className="settings-dialog__field">
-                    <div className="settings-dialog__field-header">
-                      <h3>Loading accounts…</h3>
-                    </div>
-                  </div>
-                ) : providerAccountsError ? (
-                  <div className="settings-dialog__field settings-dialog__field--inline">
-                    <div className="settings-dialog__field-header">
-                      <h3>{providerAccountsError}</h3>
-                    </div>
-                    <Button
-                      callback={() => setProviderAccountsRefresh((refresh) => refresh + 1)}
-                      disabled={Boolean(providerAccountUpdatingId)}
-                      icon={<RefreshCw aria-hidden="true" />}
-                      label={<span>Retry</span>}
-                      size="small"
-                      theme="secondary"
-                    />
-                  </div>
-                ) : !settingsProviderAccounts?.available ? (
-                  <div className="settings-dialog__field">
-                    <div className="settings-dialog__field-header">
-                      <h3>{settingsProviderAccounts?.unavailableMessage}</h3>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {settingsProviderAccounts.accounts.length === 0 && (
-                      <div className="settings-dialog__field">
-                        <div className="settings-dialog__field-header">
-                          <h3>No accounts configured</h3>
-                        </div>
-                      </div>
-                    )}
-                    {settingsProviderAccounts.accounts.map((account) => (
-                      <div
-                        className="settings-dialog__field settings-dialog__field--inline"
-                        key={account.id}
-                      >
-                        <div className="settings-dialog__field-header">
-                          <h3>{account.name}</h3>
-                          {account.active && <p>In use</p>}
-                        </div>
-                        <div className="settings-dialog__account-actions">
-                          <Button
-                            aria-pressed={account.active}
-                            callback={() => handleUseProviderAccount(account.id)}
-                            disabled={account.active || Boolean(providerAccountUpdatingId)}
-                            icon={account.active ? <Check aria-hidden="true" /> : undefined}
-                            label={<span>Use</span>}
-                            size="small"
-                            theme="secondary"
-                          />
-                          {account.id !== providerDefaultAccountId && (
-                            <Button
-                              callback={() => handleDeleteProviderAccount(account.id)}
-                              disabled={Boolean(providerAccountUpdatingId)}
-                              icon={<Trash2 aria-hidden="true" />}
-                              label={<span>Delete</span>}
-                              size="small"
-                              theme="secondary"
-                            />
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                    <div className="settings-dialog__field settings-dialog__field--inline">
-                      <div className="settings-dialog__field-header">
-                        <h3>Create another account</h3>
-                      </div>
-                      <Button
-                        callback={() => setAccountDialogOpen(true)}
-                        disabled={Boolean(providerAccountUpdatingId)}
-                        icon={<Plus aria-hidden="true" />}
-                        label={<span>Create</span>}
-                        size="small"
-                        theme="secondary"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
-            </section>
             {newSessionProvider === 'codex' && (
               <section
                 className="settings-dialog__section"
@@ -1091,6 +984,76 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     )
   }
 
+  if (settingsTab === 'chatSidebar') {
+    return (
+      <section
+        className="settings-dialog__panel"
+        id="settings-panel-chatSidebar"
+        role="tabpanel"
+        aria-label="Chat sidebar settings"
+      >
+        <section
+          className="settings-dialog__section"
+          aria-labelledby="settings-chat-sidebar-grouping"
+        >
+          <h2 className="settings-dialog__section-heading" id="settings-chat-sidebar-grouping">
+            Conversations
+          </h2>
+          <div className="settings-dialog__section-cards">
+            <div className={getSettingsFieldClassName()}>
+              <div className="settings-dialog__field-header">
+                <h3 id="settings-group-chats-by-project">Group by project</h3>
+              </div>
+              <Switch
+                className="settings-switch"
+                aria-labelledby="settings-group-chats-by-project"
+                checked={props.groupChatsByProject}
+                onChange={(event) =>
+                  props.handleGroupChatsByProjectChange(event.currentTarget.checked)
+                }
+              />
+            </div>
+          </div>
+        </section>
+        <section
+          className="settings-dialog__section"
+          aria-labelledby="settings-chat-sidebar-limits"
+        >
+          <h2 className="settings-dialog__section-heading" id="settings-chat-sidebar-limits">
+            Limits
+          </h2>
+          <div className="settings-dialog__section-cards">
+            <div className={getSettingsFieldClassName()}>
+              <div className="settings-dialog__field-header">
+                <h3>Which limits to show</h3>
+              </div>
+              {renderProjectSettingAction(chatDisplayUsagePath, 'Which limits to show')}
+              <div className="settings-dialog__limit-toggles">
+                {chatUsageDisplayOptions.map(({ value, label }) => (
+                  <label className="settings-dialog__limit-toggle" key={value}>
+                    <span>{label}</span>
+                    <Switch
+                      className="settings-switch"
+                      aria-label={label}
+                      checked={settingsPanelSettings.chat.displayUsage[value]}
+                      disabled={isScopedSettingControlDisabled(chatDisplayUsagePath)}
+                      onChange={(event) =>
+                        handleChatUsageDisplayChange({
+                          ...settingsPanelSettings.chat.displayUsage,
+                          [value]: event.currentTarget.checked
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    )
+  }
+
   if (settingsTab === 'chat') {
     return (
       <section
@@ -1105,26 +1068,6 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
           </h2>
           <div className="settings-dialog__section-cards">
             {chatPromptBoxSettingFields.map(renderChatBooleanSettingField)}
-          </div>
-        </section>
-        <section className="settings-dialog__section" aria-labelledby="settings-chat-limits">
-          <h2 className="settings-dialog__section-heading" id="settings-chat-limits">
-            Limits
-          </h2>
-          <div className="settings-dialog__section-cards">
-            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-              <div className="settings-dialog__field-header">
-                <h3>Display usage</h3>
-              </div>
-              {renderProjectSettingAction(chatDisplayUsagePath, 'Display usage')}
-              <SegmentedControl
-                aria-label="Display usage"
-                disabled={isScopedSettingControlDisabled(chatDisplayUsagePath)}
-                options={chatUsageDisplayOptions}
-                value={settingsPanelSettings.chat.displayUsage}
-                onChange={handleChatUsageDisplayChange}
-              />
-            </div>
           </div>
         </section>
         <section className="settings-dialog__section" aria-labelledby="settings-chat-dropdowns">

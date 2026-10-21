@@ -72,7 +72,11 @@ export type AppThemePreference = 'system' | 'light' | 'dark'
 export type AppAppearancePositionPreference = 'system' | 'left' | 'right' | 'hidden'
 export type AppAppearanceStylePreference = 'system' | 'sele' | 'macos'
 export type AppAppearanceControlStylePreference = 'bordered' | 'transparent'
-export type AppChatUsageDisplay = 'chatContext' | 'short' | 'weekly'
+export type AppChatUsageDisplay = {
+  context: boolean
+  short: boolean
+  long: boolean
+}
 
 export type AppFontSetting = {
   family: string
@@ -388,7 +392,7 @@ export const defaultAppSettings: AppSettings = {
     networkRetryCount: defaultNetworkRetrySettings.count,
     networkRetryDelaySeconds: defaultNetworkRetrySettings.delaySeconds,
     recentChatCacheLimit: 10,
-    displayUsage: 'short',
+    displayUsage: { context: false, short: true, long: true },
     hidePlans: false,
     enableActions: true,
     enableNotesButton: true,
@@ -450,8 +454,16 @@ const isAppBrowserView = (value: unknown): value is AppBrowserView =>
   value === 'chat' || value === 'project' || value === 'global'
 
 const getStoredChatUsageDisplay = (value: unknown): AppChatUsageDisplay | null => {
-  if (value === 'global') return 'short'
-  return value === 'chatContext' || value === 'short' || value === 'weekly' ? value : null
+  if (value === 'global' || value === 'short') return { context: false, short: true, long: true }
+  if (value === 'chatContext') return { context: true, short: false, long: false }
+  if (value === 'weekly') return { context: false, short: false, long: true }
+  if (!value || typeof value !== 'object') return null
+  const display = value as Record<string, unknown>
+  return {
+    context: typeof display.context === 'boolean' ? display.context : false,
+    short: typeof display.short === 'boolean' ? display.short : true,
+    long: typeof display.long === 'boolean' ? display.long : true
+  }
 }
 
 const isStoredModel = (value: unknown): value is ProviderModelId =>
@@ -1417,7 +1429,13 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (settings.chat.recentChatCacheLimit !== defaultAppSettings.chat.recentChatCacheLimit) {
       storedChat.recentChatCacheLimit = settings.chat.recentChatCacheLimit
     }
-    if (settings.chat.displayUsage !== defaultAppSettings.chat.displayUsage) {
+    if (
+      Object.keys(defaultAppSettings.chat.displayUsage).some(
+        (key) =>
+          settings.chat.displayUsage[key as keyof AppChatUsageDisplay] !==
+          defaultAppSettings.chat.displayUsage[key as keyof AppChatUsageDisplay]
+      )
+    ) {
       storedChat.displayUsage = settings.chat.displayUsage
     }
     if (settings.chat.hidePlans !== defaultAppSettings.chat.hidePlans) {

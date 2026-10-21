@@ -1,6 +1,7 @@
 import { useReducedMotionPreference } from './useReducedMotionPreference'
 import { motion, useIsPresent } from 'motion/react'
-import { forwardRef, type ReactNode } from 'react'
+import { forwardRef, useImperativeHandle, useRef, type ReactNode } from 'react'
+import { InlinePopLayout } from './InlinePopLayout'
 
 export const MotionListItem = forwardRef<
   HTMLDivElement,
@@ -8,13 +9,16 @@ export const MotionListItem = forwardRef<
     children: ReactNode
     order: string
     disabled?: boolean
+    popLayout?: boolean
   }
->(function MotionListItem({ children, order, disabled = false }, ref) {
+>(function MotionListItem({ children, order, disabled = false, popLayout = false }, ref) {
   const present = useIsPresent()
   const reduced = useReducedMotionPreference()
-  return (
+  const elementRef = useRef<HTMLDivElement>(null)
+  useImperativeHandle(ref, () => elementRef.current!, [])
+  const content = (
     <motion.div
-      ref={ref}
+      ref={elementRef}
       layout={reduced || disabled ? false : 'position'}
       layoutDependency={order}
       initial={reduced ? false : { opacity: 0, x: -8 }}
@@ -26,5 +30,12 @@ export const MotionListItem = forwardRef<
     >
       {children}
     </motion.div>
+  )
+  return popLayout ? (
+    <InlinePopLayout present={present} enabled={!reduced} elementRef={elementRef}>
+      {content}
+    </InlinePopLayout>
+  ) : (
+    content
   )
 })

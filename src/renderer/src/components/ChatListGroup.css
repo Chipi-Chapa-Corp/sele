@@ -182,6 +182,22 @@
   transition: opacity 160ms ease;
 }
 
+.chat-list-group--cwd .chat-list-group__header {
+  gap: 0;
+}
+
+.chat-list-group--cwd .chat-list-group__action {
+  width: 0;
+  overflow: hidden;
+}
+
+.chat-list-group--cwd .chat-list-group__header:is(:hover, :has(:focus-visible))
+  .chat-list-group__action {
+  width: auto;
+  margin-left: 0.3rem;
+  overflow: visible;
+}
+
 .chat-list-group__done-filter {
   width: 50%;
   min-width: 0;

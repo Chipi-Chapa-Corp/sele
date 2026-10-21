@@ -27,6 +27,7 @@ const bundled = await build({
             ? `export const handleLoggedIpc = (channel, handler) => globalThis.harness.handlers.set(channel, handler);
              export const logDiagnostic = (...args) => globalThis.harness.logs.push(args);`
             : `export const providerApi = {
+               createAccount: (...args) => globalThis.harness.createAccount(...args),
                getConnections: (...args) => globalThis.harness.connection('list', ...args),
                connectProvider: (...args) => globalThis.harness.connection('connect', ...args),
                getConnectionAttempt: (...args) => globalThis.harness.connection('status', ...args),
@@ -37,6 +38,7 @@ const bundled = await build({
                getChat: (...args) => globalThis.harness.getChat(...args),
                getChats: (...args) => globalThis.harness.getChats(...args),
                continueChat: (...args) => globalThis.harness.continueChat(...args),
+               updateChatPermissions: (...args) => globalThis.harness.updateChatPermissions(...args),
                resolveUserInput: (...args) => globalThis.harness.resolveUserInput(...args),
                getSubagent: (...args) => globalThis.harness.getSubagent(...args)
              };
@@ -407,6 +409,47 @@ test('chat IPC forwards validated retry settings and rejects invalid values', as
   }
 })
 
+test('live permission IPC validates choices and forwards only permission fields', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.updateChatPermissions = async (...args) => {
+    calls.push(args)
+  }
+  const handler = h.harness.handlers.get(channels.updateChatPermissions)
+  const options = {
+    approvalPolicy: 'never',
+    approvalsReviewer: 'user',
+    sandboxMode: 'danger-full-access',
+    additionalDirectories: ['/reference'],
+    model: 'ignored',
+    container: { kind: 'host' }
+  }
+  await handler({}, 'opencode', 'chat', options)
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), [
+    'opencode',
+    'chat',
+    {
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+      sandboxMode: 'danger-full-access',
+      additionalDirectories: ['/reference']
+    }
+  ])
+  for (const value of [
+    null,
+    [],
+    {},
+    { ...options, sandboxMode: 'invalid' },
+    { ...options, approvalPolicy: 'invalid' },
+    { ...options, approvalsReviewer: 'invalid' },
+    { ...options, additionalDirectories: ['relative'] },
+    { ...options, additionalDirectories: ['/bad\0path'] }
+  ]) {
+    assert.throws(() => handler({}, 'opencode', 'chat', value), /Invalid/)
+  }
+  assert.equal(calls.length, 1)
+})
+
 test('question answer IPC forwards selected turn settings and validates permissions', async () => {
   const h = setup()
   const calls = []
@@ -549,4 +592,18 @@ test('connection IPC validates secrets and forwards each operation to the select
     () => invoke(channels.getConnections, { container: { kind: 'invalid' } }),
     /Invalid/
   )
+})
+
+test('account creation IPC takes only provider and source, with no custom label argument', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.createAccount = async (...args) => {
+    calls.push(JSON.parse(JSON.stringify(args)))
+    return { accountId: 'fixture' }
+  }
+  const create = h.harness.handlers.get(channels.createAccount)
+  const source = { container: { kind: 'container', tool: 'toolbox', name: 'fixture' } }
+  await create({}, 'claude', source)
+  assert.deepEqual(calls, [['claude', source]])
+  assert.throws(() => create({}, 'claude', 'Legacy label'), /Invalid/)
 })

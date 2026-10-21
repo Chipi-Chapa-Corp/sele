@@ -1,5 +1,5 @@
 .changes-sidebar {
-  --changes-sidebar-x: 0.7rem;
+  --changes-sidebar-x: var(--panel-edge-inset);
   --changes-modified: var(--menu-option-selected-color);
   --changes-added: var(--success);
   --changes-deleted: var(--error);

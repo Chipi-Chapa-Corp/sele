@@ -1,4 +1,4 @@
-import { getWorkingSubagentIds } from './subagentUi'
+import { getVisibleSubagentRows, getWorkingSubagentIds } from './subagentUi'
 import { SubagentCompletionTimeline, type SubagentCompletion } from './subagentTimeline'
 import { SubagentCompletionBubble } from './components/SubagentCompletionBubble'
 import type { ProviderSubagent } from '../../shared/provider'
@@ -21,9 +21,7 @@ import {
 import {
   Bot,
   FolderKanban,
-  FolderTree,
   GitBranch,
-  LayoutList,
   Maximize2,
   Minimize2,
   Minus,
@@ -210,6 +208,7 @@ import {
 } from './appProjectSettings'
 import {
   chatApprovalModeIcons,
+  getApprovalAccessOptions,
   chatSandboxModeIcons,
   formatModelLabel,
   formatSelectionLabel,
@@ -1396,7 +1395,32 @@ export const useWorkspaceController = () => {
 
     // Restoring a chat is navigation, not a dropdown change to propagate.
     if (selectionsEqual(lastMessageBoxSelectionRef.current, currentSelection)) return
+    const previousSelection = lastMessageBoxSelectionRef.current
     lastMessageBoxSelectionRef.current = currentSelection
+    if (
+      selectedChat &&
+      previousSelection &&
+      isActiveChatStatus(chatDetailRef.current?.status ?? selectedChat.status) &&
+      (previousSelection.approvalMode !== currentSelection.approvalMode ||
+        previousSelection.sandboxMode !== currentSelection.sandboxMode)
+    ) {
+      const access =
+        effectiveAppSettings.chat.forceAccess === appChatManualDropdownValue
+          ? currentSelection.sandboxMode
+          : effectiveAppSettings.chat.forceAccess
+      const review =
+        effectiveAppSettings.chat.forceReview === appChatManualDropdownValue
+          ? currentSelection.approvalMode
+          : effectiveAppSettings.chat.forceReview
+      const project = projectRecordsByCwd.get(selectedChat.projectCwd ?? selectedChat.cwd ?? '')
+      void providerApi
+        .updateChatPermissions(selectedChat.providerId, selectedChat.id, {
+          ...getApprovalAccessOptions(review, access),
+          sandboxMode: access,
+          additionalDirectories: project ? [project.cwd, ...project.additionalCwds] : undefined
+        })
+        .catch((error) => console.error('Unable to update active chat permissions.', error))
+    }
     chatMessageBoxSelectionsRef.current = updateChatPreferences(
       chatMessageBoxSelectionsRef.current,
       chatKey,
@@ -3270,16 +3294,22 @@ export const useWorkspaceController = () => {
     () => new Map(projects.map((project) => [project.cwd, getProjectDisplayName(project)])),
     [projects]
   )
+  const previousChatGroupsRef = useRef<ChatListGroupData[]>([])
   const chatGroups = useMemo(
     () =>
-      groupChatsForSidebar(filteredChats, projectRecordsByCwd).map((group) => {
-        if (group.kind !== 'cwd' || !group.cwd) return group
+      groupChatsForSidebar(filteredChats, projectRecordsByCwd, previousChatGroupsRef.current).map(
+        (group) => {
+          if (group.kind !== 'cwd' || !group.cwd) return group
 
-        const project = projectRecordsByCwd.get(group.cwd)
-        return project ? { ...group, projectName: getProjectDisplayName(project) } : group
-      }),
+          const project = projectRecordsByCwd.get(group.cwd)
+          return project ? { ...group, projectName: getProjectDisplayName(project) } : group
+        }
+      ),
     [filteredChats, projectRecordsByCwd]
   )
+  useLayoutEffect(() => {
+    previousChatGroupsRef.current = chatGroups
+  }, [chatGroups])
   const importedChatGroup = chatGroups.find((group) => group.kind === 'imported') ?? null
   const pinnedChatGroup = chatGroups.find((group) => group.kind === 'pinned') ?? null
   const activeChatGroups = useMemo(
@@ -3695,20 +3725,50 @@ export const useWorkspaceController = () => {
     setProviderAccountsRefresh((revision) => revision + 1)
     setProviderResourcesRefresh((revision) => revision + 1)
   }
-  const handleUseProviderAccount = async (accountId: string): Promise<void> => {
+  const switchProviderAccount = async (
+    accountId: string,
+    providerId: ProviderId,
+    sourceContainer: AppContainerTarget | null
+  ): Promise<void> => {
     if (providerAccountUpdatingId) return
-    const container = normalizeContainerTarget(newSessionContainer)
+    const container = normalizeContainerTarget(sourceContainer)
     setProviderAccountUpdatingId(accountId)
     setProviderAccountsError(null)
     try {
       applyProviderAccountConfiguration(
         // biome-ignore lint/correctness/useHookAtTopLevel: Provider IPC method, not a React hook.
-        await providerApi.useAccount(newSessionProvider, accountId, { container })
+        await providerApi.useAccount(providerId, accountId, { container }),
+        providerId,
+        container
       )
       setProviderAccountRevision((revision) => revision + 1)
+    } finally {
+      setProviderAccountUpdatingId(null)
+    }
+  }
+  const handleUseProviderAccount = async (accountId: string): Promise<void> => {
+    try {
+      await switchProviderAccount(accountId, newSessionProvider, newSessionContainer)
     } catch (error) {
       console.error('Unable to switch provider accounts.', error)
       setProviderAccountsError(getErrorMessage(error, 'Unable to switch accounts.'))
+    }
+  }
+  const deleteProviderAccount = async (
+    accountId: string,
+    providerId: ProviderId,
+    sourceContainer: AppContainerTarget | null
+  ): Promise<void> => {
+    if (providerAccountUpdatingId) return
+    const container = normalizeContainerTarget(sourceContainer)
+    setProviderAccountUpdatingId(accountId)
+    try {
+      applyProviderAccountConfiguration(
+        await providerApi.deleteAccount(providerId, accountId, { container }),
+        providerId,
+        container
+      )
+      setProviderAccountRevision((revision) => revision + 1)
     } finally {
       setProviderAccountUpdatingId(null)
     }
@@ -3718,16 +3778,15 @@ export const useWorkspaceController = () => {
     const account = settingsProviderAccounts?.accounts.find(
       (candidate) => candidate.id === accountId
     )
-    if (!account || !window.confirm(`Delete the account “${account.name}”?`)) return
+    if (
+      !account ||
+      !window.confirm(`Delete the account “${account.displayName ?? account.login ?? 'account'}”?`)
+    )
+      return
 
-    const container = normalizeContainerTarget(newSessionContainer)
-    setProviderAccountUpdatingId(accountId)
     setProviderAccountsError(null)
     try {
-      applyProviderAccountConfiguration(
-        await providerApi.deleteAccount(newSessionProvider, accountId, { container })
-      )
-      setProviderAccountRevision((revision) => revision + 1)
+      await deleteProviderAccount(accountId, newSessionProvider, newSessionContainer)
     } catch (error) {
       console.error('Unable to delete the provider account.', error)
       setProviderAccountsError(getErrorMessage(error, 'Unable to delete the account.'))
@@ -3736,17 +3795,21 @@ export const useWorkspaceController = () => {
     }
   }
   const handleCreateProviderAccount = async (
-    name: string,
-    reauthentication?: { providerId: 'codex' | 'claude'; container: AppContainerTarget | null }
+    reauthentication?: { providerId: 'codex' | 'claude'; container: AppContainerTarget | null },
+    target?: { providerId: ProviderId; container: AppContainerTarget | null }
   ): Promise<AccountAuthorizationSession> => {
-    const providerId = reauthentication?.providerId ?? newSessionProvider
+    const providerId = reauthentication?.providerId ?? target?.providerId ?? newSessionProvider
     const container = normalizeContainerTarget(
-      reauthentication ? reauthentication.container : newSessionContainer
+      reauthentication
+        ? reauthentication.container
+        : target
+          ? target.container
+          : newSessionContainer
     )
     const restart = reauthentication
       ? await providerApi.reauthenticateAccount(providerId, { container })
       : null
-    const creation = restart ?? (await providerApi.createAccount(providerId, name, { container }))
+    const creation = restart ?? (await providerApi.createAccount(providerId, { container }))
     let loginId: string | null = null
     let userCode: string | null = null
     let authUrl: string | null = null
@@ -4326,14 +4389,6 @@ export const useWorkspaceController = () => {
     }
     setCollapsedCwdGroups(nextGroups)
     writeStoredCollapsedProjectGroups(nextGroups)
-  }
-
-  const handleToggleChatGrouping = (): void => {
-    setChatGroupingPreference((currentPreference) => {
-      const nextPreference = currentPreference === 'grouped' ? 'ungrouped' : 'grouped'
-      writeChatGroupingPreference(nextPreference)
-      return nextPreference
-    })
   }
 
   const handleLoadMoreChatsInGroup = (group: ChatListGroupData): void => {
@@ -5405,12 +5460,17 @@ export const useWorkspaceController = () => {
       onOpen={(agent) => void handleOpenSubagentChat(agent)}
     />
   )
+  const selectedChatSubagentError =
+    subagentListState?.rootChatKey === selectedChatKey ? subagentListState.error : null
   const selectedChatSubagentList =
-    selectedChat && selectedChatSubagents.length > 0 ? (
+    selectedChat &&
+    (getVisibleSubagentRows(selectedChatSubagents, activeSubagentChatView?.summary.id ?? null)
+      .length > 0 ||
+      selectedChatSubagentError) ? (
       <ChatSubagentList
         activeSubagentId={activeSubagentChatView?.summary.id ?? null}
         cancelingSubagentIds={cancelingSubagentIds}
-        error={subagentListState?.rootChatKey === selectedChatKey ? subagentListState.error : null}
+        error={selectedChatSubagentError}
         parentTitle={getRenderableText(selectedChat.title, 'Untitled chat')}
         subagents={selectedChatSubagents}
         onCancel={(subagent) => void handleCancelSubagent(subagent)}
@@ -5421,7 +5481,8 @@ export const useWorkspaceController = () => {
   // their memoized rows.
   const renderSidebarChatGroup = (
     group: ChatListGroupData,
-    contentId: string
+    contentId: string,
+    layoutOrder?: string
   ): React.ReactElement => {
     const holdsSelectedChat = Boolean(
       selectedChatKey &&
@@ -5434,7 +5495,8 @@ export const useWorkspaceController = () => {
       contentId,
       holdsSelectedChat ? selectedChatSubagentList : null,
       holdsSelectedChat && Boolean(activeSubagentChatView),
-      workingSubagentChatKeys
+      workingSubagentChatKeys,
+      layoutOrder
     )
   }
 
@@ -5499,6 +5561,12 @@ export const useWorkspaceController = () => {
     handleChatDropdownPreferenceChange,
     handleChatForcedDropdownChange,
     handleChatUsageDisplayChange,
+    groupChatsByProject: chatGroupingPreference === 'grouped',
+    handleGroupChatsByProjectChange: (enabled) => {
+      const preference = enabled ? 'grouped' : 'ungrouped'
+      setChatGroupingPreference(preference)
+      writeChatGroupingPreference(preference)
+    },
     handleCodexRecommendedPluginsChange,
     handleContinuePromptChange,
     handleDeleteProviderAccount,
@@ -5605,27 +5673,6 @@ export const useWorkspaceController = () => {
       icon={<Settings aria-hidden="true" />}
     />
   )
-
-  const renderChatGroupingButton = (): React.ReactElement => {
-    const nextPreference = chatGroupingPreference === 'grouped' ? 'ungrouped' : 'grouped'
-
-    return (
-      <Button
-        theme={chromeControlTheme}
-        aria-label={`Chat grouping: ${chatGroupingPreference}. Switch to ${nextPreference}`}
-        aria-pressed={chatGroupingPreference === 'grouped'}
-        title={chatGroupingPreference === 'grouped' ? 'Grouped' : 'Ungrouped'}
-        callback={handleToggleChatGrouping}
-        icon={
-          chatGroupingPreference === 'grouped' ? (
-            <FolderTree aria-hidden="true" />
-          ) : (
-            <LayoutList aria-hidden="true" />
-          )
-        }
-      />
-    )
-  }
 
   const rateLimitResetDisabled = shouldDisableRateLimitReset(
     accountUsage?.rateLimits ?? [],
@@ -5835,7 +5882,7 @@ export const useWorkspaceController = () => {
       reauthenticationTarget,
       setReauthenticationTarget,
       handleReauthenticateChatAccount: () =>
-        handleCreateProviderAccount('', reauthenticationTarget ?? undefined),
+        handleCreateProviderAccount(reauthenticationTarget ?? undefined),
       setAccountDialogOpen,
       handleCreateProviderAccount,
       projectDialogOpen,
@@ -5865,6 +5912,51 @@ export const useWorkspaceController = () => {
       handleStartChatResize
     },
     chatSidebar: {
+      usageIndicator: {
+        providerId: selectedProviderId ?? newSessionProvider,
+        chatId: selectedChat?.id,
+        container: changesContainer,
+        modelUsageScope: models.find((candidate) => candidate.id === effectiveModel)?.usageScope,
+        accountUsage,
+        accountUsageError,
+        accountUsageState,
+        contextUsage: messageBoxContextUsage,
+        displayUsage: effectiveAppSettings.chat.displayUsage,
+        compactDisabled:
+          messageBoxDisabled ||
+          providerUpdateInProgress ||
+          Boolean(activeSubagentChatView) ||
+          !messageBoxProviderAvailable ||
+          chatHasActiveTurn ||
+          sendState === 'sending',
+        onCompact: selectedChat && !activeSubagentChatView ? handleCompactChat : undefined,
+        onUsageRefresh: refreshAccountUsage,
+        onUsageReset: resetAccountRateLimits
+      },
+      providerAccount: {
+        onCreate: () =>
+          handleCreateProviderAccount(undefined, {
+            providerId: selectedProviderId ?? newSessionProvider,
+            container: changesContainer
+          }),
+        onDelete: (accountId: string) =>
+          deleteProviderAccount(
+            accountId,
+            selectedProviderId ?? newSessionProvider,
+            changesContainer
+          ),
+        key: `${selectedProviderId ?? newSessionProvider}:${changesContainerKey}:${providerAccountRevision}:${providerAccountsRefresh}`,
+        providerId: selectedProviderId ?? newSessionProvider,
+        container: changesContainer,
+        available: Boolean(selectedChat) || newSessionProviderAvailable,
+        updating: Boolean(providerAccountUpdatingId),
+        onSelect: (accountId: string) =>
+          switchProviderAccount(
+            accountId,
+            selectedProviderId ?? newSessionProvider,
+            changesContainer
+          )
+      },
       importedChatGroup,
       handleImportedChat: (providerId: ProviderId, summary: ProviderChatUpdateSummary): void => {
         const chat = getChatFromUpdateSummary(providerId, summary, null, false)
@@ -5884,7 +5976,6 @@ export const useWorkspaceController = () => {
       loadState,
       pinnedChatGroup,
       renderChatGroup: renderSidebarChatGroup,
-      renderChatGroupingButton,
       renderSettingsButton,
       renderWindowControls,
       searchInputRef,

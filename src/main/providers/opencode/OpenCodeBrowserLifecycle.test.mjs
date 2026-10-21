@@ -15,7 +15,13 @@ const source = ts.createSourceFile(
 const declaration = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name.text === 'OpenCodeProviderAdapter'
 )
-const methods = new Set(['sendPrompt', 'closeBrowser', 'abortState', 'handleEvent'])
+const methods = new Set([
+  'sendPrompt',
+  'closeBrowser',
+  'abortState',
+  'handleEvent',
+  'updateChatPermissions'
+])
 const code = ts.transpileModule(
   `class Harness { ${declaration.members
     .filter((x) => methods.has(x.name?.getText(source)))
@@ -142,4 +148,38 @@ test('adapter closes the capability if the session permission update fails', asy
   await assert.rejects(adapter.sendPrompt(state, 'test'), /update failed/)
   assert.deepEqual(calls.slice(-2), ['suspend', 'close'])
   assert.equal(state.browser, null)
+})
+
+test('adapter applies full access to an existing session before prompting', async () => {
+  const { adapter, state, calls } = fixture()
+  await adapter.sendPrompt(state, 'continue', {
+    sandboxMode: 'danger-full-access',
+    approvalPolicy: 'on-request'
+  })
+  const permissionsIndex = calls.findIndex((call) => call[0] === 'permissions')
+  assert.ok(permissionsIndex >= 0)
+  assert.ok(calls[permissionsIndex][1].every((rule) => rule.action === 'allow'))
+  assert.ok(calls.indexOf('prompt') > permissionsIndex)
+})
+
+test('OpenCode updates a running session and queued messages without aborting or sending a prompt', async () => {
+  const { adapter, state, calls } = fixture()
+  state.active = true
+  state.queuedMessages.push({
+    options: { sandboxMode: 'workspace-write', approvalPolicy: 'on-request' }
+  })
+  await adapter.updateChatPermissions(state.id, {
+    sandboxMode: 'danger-full-access',
+    approvalPolicy: 'never',
+    approvalsReviewer: 'user'
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][0], 'permissions')
+  assert.ok(
+    calls[0][1]
+      .filter((rule) => rule.permission !== 'sele_browser_*')
+      .every((rule) => rule.action === 'allow')
+  )
+  assert.equal(state.active, true)
+  assert.equal(state.queuedMessages[0].options.sandboxMode, 'danger-full-access')
 })

@@ -384,11 +384,13 @@ export const fallbackProviderSandboxModes: ProviderSandboxModeOption[] = [
 
 export type ProviderAccount = {
   label: string
+  displayName?: string | null
 }
 
 export type ProviderManagedAccount = {
   id: string
-  name: string
+  login?: string | null
+  displayName?: string | null
   active: boolean
 }
 
@@ -1054,6 +1056,11 @@ export type ProviderOneShotOptions = ProviderTurnOptions & {
   generationId?: string
 }
 
+export type ProviderPermissionOptions = Pick<
+  ProviderTurnOptions,
+  'approvalPolicy' | 'approvalsReviewer' | 'sandboxMode' | 'additionalDirectories' | 'container'
+>
+
 export const providerOneShotGenerationCanceledMessage = 'One-shot generation canceled'
 
 export type ProviderApi = {
@@ -1098,7 +1105,6 @@ export type ProviderApi = {
   ) => Promise<ProviderAccountConfiguration>
   createAccount: (
     providerId: ProviderId,
-    name: string,
     options?: ProviderSourceOptions
   ) => Promise<ProviderAccountCreation>
   completeAccountCreation: (
@@ -1297,6 +1303,11 @@ export type ProviderApi = {
     message: string,
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
+  updateChatPermissions: (
+    providerId: ProviderId,
+    chatId: string,
+    options: ProviderPermissionOptions
+  ) => Promise<void>
   resolveApproval: (
     providerId: ProviderId,
     chatId: string,
@@ -1472,6 +1483,7 @@ export const providerIpcChannels = {
   steerPendingMessage: 'provider:steer-pending-message',
   interruptPendingMessage: 'provider:interrupt-pending-message',
   editMessage: 'provider:edit-message',
+  updateChatPermissions: 'provider:update-chat-permissions',
   resolveApproval: 'provider:resolve-approval',
   resolveUserInput: 'provider:resolve-user-input',
   compactChat: 'provider:compact-chat',

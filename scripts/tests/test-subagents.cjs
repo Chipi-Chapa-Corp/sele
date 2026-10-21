@@ -175,6 +175,9 @@ if (!process.versions.electron) {
       const settle = () =>
         run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
       await ready(`document.querySelector('[data-chat-id="root"] .chat-list-item__main')`)
+      const sidebarListHeight = await run(
+        `document.querySelector('[data-chat-id="root"]').closest('.chat-list').getBoundingClientRect().height`
+      )
       await run(
         `window.startAgents();document.querySelector('[data-chat-id="root"] .chat-list-item__main').click()`
       )
@@ -300,6 +303,16 @@ if (!process.versions.electron) {
       assert.equal(await run(`document.querySelectorAll('.chat-subagent-list__item').length`), 1)
       await run(`document.querySelector('[aria-label="Back to parent chat"]').click()`)
       await ready(`document.querySelector('[data-subagent-completion-id="child"]')`)
+      await ready(
+        `document.querySelector('[data-chat-id="root"]').closest('.chat-list').children.length===1`
+      )
+      assert.equal(
+        await run(
+          `document.querySelector('[data-chat-id="root"]').closest('.chat-list').getBoundingClientRect().height`
+        ),
+        sidebarListHeight,
+        'selecting a chat with only hidden completed subagents adds no empty row or list gap'
+      )
       assert.equal(
         await run(`Boolean(document.querySelector('[data-chat-id="root"] .app-loading-spinner'))`),
         false

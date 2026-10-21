@@ -1,5 +1,3 @@
-import { useRef } from 'react'
-import { useFeedbackMotion } from '../../motion/useFeedbackMotion'
 import type { ReactElement, ReactNode } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 
@@ -12,15 +10,6 @@ type ConversationPanelProps = WorkspaceController['conversationPanel'] & {
   plan: ReactNode
   composer: ReactNode
 }
-
-// Fade the conversation content on navigation, but never the composer: a faded prompt box
-// reads as disabled while switching chats.
-const selectConversationMotionTargets = (panel: HTMLDivElement): Element[] =>
-  Array.from(
-    panel.querySelectorAll(
-      ':scope > :not(.chat-panel), :scope > .chat-panel > :not(.chat-panel__composer)'
-    )
-  )
 
 export function ConversationPanel(props: ConversationPanelProps): ReactElement {
   const {
@@ -36,16 +25,8 @@ export function ConversationPanel(props: ConversationPanelProps): ReactElement {
     selectedChat
   } = props
 
-  const panelRef = useRef<HTMLDivElement>(null)
-  useFeedbackMotion(
-    panelRef,
-    `${selectedChat?.providerId}:${selectedChat?.id}:${activeSubagentChatView?.summary.id}:${newChatOpen}`,
-    'panel',
-    selectConversationMotionTargets
-  )
-
   return (
-    <div ref={panelRef} className="chat__detail-panel" data-panel="true" id="detail">
+    <div className="chat__detail-panel" data-panel="true" id="detail">
       {header}
       <section
         className={`chat-panel${selectedChat ? ' chat-panel--selected' : ' chat-panel--empty'}${newChatOpen ? ' chat-panel--new' : ''}`}

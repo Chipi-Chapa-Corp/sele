@@ -94,3 +94,48 @@ test('invalid stored retry settings fall back to defaults and stay within suppor
   assert.equal(settings.readStoredAppSettings().chat.networkRetryCount, 0)
   assert.equal(settings.readStoredAppSettings().chat.networkRetryDelaySeconds, 0.1)
 })
+
+test('usage badges default to short and long and all toggle combinations survive reload', () => {
+  const { settings } = setup()
+  const plain = (value) => JSON.parse(JSON.stringify(value))
+  assert.deepEqual(plain(settings.readStoredAppSettings().chat.displayUsage), {
+    context: false,
+    short: true,
+    long: true
+  })
+  for (let mask = 0; mask < 8; mask++) {
+    const displayUsage = {
+      context: Boolean(mask & 1),
+      short: Boolean(mask & 2),
+      long: Boolean(mask & 4)
+    }
+    const defaults = settings.readStoredAppSettings()
+    settings.writeStoredAppSettings({ ...defaults, chat: { ...defaults.chat, displayUsage } })
+    assert.deepEqual(plain(settings.readStoredAppSettings().chat.displayUsage), displayUsage)
+    settings.writeStoredAppProjectSettings({ '/workspace': { chat: { displayUsage } } })
+    assert.deepEqual(
+      plain(
+        settings.resolveAppSettings(
+          settings.defaultAppSettings,
+          settings.readStoredAppProjectSettings()['/workspace']
+        ).chat.displayUsage
+      ),
+      displayUsage
+    )
+  }
+})
+
+test('legacy usage selections migrate to the new independent toggles', () => {
+  const { settings, stored } = setup()
+  for (const [legacy, expected] of [
+    ['short', { context: false, short: true, long: true }],
+    ['weekly', { context: false, short: false, long: true }],
+    ['chatContext', { context: true, short: false, long: false }]
+  ]) {
+    stored.set(settings.appSettingsStorageKey, JSON.stringify({ chat: { displayUsage: legacy } }))
+    assert.equal(
+      JSON.stringify(settings.readStoredAppSettings().chat.displayUsage),
+      JSON.stringify(expected)
+    )
+  }
+})

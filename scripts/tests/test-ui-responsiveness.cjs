@@ -29,6 +29,12 @@ if (!process.versions.electron) {
               cwd: '/project', createdAt: Date.now() - i * 60000,
               updatedAt: Date.now() - i * 60000, status: null
             }))
+            const stored = new Map()
+            window.preferencesApi = {
+              getItem: key => ({ok: true, value: stored.get(key) ?? null}),
+              setItem: (key, value) => { stored.set(key, value); return {ok: true, value: null} },
+              removeItem: key => { stored.delete(key); return {ok: true, value: null} }
+            }
             const root = createRoot(document.getElementById('root'))
             window.artKey = 0
             window.renderWorkspace = (revision = 0) => flushSync(() => root.render(
@@ -43,7 +49,7 @@ if (!process.versions.electron) {
                     agentMode="default" agentModes={[]} approvalMode="on-request" approvalModes={[]}
                     sandboxMode="workspace-write" sandboxModes={[]} reasoningEffort="medium" serviceTier={null}
                     accountUsage={null} accountUsageError={null} accountUsageState="idle"
-                    contextUsage={{source:'unavailable', usedTokens:null, maxTokens:null}} displayUsage="context"
+                    contextUsage={{source:'unavailable', usedTokens:null, maxTokens:null}} displayUsage={{context:true,short:false,long:false}}
                     onAgentModeChange={noop} onApprovalModeChange={noop} onModelChange={noop}
                     onReasoningEffortChange={noop} onServiceTierChange={noop} onSandboxModeChange={noop}
                     onSend={() => true}/>

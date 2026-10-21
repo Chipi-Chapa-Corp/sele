@@ -13,7 +13,8 @@
       var(--window-controls-content-gap)
   );
   --chat-detail-header-height: 0.4rem;
-  --panel-bottom-inset: 0.7rem;
+  --panel-edge-inset: 0.7rem;
+  --panel-bottom-inset: var(--panel-edge-inset);
   --control-surface: var(--depth-shell-surface);
   --field-border: var(--depth-shell-surface);
   --field-shadow: var(--depth-shell-shadow);
@@ -230,6 +231,15 @@
 .chat__changes-panel {
   z-index: 0;
   overflow: visible !important;
+}
+
+.chat-sidebar__footer,
+.changes-sidebar__footer {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.6rem;
 }
 
 .chat__resize-handle {

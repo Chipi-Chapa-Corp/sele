@@ -35,10 +35,12 @@ function MarkdownElement({
 
 export function MarkdownContent({
   html,
+  settled = false,
   container,
   cwd
 }: {
   html: string
+  settled?: boolean
   container?: AppContainerTarget | null
   cwd?: string | null
 }): React.JSX.Element {
@@ -81,7 +83,7 @@ export function MarkdownContent({
   }
 
   const ref = useRef<HTMLDivElement>(null)
-  usePatchedHtml(ref, content ? null : html)
+  usePatchedHtml(ref, content ? null : html, settled)
   return content ? (
     <div key="react" className="chat-detail__message-markdown">
       {renderNodes(content)}

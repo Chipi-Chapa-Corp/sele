@@ -215,13 +215,17 @@ export const getCollapsedGroupState = (
   collapsedGroups: Record<string, boolean>
 ): boolean => collapsedGroups[groupKey] ?? getDefaultCollapsedGroupState(groupKey)
 
-export const sortChatsForGroup = (chats: ProviderChat[]): ProviderChat[] =>
-  sortChatsForSidebarSection(chats)
+export const sortChatsForGroup = (
+  chats: ProviderChat[],
+  previous?: ProviderChat[]
+): ProviderChat[] => sortChatsForSidebarSection(chats, previous)
 
 export const groupChatsForSidebar = (
   chats: ProviderChat[],
-  projectsByCwd: ReadonlyMap<string, AppProject>
+  projectsByCwd: ReadonlyMap<string, AppProject>,
+  previous: ChatListGroupData[] = []
 ): ChatListGroupData[] => {
+  const previousByKey = new Map(previous.map((group) => [group.key, group.chats]))
   const groupsByCwd = new Map<string, ChatListGroupData>()
   const pinnedChats: ProviderChat[] = []
   const doneChats: ProviderChat[] = []
@@ -264,7 +268,7 @@ export const groupChatsForSidebar = (
   const cwdGroups = sortProjectGroupsForSidebar(
     Array.from(groupsByCwd.values()).map((group) => ({
       ...group,
-      chats: sortChatsForGroup(group.chats)
+      chats: sortChatsForGroup(group.chats, previousByKey.get(group.key))
     })),
     projectsByCwd
   )
@@ -276,7 +280,7 @@ export const groupChatsForSidebar = (
             key: pinnedGroupKey,
             cwd: null,
             label: 'Pinned',
-            chats: sortChatsForGroup(pinnedChats),
+            chats: sortChatsForGroup(pinnedChats, previousByKey.get(pinnedGroupKey)),
             kind: 'pinned' as const
           }
         ]
@@ -290,7 +294,7 @@ export const groupChatsForSidebar = (
             cwd: null,
             label: 'Imported',
             kind: 'imported' as const,
-            chats: sortChatsForGroup(importedChats)
+            chats: sortChatsForGroup(importedChats, previousByKey.get('imported'))
           }
         ]
       : []),
@@ -302,7 +306,7 @@ export const groupChatsForSidebar = (
             key: doneGroupKey,
             cwd: null,
             label: 'Done',
-            chats: sortDoneChats(doneChats),
+            chats: sortDoneChats(doneChats, previousByKey.get(doneGroupKey)),
             kind: 'done' as const
           }
         ])

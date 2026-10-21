@@ -627,12 +627,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return {
         status: 'authenticated' as const,
         account: {
-          label:
-            (await claudeAccounts.getAccountLabel(options)) ||
-            account.organization ||
-            account.email ||
-            account.subscriptionType ||
-            'Claude'
+          label: account.organization || account.email || account.subscriptionType || 'Claude'
         }
       }
     }).catch((error: unknown) => {
@@ -2047,15 +2042,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         direction: 'older',
         limit: 10
       })
-      // Local SDK metadata uses bounded head/tail reads. A remote SessionStore's metadata
-      // API loads the whole file, so use metadata from the range read there.
-      const metadata = state.container
-        ? {
-            ...page.metadata,
-            ...this.sessionMetadata.get(chatId),
-            lastModified: page.metadata.lastModified
-          }
-        : ((await getSessionInfo(chatId)) ?? page.metadata)
+      // The page already contains display metadata. Keep catalog fields that the bounded
+      // read could not find, and refresh local SDK metadata after messages are available.
+      // A remote SessionStore's metadata API loads the whole file, so avoid it on open.
+      const metadata = {
+        ...this.sessionMetadata.get(chatId),
+        ...Object.fromEntries(
+          Object.entries(page.metadata).filter(([, value]) => value !== undefined)
+        )
+      } as SDKSessionInfo
       const messages = page.messages
       if (this.disposed || generation !== this.stateGeneration)
         throw new Error('Claude provider was disposed.')
@@ -2090,6 +2085,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       this.rememberStateTranscriptSize(state)
       this.states.set(chatId, state)
       this.sessionContainers.set(chatId, state.container)
+      if (!state.container) this.scheduleSessionMetadataRefresh(state)
       this.leaseStateForAdmission(state)
       this.trimIdleStates(state)
       return state

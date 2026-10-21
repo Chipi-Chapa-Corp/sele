@@ -23,6 +23,7 @@ import type {
   ProviderUsageOptions,
   ProviderActiveSendMode,
   ProviderTurnOptions,
+  ProviderPermissionOptions,
   ProviderOneShotOptions,
   ProviderSubagent,
   ProviderSubagentDetail,
@@ -160,6 +161,8 @@ export type ProviderAdapter = {
     options?: { container?: AppContainerTarget | null }
   ) => Promise<ProviderChatGoal | null>
   setChatTitle: (chatId: string, title: string) => Promise<ProviderChatDetail>
+  /** Apply permissions to a running session when the native provider supports it. */
+  updateChatPermissions?: (chatId: string, options: ProviderPermissionOptions) => Promise<void>
   generateOneShot: (message: string, options?: ProviderOneShotOptions) => Promise<string>
   cancelOneShot: (generationId: string) => Promise<void>
   startChat: (

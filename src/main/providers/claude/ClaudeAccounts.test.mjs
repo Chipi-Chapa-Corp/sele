@@ -39,11 +39,11 @@ const fixture = (initial = null) => {
 
 test('adding an account preserves selection until login completes; switching persists only metadata', async () => {
   const h = fixture()
-  const a = await h.store.create('Work')
+  const a = await h.store.create()
   assert.equal((await h.store.get()).accounts[0].active, true)
   assert.equal(await h.store.getSelection(), null)
   await h.store.complete(a.accountId)
-  const b = await h.store.create('Personal')
+  const b = await h.store.create()
   assert.equal((await h.store.getSelection()).id, a.accountId)
   await h.store.complete(b.accountId)
   await h.store.select(a.accountId)
@@ -66,7 +66,7 @@ test('usage fallback reads only the selected credentials, including Default and 
     await h.store.getUsageAccessToken({ CLAUDE_CODE_OAUTH_TOKEN: 'inherited' }),
     'inherited'
   )
-  const { accountId } = await h.store.create('Work')
+  const { accountId } = await h.store.create()
   await h.store.complete(accountId)
   assert.equal(
     await h.store.getUsageAccessToken({ CLAUDE_CODE_OAUTH_TOKEN: 'inherited' }),
@@ -132,13 +132,13 @@ test('usage authentication rejection is typed without exposing response bodies; 
 
 test('cancel and crash recovery remove only the pending credential store', async () => {
   const h = fixture()
-  const a = await h.store.create('Work')
+  const a = await h.store.create()
   await h.store.complete(a.accountId)
-  const pending = await h.store.create('Canceled')
+  const pending = await h.store.create()
   await h.store.cancel(pending.accountId)
   assert.equal((await h.store.getSelection()).id, a.accountId)
   await assert.rejects(h.store.complete(pending.accountId), /canceled/)
-  const interrupted = await h.store.create('Interrupted')
+  const interrupted = await h.store.create()
   const restored = new ClaudeAccountStore(h.storage)
   assert.equal((await restored.getSelection()).id, a.accountId)
   assert.equal(await restored.getPending(), null)
@@ -148,9 +148,9 @@ test('cancel and crash recovery remove only the pending credential store', async
 
 test('deleting an inactive account keeps the selection; deleting active returns to Default', async () => {
   const h = fixture()
-  const a = await h.store.create('A')
+  const a = await h.store.create()
   await h.store.complete(a.accountId)
-  const b = await h.store.create('B')
+  const b = await h.store.create()
   await h.store.complete(b.accountId)
   await h.store.remove(a.accountId)
   assert.equal((await h.store.getSelection()).id, b.accountId)
@@ -159,23 +159,24 @@ test('deleting an inactive account keeps the selection; deleting active returns 
   await assert.rejects(h.store.remove('default'), /Invalid/)
 })
 
-test('invalid names, path traversal, duplicate names, and concurrent login creation are rejected', async () => {
+test('path traversal and concurrent login creation are rejected; new accounts need no names', async () => {
   const h = fixture()
-  await assert.rejects(h.store.create(' \n '))
-  await assert.rejects(h.store.create('bad\nname'))
-  const results = await Promise.allSettled([h.store.create('A'), h.store.create('B')])
+  const results = await Promise.allSettled([h.store.create(), h.store.create()])
   assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
   const id = (await h.store.getPending()).id
   await h.store.complete(id)
-  await assert.rejects(h.store.create('a'), /already exists/)
+  const second = await h.store.create()
+  assert.notEqual(second.accountId, id)
   await assert.rejects(h.store.select('../default'), /not found/)
   await assert.rejects(h.store.cancel('../../projects'), /Invalid/)
   assert.equal(h.removed.length, 0)
+  assert.deepEqual(Object.keys(h.saved().accounts[0]), ['id'])
+  assert.deepEqual(Object.keys(h.saved().pending), ['id'])
 })
 
 test('a failed registry write does not change the active account in memory', async () => {
   const h = fixture()
-  const a = await h.store.create('A')
+  const a = await h.store.create()
   await h.store.complete(a.accountId)
   h.storage.write = async () => {
     throw new Error('disk full')
@@ -339,4 +340,16 @@ test('CLI errors and timeout do not expose captured output', async () => {
   const timeout = loginProcess('setInterval(()=>{},1000)', 100)
   await assert.rejects(timeout.ready, /timed out/)
   assert.equal((await timeout.completion).success, false)
+})
+
+test('legacy custom labels are discarded without changing account selection or credentials', async () => {
+  const id = '00000000-0000-4000-8000-000000000001'
+  const h = fixture(
+    JSON.stringify({ activeId: id, accounts: [{ id, name: 'Legacy custom label' }] })
+  )
+  const configuration = await h.store.get()
+  assert.equal(configuration.accounts.find((account) => account.active).id, id)
+  assert.equal('name' in configuration.accounts[1], false)
+  assert.deepEqual(h.saved(), { activeId: id, accounts: [{ id }] })
+  assert.deepEqual(h.removed, [])
 })

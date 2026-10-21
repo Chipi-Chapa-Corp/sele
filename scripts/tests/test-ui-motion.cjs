@@ -27,6 +27,12 @@ if (!process.versions.electron) {
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/components/MessageBox.css'
             const noop = () => {}
+            const stored = new Map()
+            window.preferencesApi = {
+              getItem: key => ({ok: true, value: stored.get(key) ?? null}),
+              setItem: (key, value) => { stored.set(key, value); return {ok: true, value: null} },
+              removeItem: key => { stored.delete(key); return {ok: true, value: null} }
+            }
             const root = createRoot(document.getElementById('root'))
             window.state = { ids: ['a', 'b', 'c'], tab: 'a', notes: [], modal: false,
               content: 'Existing text', streaming: true, empty: true, users: [], realComposer:false, working:null }
@@ -78,7 +84,7 @@ if (!process.versions.electron) {
                       agentMode="default" agentModes={[]} approvalMode="on-request" approvalModes={[]}
                       sandboxMode="workspace-write" sandboxModes={[]} reasoningEffort="low" serviceTier={null}
                       accountUsage={null} accountUsageError={null} accountUsageState="idle"
-                      contextUsage={{source:'unavailable', usedTokens:null, maxTokens:null}} displayUsage="context"
+                      contextUsage={{source:'unavailable', usedTokens:null, maxTokens:null}} displayUsage={{context:true,short:false,long:false}}
                       onAgentModeChange={noop} onApprovalModeChange={noop} onModelChange={noop}
                       onReasoningEffortChange={noop} onServiceTierChange={noop} onSandboxModeChange={noop}
                       onSend={content=>{ window.renderFixture({users:[{type:'message',id:'composer',role:'user',content,createdAt:Date.now()}]});return true }}/>
@@ -208,6 +214,49 @@ if (!process.versions.electron) {
         'Use @ for files and $ for skills',
         'clearing a draft must not replay the hint'
       )
+      // Exit positioning stays local: no stylesheet injection, no held gap, and a
+      // rapid undo restores the same row instead of leaving absolute styles behind.
+      const exitGeometry = await run(`(() => {
+        const row=document.querySelector('[data-chat-id="a"]').parentElement;
+        const next=document.querySelector('[data-chat-id="b"]').parentElement;
+        window.exitingRow=row;
+        return {top:row.offsetTop,left:row.offsetLeft,width:row.getBoundingClientRect().width,
+          height:row.getBoundingClientRect().height,sheets:document.styleSheets.length,nextTop:next.offsetTop};
+      })()`)
+      await run(`window.renderFixture({ids:['b','c']})`)
+      const duringExit = await run(`(() => {
+        const row=window.exitingRow;
+        return {position:row.style.position,top:Number.parseFloat(row.style.top),left:Number.parseFloat(row.style.left),
+          width:Number.parseFloat(row.style.width),height:Number.parseFloat(row.style.height),
+          nextTop:document.querySelector('[data-chat-id="b"]').parentElement.offsetTop,sheets:document.styleSheets.length};
+      })()`)
+      assert.equal(duringExit.position, 'absolute')
+      assert.equal(duringExit.top, exitGeometry.top)
+      assert.equal(duringExit.left, exitGeometry.left)
+      assert.ok(Math.abs(duringExit.width - exitGeometry.width) < 0.5)
+      assert.ok(Math.abs(duringExit.height - exitGeometry.height) < 0.5)
+      assert.equal(
+        duringExit.nextTop,
+        exitGeometry.top,
+        'survivors immediately fill the removed row’s layout slot'
+      )
+      assert.equal(
+        duringExit.sheets,
+        exitGeometry.sheets,
+        'exiting rows never mutate document stylesheets'
+      )
+      await wait(40)
+      await run(`window.renderFixture({ids:['a','b','c']})`)
+      assert.equal(
+        await run(
+          `document.querySelector('[data-chat-id="a"]').parentElement === window.exitingRow`
+        ),
+        true
+      )
+      assert.equal(await run(`window.exitingRow.style.position`), '')
+      assert.equal(await run(`window.exitingRow.hasAttribute('inert')`), false)
+      await wait(250)
+      assert.equal(await run(`document.querySelectorAll('[data-chat-id="a"]').length`), 1)
       // Retain an exiting row, but immediately remove it from interaction.
       await run(`window.renderFixture({ids:['b','c']})`)
       assert.equal(

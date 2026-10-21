@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react'
+import { createBoundedTextCache } from './boundedTextCache'
 
 // Streaming used to replace a message's innerHTML on every chunk. That detaches the
 // text nodes holding the user's selection, so Chromium moved the selection endpoints
@@ -15,6 +16,21 @@ const parseHtml = (html: string): DocumentFragment => {
   template.innerHTML = html
   return template.content
 }
+
+// Reopening a cached conversation still mounts fresh message nodes. Retain a small
+// set of inert templates so those mounts can clone instead of reparsing HTML.
+// Never cache live/hydrated nodes or the succession of streaming snapshots.
+const templateCharacterLimit = 1_000_000
+const settledTemplates = createBoundedTextCache<DocumentFragment>(
+  32,
+  templateCharacterLimit,
+  () => 0
+)
+
+const mountHtml = (html: string, settled: boolean): DocumentFragment =>
+  settled && html.length <= templateCharacterLimit
+    ? (settledTemplates.get(html, () => parseHtml(html)).cloneNode(true) as DocumentFragment)
+    : parseHtml(html)
 
 const cloneChildren = (parent: Node): Node[] =>
   Array.from(parent.childNodes, (child) => child.cloneNode(true))
@@ -90,7 +106,11 @@ type PatchedSource = {
 }
 
 // Owns the children of `ref` unless `html` is null; render it without React children.
-export function usePatchedHtml(ref: RefObject<HTMLElement | null>, html: string | null): void {
+export function usePatchedHtml(
+  ref: RefObject<HTMLElement | null>,
+  html: string | null,
+  settled = false
+): void {
   const source = useRef<PatchedSource | null>(null)
   useLayoutEffect(() => {
     const node = ref.current
@@ -100,17 +120,15 @@ export function usePatchedHtml(ref: RefObject<HTMLElement | null>, html: string 
     }
     const previous = source.current
     if (previous?.node === node && previous.html === html) return
-    const next = parseHtml(html)
     if (previous?.node !== node) {
-      // This fresh fragment is not retained as a diff source. Move it directly
-      // instead of cloning every highlighted token and file-link SVG on mount.
-      node.replaceChildren(next)
+      node.replaceChildren(mountHtml(html, settled))
       source.current = { node, html, fragment: null }
       return
     }
+    const next = parseHtml(html)
     // Stream reveal splits text nodes; merging them keeps selections intact.
     node.normalize()
     patchChildren(node, previous.fragment ?? parseHtml(previous.html), next)
     source.current = { node, html, fragment: next }
-  }, [html, ref])
+  }, [html, ref, settled])
 }

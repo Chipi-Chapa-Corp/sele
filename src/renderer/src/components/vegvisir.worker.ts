@@ -3,6 +3,7 @@ import { vegvisirStrokes } from './vegvisirStrokes'
 type ArtMessage =
   | { type: 'init'; canvas: OffscreenCanvas; lengths: number[] }
   | { type: 'appearance'; size: number; color: string }
+  | { type: 'active'; active: boolean }
 
 const timingScale = 1.25
 const duration = Math.max(
@@ -18,6 +19,7 @@ let lengths: number[] = []
 let color = ''
 let startedAt: number | undefined
 let frame: number | undefined
+let active = false
 
 // Match the original CSS cubic-bezier(0.22, 1, 0.36, 1).
 const ease = (progress: number): number => {
@@ -34,7 +36,7 @@ const ease = (progress: number): number => {
 
 const draw = (now: number): void => {
   frame = undefined
-  if (!canvas || !context || !color) return
+  if (!active || !canvas || !context || !color) return
   startedAt ??= now
   const elapsed = now - startedAt
   context.clearRect(0, 0, canvas.width, canvas.height)
@@ -70,12 +72,20 @@ self.onmessage = ({ data }: MessageEvent<ArtMessage>): void => {
     context = canvas.getContext('2d')
     if (!context) throw new Error('Offscreen 2D canvas is unavailable')
     lengths = data.lengths
+  } else if (data.type === 'active') {
+    active = data.active
+    if (!active) {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      frame = undefined
+      startedAt = undefined
+      if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height)
+    } else if (frame === undefined) frame = requestAnimationFrame(draw)
   } else if (canvas) {
     if (canvas.width !== data.size) {
       canvas.width = data.size
       canvas.height = data.size
     }
     color = data.color
-    if (frame === undefined) frame = requestAnimationFrame(draw)
+    if (active && frame === undefined) frame = requestAnimationFrame(draw)
   }
 }

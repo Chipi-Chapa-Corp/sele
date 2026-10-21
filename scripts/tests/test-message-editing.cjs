@@ -16,6 +16,12 @@ if (!process.versions.electron) {
             import { flushSync } from 'react-dom'
             import { MessageBox } from './src/renderer/src/components/MessageBox'
             import { fallbackProviderModels, fallbackProviderApprovalModes, fallbackProviderSandboxModes } from './src/shared/provider'
+            const stored = new Map()
+            window.preferencesApi = {
+              getItem: key => ({ok: true, value: stored.get(key) ?? null}),
+              setItem: (key, value) => { stored.set(key, value); return {ok: true, value: null} },
+              removeItem: key => { stored.delete(key); return {ok: true, value: null} }
+            }
             const root = createRoot(document.getElementById('root'))
             const noop = () => {}
             window.sends = []
@@ -26,7 +32,7 @@ if (!process.versions.electron) {
                 providerId="codex" model={fallbackProviderModels[0].id} models={fallbackProviderModels}
                 agentMode="interactive" agentModes={[]} approvalMode="never" approvalModes={fallbackProviderApprovalModes}
                 reasoningEffort="medium" serviceTier={null} sandboxMode="danger-full-access" sandboxModes={fallbackProviderSandboxModes}
-                accountUsage={null} accountUsageError={null} accountUsageState="ready" displayUsage="chatContext"
+                accountUsage={null} accountUsageError={null} accountUsageState="ready" displayUsage={{context:true,short:false,long:false}}
                 contextUsage={{source: 'unavailable', usedTokens: null, maxTokens: null}}
                 showActions={false} showNotesButton={false} showModelSelector={false} showAccessSelector={false}
                 showReviewSelector={false} showSpeedSelector={false} showReasoningSelector={false}

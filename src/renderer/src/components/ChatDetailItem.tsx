@@ -52,6 +52,7 @@ import {
   Blocks,
   BookOpenText,
   Bot,
+  Brain,
   Check,
   ChevronRight,
   CircleQuestionMark,
@@ -1503,6 +1504,7 @@ const MarkdownMessageComponent: React.FC<{
       <div className={className} ref={containerRef} onClick={handleClick}>
         <MarkdownContent
           html={renderedMarkdown}
+          settled={!streaming}
           container={localImageContainer}
           cwd={localImageCwd}
         />
@@ -1527,7 +1529,7 @@ const MarkdownMessageComponent: React.FC<{
 
 export const MarkdownMessage = memo(MarkdownMessageComponent)
 
-const ThoughtBlock: React.FC<{
+const ThoughtRow: React.FC<{
   streaming: boolean
   onDisclosureToggle?: () => void
   children: ReactNode
@@ -1536,12 +1538,15 @@ const ThoughtBlock: React.FC<{
 
   return (
     <details
-      className="chat-detail__thought"
+      className="chat-detail__tool-group chat-detail__thought"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary onClick={onDisclosureToggle}>
-        {streaming ? 'Thinking' : 'Thought'}
+        <span className="chat-detail__tool-icon">
+          <Brain aria-hidden="true" />
+        </span>
+        <span className="chat-detail__tool-label">{streaming ? 'Thinking' : 'Thought'}</span>
         <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
       </summary>
       {open && (
@@ -2286,7 +2291,7 @@ const WorkingStep: React.FC<{
                         )}
                       </div>
                     ) : block.item.kind === 'reasoning' ? (
-                      <ThoughtBlock
+                      <ThoughtRow
                         key={block.item.id}
                         streaming={
                           active &&
@@ -2323,7 +2328,7 @@ const WorkingStep: React.FC<{
                             }
                           />
                         )}
-                      </ThoughtBlock>
+                      </ThoughtRow>
                     ) : !isWorkingItemPayloadLoaded(block.item) ? (
                       <button
                         className="chat-detail__working-load"

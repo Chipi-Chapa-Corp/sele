@@ -52,6 +52,7 @@ import {
   type ProviderPendingApproval,
   type ProviderPendingMessage,
   type ProviderPendingUserInput,
+  type ProviderPermissionOptions,
   type ProviderResourceUpdateOptions,
   type ProviderSandboxModeOption,
   type ProviderSkill,
@@ -1307,6 +1308,25 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state, true)
   }
 
+  updateChatPermissions = async (
+    chatId: string,
+    options: ProviderPermissionOptions
+  ): Promise<void> => {
+    const state = this.states.get(chatId) ?? (await this.ensureState(chatId, options.container))
+    const client = (await this.getClientEntry(state.container)).client
+    await client.session.update(
+      {
+        sessionID: chatId,
+        directory: state.directory,
+        permission: getOpenCodePermissionRules(options, Boolean(state.browser))
+      },
+      { throwOnError: true }
+    )
+    for (const pending of state.queuedMessages) {
+      if (pending.options) pending.options = { ...pending.options, ...options }
+    }
+  }
+
   resolveApproval = async (
     chatId: string,
     decision: ProviderApprovalDecision
@@ -1635,6 +1655,38 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (type === 'session.updated' && isRecord(properties.info)) {
       state.session = properties.info as unknown as Session
     }
+    // Keep interaction events in the live cache. A refresh already in flight may have
+    // read the permission list before this event and cannot supply this request.
+    if (type === 'permission.asked' && typeof properties.id === 'string') {
+      const request = properties as unknown as PermissionRequest
+      const index = state.pendingApprovals.findIndex((pending) => pending.id === request.id)
+      if (index < 0) state.pendingApprovals.push(request)
+      else state.pendingApprovals[index] = request
+      this.publishInteractionUpdate(state)
+      return
+    }
+    if (type === 'permission.replied') {
+      state.pendingApprovals = state.pendingApprovals.filter(
+        (request) => request.id !== properties.requestID
+      )
+      this.publishInteractionUpdate(state)
+      return
+    }
+    if (type === 'question.asked' && typeof properties.id === 'string') {
+      const request = properties as unknown as QuestionRequest
+      const index = state.pendingQuestions.findIndex((pending) => pending.id === request.id)
+      if (index < 0) state.pendingQuestions.push(request)
+      else state.pendingQuestions[index] = request
+      this.publishInteractionUpdate(state)
+      return
+    }
+    if (type === 'question.replied' || type === 'question.rejected') {
+      state.pendingQuestions = state.pendingQuestions.filter(
+        (request) => request.id !== properties.requestID
+      )
+      this.publishInteractionUpdate(state)
+      return
+    }
     if (type === 'permission.asked' || type === 'permission.v2.asked') {
       this.scheduleUpdate(sessionID)
       return
@@ -1668,6 +1720,16 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       return
     }
     this.scheduleUpdate(sessionID)
+  }
+
+  private publishInteractionUpdate = (state: OpenCodeChatState): void => {
+    if (state.session) {
+      // Approval controls must not wait on message history or another HTTP request.
+      void this.emitUpdateNow(state, false, false).catch((error) =>
+        console.error('Unable to publish OpenCode interaction update', error)
+      )
+    }
+    this.scheduleUpdate(state.id)
   }
 
   private getOrCreateState = (

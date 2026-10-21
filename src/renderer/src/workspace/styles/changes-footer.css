@@ -1,9 +1,5 @@
 .changes-sidebar__footer {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.6rem var(--changes-sidebar-x) 0 0;
+  padding-right: var(--changes-sidebar-x);
 }
 
 .changes-sidebar__input-row {

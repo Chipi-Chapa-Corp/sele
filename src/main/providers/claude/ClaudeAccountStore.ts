@@ -4,7 +4,7 @@ import type { ProviderAccountConfiguration } from '../../../shared/provider'
 export const claudeDefaultAccountId = 'default'
 export const claudeCredentialDirectoryVariable = 'CLAUDE_SECURESTORAGE_CONFIG_DIR'
 
-type Account = { id: string; name: string }
+type Account = { id: string }
 type Registry = { activeId: string; accounts: Account[]; pending?: Account }
 
 export type ClaudeAccountStorage = {
@@ -24,21 +24,7 @@ export const requireClaudeAccountId = (id: string): string => {
   return id
 }
 
-const normalizeName = (value: string): string => {
-  const name = value.trim()
-  if (
-    !name ||
-    name.length > 80 ||
-    Array.from(name).some(
-      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
-    )
-  ) {
-    throw new Error('Account name must contain 1–80 characters and no control characters.')
-  }
-  return name
-}
-
-/** Only account names and selection live here; Claude owns all credential contents. */
+/** Only account IDs and selection live here; Claude owns all credential contents. */
 export class ClaudeAccountStore {
   private registry: Registry | null = null
   private queue: Promise<unknown> = Promise.resolve()
@@ -59,13 +45,15 @@ export class ClaudeAccountStore {
   private load = async (): Promise<Registry> => {
     if (this.registry) return this.registry
     const text = await this.storage.read()
-    const value: Registry = text
-      ? JSON.parse(text)
-      : { activeId: claudeDefaultAccountId, accounts: [] }
-    if (!Array.isArray(value.accounts)) throw new Error('Invalid Claude account registry.')
-    for (const account of [...value.accounts, ...(value.pending ? [value.pending] : [])]) {
-      requireClaudeAccountId(account.id)
-      normalizeName(account.name)
+    const stored = text ? JSON.parse(text) : { activeId: claudeDefaultAccountId, accounts: [] }
+    if (!Array.isArray(stored.accounts)) throw new Error('Invalid Claude account registry.')
+    // Discard legacy custom labels without changing IDs, selection, or credentials.
+    const value: Registry = {
+      activeId: stored.activeId,
+      accounts: stored.accounts.map((account: Account) => ({
+        id: requireClaudeAccountId(account.id)
+      })),
+      ...(stored.pending ? { pending: { id: requireClaudeAccountId(stored.pending.id) } } : {})
     }
     if (
       value.activeId !== claudeDefaultAccountId &&
@@ -79,8 +67,9 @@ export class ClaudeAccountStore {
     if (value.pending) {
       await this.storage.removeCredentials(value.pending.id)
       delete value.pending
-      await this.storage.write(JSON.stringify(value))
     }
+    if (text && JSON.stringify(stored) !== JSON.stringify(value))
+      await this.storage.write(JSON.stringify(value))
     this.registry = value
     return value
   }
@@ -93,10 +82,10 @@ export class ClaudeAccountStore {
   private configuration = (value: Registry): ProviderAccountConfiguration => ({
     available: true,
     unavailableMessage: null,
-    accounts: [
-      { id: claudeDefaultAccountId, name: 'Default' },
-      ...[...value.accounts].sort((a, b) => a.name.localeCompare(b.name))
-    ].map((account) => ({ ...account, active: account.id === value.activeId }))
+    accounts: [{ id: claudeDefaultAccountId }, ...value.accounts].map((account) => ({
+      ...account,
+      active: account.id === value.activeId
+    }))
   })
 
   get = (): Promise<ProviderAccountConfiguration> =>
@@ -139,25 +128,33 @@ export class ClaudeAccountStore {
       return token
     })
 
+  getAccountAccessToken = (id: string, env: NodeJS.ProcessEnv): Promise<string | null> =>
+    this.serialize(async () => {
+      const value = await this.load()
+      if (id !== claudeDefaultAccountId && !value.accounts.some((account) => account.id === id))
+        return null
+      if (id === claudeDefaultAccountId && env.CLAUDE_CODE_OAUTH_TOKEN)
+        return env.CLAUDE_CODE_OAUTH_TOKEN
+      const content = await this.storage.readCredentials(id)
+      try {
+        const token = content ? JSON.parse(content)?.claudeAiOauth?.accessToken : null
+        return typeof token === 'string' && token ? token : null
+      } catch {
+        return null
+      }
+    })
+
   getPending = (): Promise<Account | null> =>
     this.serialize(async () => (await this.load()).pending ?? null)
 
   credentialDirectory = (id: string): string =>
     this.storage.credentialDirectory(requireClaudeAccountId(id))
 
-  create = (nameValue: string): Promise<{ accountId: string }> =>
+  create = (): Promise<{ accountId: string }> =>
     this.serialize(async () => {
       const value = await this.load()
       if (value.pending) throw new Error('Finish or cancel the current Claude sign-in first.')
-      const name = normalizeName(nameValue)
-      if (
-        value.accounts.some(
-          (account) => account.name.toLocaleLowerCase() === name.toLocaleLowerCase()
-        )
-      ) {
-        throw new Error('An account with this name already exists.')
-      }
-      const pending = { id: randomUUID(), name }
+      const pending = { id: randomUUID() }
       await this.storage.createCredentials(pending.id)
       await this.save({ ...value, pending })
       return { accountId: pending.id }

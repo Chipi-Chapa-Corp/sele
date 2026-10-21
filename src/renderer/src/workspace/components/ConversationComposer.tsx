@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { getComposerDraftScopeKey } from '../../composerDraft'
 import { BellOff, Download, FolderPlus, PackagePlus, X } from 'lucide-react'
@@ -17,6 +17,15 @@ import { getRequestErrorPresentation } from '../../requestError'
 type ConversationComposerProps = WorkspaceController['conversationComposer']
 
 export function ConversationComposer(props: ConversationComposerProps): ReactElement {
+  const [narrowLayout, setNarrowLayout] = useState(
+    () => window.matchMedia('(max-width: 50rem)').matches
+  )
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 50rem)')
+    const update = (): void => setNarrowLayout(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
   const {
     authenticationRequired,
     handleOpenChatReauthentication,
@@ -469,6 +478,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             chatId={selectedChat?.id}
             contextUsage={messageBoxContextUsage}
             displayUsage={effectiveAppSettings.chat.displayUsage}
+            showUsageIndicator={narrowLayout}
             draftProjectKey={terminalWorkspaceKey}
             draftScopeKey={getComposerDraftScopeKey(
               activeSubagentChatView

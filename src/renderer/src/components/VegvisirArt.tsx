@@ -13,8 +13,9 @@ const getStrokeLengths = (): number[] => {
   return strokeLengths
 }
 
-export function VegvisirArt(): ReactElement {
+export function VegvisirArt({ active = true }: { active?: boolean }): ReactElement {
   const hostRef = useRef<HTMLDivElement>(null)
+  const workerRef = useRef<Worker | null>(null)
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
   )
@@ -33,7 +34,7 @@ export function VegvisirArt(): ReactElement {
 
   useEffect(() => {
     const host = hostRef.current
-    if (!host || reducedMotion) return
+    if (!host || reducedMotion || !active) return
 
     const setAngle = (length: number): void => {
       host.style.setProperty('--vegvisir-angle', `${length * 6}deg`)
@@ -48,7 +49,7 @@ export function VegvisirArt(): ReactElement {
     }
     document.addEventListener('input', onInput)
     return () => document.removeEventListener('input', onInput)
-  }, [reducedMotion])
+  }, [active, reducedMotion])
 
   useEffect(() => {
     const host = hostRef.current
@@ -59,25 +60,14 @@ export function VegvisirArt(): ReactElement {
     canvas.setAttribute('aria-hidden', 'true')
     host.append(canvas)
     let worker: Worker | undefined
-    let resizeObserver: ResizeObserver | undefined
-    let themeObserver: MutationObserver | undefined
     const dispose = (): void => {
       worker?.terminate()
-      resizeObserver?.disconnect()
-      themeObserver?.disconnect()
-      window.removeEventListener('resize', updateAppearance)
+      if (workerRef.current === worker) workerRef.current = null
       canvas.remove()
-    }
-    const updateAppearance = (): void => {
-      const size = host.getBoundingClientRect().width
-      worker?.postMessage({
-        type: 'appearance',
-        size: Math.min(2048, Math.max(1, Math.round(size * window.devicePixelRatio))),
-        color: getComputedStyle(host).color
-      })
     }
     try {
       worker = new VegvisirWorker()
+      workerRef.current = worker
       worker.onerror = (event) => {
         console.error('Unable to animate new-chat artwork:', event.message)
         dispose()
@@ -85,15 +75,6 @@ export function VegvisirArt(): ReactElement {
       }
       const surface = canvas.transferControlToOffscreen()
       worker.postMessage({ type: 'init', canvas: surface, lengths: getStrokeLengths() }, [surface])
-      updateAppearance()
-      resizeObserver = new ResizeObserver(updateAppearance)
-      resizeObserver.observe(host)
-      themeObserver = new MutationObserver(updateAppearance)
-      themeObserver.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ['data-color-scheme', 'style', 'class']
-      })
-      window.addEventListener('resize', updateAppearance)
     } catch (error) {
       console.error('Unable to initialize new-chat artwork:', error)
       dispose()
@@ -101,6 +82,38 @@ export function VegvisirArt(): ReactElement {
     }
     return dispose
   }, [staticArt])
+
+  useEffect(() => {
+    const host = hostRef.current
+    const worker = workerRef.current
+    if (!host || !worker || staticArt) return
+    worker.postMessage({ type: 'active', active })
+    if (!active) return
+    const updateAppearance = (): void => {
+      const size = host.getBoundingClientRect().width
+      worker.postMessage({
+        type: 'appearance',
+        size: Math.min(2048, Math.max(1, Math.round(size * window.devicePixelRatio))),
+        color: getComputedStyle(host).color
+      })
+    }
+    // ResizeObserver supplies the initial size after layout. Reading here would
+    // force synchronous layout during the conversation-to-composer commit.
+    const resizeObserver = new ResizeObserver(updateAppearance)
+    resizeObserver.observe(host)
+    const themeObserver = new MutationObserver(updateAppearance)
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-color-scheme', 'style', 'class']
+    })
+    window.addEventListener('resize', updateAppearance)
+    return () => {
+      worker.postMessage({ type: 'active', active: false })
+      resizeObserver.disconnect()
+      themeObserver.disconnect()
+      window.removeEventListener('resize', updateAppearance)
+    }
+  }, [active, staticArt])
 
   return (
     <div ref={hostRef} className="chat-panel__new-chat-vegvisir" aria-hidden="true">

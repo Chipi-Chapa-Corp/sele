@@ -158,8 +158,8 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.reauthenticateAccount, providerId, options),
   getAccounts: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getAccounts, providerId, options),
-  createAccount: (providerId, name, options) =>
-    ipcRenderer.invoke(providerIpcChannels.createAccount, providerId, name, options),
+  createAccount: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.createAccount, providerId, options),
   completeAccountCreation: (providerId, accountId, loginId, options) =>
     ipcRenderer.invoke(
       providerIpcChannels.completeAccountCreation,
@@ -405,6 +405,8 @@ const providerApi: ProviderRendererApi = {
       message,
       options
     ),
+  updateChatPermissions: (providerId, chatId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.updateChatPermissions, providerId, chatId, options),
   resolveApproval: (providerId, chatId, decision) =>
     ipcRenderer.invoke(providerIpcChannels.resolveApproval, providerId, chatId, decision),
   resolveUserInput: (providerId, chatId, requestId, response, options) =>

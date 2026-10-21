@@ -66,7 +66,9 @@ if (!process.versions.electron) {
               const thought = {type:'message', id:'thought', kind:'reasoning', status:stage === 'thinking' ? 'inProgress' : 'completed',
                 content:unloaded ? '' : ('A **careful** thought with enough text to scroll.\\n\\n').repeat(80), contentLoaded:!unloaded}
               const item = {type:'working', id:'thought-work', status:stage === 'stopped' ? 'stopped' : stage === 'finished' ? 'worked' : 'working', items:[
-                {type:'message', id:'ordinary', content:'Ordinary progress message'}, thought
+                {type:'message', id:'ordinary', content:'Ordinary progress message'},
+                {type:'tool', id:'thought-command', activity:'command', status:'finished', label:'Ran command',
+                  toolId:'exec_command', command:'echo checked', stdout:'checked', diffs:[], images:[]}, thought
               ]}
               flushSync(() => root.render(<ChatDetailItem key="thought-fixture" item={item}
                 onLoadWorkingItem={async () => {window.thoughtLoads = (window.thoughtLoads || 0) + 1; window.renderThought('finished')}}
@@ -282,6 +284,35 @@ if (!process.versions.electron) {
       assert.equal(thought.label, 'Thinking')
       assert.equal(thought.open, false)
       assert.equal(thought.ordinary, 'Ordinary progress message')
+      assert.deepEqual(
+        await run(`(() => {
+          const thought = document.querySelector('.chat-detail__thought')
+          const command = document.querySelector('.chat-detail__tool-group:not(.chat-detail__thought)')
+          const summary = thought.querySelector('summary')
+          const commandSummary = command.querySelector('summary')
+          return {
+            border: getComputedStyle(thought).borderWidth,
+            padding: getComputedStyle(summary).padding,
+            sameHeight: summary.getBoundingClientRect().height === commandSummary.getBoundingClientRect().height,
+            sameLabelOffset: summary.querySelector('.chat-detail__tool-label').getBoundingClientRect().x === commandSummary.querySelector('.chat-detail__tool-label').getBoundingClientRect().x,
+            compactSummary: summary.getBoundingClientRect().width < thought.getBoundingClientRect().width
+          }
+        })()`),
+        {
+          border: '0px',
+          padding: '0px',
+          sameHeight: true,
+          sameLabelOffset: true,
+          compactSummary: true
+        },
+        'thoughts use the same compact, borderless disclosure row as commands'
+      )
+      if (process.env.SELE_THOUGHT_SCREENSHOT) {
+        await fs.writeFile(
+          process.env.SELE_THOUGHT_SCREENSHOT.replace(/\.png$/, '-collapsed.png'),
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
       await run("document.querySelector('.chat-detail__thought > summary').click()")
       await settle()
       thought = await thoughtState()

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { FolderKanban, FolderTree } from 'lucide-react'
 import type { ProviderMessage } from '../../../shared/provider'
-import { ChatListGroup, type ChatListGroupData } from '../components/ChatListGroup'
+import { AnimatedChatListGroup, type ChatListGroupData } from '../components/ChatListGroup'
 import { Dropdown } from '../components/Dropdown'
 import { providerApi } from '../providerApi'
 import { renderProjectGlyph } from '../projectPresentation'
@@ -50,21 +50,6 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     draggedProjectGroupKey,
     projectNamesByCwd,
     handleDoneProjectFilterChange,
-    handleLoadMoreChatsInGroup,
-    handleShowLessChatsInGroup,
-    handleMarkChatDone,
-    restoreExpandedProjectsAfterDrag,
-    handleProjectDragStart,
-    handleMarkCwdChatsDone,
-    handleNewChatInCwd,
-    handleRenameChat,
-    handleSelectProjectIcon,
-    handleResolveChatApproval,
-    handleReorderChats,
-    handleSelectChat,
-    handleToggleCwdGroup,
-    handleToggleChatPinned,
-    handleUnpinPinnedChats,
     resolvingApprovalId,
     chatDetail,
     sendState,
@@ -79,6 +64,64 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     runPromptActionRef,
     handleSendMessage
   } = dependencies
+
+  // Memoized groups must always invoke handlers from the latest committed workspace.
+  const sidebarActionsRef = useRef(dependencies)
+  useLayoutEffect(() => {
+    sidebarActionsRef.current = dependencies
+  })
+  const sidebarActions = useMemo(
+    () => ({
+      onLoadMoreChats: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleLoadMoreChatsInGroup']>
+      ) => sidebarActionsRef.current.handleLoadMoreChatsInGroup(...args),
+      onShowLessChats: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleShowLessChatsInGroup']>
+      ) => sidebarActionsRef.current.handleShowLessChatsInGroup(...args),
+      onMarkChatDone: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleMarkChatDone']>
+      ) => sidebarActionsRef.current.handleMarkChatDone(...args),
+      onProjectDragEnd: (
+        ...args: Parameters<
+          ChatInteractionControllerDependencies['restoreExpandedProjectsAfterDrag']
+        >
+      ) => sidebarActionsRef.current.restoreExpandedProjectsAfterDrag(...args),
+      onProjectDragStart: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleProjectDragStart']>
+      ) => sidebarActionsRef.current.handleProjectDragStart(...args),
+      onMarkCwdChatsDone: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleMarkCwdChatsDone']>
+      ) => sidebarActionsRef.current.handleMarkCwdChatsDone(...args),
+      onNewChatInCwd: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleNewChatInCwd']>
+      ) => sidebarActionsRef.current.handleNewChatInCwd(...args),
+      onRenameChat: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleRenameChat']>
+      ) => sidebarActionsRef.current.handleRenameChat(...args),
+      onSelectProjectIcon: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleSelectProjectIcon']>
+      ) => sidebarActionsRef.current.handleSelectProjectIcon(...args),
+      onResolveApproval: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleResolveChatApproval']>
+      ) => sidebarActionsRef.current.handleResolveChatApproval(...args),
+      onReorderChats: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleReorderChats']>
+      ) => sidebarActionsRef.current.handleReorderChats(...args),
+      onSelectChat: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleSelectChat']>
+      ) => sidebarActionsRef.current.handleSelectChat(...args),
+      onToggle: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleToggleCwdGroup']>
+      ) => sidebarActionsRef.current.handleToggleCwdGroup(...args),
+      onToggleChatPinned: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleToggleChatPinned']>
+      ) => sidebarActionsRef.current.handleToggleChatPinned(...args),
+      onUnpinPinnedChats: (
+        ...args: Parameters<ChatInteractionControllerDependencies['handleUnpinPinnedChats']>
+      ) => sidebarActionsRef.current.handleUnpinPinnedChats(...args)
+    }),
+    []
+  )
 
   // Chat summaries and selection change far more often than project icons.
   // Depend on the directory set, not the freshly grouped chat objects: new icon
@@ -218,7 +261,8 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     contentId: string,
     selectedChatChildren: React.ReactNode = null,
     selectedChatChildOpen = false,
-    workingSubagentChatKeys?: ReadonlySet<string>
+    workingSubagentChatKeys?: ReadonlySet<string>,
+    layoutOrder?: string
   ): React.ReactElement => {
     const groupOpen =
       searchTerms.length > 0 || !getCollapsedGroupState(group.key, collapsedCwdGroups)
@@ -284,12 +328,17 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       )
 
     return (
-      <ChatListGroup
+      <AnimatedChatListGroup
+        layoutOrder={layoutOrder}
         contentId={contentId}
         group={group}
         key={group.key}
         open={groupOpen}
-        selectedChatKey={selectedChat ? getChatKey(selectedChat) : null}
+        selectedChatKey={
+          selectedChat && group.chats.some((chat) => getChatKey(chat) === getChatKey(selectedChat))
+            ? getChatKey(selectedChat)
+            : null
+        }
         workingSubagentChatKeys={workingSubagentChatKeys}
         committingChatKeys={committingChatKeys}
         latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
@@ -304,22 +353,22 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         headerAction={doneProjectFilter}
         projectNamesByCwd={projectNamesByCwd}
         projectIconsByCwd={projectIconsByCwd}
-        onLoadMoreChats={group.kind === 'pinned' ? undefined : handleLoadMoreChatsInGroup}
-        onShowLessChats={group.kind === 'pinned' ? undefined : handleShowLessChatsInGroup}
+        onLoadMoreChats={group.kind === 'pinned' ? undefined : sidebarActions.onLoadMoreChats}
+        onShowLessChats={group.kind === 'pinned' ? undefined : sidebarActions.onShowLessChats}
         projectIcon={projectIconsByCwd.get(group.cwd ?? '')}
-        onMarkChatDone={handleMarkChatDone}
-        onProjectDragEnd={projectDraggable ? restoreExpandedProjectsAfterDrag : undefined}
-        onProjectDragStart={projectDraggable ? handleProjectDragStart : undefined}
-        onMarkCwdChatsDone={(nextGroup) => void handleMarkCwdChatsDone(nextGroup)}
-        onNewChatInCwd={handleNewChatInCwd}
-        onRenameChat={handleRenameChat}
-        onSelectProjectIcon={(nextGroup) => void handleSelectProjectIcon(nextGroup)}
-        onResolveApproval={(chat, decision) => void handleResolveChatApproval(chat, decision)}
-        onReorderChats={handleReorderChats}
-        onSelectChat={handleSelectChat}
-        onToggle={handleToggleCwdGroup}
-        onToggleChatPinned={handleToggleChatPinned}
-        onUnpinPinnedChats={(nextGroup) => void handleUnpinPinnedChats(nextGroup)}
+        onMarkChatDone={sidebarActions.onMarkChatDone}
+        onProjectDragEnd={projectDraggable ? sidebarActions.onProjectDragEnd : undefined}
+        onProjectDragStart={projectDraggable ? sidebarActions.onProjectDragStart : undefined}
+        onMarkCwdChatsDone={sidebarActions.onMarkCwdChatsDone}
+        onNewChatInCwd={sidebarActions.onNewChatInCwd}
+        onRenameChat={sidebarActions.onRenameChat}
+        onSelectProjectIcon={sidebarActions.onSelectProjectIcon}
+        onResolveApproval={sidebarActions.onResolveApproval}
+        onReorderChats={sidebarActions.onReorderChats}
+        onSelectChat={sidebarActions.onSelectChat}
+        onToggle={sidebarActions.onToggle}
+        onToggleChatPinned={sidebarActions.onToggleChatPinned}
+        onUnpinPinnedChats={sidebarActions.onUnpinPinnedChats}
         resolvingApprovalId={resolvingApprovalId}
         selectedChatChildren={selectedChatChildren}
         selectedChatChildOpen={selectedChatChildOpen}

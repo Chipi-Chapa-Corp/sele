@@ -7,12 +7,21 @@ import {
   PinOff,
   SquarePen
 } from 'lucide-react'
-import { useDeferredValue, type DragEvent, type DragEventHandler, type ReactNode } from 'react'
+import {
+  memo,
+  forwardRef,
+  useDeferredValue,
+  useMemo,
+  type DragEvent,
+  type DragEventHandler,
+  type ReactNode
+} from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { appMaxChatsRenderedDefault } from '../performanceSettings'
 import { formatProjectLabel } from '../projectPresentation'
 import { Button } from './Button'
 import { ChatList } from './ChatList'
+import { MotionListItem } from '../motion/MotionListItem'
 import { DisclosureToggle } from './DisclosureToggle'
 import './ChatListGroup.css'
 
@@ -25,7 +34,7 @@ export type ChatListGroupData = {
   kind: 'pinned' | 'cwd' | 'active' | 'done' | 'imported'
 }
 
-type ChatListGroupProps = {
+export type ChatListGroupProps = {
   contentId: string
   group: ChatListGroupData
   open: boolean
@@ -65,7 +74,61 @@ type ChatListGroupProps = {
   selectedChatChildOpen?: boolean
 }
 
-export const ChatListGroup: React.FC<ChatListGroupProps> = ({
+// Only changes visible in this group should rebuild its list/presence tree.
+// Callback props are compared too; callers keep their dispatch stable and current.
+export const areChatListGroupPropsEqual = (
+  previous: ChatListGroupProps,
+  next: ChatListGroupProps
+): boolean => {
+  const collections = new Set([
+    'group',
+    'workingSubagentChatKeys',
+    'committingChatKeys',
+    'latestCommitFinishedAtByChatKey',
+    'projectNamesByCwd',
+    'projectIconsByCwd'
+  ])
+  for (const key of Object.keys({ ...previous, ...next }) as (keyof ChatListGroupProps)[]) {
+    if (!collections.has(key) && previous[key] !== next[key]) return false
+  }
+  const before = previous.group
+  const after = next.group
+  if (
+    before !== after &&
+    (before.key !== after.key ||
+      before.cwd !== after.cwd ||
+      before.label !== after.label ||
+      before.kind !== after.kind ||
+      before.projectName !== after.projectName ||
+      before.chats.length !== after.chats.length ||
+      (before.chats !== after.chats &&
+        before.chats.some((chat, index) => chat !== after.chats[index])))
+  )
+    return false
+  for (const chat of after.chats) {
+    const key = `${chat.providerId}:${chat.id}`
+    const cwd = chat.projectCwd ?? chat.cwd ?? ''
+    if (
+      (previous.workingSubagentChatKeys !== next.workingSubagentChatKeys &&
+        Boolean(previous.workingSubagentChatKeys?.has(key)) !==
+          Boolean(next.workingSubagentChatKeys?.has(key))) ||
+      (previous.committingChatKeys !== next.committingChatKeys &&
+        Boolean(previous.committingChatKeys?.has(key)) !==
+          Boolean(next.committingChatKeys?.has(key))) ||
+      (previous.latestCommitFinishedAtByChatKey !== next.latestCommitFinishedAtByChatKey &&
+        previous.latestCommitFinishedAtByChatKey?.get(key) !==
+          next.latestCommitFinishedAtByChatKey?.get(key)) ||
+      (previous.projectNamesByCwd !== next.projectNamesByCwd &&
+        previous.projectNamesByCwd?.get(cwd) !== next.projectNamesByCwd?.get(cwd)) ||
+      (previous.projectIconsByCwd !== next.projectIconsByCwd &&
+        previous.projectIconsByCwd?.get(cwd) !== next.projectIconsByCwd?.get(cwd))
+    )
+      return false
+  }
+  return true
+}
+
+export const ChatListGroup = memo(function ChatListGroup({
   contentId,
   group,
   open,
@@ -103,13 +166,16 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
   resolvingApprovalId = null,
   selectedChatChildren = null,
   selectedChatChildOpen = false
-}) => {
+}: ChatListGroupProps) {
   const projectLike = group.kind === 'cwd' || group.kind === 'imported'
   const groupLabel =
     group.kind === 'cwd'
       ? group.projectName?.trim() || formatProjectLabel(group.label)
       : group.label
-  const visibleChats = group.chats.slice(0, visibleChatCount)
+  const visibleChats = useMemo(
+    () => group.chats.slice(0, visibleChatCount),
+    [group.chats, visibleChatCount]
+  )
   const deferredOpen = useDeferredValue(open)
   const renderItems = !deferItems || deferredOpen
   const remainingChatCount = Math.max(0, group.chats.length - visibleChats.length)
@@ -294,4 +360,19 @@ export const ChatListGroup: React.FC<ChatListGroupProps> = ({
       )}
     </section>
   )
-}
+}, areChatListGroupPropsEqual)
+
+// Keep the group animation boundary memoized too. Otherwise every workspace update
+// schedules Motion's projection tree even when the group's children can bail out.
+export const AnimatedChatListGroup = memo(
+  forwardRef<HTMLDivElement, ChatListGroupProps & { layoutOrder?: string }>(
+    function AnimatedChatListGroup({ layoutOrder, ...props }, ref) {
+      return (
+        <MotionListItem ref={ref} order={layoutOrder ?? props.group.key} popLayout>
+          <ChatListGroup {...props} />
+        </MotionListItem>
+      )
+    }
+  ),
+  areChatListGroupPropsEqual
+)

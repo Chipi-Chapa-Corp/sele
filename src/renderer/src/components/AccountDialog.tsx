@@ -19,7 +19,7 @@ type AccountDialogProps = {
   reauthenticate?: boolean
   providerLabel: string
   onClose: () => void
-  onLogin: (name: string) => Promise<AccountAuthorizationSession>
+  onLogin: () => Promise<AccountAuthorizationSession>
 }
 
 export const AccountDialog = ({
@@ -28,11 +28,9 @@ export const AccountDialog = ({
   onClose,
   onLogin
 }: AccountDialogProps): ReactElement => {
-  const inputRef = useRef<HTMLInputElement>(null)
   const mounted = useRef(true)
   const authorizationRef = useRef<AccountAuthorizationSession | null>(null)
   const cancelingRef = useRef(false)
-  const [name, setName] = useState('')
   const [phase, setPhase] = useState<'idle' | 'starting' | 'authorizing' | 'canceling'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [userCode, setUserCode] = useState<string | null>(null)
@@ -43,10 +41,8 @@ export const AccountDialog = ({
 
   useEffect(() => {
     mounted.current = true
-    const frame = window.requestAnimationFrame(() => inputRef.current?.focus())
     return () => {
       mounted.current = false
-      window.cancelAnimationFrame(frame)
       void authorizationRef.current?.cancel().catch((error: unknown) => {
         console.error('Unable to cancel sign-in after closing the account dialog.', error)
       })
@@ -55,17 +51,12 @@ export const AccountDialog = ({
 
   const handleLogin = async (): Promise<void> => {
     if (phase !== 'idle') return
-    if (!reauthenticate && !name.trim()) {
-      setError('Account name is required.')
-      return
-    }
-
     setPhase('starting')
     setCode('')
     cancelingRef.current = false
     setError(null)
     try {
-      const session = await onLogin(name)
+      const session = await onLogin()
       if (!mounted.current) {
         void session.completion.catch((error: unknown) => {
           console.warn('Account authorization ended after closing its dialog.', error)
@@ -96,18 +87,17 @@ export const AccountDialog = ({
     }
   }
 
-  const startReauthenticationRef = useRef(handleLogin)
-  const reauthenticationStartedRef = useRef(false)
+  const startSignInRef = useRef(handleLogin)
+  const signInStartedRef = useRef(false)
   useEffect(() => {
-    if (!reauthenticate) return
     // Start once on opening; rerenders must not create another OAuth flow.
     queueMicrotask(() => {
-      if (mounted.current && !reauthenticationStartedRef.current) {
-        reauthenticationStartedRef.current = true
-        void startReauthenticationRef.current()
+      if (mounted.current && !signInStartedRef.current) {
+        signInStartedRef.current = true
+        void startSignInRef.current()
       }
     })
-  }, [reauthenticate])
+  }, [])
 
   const handleCancel = async (): Promise<void> => {
     if (phase !== 'authorizing' || !authorization) return
@@ -204,7 +194,7 @@ export const AccountDialog = ({
             ) : reauthenticate ? (
               <span>Sign in again</span>
             ) : (
-              <label htmlFor="account-dialog-name">Name</label>
+              <span>Sign in</span>
             )}
             {phase === 'idle' && (
               <Button
@@ -250,23 +240,12 @@ export const AccountDialog = ({
                 </>
               )}
             </div>
-          ) : reauthenticate ? (
-            <p>
-              Your {providerLabel} session expired. Sign in again to continue this conversation.
-            </p>
           ) : (
-            <Input
-              id="account-dialog-name"
-              ref={inputRef}
-              value={name}
-              disabled={phase !== 'idle'}
-              maxLength={80}
-              placeholder="Account name"
-              onChange={(event) => {
-                setName(event.currentTarget.value)
-                setError(null)
-              }}
-            />
+            <p>
+              {phase === 'starting'
+                ? `Starting ${providerLabel} sign-in…`
+                : `Sign in to ${providerLabel} to ${reauthenticate ? 'continue this conversation' : 'add your account'}.`}
+            </p>
           )}
           {error && (
             <p className="account-dialog__error" role="alert">
@@ -303,7 +282,7 @@ export const AccountDialog = ({
             ) : (
               <Button
                 callback={handleLogin}
-                disabled={phase !== 'idle' || (!reauthenticate && !name.trim())}
+                disabled={phase !== 'idle'}
                 icon={<LogIn aria-hidden="true" />}
                 label={
                   phase === 'starting' ? 'Starting…' : reauthenticate ? 'Sign in again' : 'Log In'

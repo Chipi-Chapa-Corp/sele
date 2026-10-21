@@ -26,23 +26,35 @@ export const compareChatsBySidebarOrder = (
   return getChatKey(firstChat).localeCompare(getChatKey(secondChat))
 }
 
+// Metadata changes in one project should not sort every other project's history.
+const containsSameChats = <Chat>(chats: Chat[], previous?: Chat[]): previous is Chat[] => {
+  if (!previous || chats.length !== previous.length) return false
+  if (chats === previous) return true
+  const entries = new Set(chats)
+  return entries.size === previous.length && previous.every((chat) => entries.has(chat))
+}
+
 export const sortChatsForSidebarSection = <Chat extends SidebarOrderedChat>(
-  chats: Chat[]
-): Chat[] => [...chats].sort(compareChatsBySidebarOrder)
+  chats: Chat[],
+  previous?: Chat[]
+): Chat[] =>
+  containsSameChats(chats, previous) ? previous : [...chats].sort(compareChatsBySidebarOrder)
 
 type DoneChat = Pick<ProviderChat, 'providerId' | 'id' | 'createdAt' | 'doneAt'>
 
-export const sortDoneChats = <Chat extends DoneChat>(chats: Chat[]): Chat[] =>
-  [...chats].sort((first, second) => {
-    // Older installations did not record completion times. Keep those chats below
-    // timestamped completions, with a stable creation-time fallback.
-    const difference = (second.doneAt ?? 0) - (first.doneAt ?? 0)
-    return (
-      difference ||
-      second.createdAt - first.createdAt ||
-      getChatKey(first).localeCompare(getChatKey(second))
-    )
-  })
+export const sortDoneChats = <Chat extends DoneChat>(chats: Chat[], previous?: Chat[]): Chat[] =>
+  containsSameChats(chats, previous)
+    ? previous
+    : [...chats].sort((first, second) => {
+        // Older installations did not record completion times. Keep those chats below
+        // timestamped completions, with a stable creation-time fallback.
+        const difference = (second.doneAt ?? 0) - (first.doneAt ?? 0)
+        return (
+          difference ||
+          second.createdAt - first.createdAt ||
+          getChatKey(first).localeCompare(getChatKey(second))
+        )
+      })
 
 type SidebarProjectGroup = {
   key: string

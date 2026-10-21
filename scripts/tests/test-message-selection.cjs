@@ -11,10 +11,19 @@ if (!process.versions.electron) {
       await require('esbuild').build({
         stdin: {
           contents: `
-            import React from 'react'
+            import React, {useRef} from 'react'
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import { MarkdownMessage } from './src/renderer/src/components/ChatDetailItem'
+            import {usePatchedHtml} from './src/renderer/src/markdownDomPatch'
+            const templateRoot=createRoot(document.getElementById('templates'))
+            function PatchedFixture({html,settled}) {
+              const ref=useRef(null)
+              usePatchedHtml(ref,html,settled)
+              return <div ref={ref}/>
+            }
+            window.mountTemplate=(html,settled,key)=>flushSync(()=>templateRoot.render(
+              <React.StrictMode><PatchedFixture key={key} html={html} settled={settled}/></React.StrictMode>))
             const root = createRoot(document.getElementById('root'))
             window.state = { before: 'Earlier answer with stable words.', content: '', streaming: true }
             window.renderFixture = (patch = {}) => {
@@ -57,7 +66,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        `<!doctype html><html><div id="root"></div><script>window.appApi = {}</script><script src="fixture.js"></script></html>`
+        `<!doctype html><html><div id="root"></div><div id="templates"></div><script>window.appApi = {}</script><script src="fixture.js"></script></html>`
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
@@ -80,6 +89,8 @@ if (!process.versions.electron) {
   })
 } else {
   const { app, BrowserWindow } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'profile'))
+  app.disableHardwareAcceleration()
   app.whenReady().then(async () => {
     let code = 0
     try {
@@ -203,6 +214,43 @@ if (!process.versions.electron) {
 
       await stream(content, false)
       assert.equal(await selection(), crossing, 'selection after streaming completes')
+      const templates = await run(`(() => {
+        const property=Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML');
+        let parses=0;
+        Object.defineProperty(Element.prototype,'innerHTML',{...property,set(value){
+          if(this instanceof HTMLTemplateElement)parses++;
+          property.set.call(this,value);
+        }});
+        try {
+          const html='<p>Cached **source**</p><img src="data:image/png;base64," alt="original">';
+          mountTemplate(html,true,'first');
+          const first=document.querySelector('#templates p');
+          first.textContent='Mutated live DOM';
+          document.querySelector('#templates img').alt='hydrated';
+          const firstParses=parses;
+          mountTemplate(html,true,'second');
+          const cachedParses=parses-firstParses;
+          const fresh=document.querySelector('#templates p');
+          const result={firstParses,cachedParses,distinct:first!==fresh,text:fresh.textContent,
+            alt:document.querySelector('#templates img').alt};
+          const beforeStreaming=parses;
+          mountTemplate(html,false,'stream-one');
+          mountTemplate(html,false,'stream-two');
+          result.streamingParses=parses-beforeStreaming;
+          mountTemplate('<p>Edited source</p>',true,'edited');
+          result.edited=document.querySelector('#templates p').textContent;
+          return result;
+        } finally {Object.defineProperty(Element.prototype,'innerHTML',property)}
+      })()`)
+      assert.deepEqual(templates, {
+        firstParses: 1,
+        cachedParses: 0,
+        distinct: true,
+        text: 'Cached **source**',
+        alt: 'original',
+        streamingParses: 2,
+        edited: 'Edited source'
+      })
       assert.deepEqual(errors, [])
       console.log('Selection checks passed: settled, growing, fading, cross-message, completion')
     } catch (error) {

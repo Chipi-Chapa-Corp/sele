@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import vm from 'node:vm'
+import ts from 'typescript'
 import { ClaudeHistoryPages } from './ClaudeHistoryPages.ts'
-import { openClaudeHistorySource } from './ClaudeHistorySource.ts'
+import { claudeHistoryBlockSize, openClaudeHistorySource } from './ClaudeHistorySource.ts'
 import { restoreClaudeHistory } from './ClaudeHistory.ts'
-import { renderClaudeChatItems } from './ClaudeItemRenderers.ts'
+import { classifyClaudeTurnRecord, renderClaudeChatItems } from './ClaudeItemRenderers.ts'
 import { getProviderChatTurns } from '../../../shared/chatTurns.ts'
 const sessionId = randomUUID()
 const record = (type, uuid, parentUuid, content, extra = {}) => ({
@@ -182,6 +185,80 @@ test('large selected records, UTF-8 block splits and partial final writes preser
       .slice(-10)
       .flatMap((t) => t.items)
   )
+})
+
+test('tool-heavy pages bound cumulative recovery input and match full SDK history', async () => {
+  // Instrument the real reader method while retaining the real SDK branch recovery.
+  const source = ts.createSourceFile(
+    'ClaudeHistoryPages.ts',
+    readFileSync(new URL('./ClaudeHistoryPages.ts', import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true
+  )
+  const declaration = source.statements.find(
+    (node) => ts.isClassDeclaration(node) && node.name?.text === 'ClaudeHistoryPages'
+  )
+  const method = declaration.members.find((node) => node.name?.getText(source) === 'readBoundary')
+  let recoveredBytes = 0
+  let recoveries = 0
+  const reader = vm.runInNewContext(
+    ts.transpile(`new class { ${method.getText(source)} }`, { target: ts.ScriptTarget.ES2022 }),
+    {
+      Buffer,
+      JSON,
+      console,
+      claudeHistoryBlockSize,
+      classifyClaudeTurnRecord,
+      restoreClaudeHistory: async (...args) => {
+        recoveries++
+        recoveredBytes += args[1].reduce(
+          (total, entry) => total + Buffer.byteLength(JSON.stringify(entry)) + 1,
+          0
+        )
+        return restoreClaudeHistory(...args)
+      }
+    }
+  )
+  const entries = []
+  let parent = null
+  const add = (type, uuid, content) => {
+    entries.push(record(type, uuid, parent, content))
+    parent = uuid
+  }
+  for (let turn = 0; turn < 15; turn++) {
+    add('user', `u${turn}`, `Prompt ${turn}`)
+    for (let tool = 0; tool < 100; tool++) {
+      const id = `tool-${turn}-${tool}`
+      add('assistant', `call-${id}`, [
+        { type: 'tool_use', id, name: 'Read', input: { file_path: '/fixture' } }
+      ])
+      add('user', `result-${id}`, [
+        { type: 'tool_result', tool_use_id: id, content: 'x'.repeat(500) }
+      ])
+    }
+    add('assistant', `a${turn}`, `Answer ${turn}`)
+  }
+  const data = Buffer.from(entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n')
+  const page = await reader.readBoundary(
+    {
+      size: data.length,
+      read: async (offset, length) => data.subarray(offset, offset + length)
+    },
+    sessionId,
+    { end: data.length, limit: 10 }
+  )
+  const reference = renderClaudeChatItems(await restoreClaudeHistory(sessionId, entries), {
+    active: false,
+    stopped: false
+  })
+  assert.deepEqual(
+    items(page),
+    getProviderChatTurns(reference)
+      .slice(-10)
+      .flatMap((turn) => turn.items)
+  )
+  assert.ok(recoveredBytes < data.length * 3, `recovered ${recoveredBytes} bytes`)
+  assert.ok(recoveries < 10, `ran SDK recovery ${recoveries} times`)
 })
 
 test('real local and shell-backed range transports return the same bounded pages', async () => {

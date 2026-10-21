@@ -3,7 +3,17 @@ import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { MotionSurface } from '../motion/MotionSurface'
 import type { RefObject } from 'react'
 import { appApi } from '../appApi'
-import { Blocks, Download, Gauge, GitBranch, Globe2, MessageSquare, Sun, X } from 'lucide-react'
+import {
+  Blocks,
+  Download,
+  Gauge,
+  GitBranch,
+  Globe2,
+  PanelLeft,
+  MessageSquare,
+  Sun,
+  X
+} from 'lucide-react'
 import { version as appVersion } from '../../../../package.json'
 import { Button } from './Button'
 import { PopupWindow } from './PopupWindow'
@@ -22,6 +32,11 @@ const settingsTabOptions = [
     value: 'chat',
     label: 'Chat',
     icon: <MessageSquare aria-hidden="true" />
+  },
+  {
+    value: 'chatSidebar',
+    label: 'Chat sidebar',
+    icon: <PanelLeft aria-hidden="true" />
   },
   {
     value: 'providers',

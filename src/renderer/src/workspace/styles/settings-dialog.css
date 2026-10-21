@@ -13,11 +13,11 @@
 
 .settings-dialog {
   display: grid;
-  width: min(48rem, calc(100vw - 2rem));
+  width: min(51.125rem, calc(100vw - 2rem));
   height: min(36rem, calc(100vh - var(--settings-dialog-vertical-inset)));
-  min-width: min(38rem, calc(100vw - 2rem));
+  min-width: min(41.125rem, calc(100vw - 2rem));
   min-height: 0;
-  grid-template-columns: 10rem minmax(0, 1fr);
+  grid-template-columns: min(210px, 40%) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   border: 0.0625rem solid var(--panel-border);

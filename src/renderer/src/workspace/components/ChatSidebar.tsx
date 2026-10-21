@@ -1,6 +1,8 @@
 import { AnimatePresence } from 'motion/react'
-import { MotionListItem } from '../../motion/MotionListItem'
 import { AppUpdatePrompt } from './AppUpdatePrompt'
+import { SidebarProviderAccount } from './SidebarProviderAccount'
+import { UsageIndicator } from '../../components/UsageIndicator'
+import { getVisibleUsageBadges } from '../../usageBadges'
 import { useState, type ReactElement } from 'react'
 import type { ChatImportPreview } from '../../../../shared/chatArchive'
 import { providerApi } from '../../providerApi'
@@ -26,9 +28,10 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     handleProjectDrop,
     handleProjectStackDragOver,
     loadState,
+    providerAccount,
+    usageIndicator,
     pinnedChatGroup,
     renderChatGroup,
-    renderChatGroupingButton,
     renderSettingsButton,
     renderWindowControls,
     searchInputRef,
@@ -114,16 +117,6 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           <div className="chat-home__actions">
             <div className="chat-home__actions-left">
               <span className="chat-home__settings-action">{renderSettingsButton()}</span>
-              {renderChatGroupingButton()}
-            </div>
-            <div className="chat-home__actions-right">
-              <Button
-                theme={chromeControlTheme}
-                aria-label="New chat"
-                title="New chat"
-                callback={handleNewChat}
-                icon={<SquarePen aria-hidden="true" />}
-              />
               <Button
                 theme={chromeControlTheme}
                 aria-label="Import chat"
@@ -137,6 +130,15 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
                     <Download aria-hidden="true" />
                   )
                 }
+              />
+            </div>
+            <div className="chat-home__actions-right">
+              <Button
+                theme={chromeControlTheme}
+                aria-label="New chat"
+                title="New chat"
+                callback={handleNewChat}
+                icon={<SquarePen aria-hidden="true" />}
               />
               <Button
                 theme={chromeControlTheme}
@@ -186,12 +188,10 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           onDrop={handleProjectDrop}
         >
           {/* groupOrder drives layout changes without broadcasting each workspace render to all rows. */}
-          <AnimatePresence initial={false} mode="popLayout" presenceAffectsLayout={false}>
-            {groups.map((group) => (
-              <MotionListItem key={group.key} order={groupOrder}>
-                {renderChatGroup(group, `chat-group-${encodeURIComponent(group.key)}`)}
-              </MotionListItem>
-            ))}
+          <AnimatePresence initial={false} mode="sync" presenceAffectsLayout={false}>
+            {groups.map((group) =>
+              renderChatGroup(group, `chat-group-${encodeURIComponent(group.key)}`, groupOrder)
+            )}
           </AnimatePresence>
         </div>
         {sidebarSearch.hasMore && (
@@ -203,7 +203,32 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           />
         )}
       </div>
-      <AppUpdatePrompt />
+      <footer className="chat-sidebar__footer">
+        <AppUpdatePrompt />
+        <div className="chat-sidebar__account-row">
+          <SidebarProviderAccount
+            refreshKey={providerAccount.key}
+            providerId={providerAccount.providerId}
+            container={providerAccount.container}
+            available={providerAccount.available}
+            updating={providerAccount.updating}
+            hasVisibleLimits={
+              getVisibleUsageBadges(
+                usageIndicator.accountUsage?.rateLimits ?? [],
+                usageIndicator.contextUsage,
+                usageIndicator.displayUsage
+              ).length > 0
+            }
+            onSelect={providerAccount.onSelect}
+            onCreate={providerAccount.onCreate}
+            onDelete={providerAccount.onDelete}
+          />
+          <UsageIndicator
+            key={`${providerAccount.key}:${usageIndicator.chatId ?? ''}`}
+            {...usageIndicator}
+          />
+        </div>
+      </footer>
     </aside>
   )
 }

@@ -1,4 +1,5 @@
 import type { McpAppConnection } from '../../../shared/mcpApps'
+import { copilotAccountDisplayName } from '../AccountDisplayName'
 import { encodeCopilotHistory } from '../NativeHistoryImport'
 import { nativeHistoryFile } from '../NativeHistoryFile'
 import { record as mcpRecord } from '../../../shared/elicitation'
@@ -693,9 +694,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       throw new Error('GitHub Copilot is not authenticated. Run `copilot` and use `/login` first.')
     }
 
+    const displayName = status.login
+      ? await copilotAccountDisplayName(status.login, status.host)
+      : null
     return {
       status: 'authenticated',
-      account: { label: status.login || status.host || 'GitHub Copilot' }
+      account: {
+        label: displayName || status.login || status.host || 'GitHub Copilot',
+        displayName
+      }
     }
   }
 

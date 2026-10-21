@@ -85,3 +85,15 @@
 .settings-switch {
   justify-self: end;
 }
+.settings-dialog__limit-toggles {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.settings-dialog__limit-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}

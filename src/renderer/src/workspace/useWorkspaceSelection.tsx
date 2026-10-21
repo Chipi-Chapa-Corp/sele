@@ -1145,8 +1145,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     pendingChatScrollAnchorRef.current = null
     chatViewportAnchorRef.current = null
     previousChatScrollTopRef.current = null
-    contentRef.current?.scrollTo({ top: 0 })
-    resetDocumentScroll()
+    // The selection-key effect already resets document scroll once per navigation.
   }, [selectedChat])
   const focusSearchInput = useCallback((searchInput: HTMLInputElement | null): void => {
     if (!searchInput) return

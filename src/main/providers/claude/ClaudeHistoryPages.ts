@@ -199,7 +199,9 @@ export class ClaudeHistoryPages {
   }
 
   private async readBoundary(source: ClaudeHistorySource, sessionId: string, boundary: Boundary) {
-    const rows: Row[] = []
+    const batches: Row[][] = []
+    let nextRestoreBytes = 0
+    let rows: Row[] = []
     let position = boundary.end
     let pending: Buffer[] = []
     let messages: ClaudeTranscriptMessage[] = []
@@ -237,7 +239,15 @@ export class ClaudeHistoryPages {
         lineOffset += Buffer.byteLength(line) + 1
       }
       if (!added.length && position > 0) continue
-      rows.unshift(...added)
+      batches.push(added)
+      // Rebuilding the entire accumulated chain after every 64 KiB block is quadratic
+      // for tool-heavy turns. Double the byte budget between SDK recoveries, keeping
+      // cumulative recovery input linear and read-ahead bounded even for large records.
+      // EOF always gets a final recovery.
+      const readBytes = boundary.end - position
+      if (position > 0 && readBytes < nextRestoreBytes) continue
+      rows = batches.toReversed().flat()
+      nextRestoreBytes = readBytes * 2
       messages = await restoreClaudeHistory(
         sessionId,
         rows.map((row) => row.entry),

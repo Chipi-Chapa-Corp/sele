@@ -228,16 +228,6 @@
   color: color-mix(in srgb, var(--lead) 72%, transparent);
   background: color-mix(in srgb, var(--user-message-surface) 68%, transparent);
   box-shadow: none;
-}
-
-.chat-detail__message-block--pending-queued .chat-detail__message--user {
-  border: 0.0625rem dashed currentColor;
-  color: var(--quiet);
-  background: transparent;
-  opacity: 1;
-}
-
-.chat-detail__message-block--pending-steering .chat-detail__message--user {
   opacity: 0.82;
 }
 
@@ -542,22 +532,14 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 .chat-detail__thought {
   min-width: 0;
   max-width: 100%;
-  border: 0.0625rem solid var(--line);
-  border-radius: 0.35rem;
-}
-
-.chat-detail__thought > summary {
-  width: 100%;
-  padding: 0.45rem 0.65rem;
-  color: var(--quiet);
 }
 
 .chat-detail__thought-content {
   max-height: 21rem;
-  padding: 0.65rem;
+  margin-top: 0.5rem;
+  color: var(--lead);
   overflow: auto;
   overscroll-behavior: contain;
-  border-top: 0.0625rem solid var(--line);
 }
 
 .chat-detail__thought > summary:focus-visible,
@@ -790,7 +772,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 .chat-detail__markdown-image {
   display: block;
   width: fit-content;
-  max-width: 100%;
+  max-width: min(100%, 36rem);
   margin: 0.7em 0;
   padding: 0;
   overflow: hidden;
@@ -818,7 +800,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   display: block;
   width: auto;
   height: auto;
-  max-width: min(100%, 36rem);
+  max-width: 100%;
   max-height: min(70vh, 28rem);
   object-fit: contain;
 }

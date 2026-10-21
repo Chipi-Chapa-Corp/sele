@@ -55,6 +55,7 @@ const setup = async () => {
     version: '2.1.281',
     authenticated: true,
     usageCalls: [],
+    profileCalls: [],
     usage: async (token) => {
       fixture.usageCalls.push(token)
       return { seven_day: { utilization: token === 'fixture-default' ? 19 : 7, resets_at: null } }
@@ -112,6 +113,22 @@ const setup = async () => {
     console,
     URL,
     Buffer,
+    AbortSignal,
+    fetch: async (url, options) => {
+      assert.equal(url, 'https://api.anthropic.com/api/oauth/profile')
+      fixture.profileCalls.push(options.headers.Authorization)
+      return {
+        ok: true,
+        json: async () => ({
+          account: {
+            display_name:
+              options.headers.Authorization === 'Bearer fixture-default'
+                ? 'Personal Name'
+                : 'Work Name'
+          }
+        })
+      }
+    },
     setTimeout,
     clearTimeout,
     process: {
@@ -140,7 +157,7 @@ const setup = async () => {
 test('complete CLI sign-in keeps the shared home and activates only after verified completion', async () => {
   const h = await setup()
   try {
-    const { accountId } = await h.accounts.create('Work')
+    const { accountId } = await h.accounts.create()
     const login = await h.accounts.login()
     assert.equal(login.acceptsCode, true)
     assert.equal((await h.accounts.get()).accounts.length, 1)
@@ -155,7 +172,11 @@ test('complete CLI sign-in keeps the shared home and activates only after verifi
       (await h.accounts.getEnvironment()).CLAUDE_SECURESTORAGE_CONFIG_DIR,
       command.options.env.CLAUDE_SECURESTORAGE_CONFIG_DIR
     )
-    assert.equal(await h.accounts.getAccountLabel(), 'Work')
+    assert.equal(
+      (await h.accounts.getWithDisplayNames()).accounts.find((account) => account.active)
+        .displayName,
+      'Work Name'
+    )
     const managedUsage = await h.accounts.getUsageEnvironment()
     assert.equal(
       managedUsage.CLAUDE_SECURESTORAGE_CONFIG_DIR,
@@ -183,7 +204,7 @@ for (const named of [false, true]) {
     const h = await setup()
     try {
       if (named) {
-        const { accountId } = await h.accounts.create('Work')
+        const { accountId } = await h.accounts.create()
         await h.accounts.complete(accountId)
       }
       const before = JSON.stringify(await h.accounts.get())
@@ -209,7 +230,7 @@ for (const named of [false, true]) {
     const h = await setup()
     try {
       if (named) {
-        const { accountId } = await h.accounts.create('Work')
+        const { accountId } = await h.accounts.create()
         await h.accounts.complete(accountId)
       }
       const before = JSON.stringify(await h.accounts.get())
@@ -235,7 +256,7 @@ test('fallback caching never carries usage from Default to the added account', a
     ])
     assert.equal(defaults[0].seven_day.utilization, 19)
     assert.equal(h.fixture.usageCalls.length, 1)
-    const { accountId } = await h.accounts.create('Work')
+    const { accountId } = await h.accounts.create()
     await h.accounts.complete(accountId)
     assert.equal((await h.accounts.getUsageFallback()).seven_day.utilization, 7)
     await h.accounts.select('default')
@@ -250,7 +271,7 @@ test('a login ID cannot authorize another environment; cancel cannot activate an
   const h = await setup()
   try {
     const remote = { container: { kind: 'container', tool: 'ssh', name: 'server' } }
-    const { accountId } = await h.accounts.create('Work')
+    const { accountId } = await h.accounts.create()
     const login = await h.accounts.login()
     await assert.rejects(
       h.accounts.submitCode(login.loginId, 'fixture-code', remote),
@@ -273,11 +294,60 @@ test('old CLIs fail closed before creating a new credential store', async () => 
   try {
     h.fixture.version = '2.1.100'
     assert.equal((await h.accounts.getUsageEnvironment()).CLAUDE_CONFIG_DIR, '/shared-config')
-    await assert.rejects(h.accounts.create('Unsupported'), /2\.1\.281/)
+    await assert.rejects(h.accounts.create(), /2\.1\.281/)
     assert.equal(h.supports('2.1.280'), false)
     assert.equal(h.supports('2.1.281'), true)
     assert.equal(h.supports('2.2.0'), true)
     assert.equal(h.supports('unknown'), false)
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('display names read each account credential without activating it', async () => {
+  const h = await setup()
+  try {
+    const { accountId } = await h.accounts.create()
+    const login = await h.accounts.login()
+    await h.accounts.submitCode(login.loginId, 'fixture-code')
+    await h.accounts.complete(accountId)
+    const configuration = await h.accounts.getWithDisplayNames()
+    assert.equal(
+      configuration.accounts.find((account) => account.id === 'default').displayName,
+      'Personal Name'
+    )
+    assert.equal(
+      configuration.accounts.find((account) => account.id === accountId).displayName,
+      'Work Name'
+    )
+    assert.equal(configuration.accounts.find((account) => account.active).id, accountId)
+    assert.deepEqual(
+      h.fixture.profileCalls.sort(),
+      ['Bearer fixture-default', `Bearer fixture-${accountId}`].sort()
+    )
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('fetches display names for saved accounts that have not been selected', async () => {
+  const h = await setup()
+  try {
+    const id = '00000000-0000-4000-8000-000000000001'
+    const storage = await h.fixture.storage()
+    await storage.write(
+      JSON.stringify({ activeId: 'default', accounts: [{ id, name: 'Saved label' }] })
+    )
+    const configuration = await h.accounts.getWithDisplayNames()
+    assert.equal(
+      configuration.accounts.find((account) => account.id === id).displayName,
+      'Work Name'
+    )
+    assert.equal(configuration.accounts.find((account) => account.active).id, 'default')
+    assert.equal(
+      h.commands.some((command) => command.args[0] === 'auth'),
+      false
+    )
   } finally {
     await h.cleanup()
   }

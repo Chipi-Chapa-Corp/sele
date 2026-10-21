@@ -72,6 +72,12 @@ if (!process.versions.electron) {
             import './src/renderer/src/workspace/styles/conversation-messages-shell.css'
             import './src/renderer/src/workspace/styles/conversation-messages.css'
             import './src/renderer/src/workspace/styles/conversation-composer.css'
+            const stored = new Map()
+            window.preferencesApi = {
+              getItem: key => ({ok: true, value: stored.get(key) ?? null}),
+              setItem: (key, value) => { stored.set(key, value); return {ok: true, value: null} },
+              removeItem: key => { stored.delete(key); return {ok: true, value: null} }
+            }
             const root = createRoot(document.getElementById('root'))
             const noop = () => {}
             window.renderUsage = (provider = 'codex', chatId = 'chat') => flushSync(() => root.render(<>
@@ -88,7 +94,7 @@ if (!process.versions.electron) {
                 providerId={provider} model={fallbackProviderModels[0].id} models={fallbackProviderModels}
                 agentMode="interactive" agentModes={[]} approvalMode="never" approvalModes={fallbackProviderApprovalModes}
                 reasoningEffort="medium" serviceTier={null} sandboxMode="danger-full-access" sandboxModes={fallbackProviderSandboxModes}
-                accountUsage={{ statisticsLoaded: true, summary: {lifetimeTokens:'10000', peakDailyTokens:'5000',lifetimeCostUSD:1.25,peakDailyCostUSD:0.42,lifetimeCostSample:{tokens:1000,usdPerMillionTokens:125},peakDailyCostSample:{tokens:1000,usdPerMillionTokens:84},longestRunningTurnSec:30,currentStreakDays:1,longestStreakDays:2}, rateLimits:[], errors:[], updatedAt:1 }} accountUsageError={null} accountUsageState="ready" displayUsage="chatContext"
+                accountUsage={{ statisticsLoaded: true, summary: {lifetimeTokens:'10000', peakDailyTokens:'5000',lifetimeCostUSD:1.25,peakDailyCostUSD:0.42,lifetimeCostSample:{tokens:1000,usdPerMillionTokens:125},peakDailyCostSample:{tokens:1000,usdPerMillionTokens:84},longestRunningTurnSec:30,currentStreakDays:1,longestStreakDays:2}, rateLimits:[], errors:[], updatedAt:1 }} accountUsageError={null} accountUsageState="ready" displayUsage={{context:true,short:false,long:false}}
                 contextUsage={{source: 'exact', usedTokens: 1000, maxTokens: 200000}}
                 showActions={false} showNotesButton={false} showModelSelector={false} showAccessSelector={false}
                 showReviewSelector={false} showSpeedSelector={false} showReasoningSelector={false}
