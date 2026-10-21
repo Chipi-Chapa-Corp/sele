@@ -47,4 +47,6 @@ test('names the provider when several providers serve the same model', () => {
       }
     ]
   )
+  assert.deepEqual(models[0].modelProvider, { id: 'opencode', name: 'OpenCode Zen' })
+  assert.deepEqual(models[2].modelProvider, { id: 'anthropic', name: 'Anthropic' })
 })

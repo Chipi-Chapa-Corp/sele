@@ -261,6 +261,8 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
   getChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.getChat, providerId, chatId),
+  getChatTerminalTasks: (providerId, chatId) =>
+    ipcRenderer.invoke(providerIpcChannels.getChatTerminalTasks, providerId, chatId),
   getSubagents: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.getSubagents, providerId, chatId),
   getSubagent: (providerId, chatId, subagentId, window) =>
@@ -383,14 +385,31 @@ const providerApi: ProviderRendererApi = {
     ),
   deletePendingMessage: (providerId, chatId, messageId) =>
     ipcRenderer.invoke(providerIpcChannels.deletePendingMessage, providerId, chatId, messageId),
-  editPendingMessage: (providerId, chatId, messageId, message, options) =>
+  beginPendingMessageEdit: (providerId, chatId, messageId, editId) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.beginPendingMessageEdit,
+      providerId,
+      chatId,
+      messageId,
+      editId
+    ),
+  cancelPendingMessageEdit: (providerId, chatId, messageId, editId) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.cancelPendingMessageEdit,
+      providerId,
+      chatId,
+      messageId,
+      editId
+    ),
+  editPendingMessage: (providerId, chatId, messageId, message, options, editId) =>
     ipcRenderer.invoke(
       providerIpcChannels.editPendingMessage,
       providerId,
       chatId,
       messageId,
       message,
-      options
+      options,
+      editId
     ),
   steerPendingMessage: (providerId, chatId, messageId) =>
     ipcRenderer.invoke(providerIpcChannels.steerPendingMessage, providerId, chatId, messageId),

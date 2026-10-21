@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
   ProviderChat,
+  ProviderChatDetail,
+  ProviderId,
   ProviderWorkingItem,
   ProviderWorkingStep,
   ProviderMessage,
@@ -19,6 +21,9 @@ import { unloadWorkingStepItems } from '../../../shared/chatTurns'
 import { providerOneShotGenerationCanceledMessage } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { providerApi } from '../providerApi'
+import { getComposerDraftScopeKey } from '../composerDraft'
+import { moveComposerDraftScope, updateStoredComposerDrafts } from '../composerDraftStorage'
+import { getContainerTargetKey } from '../containerSelection'
 import { getAppGitCommitModel } from '../gitCommitModels'
 import { getApprovalAccessOptions } from '../messageBoxPreferences'
 import {
@@ -123,9 +128,50 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   } = dependencies
 
   const editRequestRef = useRef(0)
+  const editOpeningRef = useRef(false)
+  type PendingEditSession = {
+    providerId: ProviderId
+    chatId: string
+    messageId: string
+    editId: string
+    ready: Promise<ProviderChatDetail>
+    phase: 'opening' | 'editing' | 'saving'
+  }
+  const pendingEditRef = useRef<PendingEditSession | null>(null)
+  const releasePendingEdit = async (session: PendingEditSession): Promise<ProviderChatDetail> => {
+    await session.ready
+    return providerApi.cancelPendingMessageEdit(
+      session.providerId,
+      session.chatId,
+      session.messageId,
+      session.editId
+    )
+  }
   useEffect(() => {
     editRequestRef.current += 1
+    return () => {
+      editRequestRef.current += 1
+      const session = pendingEditRef.current
+      if (session) {
+        pendingEditRef.current = null
+        void releasePendingEdit(session).catch((error) =>
+          console.error('Unable to release pending message edit.', error)
+        )
+      }
+    }
   }, [selectedChatId, selectedChat?.providerId])
+  useEffect(() => {
+    const session = pendingEditRef.current
+    if (
+      session?.phase === 'editing' &&
+      (!editingMessage || editingMessage.id !== session.messageId)
+    ) {
+      pendingEditRef.current = null
+      void releasePendingEdit(session).catch((error) =>
+        console.error('Unable to release pending message edit.', error)
+      )
+    }
+  }, [editingMessage])
   const prepareEditAttachments = async (
     message: ProviderMessage | ProviderPendingMessage
   ): Promise<AppSelectedAttachment[] | null> => {
@@ -172,25 +218,93 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   )
   const handleEditPendingMessage = useCallback(
     async (message: ProviderPendingMessage): Promise<void> => {
-      if (!selectedChatId || sendInFlightRef.current) return
-
-      const attachments = await prepareEditAttachments(message)
-      if (!attachments || sendInFlightRef.current) return
-      setSendState('idle')
-      setEditingMessage({
-        attachments,
-        type: 'pending',
-        id: message.id,
-        kind: message.kind,
-        content: message.content
-      })
+      if (!selectedChat || sendInFlightRef.current || editOpeningRef.current) return
+      editOpeningRef.current = true
+      const chatKey = selectedChatKeyRef.current
+      let session: PendingEditSession | null = null
+      try {
+        const previous = pendingEditRef.current
+        if (previous) {
+          await releasePendingEdit(previous)
+          if (pendingEditRef.current === previous) pendingEditRef.current = null
+          setEditingMessage(null)
+        }
+        if (chatKey !== selectedChatKeyRef.current) return
+        const editId = crypto.randomUUID()
+        session = {
+          providerId: selectedChat.providerId,
+          chatId: selectedChat.id,
+          messageId: message.id,
+          editId,
+          phase: 'opening',
+          ready: providerApi.beginPendingMessageEdit(
+            selectedChat.providerId,
+            selectedChat.id,
+            message.id,
+            editId
+          )
+        }
+        pendingEditRef.current = session
+        const detail = await session.ready
+        if (pendingEditRef.current !== session || chatKey !== selectedChatKeyRef.current) return
+        const current = detail.items.find(
+          (item): item is ProviderPendingMessage =>
+            item.type === 'pendingMessage' && item.id === message.id
+        )
+        if (!current) throw new Error('The message is no longer pending.')
+        const attachments = await prepareEditAttachments(current)
+        if (
+          !attachments ||
+          sendInFlightRef.current ||
+          pendingEditRef.current !== session ||
+          chatKey !== selectedChatKeyRef.current
+        ) {
+          await releasePendingEdit(session)
+          if (pendingEditRef.current === session) pendingEditRef.current = null
+          return
+        }
+        applyViewedChatDetail(session.providerId, detail)
+        session.phase = 'editing'
+        setSendState('idle')
+        setEditingMessage({
+          attachments,
+          type: 'pending',
+          id: current.id,
+          kind: current.kind,
+          content: current.content,
+          editId
+        })
+      } catch (error) {
+        if (session && pendingEditRef.current === session) {
+          pendingEditRef.current = null
+          void releasePendingEdit(session).catch((releaseError) =>
+            console.error('Unable to release failed edit.', releaseError)
+          )
+        }
+        if (chatKey === selectedChatKeyRef.current)
+          handleSendFailure(error, 'Unable to edit pending message.')
+      } finally {
+        editOpeningRef.current = false
+      }
     },
-    [selectedChatId, changesContainer, changesCwd]
+    [selectedChat, changesContainer, changesCwd]
   )
-  const handleCancelEditMessage = useCallback((): void => {
+  const handleCancelEditMessage = useCallback(async (): Promise<void> => {
+    if (sendInFlightRef.current) return
     editRequestRef.current += 1
-    setSendState('idle')
-    setEditingMessage(null)
+    const session = pendingEditRef.current
+    try {
+      if (session) {
+        const detail = await releasePendingEdit(session)
+        if (pendingEditRef.current !== session) return
+        pendingEditRef.current = null
+        applyViewedChatDetail(session.providerId, detail)
+      }
+      setSendState('idle')
+      setEditingMessage(null)
+    } catch (error) {
+      handleSendFailure(error, 'Unable to resume pending message.')
+    }
   }, [])
   const normalizeTurnOptionsForModels = useCallback(
     (turnOptions: ProviderTurnOptions): ProviderTurnOptions => {
@@ -345,6 +459,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     sendTarget?: 'current' | 'new'
   ): Promise<boolean> => {
     if (
+      (configProviderId === 'opencode' && !selectedEffectiveModel) ||
       providerUpdateInProgress ||
       sendInFlightRef.current ||
       authenticationRequired ||
@@ -412,6 +527,8 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       }
 
       setSendState('sending')
+      const pendingEdit = pendingEditRef.current
+      if (pendingEdit) pendingEdit.phase = 'saving'
 
       try {
         const detail =
@@ -421,7 +538,8 @@ export function useChatMessagingController(dependencies: ChatMessagingController
                 selectedChat.id,
                 editingMessage.id,
                 serializedMessage,
-                turnOptions
+                turnOptions,
+                editingMessage.editId
               )
             : await providerApi.editMessage(
                 selectedChat.providerId,
@@ -431,11 +549,13 @@ export function useChatMessagingController(dependencies: ChatMessagingController
                 turnOptions
               )
         applyViewedChatDetail(selectedChat.providerId, detail)
+        if (pendingEditRef.current === pendingEdit) pendingEditRef.current = null
         setEditingMessage(null)
         setSendState('idle')
         return true
       } catch (error) {
         console.error('[caught:useChatMessagingController:handleSendMessage]', error)
+        if (pendingEdit && pendingEditRef.current === pendingEdit) pendingEdit.phase = 'editing'
         handleSendFailure(error, 'Unable to edit message.')
         return false
       } finally {
@@ -499,6 +619,16 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         })
         rememberStartedChatSelection(startingProviderId, detail.id, messageBoxSelection)
         const startedChatKey = getChatKey({ providerId: startingProviderId, id: detail.id })
+        if (!selectedChat) {
+          const workspaceKey = `${getContainerTargetKey(changesContainer)}\0${newSessionCwd ?? ''}`
+          updateStoredComposerDrafts((state) =>
+            moveComposerDraftScope(
+              state,
+              getComposerDraftScopeKey(null, workspaceKey),
+              startedChatKey
+            )
+          )
+        }
         applyViewedChatDetail(
           startingProviderId,
           !hasProviderUserMessage(detail.items)

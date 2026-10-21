@@ -49,6 +49,7 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
     repositoryFileTree,
     repositoryFiles,
     setGitChangeLoadRequest,
+    terminalChatKey,
     terminalCommandLaunchRequest,
     terminalOpened,
     terminalWorkspaceKey,
@@ -198,6 +199,7 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
           aria-hidden={changesPaneView !== 'terminal'}
         >
           <TerminalPanel
+            chatKey={terminalChatKey}
             active={changesPaneView === 'terminal'}
             commandLaunchRequest={terminalCommandLaunchRequest}
             container={changesContainer}

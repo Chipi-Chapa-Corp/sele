@@ -115,7 +115,6 @@ type MessageBoxProps = {
   autoFocus?: boolean
   draftScopeKey: string
   chatId?: string | null
-  draftProjectKey: string
   /**
    * Gates sending and actions only, like `operationsDisabled` and `pending`. The prompt,
    * attachments, usage, chat settings and notes remain usable in every state.
@@ -963,7 +962,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   activeSteeringEnabled = true,
   autoFocus = false,
   draftScopeKey,
-  draftProjectKey,
   disabled = false,
   editSession = null,
   error = null,
@@ -1027,10 +1025,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 }) => {
   const fileMentionListboxId = useId().replace(/:/g, '')
   const skillMentionListboxId = useId().replace(/:/g, '')
-  const { composerDrafts, setComposerDrafts, promptDraftsByProject, setPromptDraftsByProject } =
+  const { composerDrafts, setComposerDrafts, promptDraftsByScope, setPromptDraftsByScope } =
     useComposerDrafts(Boolean(editSession))
   const composerDraft = getComposerDraft(composerDrafts, draftScopeKey)
-  const promptDrafts = getPromptDrafts(promptDraftsByProject, draftProjectKey)
+  const promptDrafts = getPromptDrafts(promptDraftsByScope, draftScopeKey)
   const message = composerDraft.message
   const selectedAttachments = composerDraft.attachments
   const selectedSkills = composerDraft.skills
@@ -2370,7 +2368,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         prompt
       }
 
-      setPromptDraftsByProject((drafts) => addPromptDraft(drafts, draftProjectKey, draft))
+      setPromptDraftsByScope((drafts) => addPromptDraft(drafts, draftScopeKey, draft))
       setMessage('')
       setFileMention(null)
       setSkillMention(null)
@@ -2388,7 +2386,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handlePopPromptDraft = (draft: PromptDraft): void => {
-    setPromptDraftsByProject((drafts) => removePromptDraft(drafts, draftProjectKey, draft.id))
+    setPromptDraftsByScope((drafts) => removePromptDraft(drafts, draftScopeKey, draft.id))
     setMessage((currentMessage) => appendPromptDraft(currentMessage, draft.prompt))
     setFileMention(null)
     setSkillMention(null)
@@ -2403,7 +2401,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleRemovePromptDraft = (draftId: string): void => {
-    setPromptDraftsByProject((drafts) => removePromptDraft(drafts, draftProjectKey, draftId))
+    setPromptDraftsByScope((drafts) => removePromptDraft(drafts, draftScopeKey, draftId))
   }
 
   const hasContent =
@@ -2795,6 +2793,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 chatId={chatId}
                 container={container}
                 modelUsageScope={selectedModel?.usageScope}
+                modelProviderId={selectedModel?.modelProvider?.id}
                 accountUsage={accountUsage}
                 accountUsageError={accountUsageError}
                 accountUsageState={accountUsageState}

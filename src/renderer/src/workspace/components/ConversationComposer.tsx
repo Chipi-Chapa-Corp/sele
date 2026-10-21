@@ -12,7 +12,8 @@ import { UserInputRequestBox } from '../../components/UserInputRequestBox'
 import { appChatManualDropdownValue } from '../../settings'
 import { getContainerTargetKey } from '../../containerSelection'
 import { providerLabels } from '../../providerSettings'
-import { getRequestErrorPresentation } from '../../requestError'
+import { RequestErrorBanner } from '../../components/RequestErrorBanner'
+import { OpenCodeConnectionError } from '../../components/OpenCodeConnectionError'
 
 type ConversationComposerProps = WorkspaceController['conversationComposer']
 
@@ -28,6 +29,8 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
   }, [])
   const {
     authenticationRequired,
+    openCodeConnectionFailure,
+    handleManageOpenCodeProviders,
     handleOpenChatReauthentication,
     handleManageChatAccounts,
     accountUsage,
@@ -140,8 +143,6 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     userInputResolving,
     worktreeCreationState
   } = props
-  const requestErrorPresentation = getRequestErrorPresentation(requestErrorSummary)
-
   return (
     <div
       className="chat-panel__composer"
@@ -152,7 +153,13 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
       }
     >
       <div className="chat-panel__composer-inner chat-panel__composer-notices">
-        {!activeSubagentChatView && authenticationRequired && (
+        {!activeSubagentChatView && openCodeConnectionFailure && (
+          <OpenCodeConnectionError
+            failure={openCodeConnectionFailure}
+            onManage={handleManageOpenCodeProviders}
+          />
+        )}
+        {!activeSubagentChatView && authenticationRequired && !openCodeConnectionFailure && (
           <section
             className="chat-approval chat-request-error"
             role="alert"
@@ -183,39 +190,25 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           </section>
         )}
         {!activeSubagentChatView && !authenticationRequired && requestErrorVisible && (
-          <section
-            className="chat-approval chat-request-error"
-            aria-label="Request error"
-            role="alert"
-          >
-            <div className="chat-approval__main">
-              {requestErrorPresentation.label && (
-                <span className="chat-approval__label">{requestErrorPresentation.label}</span>
-              )}
-              <span className="chat-approval__summary" title={requestErrorPresentation.summary}>
-                {requestErrorPresentation.summary}
-              </span>
-            </div>
-            <div className="chat-approval__actions">
-              {chatOpenedElsewhere ? (
-                <Button
-                  callback={handleRetryChatWriteAccess}
-                  label={<span>Retry</span>}
-                  size="small"
-                  theme="transparent"
-                />
-              ) : chatLegacyHistoryReadOnly ? null : (
-                <Button
-                  aria-label="Dismiss error"
-                  title="Dismiss error"
-                  callback={handleDismissSendError}
-                  icon={<X aria-hidden="true" />}
-                  size="small"
-                  theme="transparent"
-                />
-              )}
-            </div>
-          </section>
+          <RequestErrorBanner message={requestErrorSummary}>
+            {chatOpenedElsewhere ? (
+              <Button
+                callback={handleRetryChatWriteAccess}
+                label={<span>Retry</span>}
+                size="small"
+                theme="transparent"
+              />
+            ) : chatLegacyHistoryReadOnly ? null : (
+              <Button
+                aria-label="Dismiss error"
+                title="Dismiss error"
+                callback={handleDismissSendError}
+                icon={<X aria-hidden="true" />}
+                size="small"
+                theme="transparent"
+              />
+            )}
+          </RequestErrorBanner>
         )}
         {!selectedChat && newChatOpen && remoteContainerSuggestionsError && (
           <section
@@ -479,7 +472,6 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             contextUsage={messageBoxContextUsage}
             displayUsage={effectiveAppSettings.chat.displayUsage}
             showUsageIndicator={narrowLayout}
-            draftProjectKey={terminalWorkspaceKey}
             draftScopeKey={getComposerDraftScopeKey(
               activeSubagentChatView
                 ? `${selectedChat?.providerId}:${activeSubagentChatView.summary.id}`

@@ -51,6 +51,7 @@ export type HistoricalTokenUsageSnapshot = TokenUsageSummary & { sourceIdentity?
 
 export type ProviderAdapter = {
   id: ProviderId
+  getChatTerminalTasks?: (chatId: string, options?: ProviderSourceOptions) => Promise<string[]>
   /** Import text exchanges while idle, preserving the session's own tool history. */
   importHistory?: (
     chatId: string | null,
@@ -193,11 +194,22 @@ export type ProviderAdapter = {
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
   deletePendingMessage: (chatId: string, messageId: string) => Promise<ProviderChatDetail>
+  beginPendingMessageEdit: (
+    chatId: string,
+    messageId: string,
+    editId: string
+  ) => Promise<ProviderChatDetail>
+  cancelPendingMessageEdit: (
+    chatId: string,
+    messageId: string,
+    editId: string
+  ) => Promise<ProviderChatDetail>
   editPendingMessage: (
     chatId: string,
     messageId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    editId?: string
   ) => Promise<ProviderChatDetail>
   steerPendingMessage: (chatId: string, messageId: string) => Promise<ProviderChatDetail>
   interruptPendingMessage: (chatId: string, messageId: string) => Promise<ProviderChatDetail>

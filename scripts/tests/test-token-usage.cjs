@@ -90,7 +90,7 @@ if (!process.versions.electron) {
                 <div className="chat-panel__composer">
                   <div className="chat-panel__composer-input">
                     <div className="chat-panel__composer-inner">
-              <MessageBox draftScopeKey="chat" draftProjectKey="project" chatId={chatId}
+              <MessageBox draftScopeKey="chat" chatId={chatId}
                 providerId={provider} model={fallbackProviderModels[0].id} models={fallbackProviderModels}
                 agentMode="interactive" agentModes={[]} approvalMode="never" approvalModes={fallbackProviderApprovalModes}
                 reasoningEffort="medium" serviceTier={null} sandboxMode="danger-full-access" sandboxModes={fallbackProviderSandboxModes}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { AppContainerTarget } from '../../../../shared/app'
 import type { ProviderAccountConfiguration, ProviderId } from '../../../../shared/provider'
+import { useSidebarOpenCodeProvider, type OpenCodeProviderPicker } from './SidebarOpenCodeProvider'
 import { Dropdown } from '../../components/Dropdown'
 import { ProviderIcon } from '../../components/ProviderIcon'
 import { providerApi } from '../../providerApi'
@@ -11,6 +12,7 @@ import { AccountDialog, type AccountAuthorizationSession } from '../../component
 
 type SidebarProviderAccountProps = {
   providerId: ProviderId
+  openCode?: OpenCodeProviderPicker
   refreshKey?: string
   container: AppContainerTarget | null
   available: boolean
@@ -23,6 +25,7 @@ type SidebarProviderAccountProps = {
 
 export function SidebarProviderAccount({
   providerId,
+  openCode,
   refreshKey,
   container,
   available,
@@ -32,6 +35,12 @@ export function SidebarProviderAccount({
   onCreate,
   onDelete
 }: SidebarProviderAccountProps): ReactElement | null {
+  const isOpenCode = providerId === 'opencode' && Boolean(openCode)
+  const openCodeControl = useSidebarOpenCodeProvider(
+    isOpenCode ? openCode : undefined,
+    container,
+    available
+  )
   const [configurations, setConfigurations] = useState<
     Record<string, ProviderAccountConfiguration>
   >({})
@@ -51,7 +60,7 @@ export function SidebarProviderAccount({
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey requests revalidation without remounting the control.
   useEffect(() => {
     sourceRevision.current += 1
-    if (!available) return
+    if (!available || isOpenCode) return
     setFailure(null)
     let active = true
     void providerApi
@@ -72,7 +81,7 @@ export function SidebarProviderAccount({
       active = false
       sourceRevision.current += 1
     }
-  }, [providerId, sourceKey, available, refreshKey])
+  }, [providerId, sourceKey, available, refreshKey, isOpenCode])
 
   const account = configuration?.accounts.find((candidate) => candidate.active)
   const accountName = (candidate: {
@@ -84,20 +93,22 @@ export function SidebarProviderAccount({
       : candidate.displayName || candidate.login || 'Default Account'
   const label = !available
     ? 'Provider unavailable'
-    : configuration
-      ? account
-        ? accountName(account)
-        : configuration.available
-          ? 'No account selected'
-          : 'Default Account'
-      : error
-        ? (previousLabel.current ?? 'Account unavailable')
-        : (previousLabel.current ?? 'Loading account…')
+    : isOpenCode
+      ? (openCodeControl.label ?? previousLabel.current ?? 'Providers')
+      : configuration
+        ? account
+          ? accountName(account)
+          : configuration.available
+            ? 'No account selected'
+            : 'Default Account'
+        : error
+          ? (previousLabel.current ?? 'Account unavailable')
+          : (previousLabel.current ?? 'Loading account…')
 
   useFeedbackMotion(labelRef, label)
   useEffect(() => {
-    if (configuration) previousLabel.current = label
-  }, [configuration, label])
+    if (configuration || (isOpenCode && openCodeControl.label)) previousLabel.current = label
+  }, [configuration, isOpenCode, openCodeControl.label, label])
 
   const refreshNames = (): void => {
     const revision = sourceRevision.current
@@ -136,7 +147,7 @@ export function SidebarProviderAccount({
     (configuration
       ? !configuration.available || configuration.accounts.length === 0
       : Boolean(error) || !previousLabel.current)
-  if (unavailable && !hasVisibleLimits && !addTarget) return null
+  if (!isOpenCode && unavailable && !hasVisibleLimits && !addTarget) return null
 
   const deleteAccount = async (
     candidate: NonNullable<typeof configuration>['accounts'][number]
@@ -157,12 +168,12 @@ export function SidebarProviderAccount({
   }
 
   return (
-    <div aria-label="Current provider account">
+    <div aria-label={isOpenCode ? 'Current OpenCode provider' : 'Current provider account'}>
       <Dropdown
-        aria-label={`${providerLabels[providerId]} account`}
+        aria-label={isOpenCode ? 'OpenCode provider' : `${providerLabels[providerId]} account`}
         fill
         placement="top"
-        value={account?.id ?? ''}
+        value={isOpenCode ? openCodeControl.dropdownProps.value : (account?.id ?? '')}
         valueLabel={label}
         valueContent={
           <>
@@ -175,39 +186,49 @@ export function SidebarProviderAccount({
           </>
         }
         title={`${providerLabels[providerId]} · ${label}`}
-        disabled={disabled}
+        disabled={isOpenCode ? openCodeControl.dropdownProps.disabled : disabled}
         menuActions={
-          configuration?.available
-            ? [
-                {
-                  id: 'add-account',
-                  label: 'Add account',
-                  icon: <Plus aria-hidden="true" />,
-                  disabled: updating || deleting,
-                  callback: () => setAddTarget({ providerId, create: onCreate })
-                }
-              ]
-            : []
-        }
-        options={configuration?.accounts.map((candidate) => ({
-          value: candidate.id,
-          label: accountName(candidate),
-          inlineActions:
-            candidate.id !== 'default' && configuration.available
+          isOpenCode
+            ? openCodeControl.dropdownProps.menuActions
+            : configuration?.available
               ? [
                   {
-                    id: 'delete-account',
-                    ariaLabel: `Delete account ${accountName(candidate)}`,
-                    title: 'Delete account',
-                    icon: <X aria-hidden="true" />,
+                    id: 'add-account',
+                    label: 'Add account',
+                    icon: <Plus aria-hidden="true" />,
                     disabled: updating || deleting,
-                    callback: () => deleteAccount(candidate)
+                    callback: () => setAddTarget({ providerId, create: onCreate })
                   }
                 ]
               : []
-        }))}
-        onOpen={refreshNames}
-        onChange={(accountId) => void selectAccount(accountId)}
+        }
+        options={
+          isOpenCode
+            ? openCodeControl.dropdownProps.options
+            : configuration?.accounts.map((candidate) => ({
+                value: candidate.id,
+                label: accountName(candidate),
+                inlineActions:
+                  candidate.id !== 'default' && configuration.available
+                    ? [
+                        {
+                          id: 'delete-account',
+                          ariaLabel: `Delete account ${accountName(candidate)}`,
+                          title: 'Delete account',
+                          icon: <X aria-hidden="true" />,
+                          disabled: updating || deleting,
+                          callback: () => deleteAccount(candidate)
+                        }
+                      ]
+                    : []
+              }))
+        }
+        onOpen={isOpenCode ? undefined : refreshNames}
+        onChange={
+          isOpenCode
+            ? openCodeControl.dropdownProps.onChange
+            : (accountId) => void selectAccount(accountId)
+        }
       />
       {addTarget && (
         <AccountDialog
@@ -219,7 +240,8 @@ export function SidebarProviderAccount({
           onLogin={addTarget.create}
         />
       )}
-      {error && (
+      {isOpenCode && openCodeControl.content}
+      {!isOpenCode && error && (
         <p className="chat__status" role="alert">
           {error}
         </p>

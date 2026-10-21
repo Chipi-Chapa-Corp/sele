@@ -16,6 +16,8 @@ if (!process.versions.electron) {
             import { flushSync } from 'react-dom'
             import { useComposerDrafts } from './src/renderer/src/useComposerDrafts'
             import { initializePreferences, flushPreferences } from './src/renderer/src/preferences'
+            import { useChatListController } from './src/renderer/src/workspace/useChatListController'
+            import { updateStoredComposerDrafts, moveComposerDraftScope } from './src/renderer/src/composerDraftStorage'
             import { updateComposerDraft, addPromptDraft, removePromptDraft } from './src/renderer/src/composerDraft'
             const root = createRoot(document.getElementById('root'))
             function Fixture({editing}) {
@@ -25,14 +27,24 @@ if (!process.versions.electron) {
             window.render = editing => flushSync(() => root.render(<React.StrictMode><Fixture editing={editing} /></React.StrictMode>))
             window.setMessage = (key, message) => flushSync(() => window.drafts.setComposerDrafts(drafts => updateComposerDraft(drafts, key, 'message', message)))
             window.stash = (key, id, prompt) => flushSync(() => {
-              window.drafts.setPromptDraftsByProject(drafts => addPromptDraft(drafts, key, {id, prompt}))
+              window.drafts.setPromptDraftsByScope(drafts => addPromptDraft(drafts, key, {id, prompt}))
               window.drafts.setComposerDrafts(drafts => updateComposerDraft(drafts, key, 'message', ''))
             })
             window.pop = (key, id, prompt) => flushSync(() => {
-              window.drafts.setPromptDraftsByProject(drafts => removePromptDraft(drafts, key, id))
+              window.drafts.setPromptDraftsByScope(drafts => removePromptDraft(drafts, key, id))
               window.drafts.setComposerDrafts(drafts => updateComposerDraft(drafts, key, 'message', prompt))
             })
-            window.snapshot = () => ({composerDrafts: [...window.drafts.composerDrafts], promptDraftsByProject: [...window.drafts.promptDraftsByProject]})
+            window.snapshot = () => ({composerDrafts: [...window.drafts.composerDrafts], promptDraftsByScope: [...window.drafts.promptDraftsByScope]})
+            window.move = (from, to) => flushSync(() => updateStoredComposerDrafts(state => moveComposerDraftScope(state, from, to)))
+            const chatList = useChatListController({
+              applyChatMetadata: () => {}, removeRecentChatCacheEntry: () => {}, selectedChat: null
+            })
+            window.complete = async keys => {
+              const chats = keys.map(key => ({providerId: key.split(':')[0], id: key.slice(key.indexOf(':') + 1), cwd: '/a'}))
+              if (chats.length === 1) await chatList.handleMarkChatDone(chats[0])
+              else await chatList.handleMarkCwdChatsDone({kind: 'cwd', chats})
+              flushSync(() => {})
+            }
             window.flush = flushPreferences
             window.ready = initializePreferences().then(() => window.render(false))
           `,
@@ -70,11 +82,19 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<div id="root"></div><script src="fixture.js"></script>'
+        `<div id="root"></div><script>
+          window.providerApi = {
+            markChatDone: async (_providerId, id, done) => {
+              if (window.rejectDone) throw new Error('Expected fixture failure')
+              return {id, done}
+            },
+            markChatsDone: async ids => ids.map(id => ({id, done: true}))
+          }
+        </script><script src="fixture.js"></script>`
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
-      for (const mode of ['save', 'restore', 'verify', 'empty']) {
+      for (const mode of ['save', 'restore', 'verify', 'released', 'empty']) {
         const result = spawnSync(
           require('electron'),
           [__filename, directory, mode, '--no-sandbox'],
@@ -83,7 +103,9 @@ if (!process.versions.electron) {
         assert.equal(result.status, 0, result.stderr || result.error?.message)
         assert.ok(result.stdout.includes(`Draft persistence passed: ${mode}`), result.stdout)
       }
-      console.log('Composer drafts survive Electron restarts and immediate close')
+      console.log(
+        'Composer drafts stay per chat through creation, Done, Electron restarts and immediate close'
+      )
     } finally {
       await fs.rm(directory, { recursive: true, force: true })
     }
@@ -122,9 +144,11 @@ if (!process.versions.electron) {
     try {
       await window.loadFile(path.join(directory, 'index.html'))
       await run('window.ready')
+      const releasedScope = 'new-chat:host\0/a'
+      await run(`window.releasedScope = ${JSON.stringify(releasedScope)}`)
       if (mode === 'save') {
         await run(
-          `window.setMessage('new-chat:cwd:/a', 'first draft'); window.stash('new-chat:cwd:/a', 'one', 'first draft'); window.setMessage('new-chat:cwd:/a', 'second draft'); window.stash('new-chat:cwd:/a', 'two', 'second draft'); window.setMessage('new-chat:cwd:/b', 'other project'); window.setMessage('codex:chat', 'chat draft'); window.flush()`
+          `window.setMessage('new-chat:cwd:/a', 'first draft'); window.stash('new-chat:cwd:/a', 'one', 'first draft'); window.setMessage('new-chat:cwd:/a', 'second draft'); window.stash('new-chat:cwd:/a', 'two', 'second draft'); window.setMessage('new-chat:cwd:/b', 'other project'); window.setMessage('codex:chat', 'chat draft'); window.move('new-chat:cwd:/a', 'codex:created'); window.flush()`
         )
         // Editing replaces the visible input but must not replace the saved normal draft.
         await run(
@@ -132,9 +156,9 @@ if (!process.versions.electron) {
         )
       } else if (mode === 'restore') {
         const state = await run('window.snapshot()')
-        assert.deepEqual(state.promptDraftsByProject, [
+        assert.deepEqual(state.promptDraftsByScope, [
           [
-            'new-chat:cwd:/a',
+            'codex:created',
             [
               { id: 'one', prompt: 'first draft' },
               { id: 'two', prompt: 'second draft' }
@@ -143,24 +167,50 @@ if (!process.versions.electron) {
         ])
         assert.equal(new Map(state.composerDrafts).get('new-chat:cwd:/b').message, 'other project')
         assert.equal(new Map(state.composerDrafts).get('codex:chat').message, 'chat draft')
+        await run(`window.rejectDone = true; window.complete(['codex:chat'])`)
+        assert.equal(
+          new Map((await run('window.snapshot()')).composerDrafts).get('codex:chat').message,
+          'chat draft'
+        )
+        await run(`window.rejectDone = false`)
         // Close in the same task as the mutation, before the deferred writer can run.
         await run(
-          `window.pop('new-chat:cwd:/a', 'two', 'second draft'); window.setMessage('codex:chat', 'last keystroke'); window.close()`
+          `window.pop('codex:created', 'two', 'second draft'); window.setMessage('codex:chat', 'last keystroke'); window.close()`
         )
       } else if (mode === 'verify') {
         const state = await run('window.snapshot()')
         assert.equal(new Map(state.composerDrafts).get('codex:chat').message, 'last keystroke')
-        assert.equal(new Map(state.composerDrafts).get('new-chat:cwd:/a').message, 'second draft')
-        assert.deepEqual(state.promptDraftsByProject, [
-          ['new-chat:cwd:/a', [{ id: 'one', prompt: 'first draft' }]]
+        assert.equal(new Map(state.composerDrafts).get('codex:created').message, 'second draft')
+        assert.deepEqual(state.promptDraftsByScope, [
+          ['codex:created', [{ id: 'one', prompt: 'first draft' }]]
         ])
         await run(
-          `window.pop('new-chat:cwd:/a', 'one', ''); window.setMessage('codex:chat', ''); window.setMessage('new-chat:cwd:/b', ''); window.close()`
+          `(async () => { window.setMessage('codex:created', 'unsent text'); window.stash('codex:chat', 'bulk', 'bulk saved'); window.setMessage('codex:chat', 'last keystroke'); window.stash('claude:bulk', 'third', 'third draft'); await window.complete(['codex:created']); await window.complete(['codex:chat', 'claude:bulk']); window.close() })()`
+        )
+      } else if (mode === 'released') {
+        const state = await run('window.snapshot()')
+        assert.equal(new Map(state.composerDrafts).has('codex:created'), false)
+        assert.equal(new Map(state.composerDrafts).has('codex:chat'), false)
+        assert.equal(new Map(state.composerDrafts).get('new-chat:cwd:/b').message, 'other project')
+        assert.deepEqual(new Map(state.promptDraftsByScope).get(releasedScope), [
+          { id: 'one', prompt: 'first draft', newChatsOnly: true },
+          { id: 'bulk', prompt: 'bulk saved', newChatsOnly: true },
+          { id: 'third', prompt: 'third draft', newChatsOnly: true }
+        ])
+        await run(`window.move(window.releasedScope, 'codex:next')`)
+        const started = await run('window.snapshot()')
+        assert.equal(new Map(started.promptDraftsByScope).has('codex:next'), false)
+        assert.deepEqual(
+          new Map(started.promptDraftsByScope).get(releasedScope),
+          new Map(state.promptDraftsByScope).get(releasedScope)
+        )
+        await run(
+          `window.pop(window.releasedScope, 'one', ''); window.pop(window.releasedScope, 'bulk', ''); window.pop(window.releasedScope, 'third', ''); window.setMessage('codex:next', ''); window.setMessage('new-chat:cwd:/b', ''); window.close()`
         )
       } else {
         assert.deepEqual(await run('window.snapshot()'), {
           composerDrafts: [],
-          promptDraftsByProject: []
+          promptDraftsByScope: []
         })
       }
       console.log(`Draft persistence passed: ${mode}`)

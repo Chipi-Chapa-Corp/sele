@@ -3,7 +3,10 @@
   position: relative;
   display: inline-flex;
   flex: none;
-  gap: 0.2rem;
+}
+
+.message-box__usage-control:empty {
+  display: none;
 }
 
 .message-box__usage-control > .ui-button {
@@ -15,6 +18,7 @@
   border-radius: var(--control-radius);
   background: transparent;
   box-shadow: none;
+  transition: color 160ms ease;
 }
 
 .message-box__usage-control > .ui-button::before {
@@ -52,6 +56,7 @@
   height: 100%;
   fill: none;
   stroke-width: 3;
+  overflow: visible;
 }
 
 .message-box__usage-track {
@@ -60,6 +65,18 @@
 
 .message-box__usage-strip {
   stroke: var(--message-box-usage-accent);
+  transition: stroke-dasharray 200ms ease-out;
+}
+
+.message-box__usage-pulse {
+  stroke: var(--message-box-usage-accent);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-box__usage-strip {
+    transition: none;
+  }
 }
 
 .message-box__usage-percent {
@@ -255,4 +272,36 @@
   margin: 0;
   color: var(--lead);
   line-height: 1.35;
+}
+
+.message-box__usage-control > .ui-button[data-usage-balance="remaining"],
+.message-box__usage-control > .ui-button[data-usage-balance="spent"] {
+  width: auto;
+  min-width: 3.5rem;
+  padding: 0 0.4rem;
+}
+
+.message-box__usage-balance {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.message-box__balances {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.message-box__balances + .message-box__balances,
+.message-box__balances + .message-box__limits {
+  margin-top: 0.2rem;
+}
+
+.message-box__balance {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
 }

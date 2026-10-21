@@ -1,3 +1,4 @@
+import { PendingMessageEdits } from '../PendingMessageEdits.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -16,6 +17,7 @@ const declaration = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name.text === 'OpenCodeProviderAdapter'
 )
 const methods = new Set([
+  'pendingMessageEdits',
   'sendPrompt',
   'closeBrowser',
   'abortState',
@@ -31,6 +33,7 @@ const code = ts.transpileModule(
 ).outputText
 const fixture = () => {
   const context = vm.createContext({
+    PendingMessageEdits,
     console,
     getOpenCodePermissionRules,
     parseOpenCodeSessionEvent,

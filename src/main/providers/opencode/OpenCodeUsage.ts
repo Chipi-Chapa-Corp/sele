@@ -50,14 +50,28 @@ export const extractOpenCodeGoApiKey = (store: unknown): string | null => {
   return getApiKeyFromEntry(store['opencode-go']) ?? getApiKeyFromEntry(store.opencode) ?? null
 }
 
-export const parseOpenCodeAuthContent = (content: string): string | null => {
+/** API keys saved in OpenCode's auth store, keyed by OpenCode provider ID. OAuth entries are skipped. */
+export const extractOpenCodeApiKeys = (store: unknown): Record<string, string> => {
+  if (!isRecord(store)) return {}
+  const keys: Record<string, string> = {}
+  for (const [providerId, entry] of Object.entries(store)) {
+    const key = getApiKeyFromEntry(entry)
+    if (key) keys[providerId] = key
+  }
+  return keys
+}
+
+const parseOpenCodeAuthStore = (content: string): unknown => {
   try {
-    return extractOpenCodeGoApiKey(JSON.parse(content))
+    return JSON.parse(content)
   } catch (error) {
-    console.error('[caught:OpenCodeUsage:parseOpenCodeAuthContent]', error)
+    console.error('[caught:OpenCodeUsage:parseOpenCodeAuthStore]', error)
     return null
   }
 }
+
+export const parseOpenCodeAuthContent = (content: string): string | null =>
+  extractOpenCodeGoApiKey(parseOpenCodeAuthStore(content))
 
 // OpenCode uses a valid OPENCODE_AUTH_CONTENT as the entire auth store, even
 // when it contains no Go key. Only malformed JSON falls back to auth.json.
@@ -142,16 +156,22 @@ export const usesLocalOpenCodeAuth = (
   hasHostBridge: boolean
 ): boolean => container?.kind !== 'container' && !flatpak && !hasHostBridge
 
-export const getOpenCodeGoApiKey = async (
+/** Whether OpenCode for this target runs with Sele's own filesystem and environment. */
+export const isLocalOpenCodeTarget = async (
   container?: AppContainerTarget | null
-): Promise<string> => {
+): Promise<boolean> => {
   const { getCurrentContainerHostBridge } = await import('../../currentContainer')
-  const useLocalFileSystem = usesLocalOpenCodeAuth(
+  return usesLocalOpenCodeAuth(
     container,
     Boolean(process.env.FLATPAK_ID),
     Boolean(await getCurrentContainerHostBridge())
   )
-  const content = useLocalFileSystem
+}
+
+const getOpenCodeAuthContent = async (
+  container?: AppContainerTarget | null
+): Promise<string | null> => {
+  return (await isLocalOpenCodeTarget(container))
     ? await resolveOpenCodeAuthContent(process.env.OPENCODE_AUTH_CONTENT, async () => {
         try {
           return await readFile(getOpenCodeAuthPath(process.env, homedir()), 'utf8')
@@ -161,7 +181,23 @@ export const getOpenCodeGoApiKey = async (
         }
       })
     : await readTargetOpenCodeAuthContent(container)
-  const apiKey = content ? parseOpenCodeAuthContent(content) : null
+}
+
+/** Reads OpenCode's auth store in the same environment as the OpenCode process. */
+export const getOpenCodeAuthStore = async (
+  container?: AppContainerTarget | null
+): Promise<unknown> => {
+  const content = await getOpenCodeAuthContent(container)
+  return content ? parseOpenCodeAuthStore(content) : null
+}
+
+export const getOpenCodeGoApiKey = async (
+  container?: AppContainerTarget | null,
+  store?: unknown
+): Promise<string> => {
+  const apiKey = extractOpenCodeGoApiKey(
+    store === undefined ? await getOpenCodeAuthStore(container) : store
+  )
   if (!apiKey) throw new OpenCodeGoApiKeyMissingError()
   return apiKey
 }
@@ -256,9 +292,10 @@ export const mapOpenCodeGoUsageToRateLimits = (
 
 export const getOpenCodeGoRateLimits = async (
   container?: AppContainerTarget | null,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  store?: unknown
 ): Promise<ProviderAccountRateLimit[]> => {
-  const apiKey = await getOpenCodeGoApiKey(container)
+  const apiKey = await getOpenCodeGoApiKey(container, store)
   const usage = await fetchOpenCodeGoUsage(apiKey, fetchFn)
   return mapOpenCodeGoUsageToRateLimits(usage)
 }

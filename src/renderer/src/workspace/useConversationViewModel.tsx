@@ -47,6 +47,7 @@ import type { ConversationViewModelDependencies } from './viewModelDependencies'
 // Return shape is inferred from the view-model declarations below.
 export function useConversationViewModel(dependencies: ConversationViewModelDependencies) {
   const {
+    modelUnavailable,
     authenticationRequired,
     selectedChat,
     newSessionProviderAvailable,
@@ -102,7 +103,8 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const chatReadOnly = getChatWriteAccessPresentation(chatDetail).readOnly
   const messageBoxDisabled = selectedChat
-    ? providerUpdateInProgress ||
+    ? modelUnavailable ||
+      providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
       chatReadOnly ||
       authenticationRequired ||
@@ -111,7 +113,10 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           // of whether the parent turn is still active.
           !activeSubagentChatView.summary.canMessage || activeSubagentChatView.loadState !== 'ready'
         : chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
-    : providerUpdateInProgress || !newSessionProviderAvailable || authenticationRequired
+    : modelUnavailable ||
+      providerUpdateInProgress ||
+      !newSessionProviderAvailable ||
+      authenticationRequired
   const canEditOwnMessages = Boolean(
     selectedChat &&
       !activeSubagentChatView &&

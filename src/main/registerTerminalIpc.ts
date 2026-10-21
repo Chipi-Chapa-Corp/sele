@@ -24,6 +24,10 @@ const maximumRows = 300
 const outputFlushDelayMs = 4
 const maximumOutputBatchCharacters = 64 * 1024
 const maximumCommandLength = 20_000
+const fishTerminalIntegration = [
+  "function __sele_terminal_start --on-event fish_preexec; printf '\\033]133;C\\007'; end",
+  "function __sele_terminal_finish --on-event fish_postexec; printf '\\033]133;D;%s\\007' $status; end"
+].join('\n')
 
 type ManagedTerminalSession = {
   id: string
@@ -177,28 +181,44 @@ const getTerminalCommandShell = (
       return {
         file: shell.file,
         args: keepAlive
-          ? [...shell.args, '-NoExit', '-Command', command]
+          ? [
+              ...shell.args,
+              '-NoExit',
+              '-Command',
+              `${command}\n[Console]::Write(([char]27).ToString() + ']777;sele-command-finished;0' + ([char]7).ToString())`
+            ]
           : [...shell.args, '-NoProfile', '-Command', command]
       }
     }
 
     return {
       file: shell.file,
-      args: keepAlive ? ['/d', '/s', '/k', command] : ['/d', '/s', '/c', command]
+      args: keepAlive
+        ? ['/d', '/s', '/k', `${command}\r\necho \u001b]777;sele-command-finished;0\u0007`]
+        : ['/d', '/s', '/c', command]
     }
   }
 
   if (keepAlive && shellName === 'fish') {
     return {
       file: shell.file,
-      args: [...shell.args, '-C', command]
+      args: [
+        ...shell.args,
+        '-C',
+        `${command}\nprintf '\\033]777;sele-command-finished;%s\\007' $status`
+      ]
     }
   }
 
   if (keepAlive) {
     return {
       file: shell.file,
-      args: [...shell.args, '-i', '-c', `${command}\nexec ${quotePosixShellArg(shell.file)} -i`]
+      args: [
+        ...shell.args,
+        '-i',
+        '-c',
+        `${command}\nprintf '\\033]777;sele-command-finished;%s\\007' "$?"\nexec ${quotePosixShellArg(shell.file)} -i`
+      ]
     }
   }
 
@@ -320,6 +340,7 @@ const createSession = async (
 ): Promise<TerminalSession> => {
   const options = await getCreateOptions(value)
   const baseShell = getShell()
+  if (basename(baseShell.file) === 'fish') baseShell.args.push('-C', fishTerminalIntegration)
   const id = options.sessionId
   if (sessions.has(id)) throw new Error('Terminal session already exists')
   const command = options.initialCommand?.trim() || null
@@ -327,11 +348,15 @@ const createSession = async (
     ? getTerminalCommandShell(baseShell, command, Boolean(options.keepAliveOnCommandFinish))
     : baseShell
   const cwd = options.cwd ?? app.getPath('home')
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'Sele'
+  }
+  if (basename(baseShell.file) === 'bash') {
+    env['PS0'] = `\u001b]133;C\u0007${process.env.PS0 ?? ''}`
+    env['PROMPT_COMMAND'] = `${process.env.PROMPT_COMMAND ?? ''}\nprintf '\\033]133;D;0\\007'`
   }
   const hostCommand =
     options.container?.kind === 'container'

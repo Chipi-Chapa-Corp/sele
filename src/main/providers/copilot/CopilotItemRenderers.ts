@@ -10,6 +10,7 @@ import { basename } from 'node:path'
 import type { SessionEvent } from '@github/copilot-sdk'
 import type {
   ProviderChatItem,
+  ProviderChatTurnOutcome,
   ProviderFileDiff,
   ProviderMessage,
   ProviderMessageAttachment,
@@ -441,6 +442,25 @@ const getAttachments = (
 
 const isScopedEvent = (event: SessionEvent, agentId: string | null | undefined): boolean =>
   agentId ? event.agentId === agentId : !event.agentId
+
+/** Undefined asks a backward journal reader for the preceding page of this same turn. */
+export const getCopilotTurnOutcome = (
+  events: SessionEvent[]
+): ProviderChatTurnOutcome | null | undefined => {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (!isScopedEvent(event, null)) continue
+    if (event.type === 'session.error') return 'failed'
+    if (event.type === 'abort' || (event.type === 'session.idle' && event.data.aborted))
+      return 'stopped'
+    if (
+      event.type === 'assistant.turn_start' ||
+      (event.type === 'user.message' && !isCopilotSystemContextMessage(event))
+    )
+      return null
+  }
+  return undefined
+}
 
 const hasRenderableWorkingEvent = (event: SessionEvent): boolean => {
   if (event.type === 'assistant.reasoning') return Boolean(event.data.content.trim())

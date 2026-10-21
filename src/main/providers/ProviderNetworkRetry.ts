@@ -277,6 +277,8 @@ export const withProviderNetworkRetries = (adapter: ProviderAdapter): ProviderAd
     'forkChat',
     'sendActiveChatMessage',
     'deletePendingMessage',
+    'beginPendingMessageEdit',
+    'cancelPendingMessageEdit',
     'editPendingMessage',
     'steerPendingMessage',
     'interruptPendingMessage',

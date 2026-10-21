@@ -1,3 +1,4 @@
+import { PendingMessageEdits } from '../PendingMessageEdits.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -25,7 +26,7 @@ const methods = [
   'startSubmittedCodexTurn'
 ]
 const code = ts.transpile(
-  `class Adapter { ${declaration.members
+  `class Adapter { pendingMessageEdits = new PendingMessageEdits(); ${declaration.members
     .filter((node) => methods.includes(node.name?.getText(source)))
     .map((node) => node.getText(source))
     .join('\n')} }; new Adapter()`,
@@ -36,6 +37,7 @@ const fixture = (status = 'idle', turnStatus = 'completed') => {
   const authoritativeTurns = [{ id: 'turn', status: turnStatus, items: [] }]
   const started = []
   const adapter = vm.runInNewContext(code, {
+    PendingMessageEdits,
     getCodexQueueDrainDecision,
     isCodexTurnTerminal,
     assertSupportedCodexHistory() {},

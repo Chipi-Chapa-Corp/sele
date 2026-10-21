@@ -1,3 +1,4 @@
+import { PendingMessageEdits } from '../PendingMessageEdits'
 import type { McpAppConnection } from '../../../shared/mcpApps'
 import { copilotAccountDisplayName } from '../AccountDisplayName'
 import { encodeCopilotHistory } from '../NativeHistoryImport'
@@ -79,6 +80,7 @@ import {
 import { getCopilotExecutable } from './CopilotExecutable'
 import {
   isCopilotSystemContextMessage,
+  getCopilotTurnOutcome,
   renderCopilotChatItems,
   renderCopilotChatWindow,
   findCopilotItemTurnWindow,
@@ -127,6 +129,11 @@ type CopilotSessionMetadata = SessionMetadata & {
   name?: string
 }
 
+type CopilotPendingMessage = ProviderPendingMessage & {
+  options?: ProviderTurnOptions
+  delivery: 'local' | 'submitting' | 'provider'
+}
+
 type CopilotSessionState = {
   id: string
   revision: number
@@ -143,7 +150,10 @@ type CopilotSessionState = {
   stopped: boolean
   failed: boolean
   options: ProviderTurnOptions | undefined
-  pendingMessages: ProviderPendingMessage[]
+  pendingMessages: CopilotPendingMessage[]
+  queuePaused: boolean
+  queueDrainInProgress: boolean
+  pendingRefreshSequence: number
   pendingPermissions: PendingPermission[]
   pendingUserInputs: PendingUserInput[]
   plan: CopilotRenderedPlan | null
@@ -607,6 +617,7 @@ const getRuntimeEnvironment = (env: NodeJS.ProcessEnv | undefined): Record<strin
 
 export class CopilotProviderAdapter implements ProviderAdapter {
   id = 'copilot' as const
+  private pendingMessageEdits = new PendingMessageEdits()
   private historicalUsageReader = new SqliteUsageReader<HistoricalUsageRow>()
   private tokenUsageReporter = new TokenUsageReporter()
   onTokenUsage = this.tokenUsageReporter.subscribe
@@ -991,6 +1002,17 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   resetRateLimits = async (): Promise<'nothingToReset'> => 'nothingToReset'
 
+  getChatTerminalTasks = async (chatId: string): Promise<string[]> => {
+    const session = this.states.get(chatId)?.session
+    if (!session) return []
+    await session.rpc.tasks.refresh()
+    return (await session.rpc.tasks.list()).tasks
+      .filter(
+        (task) => task.type === 'shell' && (task.status === 'running' || task.status === 'idle')
+      )
+      .map((task) => task.id)
+  }
+
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {
     const normalizedContainer = normalizeContainerTarget(options.container)
     const storedContainer = normalizedContainer.kind === 'container' ? normalizedContainer : null
@@ -1026,12 +1048,58 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0)
     const limit = Math.max(1, Math.min(options.limit ?? 50, 100))
     const page = sessions.slice(offset, offset + limit)
-    const chats = page.map((metadata) => this.createChatFromMetadata(metadata, storedContainer))
+    const chats: ProviderChat[] = []
+    for (let index = 0; index < page.length; index += 8) {
+      chats.push(
+        ...(await Promise.all(
+          page.slice(index, index + 8).map(async (metadata) => {
+            const chat = this.createChatFromMetadata(metadata, storedContainer)
+            if (chat.status === 'active' || chat.pendingApproval) return chat
+            const latest = await this.getSidebarTurnSummary(client, metadata.sessionId)
+            return latest
+              ? {
+                  ...chat,
+                  lastTurnOutcome: latest.outcome,
+                  updatedAt: Math.max(chat.updatedAt, latest.updatedAt)
+                }
+              : chat
+          })
+        ))
+      )
+    }
     const nextOffset = offset + page.length
 
     return {
       chats,
       nextCursor: nextOffset < sessions.length ? String(nextOffset) : null
+    }
+  }
+
+  private getSidebarTurnSummary = async (client: CopilotClient, sessionId: string) => {
+    let cursor: string | undefined
+    let updatedAt = 0
+    const seenCursors = new Set<string>()
+    try {
+      while (true) {
+        const page = await client.rpc.sessions.readPersistedEvents({
+          sessionId,
+          cursor,
+          direction: 'backward',
+          max: 64
+        })
+        updatedAt = Math.max(
+          updatedAt,
+          ...page.events.map((event) => toMilliseconds(event.timestamp))
+        )
+        const outcome = getCopilotTurnOutcome(page.events)
+        if (outcome !== undefined || !page.hasMore) return { outcome: outcome ?? null, updatedAt }
+        if (seenCursors.has(page.cursor)) throw new Error('Repeated Copilot journal cursor')
+        seenCursors.add(page.cursor)
+        cursor = page.cursor
+      }
+    } catch (error) {
+      console.error('Unable to read latest Copilot sidebar turn.', error)
+      return undefined
     }
   }
 
@@ -1382,13 +1450,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, options)
-    this.completionCoordinator.cancel(chatId)
-    await this.applyTurnOptions(state, options)
-    state.active = true
-    state.stopped = false
-    state.failed = false
-    state.browser?.resume()
-    await state.session!.send(getMessageOptions(message, options))
+    this.enqueueMessage(state, message, options)
+    state.queuePaused = false
+    await this.drainQueue(state)
     return this.createChatDetail(state)
   }
 
@@ -1448,44 +1512,74 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, options)
-    this.completionCoordinator.cancel(chatId)
-    await this.applyTurnOptions(state, options)
-
-    if (mode === 'interrupt') {
-      this.cancelPendingUserInputs(state)
-      state.browser?.suspend()
-      await state.session!.abort()
-      state.browser?.resume()
-      await state.session!.send(getMessageOptions(message, options, 'enqueue'))
+    const pending = this.enqueueMessage(
+      state,
+      message,
+      options,
+      mode === 'steer' ? 'steering' : 'queued'
+    )
+    state.queuePaused = false
+    if (mode !== 'queue' && !this.pendingMessageEdits.has(chatId)) {
+      await this.submitPendingMessage(state, pending, mode === 'interrupt')
     } else {
-      state.browser?.resume()
-      await state.session!.send(
-        getMessageOptions(message, options, mode === 'steer' ? 'immediate' : 'enqueue')
-      )
+      await this.drainQueue(state)
     }
-    state.active = true
-    await this.refreshPendingMessages(state)
+    return this.createChatDetail(state)
+  }
+
+  beginPendingMessageEdit = async (
+    chatId: string,
+    messageId: string,
+    editId: string
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId)
+    const existing = this.pendingMessageEdits.get(chatId)
+    if (existing?.messageId === messageId && existing.editId === editId)
+      return this.createChatDetail(state)
+    this.pendingMessageEdits.begin(chatId, messageId, editId, state.pendingMessages)
+    try {
+      await this.refreshPendingMessages(state)
+      const pending = state.pendingMessages.find((message) => message.id === messageId)
+      if (!pending || pending.delivery === 'submitting')
+        throw new Error('This message has already started delivery.')
+      if (pending.delivery === 'provider') {
+        await this.withdrawPendingMessage(state, pending)
+        // Keep the same visible row and its attachments throughout the edit.
+        pending.delivery = 'local'
+        state.pendingRefreshSequence += 1
+      }
+      this.emitUpdate(state)
+      return this.createChatDetail(state)
+    } catch (error) {
+      this.pendingMessageEdits.release(chatId, messageId, editId)
+      this.scheduleQueueDrain(state)
+      throw error
+    }
+  }
+
+  cancelPendingMessageEdit = async (
+    chatId: string,
+    messageId: string,
+    editId: string
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId)
+    if (this.pendingMessageEdits.release(chatId, messageId, editId)) {
+      await this.resumeEditedMessage(state, messageId)
+    }
     return this.createChatDetail(state)
   }
 
   deletePendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
-    await this.refreshPendingMessages(state)
+    this.pendingMessageEdits.assert(chatId, messageId)
     const pending = state.pendingMessages.find((message) => message.id === messageId)
-    if (!pending) throw new Error('The queued message is no longer pending.')
-
-    if (pending.kind === 'queued') {
-      const result = await state.session!.rpc.queue.removeAt({ id: messageId })
-      if (!result.removed) throw new Error('The queued message is no longer pending.')
-    } else {
-      if (state.pendingMessages.at(-1)?.id !== messageId) {
-        throw new Error('Copilot can only remove the most recent steering message.')
-      }
-      const result = await state.session!.rpc.queue.removeMostRecent()
-      if (!result.removed) throw new Error('The steering message is no longer pending.')
-    }
-
-    await this.refreshPendingMessages(state)
+    if (!pending || pending.delivery === 'submitting')
+      throw new Error('The queued message is no longer pending.')
+    if (pending.delivery === 'provider') await this.withdrawPendingMessage(state, pending)
+    state.pendingMessages = state.pendingMessages.filter((message) => message !== pending)
+    state.pendingRefreshSequence += 1
+    this.emitUpdate(state)
+    this.scheduleQueueDrain(state)
     return this.createChatDetail(state)
   }
 
@@ -1493,41 +1587,55 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     chatId: string,
     messageId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    editId?: string
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, options)
+    this.pendingMessageEdits.assert(chatId, messageId, editId)
     const pending = state.pendingMessages.find((item) => item.id === messageId)
-    if (!pending || state.pendingMessages.at(-1)?.id !== messageId) {
-      throw new Error('Copilot can only edit the most recently queued message.')
-    }
-    const result = await state.session!.rpc.queue.removeMostRecent()
-    if (!result.removed) throw new Error('The queued message is no longer pending.')
-    await state.session!.send(
-      getMessageOptions(message, options, pending.kind === 'steering' ? 'immediate' : 'enqueue')
+    if (!pending || pending.delivery === 'submitting')
+      throw new Error('The queued message is no longer pending.')
+    if (!message.trim() && !hasMessageAttachments(options))
+      throw new Error('Cannot edit a message to empty content')
+    if (pending.delivery === 'provider') await this.withdrawPendingMessage(state, pending)
+    const replacement = this.createPendingMessage(
+      message,
+      options ?? pending.options,
+      pending.kind,
+      messageId
     )
-    await this.refreshPendingMessages(state)
+    state.pendingMessages = state.pendingMessages.map((item) =>
+      item === pending ? replacement : item
+    )
+    state.pendingRefreshSequence += 1
+    if (editId) this.pendingMessageEdits.release(chatId, messageId, editId)
+    this.emitUpdate(state)
+    try {
+      await this.resumeEditedMessage(state, messageId)
+    } catch (error) {
+      // A failed steering resubmission must leave a cancellable edit of the original payload.
+      if (editId && replacement.delivery === 'local') {
+        pending.delivery = 'local'
+        state.pendingMessages = state.pendingMessages.map((item) =>
+          item === replacement ? pending : item
+        )
+        this.pendingMessageEdits.begin(chatId, messageId, editId, state.pendingMessages)
+        this.emitUpdate(state)
+      }
+      throw error
+    }
     return this.createChatDetail(state)
   }
 
   steerPendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
-    await this.refreshPendingMessages(state)
-    if (state.pendingMessages.some((item) => item.kind === 'steering')) {
-      throw new Error('A steering message is already pending.')
-    }
-
-    const pending = state.pendingMessages.find((item) => item.id === messageId)
-    if (!pending || pending.kind !== 'queued' || state.pendingMessages.at(-1)?.id !== messageId) {
-      throw new Error('Copilot can only steer with the most recently queued message.')
-    }
-    const result = await state.session!.rpc.queue.removeMostRecent()
-    if (!result.removed) throw new Error('The queued message is no longer pending.')
-    await state.session!.send({
-      prompt: pending.content,
-      displayPrompt: pending.content,
-      mode: 'immediate'
-    })
-    await this.refreshPendingMessages(state)
+    this.pendingMessageEdits.assert(chatId, messageId)
+    const pending = state.pendingMessages.find((message) => message.id === messageId)
+    if (!pending || pending.delivery !== 'local')
+      throw new Error('The queued message is no longer pending.')
+    pending.kind = 'steering'
+    state.queuePaused = false
+    await this.submitPendingMessage(state, pending)
     return this.createChatDetail(state)
   }
 
@@ -1536,19 +1644,190 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     messageId: string
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
-    const pending = state.pendingMessages.find((item) => item.id === messageId)
-    if (!pending || state.pendingMessages.at(-1)?.id !== messageId) {
-      throw new Error('Copilot can only promote the most recently queued message.')
-    }
-    const result = await state.session!.rpc.queue.removeMostRecent()
-    if (!result.removed) throw new Error('The queued message is no longer pending.')
-    await state.session!.send({
-      prompt: pending.content,
-      displayPrompt: pending.content,
-      mode: 'immediate'
-    })
-    await this.refreshPendingMessages(state)
+    this.pendingMessageEdits.assert(chatId, messageId)
+    const pending = state.pendingMessages.find((message) => message.id === messageId)
+    if (!pending || pending.delivery !== 'local')
+      throw new Error('The queued message is no longer pending.')
+    state.queuePaused = false
+    await this.submitPendingMessage(state, pending, true)
     return this.createChatDetail(state)
+  }
+
+  private createPendingMessage = (
+    message: string,
+    options: ProviderTurnOptions | undefined,
+    kind: ProviderPendingMessage['kind'] = 'queued',
+    id: string = randomUUID()
+  ): CopilotPendingMessage => {
+    if (!message.trim() && !hasMessageAttachments(options))
+      throw new Error('Cannot queue an empty message')
+    return {
+      type: 'pendingMessage',
+      id,
+      kind,
+      content: message.trim(),
+      options,
+      delivery: 'local',
+      createdAt: Date.now(),
+      attachments: [
+        ...(options?.files ?? []).map((file) => ({
+          kind: 'file' as const,
+          name: basename(file.path),
+          path: file.path
+        })),
+        ...(options?.images ?? []).map((image) => ({
+          kind: 'image' as const,
+          name: basename(image.path),
+          path: image.path
+        }))
+      ]
+    }
+  }
+
+  private enqueueMessage = (
+    state: CopilotSessionState,
+    message: string,
+    options?: ProviderTurnOptions,
+    kind: ProviderPendingMessage['kind'] = 'queued'
+  ): CopilotPendingMessage => {
+    const pending = this.createPendingMessage(message, options, kind)
+    state.pendingMessages.push(pending)
+    this.emitUpdate(state)
+    return pending
+  }
+
+  private withdrawPendingMessage = async (
+    state: CopilotSessionState,
+    pending: CopilotPendingMessage
+  ): Promise<void> => {
+    let removed: boolean
+    if (pending.kind === 'queued') {
+      removed = (await state.session!.rpc.queue.removeAt({ id: pending.id })).removed
+    } else {
+      // The SDK only offers LIFO removal for steering. Never remove a different message.
+      const snapshot = await state.session!.rpc.queue.pendingItems()
+      const native = state.pendingMessages.filter(
+        (message) => message.delivery === 'provider' && message.kind === 'steering'
+      )
+      if (
+        snapshot.items.length ||
+        native.at(-1)?.id !== pending.id ||
+        snapshot.steeringMessages.at(-1) !== pending.content ||
+        (snapshot.inFlightSteeringCount ?? 0) >= snapshot.steeringMessages.length
+      ) {
+        throw new Error('Only the most recent, unaccepted steering message can be withdrawn.')
+      }
+      removed = (await state.session!.rpc.queue.removeMostRecent()).removed
+    }
+    if (!removed) throw new Error('The steering message has already been accepted.')
+  }
+
+  private resumeEditedMessage = async (
+    state: CopilotSessionState,
+    messageId: string
+  ): Promise<void> => {
+    const pending = state.pendingMessages.find((message) => message.id === messageId)
+    if (pending?.kind === 'steering' && !state.stopped) {
+      state.queuePaused = false
+      await this.submitPendingMessage(state, pending)
+    } else {
+      await this.drainQueue(state)
+    }
+  }
+
+  private scheduleQueueDrain = (state: CopilotSessionState): void => {
+    void this.drainQueue(state).catch((error) =>
+      console.error('Unable to drain Copilot queue.', error)
+    )
+  }
+
+  private drainQueue = async (state: CopilotSessionState): Promise<void> => {
+    if (
+      state.queuePaused ||
+      state.queueDrainInProgress ||
+      state.pendingPermissions.length ||
+      state.pendingUserInputs.length ||
+      state.pendingMessages.some(
+        (message) => message.kind === 'steering' && message.delivery === 'provider'
+      )
+    )
+      return
+    const pending =
+      state.pendingMessages.find(
+        (message) =>
+          message.delivery === 'local' &&
+          message.kind === 'steering' &&
+          !this.pendingMessageEdits.blocks(state.id, message.id)
+      ) ??
+      state.pendingMessages.find(
+        (message) =>
+          message.delivery === 'local' && !this.pendingMessageEdits.blocks(state.id, message.id)
+      )
+    if (!pending || (state.active && pending.kind !== 'steering')) return
+    await this.submitPendingMessage(state, pending)
+  }
+
+  private submitPendingMessage = async (
+    state: CopilotSessionState,
+    pending: CopilotPendingMessage,
+    interrupt = false
+  ): Promise<void> => {
+    if (
+      this.pendingMessageEdits.blocks(state.id, pending.id) ||
+      state.queueDrainInProgress ||
+      pending.delivery !== 'local' ||
+      (pending.kind === 'steering' &&
+        state.pendingMessages.some(
+          (message) =>
+            message !== pending && message.kind === 'steering' && message.delivery === 'provider'
+        ))
+    )
+      return
+    state.queueDrainInProgress = true
+    try {
+      this.completionCoordinator.cancel(state.id)
+      await this.applyTurnOptions(state, pending.options)
+      if (
+        this.pendingMessageEdits.blocks(state.id, pending.id) ||
+        state.queuePaused ||
+        !state.pendingMessages.includes(pending)
+      )
+        return
+      if (interrupt) {
+        this.cancelPendingUserInputs(state)
+        state.browser?.suspend()
+        await state.session!.abort()
+        if (
+          this.pendingMessageEdits.blocks(state.id, pending.id) ||
+          !state.pendingMessages.includes(pending)
+        )
+          return
+      } else if (state.active && pending.kind !== 'steering') return
+      // Claim and send in one synchronous section after all asynchronous preparation.
+      pending.delivery = 'submitting'
+      state.active = true
+      state.stopped = false
+      state.failed = false
+      state.browser?.resume()
+      await state.session!.send(
+        getMessageOptions(
+          pending.content,
+          pending.options,
+          pending.kind === 'steering' ? 'immediate' : 'enqueue'
+        )
+      )
+      if (pending.kind === 'steering') pending.delivery = 'provider'
+      else state.pendingMessages = state.pendingMessages.filter((message) => message !== pending)
+      await this.refreshPendingMessages(state)
+    } catch (error) {
+      if (pending.delivery === 'submitting') pending.delivery = 'local'
+      state.queuePaused = true
+      throw error
+    } finally {
+      state.queueDrainInProgress = false
+      this.emitUpdate(state)
+      if (!state.queuePaused) this.scheduleQueueDrain(state)
+    }
   }
 
   editMessage = async (
@@ -1675,6 +1954,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
+    state.queuePaused = true
     state.stopped = true
     state.active = false
     state.browser?.suspend()
@@ -1845,6 +2125,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       failed: false,
       options,
       pendingMessages: [],
+      queuePaused: false,
+      queueDrainInProgress: false,
+      pendingRefreshSequence: 0,
       pendingPermissions: [],
       pendingUserInputs: [],
       plan: null,
@@ -2380,6 +2663,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
           console.error(`Unable to ${phase} completed Copilot session ${state.id}`, error)
         }
       })
+      if (!state.stopped && !state.failed) {
+        void this.refreshPendingMessages(state)
+          .then(() => this.scheduleQueueDrain(state))
+          .catch((error) => console.error('Unable to reconcile pending Copilot steering.', error))
+      }
       return
     }
     if (event.type === 'session.plan_changed' || event.type === 'session.todos_changed') {
@@ -2387,7 +2675,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       return
     }
     if (event.type === 'pending_messages.modified') {
-      void this.refreshPendingMessages(state).then(() => this.emitUpdate(state))
+      void this.refreshPendingMessages(state)
+        .then(() => {
+          this.emitUpdate(state)
+          this.scheduleQueueDrain(state)
+        })
+        .catch((error) => console.error('Unable to refresh pending Copilot messages.', error))
       return
     }
 
@@ -2472,35 +2765,53 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   private refreshPendingMessages = async (state: CopilotSessionState): Promise<void> => {
     if (!state.session) return
+    const sequence = ++state.pendingRefreshSequence
     const result = await state.session.rpc.queue.pendingItems()
-    const previous = [...state.pendingMessages]
-    const takeId = (kind: ProviderPendingMessage['kind'], content: string): string => {
-      const index = previous.findIndex(
-        (message) => message.kind === kind && message.content === content
-      )
-      if (index < 0) return randomUUID()
-      return previous.splice(index, 1)[0]!.id
-    }
-
-    state.pendingMessages = [
-      ...result.items
-        .filter((item) => item.kind === 'message')
-        .map(
-          (item): ProviderPendingMessage => ({
-            type: 'pendingMessage',
-            id: item.id,
-            kind: 'queued',
-            content: item.displayText
-          })
-        ),
-      ...result.steeringMessages.map(
-        (message): ProviderPendingMessage => ({
+    if (sequence !== state.pendingRefreshSequence) return
+    const previous = state.pendingMessages.filter(
+      (message) =>
+        message.delivery === 'provider' ||
+        (message.delivery === 'submitting' && message.kind === 'steering')
+    )
+    const native: CopilotPendingMessage[] = []
+    for (const item of result.items) {
+      if (item.kind !== 'message') continue
+      native.push(
+        previous.find((message) => message.id === item.id) ?? {
           type: 'pendingMessage',
-          id: takeId('steering', message),
-          kind: 'steering',
-          content: message
-        })
+          id: item.id,
+          kind: 'queued',
+          content: item.displayText,
+          delivery: 'provider'
+        }
       )
+    }
+    for (const content of result.steeringMessages.slice(result.inFlightSteeringCount ?? 0)) {
+      const index = previous.findIndex(
+        (message) => message.kind === 'steering' && message.content === content
+      )
+      native.push(
+        index >= 0
+          ? previous.splice(index, 1)[0]!
+          : {
+              type: 'pendingMessage',
+              id: randomUUID(),
+              kind: 'steering',
+              content,
+              delivery: 'provider'
+            }
+      )
+    }
+    const live = new Set(native)
+    const retained = state.pendingMessages.filter(
+      (message) =>
+        message.delivery !== 'provider' ||
+        live.has(message) ||
+        this.pendingMessageEdits.get(state.id)?.messageId === message.id
+    )
+    state.pendingMessages = [
+      ...retained,
+      ...native.filter((message) => !retained.includes(message))
     ]
   }
 
@@ -2626,6 +2937,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
             : state.active
               ? 'active'
               : null,
+      lastTurnOutcome: state.active
+        ? null
+        : state.failed
+          ? 'failed'
+          : state.stopped
+            ? 'stopped'
+            : (getCopilotTurnOutcome(state.events) ?? null),
       pinned: false,
       sidebarOrder: null,
       done: false,
@@ -2644,7 +2962,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
           active: state.active || state.pendingUserInputs.length > 0,
           stopped: state.stopped,
           failed: state.failed,
-          pendingItems: state.pendingMessages,
+          pendingItems: state.pendingMessages.map(
+            ({ options: _options, delivery: _delivery, ...message }) => message
+          ),
           plan: state.plan
         }
         return window
@@ -2678,6 +2998,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       createdAt: toMilliseconds(metadata.startTime),
       updatedAt: toMilliseconds(metadata.modifiedTime),
       status: detail?.status ?? null,
+      lastTurnOutcome: detail?.lastTurnOutcome,
       pendingApproval: detail?.pendingApproval ?? null,
       pinned: false,
       sidebarOrder: null,

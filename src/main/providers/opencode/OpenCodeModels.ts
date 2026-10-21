@@ -71,6 +71,7 @@ export const mapOpenCodeModels = (
 
       return {
         id,
+        modelProvider: { id: provider.id, name: providerName },
         label: (labelProviders.get(name)?.size ?? 0) > 1 ? `${name} (${providerName})` : name,
         description:
           `${providerName} · ${formatContextWindow(model.limit.context)}${status}`.trim(),

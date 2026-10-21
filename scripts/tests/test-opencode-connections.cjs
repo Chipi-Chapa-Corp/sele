@@ -16,10 +16,38 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import { ProviderSettingsContent } from './src/renderer/src/components/ProviderSettingsContent'
+            import { useOpenCodeConnectionHealth } from './src/renderer/src/useOpenCodeConnectionHealth'
+            import { OpenCodeConnectionError } from './src/renderer/src/components/OpenCodeConnectionError'
+            import { SidebarOpenCodeProvider } from './src/renderer/src/workspace/components/SidebarOpenCodeProvider'
+            import { useOpenCodeProviders } from './src/renderer/src/useOpenCodeProviders'
+            import { filterOpenCodeModels } from './src/renderer/src/openCodeProviderPreferences'
+            import { Dropdown } from './src/renderer/src/components/Dropdown'
+            import './src/renderer/src/assets/styles/base.css'
             import './src/renderer/src/assets/styles/tokens.css'
             import './src/renderer/src/workspace/styles/settings-sections.css'
             import './src/renderer/src/workspace/styles/settings-controls.css'
+            import './src/renderer/src/workspace/styles/conversation-requests.css'
             const root = createRoot(document.getElementById('root'))
+            function ProviderFixture({container}) {
+              const [revision, refresh] = React.useState(0)
+              const [manageOpen, setManageOpen] = React.useState(false)
+              const [model, setModel] = React.useState('anthropic/claude')
+              const state = useOpenCodeProviders({enabled:true, container, models:window.pickerModels, model, revision})
+              const models = filterOpenCodeModels(window.pickerModels, state.selectedId)
+              const effectiveModel = models.some(m=>m.id===model) ? model : models[0]?.id ?? ''
+              const failure = useOpenCodeConnectionHealth({providerId:'opencode',container,available:true,model:effectiveModel,revision,chatKey:null})
+              const onManage = () => setManageOpen(true)
+              return <><SidebarOpenCodeProvider {...state} manageOpen={manageOpen} onManage={onManage} onClose={() => setManageOpen(false)} onSelect={id => {state.select(id);setModel(filterOpenCodeModels(window.pickerModels,id)[0]?.id ?? '')}} onChanged={id => {if(id)state.select(id);refresh(r=>r+1)}} container={container} available={true} />
+                <Dropdown aria-label="Model" value={models.some(m=>m.id===model) ? model : models[0]?.id ?? ''} options={models.map(m=>({value:m.id,label:m.label}))} onChange={setModel} />
+                {failure && <OpenCodeConnectionError failure={failure} onManage={onManage} />}
+              </>
+            }
+            window.renderPicker = (container = {kind:'host'}, key = '') => flushSync(() => root.render(<React.StrictMode><ProviderFixture key={key + JSON.stringify(container)} container={container}/></React.StrictMode>))
+            function HealthFixture(props) {
+              const failure = useOpenCodeConnectionHealth(props)
+              return <><button disabled={!!failure}>Send</button>{failure && <OpenCodeConnectionError failure={failure} onManage={() => window.managed++} />}</>
+            }
+            window.renderHealth = (props = {}) => flushSync(() => root.render(<React.StrictMode><HealthFixture providerId="opencode" container={{kind:'host'}} available={true} model="openai/test" revision={0} chatKey={null} {...props} /></React.StrictMode>))
             window.render = (id = 'opencode', container = {kind:'host'}) => flushSync(() => root.render(
               <React.StrictMode><ProviderSettingsContent key={id + JSON.stringify(container)} providerId={id} container={container} onConnectionsChanged={() => window.changed++}>
                 <p>General settings</p>{() => <p>Skills</p>}
@@ -47,18 +75,33 @@ if (!process.versions.electron) {
         #root { display:flex;flex-direction:column;align-items:center; }
       </style></head><body><div id="root"></div><script>
         window.changed = 0; window.calls = []; window.failLoad = false; window.status = 'pending'; window.nextMode = 'auto';
+        window.preferencesApi = {getItem: key => ({ok:true,value:localStorage.getItem(key)}),setItem: (key,value) => {localStorage.setItem(key,value);return {ok:true,value:null}}};
         window.catalog = [
           {id:'openai',name:'OpenAI',methods:[{type:'key',label:'API key'}],connections:[{type:'credential',id:'saved-one',label:'Personal key',status:{state:'failed',message:'This API key has expired.',checkedAt:1}},{type:'env',name:'OPENAI_API_KEY',status:{state:'verified',checkedAt:1}}]},
           {id:'copilot',name:'GitHub Copilot',methods:[{type:'oauth',id:'0',label:'Browser sign-in',prompts:[{type:'select',key:'account',message:'Account type',options:[{label:'Personal',value:'personal'},{label:'Enterprise',value:'enterprise'}]},{type:'text',key:'domain',message:'Enterprise domain',when:{key:'account',op:'eq',value:'enterprise'}}]},{type:'key',label:'API key'}],connections:[]}
         ];
         window.providerApi = {
-          getConnections: async (provider, options) => { calls.push(['list',options]); if(failLoad) throw new Error('Fixture load failed'); return structuredClone(catalog) },
+          getConnections: async (provider, options) => {
+            calls.push(['list',options]);
+            if(failLoad) throw new Error('Fixture load failed');
+            if(window.pickerMode) {
+              if(window.deferPickerReads && !options.forceRefresh) return new Promise(resolve => (window.pendingPickerReads ??= []).push(() => resolve(structuredClone(window.pickerCatalog))));
+              return structuredClone(window.pickerCatalog);
+            }
+            if(window.healthMode) {
+              if(window.deferHealth) return new Promise(resolve => window.resolveHealth = resolve);
+              if(options.forceRefresh) window.healthCatalog = structuredClone(window.checkedHealthCatalog);
+              return structuredClone(window.healthCatalog);
+            }
+            return structuredClone(catalog)
+          },
           connectProvider: async (provider,input,options) => {
             calls.push(['connect',input,options]);
             if(input.method === 'key') {
-              const entry = catalog.find(p=>p.id===input.integrationId);
+              const entry = (window.pickerMode ? pickerCatalog : catalog).find(p=>p.id===input.integrationId);
               const status = input.key === 'bad-key' ? {state:'failed',message:'invalid x-api-key',checkedAt:2} : {state:'verified',checkedAt:2};
-              entry.connections = [{type:'credential',id:'saved-one',label:'New key',status}, ...entry.connections.filter(c=>c.type!=='credential')];
+              entry.connections = [{type:'credential',id:window.pickerMode ? entry.id : 'saved-one',label:'New key',status}, ...entry.connections.filter(c=>c.type!=='credential')];
+              if(window.pickerMode) window.pickerModels=[...pickerModels,{id:entry.id+'/new',label:'New provider model'}];
               return null
             }
             if(window.deferStart) return new Promise(resolve => window.resolveStart = resolve)
@@ -67,7 +110,14 @@ if (!process.versions.electron) {
           getConnectionAttempt: async () => ({status:window.status}),
           completeConnection: async (provider,id,code,options) => {calls.push(['complete',id,code,options]); window.status='complete'},
           cancelConnection: async (provider,id,options) => {calls.push(['cancel',id,options])},
-          deleteConnection: async (provider,id,options) => {calls.push(['delete',id,options]); catalog.forEach(p=>p.connections=p.connections.filter(c=>c.id!==id))}
+          deleteConnection: async (provider,id,options) => {
+            calls.push(['delete',id,options]);
+            catalog.forEach(p=>p.connections=p.connections.filter(c=>c.id!==id));
+            if(window.pickerMode) {
+              pickerCatalog.forEach(p=>p.connections=p.connections.filter(c=>c.id!==id));
+              window.pickerModels=pickerModels.filter(m=>!m.id.startsWith(id+'/'));
+            }
+          }
         };
         window.appApi = {handleExternalLink: async input => calls.push(['open',input])};
       </script><script src="ui.js"></script></body></html>`
@@ -165,7 +215,7 @@ if (!process.versions.electron) {
         await run('window.setInput(\'input[type="password"]\',"fixture-key")')
         await tick()
         await click('Connect')
-        assert.equal(await run('window.changed'), 2)
+        assert.equal(await run('window.changed'), 3)
         assert.equal(await run('!!document.querySelector("[role=alert]")'), false)
         assert.equal(
           await run('document.querySelector("[role=status]").textContent'),
@@ -251,6 +301,234 @@ if (!process.versions.electron) {
             '[...document.querySelectorAll("button")].some(b=>b.textContent.trim()==="Connections")'
           ),
           false
+        )
+        // Opening the chat checks both expired saved keys before any user message is sent.
+        await run(`window.healthMode = true; window.managed = 0; window.calls = [];
+          window.healthCatalog = ['openai','anthropic'].map(id => ({id,name:id,methods:[],connections:[{type:'credential',id,label:'API key'}]}));
+          window.checkedHealthCatalog = healthCatalog.map(p => ({...p,connections:p.connections.map(c => ({...c,status:{state:'failed',message:'This API key has expired.',checkedAt:Date.now()}}))}));
+          window.renderHealth()`)
+        await tick()
+        assert.match(
+          await run('document.querySelector("[role=alert]").textContent'),
+          /Request failedThis API key has expired/
+        )
+        assert.equal(await run('document.querySelector("button").disabled'), true)
+        assert.equal(await run('calls.filter(c=>c[1].forceRefresh).length'), 1)
+        // Revalidating the same environment must keep a known error visible while reads wait.
+        await run('window.deferHealth=true;window.renderHealth({revision:1})')
+        await tick()
+        assert.equal(
+          await run('!!document.querySelector(\'[aria-label="OpenCode connection error"]\')'),
+          true
+        )
+        assert.equal(await run('document.querySelector("button").disabled'), true)
+        await run('window.deferHealth=false;window.resolveHealth(window.checkedHealthCatalog)')
+        await tick()
+        if (process.env.SELE_HEALTH_SCREENSHOT)
+          await fs.writeFile(
+            process.env.SELE_HEALTH_SCREENSHOT,
+            (await win.webContents.capturePage()).toPNG()
+          )
+        await click('Manage Providers')
+        assert.equal(await run('window.managed'), 1)
+        await run('window.renderHealth({model:"anthropic/test"})')
+        await tick()
+        assert.match(
+          await run('document.querySelector("[role=alert]").textContent'),
+          /Request failedThis API key has expired/
+        )
+        assert.equal(await run('calls.filter(c=>c[1].forceRefresh).length'), 1)
+        // An unrelated expired key must not disable a working or credential-free provider.
+        await run(
+          `healthCatalog.push({id:'working',name:'Working',methods:[],connections:[{type:'credential',id:'working',label:'Key',status:{state:'verified',checkedAt:Date.now()}}]}); renderHealth({model:'working/test'})`
+        )
+        await tick()
+        assert.equal(await run('!!document.querySelector("[role=alert]")'), false)
+        assert.equal(await run('document.querySelector("button").disabled'), false)
+        await run('window.renderHealth({model:"public/free"})')
+        await tick()
+        assert.equal(await run('!!document.querySelector("[role=alert]")'), false)
+        // Saving a replacement and refreshing the model catalog clears the banner.
+        await run(
+          `healthCatalog[0].connections[0].status={state:'verified',checkedAt:Date.now()}; renderHealth({revision:1})`
+        )
+        await tick()
+        assert.equal(await run('!!document.querySelector("[role=alert]")'), false)
+        // A late result from the host cannot poison another source or provider.
+        await run('window.deferHealth=true; window.renderHealth({revision:2})')
+        await tick()
+        await run(
+          'window.renderHealth({providerId:"codex",revision:2}); window.resolveHealth(window.checkedHealthCatalog)'
+        )
+        await tick()
+        assert.equal(await run('!!document.querySelector("[role=alert]")'), false)
+        await run('window.renderHealth({revision:3})')
+        await tick()
+        await run(
+          'window.oldHostHealth=window.resolveHealth; window.deferHealth=false; window.healthCatalog=[]; window.renderHealth({container:{kind:"container",tool:"podman",name:"fixture"},revision:3})'
+        )
+        await tick()
+        await run('window.oldHostHealth(window.checkedHealthCatalog)')
+        await tick()
+        assert.equal(await run('!!document.querySelector("[role=alert]")'), false)
+        // The sidebar provider picker remembers the environment and scopes its model dropdown.
+        await run(`window.pickerMode=true; window.confirm=()=>true;
+          window.pickerCatalog=[
+            {id:'anthropic',name:'Anthropic',methods:[{type:'key',label:'API key'}],connections:[{type:'credential',id:'anthropic',label:'API key',status:{state:'verified',checkedAt:Date.now()}}]},
+            {id:'opencode-go',name:'OpenCode Go',methods:[{type:'key',label:'API key'}],connections:[{type:'credential',id:'opencode-go',label:'API key',status:{state:'failed',message:'This API key has expired.',checkedAt:Date.now()}}]},
+            {id:'new',name:'New Provider',methods:[{type:'key',label:'API key'}],connections:[]},
+            {id:'env',name:'Environment Provider',methods:[],connections:[{type:'env',name:'ENV_KEY',status:{state:'verified',checkedAt:Date.now()}}]}
+          ];
+          window.pickerModels=[{id:'anthropic/claude',label:'Claude via Anthropic'},{id:'opencode-go/claude',label:'Claude via Go'}];
+          window.renderPicker()`)
+        await tick()
+        await run('document.querySelector(\'button[aria-label="OpenCode provider"]\').click()')
+        await tick()
+        assert.equal(
+          await run(
+            '[...document.querySelectorAll("button")].some(b=>b.textContent.trim()==="Add account")'
+          ),
+          false
+        )
+        assert.equal(
+          await run('!!document.querySelector(\'[aria-label="Delete Anthropic connection"]\')'),
+          true
+        )
+        assert.equal(
+          await run(
+            '!!document.querySelector(\'[aria-label="Delete Environment Provider connection"]\')'
+          ),
+          false
+        )
+        await run(
+          '[...document.querySelectorAll("[role=option]")].find(e=>e.textContent.includes("OpenCode Go")).click()'
+        )
+        await tick()
+        await run('document.querySelector(\'button[aria-label="Model"]\').click()')
+        await tick()
+        assert.deepEqual(
+          await run(
+            '[...document.getElementById(document.querySelector(\'button[aria-label="Model"]\').getAttribute("aria-controls")).querySelectorAll("[role=option]")].map(e=>e.textContent.trim())'
+          ),
+          ['Claude via Go']
+        )
+        await run(
+          'document.querySelector(\'button[aria-label="Model"]\').click(); window.renderPicker({kind:"host"}, "restart")'
+        )
+        await tick()
+        assert.match(
+          await run(
+            'document.querySelector(\'button[aria-label="OpenCode provider"]\').textContent'
+          ),
+          /OpenCode Go/
+        )
+        await run('window.renderPicker({kind:"container",tool:"podman",name:"fixture"})')
+        await tick()
+        assert.match(
+          await run(
+            'document.querySelector(\'button[aria-label="OpenCode provider"]\').textContent'
+          ),
+          /Anthropic/
+        )
+        await run('window.renderPicker()')
+        await tick()
+        // Both entry points open the same modal without replacing the model or hiding its error.
+        await run(`window.stableComposer = () => [document.querySelector('button[aria-label="Model"]').textContent, document.querySelector('[aria-label="OpenCode connection error"]')?.textContent];
+          window.composerBefore=stableComposer(); window.composerChanges=[];
+          window.composerObserver=new MutationObserver(()=>composerChanges.push(stableComposer()));
+          composerObserver.observe(document.getElementById('root'),{subtree:true,childList:true,characterData:true});
+          document.querySelector('[aria-label="OpenCode connection error"] button').click()`)
+        await tick()
+        assert.equal(
+          await run(
+            'document.querySelectorAll(\'[role="dialog"][aria-label="Manage Providers"]\').length'
+          ),
+          1
+        )
+        assert.deepEqual(await run('stableComposer()'), await run('composerBefore'))
+        // Refresh completion bumps the catalog revision; keep cached presentation during that read.
+        await run(
+          `window.deferPickerReads=true; [...document.querySelectorAll('[role="dialog"] button')].find(b=>b.textContent.trim()==='Refresh').click()`
+        )
+        await tick()
+        assert.deepEqual(await run('stableComposer()'), await run('composerBefore'))
+        await run(
+          'window.deferPickerReads=false;window.pendingPickerReads.forEach(resolve=>resolve());window.pendingPickerReads=[]'
+        )
+        await tick()
+        assert.equal(
+          await run(
+            'composerChanges.every(value=>JSON.stringify(value)===JSON.stringify(composerBefore))'
+          ),
+          true
+        )
+        await run(
+          'composerObserver.disconnect();document.querySelector(\'[aria-label="Close connections window"]\').click()'
+        )
+        await tick()
+        await run('document.querySelector(\'button[aria-label="OpenCode provider"]\').click()')
+        await tick()
+        await run(
+          '[...document.querySelectorAll(".ui-dropdown__action")].find(b=>b.textContent.trim()==="Manage Providers").click()'
+        )
+        await tick()
+        if (process.env.SELE_PROVIDERS_SCREENSHOT)
+          await fs.writeFile(
+            process.env.SELE_PROVIDERS_SCREENSHOT,
+            (await win.webContents.capturePage()).toPNG()
+          )
+        assert.equal(
+          await run('!!document.querySelector(\'[role="dialog"][aria-label="Manage Providers"]\')'),
+          true
+        )
+        assert.equal(await run('!!document.querySelector(\'[aria-label="Model provider"]\')'), true)
+        await pick('Model provider', 'New Provider')
+        await run('window.setInput(\'input[type="password"]\',"fixture-key")')
+        await tick()
+        await click('Connect')
+        assert.match(
+          await run(
+            'document.querySelector(\'button[aria-label="OpenCode provider"]\').textContent'
+          ),
+          /New Provider/
+        )
+        await run('document.querySelector(\'[aria-label="Close connections window"]\').click()')
+        await tick()
+        await run('document.querySelector(\'button[aria-label="OpenCode provider"]\').click()')
+        await tick()
+        await run(
+          'document.querySelector(\'[aria-label="Delete OpenCode Go connection"]\').click()'
+        )
+        await tick()
+        assert.equal(await run('calls.some(c=>c[0]==="delete"&&c[1]==="opencode-go")'), true)
+        assert.match(
+          await run(
+            'document.querySelector(\'button[aria-label="OpenCode provider"]\').textContent'
+          ),
+          /New Provider/
+        )
+        await run('document.querySelector(\'button[aria-label="OpenCode provider"]\').click()')
+        await tick()
+        await run(
+          'document.querySelector(\'[aria-label="Delete New Provider connection"]\').click()'
+        )
+        await tick()
+        assert.match(
+          await run(
+            'document.querySelector(\'button[aria-label="OpenCode provider"]\').textContent'
+          ),
+          /Anthropic/
+        )
+        await run(
+          'window.pickerCatalog=[];window.pickerModels=[];window.renderPicker({kind:"host"},"empty")'
+        )
+        await tick()
+        await run('document.querySelector(\'button[aria-label="OpenCode provider"]\').click()')
+        await tick()
+        await click('Manage Providers')
+        assert.equal(
+          await run('!!document.querySelector(\'[role="dialog"][aria-label="Manage Providers"]\')'),
+          true
         )
         console.log('OpenCode connections UI checks passed')
         app.exit(0)

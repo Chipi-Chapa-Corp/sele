@@ -13,6 +13,7 @@ import {
   PinOff,
   Save,
   ShieldQuestionMark,
+  Terminal,
   Undo2,
   X
 } from 'lucide-react'
@@ -40,6 +41,8 @@ import { ProviderIcon } from './ProviderIcon'
 import './ChatListItem.css'
 import { Dropdown } from './Dropdown'
 import { providerApi } from '../providerApi'
+import { useChatTerminalStatus } from '../useChatTerminalActivity'
+import { chatTerminalActivity } from '../chatTerminalActivity'
 
 type ChatListItemProps = {
   chat: ProviderChat
@@ -69,6 +72,7 @@ type ChatListItemProps = {
 const statusLabels = {
   active: 'In progress',
   error: 'Error',
+  stopped: 'Stopped',
   waitingOnApproval: 'Waiting for approval',
   waitingOnUserInput: 'Waiting for your input'
 } as const
@@ -135,6 +139,7 @@ export const ChatListItem = memo(function ChatListItem({
   onTogglePinned,
   approvalDecisionInFlight = null
 }: ChatListItemProps) {
+  const terminalActivity = useChatTerminalStatus(`${chat.providerId}:${chat.id}`)
   const [exporting, setExporting] = useState(false)
   const [exportResult, setExportResult] = useState<string | null>(null)
   const exportChat = async (): Promise<void> => {
@@ -180,11 +185,19 @@ export const ChatListItem = memo(function ChatListItem({
         : null
   const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
   const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
-  const errorStatus = chat.status === 'error' ? chat.status : null
+  const turnOutcomeStatus =
+    chat.lastTurnOutcome === 'failed'
+      ? 'error'
+      : chat.lastTurnOutcome === 'stopped'
+        ? 'stopped'
+        : null
   const pendingApproval = chat.pendingApproval
   const unreadUpdatedAt = Math.max(chat.updatedAt, latestCommitFinishedAt ?? 0)
   const unread =
-    !selected && !childOpen && !chat.done && unreadUpdatedAt > (chat.seenUpdatedAt ?? chat.updatedAt)
+    !selected &&
+    !childOpen &&
+    !chat.done &&
+    (terminalActivity.unread || unreadUpdatedAt > (chat.seenUpdatedAt ?? 0))
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()
@@ -330,7 +343,10 @@ export const ChatListItem = memo(function ChatListItem({
               type: 'button' as const,
               'aria-current': selected ? ('true' as const) : undefined,
               'aria-describedby': detailOpen ? detailCardId : undefined,
-              onClick: () => onClick(chat)
+              onClick: () => {
+                chatTerminalActivity.markSeen(`${chat.providerId}:${chat.id}`)
+                onClick(chat)
+              }
             })}
       >
         <span className="chat-list-item__header">
@@ -375,15 +391,22 @@ export const ChatListItem = memo(function ChatListItem({
                 aria-label={statusLabels[userInputStatus]}
               />
             </span>
-          ) : errorStatus ? (
+          ) : terminalActivity.running ? (
             <span
               className="chat-list-item__status-container chat-list-item__status-container--leading"
-              title={statusLabels[errorStatus]}
+              title="Terminal task running"
+            >
+              <Terminal className="chat-list-item__terminal" aria-label="Terminal task running" />
+            </span>
+          ) : turnOutcomeStatus ? (
+            <span
+              className="chat-list-item__status-container chat-list-item__status-container--leading"
+              title={statusLabels[turnOutcomeStatus]}
             >
               <span
-                className="chat-list-item__status chat-list-item__status--error"
+                className={`chat-list-item__status chat-list-item__status--${turnOutcomeStatus}`}
                 role="img"
-                aria-label={statusLabels[errorStatus]}
+                aria-label={statusLabels[turnOutcomeStatus]}
               />
             </span>
           ) : (

@@ -9,6 +9,7 @@ import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
 import { getClaudePermissionAction } from './ClaudePermissions.ts'
 import {
   ClaudeTranscriptProjection,
+  getClaudeTurnOutcome,
   isClaudeInternalUserMessage,
   renderClaudeChatItems
 } from './ClaudeItemRenderers.ts'
@@ -71,6 +72,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
     isClaudeAuthenticationFailure,
     isClaudeInternalUserMessage,
     ClaudeTranscriptProjection,
+    getClaudeTurnOutcome,
     renderClaudeChatItems,
     normalizeContainerTarget,
     getContainerTargetKey,
@@ -136,7 +138,11 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
       const store = container ? { container } : undefined
       return {
         messages: await records(id, store),
-        metadata: await metadata(id, { sessionStore: store }) ?? { sessionId: id, summary: '', lastModified: 0 },
+        metadata: (await metadata(id, { sessionStore: store })) ?? {
+          sessionId: id,
+          summary: '',
+          lastModified: 0
+        },
         pagination: { kind: 'cursor', olderCursor: null, newerCursor: null }
       }
     },

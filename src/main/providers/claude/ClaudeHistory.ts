@@ -91,6 +91,7 @@ export const restoreClaudeHistory = async (
         // SDK SessionMessage omits top-level system payloads and internal user flags.
         message: original?.type === 'system' ? original : message.message,
         ...(typeof original?.error === 'string' ? { error: original.error } : {}),
+        ...(original?.failed === true ? { failed: true } : {}),
         ...(original?.isMeta === true ? { isMeta: true } : {}),
         ...(original?.isSynthetic === true ? { isSynthetic: true } : {}),
         ...(original?.isCompactSummary === true ? { isCompactSummary: true } : {}),

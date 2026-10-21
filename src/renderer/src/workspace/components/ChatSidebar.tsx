@@ -3,6 +3,7 @@ import { AppUpdatePrompt } from './AppUpdatePrompt'
 import { SidebarProviderAccount } from './SidebarProviderAccount'
 import { UsageIndicator } from '../../components/UsageIndicator'
 import { getVisibleUsageBadges } from '../../usageBadges'
+import { selectBadgeBalance } from '../../accountBalances'
 import { useState, type ReactElement } from 'react'
 import type { ChatImportPreview } from '../../../../shared/chatArchive'
 import { providerApi } from '../../providerApi'
@@ -207,6 +208,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
         <AppUpdatePrompt />
         <div className="chat-sidebar__account-row">
           <SidebarProviderAccount
+            openCode={providerAccount.openCode}
             refreshKey={providerAccount.key}
             providerId={providerAccount.providerId}
             container={providerAccount.container}
@@ -217,16 +219,17 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
                 usageIndicator.accountUsage?.rateLimits ?? [],
                 usageIndicator.contextUsage,
                 usageIndicator.displayUsage
-              ).length > 0
+              ).length > 0 ||
+              selectBadgeBalance(
+                usageIndicator.accountUsage?.balances ?? [],
+                usageIndicator.modelProviderId
+              ) != null
             }
             onSelect={providerAccount.onSelect}
             onCreate={providerAccount.onCreate}
             onDelete={providerAccount.onDelete}
           />
-          <UsageIndicator
-            key={`${providerAccount.key}:${usageIndicator.chatId ?? ''}`}
-            {...usageIndicator}
-          />
+          <UsageIndicator scopeKey={providerAccount.key} {...usageIndicator} />
         </div>
       </footer>
     </aside>

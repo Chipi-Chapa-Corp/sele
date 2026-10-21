@@ -3,6 +3,7 @@ import { createAfterPaintWriter } from './afterPaintWriter'
 import {
   type ComposerDraftState,
   readStoredComposerDrafts,
+  subscribeComposerDrafts,
   writeStoredComposerDrafts
 } from './composerDraftStorage'
 
@@ -12,6 +13,7 @@ const resolveAction = <T>(current: T, action: SetStateAction<T>): T =>
 export const useComposerDrafts = (editing: boolean) => {
   const [state, setState] = useState(readStoredComposerDrafts)
   const [writer] = useState(() => createAfterPaintWriter(writeStoredComposerDrafts))
+  useLayoutEffect(() => subscribeComposerDrafts(setState), [])
   const setComposerDrafts = useCallback(
     (action: SetStateAction<ComposerDraftState['composerDrafts']>) => {
       setState((current) => {
@@ -21,13 +23,13 @@ export const useComposerDrafts = (editing: boolean) => {
     },
     []
   )
-  const setPromptDraftsByProject = useCallback(
-    (action: SetStateAction<ComposerDraftState['promptDraftsByProject']>) => {
+  const setPromptDraftsByScope = useCallback(
+    (action: SetStateAction<ComposerDraftState['promptDraftsByScope']>) => {
       setState((current) => {
-        const promptDraftsByProject = resolveAction(current.promptDraftsByProject, action)
-        return promptDraftsByProject === current.promptDraftsByProject
+        const promptDraftsByScope = resolveAction(current.promptDraftsByScope, action)
+        return promptDraftsByScope === current.promptDraftsByScope
           ? current
-          : { ...current, promptDraftsByProject }
+          : { ...current, promptDraftsByScope }
       })
     },
     []
@@ -39,5 +41,5 @@ export const useComposerDrafts = (editing: boolean) => {
   }, [editing, state, writer])
   useLayoutEffect(() => () => writer.flush(), [writer])
 
-  return { ...state, setComposerDrafts, setPromptDraftsByProject }
+  return { ...state, setComposerDrafts, setPromptDraftsByScope }
 }

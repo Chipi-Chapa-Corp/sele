@@ -1,3 +1,4 @@
+import { PendingMessageEdits } from '../PendingMessageEdits.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -29,6 +30,9 @@ const adapter = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name.text === 'ClaudeProviderAdapter'
 )
 const methods = new Set([
+  'beginPendingMessageEdit',
+  'cancelPendingMessageEdit',
+  'resumePendingMessages',
   'drainNextQueuedMessage',
   'getQueueDrainDecision',
   'getDrainingMessage',
@@ -53,13 +57,14 @@ const methods = new Set([
 const code = ts.transpileModule(
   `${source.statements.find((node) => ts.isClassDeclaration(node) && node.name.text === 'AsyncMessageQueue').getText(source)}
   ${source.statements.find((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((declaration) => declaration.name.getText(source) === 'toTranscriptMessage')).getText(source)}
-  class Harness { ${adapter.members
+  class Harness { pendingMessageEdits = new PendingMessageEdits(); ${adapter.members
     .filter((member) => methods.has(member.name?.getText(source)))
     .map((member) => member.getText(source))
     .join('\n')} }; globalThis.Harness = Harness`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
 ).outputText
 const context = vm.createContext({
+  PendingMessageEdits,
   isClaudeAuthenticationFailure,
   isExpectedClaudeQueryShutdownError,
   getContainerTargetKey,
@@ -482,7 +487,14 @@ for (const outcome of ['success', 'api-error', 'error-result', 'disconnect']) {
 test('stop during result settlement cannot leave the next send blocked on a retired query', async () => {
   const { instance, state } = setup()
   const usage = deferred()
-  const old = { getContextUsage: () => usage.promise, interrupt: async () => {}, close() {} }
+  const old = {
+    getContextUsage: (options) => {
+      assert.equal(options.detail, 'summary')
+      return usage.promise
+    },
+    interrupt: async () => {},
+    close() {}
+  }
   state.query = old
   state.queuedMessages = []
   state.active = true
@@ -824,12 +836,13 @@ test('a message sent while a finished turn settles is sent instead of racing the
   assert.deepEqual(state.queuedMessages, [])
 })
 
-
 test('a rejected idle send does not remain queued while its text stays in the composer draft', async () => {
   const { instance, state } = setup()
   state.queuedMessages = []
-  instance.createQueuedMessage = content => ({ id: content, content })
-  instance.ensureStateQuery = async () => { throw new Error('No conversation found') }
+  instance.createQueuedMessage = (content) => ({ id: content, content })
+  instance.ensureStateQuery = async () => {
+    throw new Error('No conversation found')
+  }
   await assert.rejects(instance.sendMessageRespectingQueue(state, 'test'), /No conversation found/)
   assert.equal(state.queuedMessages.length, 0)
   assert.equal(state.queuedMessagesPaused, false)
@@ -838,10 +851,81 @@ test('a rejected idle send does not remain queued while its text stays in the co
 test('startup failure preserves earlier explicit queued messages', async () => {
   const { instance, state } = setup()
   const original = state.queuedMessages[0]
-  instance.createQueuedMessage = content => ({ id: content, content })
-  instance.ensureStateQuery = async () => { throw new Error('No conversation found') }
+  instance.createQueuedMessage = (content) => ({ id: content, content })
+  instance.ensureStateQuery = async () => {
+    throw new Error('No conversation found')
+  }
   await assert.rejects(instance.sendMessageRespectingQueue(state, 'next'), /No conversation found/)
   assert.equal(state.queuedMessages[0], original)
   assert.equal(state.queuedMessages.length, 2)
   assert.equal(state.queuedMessagesPaused, true)
+})
+
+test('editing Claude queue during startup holds dispatch through option application and cancel resumes once', async () => {
+  const { instance, state } = setup()
+  const startup = deferred()
+  instance.applyTurnOptions = () => startup.promise
+  const draining = instance.drainNextQueuedMessage(state)
+  await instance.beginPendingMessageEdit('session', 'first', 'edit')
+  startup.resolve()
+  await draining
+  assert.equal(state.active, false)
+  assert.equal(state.queuedMessages[0].id, 'first')
+  assert.equal(instance.getDrainingMessage(state), null)
+  await instance.cancelPendingMessageEdit('session', 'first', 'stale')
+  assert.equal(state.active, false)
+  await instance.cancelPendingMessageEdit('session', 'first', 'edit')
+  assert.equal(state.active, true)
+  assert.equal(state.queuedMessages.length, 0)
+})
+
+test('editing a later Claude queued message still sends the messages queued before it', async () => {
+  const { instance, state } = setup()
+  state.queuedMessages = [{ id: 'first' }, { id: 'edited' }, { id: 'third' }]
+  const sent = []
+  instance.sendQueuedMessageNow = (_state, message) => {
+    sent.push(message.id)
+    state.active = true
+  }
+  await instance.beginPendingMessageEdit('session', 'edited', 'edit')
+  assert.equal(await instance.drainNextQueuedMessage(state), true)
+  assert.deepEqual(sent, ['first'])
+  state.active = false
+  assert.equal(instance.getQueueDrainDecision(state), 'wait')
+  assert.equal(await instance.drainNextQueuedMessage(state), false)
+  await instance.cancelPendingMessageEdit('session', 'edited', 'edit')
+  assert.deepEqual(sent, ['first', 'edited'])
+  assert.deepEqual(
+    state.queuedMessages.map((message) => message.id),
+    ['third']
+  )
+})
+
+test('new Claude submissions cannot clear an edit hold', async () => {
+  const { instance, state } = setup()
+  instance.createQueuedMessage = (content, options, id = 'new') => ({ id, content, options })
+  await instance.beginPendingMessageEdit('session', 'first', 'edit')
+  await instance.sendActiveChatMessage('session', 'later', 'steer')
+  assert.equal(state.queuedMessages.length, 2)
+  assert.equal(state.queuedMessages[1].kind, 'steering')
+  assert.equal(state.active, false)
+  assert.equal(instance.getQueueDrainDecision(state), 'wait')
+})
+
+test('failed Claude startup while saving restores the original queued payload and the edit hold', async () => {
+  const { instance, state } = setup()
+  const original = state.queuedMessages[0]
+  original.content = 'original'
+  instance.createQueuedMessage = (content, options, id) => ({ content, options, id })
+  await instance.beginPendingMessageEdit('session', 'first', 'edit')
+  instance.ensureStateQuery = async () => {
+    throw new Error('offline')
+  }
+  await assert.rejects(
+    instance.editPendingMessage('session', 'first', 'revised', {}, 'edit'),
+    /offline/
+  )
+  assert.equal(state.queuedMessages[0], original)
+  assert.equal(state.queuedMessagesPaused, false)
+  assert.equal(instance.pendingMessageEdits.has('session'), true)
 })

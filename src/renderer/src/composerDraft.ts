@@ -12,6 +12,8 @@ export type ComposerDraft = {
 export type PromptDraft = {
   id: string
   prompt: string
+  /** Released by a completed chat; keep available only in new-chat composers until used. */
+  newChatsOnly?: boolean
 }
 
 const emptyComposerDraft: ComposerDraft = {

@@ -77,7 +77,7 @@ if (!process.versions.electron) {
                         {s.bottomAligned && <div className="chat-detail__messages-footer"/>}
                       </div>
                     </div>
-                    {s.realComposer ? <MessageBox draftScopeKey="codex:chat" draftProjectKey="project"
+                    {s.realComposer ? <MessageBox draftScopeKey="codex:chat"
                       providerId="codex" model="test" models={[{id:'test', label:'Test', description:'Test model', isDefault:true,
                         supportedReasoningEfforts:[{id:'low',label:'Low',description:'Low effort'},{id:'high',label:'High',description:'High effort'}],defaultReasoningEffort:'low'},
                         {id:'other',label:'Other',description:'Other model',supportedReasoningEfforts:[],defaultReasoningEffort:'low'}]}

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   composerDraftsStorageKey,
+  releaseComposerDraftScope,
+  moveComposerDraftScope,
   parseStoredComposerDrafts,
   readStoredComposerDrafts,
   writeStoredComposerDrafts
@@ -76,7 +78,7 @@ test('project and chat composers survive a fresh preference client with all sele
   drafts = updateComposerDraft(drafts, 'codex:chat', 'message', 'existing chat')
   const state = {
     composerDrafts: drafts,
-    promptDraftsByProject: new Map([
+    promptDraftsByScope: new Map([
       [
         'cwd:/a',
         [
@@ -96,9 +98,9 @@ test('project and chat composers survive a fresh preference client with all sele
 test('stashing, restoring, failed sends and deleting the final draft persist without resurrection', async () => {
   const disk = {}
   const client = await makeClient(disk)
-  const state = { composerDrafts: new Map(), promptDraftsByProject: new Map() }
+  const state = { composerDrafts: new Map(), promptDraftsByScope: new Map() }
   state.composerDrafts = updateComposerDraft(state.composerDrafts, 'project', 'message', 'prompt')
-  state.promptDraftsByProject = addPromptDraft(state.promptDraftsByProject, 'project', {
+  state.promptDraftsByScope = addPromptDraft(state.promptDraftsByScope, 'project', {
     id: 'saved',
     prompt: 'prompt'
   })
@@ -106,9 +108,9 @@ test('stashing, restoring, failed sends and deleting the final draft persist wit
   writeStoredComposerDrafts(state)
   let restored = readStoredComposerDrafts()
   assert.equal(getComposerDraft(restored.composerDrafts, 'project').message, '')
-  const draft = getPromptDrafts(restored.promptDraftsByProject, 'project')[0]
-  restored.promptDraftsByProject = removePromptDraft(
-    restored.promptDraftsByProject,
+  const draft = getPromptDrafts(restored.promptDraftsByScope, 'project')[0]
+  restored.promptDraftsByScope = removePromptDraft(
+    restored.promptDraftsByScope,
     'project',
     draft.id
   )
@@ -120,7 +122,7 @@ test('stashing, restoring, failed sends and deleting the final draft persist wit
   )
   writeStoredComposerDrafts(restored)
   restored = readStoredComposerDrafts()
-  assert.deepEqual(getPromptDrafts(restored.promptDraftsByProject, 'project'), [])
+  assert.deepEqual(getPromptDrafts(restored.promptDraftsByScope, 'project'), [])
   assert.equal(getComposerDraft(restored.composerDrafts, 'project').message, 'new text\n\nprompt')
   restored.composerDrafts = updateComposerDraft(restored.composerDrafts, 'project', 'message', '')
   restored.composerDrafts = restoreFailedComposerMessage(
@@ -137,10 +139,10 @@ test('stashing, restoring, failed sends and deleting the final draft persist wit
   writeStoredComposerDrafts(restored)
   await client.flush()
   await makeClient(disk)
-  assert.deepEqual(
-    readStoredComposerDrafts(),
-    { composerDrafts: new Map(), promptDraftsByProject: new Map() }
-  )
+  assert.deepEqual(readStoredComposerDrafts(), {
+    composerDrafts: new Map(),
+    promptDraftsByScope: new Map()
+  })
   assert.equal(disk[composerDraftsStorageKey], undefined)
 })
 
@@ -161,7 +163,7 @@ test('malformed stored entries cannot break valid project prompts', () => {
           }
         ]
       ],
-      promptDraftsByProject: [
+      promptDraftsByScope: [
         null,
         ['bad', {}],
         ['valid', [{ id: 'draft', prompt: 'keep' }, null, { id: 12, prompt: 'bad' }]]
@@ -174,11 +176,113 @@ test('malformed stored entries cannot break valid project prompts', () => {
     skills: [skill],
     apps: [app]
   })
-  assert.deepEqual(getPromptDrafts(parsed.promptDraftsByProject, 'valid'), [
+  assert.deepEqual(getPromptDrafts(parsed.promptDraftsByScope, 'valid'), [
     { id: 'draft', prompt: 'keep' }
   ])
   assert.deepEqual([...parsed.composerDrafts.keys()], ['valid'])
   for (const value of [null, 'null', '[]', '42']) {
     assert.equal(parseStoredComposerDrafts(value).composerDrafts.size, 0)
   }
+})
+
+test('legacy project prompts migrate into the new-chat composer without leaking to chats', () => {
+  const parsed = parseStoredComposerDrafts(
+    JSON.stringify({
+      promptDraftsByProject: [['host\0/a', [{ id: 'legacy', prompt: 'keep me' }]]]
+    })
+  )
+  assert.deepEqual(getPromptDrafts(parsed.promptDraftsByScope, 'new-chat:host\0/a'), [
+    { id: 'legacy', prompt: 'keep me' }
+  ])
+  assert.deepEqual(getPromptDrafts(parsed.promptDraftsByScope, 'codex:chat'), [])
+})
+
+test('chat creation moves private drafts, and Done releases saved prompts to new chats only', () => {
+  const from = getComposerDraftScopeKey(null, 'host\0/a')
+  const draft = { message: 'typed during send', attachments: [image], skills: [skill], apps: [app] }
+  const saved = [{ id: 'saved', prompt: 'next task' }]
+  const other = [{ id: 'other', prompt: 'other task' }]
+  const state = {
+    composerDrafts: new Map([
+      [from, draft],
+      ['claude:other', { ...draft, message: 'other input' }]
+    ]),
+    promptDraftsByScope: new Map([
+      [from, saved],
+      ['claude:other', other]
+    ])
+  }
+  const moved = moveComposerDraftScope(state, from, 'codex:created')
+  assert.equal(moved.composerDrafts.has(from), false)
+  assert.equal(moved.promptDraftsByScope.has(from), false)
+  assert.deepEqual(moved.composerDrafts.get('codex:created'), draft)
+  assert.deepEqual(moved.promptDraftsByScope.get('codex:created'), saved)
+  assert.equal(moveComposerDraftScope(moved, from, 'codex:created'), moved)
+  const released = releaseComposerDraftScope(moved, 'codex:created', from)
+  assert.equal(released.composerDrafts.has('codex:created'), false)
+  assert.equal(released.promptDraftsByScope.has('codex:created'), false)
+  assert.deepEqual(released.composerDrafts.get(from), draft)
+  assert.deepEqual(
+    released.promptDraftsByScope.get(from),
+    saved.map((item) => ({ ...item, newChatsOnly: true }))
+  )
+  assert.deepEqual(
+    released.composerDrafts.get('claude:other'),
+    state.composerDrafts.get('claude:other')
+  )
+  assert.deepEqual(released.promptDraftsByScope.get('claude:other'), other)
+  assert.equal(releaseComposerDraftScope(released, 'codex:created', from), released)
+  assert.equal(state.composerDrafts.has(from), true)
+
+  // Starting another chat carries its own saved prompts, while released prompts stay available.
+  const withPrivate = {
+    ...released,
+    promptDraftsByScope: addPromptDraft(released.promptDraftsByScope, from, {
+      id: 'private',
+      prompt: 'belongs to next chat'
+    })
+  }
+  const started = moveComposerDraftScope(withPrivate, from, 'codex:next')
+  assert.deepEqual(started.promptDraftsByScope.get('codex:next'), [
+    { id: 'private', prompt: 'belongs to next chat' }
+  ])
+  assert.deepEqual(started.promptDraftsByScope.get(from), released.promptDraftsByScope.get(from))
+  assert.deepEqual(started.composerDrafts.get('codex:next'), draft)
+  assert.equal(moveComposerDraftScope(started, from, 'codex:another'), started)
+  assert.deepEqual(
+    parseStoredComposerDrafts(
+      JSON.stringify({
+        composerDrafts: [...started.composerDrafts],
+        promptDraftsByScope: [...started.promptDraftsByScope]
+      })
+    ),
+    started
+  )
+})
+
+test('Done appends to existing new-chat drafts without replacing input or other projects', () => {
+  const from = 'codex:done'
+  const to = 'new-chat:host\0/a'
+  const empty = { message: '', attachments: [], skills: [], apps: [] }
+  const state = {
+    composerDrafts: new Map([
+      [from, { ...empty, message: 'unsent' }],
+      [to, { ...empty, message: 'new input' }]
+    ]),
+    promptDraftsByScope: new Map([
+      [from, [{ id: 'done', prompt: 'done task' }]],
+      [to, [{ id: 'new', prompt: 'new task' }]],
+      ['new-chat:host\0/b', [{ id: 'other', prompt: 'other project' }]]
+    ])
+  }
+  const released = releaseComposerDraftScope(state, from, to)
+  assert.equal(released.composerDrafts.get(to).message, 'new input\n\nunsent')
+  assert.deepEqual(released.promptDraftsByScope.get(to), [
+    { id: 'new', prompt: 'new task' },
+    { id: 'done', prompt: 'done task', newChatsOnly: true }
+  ])
+  assert.deepEqual(
+    released.promptDraftsByScope.get('new-chat:host\0/b'),
+    state.promptDraftsByScope.get('new-chat:host\0/b')
+  )
 })

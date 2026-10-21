@@ -1,3 +1,5 @@
+import { useChatTerminalActivity } from './useChatTerminalActivity'
+import { chatTerminalActivity } from './chatTerminalActivity'
 import { getVisibleSubagentRows, getWorkingSubagentIds } from './subagentUi'
 import { SubagentCompletionTimeline, type SubagentCompletion } from './subagentTimeline'
 import { SubagentCompletionBubble } from './components/SubagentCompletionBubble'
@@ -350,6 +352,9 @@ import { useChatInteractionController } from './workspace/useChatInteractionCont
 import { useConversationViewModel } from './workspace/useConversationViewModel'
 import { useChangesData } from './workspace/useChangesData'
 import { useWorkspaceSelection } from './workspace/useWorkspaceSelection'
+import { useOpenCodeConnectionHealth } from './useOpenCodeConnectionHealth'
+import { useOpenCodeProviders } from './useOpenCodeProviders'
+import { filterOpenCodeModels } from './openCodeProviderPreferences'
 
 // The return type intentionally stays inferred so every view slice remains exact.
 export const useWorkspaceController = () => {
@@ -390,6 +395,9 @@ export const useWorkspaceController = () => {
   const [providerAccountRevision, setProviderAccountRevision] = useState(0)
   const [providerAccountUpdatingId, setProviderAccountUpdatingId] = useState<string | null>(null)
   const [accountDialogOpen, setAccountDialogOpen] = useState(false)
+  const [openCodeProviderManagerSource, setOpenCodeProviderManagerSource] = useState<string | null>(
+    null
+  )
   const [reauthenticationTarget, setReauthenticationTarget] = useState<{
     providerId: 'codex' | 'claude'
     container: AppContainerTarget | null
@@ -414,6 +422,7 @@ export const useWorkspaceController = () => {
   const [chats, setChats] = useState<ProviderChat[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
+  useChatTerminalActivity(chats, selectedChat)
   const [chatDetail, setChatDetail] = useState<ProviderChatDetail | null>(null)
   const [recentChatReferencesCache, setRecentChatReferencesCache] = useState<{
     chatKey: string
@@ -462,7 +471,7 @@ export const useWorkspaceController = () => {
   const [sandboxMode, setSandboxMode] = useState<ProviderSandboxMode>(
     storedMessageBoxSelection.sandboxMode ?? fallbackDefaultSandboxMode
   )
-  const [models, setModels] = useState<ProviderModel[]>(fallbackProviderModels)
+  const [allModels, setModels] = useState<ProviderModel[]>(fallbackProviderModels)
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelsLoading, setModelsLoading] = useState(false)
   const [gitSettingsModels, setGitSettingsModels] = useState<ProviderModel[]>([])
@@ -626,6 +635,28 @@ export const useWorkspaceController = () => {
   const configProviderModelsReady =
     configProviderHasSelectedChat ||
     (newSessionSourceAvailabilityReady && newSessionProviderAvailable && loadState !== 'loading')
+  const openCodeProviders = useOpenCodeProviders({
+    enabled: configProviderId === 'opencode' && configProviderModelsReady,
+    container: normalizeContainerTarget(configProviderContainer),
+    models: displayedModelCatalogKey === configProviderModelCatalogKey ? allModels : [],
+    model,
+    revision: providerModelsRevision
+  })
+  const models = useMemo(
+    () =>
+      configProviderId === 'opencode'
+        ? displayedModelCatalogKey === configProviderModelCatalogKey
+          ? filterOpenCodeModels(allModels, openCodeProviders.selectedId)
+          : []
+        : allModels,
+    [
+      allModels,
+      configProviderId,
+      openCodeProviders.selectedId,
+      displayedModelCatalogKey,
+      configProviderModelCatalogKey
+    ]
+  )
   const gitSettingsModelCatalogKey = `${newSessionProvider}:${newSessionContainerKey}`
   const gitSettingsUsesConfigProviderModels =
     gitSettingsModelCatalogKey === configProviderModelCatalogKey
@@ -2455,7 +2486,14 @@ export const useWorkspaceController = () => {
       modelsError
     ]
   )
-  const modelAccountKey = modelCatalogIdentity?.accountKey ?? null
+  const modelAccountKey =
+    configProviderId === 'opencode'
+      ? getAccountModelPreferenceKey(
+          'opencode',
+          configProviderContainerKey,
+          openCodeProviders.selectedId
+        )
+      : (modelCatalogIdentity?.accountKey ?? null)
 
   useLayoutEffect(() => {
     const selection = reconcileModelSelection(
@@ -2863,6 +2901,7 @@ export const useWorkspaceController = () => {
         const updatedChatKey = getChatKey({ providerId: event.providerId, id: event.chatId })
         if (event.detail?.subagents)
           updateSubagentWorkingChat(updatedChatKey, event.detail.subagents)
+        chatTerminalActivity.requestProbe(updatedChatKey)
         const viewingUpdatedChat = selectedChatKeyRef.current === updatedChatKey
         const recentlyViewedPreview =
           recentlyViewedActiveChatPreviewsRef.current.get(updatedChatKey)
@@ -3720,7 +3759,11 @@ export const useWorkspaceController = () => {
     providerId: ProviderId,
     container: AppContainerTarget
   ): void => {
-    providerModelCatalogCacheRef.current.delete(`${providerId}:${getContainerTargetKey(container)}`)
+    // Keep OpenCode's current models visible until the refreshed catalog replaces them.
+    if (providerId !== 'opencode')
+      providerModelCatalogCacheRef.current.delete(
+        `${providerId}:${getContainerTargetKey(container)}`
+      )
     setProviderModelsRevision((revision) => revision + 1)
     setProviderAccountsRefresh((revision) => revision + 1)
     setProviderResourcesRefresh((revision) => revision + 1)
@@ -4219,13 +4262,17 @@ export const useWorkspaceController = () => {
     effectiveAppSettings.chat.forceModel === appChatManualDropdownValue
       ? null
       : effectiveAppSettings.chat.forceModel
-  const effectiveModel = resolveEffectiveModel(
+  const resolvedModel = resolveEffectiveModel(
     models,
     model,
     forcedModel,
     activeModelCatalog,
     modelAccountKey ? accountModelPreferencesRef.current[modelAccountKey] : undefined
   )
+  const effectiveModel =
+    configProviderId === 'opencode' && !models.some((model) => model.id === resolvedModel)
+      ? (models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? '')
+      : resolvedModel
   const selectedEffectiveModel = models.find(
     (candidateModel) => candidateModel.id === effectiveModel
   )
@@ -4691,7 +4738,16 @@ export const useWorkspaceController = () => {
     providerUpdatePreferences
   })
   const chatWriteAccess = getChatWriteAccessPresentation(chatDetail)
+  const openCodeConnectionFailure = useOpenCodeConnectionHealth({
+    providerId: selectedChat?.providerId ?? newSessionProvider,
+    container: normalizeContainerTarget(changesContainer),
+    available: Boolean(selectedChat) || newSessionProviderAvailable,
+    model: effectiveModel,
+    revision: providerModelsRevision,
+    chatKey: selectedChatKey
+  })
   const authenticationRequired =
+    Boolean(openCodeConnectionFailure) ||
     usageAuthenticationRequired ||
     (Boolean(selectedChat) && chatDetail?.authenticationRequired === true)
   const chatOpenedElsewhere = chatWriteAccess.openedElsewhere
@@ -4722,6 +4778,10 @@ export const useWorkspaceController = () => {
     setSettingsTab('providers')
     setSettingsOpen(true)
   }, [selectedChat, changesContainer, newSessionProvider])
+
+  const handleManageOpenCodeProviders = useCallback((): void => {
+    setOpenCodeProviderManagerSource(configProviderContainerKey)
+  }, [configProviderContainerKey])
 
   const handleOpenChatReauthentication = useCallback((): void => {
     const providerId = selectedChat?.providerId ?? newSessionProvider
@@ -4972,6 +5032,7 @@ export const useWorkspaceController = () => {
     visibleChatItems,
     workingStepIdsWithNextWorkingStep
   } = useConversationViewModel({
+    modelUnavailable: configProviderId === 'opencode' && !effectiveModel,
     authenticationRequired,
     selectedChat,
     newSessionProviderAvailable,
@@ -5917,6 +5978,8 @@ export const useWorkspaceController = () => {
         chatId: selectedChat?.id,
         container: changesContainer,
         modelUsageScope: models.find((candidate) => candidate.id === effectiveModel)?.usageScope,
+        modelProviderId: models.find((candidate) => candidate.id === effectiveModel)?.modelProvider
+          ?.id,
         accountUsage,
         accountUsageError,
         accountUsageState,
@@ -5934,6 +5997,38 @@ export const useWorkspaceController = () => {
         onUsageReset: resetAccountRateLimits
       },
       providerAccount: {
+        openCode: {
+          sourceKey: configProviderContainerKey,
+          manageOpen: openCodeProviderManagerSource === configProviderContainerKey,
+          onManage: handleManageOpenCodeProviders,
+          onClose: () => setOpenCodeProviderManagerSource(null),
+          loading: openCodeProviders.loading,
+          providers: openCodeProviders.providers,
+          selectedId: openCodeProviders.selectedId,
+          error: openCodeProviders.error,
+          onSelect: (id: string) => {
+            openCodeProviders.select(id)
+            modelManuallySelectedRef.current = true
+            const providerModels = filterOpenCodeModels(allModels, id)
+            const remembered =
+              accountModelPreferencesRef.current[
+                getAccountModelPreferenceKey('opencode', configProviderContainerKey, id)
+              ]
+            setModel(
+              providerModels.find((model) => model.id === remembered)?.id ??
+                providerModels.find((model) => model.isDefault)?.id ??
+                providerModels[0]?.id ??
+                ''
+            )
+          },
+          onChanged: (connectedProviderId?: string) => {
+            if (connectedProviderId) openCodeProviders.select(connectedProviderId)
+            handleProviderConnectionsChanged(
+              'opencode',
+              normalizeContainerTarget(configProviderContainer)
+            )
+          }
+        },
         onCreate: () =>
           handleCreateProviderAccount(undefined, {
             providerId: selectedProviderId ?? newSessionProvider,
@@ -6041,6 +6136,8 @@ export const useWorkspaceController = () => {
       visibleChatItems
     },
     conversationComposer: {
+      openCodeConnectionFailure,
+      handleManageOpenCodeProviders,
       authenticationRequired,
       handleOpenChatReauthentication,
       handleManageChatAccounts,
@@ -6191,6 +6288,7 @@ export const useWorkspaceController = () => {
       treeToggleLabel
     },
     changesContent: {
+      terminalChatKey: selectedChat ? getChatKey(selectedChat) : null,
       browserOpenRequest,
       browserOpened,
       browserWorkspaceKey,

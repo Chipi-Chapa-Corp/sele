@@ -58,6 +58,8 @@ export type ProviderServiceTierOption = {
 }
 
 export type ProviderModel = {
+  /** Native model-serving provider within a multi-provider harness such as OpenCode. */
+  modelProvider?: { id: string; name: string }
   /** Concrete model behind a provider alias, when supplied by its model catalog. */
   resolvedModelId?: ProviderModelId
   id: ProviderModelId
@@ -490,6 +492,25 @@ export type ProviderAccountRateLimitResetOutcome =
   | 'noCredit'
   | 'alreadyRedeemed'
 
+/**
+ * A money amount reported by a model provider's billing API, such as a prepaid balance
+ * (`remaining`) or the spend in the current billing period (`spent`).
+ */
+export type ProviderAccountBalance = {
+  id: string
+  /** Native model-serving provider within a multi-provider harness such as OpenCode. */
+  modelProviderId: string
+  modelProviderName: string
+  label: string
+  kind: 'remaining' | 'spent'
+  amount: number
+  /** ISO 4217 currency code, e.g. `USD` or `CNY`. */
+  currency: string
+  /** Spending cap for `spent` amounts, when the provider reports one. */
+  limit?: number | null
+  resetsAt?: number | null
+}
+
 export type ProviderAccountUsage = {
   authenticationRequired?: boolean
   updatedAt: number
@@ -498,6 +519,7 @@ export type ProviderAccountUsage = {
   dailyUsageBuckets: ProviderAccountUsageDailyBucket[] | null
   rateLimits: ProviderAccountRateLimit[]
   rateLimitResetCredits: ProviderAccountRateLimitResetCredits | null
+  balances?: ProviderAccountBalance[]
   errors: string[]
 }
 
@@ -525,6 +547,7 @@ export type ProviderUsageOptions = ProviderSourceOptions & {
 }
 
 export type ProviderChatStatus = 'active' | 'error' | 'waitingOnApproval' | 'waitingOnUserInput'
+export type ProviderChatTurnOutcome = 'failed' | 'stopped'
 export type ProviderChatPurpose = 'commit'
 export type ProviderChatCwdKind = 'directory' | 'gitWorktree'
 export type ProviderChatCwdMetadata = {
@@ -619,6 +642,8 @@ export type ProviderChat = {
   createdAt: number
   updatedAt: number
   status: ProviderChatStatus | null
+  /** Latest native turn only, independent of read state. Undefined means its read was unavailable. */
+  lastTurnOutcome: ProviderChatTurnOutcome | null | undefined
   pendingApproval: ProviderPendingApproval | null
   pinned: boolean
   sidebarOrder: number | null
@@ -922,6 +947,8 @@ export type ProviderChatDetail = {
   branchName: string | null
   worktreeBaseBranchName: string | null
   status: ProviderChatStatus | null
+  /** Latest native turn only, independent of the displayed history window and read state. */
+  lastTurnOutcome: ProviderChatTurnOutcome | null | undefined
   pinned: boolean
   sidebarOrder: number | null
   done: boolean
@@ -1279,12 +1306,25 @@ export type ProviderApi = {
     chatId: string,
     messageId: string
   ) => Promise<ProviderChatDetail>
+  beginPendingMessageEdit: (
+    providerId: ProviderId,
+    chatId: string,
+    messageId: string,
+    editId: string
+  ) => Promise<ProviderChatDetail>
+  cancelPendingMessageEdit: (
+    providerId: ProviderId,
+    chatId: string,
+    messageId: string,
+    editId: string
+  ) => Promise<ProviderChatDetail>
   editPendingMessage: (
     providerId: ProviderId,
     chatId: string,
     messageId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    editId?: string
   ) => Promise<ProviderChatDetail>
   steerPendingMessage: (
     providerId: ProviderId,
@@ -1345,6 +1385,8 @@ export type ProviderApi = {
     pinned: boolean
   ) => Promise<ProviderChatMetadata>
   setChatOrder: (chatIds: string[]) => Promise<ProviderChatMetadata[]>
+  /** Live agent-owned shell tasks; this read must never resume a session. */
+  getChatTerminalTasks: (providerId: ProviderId, chatId: string) => Promise<string[]>
   onChatUpdated: (listener: (event: ProviderChatUpdatedEvent) => void) => () => void
 }
 
@@ -1479,6 +1521,8 @@ export const providerIpcChannels = {
   forkChat: 'provider:fork-chat',
   sendActiveChatMessage: 'provider:send-active-chat-message',
   deletePendingMessage: 'provider:delete-pending-message',
+  beginPendingMessageEdit: 'provider:begin-pending-message-edit',
+  cancelPendingMessageEdit: 'provider:cancel-pending-message-edit',
   editPendingMessage: 'provider:edit-pending-message',
   steerPendingMessage: 'provider:steer-pending-message',
   interruptPendingMessage: 'provider:interrupt-pending-message',
@@ -1498,6 +1542,7 @@ export const providerIpcChannels = {
   continueChatSummary: 'provider:continue-chat-summary',
   sendActiveChatMessageSummary: 'provider:send-active-chat-message-summary',
   chatUpdated: 'provider:chat-updated',
+  getChatTerminalTasks: 'provider:get-chat-terminal-tasks',
   chatUpdatesReady: 'provider:chat-updates-ready',
   chatUpdatesStopped: 'provider:chat-updates-stopped',
   viewedChatChanged: 'provider:viewed-chat-changed',

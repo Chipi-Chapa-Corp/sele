@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { groupWorkingItemsForRenderer } from '../workingStepLazy.ts'
 import { getConversationTailWorkingStep } from '../../../renderer/src/chatConversationModel.ts'
-import { renderCopilotChatItems } from './CopilotItemRenderers.ts'
+import { getCopilotTurnOutcome, renderCopilotChatItems } from './CopilotItemRenderers.ts'
 
 // Test fixtures intentionally omit production-only Copilot event fields.
 const userMessage = (id, content, source, attachments) => ({
@@ -58,6 +58,32 @@ const render = (events) =>
     active: false,
     stopped: false
   })
+
+test('latest Copilot turn outcome ignores older, tool and subagent failures', () => {
+  const failure = { type: 'session.error', id: 'error', data: { message: 'Failed' } }
+  const stop = { type: 'abort', id: 'stop', data: {} }
+  const start = { type: 'assistant.turn_start', id: 'start', data: {} }
+  for (const [event, expected] of [
+    [failure, 'failed'],
+    [stop, 'stopped']
+  ]) {
+    assert.equal(getCopilotTurnOutcome([start, event, turnEnd('end')]), expected)
+    assert.equal(
+      getCopilotTurnOutcome([start, event, start, assistantMessage('success', 'Completed')]),
+      null
+    )
+  }
+  assert.equal(getCopilotTurnOutcome([start, { ...failure, agentId: 'child' }]), null)
+  assert.equal(
+    getCopilotTurnOutcome([start, { type: 'tool.execution_complete', data: { success: false } }]),
+    null
+  )
+  assert.equal(
+    getCopilotTurnOutcome([turnEnd('end')]),
+    undefined,
+    'a tail page without a boundary needs the previous page'
+  )
+})
 
 test('keeps Copilot session errors on the failed step', () => {
   const items = render([

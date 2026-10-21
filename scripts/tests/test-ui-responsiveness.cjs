@@ -44,7 +44,7 @@ if (!process.versions.electron) {
                   onResolveApproval={noop} onSelect={noop} onTogglePinned={noop}/></aside>
                 <div className="chat-panel">
                   <ConversationEmptyState key={window.artKey} visible/>
-                  <MessageBox autoFocus draftScopeKey="new" draftProjectKey="project"
+                  <MessageBox autoFocus draftScopeKey="new"
                     providerId="codex" model="test" models={[{id:'test', label:'Test', description:'Test model', isDefault:true, supportedReasoningEfforts:[], defaultReasoningEffort:'medium'}]}
                     agentMode="default" agentModes={[]} approvalMode="on-request" approvalModes={[]}
                     sandboxMode="workspace-write" sandboxModes={[]} reasoningEffort="medium" serviceTier={null}

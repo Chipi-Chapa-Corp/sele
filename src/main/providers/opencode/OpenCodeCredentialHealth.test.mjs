@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  getOpenCodeConnectionFailure,
+  openCodeConnectionsNeedCheck
+} from '../../../shared/providerConnections.ts'
+import {
   OpenCodeCredentialHealth,
   checkOpenCodeCredential,
   isOpenCodeCredentialError,
@@ -18,6 +22,77 @@ const apiError = (statusCode, message, body, isRetryable = false) => ({
   }
 })
 const expiredKey = apiError(401, 'This API key has expired.')
+
+test('connection health checks missing and stale results while reusing recent checks', () => {
+  const now = 2_000_000
+  const list = (status) => [{ connections: [{ status }] }]
+  assert.equal(openCodeConnectionsNeedCheck(list(undefined), now), true)
+  assert.equal(openCodeConnectionsNeedCheck(list({ checkedAt: now - 900_001 }), now), true)
+  for (const state of ['failed', 'verified', 'unverified'])
+    assert.equal(openCodeConnectionsNeedCheck(list({ state, checkedAt: now }), now), false)
+  assert.equal(openCodeConnectionsNeedCheck([{ connections: [] }], now), false)
+})
+
+test('the chat failure follows the selected model and does not block usable alternatives', () => {
+  const failed = { state: 'failed', message: 'Expired key', checkedAt: 1 }
+  const providers = [
+    { id: 'bad', name: 'Expired provider', connections: [{ status: failed }] },
+    { id: 'good', name: 'Working provider', connections: [{ status: { state: 'verified' } }] },
+    { id: 'public', name: 'Public provider', connections: [] },
+    { id: 'unknown', name: 'Unchecked provider', connections: [{}] },
+    {
+      id: 'outage',
+      name: 'Unavailable provider',
+      connections: [{ status: { state: 'unverified' } }]
+    },
+    {
+      id: 'mixed',
+      name: 'Mixed provider',
+      connections: [{ status: failed }, { status: { state: 'verified' } }]
+    }
+  ]
+  assert.deepEqual(getOpenCodeConnectionFailure(providers, 'bad/model/variant'), {
+    name: 'Expired provider',
+    message: 'Expired key'
+  })
+  for (const model of [
+    'good/model',
+    'public/free',
+    'unknown/model',
+    'outage/model',
+    'mixed/model',
+    'absent/model',
+    '',
+    'bad'
+  ])
+    assert.equal(getOpenCodeConnectionFailure(providers, model), null, model)
+})
+
+test('usage-only admin keys do not hide or cause model connection failures', () => {
+  const failed = { state: 'failed', message: 'Expired key', checkedAt: 1 }
+  const verified = { state: 'verified', checkedAt: 1 }
+  const admin = (status) => ({
+    type: 'credential',
+    id: 'sele-admin:anthropic',
+    label: 'Admin key',
+    usageOnly: true,
+    status
+  })
+  const provider = (connections) => [
+    { id: 'anthropic', name: 'Anthropic', methods: [], connections }
+  ]
+  assert.deepEqual(
+    getOpenCodeConnectionFailure(
+      provider([
+        { type: 'credential', id: 'anthropic', label: 'API key', status: failed },
+        admin(verified)
+      ]),
+      'anthropic/claude'
+    ),
+    { name: 'Anthropic', message: 'Expired key' }
+  )
+  assert.equal(getOpenCodeConnectionFailure(provider([admin(failed)]), 'anthropic/claude'), null)
+})
 // Recorded from api.anthropic.com for an organization-level key.
 const workspaceKey = apiError(
   400,

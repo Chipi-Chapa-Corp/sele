@@ -29,7 +29,11 @@
   flex: 1;
 }
 
-/* Subagent rows have a single hover action (cancel), not the chat row's three. */
+/*
+ * Subagent rows have at most one hover action (stop), not the chat row's three. Like chat rows,
+ * the title uses the full width at rest and makes room only while the action is shown. These
+ * selectors must out-rank the chat row's hover padding rule, which includes :not(:has(.ui-input)).
+ */
 .chat-subagent-list .chat-list-item:hover:not(:has(.ui-input)) .chat-list-item__header,
 .chat-subagent-list
   .chat-list-item:has(:focus-visible):not(:has(.ui-input))
@@ -37,21 +41,12 @@
   padding-right: 0;
 }
 
-.chat-subagent-list .chat-subagent-list__row--cancelable:hover .chat-list-item__header,
 .chat-subagent-list
-  .chat-subagent-list__row--cancelable:has(:focus-visible)
+  .chat-subagent-list__row--cancelable:hover:not(:has(.ui-input))
+  .chat-list-item__header,
+.chat-subagent-list
+  .chat-subagent-list__row--cancelable:has(:focus-visible):not(:has(.ui-input))
   .chat-list-item__header {
-  padding-right: 2rem;
-}
-
-/* Stopping a running agent is always available, including without hover. */
-.chat-subagent-list .chat-subagent-list__row--cancelable .chat-list-item__actions {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-}
-
-.chat-subagent-list .chat-subagent-list__row--cancelable .chat-list-item__header {
   padding-right: 2rem;
 }
 

@@ -13,6 +13,7 @@ const { spawnSync } = require('node:child_process')
           import assert from 'node:assert/strict'
           import Database from 'better-sqlite3'
           import * as chat from './src/main/database/chat'
+          import { getChatTurnOutcomes, setChatTurnOutcome } from './src/main/database/chatTurnOutcome'
           import { getDatabase, disposeDatabase } from './src/main/database/sqlite'
           const run = async () => {
             // Upgrade an existing installation without assigning invented completion times.
@@ -32,7 +33,21 @@ const { spawnSync } = require('node:child_process')
             await chat.setChatPinned('first', true)
             await chat.setChatSeen('first', 5000)
             assert.equal((await chat.getChatMetadata('first')).doneAt, 1000)
+            await setChatTurnOutcome('codex', 'first', 'stopped')
+            await setChatTurnOutcome('claude', 'first', 'failed')
+            const listed = [
+              { providerId: 'codex', id: 'first', updatedAt: 1000 },
+              { providerId: 'claude', id: 'first', updatedAt: 1000 }
+            ]
             await disposeDatabase()
+            assert.deepEqual([...await getChatTurnOutcomes(listed)], [
+              ['claude:first', 'failed'], ['codex:first', 'stopped']
+            ])
+            await chat.setChatSeen('first', 6000)
+            assert.equal((await getChatTurnOutcomes(listed)).get('codex:first'), 'stopped')
+            await setChatTurnOutcome('codex', 'first', null)
+            assert.equal((await getChatTurnOutcomes(listed)).get('codex:first'), null)
+            assert.equal((await getChatTurnOutcomes([{ ...listed[1], updatedAt: 3000 }])).size, 0)
             assert.equal((await chat.getChatMetadata('first')).doneAt, 1000)
             now = 3000
             const undone = await chat.setChatDone('first', false)

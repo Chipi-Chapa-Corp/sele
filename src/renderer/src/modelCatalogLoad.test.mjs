@@ -11,6 +11,13 @@ import {
 } from './modelSelection.ts'
 import { selectChatPreferences } from './chatModelPreferences.ts'
 import {
+  filterOpenCodeModels,
+  getOpenCodeProviders,
+  readOpenCodeProviderPreferences,
+  selectOpenCodeProvider,
+  writeOpenCodeProviderPreferences
+} from './openCodeProviderPreferences.ts'
+import {
   getAccountModelPreferenceKey,
   readAccountModelPreferences,
   writeAccountModelPreferences
@@ -19,6 +26,47 @@ import {
 const cachedModels = [{ id: 'cached' }]
 const fallbackModels = [{ id: 'fallback' }]
 const freshModels = [{ id: 'fresh' }]
+
+test('OpenCode providers distinguish billing connections and filter models by provider ID', () => {
+  const models = [
+    { id: 'anthropic/claude', modelProvider: { id: 'anthropic', name: 'Anthropic' } },
+    { id: 'opencode-go/claude', modelProvider: { id: 'opencode-go', name: 'OpenCode Go' } },
+    { id: 'opencode/free', modelProvider: { id: 'opencode', name: 'OpenCode Zen' } }
+  ]
+  const connections = [
+    { id: 'anthropic', name: 'Anthropic', connections: [{ type: 'credential', id: 'anthropic' }] },
+    { id: 'unused', name: 'Unused', connections: [] },
+    { id: 'disabled', name: 'Disabled', connections: [{ type: 'credential', id: 'disabled' }] }
+  ]
+  const providers = getOpenCodeProviders(connections, models)
+  assert.deepEqual(
+    providers.map((provider) => provider.name),
+    ['Anthropic', 'Disabled', 'OpenCode Go', 'OpenCode Zen']
+  )
+  assert.deepEqual(filterOpenCodeModels(models, 'anthropic'), [models[0]])
+  assert.deepEqual(filterOpenCodeModels(models, 'opencode-go'), [models[1]])
+  assert.deepEqual(filterOpenCodeModels(models, 'disabled'), [])
+  assert.equal(selectOpenCodeProvider(providers, 'opencode-go', 'anthropic/claude'), 'opencode-go')
+  assert.equal(selectOpenCodeProvider(providers, 'deleted', 'anthropic/claude'), 'anthropic')
+  assert.equal(selectOpenCodeProvider([], 'anthropic', 'anthropic/claude'), '')
+})
+
+test('OpenCode remembers the selected provider independently per environment across restarts', () => {
+  let stored
+  const storage = {
+    getItem: () => stored ?? null,
+    setItem: (_, value) => {
+      stored = value
+    }
+  }
+  writeOpenCodeProviderPreferences({ host: 'anthropic', 'podman:dev': 'opencode-go' }, storage)
+  assert.deepEqual(readOpenCodeProviderPreferences(storage), {
+    host: 'anthropic',
+    'podman:dev': 'opencode-go'
+  })
+  stored = '{"host": 123, "podman:dev": "opencode-go"}'
+  assert.deepEqual(readOpenCodeProviderPreferences(storage), { 'podman:dev': 'opencode-go' })
+})
 
 test('keeps the last successful model catalog while exposing refresh errors', () => {
   assert.deepEqual(

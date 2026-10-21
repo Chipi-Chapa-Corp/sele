@@ -9,8 +9,11 @@ import { Button } from './Button'
 import { SegmentedControl } from './SegmentedControl'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPanel.css'
+import { chatTerminalActivity } from '../chatTerminalActivity'
+import { createPanelTerminalTask } from '../panelTerminalTask'
 
 export type TerminalCommandLaunchRequest = {
+  chatKey?: string | null
   id: string
   command: string
   container: AppContainerTarget | null
@@ -23,6 +26,7 @@ export type TerminalCommandLaunchRequest = {
 }
 
 type TerminalPanelProps = {
+  chatKey?: string | null
   active: boolean
   container: AppContainerTarget | null
   cwd: string | null
@@ -34,6 +38,7 @@ type TerminalPanelProps = {
 type TerminalState = 'starting' | 'running' | 'exited' | 'error'
 
 type TerminalTab = {
+  chatKey?: string | null
   id: string
   label: string
   container: AppContainerTarget | null
@@ -43,6 +48,8 @@ type TerminalTab = {
 }
 
 type TerminalSessionProps = {
+  chatKey: string | null
+  initialChatKey: string | null
   closeOnCommandFinish: boolean
   container: AppContainerTarget | null
   cwd: string | null
@@ -159,6 +166,7 @@ const getCommandTabLabel = (command: string): string => {
 }
 
 const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): TerminalTab => ({
+  chatKey: request.chatKey,
   id: crypto.randomUUID(),
   label: request.label?.trim() || getCommandTabLabel(request.command),
   container: request.container,
@@ -168,6 +176,8 @@ const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): Termin
 })
 
 const TerminalSession: React.FC<TerminalSessionProps> = ({
+  chatKey,
+  initialChatKey,
   closeOnCommandFinish,
   container,
   cwd,
@@ -178,6 +188,8 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
   onCommandFinish,
   onStateChange
 }) => {
+  const chatKeyRef = useRef(chatKey)
+  chatKeyRef.current = chatKey
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<XtermTerminal | null>(null)
   const fitRef = useRef<(() => void) | null>(null)
@@ -201,6 +213,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
     return () => cancelAnimationFrame(frame)
   }, [visible])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: generation explicitly restarts an exited terminal.
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -222,6 +235,20 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
     let ptyPaused = false
     let lastColumns = 0
     let lastRows = 0
+    let taskPoll: number | null = null
+    let checkingTask = false
+    const task = createPanelTerminalTask({
+      initialChatKey,
+      currentChatKey: () => chatKeyRef.current,
+      readStatus: () => terminalApi.getProcessStatus(sessionId),
+      report: (key, running, completed) =>
+        chatTerminalActivity.report(
+          key,
+          `panel:${sessionId}`,
+          running ? [sessionId] : [],
+          completed
+        )
+    })
 
     const updateState = (nextState: TerminalState): void => {
       if (!active) return
@@ -354,12 +381,16 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
         })
 
         removeDataListener = terminalApi.onData((event) => {
-          if (event.sessionId === sessionId) queueOutput(event.data)
+          if (event.sessionId === sessionId) {
+            task.output(event.data)
+            queueOutput(event.data)
+          }
         })
         removeExitListener = terminalApi.onExit((event) => {
           if (event.sessionId !== sessionId) return
 
           sessionExited = true
+          task.finish()
           sessionCreated = false
           queueOutput(
             `\r\n\u001b[90m[process exited with code ${event.exitCode}${
@@ -400,6 +431,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
           terminal.writeln(`$ ${initialCommand.trim().replace(/\r?\n/g, '\r\n')}`)
         }
 
+        if (initialCommand?.trim()) task.start()
         await terminalApi.createSession({
           sessionId,
           container,
@@ -417,15 +449,31 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
         if (sessionExited) return
 
         sessionCreated = true
+        taskPoll = window.setInterval(() => {
+          if (checkingTask) return
+          checkingTask = true
+          void task
+            .check()
+            .catch((error) => {
+              console.error('Unable to read terminal task status.', error)
+            })
+            .finally(() => {
+              checkingTask = false
+            })
+        }, 500)
         terminal.options.disableStdin = false
         if (ptyPaused) terminalApi.setPaused(sessionId, true)
         updateState('running')
 
         terminal.onData((data) => {
-          if (sessionCreated) terminalApi.write(sessionId, data)
+          if (sessionCreated) {
+            task.input(data)
+            terminalApi.write(sessionId, data)
+          }
         })
         if (visibleRef.current) terminal.focus()
       } catch (startError) {
+        task.dispose()
         console.error('[caught:TerminalPanel:start]', startError)
         if (!active) return
         const message = getErrorMessage(startError)
@@ -438,6 +486,8 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
     void start()
 
     return () => {
+      if (taskPoll !== null) window.clearInterval(taskPoll)
+      task.dispose()
       active = false
       if (outputFrame != null) cancelAnimationFrame(outputFrame)
       if (resizeFrame != null) cancelAnimationFrame(resizeFrame)
@@ -457,6 +507,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
     cwd,
     generation,
     initialCommand,
+    initialChatKey,
     onCommandFinish,
     onStateChange,
     tabId
@@ -489,6 +540,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
 }
 
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({
+  chatKey = null,
   active,
   container,
   cwd,
@@ -502,6 +554,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
   const [workspaces, setWorkspaces] = useState(() => {
     const initialLocalTab = createTerminalTab(1, projectCwd ?? cwd, container)
+    initialLocalTab.chatKey = chatKey
     return new Map<string, TerminalWorkspace>([
       [workspaceKey, { activeTabId: initialLocalTab.id, tabs: [initialLocalTab] }]
     ])
@@ -576,6 +629,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const handleAddTab = (): void => {
     const nextTabNumber = nextTabNumberByWorkspaceRef.current.get(workspaceKey) ?? 1
     const tab = createTerminalTab(nextTabNumber, cwd ?? projectCwd, container)
+    tab.chatKey = chatKey
     nextTabNumberByWorkspaceRef.current.set(workspaceKey, nextTabNumber + 1)
     setWorkspaces((currentWorkspaces) => {
       const currentWorkspace = currentWorkspaces.get(workspaceKey) ?? {
@@ -729,6 +783,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         {Array.from(workspaces, ([currentWorkspaceKey, currentWorkspace]) =>
           currentWorkspace.tabs.map((tab) => (
             <TerminalSession
+              chatKey={chatKey}
+              initialChatKey={tab.chatKey ?? null}
               closeOnCommandFinish={tab.closeOnCommandFinish}
               container={tab.container}
               cwd={tab.cwd}

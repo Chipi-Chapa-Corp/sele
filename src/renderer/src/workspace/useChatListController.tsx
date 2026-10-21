@@ -8,6 +8,13 @@ import {
 } from '../chatSidebarOrder'
 import { providerApi } from '../providerApi'
 import {
+  releaseComposerDraftScope,
+  updateStoredComposerDrafts,
+  type ComposerDraftState
+} from '../composerDraftStorage'
+import { getComposerDraftScopeKey } from '../composerDraft'
+import { getContainerTargetKey } from '../containerSelection'
+import {
   getChatCwdGroupKey,
   getChatKey,
   getChatProjectCwd,
@@ -43,9 +50,23 @@ export function useChatListController(dependencies: ChatListControllerDependenci
     collapsedCwdGroups
   } = dependencies
 
+  const releaseChatDrafts = (state: ComposerDraftState, chat: ProviderChat): ComposerDraftState => {
+    const currentChat =
+      chatDetail?.id === chat.id && selectedChat?.providerId === chat.providerId ? chatDetail : chat
+    const workspaceKey = `${getContainerTargetKey(currentChat.container)}\0${getChatProjectCwd(currentChat) ?? ''}`
+    return releaseComposerDraftScope(
+      state,
+      getChatKey(chat),
+      getComposerDraftScopeKey(null, workspaceKey)
+    )
+  }
+
   const handleMarkChatDone = async (chat: ProviderChat, done = true): Promise<void> => {
     try {
       const metadata = await providerApi.markChatDone(chat.providerId, chat.id, done)
+      if (metadata.done) {
+        updateStoredComposerDrafts((state) => releaseChatDrafts(state, chat))
+      }
       applyChatMetadata([metadata])
       if (metadata.done) removeRecentChatCacheEntry(chat.providerId, chat.id)
 
@@ -271,6 +292,10 @@ export function useChatListController(dependencies: ChatListControllerDependenci
       // ignore the selected container and fail entirely when any one provider is unavailable.
       const metadata = await providerApi.markChatsDone(
         Array.from(new Set(group.chats.map((chat) => chat.id)))
+      )
+      const doneIds = new Set(metadata.filter((chat) => chat.done).map((chat) => chat.id))
+      updateStoredComposerDrafts((state) =>
+        group.chats.filter((chat) => doneIds.has(chat.id)).reduce(releaseChatDrafts, state)
       )
       applyChatMetadata(metadata)
       group.chats.forEach((chat) => removeRecentChatCacheEntry(chat.providerId, chat.id))

@@ -27,6 +27,9 @@ const bundled = await build({
             ? `export const handleLoggedIpc = (channel, handler) => globalThis.harness.handlers.set(channel, handler);
              export const logDiagnostic = (...args) => globalThis.harness.logs.push(args);`
             : `export const providerApi = {
+               beginPendingMessageEdit: (...args) => globalThis.harness.beginPendingMessageEdit(...args),
+               cancelPendingMessageEdit: (...args) => globalThis.harness.cancelPendingMessageEdit(...args),
+               editPendingMessage: (...args) => globalThis.harness.editPendingMessage(...args),
                createAccount: (...args) => globalThis.harness.createAccount(...args),
                getConnections: (...args) => globalThis.harness.connection('list', ...args),
                connectProvider: (...args) => globalThis.harness.connection('connect', ...args),
@@ -606,4 +609,93 @@ test('account creation IPC takes only provider and source, with no custom label 
   await create({}, 'claude', source)
   assert.deepEqual(calls, [['claude', source]])
   assert.throws(() => create({}, 'claude', 'Legacy label'), /Invalid/)
+})
+
+test('renderer destruction releases an edit only after its begin operation finishes', async () => {
+  const h = setup()
+  let begun
+  const released = []
+  h.harness.beginPendingMessageEdit = () =>
+    new Promise((resolve) => {
+      begun = resolve
+    })
+  h.harness.cancelPendingMessageEdit = async (...args) => {
+    released.push(args)
+    return { id: 'chat', items: [] }
+  }
+  const begin = h.harness.handlers.get(channels.beginPendingMessageEdit)
+  const opening = begin({ sender: h.contents }, 'copilot', 'chat', 'message', 'edit')
+  h.contents.emit('destroyed')
+  assert.equal(released.length, 0)
+  begun({ id: 'chat', items: [] })
+  await opening
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(Array.from(released[0]), ['copilot', 'chat', 'message', 'edit'])
+})
+
+test('successful pending saves forward the token and remove renderer cleanup ownership', async () => {
+  const h = setup()
+  const released = []
+  const saved = []
+  h.harness.beginPendingMessageEdit = async () => ({ id: 'chat', items: [] })
+  h.harness.cancelPendingMessageEdit = async (...args) => {
+    released.push(args)
+    return { id: 'chat', items: [] }
+  }
+  h.harness.editPendingMessage = async (...args) => {
+    saved.push(args)
+    return { id: 'chat', items: [] }
+  }
+  const event = { sender: h.contents }
+  await h.harness.handlers.get(channels.beginPendingMessageEdit)(
+    event,
+    'copilot',
+    'chat',
+    'message',
+    'edit'
+  )
+  await h.harness.handlers.get(channels.editPendingMessage)(
+    event,
+    'copilot',
+    'chat',
+    'message',
+    'revised',
+    undefined,
+    'edit'
+  )
+  assert.deepEqual(Array.from(saved[0]), [
+    'copilot',
+    'chat',
+    'message',
+    'revised',
+    undefined,
+    'edit'
+  ])
+  h.contents.emit('destroyed')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(released, [])
+})
+
+test('a full renderer reload releases its edit while hash and subframe navigation preserve it', async () => {
+  const h = setup()
+  const released = []
+  h.harness.beginPendingMessageEdit = async () => ({ id: 'chat', items: [] })
+  h.harness.cancelPendingMessageEdit = async (...args) => {
+    released.push(args)
+    return { id: 'chat', items: [] }
+  }
+  await h.harness.handlers.get(channels.beginPendingMessageEdit)(
+    { sender: h.contents },
+    'copilot',
+    'chat',
+    'message',
+    'edit'
+  )
+  h.contents.emit('did-start-navigation', {}, 'about:blank#hash', true, true)
+  h.contents.emit('did-start-navigation', {}, 'about:blank', false, false)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(released.length, 0)
+  h.contents.emit('did-start-navigation', {}, 'about:blank', false, true)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(Array.from(released[0]), ['copilot', 'chat', 'message', 'edit'])
 })

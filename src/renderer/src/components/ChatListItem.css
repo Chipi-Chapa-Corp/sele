@@ -191,8 +191,18 @@
   border-radius: 50%;
 }
 
+.chat-list-item__terminal {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--muted);
+}
+
 .chat-list-item__status--error {
   background: var(--error);
+}
+
+.chat-list-item__status--stopped {
+  background: var(--muted);
 }
 
 .chat-list-item__status--waitingOnApproval {

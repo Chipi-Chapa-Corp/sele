@@ -18,6 +18,7 @@ import {
 import { basename, extname, posix, win32 } from 'node:path'
 import type {
   ProviderChatItem,
+  ProviderChatTurnOutcome,
   ProviderMessage,
   ProviderWorkingItem,
   ProviderFileDiff,
@@ -511,6 +512,22 @@ export const resolveClaudeAssistantMessageUuid = (
 }
 
 export const claudeBackgroundTurnSubtype = 'sele_background_turn'
+
+/** Terminal metadata only; tool failures inside an otherwise successful turn do not count. */
+export const getClaudeTurnOutcome = (
+  messages: ClaudeTranscriptMessage[]
+): ProviderChatTurnOutcome | null => {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.parent_tool_use_id) continue
+    if (isClaudeInterruptMarker(message)) return 'stopped'
+    if (isClaudeInternalUserMessage(message) || isClaudeSyntheticAssistantMessage(message)) continue
+    if (message.failed || (message.type === 'assistant' && message.error)) return 'failed'
+    if (message.type === 'assistant') return null
+    if (message.type === 'user' && !hasToolResults(getContentBlocks(message.message))) return null
+  }
+  return null
+}
 
 /**
  * Claude starts a main-thread turn on its own when a background task (an agent, a command or a

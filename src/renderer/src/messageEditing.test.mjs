@@ -43,6 +43,10 @@ for (const type of ['message', 'pending']) {
         ])
       )
       const globals = {
+        configProviderId: 'codex',
+        authenticationRequired: false,
+        chatDetailRef: { current: null },
+        pendingEditRef: { current: null },
         providerUpdateInProgress: false,
         activeSubagentChatView: null,
         sendInFlightRef: { current: false },
@@ -58,7 +62,12 @@ for (const type of ['message', 'pending']) {
         serializeComposerMessage: (message) => message,
         normalizeTurnOptionsForModels: (options) => options,
         getCurrentTurnOptions: () => ({ model: 'test' }),
-        editingMessage: { type, id: 'pending-id', targetId: 'server-turn' },
+        editingMessage: {
+          type,
+          id: 'pending-id',
+          targetId: 'server-turn',
+          editId: type === 'pending' ? 'edit' : undefined
+        },
         setSendState() {},
         providerApi,
         applyViewedChatDetail() {},
@@ -77,6 +86,7 @@ for (const type of ['message', 'pending']) {
         attachments.map((image) => image.path)
       )
       assert.equal(packet.args[4].files.length, 0)
+      if (type === 'pending') assert.equal(packet.args[5], 'edit')
       assert.equal(globals.sendInFlightRef.current, false)
     })
   }
@@ -132,4 +142,82 @@ test('opening an edit prepares all transcript attachments and ignores a stale lo
   finish(original)
   await stale
   assert.equal(session, null)
+})
+
+const pendingEditFixture = () => {
+  const calls = []
+  let editingMessage = null
+  const pending = { type: 'pendingMessage', id: 'pending', kind: 'steering', content: 'original' }
+  const globals = {
+    useCallback: (callback) => callback,
+    crypto: { randomUUID: () => 'edit' },
+    editOpeningRef: { current: false },
+    editRequestRef: { current: 0 },
+    pendingEditRef: { current: null },
+    selectedChat: { id: 'chat', providerId: 'copilot' },
+    selectedChatKeyRef: { current: 'copilot:chat' },
+    changesContainer: null,
+    changesCwd: '/repo',
+    sendInFlightRef: { current: false },
+    setSendState() {},
+    applyViewedChatDetail() {},
+    setEditingMessage: (message) => {
+      editingMessage = message
+    },
+    handleSendFailure: (error) => calls.push(['error', error.message]),
+    console,
+    appApi: {
+      prepareMessageAttachments: async () => {
+        calls.push(['attachments'])
+        return []
+      }
+    },
+    providerApi: {
+      beginPendingMessageEdit: async (...args) => {
+        calls.push(['begin', ...args])
+        return { id: 'chat', items: [pending] }
+      },
+      cancelPendingMessageEdit: async (...args) => {
+        calls.push(['cancel', ...args])
+        return { id: 'chat', items: [pending] }
+      }
+    }
+  }
+  const controller = vm.runInNewContext(
+    `${code(['releasePendingEdit', 'prepareEditAttachments', 'handleEditPendingMessage', 'handleCancelEditMessage'])}; ({edit: handleEditPendingMessage, cancel: handleCancelEditMessage})`,
+    globals
+  )
+  return {
+    globals,
+    calls,
+    pending,
+    controller,
+    get editingMessage() {
+      return editingMessage
+    }
+  }
+}
+
+test('pending edit acquires a hold before loading attachments and passes its token to cancel', async () => {
+  const f = pendingEditFixture()
+  await f.controller.edit(f.pending)
+  assert.deepEqual(f.calls, [['begin', 'copilot', 'chat', 'pending', 'edit'], ['attachments']])
+  assert.equal(f.editingMessage.id, 'pending')
+  assert.equal(f.editingMessage.editId, 'edit')
+  await f.controller.cancel()
+  assert.deepEqual(f.calls[2], ['cancel', 'copilot', 'chat', 'pending', 'edit'])
+  assert.equal(f.editingMessage, null)
+  assert.equal(f.globals.pendingEditRef.current, null)
+})
+
+test('attachment failure releases the backend hold and leaves the editor closed', async () => {
+  const f = pendingEditFixture()
+  f.globals.appApi.prepareMessageAttachments = async () => {
+    throw new Error('attachment missing')
+  }
+  f.globals.console = { error() {} }
+  await f.controller.edit(f.pending)
+  assert.ok(f.calls.some((call) => call[0] === 'cancel'))
+  assert.equal(f.editingMessage, null)
+  assert.equal(f.globals.pendingEditRef.current, null)
 })

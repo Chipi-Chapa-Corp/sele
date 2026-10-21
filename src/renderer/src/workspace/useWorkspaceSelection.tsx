@@ -722,6 +722,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       if (action.openInTerminal) {
         setTerminalOpened(true)
         setTerminalCommandLaunchRequest({
+          chatKey: selectedChatKey,
           id: crypto.randomUUID(),
           command: action.command,
           container: changesContainer,
@@ -749,6 +750,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       changesCwd,
       changesProjectCwd,
       handleChangesPaneViewChange,
+      selectedChatKey,
       terminalWorkspaceKey
     ]
   )

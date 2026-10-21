@@ -5,6 +5,7 @@ import test from 'node:test'
 import ts from 'typescript'
 import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
 import { parseOpenCodeSessionEvent } from './OpenCodeEvents.ts'
+import { isOpenCodeChildState } from './OpenCodeSubagents.ts'
 
 const source = ts.createSourceFile(
   'adapter.ts',
@@ -39,7 +40,8 @@ const fixture = () => {
     reconcileProviderRecords,
     requireData: (result) => result.data,
     isRecord: (value) => !!value && typeof value === 'object' && !Array.isArray(value),
-    isOneShotSession: () => false
+    isOneShotSession: () => false,
+    isOpenCodeChildState
   })
   vm.runInContext(code, context)
   const state = {

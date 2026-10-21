@@ -193,12 +193,25 @@ if (!process.versions.electron) {
         true,
         'an idle root displays a loader while a descendant works'
       )
-      assert.equal(
+      // Like chat row actions, stop appears only on hover, and only then takes width from the title.
+      const stopOpacity = `getComputedStyle(document.querySelector('[aria-label="Stop Child agent"]').parentElement).opacity`
+      const titlePadding = `getComputedStyle(document.querySelector('.chat-subagent-list .chat-list-item__header')).paddingRight`
+      const hoverPadding = `parseFloat(getComputedStyle(document.documentElement).fontSize)*2+'px'`
+      const subagentRow = JSON.parse(
         await run(
-          `getComputedStyle(document.querySelector('[aria-label="Stop Child agent"]').parentElement).opacity`
-        ),
-        '1'
+          `JSON.stringify(document.querySelector('.chat-subagent-list .chat-list-item').getBoundingClientRect())`
+        )
       )
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 })
+      await ready(`${stopOpacity}==='0'&&${titlePadding}==='0px'`)
+      win.webContents.sendInputEvent({
+        type: 'mouseMove',
+        x: Math.round(subagentRow.x + subagentRow.width / 2),
+        y: Math.round(subagentRow.y + subagentRow.height / 2)
+      })
+      await ready(`${stopOpacity}==='1'&&${titlePadding}===${hoverPadding}`)
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 })
+      await ready(`${stopOpacity}==='0'&&${titlePadding}==='0px'`)
       await run(`document.querySelector('.chat-subagent-list .chat-list-item__main').click()`)
       await ready(`document.querySelectorAll('.chat-subagent-list__item').length===2`)
       assert.equal(

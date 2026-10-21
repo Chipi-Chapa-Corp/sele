@@ -1,3 +1,4 @@
+import { PendingMessageEdits } from '../PendingMessageEdits'
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
 import { encodeOpenCodeHistory, importOpenCodeHistory } from './OpenCodeHistoryImport'
 import { OpenCodeCredentialHealth, checkOpenCodeCredential } from './OpenCodeCredentialHealth'
@@ -83,6 +84,7 @@ import {
 } from '../providerResources'
 import {
   getOpenCodeErrorMessage,
+  getOpenCodeTurnOutcome,
   isOpenCodeAbortError,
   getOpenCodeDisplayTitle,
   renderOpenCodeChatItems,
@@ -91,10 +93,28 @@ import {
   type OpenCodeMessageWithParts
 } from './OpenCodeItemRenderers'
 import {
+  extractOpenCodeApiKeys,
+  getOpenCodeAuthStore,
   getOpenCodeGoRateLimits,
+  isLocalOpenCodeTarget,
   OpenCodeGoApiKeyMissingError,
   OpenCodeGoNoSubscriptionError
 } from './OpenCodeUsage'
+import {
+  getOpenCodeEnvironmentApiKeys,
+  OpenCodeBalanceCache,
+  selectOpenCodeBalanceKeys,
+  verifyOpenCodeAdminKey
+} from './OpenCodeBalances'
+import {
+  createOpenCodeAdminKeyStore,
+  getOpenCodeAdminConnectionId,
+  isOpenCodeAdminKey,
+  openCodeAdminKeyMethodId,
+  openCodeAdminKeyProviders,
+  parseOpenCodeAdminConnectionId,
+  supportsOpenCodeAdminKey
+} from './OpenCodeAdminKeys'
 import { mapOpenCodeModels, parseOpenCodeModelId } from './OpenCodeModels'
 import {
   generateOpenCodeChatTitle,
@@ -108,6 +128,7 @@ import { parseOpenCodeSessionEvent } from './OpenCodeEvents'
 import {
   createOpenCodeSubagentSummary,
   getOpenCodeSubagentPromptSettings,
+  isOpenCodeChildState,
   isOpenCodeSubagentSession
 } from './OpenCodeSubagents'
 import type { BrowserMcpIntegration } from '../../browser/BrowserMcpServer'
@@ -132,6 +153,7 @@ type OpenCodeChatState = {
   container: AppContainerTarget | null
   session: Session | GlobalSession | null
   messages: OpenCodeMessageWithParts[]
+  terminalMessageIds?: Set<string>
   messagesHydrated: boolean
   messagesDirty: boolean
   hydratedUpdatedAt: number | null
@@ -398,6 +420,8 @@ const getPendingUserInput = (
 
 export class OpenCodeProviderAdapter implements ProviderAdapter {
   id = 'opencode' as const
+  private pendingMessageEdits = new PendingMessageEdits()
+  private queueDrains = new Set<string>()
   private tokenUsageReporter = new TokenUsageReporter()
   onTokenUsage = this.tokenUsageReporter.subscribe
 
@@ -424,6 +448,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private credentialHealth = new OpenCodeCredentialHealth()
   private connectionAttemptProviders = new Map<string, string>()
   private connectionChecks = new Map<string, Promise<ProviderConnectionStatus>>()
+  private adminKeys = createOpenCodeAdminKeyStore()
+  private adminKeyStatuses = new Map<string, ProviderConnectionStatus>()
+  private balanceCache = new OpenCodeBalanceCache()
 
   /** `forceRefresh` (the Refresh button) tests every listed connection with a real request. */
   getConnections = async (options: ProviderSourceOptions = {}): Promise<ProviderConnection[]> => {
@@ -436,13 +463,67 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     const client = (await this.getClientEntry(options.container)).client
     const providers = await list()
-    if (!options.forceRefresh) return providers
+    if (!options.forceRefresh) return this.withAdminKeyConnections(providers, false)
     await Promise.all(
       providers
         .filter((provider) => provider.connections.length > 0)
         .map((provider) => this.checkConnection(provider.id, options))
     )
-    return list()
+    return this.withAdminKeyConnections(await list(), true)
+  }
+
+  /** Adds the usage-only admin key method and any saved admin keys to OpenCode's providers. */
+  private withAdminKeyConnections = async (
+    providers: ProviderConnection[],
+    check: boolean
+  ): Promise<ProviderConnection[]> => {
+    let saved: Record<string, string> = {}
+    try {
+      saved = await this.adminKeys.list()
+    } catch (error) {
+      console.error('[OpenCodeProviderAdapter:withAdminKeyConnections]', error)
+    }
+    if (check) {
+      await Promise.all(
+        Object.entries(saved).map(async ([providerId, key]) => {
+          try {
+            await verifyOpenCodeAdminKey(providerId, key)
+            this.adminKeyStatuses.set(providerId, { state: 'verified', checkedAt: Date.now() })
+          } catch (error) {
+            this.adminKeyStatuses.set(providerId, {
+              state: 'failed',
+              message: error instanceof Error ? error.message : 'Key check failed.',
+              checkedAt: Date.now()
+            })
+          }
+        })
+      )
+    }
+    return providers.map((provider) => {
+      if (!supportsOpenCodeAdminKey(provider.id)) return provider
+      const adminMethod = openCodeAdminKeyProviders[provider.id]!
+      const status = this.adminKeyStatuses.get(provider.id)
+      return {
+        ...provider,
+        methods: [
+          ...provider.methods,
+          { type: 'key', id: openCodeAdminKeyMethodId, label: adminMethod.label }
+        ],
+        connections: saved[provider.id]
+          ? [
+              ...provider.connections,
+              {
+                type: 'credential',
+                id: getOpenCodeAdminConnectionId(provider.id),
+                label: adminMethod.label,
+                usageOnly: true,
+                // Saved keys are checked when added and on Refresh; unchecked ones show no status.
+                ...(status ? { status } : {})
+              }
+            ]
+          : provider.connections
+      }
+    })
   }
 
   /** Saves the credential, then tests it so the result reflects what the provider says. */
@@ -450,10 +531,26 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     input: ProviderConnectInput,
     options: ProviderSourceOptions = {}
   ): Promise<ProviderConnectionAttempt | null> => {
+    if (
+      input.method === 'key' &&
+      input.key &&
+      (input.methodId === openCodeAdminKeyMethodId ||
+        isOpenCodeAdminKey(input.integrationId, input.key))
+    ) {
+      // Admin keys cannot run models, so they never go to OpenCode.
+      if (!supportsOpenCodeAdminKey(input.integrationId))
+        throw new Error('This provider does not support admin keys.')
+      await verifyOpenCodeAdminKey(input.integrationId, input.key)
+      await this.adminKeys.set(input.integrationId, input.key)
+      this.adminKeyStatuses.set(input.integrationId, { state: 'verified', checkedAt: Date.now() })
+      this.balanceCache.clear()
+      return null
+    }
     const result = await connectOpenCode(
       (await this.getClientEntry(options.container)).client,
       input
     )
+    this.balanceCache.clear()
     if (result) this.connectionAttemptProviders.set(result.attemptId, input.integrationId)
     else await this.checkConnection(input.integrationId, options)
     return result
@@ -529,6 +626,13 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     credentialId: string,
     options: ProviderSourceOptions = {}
   ): Promise<void> => {
+    this.balanceCache.clear()
+    const adminProviderId = parseOpenCodeAdminConnectionId(credentialId)
+    if (adminProviderId) {
+      await this.adminKeys.remove(adminProviderId)
+      this.adminKeyStatuses.delete(adminProviderId)
+      return
+    }
     await deleteOpenCodeConnection(
       (await this.getClientEntry(options.container)).client,
       credentialId
@@ -702,8 +806,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
     const includeStatistics = Boolean(options.includeStatistics)
-    const [rateLimitsResult, statisticsResult] = await Promise.allSettled([
-      getOpenCodeGoRateLimits(options.container),
+    const authStore = getOpenCodeAuthStore(options.container)
+    // Keep the Go lookup's missing-key handling when the auth store cannot be read.
+    const goStore = authStore.catch(() => undefined)
+    const [rateLimitsResult, statisticsResult, balancesResult] = await Promise.allSettled([
+      goStore.then((store) => getOpenCodeGoRateLimits(options.container, fetch, store)),
       includeStatistics
         ? (async (): Promise<{ lifetimeTokens: string }> => {
             const client = (await this.getClientEntry(options.container)).client
@@ -721,7 +828,25 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
             )
             return { lifetimeTokens: lifetimeTokens.toLocaleString() }
           })()
-        : Promise.resolve<{ lifetimeTokens: string } | null>(null)
+        : Promise.resolve<{ lifetimeTokens: string } | null>(null),
+      (async () => {
+        const [store, adminKeys, local] = await Promise.all([
+          authStore.catch(() => null),
+          this.adminKeys.list().catch((error: unknown) => {
+            console.error('[OpenCodeProviderAdapter:getUsage] Unable to read admin keys', error)
+            return {}
+          }),
+          isLocalOpenCodeTarget(options.container)
+        ])
+        // OpenCode prefers saved credentials over environment variables; match that order.
+        const apiKeys = {
+          ...(local ? getOpenCodeEnvironmentApiKeys(process.env) : {}),
+          ...extractOpenCodeApiKeys(store)
+        }
+        return this.balanceCache.get(selectOpenCodeBalanceKeys(apiKeys, adminKeys), {
+          forceRefresh: Boolean(options.forceRefresh)
+        })
+      })()
     ])
 
     const errors: string[] = []
@@ -754,6 +879,13 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     }
 
+    if (balancesResult.status === 'rejected') {
+      console.error(
+        '[OpenCodeProviderAdapter:getUsage] Unable to load balances',
+        balancesResult.reason
+      )
+    } else errors.push(...balancesResult.value.errors)
+
     const statistics = statisticsResult.status === 'fulfilled' ? statisticsResult.value : null
     return {
       updatedAt: Date.now(),
@@ -765,11 +897,50 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       dailyUsageBuckets: null,
       rateLimits: rateLimitsResult.status === 'fulfilled' ? rateLimitsResult.value : [],
       rateLimitResetCredits: null,
+      balances: balancesResult.status === 'fulfilled' ? balancesResult.value.balances : [],
       errors
     }
   }
 
   resetRateLimits = async (): Promise<'nothingToReset'> => 'nothingToReset'
+
+  getChatTerminalTasks = async (chatId: string): Promise<string[]> => {
+    const state = this.states.get(chatId)
+    if (!state?.session) return []
+    const entry = this.clientEntries.get(getContainerTargetKey(state.container))
+    if (!entry) return []
+    const messages = await this.loadMessages(entry.client, state.session, 8)
+    const present = new Set(messages.map((message) => message.info.id))
+    for (const messageId of state.terminalMessageIds ?? []) {
+      if (present.has(messageId)) continue
+      messages.push(
+        requireData(
+          await entry.client.session.message(
+            {
+              sessionID: chatId,
+              messageID: messageId,
+              directory: state.directory
+            },
+            { throwOnError: true }
+          )
+        )
+      )
+    }
+    const stillRunning = new Set<string>()
+    const taskIds = messages.flatMap((message) =>
+      message.parts.flatMap((part) => {
+        const running =
+          part.type === 'tool' &&
+          /^(?:bash|shell|terminal|exec|command)$/.test(part.tool) &&
+          (part.state.status === 'running' || part.state.status === 'pending')
+        if (!running) return []
+        stillRunning.add(message.info.id)
+        return [part.callID]
+      })
+    )
+    state.terminalMessageIds = stillRunning
+    return taskIds
+  }
 
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {
     const entry = await this.getClientEntry(options.container)
@@ -1157,7 +1328,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options?.container)
-    if (state.active) return this.queueMessage(state, message, options)
+    if (state.active || this.pendingMessageEdits.has(chatId) || state.queuedMessages.length > 0) {
+      const detail = await this.queueMessage(state, message, options)
+      if (!state.active && !state.stopped) await this.drainQueue(state)
+      return detail
+    }
     await this.sendPrompt(state, message, options)
     return this.createChatDetail(state, true)
   }
@@ -1221,6 +1396,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options?.container)
+    if (this.pendingMessageEdits.has(chatId))
+      return this.queueMessage(state, message, options, mode === 'steer' ? 'steering' : 'queued')
     if (mode === 'queue') return this.queueMessage(state, message, options)
     if (mode === 'interrupt') {
       await this.abortState(state)
@@ -1237,8 +1414,32 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     }
   }
 
+  beginPendingMessageEdit = async (
+    chatId: string,
+    messageId: string,
+    editId: string
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId)
+    if (!state.queuedMessages.some((message) => message.id === messageId))
+      throw new Error('The OpenCode message is no longer queued.')
+    this.pendingMessageEdits.begin(chatId, messageId, editId, state.queuedMessages)
+    return this.createChatDetail(state, true)
+  }
+
+  cancelPendingMessageEdit = async (
+    chatId: string,
+    messageId: string,
+    editId: string
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId)
+    if (this.pendingMessageEdits.release(chatId, messageId, editId) && !state.stopped)
+      await this.drainQueue(state)
+    return this.createChatDetail(state, true)
+  }
+
   deletePendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
+    this.pendingMessageEdits.assert(chatId, messageId)
     const index = state.queuedMessages.findIndex((message) => message.id === messageId)
     if (index < 0) throw new Error('Pending message was not found.')
     state.queuedMessages.splice(index, 1)
@@ -1250,24 +1451,34 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     chatId: string,
     messageId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    editId?: string
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options?.container)
+    this.pendingMessageEdits.assert(chatId, messageId, editId)
     const pending = state.queuedMessages.find((item) => item.id === messageId)
     if (!pending) throw new Error('Pending message was not found.')
-    pending.content = message.trim()
-    pending.options = options
-    pending.createdAt = Date.now()
+    if (!message.trim() && !options?.images?.length && !options?.files?.length)
+      throw new Error('Cannot edit a message to empty content')
+    const replacement = { ...pending, content: message.trim(), options, createdAt: Date.now() }
+    state.queuedMessages = state.queuedMessages.map((item) =>
+      item === pending ? replacement : item
+    )
+    if (editId) {
+      this.pendingMessageEdits.release(chatId, messageId, editId)
+      if (!state.stopped) await this.drainQueue(state)
+    }
     this.scheduleUpdate(chatId)
     return this.createChatDetail(state, true)
   }
 
   steerPendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
+    this.pendingMessageEdits.assert(chatId, messageId)
     const pending = this.takeQueuedMessage(state, messageId)
     if (!pending) throw new Error('Pending message was not found.')
     try {
-      await this.sendPrompt(state, pending.content, pending.options)
+      await this.sendPrompt(state, pending.content, pending.options, () => true)
     } catch (error) {
       console.error('[caught:OpenCodeProviderAdapter:steerPendingMessage]', error)
       state.queuedMessages.unshift({ ...pending, kind: 'steering' })
@@ -1280,10 +1491,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     messageId: string
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
+    this.pendingMessageEdits.assert(chatId, messageId)
     const pending = this.takeQueuedMessage(state, messageId)
     if (!pending) throw new Error('Pending message was not found.')
     await this.abortState(state)
-    await this.sendPrompt(state, pending.content, pending.options)
+    await this.sendPrompt(state, pending.content, pending.options, () => true)
     return this.createChatDetail(state, true)
   }
 
@@ -1995,8 +2207,20 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     branchName: null,
     worktreeBaseBranchName: null,
     createdAt: session.time.created,
-    updatedAt: session.time.updated,
+    updatedAt: Math.max(
+      session.time.updated,
+      ...messages.map(({ info }) =>
+        info.role === 'assistant' ? (info.time.completed ?? info.time.created) : info.time.created
+      )
+    ),
     status: state ? this.getChatStatus(state) : null,
+    lastTurnOutcome: state?.active
+      ? null
+      : state?.failed
+        ? 'failed'
+        : state?.stopped
+          ? 'stopped'
+          : getOpenCodeTurnOutcome(messages),
     pendingApproval: state ? getPendingApproval(state.pendingApprovals[0], state.directory) : null,
     pinned: false,
     sidebarOrder: null,
@@ -2121,6 +2345,13 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       branchName: null,
       worktreeBaseBranchName: null,
       status: this.getChatStatus(state),
+      lastTurnOutcome: state.active
+        ? null
+        : state.failed
+          ? 'failed'
+          : state.stopped
+            ? 'stopped'
+            : getOpenCodeTurnOutcome(state.messages),
       pinned: false,
       sidebarOrder: null,
       done: false,
@@ -2149,8 +2380,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private sendPrompt = async (
     state: OpenCodeChatState,
     message: string,
-    options?: ProviderTurnOptions
-  ): Promise<void> => {
+    options?: ProviderTurnOptions,
+    claim?: () => boolean
+  ): Promise<boolean> => {
     const text = message.trim()
     const parts = await createPromptParts(text, options)
     if (parts.length === 0) throw new Error('Cannot send an empty OpenCode message.')
@@ -2182,6 +2414,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         },
         { throwOnError: true }
       )
+      if (claim && !claim()) return false
+      if (!claim && this.pendingMessageEdits.has(state.id)) {
+        await this.queueMessage(state, message, options, state.active ? 'steering' : 'queued')
+        return false
+      }
       state.active = true
       state.stopped = false
       state.failed = false
@@ -2202,6 +2439,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       throw error
     }
     this.scheduleUpdate(state.id)
+    return true
   }
 
   private abortState = async (state: OpenCodeChatState): Promise<void> => {
@@ -2269,19 +2507,52 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   }
 
   private drainQueue = async (state: OpenCodeChatState): Promise<void> => {
-    const pending = state.queuedMessages.shift()
-    if (!pending) {
-      this.scheduleUpdate(state.id)
-      return
-    }
+    if (this.queueDrains.has(state.id) || state.stopped) return
+    const pending = state.active
+      ? state.queuedMessages.find(
+          (message) =>
+            message.kind === 'steering' && !this.pendingMessageEdits.blocks(state.id, message.id)
+        )
+      : state.queuedMessages[0]
+    if (!pending || this.pendingMessageEdits.blocks(state.id, pending.id)) return
+    this.queueDrains.add(state.id)
+    let failed = false
     try {
-      await this.sendPrompt(state, pending.content, pending.options)
+      await this.sendPrompt(state, pending.content, pending.options, () => {
+        if (
+          this.pendingMessageEdits.blocks(state.id, pending.id) ||
+          (state.active && pending.kind !== 'steering') ||
+          state.stopped ||
+          !state.queuedMessages.includes(pending)
+        )
+          return false
+        state.queuedMessages = state.queuedMessages.filter((message) => message !== pending)
+        return true
+      })
     } catch (error) {
+      failed = true
       state.failed = true
       state.failureMessage = getOpenCodeErrorMessage(error)
-      state.queuedMessages.unshift(pending)
+      if (!state.queuedMessages.includes(pending)) state.queuedMessages.unshift(pending)
       void this.completeTurn(state)
       console.error('Unable to send queued OpenCode message', error)
+    } finally {
+      this.queueDrains.delete(state.id)
+      this.scheduleUpdate(state.id)
+      if (
+        !failed &&
+        !state.stopped &&
+        state.queuedMessages.length > 0 &&
+        state.queuedMessages.some(
+          (message) =>
+            !this.pendingMessageEdits.blocks(state.id, message.id) &&
+            (!state.active || message.kind === 'steering')
+        )
+      ) {
+        void this.drainQueue(state).catch((error) =>
+          console.error('Unable to resume OpenCode queue.', error)
+        )
+      }
     }
   }
 
@@ -2394,22 +2665,26 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const timer = this.updateTimers.get(state.id)
     if (timer) clearTimeout(timer)
     this.updateTimers.delete(state.id)
+    if (isOpenCodeChildState(state)) return
     const detail = refresh
       ? await this.createChatDetail(state, false, { startIndex: null, limit: 10 })
       : this.createChatDetailFromState(state, { startIndex: null, limit: 10 })
-    if (this.states.get(state.id) !== state) return
+    if (this.states.get(state.id) !== state || isOpenCodeChildState(state)) return
     this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
   }
 
   private scheduleUpdate = (chatId: string): void => {
     const existingTimer = this.updateTimers.get(chatId)
     if (existingTimer) clearTimeout(existingTimer)
+    if (isOpenCodeChildState(this.states.get(chatId))) return
     const timer = setTimeout(() => {
       this.updateTimers.delete(chatId)
       const state = this.states.get(chatId)
       if (!state) return
       void this.createChatDetail(state, false, { startIndex: null, limit: 10 })
         .then((detail) => {
+          // The first event of a child session arrives before its session record is known.
+          if (isOpenCodeChildState(state)) return
           this.chatUpdatedListeners.forEach((listener) =>
             listener(detail, { turnCompleted: false })
           )

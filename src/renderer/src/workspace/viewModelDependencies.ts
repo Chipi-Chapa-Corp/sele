@@ -79,6 +79,7 @@ export type ChangesDataDependencies = {
 }
 
 export type ConversationViewModelDependencies = {
+  modelUnavailable?: boolean
   authenticationRequired: boolean
   selectedChat: ProviderChat | null
   newSessionProviderAvailable: boolean

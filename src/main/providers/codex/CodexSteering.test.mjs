@@ -1,3 +1,4 @@
+import { PendingMessageEdits } from '../PendingMessageEdits.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -16,12 +17,15 @@ const declaration = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name?.text === 'CodexProviderAdapter'
 )
 const method = declaration.members.find((node) => node.name?.getText(source) === 'steerActiveChat')
-const code = ts.transpile(`class Adapter { ${method.getText(source)} }; new Adapter()`, {
-  target: ts.ScriptTarget.ES2022
-})
+const code = ts.transpile(
+  `class Adapter { pendingMessageEdits = new PendingMessageEdits(); ${method.getText(source)} }; new Adapter()`,
+  {
+    target: ts.ScriptTarget.ES2022
+  }
+)
 
 test('steering reaches an active turn even after a completed final-tagged message', async () => {
-  const adapter = vm.runInNewContext(code)
+  const adapter = vm.runInNewContext(code, { PendingMessageEdits })
   const processed = []
   Object.assign(adapter, {
     ensureChatTailLoaded: async () => {},
@@ -58,12 +62,12 @@ const createAdapter = (methodNames, globals = {}) => {
   )
   return vm.runInNewContext(
     ts.transpile(
-      `class Adapter { ${methods.map((method) => method.getText(source)).join('\n')} }; new Adapter()`,
+      `class Adapter { pendingMessageEdits = new PendingMessageEdits(); ${methods.map((method) => method.getText(source)).join('\n')} }; new Adapter()`,
       {
         target: ts.ScriptTarget.ES2022
       }
     ),
-    globals
+    { PendingMessageEdits, ...globals }
   )
 }
 

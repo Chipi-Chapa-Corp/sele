@@ -338,6 +338,8 @@ export const getChatFromDetail = (
   createdAt: detail.createdAt,
   updatedAt,
   status: detail.status,
+  lastTurnOutcome:
+    detail.lastTurnOutcome === undefined ? existingChat?.lastTurnOutcome : detail.lastTurnOutcome,
   pendingApproval: detail.pendingApproval,
   seenUpdatedAt: detail.seenUpdatedAt ?? existingChat?.seenUpdatedAt ?? null,
   pinned: detail.pinned ?? existingChat?.pinned ?? false,
@@ -586,6 +588,7 @@ export const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolea
   first.createdAt === second.createdAt &&
   first.updatedAt === second.updatedAt &&
   first.status === second.status &&
+  first.lastTurnOutcome === second.lastTurnOutcome &&
   arePendingApprovalsEqual(first.pendingApproval, second.pendingApproval) &&
   first.pinned === second.pinned &&
   first.sidebarOrder === second.sidebarOrder &&
@@ -611,6 +614,7 @@ export const getChatFromUpdateSummary = (
     existingChat.branchName !== summary.branchName ||
     existingChat.worktreeBaseBranchName !== summary.worktreeBaseBranchName ||
     existingChat.status !== summary.status ||
+    existingChat.lastTurnOutcome !== summary.lastTurnOutcome ||
     !arePendingApprovalsEqual(existingChat.pendingApproval, summary.pendingApproval) ||
     existingChat.pinned !== summary.pinned ||
     existingChat.sidebarOrder !== summary.sidebarOrder ||
@@ -635,6 +639,10 @@ export const getChatFromUpdateSummary = (
     updatedAt:
       !existingChat || summaryChanged || turnCompleted ? summary.updatedAt : existingChat.updatedAt,
     status: summary.status,
+    lastTurnOutcome:
+      summary.lastTurnOutcome === undefined
+        ? existingChat?.lastTurnOutcome
+        : summary.lastTurnOutcome,
     pendingApproval: summary.pendingApproval,
     pinned: summary.pinned,
     sidebarOrder: summary.sidebarOrder,

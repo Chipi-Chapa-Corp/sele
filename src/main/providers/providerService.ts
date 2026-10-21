@@ -1,3 +1,5 @@
+import { getLastTurnOutcome } from '../../shared/chatTurnOutcome'
+import { getChatTurnOutcomes, setChatTurnOutcome } from '../database/chatTurnOutcome'
 import { ImportedConversations } from './ImportedConversations'
 import { app } from 'electron'
 import { join } from 'node:path'
@@ -167,7 +169,10 @@ const applyMetadataToChat = (
 })
 
 const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat[]> => {
-  const metadataById = await getChatMetadataByIds(chats.map((chat) => chat.id))
+  const [metadataById, outcomes] = await Promise.all([
+    getChatMetadataByIds(chats.map((chat) => chat.id)),
+    getChatTurnOutcomes(chats)
+  ])
   return Promise.all(
     chats.map(async (chat) => {
       const [cwdMetadata, reviews] = await Promise.all([
@@ -184,6 +189,10 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
 
       return {
         ...applyMetadataToChat(chat, metadataById.get(chat.id)),
+        lastTurnOutcome:
+          chat.lastTurnOutcome === undefined
+            ? outcomes.get(`${chat.providerId}:${chat.id}`)
+            : chat.lastTurnOutcome,
         preview: previewReview
           ? previewReview.prompt || `Review · ${previewReview.comments.length}`
           : chat.preview,
@@ -200,6 +209,10 @@ const applyMetadataToDetail = async (
   detail: ProviderChatDetail,
   providerId: ProviderId
 ): Promise<ProviderChatDetail> => {
+  const lastTurnOutcome = getLastTurnOutcome(detail)
+  if (lastTurnOutcome !== undefined) {
+    await setChatTurnOutcome(providerId, detail.id, lastTurnOutcome)
+  }
   const [metadata, cwdMetadata, reviews] = await Promise.all([
     getChatMetadata(detail.id),
     getCwdMetadata(detail.cwd),
@@ -220,6 +233,7 @@ const applyMetadataToDetail = async (
 
   return {
     ...detail,
+    lastTurnOutcome,
     cwdKind: cwdMetadata.kind,
     projectCwd: cwdMetadata.projectCwd,
     branchName: cwdMetadata.branchName,
@@ -475,6 +489,8 @@ export const getChatUpdateSummary = (
     worktreeBaseBranchName: detail.worktreeBaseBranchName,
     updatedAt,
     status: detail.status,
+    lastTurnOutcome:
+      detail.lastTurnOutcome === undefined ? getLastTurnOutcome(detail) : detail.lastTurnOutcome,
     pendingApproval: detail.pendingApproval,
     pinned: detail.pinned,
     sidebarOrder: detail.sidebarOrder,
@@ -837,6 +853,12 @@ export const providerApi: ProviderApi = {
       )
     }
   },
+  getChatTerminalTasks: async (providerId, chatId) => {
+    const metadata = await getChatMetadata(chatId)
+    return (
+      adapters[providerId].getChatTerminalTasks?.(chatId, { container: metadata.container }) ?? []
+    )
+  },
   getChat: async (providerId, chatId) => {
     const metadata = await getChatMetadata(chatId)
     return applyMetadataToDetail(
@@ -969,9 +991,17 @@ export const providerApi: ProviderApi = {
     adapters[providerId]
       .deletePendingMessage(chatId, messageId)
       .then((detail) => applyMetadataToDetail(detail, providerId)),
-  editPendingMessage: (providerId, chatId, messageId, message, options) =>
+  beginPendingMessageEdit: (providerId, chatId, messageId, editId) =>
+    adapters[providerId]
+      .beginPendingMessageEdit(chatId, messageId, editId)
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
+  cancelPendingMessageEdit: (providerId, chatId, messageId, editId) =>
+    adapters[providerId]
+      .cancelPendingMessageEdit(chatId, messageId, editId)
+      .then((detail) => applyMetadataToDetail(detail, providerId)),
+  editPendingMessage: (providerId, chatId, messageId, message, options, editId) =>
     runWithStoredReview(chatId, message, options?.review, () =>
-      adapters[providerId].editPendingMessage(chatId, messageId, message, options)
+      adapters[providerId].editPendingMessage(chatId, messageId, message, options, editId)
     ).then((detail) => applyMetadataToDetail(detail, providerId)),
   steerPendingMessage: (providerId, chatId, messageId) =>
     adapters[providerId]

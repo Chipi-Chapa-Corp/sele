@@ -14,6 +14,7 @@ if (!process.versions.electron) {
             import React from 'react'
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
+            import { updateStoredComposerDrafts, releaseComposerDraftScope, moveComposerDraftScope } from './src/renderer/src/composerDraftStorage'
             import { MessageBox } from './src/renderer/src/components/MessageBox'
             import { fallbackProviderModels, fallbackProviderApprovalModes, fallbackProviderSandboxModes } from './src/shared/provider'
             const stored = new Map()
@@ -27,8 +28,8 @@ if (!process.versions.electron) {
             window.sends = []
             window.sendSucceeded = true
             window.image = name => ({ kind: 'image', name, path: '/' + name, dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=' })
-            window.renderComposer = (editSession = null) => flushSync(() => root.render(<React.StrictMode>
-              <MessageBox draftScopeKey="chat" draftProjectKey="project" editSession={editSession}
+            window.renderComposer = (editSession = null, draftScopeKey = 'chat') => flushSync(() => root.render(<React.StrictMode>
+              <MessageBox draftScopeKey={draftScopeKey} editSession={editSession}
                 providerId="codex" model={fallbackProviderModels[0].id} models={fallbackProviderModels}
                 agentMode="interactive" agentModes={[]} approvalMode="never" approvalModes={fallbackProviderApprovalModes}
                 reasoningEffort="medium" serviceTier={null} sandboxMode="danger-full-access" sandboxModes={fallbackProviderSandboxModes}
@@ -55,6 +56,8 @@ if (!process.versions.electron) {
               if (!button || button.disabled) throw new Error('Unavailable control: ' + label)
               button.click()
             }
+            window.release = (from, to) => flushSync(() => updateStoredComposerDrafts(state => releaseComposerDraftScope(state, from, to)))
+            window.move = (from, to) => flushSync(() => updateStoredComposerDrafts(state => moveComposerDraftScope(state, from, to)))
             window.previewNames = () => Array.from(document.querySelectorAll('.message-box__attachment-open')).map(button => button.getAttribute('aria-label'))
             window.renderComposer()
           `,
@@ -114,6 +117,61 @@ if (!process.versions.electron) {
       const settle = () =>
         run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
       await settle()
+      // Tab-saved drafts and unsent input belong to the selected chat.
+      await run(`window.renderComposer(null, 'codex:first'); window.setText('first saved prompt')`)
+      await run(
+        `document.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', {key: 'Tab', bubbles: true}))`
+      )
+      assert.ok(
+        await run(
+          `Boolean(document.querySelector('[aria-label="Restore latest draft: first saved prompt"]'))`
+        )
+      )
+      await run(`window.setText('first unsent input')`)
+      await run(`window.renderComposer(null, 'codex:second')`)
+      assert.equal(await run(`document.querySelector('textarea').value`), '')
+      assert.equal(await run(`document.querySelector('.prompt-drafts')`), null)
+      await run(`window.setText('second saved prompt')`)
+      await run(
+        `document.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', {key: 'Tab', bubbles: true}))`
+      )
+      await run(`window.renderComposer(null, 'codex:first')`)
+      assert.equal(await run(`document.querySelector('textarea').value`), 'first unsent input')
+      await run(`window.click('Restore latest draft: first saved prompt')`)
+      assert.equal(
+        await run(`document.querySelector('textarea').value`),
+        'first unsent input\n\nfirst saved prompt'
+      )
+      assert.equal(await run(`document.querySelector('.prompt-drafts')`), null)
+      await run(`window.renderComposer(null, 'codex:second')`)
+      assert.ok(
+        await run(
+          `Boolean(document.querySelector('[aria-label="Restore latest draft: second saved prompt"]'))`
+        )
+      )
+      await run(`window.release('codex:second', 'new-chat:project')`)
+      assert.equal(await run(`document.querySelector('.prompt-drafts')`), null)
+      await run(`window.renderComposer(null, 'codex:first')`)
+      assert.equal(await run(`document.querySelector('.prompt-drafts')`), null)
+      await run(`window.renderComposer(null, 'new-chat:other-project')`)
+      assert.equal(await run(`document.querySelector('.prompt-drafts')`), null)
+      await run(`window.renderComposer(null, 'new-chat:project')`)
+      assert.ok(
+        await run(
+          `Boolean(document.querySelector('[aria-label="Restore latest draft: second saved prompt"]'))`
+        )
+      )
+      await run(
+        `window.move('new-chat:project', 'codex:third'); window.renderComposer(null, 'codex:third')`
+      )
+      assert.equal(await run(`document.querySelector('.prompt-drafts')`), null)
+      await run(
+        `window.renderComposer(null, 'new-chat:project'); window.click('Restore latest draft: second saved prompt')`
+      )
+      assert.equal(await run(`document.querySelector('textarea').value`), 'second saved prompt')
+      assert.equal(await run(`document.querySelector('.prompt-drafts')`), null)
+      await run(`window.renderComposer()`)
+
       // Original composer draft survives both cancellation and successful editing.
       await run(
         `window.setText('original draft'); window.nextAttachments = [window.image('draft.png')]; window.click('Attach files')`

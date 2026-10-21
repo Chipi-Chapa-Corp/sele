@@ -10,7 +10,7 @@ import {
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
-import { AnimatePresence } from 'motion/react'
+import { animate, AnimatePresence, motion, useIsPresent } from 'motion/react'
 import { LoaderCircle, Shrink } from 'lucide-react'
 import type { AppContainerTarget } from '../../../shared/app'
 import type {
@@ -30,8 +30,17 @@ import {
   getRateLimitResetMessage,
   groupRateLimitResetCreditsByExpiration
 } from '../rateLimitReset'
+import {
+  describeBalance,
+  formatBalanceAmount,
+  getBalanceUsedPercent,
+  groupAccountBalances,
+  selectBadgeBalance
+} from '../accountBalances'
 import type { AppChatUsageDisplay } from '../settings'
 import { getContextPercent, getVisibleUsageBadges, type ChatContextUsage } from '../usageBadges'
+import { useFeedbackMotion } from '../motion/useFeedbackMotion'
+import { useReducedMotionPreference } from '../motion/useReducedMotionPreference'
 import { MotionSurface } from '../motion/MotionSurface'
 import { Button } from './Button'
 import { DisclosureToggle } from './DisclosureToggle'
@@ -44,12 +53,16 @@ export type { ChatContextUsage } from '../usageBadges'
 
 type UsagePopoverView = 'limits' | 'usage' | 'statistics'
 type AccountRateLimit = ProviderAccountUsage['rateLimits'][number]
+type AccountBalance = NonNullable<ProviderAccountUsage['balances']>[number]
 
 type UsageIndicatorProps = {
   providerId: ProviderId
+  scopeKey?: string
   chatId?: string | null
   container?: AppContainerTarget | null
   modelUsageScope?: string
+  /** Native provider of the selected model, for harnesses such as OpenCode. */
+  modelProviderId?: string
   accountUsage: ProviderAccountUsage | null
   accountUsageError: string | null
   accountUsageState: 'idle' | 'loading' | 'ready' | 'error'
@@ -94,24 +107,148 @@ const clampPercent = (value: number): number => Math.min(Math.max(value, 0), 100
 const usageStripPath =
   'M28 1.5H48A6.5 6.5 0 0 1 54.5 8V24A6.5 6.5 0 0 1 48 30.5H8A6.5 6.5 0 0 1 1.5 24V8A6.5 6.5 0 0 1 8 1.5Z'
 
-const UsageStrip = ({ usedPercent }: { usedPercent: number | null }): ReactNode => {
+const UsageStrip = ({
+  usedPercent,
+  feedback = false
+}: {
+  usedPercent: number | null
+  feedback?: boolean
+}): ReactNode => {
+  const ringRef = useRef<HTMLSpanElement>(null)
+  const pulseRef = useRef<SVGPathElement>(null)
+  const previous = useRef(usedPercent == null ? null : Math.round(usedPercent))
+  const reduced = useReducedMotionPreference()
+  const displayedPercent = usedPercent == null ? null : Math.round(usedPercent)
+  useFeedbackMotion(ringRef, feedback ? displayedPercent : null)
+  useLayoutEffect(() => {
+    const changed = previous.current !== displayedPercent
+    previous.current = displayedPercent
+    if (!feedback || !changed || reduced || !pulseRef.current) return
+    const pulse = animate(
+      pulseRef.current,
+      { opacity: [0, 0.8, 0], strokeWidth: [3, 4.5, 3] },
+      {
+        duration: 0.35,
+        ease: 'easeOut'
+      }
+    )
+    return () => pulse.cancel()
+  }, [displayedPercent, feedback, reduced])
   const remainingPercent = usedPercent == null ? 0 : Math.round(100 - usedPercent)
 
   return (
-    <span className="message-box__usage-ring">
+    <span className="message-box__usage-ring" ref={ringRef}>
       <svg aria-hidden="true" viewBox="0 0 56 32">
         <path className="message-box__usage-track" d={usageStripPath} />
         <path
           className="message-box__usage-strip"
           d={usageStripPath}
           pathLength={100}
-          strokeDasharray={remainingPercent >= 100 ? undefined : `${remainingPercent} 100`}
+          strokeDasharray={`${remainingPercent} 100`}
         />
+        {feedback && (
+          <path ref={pulseRef} className="message-box__usage-pulse" d={usageStripPath} />
+        )}
       </svg>
       {usedPercent != null && (
         <span className="message-box__usage-percent">{formatPercent(remainingPercent)}</span>
       )}
     </span>
+  )
+}
+
+const MotionButton = motion.create(Button)
+type UsageBadgeData = ReturnType<typeof getVisibleUsageBadges>[number]
+
+function UsageBadge({
+  badge,
+  index,
+  popoverId,
+  open,
+  onToggle
+}: {
+  badge: UsageBadgeData
+  index: number
+  popoverId: string
+  open: boolean
+  onToggle: () => void
+}): ReactElement {
+  const present = useIsPresent()
+  const reduced = useReducedMotionPreference()
+  return (
+    <MotionButton
+      initial={reduced ? false : { opacity: 0, scale: 0.85, y: 6, width: 0, marginLeft: 0 }}
+      animate={{
+        opacity: 1,
+        scale: 1,
+        y: 0,
+        width: '3.5rem',
+        marginLeft: index === 0 ? 0 : '0.2rem'
+      }}
+      exit={{ opacity: 0, scale: reduced ? 1 : 0.85, y: reduced ? 0 : 6, width: 0, marginLeft: 0 }}
+      transition={{ duration: reduced ? 0 : present ? 0.18 : 0.14, ease: 'easeOut' }}
+      aria-label={badge.title}
+      aria-controls={popoverId}
+      aria-expanded={open}
+      aria-hidden={!present || undefined}
+      inert={!present}
+      disabled={!present}
+      callback={onToggle}
+      data-usage-limit={badge.key}
+      data-pressed={open ? 'true' : undefined}
+      icon={<UsageStrip usedPercent={badge.percent} feedback />}
+      size="small"
+      theme="transparent"
+      title={badge.title}
+    />
+  )
+}
+
+function BalanceBadge({
+  balance,
+  index,
+  popoverId,
+  open,
+  onToggle
+}: {
+  balance: AccountBalance
+  index: number
+  popoverId: string
+  open: boolean
+  onToggle: () => void
+}): ReactElement {
+  const present = useIsPresent()
+  const reduced = useReducedMotionPreference()
+  const usedPercent = getBalanceUsedPercent(balance)
+  const title = `${balance.modelProviderName} ${balance.label.toLocaleLowerCase()}: ${describeBalance(balance)}`
+  return (
+    <MotionButton
+      initial={reduced ? false : { opacity: 0, scale: 0.85, y: 6 }}
+      animate={{ opacity: 1, scale: 1, y: 0, marginLeft: index === 0 ? 0 : '0.2rem' }}
+      exit={{ opacity: 0, scale: reduced ? 1 : 0.85, y: reduced ? 0 : 6 }}
+      transition={{ duration: reduced ? 0 : present ? 0.18 : 0.14, ease: 'easeOut' }}
+      aria-label={title}
+      aria-controls={popoverId}
+      aria-expanded={open}
+      aria-hidden={!present || undefined}
+      inert={!present}
+      disabled={!present}
+      callback={onToggle}
+      data-usage-balance={usedPercent == null ? balance.kind : 'limit'}
+      data-pressed={open ? 'true' : undefined}
+      {...(usedPercent == null
+        ? {
+            label: (
+              <span className="message-box__usage-balance">
+                {formatBalanceAmount(balance.amount, balance.currency, { compact: true })}
+              </span>
+            )
+          }
+        : { icon: <UsageStrip usedPercent={usedPercent} feedback /> })}
+      size="small"
+      theme="transparent"
+      title={title}
+    />
   )
 }
 
@@ -175,9 +312,11 @@ const getRateLimitUsageFingerprint = (usage: ProviderAccountUsage | null): strin
 
 export function UsageIndicator({
   providerId,
+  scopeKey,
   chatId,
   container,
   modelUsageScope,
+  modelProviderId,
   accountUsage,
   accountUsageError,
   accountUsageState,
@@ -192,14 +331,54 @@ export function UsageIndicator({
   const usageControlRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties | null>(null)
-  const [usageOpen, setUsageOpen] = useState(false)
+  const sourceKey = JSON.stringify([scopeKey, providerId, chatId, container])
+  // Preserve the sidebar's source-specific popover reset without replacing its badges.
+  const popoverSourceKey = scopeKey === undefined ? '' : sourceKey
+  const currentSource = useRef(sourceKey)
+  currentSource.current = sourceKey
+  const [usageOpenSource, setUsageOpenSource] = useState<string | null>(null)
+  const previousRateLimits = useRef<AccountRateLimit[]>([])
+  const previousBalances = useRef<AccountBalance[]>([])
+  useLayoutEffect(() => {
+    if (accountUsage) {
+      previousRateLimits.current = accountUsage.rateLimits
+      previousBalances.current = accountUsage.balances ?? []
+    } else if (accountUsageState !== 'loading') {
+      previousRateLimits.current = []
+      previousBalances.current = []
+    }
+  }, [accountUsage, accountUsageState])
+  // Account switches clear usage before the replacement arrives. Hold the visible
+  // limits during that lookup so existing badges can animate directly to new values.
+  const badgeRateLimits =
+    accountUsage?.rateLimits ?? (accountUsageState === 'loading' ? previousRateLimits.current : [])
+  const badges = getVisibleUsageBadges(badgeRateLimits, contextUsage, displayUsage)
+  const balances =
+    accountUsage?.balances ?? (accountUsageState === 'loading' ? previousBalances.current : [])
+  const badgeBalance = selectBadgeBalance(balances, modelProviderId)
+  const hasUsageBadges = badges.length > 0 || badgeBalance != null
   const [usageView, setUsageView] = useState<UsagePopoverView>('limits')
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
   const [resetDetailsOpen, setResetDetailsOpen] = useState(false)
   const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
   const [rateLimitRefreshBaseline, setRateLimitRefreshBaseline] = useState<string | null>(null)
   const rateLimitResetBaselineRef = useRef<string | null>(null)
-  const usageMenuOpen = usageOpen
+  const usageMenuOpen = usageOpenSource === popoverSourceKey && hasUsageBadges
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: source changes reset the popover without remounting badges.
+  useEffect(() => {
+    setUsageOpenSource(null)
+    setUsageView('limits')
+    setOtherLimitsOpen(false)
+    setResetDetailsOpen(false)
+    setRateLimitResetMessage(null)
+    setRateLimitRefreshBaseline(null)
+    rateLimitResetBaselineRef.current = null
+  }, [popoverSourceKey])
+
+  useEffect(() => {
+    if (!hasUsageBadges) setUsageOpenSource(null)
+  }, [hasUsageBadges])
 
   useLayoutEffect(() => {
     const reference = usageControlRef.current
@@ -208,7 +387,7 @@ export function UsageIndicator({
     let active = true
     const update = (): void => {
       if (reference.getClientRects().length === 0) {
-        setUsageOpen(false)
+        setUsageOpenSource(null)
         return
       }
       void computePosition(reference, floating, {
@@ -237,11 +416,11 @@ export function UsageIndicator({
       )
         return
 
-      setUsageOpen(false)
+      setUsageOpenSource(null)
     }
 
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setUsageOpen(false)
+      if (event.key === 'Escape') setUsageOpenSource(null)
     }
 
     document.addEventListener('click', handleClick)
@@ -282,7 +461,7 @@ export function UsageIndicator({
             console.error('Unable to refresh account usage while polling.', error)
             // Keep polling after transient refresh failures.
           } finally {
-            if (active) scheduleRefresh()
+            if (active && currentSource.current === sourceKey) scheduleRefresh()
           }
         })()
       }, 1_000)
@@ -294,7 +473,7 @@ export function UsageIndicator({
       active = false
       if (refreshTimeout !== null) window.clearTimeout(refreshTimeout)
     }
-  }, [onUsageRefresh, rateLimitRefreshBaseline, rateLimitUsageFingerprint])
+  }, [onUsageRefresh, rateLimitRefreshBaseline, rateLimitUsageFingerprint, sourceKey])
 
   const accountUsageErrors = accountUsage?.errors ?? []
   const tokenUsageSupported = providerId !== 'opencode'
@@ -319,7 +498,6 @@ export function UsageIndicator({
   )
   const contextPercent = getContextPercent(contextUsage)
   const contextPercentLabel = contextPercent == null ? null : formatPercent(contextPercent)
-  const badges = getVisibleUsageBadges(rateLimits, contextUsage, displayUsage)
   const availableRateLimitResets = accountUsage?.rateLimitResetCredits?.availableCount ?? 0
   const rateLimitResetDisabled = shouldDisableRateLimitReset(
     rateLimits,
@@ -331,7 +509,7 @@ export function UsageIndicator({
 
   const handleUsageToggle = (): void => {
     const nextOpen = !usageMenuOpen
-    setUsageOpen(nextOpen)
+    setUsageOpenSource(nextOpen ? popoverSourceKey : null)
     if (nextOpen) {
       if (!statisticsReported && usageView === 'statistics') setUsageView('limits')
       void onUsageRefresh?.({ includeStatistics: true })
@@ -353,9 +531,15 @@ export function UsageIndicator({
   const handleRateLimitResetResult = async (
     outcome: ProviderAccountRateLimitResetOutcome
   ): Promise<void> => {
+    if (currentSource.current !== sourceKey) return
     setRateLimitResetMessage(getRateLimitResetMessage(outcome))
     await onUsageRefresh?.()
-    if (outcome === 'reset' && onUsageRefresh && rateLimitResetBaselineRef.current !== null) {
+    if (
+      currentSource.current === sourceKey &&
+      outcome === 'reset' &&
+      onUsageRefresh &&
+      rateLimitResetBaselineRef.current !== null
+    ) {
       setRateLimitRefreshBaseline(rateLimitResetBaselineRef.current)
     }
   }
@@ -375,25 +559,30 @@ export function UsageIndicator({
     )
   }
 
-  if (badges.length === 0) return null
-
   return (
     <div className="message-box__usage-control" ref={usageControlRef}>
-      {badges.map((badge) => (
-        <Button
-          key={badge.key}
-          aria-label={badge.title}
-          aria-controls={`message-usage-${usagePopoverId}`}
-          aria-expanded={usageMenuOpen}
-          callback={handleUsageToggle}
-          data-usage-limit={badge.key}
-          data-pressed={usageMenuOpen ? 'true' : undefined}
-          icon={<UsageStrip usedPercent={badge.percent} />}
-          size="small"
-          theme="transparent"
-          title={badge.title}
-        />
-      ))}
+      <AnimatePresence initial={false}>
+        {badges.map((badge, index) => (
+          <UsageBadge
+            key={badge.key}
+            badge={badge}
+            index={index}
+            popoverId={`message-usage-${usagePopoverId}`}
+            open={usageMenuOpen}
+            onToggle={handleUsageToggle}
+          />
+        ))}
+        {badgeBalance && (
+          <BalanceBadge
+            key="balance"
+            balance={badgeBalance}
+            index={badges.length}
+            popoverId={`message-usage-${usagePopoverId}`}
+            open={usageMenuOpen}
+            onToggle={handleUsageToggle}
+          />
+        )}
+      </AnimatePresence>
       {createPortal(
         <AnimatePresence>
           {usageMenuOpen && (
@@ -489,6 +678,32 @@ export function UsageIndicator({
                         {accountUsageError ?? 'Limits unavailable.'}
                       </p>
                     )}
+                    {groupAccountBalances(balances, modelProviderId).map((group) => (
+                      <div className="message-box__balances" key={group.providerId}>
+                        <span className="message-box__usage-section-title">
+                          {group.providerName}
+                        </span>
+                        {group.balances.map((balance) => {
+                          const usedPercent = getBalanceUsedPercent(balance)
+                          const resetTime = formatResetTime(balance.resetsAt ?? null)
+                          return (
+                            <div className="message-box__balance" key={balance.id}>
+                              <div className="message-box__usage-row">
+                                <span>{balance.label}</span>
+                                <strong title={resetTime ? `Resets ${resetTime}` : undefined}>
+                                  {describeBalance(balance)}
+                                </strong>
+                              </div>
+                              {usedPercent != null && (
+                                <div className="message-box__usage-meter" aria-hidden="true">
+                                  <span style={{ width: `${usedPercent}%` }} />
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ))}
                     {visibleRateLimits.length > 0 && (
                       <div className="message-box__limits">
                         {sortRateLimitsForDisplay(visibleRateLimits).map((limit, index) =>
@@ -535,7 +750,10 @@ export function UsageIndicator({
                             availableCount={availableRateLimitResets}
                             disabled={rateLimitResetDisabled}
                             onReset={handleRateLimitReset}
-                            onResetError={setRateLimitResetMessage}
+                            onResetError={(message) => {
+                              if (currentSource.current === sourceKey)
+                                setRateLimitResetMessage(message)
+                            }}
                             onResetResult={handleRateLimitResetResult}
                             onResetStart={() => setRateLimitResetMessage(null)}
                           />
@@ -584,6 +802,7 @@ export function UsageIndicator({
                     )}
                     {accountUsage &&
                       accountUsage.rateLimits.length === 0 &&
+                      balances.length === 0 &&
                       accountUsageErrors.length === 0 && (
                         <p className="message-box__usage-status">Usage unavailable.</p>
                       )}

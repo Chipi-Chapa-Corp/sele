@@ -68,6 +68,7 @@ export type EditingMessage =
   | (Pick<ProviderPendingMessage, 'id' | 'content' | 'kind'> & {
       attachments: AppSelectedAttachment[]
       type: 'pending'
+      editId: string
     })
 
 export type ApprovalResolutionState = {

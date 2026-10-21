@@ -19,6 +19,10 @@ export const getTargetTerminalScript = (options: {
   }
 
   lines.push(command)
-  if (options.keepAlive) lines.push('exec "${SHELL:-/bin/sh}" -i')
+  if (options.keepAlive)
+    lines.push(
+      'printf \'\\033]777;sele-command-finished;%s\\007\' "$?"',
+      'exec "${SHELL:-/bin/sh}" -i'
+    )
   return lines.join('\n')
 }

@@ -64,6 +64,11 @@ export type LocalDatabase = {
     scale: number
     updated_at: number
   }
+  chat_turn_outcome: {
+    id: string
+    outcome: 'failed' | 'stopped' | null
+    observed_at: number
+  }
   chat: {
     id: string
     container_name: string | null
@@ -166,6 +171,14 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('hostname', 'text', (column) => column.primaryKey())
     .addColumn('scale', 'real', (column) => column.notNull())
     .addColumn('updated_at', 'integer', (column) => column.notNull())
+    .execute()
+
+  await db.schema
+    .createTable('chat_turn_outcome')
+    .ifNotExists()
+    .addColumn('id', 'text', (column) => column.primaryKey())
+    .addColumn('outcome', 'text')
+    .addColumn('observed_at', 'integer', (column) => column.notNull())
     .execute()
 
   await db.schema

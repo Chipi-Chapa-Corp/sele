@@ -1,3 +1,4 @@
+import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createProviderElicitation, getProviderElicitationResult } from '../ProviderElicitation'
 import { ClaudeLiveTokenUsage } from './ClaudeLiveTokenUsage.ts'
 import { encodeClaudeHistory, historyMessageId } from '../NativeHistoryImport'
@@ -93,6 +94,7 @@ import { isClaudeAuthenticationFailure, isClaudeAuthenticationError } from './Cl
 import { claudeAccounts } from './ClaudeAccounts'
 import {
   ClaudeTranscriptProjection,
+  getClaudeTurnOutcome,
   classifyClaudeTurnRecord,
   claudeBackgroundTurnSubtype,
   isClaudeInternalUserMessage,
@@ -155,6 +157,7 @@ type ClaudePendingUserInput = {
 }
 
 type QueuedClaudeMessage = {
+  kind?: 'queued' | 'steering'
   id: string
   content: string
   prompt: string
@@ -202,6 +205,7 @@ type ClaudeSessionState = {
   queryModel: string | undefined | null
   queryStartupRevision: number
   backgroundTaskIds: Set<string>
+  terminalTaskIds: Set<string>
   subagentTaskStatuses: Map<string, ProviderSubagent['status']>
   waitingForSessionIdle: boolean
   /** The SDK may be preparing a follow-up before any assistant output arrives. */
@@ -323,6 +327,7 @@ const contextUsageCloseGraceMs = 1_000
 // Time for the last background task's notification to start its main-thread turn.
 const backgroundIdleCloseGraceMs = 15_000
 const interruptCloseGraceMs = 500
+const turnOptionsTimeoutMs = 15_000
 const oneShotCancellationRetentionMs = 60_000
 const sessionTitleRefreshDelayMs = 5_000
 const maxIdleSessionStates = 8
@@ -399,6 +404,24 @@ const settleWithin = (promise: Promise<unknown>, timeoutMs: number): Promise<voi
       resolve()
     }
     void promise.then(finish, finish)
+  })
+
+const awaitClaudeTurnOptions = (promise: Promise<unknown>): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('Claude did not apply chat settings in time. Try sending again.')),
+      turnOptionsTimeoutMs
+    )
+    void promise.then(
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
   })
 
 class ClaudeRemoteSessionStore extends RemoteSessionStore {
@@ -569,6 +592,7 @@ const getTokenBreakdown = (
 })
 
 export class ClaudeProviderAdapter implements ProviderAdapter {
+  private pendingMessageEdits = new PendingMessageEdits()
   private readonly sessionDiscovery = new ClaudeSessionDiscovery()
   id = 'claude' as const
   private tokenUsageReporter = new TokenUsageReporter()
@@ -921,6 +945,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   resetRateLimits = async (): Promise<'nothingToReset'> => 'nothingToReset'
 
+  getChatTerminalTasks = async (chatId: string): Promise<string[]> => [
+    ...(this.states.get(chatId)?.terminalTaskIds ?? [])
+  ]
+
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {
     const normalizedContainer = normalizeContainerTarget(options.container)
     const container = isStoredContainer(normalizedContainer) ? normalizedContainer : null
@@ -935,10 +963,33 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       this.sessionContainers.set(session.sessionId, container)
       this.sessionMetadata.set(session.sessionId, session)
     })
-    return {
-      chats: page.map((session) => this.createChatFromMetadata(session)),
-      nextCursor
+    const chats: ProviderChat[] = []
+    for (let index = 0; index < page.length; index += 8) {
+      chats.push(
+        ...(await Promise.all(
+          page.slice(index, index + 8).map(async (session) => {
+            const chat = this.createChatFromMetadata(session)
+            if (chat.status === 'active' || chat.pendingApproval) return chat
+            try {
+              const latest = await this.readHistoryPage(session.sessionId, container, {
+                cursor: null,
+                direction: 'older',
+                limit: 1
+              })
+              return {
+                ...chat,
+                updatedAt: Math.max(chat.updatedAt, latest.metadata.lastModified),
+                lastTurnOutcome: getClaudeTurnOutcome(latest.messages)
+              }
+            } catch (error) {
+              console.error('Unable to read latest Claude sidebar turn.', error)
+              return chat
+            }
+          })
+        ))
+      )
     }
+    return { chats, nextCursor }
   }
 
   getChat = async (
@@ -1420,7 +1471,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const state = await this.ensureState(chatId, options)
     this.requireAuthentication(state)
 
-    if (!state.active) {
+    if (this.pendingMessageEdits.has(chatId)) {
+      state.queuedMessages.push({
+        ...this.createQueuedMessage(message, options),
+        kind: mode === 'steer' ? 'steering' : 'queued'
+      })
+      this.emitUpdate(state)
+    } else if (!state.active) {
       await this.sendMessageRespectingQueue(state, message, options)
     } else if (mode === 'queue') {
       const queued = this.createQueuedMessage(message, options)
@@ -1439,8 +1496,53 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
+  beginPendingMessageEdit = async (
+    chatId: string,
+    messageId: string,
+    editId: string
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId)
+    if (!state.queuedMessages.some((message) => message.id === messageId))
+      throw new Error('The Claude message is no longer queued.')
+    this.pendingMessageEdits.begin(chatId, messageId, editId, state.queuedMessages)
+    this.emitUpdate(state)
+    return this.createChatDetail(state)
+  }
+
+  cancelPendingMessageEdit = async (
+    chatId: string,
+    messageId: string,
+    editId: string
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureState(chatId)
+    if (this.pendingMessageEdits.release(chatId, messageId, editId)) {
+      await this.resumePendingMessages(state)
+      this.emitUpdate(state)
+    }
+    return this.createChatDetail(state)
+  }
+
+  private resumePendingMessages = async (state: ClaudeSessionState): Promise<void> => {
+    if (
+      this.pendingMessageEdits.blocks(state.id, state.queuedMessages[0]?.id) ||
+      state.queuedMessagesPaused ||
+      state.stopped
+    )
+      return
+    const pending = state.queuedMessages[0]
+    if (pending?.kind === 'steering' && state.active && state.input) {
+      state.queuedMessages.shift()
+      state.waitingForSessionIdle = false
+      this.addUserMessage(state, pending, 'Steering with', 'steering')
+      state.input.push(createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
+    } else {
+      await this.drainNextQueuedMessage(state)
+    }
+  }
+
   deletePendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
+    this.pendingMessageEdits.assert(chatId, messageId)
     const index = state.queuedMessages.findIndex((message) => message.id === messageId)
     if (index < 0) throw new Error('The Claude message is no longer queued.')
     state.queuedMessages.splice(index, 1)
@@ -1453,12 +1555,36 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     chatId: string,
     messageId: string,
     message: string,
-    options?: ProviderTurnOptions
+    options?: ProviderTurnOptions,
+    editId?: string
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options)
+    this.pendingMessageEdits.assert(chatId, messageId, editId)
     const index = state.queuedMessages.findIndex((item) => item.id === messageId)
     if (index < 0) throw new Error('The Claude message is no longer queued.')
-    state.queuedMessages[index] = this.createQueuedMessage(message, options, messageId)
+    const original = state.queuedMessages[index]!
+    const replacement = {
+      ...this.createQueuedMessage(message, options, messageId),
+      kind: original.kind
+    }
+    state.queuedMessages[index] = replacement
+    if (editId) {
+      this.pendingMessageEdits.release(chatId, messageId, editId)
+      const wasPaused = state.queuedMessagesPaused
+      try {
+        await this.resumePendingMessages(state)
+      } catch (error) {
+        if (!state.active && state.queuedMessages.includes(replacement)) {
+          state.queuedMessages = state.queuedMessages.map((item) =>
+            item === replacement ? original : item
+          )
+          state.queuedMessagesPaused = wasPaused
+          this.pendingMessageEdits.begin(chatId, messageId, editId, state.queuedMessages)
+          this.emitUpdate(state)
+        }
+        throw error
+      }
+    }
     this.emitUpdate(state)
     return this.createChatDetail(state)
   }
@@ -1466,6 +1592,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   steerPendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
     this.requireAuthentication(state)
+    this.pendingMessageEdits.assert(chatId, messageId)
     const index = state.queuedMessages.findIndex((item) => item.id === messageId)
     const pending = state.queuedMessages[index]
     if (!pending) throw new Error('The Claude message is no longer queued.')
@@ -1492,6 +1619,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
     this.requireAuthentication(state)
+    this.pendingMessageEdits.assert(chatId, messageId)
     const index = state.queuedMessages.findIndex((item) => item.id === messageId)
     const pending = state.queuedMessages[index]
     if (!pending) throw new Error('The Claude message is no longer queued.')
@@ -1853,6 +1981,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       queryModel: null,
       queryStartupRevision: 0,
       backgroundTaskIds: new Set(),
+      terminalTaskIds: new Set(),
       subagentTaskStatuses: new Map(),
       waitingForSessionIdle: false,
       sessionBusy: false,
@@ -2328,6 +2457,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.queryReadOnly = null
     state.queryModel = null
     state.backgroundTaskIds.clear()
+    state.terminalTaskIds?.clear()
     state.waitingForSessionIdle = false
     state.sessionBusy = false
     state.taskNotificationPending = false
@@ -2366,15 +2496,23 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const control = state.query
     const model = getClaudeModel(options)
     const modelChanged = state.queryModel !== model
-    await Promise.all([
-      ...(modelChanged ? [control.setModel(model)] : []),
-      control.setPermissionMode(getClaudePermissionMode(options)),
-      control.applyFlagSettings({
-        effortLevel: toEffortLevel(options.reasoningEffort) ?? null,
-        fastMode: options.serviceTier === 'fast',
-        sandbox: getSandbox(options)
-      })
-    ])
+    try {
+      await awaitClaudeTurnOptions(
+        Promise.all([
+          ...(modelChanged ? [control.setModel(model)] : []),
+          control.setPermissionMode(getClaudePermissionMode(options)),
+          control.applyFlagSettings({
+            effortLevel: toEffortLevel(options.reasoningEffort) ?? null,
+            fastMode: options.serviceTier === 'fast',
+            sandbox: getSandbox(options)
+          })
+        ])
+      )
+    } catch (error) {
+      // A partially applied or unresponsive query cannot safely accept the next prompt.
+      if (state.query === control) await this.closeStateQuery(state)
+      throw error
+    }
     if (modelChanged && state.query === control) state.queryModel = model
   }
 
@@ -2740,6 +2878,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         state.taskNotificationPending = true
       }
       state.backgroundTaskIds = taskIds
+      state.terminalTaskIds = new Set(
+        event.tasks
+          .filter((task) => task.task_type === 'local_bash' && !task.ambient)
+          .map((task) => task.task_id)
+      )
       this.queueUpdate(state, false)
       // The last task's notification still has to start a main-thread turn that reads its
       // result. Closing here would kill that turn, so only close if it never arrives.
@@ -2845,7 +2988,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       updatedAt: Date.now()
     }
     const refreshContextUsage = control
-      .getContextUsage()
+      .getContextUsage({ detail: 'summary' })
       .then((usage) => {
         if (state.query !== control) return
         state.contextUsage = {
@@ -2860,6 +3003,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         this.queueUpdate(state, false)
       })
       .catch((error: unknown) => {
+        if (state.query !== control && isExpectedClaudeQueryShutdownError(error)) return
         console.error(`Unable to refresh Claude context usage for session ${state.id}.`, error)
       })
     // Claude Code writes the auto-generated session title to the transcript during the turn; it
@@ -2978,7 +3122,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   ): ReturnType<typeof getClaudeQueueDrainDecision> =>
     getClaudeQueueDrainDecision({
       hasQueuedMessage: state.queuedMessages.length > 0,
-      paused: state.queuedMessagesPaused,
+      paused:
+        state.queuedMessagesPaused ||
+        this.pendingMessageEdits.blocks(state.id, state.queuedMessages[0]?.id),
       drainInProgress: state.queueDrainInProgress || state.resultSettling,
       foregroundActive: state.active,
       hasPendingRequest: state.pendingApprovals.length > 0 || state.pendingUserInputs.length > 0
@@ -2995,7 +3141,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         if (!queued) return false
         await this.ensureStateQuery(state, queued.options)
         await this.applyTurnOptions(state, queued.options)
-        if (state.queuedMessagesPaused || state.active) {
+        if (
+          state.queuedMessagesPaused ||
+          state.active ||
+          this.pendingMessageEdits.blocks(state.id, queued.id)
+        ) {
           if (state.stopped && state.queuedMessagesPaused) await this.closeStateQuery(state)
           return false
         }
@@ -3043,26 +3193,44 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.rejectPendingRequests(state)
     this.emitUpdate(state)
     const control = state.query
-    if (control) state.interruptRequested = true
-    const interrupted = control
-      ? await control.interrupt().then(
-          () => true,
-          (error: unknown) => {
-            if (isExpectedClaudeQueryShutdownError(error)) return false
-            console.error(`Unable to interrupt Claude session ${state.id} for steering.`, error)
-            return false
-          }
+    if (control) {
+      state.interruptRequested = true
+      let finish = (): void => {}
+      const ended = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const unsubscribe = this.onChatUpdated((detail) => {
+        if (
+          detail.id === state.id &&
+          (state.query !== control || !state.active || !state.queuedMessages.includes(message))
         )
-      : false
-    const queuedIndex = state.queuedMessages.findIndex((queued) => queued.id === message.id)
-    if (queuedIndex < 0) return
-    if (interrupted && state.query === control && state.active) return
+          finish()
+      })
+      try {
+        void control.interrupt().catch((error: unknown) => {
+          if (!isExpectedClaudeQueryShutdownError(error))
+            console.error(`Unable to interrupt Claude session ${state.id} for steering.`, error)
+          finish()
+        })
+        // An acknowledgement alone does not guarantee a result will follow. Bound both waits.
+        await settleWithin(ended, interruptCloseGraceMs)
+      } finally {
+        unsubscribe()
+      }
+    }
+    // Stop or another send may have taken over while the interrupt was pending.
+    if (
+      state.stopped ||
+      state.queuedMessagesPaused ||
+      state.query !== control ||
+      !state.queuedMessages.includes(message) ||
+      state.queueDrainInProgress
+    )
+      return
 
-    state.queuedMessages.splice(queuedIndex, 1)
     await this.closeStateQuery(state)
-    await this.ensureStateQuery(state, message.options)
-    await this.applyTurnOptions(state, message.options)
-    this.sendQueuedMessageNow(state, message)
+    // Keep the message queued until startup succeeds, so a failed recovery cannot lose it.
+    await this.drainNextQueuedMessage(state)
   }
 
   private createUserTranscriptMessage = (
@@ -3179,7 +3347,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       .map((message) => ({
         type: 'pendingMessage',
         id: message.id,
-        kind: 'queued',
+        kind: message.kind ?? 'queued',
         content: message.content,
         attachments: message.attachments,
         createdAt: message.createdAt
@@ -3191,7 +3359,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
    * use) avoids flashing a "queued" item between the composer submit and the SDK accepting it.
    */
   private getDrainingMessage = (state: ClaudeSessionState): QueuedClaudeMessage | null =>
-    state.queueDrainInProgress && !state.active && !state.queuedMessagesPaused
+    state.queueDrainInProgress &&
+    !state.active &&
+    !state.queuedMessagesPaused &&
+    !this.pendingMessageEdits.blocks(state.id, state.queuedMessages[0]?.id)
       ? (state.queuedMessages[0] ?? null)
       : null
 
@@ -3262,6 +3433,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
             : foregroundActive
               ? 'active'
               : null,
+      lastTurnOutcome: state.historyPagination?.newerCursor
+        ? undefined
+        : foregroundActive
+          ? null
+          : state.failed
+            ? 'failed'
+            : state.stopped
+              ? 'stopped'
+              : getClaudeTurnOutcome([...state.messages, ...overlays]),
       pinned: false,
       sidebarOrder: null,
       done: false,
@@ -3298,6 +3478,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       createdAt: detail.createdAt,
       updatedAt: state.updatedAt,
       status: detail.status,
+      lastTurnOutcome: detail.lastTurnOutcome,
       pendingApproval: detail.pendingApproval,
       pinned: false,
       sidebarOrder: null,
@@ -3328,6 +3509,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       createdAt: metadata.createdAt ?? metadata.lastModified,
       updatedAt: metadata.lastModified,
       status: null,
+      lastTurnOutcome: undefined,
       pendingApproval: null,
       pinned: false,
       sidebarOrder: null,

@@ -2,12 +2,92 @@ import type { AppSelectedAttachment } from '../../shared/app'
 import type { ProviderApp, ProviderSkill } from '../../shared/provider'
 import type { ComposerDraft, PromptDraft } from './composerDraft'
 import { preferences } from './preferences.ts'
+import { flushAfterPaintWriters } from './afterPaintWriter.ts'
 
 export const composerDraftsStorageKey = 'sele:composer-drafts:v1'
 
 export type ComposerDraftState = {
   composerDrafts: ReadonlyMap<string, ComposerDraft>
-  promptDraftsByProject: ReadonlyMap<string, readonly PromptDraft[]>
+  promptDraftsByScope: ReadonlyMap<string, readonly PromptDraft[]>
+}
+
+const listeners = new Set<(state: ComposerDraftState) => void>()
+
+export const subscribeComposerDrafts = (listener: (state: ComposerDraftState) => void) => {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+export const updateStoredComposerDrafts = (
+  update: (state: ComposerDraftState) => ComposerDraftState
+): void => {
+  // Capture the latest committed input before lifecycle actions change its scope.
+  // Flush first so an old pending write cannot resurrect a completed chat's drafts.
+  flushAfterPaintWriters()
+  const current = readStoredComposerDrafts()
+  const next = update(current)
+  if (next === current) return
+  writeStoredComposerDrafts(next)
+  for (const listener of listeners) listener(next)
+}
+
+export const moveComposerDraftScope = (
+  state: ComposerDraftState,
+  from: string,
+  to: string
+): ComposerDraftState => {
+  const prompts = state.promptDraftsByScope.get(from) ?? []
+  const moving = to.startsWith('new-chat:')
+    ? prompts
+    : prompts.filter((draft) => !draft.newChatsOnly)
+  if (from === to || (!state.composerDrafts.has(from) && moving.length === 0)) {
+    return state
+  }
+  const composerDrafts = new Map(state.composerDrafts)
+  const promptDraftsByScope = new Map(state.promptDraftsByScope)
+  const source = composerDrafts.get(from)
+  if (source) {
+    const target = composerDrafts.get(to)
+    composerDrafts.set(
+      to,
+      target
+        ? {
+            message: [target.message, source.message].filter(Boolean).join('\n\n'),
+            attachments: [...target.attachments, ...source.attachments],
+            skills: [...target.skills, ...source.skills],
+            apps: [...target.apps, ...source.apps]
+          }
+        : source
+    )
+    composerDrafts.delete(from)
+  }
+  if (prompts.length) {
+    const retained = to.startsWith('new-chat:') ? [] : prompts.filter((draft) => draft.newChatsOnly)
+    if (moving.length) {
+      promptDraftsByScope.set(to, [...(promptDraftsByScope.get(to) ?? []), ...moving])
+    }
+    if (retained.length) promptDraftsByScope.set(from, retained)
+    else promptDraftsByScope.delete(from)
+  }
+  return { composerDrafts, promptDraftsByScope }
+}
+
+export const releaseComposerDraftScope = (
+  state: ComposerDraftState,
+  from: string,
+  newChatScope: string
+): ComposerDraftState => {
+  const prompts = state.promptDraftsByScope.get(from)
+  const moved = moveComposerDraftScope(state, from, newChatScope)
+  if (!prompts?.length || from === newChatScope) return moved
+  const promptDraftsByScope = new Map(moved.promptDraftsByScope)
+  promptDraftsByScope.set(newChatScope, [
+    ...(state.promptDraftsByScope.get(newChatScope) ?? []),
+    ...prompts.map((draft) => ({ ...draft, newChatsOnly: true }))
+  ])
+  return { ...moved, promptDraftsByScope }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -45,7 +125,7 @@ const isPromptDraft = (value: unknown): value is PromptDraft =>
 export const parseStoredComposerDrafts = (value: string | null): ComposerDraftState => {
   const state: ComposerDraftState = {
     composerDrafts: new Map(),
-    promptDraftsByProject: new Map()
+    promptDraftsByScope: new Map()
   }
   if (!value) return state
 
@@ -74,23 +154,30 @@ export const parseStoredComposerDrafts = (value: string | null): ComposerDraftSt
       }
     }
   }
-  const promptDraftsByProject = new Map<string, readonly PromptDraft[]>()
-  if (Array.isArray(parsed.promptDraftsByProject)) {
-    for (const entry of parsed.promptDraftsByProject) {
+  const promptDraftsByScope = new Map<string, readonly PromptDraft[]>()
+  // Older versions shared saved prompts across a project. Keep these in its new-chat
+  // composer, where they can be recovered without exposing them in every existing chat.
+  const legacyPromptDrafts = !Array.isArray(parsed.promptDraftsByScope)
+  const storedPromptDrafts = legacyPromptDrafts
+    ? parsed.promptDraftsByProject
+    : parsed.promptDraftsByScope
+  if (Array.isArray(storedPromptDrafts)) {
+    for (const entry of storedPromptDrafts) {
       if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !Array.isArray(entry[1]))
         continue
       const drafts = entry[1].filter(isPromptDraft)
-      if (drafts.length) promptDraftsByProject.set(entry[0], drafts)
+      const scopeKey = legacyPromptDrafts ? `new-chat:${entry[0]}` : entry[0]
+      if (drafts.length) promptDraftsByScope.set(scopeKey, drafts)
     }
   }
-  return { composerDrafts, promptDraftsByProject }
+  return { composerDrafts, promptDraftsByScope }
 }
 
 export const readStoredComposerDrafts = (): ComposerDraftState =>
   parseStoredComposerDrafts(preferences.getItem(composerDraftsStorageKey))
 
 export const writeStoredComposerDrafts = (state: ComposerDraftState): void => {
-  if (state.composerDrafts.size === 0 && state.promptDraftsByProject.size === 0) {
+  if (state.composerDrafts.size === 0 && state.promptDraftsByScope.size === 0) {
     preferences.removeItem(composerDraftsStorageKey)
     return
   }
@@ -99,7 +186,7 @@ export const writeStoredComposerDrafts = (state: ComposerDraftState): void => {
     composerDraftsStorageKey,
     JSON.stringify({
       composerDrafts: [...state.composerDrafts],
-      promptDraftsByProject: [...state.promptDraftsByProject]
+      promptDraftsByScope: [...state.promptDraftsByScope]
     })
   )
 }

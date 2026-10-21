@@ -7,7 +7,11 @@ import { execFileSync } from 'node:child_process'
 import test from 'node:test'
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk'
 import { loadClaudeHistory } from './ClaudeHistory.ts'
-import { ClaudeTranscriptProjection, renderClaudeChatItems } from './ClaudeItemRenderers.ts'
+import {
+  ClaudeTranscriptProjection,
+  getClaudeTurnOutcome,
+  renderClaudeChatItems
+} from './ClaudeItemRenderers.ts'
 
 const sessionId = randomUUID()
 const options = { active: false, stopped: false }
@@ -71,6 +75,35 @@ const store = (entries) => ({
 })
 const userTexts = (items) =>
   items.filter((item) => item.role === 'user').map((item) => item.content)
+
+test('all persisted Claude terminal errors and stop markers restore the same latest-turn outcome', async () => {
+  for (const error of [
+    'authentication_failed',
+    'rate_limit',
+    'billing_error',
+    'server_error',
+    'unknown'
+  ]) {
+    const entries = [
+      record('user', 'request', null, 'Request'),
+      record('assistant', 'error', 'request', [{ type: 'text', text: 'Request failed' }], {
+        error,
+        isApiErrorMessage: true
+      })
+    ]
+    assert.equal(getClaudeTurnOutcome(await loadClaudeHistory(sessionId, store(entries))), 'failed')
+    entries.push(record('user', 'continuation', 'error', 'Continue'))
+    entries.push(
+      record('assistant', 'success', 'continuation', [{ type: 'text', text: 'Completed' }])
+    )
+    assert.equal(getClaudeTurnOutcome(await loadClaudeHistory(sessionId, store(entries))), null)
+  }
+  const stopped = [
+    record('user', 'request', null, 'Request'),
+    record('user', 'stop', 'request', '[Request interrupted by user]')
+  ]
+  assert.equal(getClaudeTurnOutcome(await loadClaudeHistory(sessionId, store(stopped))), 'stopped')
+})
 
 test('reopening an expired OAuth session preserves the authentication failure through the SDK', async () => {
   const text = 'Failed to authenticate: OAuth session expired and could not be refreshed'

@@ -687,6 +687,9 @@ const requireConnectionInput = (value: unknown): ProviderConnectInput => {
     return {
       integrationId,
       method: 'key',
+      ...(input.methodId !== undefined
+        ? { methodId: requireConnectionString(input.methodId) }
+        : {}),
       key: requireConnectionString(input.key),
       ...(input.inputs ? { inputs: input.inputs as Record<string, string> } : {})
     }
@@ -1513,6 +1516,11 @@ export const registerProviderIpc = (): void => {
   )
 
   handleLoggedIpc(providerIpcChannels.getChatContainers, () => providerApi.getChatContainers())
+  handleLoggedIpc(
+    providerIpcChannels.getChatTerminalTasks,
+    (_, providerId: unknown, chatId: unknown) =>
+      providerApi.getChatTerminalTasks(requireProviderId(providerId), requireChatId(chatId))
+  )
 
   handleLoggedIpc(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) => {
     const requiredProviderId = requireProviderId(providerId)
@@ -1983,25 +1991,118 @@ export const registerProviderIpc = (): void => {
       )
   )
 
+  // Renderer ownership makes abandoned edits resumable after a window closes or crashes.
+  const pendingEdits = new Map<
+    number,
+    Map<
+      string,
+      {
+        providerId: ProviderId
+        chatId: string
+        messageId: string
+        ready: Promise<ProviderChatDetail>
+      }
+    >
+  >()
+  const editOwners = new Set<number>()
+  const forgetPendingEdit = (ownerId: number, editId: string): void => {
+    pendingEdits.get(ownerId)?.delete(editId)
+  }
+  handleLoggedIpc(
+    providerIpcChannels.beginPendingMessageEdit,
+    async (event, provider: unknown, chat: unknown, message: unknown, token: unknown) => {
+      const providerId = requireProviderId(provider)
+      const chatId = requireChatId(chat)
+      const messageId = requireMessageId(message)
+      const editId = requireMessageId(token)
+      const ownerId = event.sender.id
+      if (!editOwners.has(ownerId)) {
+        editOwners.add(ownerId)
+        const release = (): void => {
+          const edits = pendingEdits.get(ownerId)
+          pendingEdits.delete(ownerId)
+          for (const [id, edit] of edits ?? []) {
+            void edit.ready
+              .then(() =>
+                providerApi.cancelPendingMessageEdit(
+                  edit.providerId,
+                  edit.chatId,
+                  edit.messageId,
+                  id
+                )
+              )
+              .catch((error) => console.error('Unable to release abandoned message edit.', error))
+          }
+        }
+        event.sender.on('render-process-gone', release)
+        event.sender.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+          if (isMainFrame && !isInPlace) release()
+        })
+        event.sender.once('destroyed', () => {
+          release()
+          editOwners.delete(ownerId)
+        })
+      }
+      const edits = pendingEdits.get(ownerId) ?? new Map()
+      pendingEdits.set(ownerId, edits)
+      const ready = providerApi.beginPendingMessageEdit(providerId, chatId, messageId, editId)
+      edits.set(editId, { providerId, chatId, messageId, ready })
+      try {
+        return await getRendererChatDetail(() => ready)
+      } catch (error) {
+        forgetPendingEdit(ownerId, editId)
+        void providerApi
+          .cancelPendingMessageEdit(providerId, chatId, messageId, editId)
+          .catch((releaseError) =>
+            console.error('Unable to release failed pending edit.', releaseError)
+          )
+        throw error
+      }
+    }
+  )
+  handleLoggedIpc(
+    providerIpcChannels.cancelPendingMessageEdit,
+    async (event, provider: unknown, chat: unknown, message: unknown, token: unknown) => {
+      const editId = requireMessageId(token)
+      const detail = await getRendererChatDetail(() =>
+        providerApi.cancelPendingMessageEdit(
+          requireProviderId(provider),
+          requireChatId(chat),
+          requireMessageId(message),
+          editId
+        )
+      )
+      forgetPendingEdit(event.sender.id, editId)
+      return detail
+    }
+  )
+
   handleLoggedIpc(
     providerIpcChannels.editPendingMessage,
     (
-      _,
+      event,
       providerId: unknown,
       chatId: unknown,
       messageId: unknown,
       message: unknown,
-      options: unknown
-    ) =>
-      getRendererChatDetail(() =>
+      options: unknown,
+      token: unknown
+    ) => {
+      const editId = token === undefined ? undefined : requireMessageId(token)
+      return getRendererChatDetail(() =>
         providerApi.editPendingMessage(
           requireProviderId(providerId),
           requireChatId(chatId),
           requireMessageId(messageId),
           requireMessage(message),
-          requireTurnOptions(options)
+          requireTurnOptions(options),
+          editId
         )
-      )
+      ).then((detail) => {
+        if (editId) forgetPendingEdit(event.sender.id, editId)
+        return detail
+      })
+    }
   )
 
   handleLoggedIpc(

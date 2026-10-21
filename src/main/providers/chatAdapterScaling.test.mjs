@@ -7,6 +7,7 @@ import * as claude from './claude/ClaudeItemRenderers.ts'
 import * as copilot from './copilot/CopilotItemRenderers.ts'
 import * as opencode from './opencode/OpenCodeItemRenderers.ts'
 import * as codex from './codex/CodexItemRenderers.ts'
+import { getCodexTurnOutcome } from './codex/CodexTurnOutcome.ts'
 import { getCodexTurnSubagents } from './codex/CodexSubagents.ts'
 import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns.ts'
 import { getContainerTargetKey } from '../containerTarget.ts'
@@ -71,7 +72,7 @@ test('codex: actual detail construction reuses an unchanged active turn', () => 
   ] }
   const thread = { id: 'chat', createdAt: 0, turns: [turn] }
   const adapter = harness('codex', 'Codex', {
-    ...codex, getCodexTurnSubagents, assertReadableCodexHistory: () => {}, getThreadApiCwd: () => '/tmp',
+    ...codex, getCodexTurnOutcome, getCodexTurnSubagents, assertReadableCodexHistory: () => {}, getThreadApiCwd: () => '/tmp',
     isLegacyCodexHistory: () => false, getThreadTitle: () => 'Saved title', getHydratedThreadStatus: () => 'active', codexCapabilities: {}
   }, thread)
   Object.assign(adapter, {

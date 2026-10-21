@@ -16,7 +16,9 @@
 
 :where(.ui-dropdown[data-dropdown-menu-root="true"]) {
   position: fixed;
-  z-index: 1000;
+  /* Menus are portaled to <body>, so they must stack above every modal overlay
+     (dialogs go up to 1200) or they render behind the popup that opened them. */
+  z-index: 1300;
   width: max-content;
 }
 

@@ -17,6 +17,14 @@ const getOpenCodeSubagentTitle = (title: string | undefined): string =>
 export const isOpenCodeSubagentSession = (session: Session | GlobalSession): boolean =>
   Boolean(session.agent?.trim())
 
+/**
+ * Child sessions are shown only as their root chat's subagents. Publishing one as a chat update
+ * would add it to the sidebar as a second, top-level chat.
+ */
+export const isOpenCodeChildState = (
+  state: { session: Session | GlobalSession | null } | undefined
+): boolean => Boolean(state?.session?.parentID)
+
 export const createOpenCodeSubagentSummary = (
   session: Session | GlobalSession,
   rootChatId: string,

@@ -3,6 +3,7 @@ import { ExternalLink, RefreshCw, Trash2 } from 'lucide-react'
 import type { AppContainerTarget } from '../../../shared/app'
 import {
   isConnectionPromptVisible,
+  openCodeConnectionsNeedCheck,
   type ProviderConnection,
   type ProviderConnectionAttempt,
   type ProviderConnectionStatus,
@@ -21,21 +22,13 @@ const describeStatus = (status: ProviderConnectionStatus): string =>
       ? `Rejected by the provider: ${status.message}`
       : `Couldn't verify: ${status.message}`
 
-// Opening the panel re-tests connections whose last result is missing or older than this.
-const statusMaxAgeMs = 15 * 60_000
-const needsCheck = (providers: ProviderConnection[], now = Date.now()): boolean =>
-  providers.some((entry) =>
-    entry.connections.some(
-      (connection) => !connection.status || now - connection.status.checkedAt > statusMaxAgeMs
-    )
-  )
-
 type Props = {
   container: AppContainerTarget
-  onChanged?: () => void
+  onChanged?: (providerId?: string) => void
+  renderHeader?: (refreshButton: ReactNode) => ReactNode
 }
 
-export function ProviderConnectionsPanel({ container, onChanged }: Props): ReactNode {
+export function ProviderConnectionsPanel({ container, onChanged, renderHeader }: Props): ReactNode {
   const [providers, setProviders] = useState<ProviderConnection[]>([])
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
@@ -85,6 +78,7 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
     setNotice('')
     try {
       await reload(true)
+      changed.current?.()
     } catch (error) {
       fail(error)
     } finally {
@@ -103,13 +97,16 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
         if (!active) return
         setProviders(result)
         setLoading(false)
-        if (!needsCheck(result)) return
+        if (!openCodeConnectionsNeedCheck(result)) return
         setChecking(true)
         const checked = await providerApi.getConnections('opencode', {
           ...source,
           forceRefresh: true
         })
-        if (active) setProviders(checked)
+        if (active) {
+          setProviders(checked)
+          changed.current?.()
+        }
       } catch (error) {
         console.error('[ProviderConnectionsPanel:load]', error)
         if (active) setError(error instanceof Error ? error.message : 'Unable to load connections.')
@@ -140,12 +137,18 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
       setCode('')
       setKey('')
       setInputs({})
-      changed.current?.()
+      changed.current?.(providerId)
       const result = await reload()
       const entry = result.find((candidate) => candidate.id === providerId)
-      const status = entry?.connections.find(
-        (connection) => connection.type === 'credential'
-      )?.status
+      // A provider can hold both a model key and a usage-only admin key; report the one just checked.
+      const status = entry?.connections
+        .filter((connection) => connection.type === 'credential')
+        .map((connection) => connection.status)
+        .reduce<ProviderConnectionStatus | undefined>(
+          (latest, current) =>
+            current && (!latest || current.checkedAt >= latest.checkedAt) ? current : latest,
+          undefined
+        )
       if (!alive.current) return
       if (status?.state === 'failed')
         setError(`Saved, but ${entry?.name ?? 'the provider'} rejected it: ${status.message}`)
@@ -203,6 +206,7 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
         ? {
             integrationId: provider.id,
             method: 'key',
+            ...(method.id ? { methodId: method.id } : {}),
             key: key.trim(),
             inputs: Object.fromEntries(
               prompts.map((prompt) => [prompt.key, inputs[prompt.key] ?? ''])
@@ -284,20 +288,23 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
     }
   }
   const connected = providers.filter((entry) => entry.connections.length > 0)
+  const refreshButton = (
+    <Button
+      icon={<RefreshCw />}
+      label={checking ? 'Checking…' : 'Refresh'}
+      size="small"
+      disabled={loading || checking || busy || Boolean(attempt)}
+      callback={refresh}
+    />
+  )
 
   return (
     <section className="settings-dialog__section" aria-label="OpenCode connections">
-      <div className="settings-dialog__config-toolbar">
-        <h2 className="settings-dialog__section-heading">Connections</h2>
-        <Button
-          icon={<RefreshCw />}
-          label={checking ? 'Checking…' : 'Refresh'}
-          size="small"
-          disabled={loading || checking || busy || Boolean(attempt)}
-          callback={refresh}
-        />
-      </div>
-      <p>Connect model providers with an API key or sign in to your account.</p>
+      {renderHeader ? (
+        renderHeader(refreshButton)
+      ) : (
+        <div className="settings-dialog__config-toolbar">{refreshButton}</div>
+      )}
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       {loading ? (
@@ -320,6 +327,9 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
                         : `Environment variable · ${connection.name}`}
                     </p>
                     {connection.type === 'env' && <p>Managed in your environment.</p>}
+                    {connection.type === 'credential' && connection.usageOnly && (
+                      <p>Used only to show balance and spend. Stored by Sele.</p>
+                    )}
                     {checking ? (
                       <p role="status">Checking…</p>
                     ) : (
@@ -427,9 +437,17 @@ export function ProviderConnectionsPanel({ container, onChanged }: Props): React
                     )}
                   </label>
                 ))}
+                {method?.type === 'key' && method.id === 'sele-admin' && (
+                  <p>
+                    Only used to show balance and spend in the usage popover. Sele keeps this key
+                    and never sends it to OpenCode.
+                  </p>
+                )}
                 {method?.type === 'key' && (
                   <label className="settings-dialog__connection-input">
-                    <span>API key</span>
+                    <span>
+                      {method.id === 'sele-admin' ? (method.label ?? 'Admin key') : 'API key'}
+                    </span>
                     <Input
                       type="password"
                       autoComplete="off"

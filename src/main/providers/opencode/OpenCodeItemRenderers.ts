@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import type { Message, Part } from '@opencode-ai/sdk/v2'
 import type {
   ProviderChatItem,
+  ProviderChatTurnOutcome,
   ProviderFileDiff,
   ProviderMessageAttachment,
   ProviderToolActivity,
@@ -76,6 +77,23 @@ export const getOpenCodeErrorMessage = (error: unknown): string => {
 
 export const isOpenCodeAbortError = (error: unknown): boolean =>
   isRecord(error) && error.name === 'MessageAbortedError'
+
+/** Read only the latest reply's outcome, without rendering tool or message payloads. */
+export const getOpenCodeTurnOutcome = (
+  messages: OpenCodeMessageWithParts[]
+): ProviderChatTurnOutcome | null => {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const { info } = messages[index]
+    if (info.role === 'user') {
+      if (classifyOpenCodeTurnRecord(messages[index]) === 'start') return null
+      continue
+    }
+    if (info.summary) continue
+    if (isOpenCodeAbortError(info.error)) return 'stopped'
+    return info.error ? 'failed' : null
+  }
+  return null
+}
 
 const openCodeRateLimitMarkers = [
   'gousagelimiterror',

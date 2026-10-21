@@ -1,4 +1,5 @@
 import type { ProviderChatTurnWindow } from '../ProviderAdapter'
+import { getCodexTurnOutcome } from './CodexTurnOutcome.ts'
 import { isImageSizingMetadata } from '../imageSizingMetadata.ts'
 import type { CodexGoalPrompt } from './CodexGoalPrompts.ts'
 import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
@@ -1778,7 +1779,7 @@ const getWorkingStatus = (
   aborted = turn.items.some((item) => item.type === 'turnAborted')
 ): ProviderWorkingStep['status'] => {
   if (turn.status === 'queued') return 'queued'
-  if (turn.status === 'failed') return 'failed'
+  if (getCodexTurnOutcome(turn) === 'failed') return 'failed'
 
   if (turn.status === 'interrupted' || aborted) {
     return 'stopped'

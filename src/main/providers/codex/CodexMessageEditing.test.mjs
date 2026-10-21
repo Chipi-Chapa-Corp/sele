@@ -1,3 +1,4 @@
+import { PendingMessageEdits } from '../PendingMessageEdits.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -14,6 +15,9 @@ const declaration = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name?.text === 'CodexProviderAdapter'
 )
 const methods = [
+  'beginPendingMessageEdit',
+  'cancelPendingMessageEdit',
+  'resumePendingMessageDelivery',
   'editPendingMessageInContext',
   'editQueuedTurn',
   'editSteeringMessage',
@@ -31,13 +35,14 @@ const methods = [
 const createAdapter = () => {
   const adapter = vm.runInNewContext(
     ts.transpile(
-      `class Adapter { ${declaration.members
+      `class Adapter { pendingMessageEdits = new PendingMessageEdits(); ${declaration.members
         .filter((node) => methods.includes(node.name?.getText(source)))
         .map((node) => node.getText(source))
         .join('\n')} }; new Adapter()`,
       { target: ts.ScriptTarget.ES2022 }
     ),
     {
+      PendingMessageEdits,
       hasAttachmentInput: (options) => Boolean(options?.images?.length || options?.files?.length),
       createUserInput: (text, images) => ({ text, images }),
       getSteerResponseTurnId: (response) => response.turnId,
@@ -53,6 +58,9 @@ const createAdapter = () => {
     pendingTurnIds: new Map(),
     threads: new Map([['chat', { turns: [{ id: 'server-turn', status: 'inProgress' }] }]]),
     rememberThreadContainer() {},
+    getThreadContainer: () => null,
+    runWithContainer: (_container, action) => action(),
+    scheduleQueueDrain() {},
     ensureChatTailLoaded: async () => {},
     emitChatUpdated() {},
     getCachedChatDetail: () => ({ id: 'chat' }),
@@ -433,4 +441,61 @@ test('delivered steering resolves its authoritative item id and replays earlier 
   assert.equal(fixture.requests[1].params.input, initialInput)
   assert.equal(fixture.steering[0][3], earlierInput)
   assert.equal(fixture.steering[1][2], options)
+})
+
+test('a pending edit holds automatic Codex delivery and saves in place before resuming', async () => {
+  const adapter = createAdapter()
+  const pending = queue(adapter)
+  await adapter.beginPendingMessageEdit('chat', pending.id, 'edit')
+  adapter.addSubmittedPendingTurn = () => assert.fail('held messages cannot enter delivery')
+  await adapter.runQueuedTurn('chat', pending)
+  assert.equal(adapter.queuedTurnsByThread.get('chat')[0], pending)
+  await assert.rejects(
+    adapter.editPendingMessageInContext('chat', pending.id, 'wrong', {}, 'old-edit'),
+    /no longer active/
+  )
+  let resumes = 0
+  adapter.scheduleQueueDrain = () => resumes++
+  await adapter.editPendingMessageInContext('chat', pending.id, 'revised', { images: [] }, 'edit')
+  assert.equal(adapter.queuedTurnsByThread.get('chat')[0].id, pending.id)
+  assert.equal(adapter.queuedTurnsByThread.get('chat')[0].text, 'revised')
+  assert.equal(adapter.pendingMessageEdits.has('chat'), false)
+  assert.equal(resumes, 1)
+})
+
+test('a pending Codex edit holds only the edited turn and its successors', async () => {
+  const adapter = createAdapter()
+  const turns = ['first', 'edited', 'third'].map((id) => ({ id, text: id, options: {} }))
+  adapter.queuedTurnsByThread.set('chat', [...turns])
+  await adapter.beginPendingMessageEdit('chat', 'edited', 'edit')
+  const started = []
+  adapter.addSubmittedPendingTurn = async () => ({})
+  adapter.startCodexTurn = async (_chat, text) => started.push(text)
+  await adapter.runQueuedTurn('chat', turns[0])
+  assert.deepEqual(started, ['first'])
+  await adapter.runQueuedTurn('chat', turns[1])
+  assert.deepEqual(started, ['first'], 'the edited turn waits for the edit')
+  assert.deepEqual(
+    adapter.queuedTurnsByThread.get('chat').map((turn) => turn.id),
+    ['edited', 'third']
+  )
+})
+
+test('Codex cancel resumes waiting local steering once and refuses already submitted steering', async () => {
+  const adapter = createAdapter()
+  const pending = steering(adapter)
+  await adapter.beginPendingMessageEdit('chat', pending.id, 'edit')
+  const sent = []
+  adapter.processWaitingSteeringMessage = async (_chat, id) => sent.push(id)
+  await adapter.cancelPendingMessageEdit('chat', pending.id, 'stale')
+  assert.deepEqual(sent, [])
+  await adapter.cancelPendingMessageEdit('chat', pending.id, 'edit')
+  await adapter.cancelPendingMessageEdit('chat', pending.id, 'edit')
+  assert.deepEqual(sent, [pending.id])
+  pending.status = 'pending'
+  await assert.rejects(
+    adapter.beginPendingMessageEdit('chat', pending.id, 'next'),
+    /already started delivery/
+  )
+  assert.equal(adapter.pendingMessageEdits.has('chat'), false)
 })
