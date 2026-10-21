@@ -156,7 +156,7 @@ test('switching back to Ask stops automatic replies, including during a pending 
   const original = f.native.resolveApproval
   f.native.resolveApproval = async (...args) => {
     await gate.promise
-    const result = await original(...args)
+    await original(...args)
     return f.emit('chat', 'next')
   }
   f.emit('chat', 'first')
