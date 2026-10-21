@@ -20,6 +20,7 @@ const normalizeSeenUpdatedAt = (seenUpdatedAt: number): number => {
 
 const getDefaultChatMetadata = (id: string): ProviderChatMetadata => ({
   id,
+  noProject: false,
   pinned: false,
   sidebarOrder: null,
   done: false,
@@ -52,6 +53,7 @@ const mapChatMetadataRow = (row: {
   container_runtime_tool: string | null
   container_tool: string | null
   id: string
+  no_project: number
   pinned: number
   pinned_order: number | null
   done: number
@@ -60,6 +62,7 @@ const mapChatMetadataRow = (row: {
   purpose: ProviderChatPurpose | null
 }): ProviderChatMetadata => ({
   id: row.id,
+  noProject: toBoolean(row.no_project),
   pinned: toBoolean(row.pinned),
   sidebarOrder: toNumberOrNull(row.pinned_order),
   done: toBoolean(row.done),
@@ -87,6 +90,7 @@ export const getChatMetadata = async (chatId: string): Promise<ProviderChatMetad
       'container_name',
       'container_runtime_tool',
       'container_runtime_name',
+      'no_project',
       'pinned',
       'pinned_order',
       'done',
@@ -119,6 +123,7 @@ export const getChatMetadataByIds = async (
         'container_name',
         'container_runtime_tool',
         'container_runtime_name',
+        'no_project',
         'pinned',
         'pinned_order',
         'done',
@@ -157,6 +162,16 @@ export const getChatContainers = async (): Promise<AppContainerTarget[]> => {
     )
     return container ? [container] : []
   })
+}
+
+export const setChatNoProject = async (chatId: string): Promise<ProviderChatMetadata> => {
+  const db = await getDatabase()
+  await db
+    .insertInto('chat')
+    .values({ id: chatId, pinned: 0, done: 0, no_project: 1 })
+    .onConflict((conflict) => conflict.column('id').doUpdateSet({ no_project: 1 }))
+    .execute()
+  return getChatMetadata(chatId)
 }
 
 export const setChatDone = async (chatId: string, done = true): Promise<ProviderChatMetadata> => {

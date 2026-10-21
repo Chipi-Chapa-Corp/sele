@@ -132,45 +132,70 @@ const getArgument = (input: unknown, ...keys: string[]): string | null => {
   return null
 }
 
-const getToolCommand = (input: unknown): string | null =>
-  getArgument(input, 'command', 'cmd', 'query', 'pattern', 'prompt')
+const shellTools = new Set(['bash', 'shell'])
+const searchTools = new Set(['grep', 'glob', 'websearch', 'codesearch'])
+const editTools = new Set(['edit', 'multiedit', 'patch', 'apply_patch'])
+
+const getToolCommand = (name: string, input: unknown): string | null =>
+  shellTools.has(name) ? getArgument(input, 'command', 'cmd') : null
 
 const getToolPath = (input: unknown): string | null =>
   getArgument(input, 'filePath', 'file_path', 'path', 'file', 'directory')
 
 const getToolCwd = (input: unknown): string | null =>
-  getArgument(input, 'cwd', 'workingDirectory', 'working_directory', 'directory')
+  getArgument(input, 'cwd', 'workingDirectory', 'working_directory', 'directory', 'workdir')
 
-const classifyTool = (nameValue: unknown, input: unknown): ProviderToolActivity => {
-  const name = getString(nameValue)?.toLocaleLowerCase() ?? ''
-  const command = getToolCommand(input)?.toLocaleLowerCase() ?? ''
-  if (name.includes('delete') || /\brm\b/.test(command)) return 'delete'
-  if (name === 'write' || name.includes('create')) return 'create'
-  if (name.includes('edit') || name.includes('patch') || name.includes('replace')) return 'edit'
-  if (name.includes('grep') || name.includes('glob') || name.includes('search')) return 'search'
-  if (name.includes('read') || name.includes('view') || name.includes('list')) return 'read'
-  if (name.includes('git') || /^git(?:\s|$)/.test(command)) return 'git'
-  if (name.includes('npm') || /^npm(?:\s|$)/.test(command)) return 'npm'
-  if (name.includes('npx') || /^npx(?:\s|$)/.test(command)) return 'npx'
-  if (name === 'bash' || name.includes('shell') || command) return 'command'
-  return 'other'
+const classifyTool = (name: string, input: unknown): ProviderToolActivity => {
+  if (name === 'write') return 'create'
+  if (editTools.has(name)) return 'edit'
+  if (searchTools.has(name)) return 'search'
+  if (name === 'read' || name === 'list') return 'read'
+  if (name === 'skill') return 'skill'
+  const command = getToolCommand(name, input)
+  if (command) {
+    if (/^git(?:\s|$)/.test(command)) return 'git'
+    if (/^npm(?:\s|$)/.test(command)) return 'npm'
+    if (/^npx(?:\s|$)/.test(command)) return 'npx'
+  }
+  return shellTools.has(name) ? 'command' : 'other'
 }
 
-const getToolLabel = (nameValue: unknown, input: unknown, title: unknown): string => {
-  const name = getString(nameValue) ?? 'Tool'
-  if (name === 'question') return 'Asking question'
+const getToolLabel = (name: string, input: unknown, finished: boolean): string => {
+  if (name === 'question') return finished ? 'Asked a question' : 'Asking question'
+  if (name === 'todoread') return 'Read plan'
   if (name === 'todowrite' || name === 'todo') return 'Updated plan'
-  const path = getToolPath(input)
-  const activity = classifyTool(name, input)
-  if (path) {
-    const displayPath = basename(path) || path
-    if (activity === 'read') return `Read ${displayPath}`
-    if (activity === 'search') return `Search ${displayPath}`
-    if (activity === 'create') return `Create ${displayPath}`
-    if (activity === 'delete') return `Delete ${displayPath}`
-    if (activity === 'edit') return `Edit ${displayPath}`
+  if (name === 'webfetch') {
+    const url = getArgument(input, 'url')
+    return url ? `Fetched ${url}` : 'Used webfetch'
   }
-  return getToolCommand(input) ?? getString(title) ?? name.replace(/[_-]+/g, ' ')
+  if (name === 'skill') {
+    const skill = getArgument(input, 'name', 'skill')
+    return skill ? `Used ${skill} skill` : 'Used skill'
+  }
+  const activity = classifyTool(name, input)
+  const path = getToolPath(input)
+  const displayPath = path ? basename(path) || path : null
+  if (activity === 'search') {
+    const query = getArgument(input, 'pattern', 'query')
+    return `Searched${query ? ` for ${query}` : ''}${displayPath ? ` in ${displayPath}` : ''}`
+  }
+  if (displayPath) {
+    if (activity === 'read') return `Read ${displayPath}`
+    if (activity === 'create') return `Created ${displayPath}`
+    if (activity === 'edit') return `Edited ${displayPath}`
+  }
+  const command = getToolCommand(name, input)
+  // Plugin/MCP names and input fields are arbitrary. Preserve the exact tool identity rather
+  // than guessing a file/shell operation from a substring or an argument named "prompt".
+  return command ? `Ran ${command}` : `Used ${name}`
+}
+
+const getToolSummaryLabel = (name: string): string | undefined => {
+  if (name === 'webfetch') return 'Fetched web pages'
+  if (name === 'question') return 'Asked a question'
+  if (name === 'todoread') return 'Read plan'
+  if (name === 'todowrite' || name === 'todo') return 'Updated plan'
+  return undefined
 }
 
 const truncateOutput = (value: string | null): string | null => {
@@ -267,11 +292,14 @@ const renderTool = (part: Extract<Part, { type: 'tool' }>): ProviderWorkingTool 
     icon:
       part.tool === 'question'
         ? 'question'
-        : part.tool === 'todowrite' || part.tool === 'todo'
+        : part.tool === 'todowrite' || part.tool === 'todo' || part.tool === 'todoread'
           ? 'plan'
-          : null,
-    label: getToolLabel(part.tool, input, 'title' in state ? state.title : null),
-    command: getToolCommand(input),
+          : part.tool === 'skill'
+            ? 'skill'
+            : null,
+    label: getToolLabel(part.tool, input, finished),
+    summaryLabel: getToolSummaryLabel(part.tool),
+    command: getToolCommand(part.tool, input),
     cwd: getToolCwd(input),
     stdout: truncateOutput(output),
     diffs: getToolDiffs(activity, input, metadata, output),

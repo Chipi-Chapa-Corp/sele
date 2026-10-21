@@ -54,6 +54,7 @@ for (const type of ['message', 'pending']) {
         selectedChat: { id: 'chat', providerId: 'codex' },
         changesProjectCwd: '/repo',
         getChatCwdGroupKey: (cwd) => cwd,
+        getChatGroupKey: () => '/repo',
         getChatProjectCwd: () => '/repo',
         setSendInFlightProjectKey() {},
         chatAutoScrollEnabledRef: { current: false },

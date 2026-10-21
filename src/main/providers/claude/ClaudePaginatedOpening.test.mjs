@@ -64,6 +64,9 @@ const harness = () => {
     normalizeContainerTarget,
     isClaudeAuthenticationFailure,
     markTranscriptRecordsChanged,
+    // Fixtures read local transcripts; container transport is covered by ClaudeHistorySource.
+    getRemoteClaudeContainer: async () => null,
+    getClaudeSessionStore: async () => undefined,
     Date,
     openClaudeHistorySource: async (...args) => {
       const file = await openClaudeHistorySource(...args)

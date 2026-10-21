@@ -1,4 +1,4 @@
-import { sql } from 'kysely'
+import { sql, type Transaction } from 'kysely'
 import type { ProviderAccountUsageSummary, ProviderId } from '../../shared/provider'
 import type { TokenUsage, TokenUsageSummary } from '../../shared/tokenUsage'
 import {
@@ -16,10 +16,9 @@ import {
   type ModelTokenUsage
 } from '../providers/modelPricing/TokenPricing'
 import { resolveModelPricing } from '../providers/modelPricing/ModelsDevPricing'
-import { getDatabase } from './sqlite'
+import { getDatabase, type LocalDatabase } from './sqlite'
 import type { HistoricalTokenUsageSnapshot } from '../providers/ProviderAdapter'
 
-let pendingWrites: Promise<void> = Promise.resolve()
 const key = (...parts: (string | null)[]): string => JSON.stringify(parts)
 const columns = (usage: TokenUsage) => ({
   input_tokens: usage.inputTokens,
@@ -59,174 +58,241 @@ const fromRow = (row: {
     : {})
 })
 
+type QueuedObservation = {
+  providerId: ProviderId
+  observation: TokenUsageObservation
+  resolved: boolean
+  resolvedModels?: ModelTokenUsage[]
+}
+
+const queuedObservations: QueuedObservation[] = []
+let draining: Promise<void> | null = null
+// better-sqlite3 is synchronous and Kysely's awaits resolve as microtasks, so one
+// transaction never yields the main process. Opening a long transcript re-reports every
+// historical request; one commit per observation froze the UI for seconds. Batch them
+// into short transactions and yield between batches.
+const transactionBudgetMs = 12
+const resolveBatchSize = 32
+
+const drainTokenUsage = async (): Promise<void> => {
+  while (queuedObservations.length) {
+    try {
+      // Catalog I/O runs outside the ledger transaction, including on a cold start.
+      for (const item of queuedObservations.slice(0, resolveBatchSize)) {
+        if (item.resolved) continue
+        try {
+          item.resolvedModels = await resolveModelPricing(item.observation.models!)
+          item.resolved = true
+        } catch (error) {
+          console.error('Unable to persist token usage.', error)
+          queuedObservations.splice(queuedObservations.indexOf(item), 1)
+        }
+      }
+      const db = await getDatabase()
+      let written = 0
+      try {
+        await db.transaction().execute(async (trx) => {
+          const started = performance.now()
+          for (const item of queuedObservations) {
+            if (
+              !item.resolved ||
+              (written > 0 && performance.now() - started >= transactionBudgetMs)
+            )
+              break
+            await writeObservation(trx, item.providerId, item.observation, item.resolvedModels)
+            written += 1
+          }
+        })
+        queuedObservations.splice(0, written)
+      } catch {
+        // The batch rolled back. Retry its members individually so one bad observation
+        // cannot discard the others, matching the former per-observation transactions.
+        for (const item of queuedObservations.splice(0, written + 1)) {
+          try {
+            await db
+              .transaction()
+              .execute((trx) =>
+                writeObservation(trx, item.providerId, item.observation, item.resolvedModels)
+              )
+          } catch (error) {
+            console.error('Unable to persist token usage.', error)
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Unable to persist token usage.', error)
+      queuedObservations.shift()
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+}
+
+const scheduleTokenUsageDrain = (): Promise<void> =>
+  (draining ??= drainTokenUsage().finally(() => {
+    draining = null
+    if (queuedObservations.length) void scheduleTokenUsageDrain()
+  }))
+
 /** Serialize observations before asynchronous UI snapshots can coalesce or reorder them. */
 export const recordTokenUsage = (
   providerId: ProviderId,
   observation: TokenUsageObservation
 ): void => {
-  pendingWrites = pendingWrites
-    .then(async () => {
-      // Catalog I/O runs outside the ledger transaction, including on a cold start.
-      const resolvedModels = observation.models
-        ? await resolveModelPricing(observation.models)
-        : undefined
-      const db = await getDatabase()
-      await db.transaction().execute(async (trx) => {
-        if (observation.parentChatId && observation.parentChatId !== observation.chatId) {
-          const lineage = {
-            id: key(providerId, observation.sourceKey, observation.chatId),
-            provider_id: providerId,
-            source_key: observation.sourceKey,
-            chat_id: observation.chatId,
-            parent_chat_id: observation.parentChatId,
-            parent_turn_id: observation.parentTurnId ?? null
-          }
-          await trx
-            .insertInto('token_usage_chat_parent')
-            .values(lineage)
-            .onConflict((conflict) =>
-              conflict.column('id').doUpdateSet({
-                parent_chat_id: lineage.parent_chat_id,
-                parent_turn_id: sql`coalesce(${lineage.parent_turn_id}, parent_turn_id)`
-              })
-            )
-            .execute()
-        }
-        const streamKey = key(
-          providerId,
-          observation.sourceKey,
-          observation.chatId,
-          observation.recordId
-        )
-        let usage = observation.usage
-        let models = resolvedModels
-        if (observation.cumulative) {
-          const previous = await trx
-            .selectFrom('token_usage_checkpoint')
-            .selectAll()
-            .where('id', '=', streamKey)
-            .executeTakeFirst()
-          const increment = getTokenUsageIncrement(
-            observation,
-            previous ? { usage: fromRow(previous), timestamp: previous.updated_at } : undefined
-          )
-          if (!increment) return
-          usage = increment
-          if (models)
-            models = differenceModelUsage(
-              models,
-              previous?.models_json
-                ? (JSON.parse(previous.models_json) as ModelTokenUsage[])
-                : undefined,
-              !previous ? observation.initialUsage : undefined
-            )
-          // Codex counters are thread-wide even when the current turn uses a different model.
-          if (providerId === 'codex' && models?.length === 1)
-            models = [{ ...models[0], usage: increment }]
-          if (models) usage = { ...usage, cost: priceModelUsage(models).cost }
-          await trx
-            .insertInto('token_usage_checkpoint')
-            .values({
-              id: streamKey,
-              ...columns(observation.usage),
-              updated_at: observation.timestamp,
-              models_json: resolvedModels ? JSON.stringify(resolvedModels) : null
-            })
-            .onConflict((conflict) =>
-              conflict.column('id').doUpdateSet({
-                ...columns(observation.usage),
-                updated_at: observation.timestamp,
-                models_json: resolvedModels ? JSON.stringify(resolvedModels) : null
-              })
-            )
-            .execute()
-          if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return
-        }
-        if (models) usage = { ...usage, cost: priceModelUsage(models).cost }
-        if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return
-        if (observation.replaceProvisionalGroup) {
-          await trx
-            .deleteFrom('token_usage')
-            .where('provider_id', '=', providerId)
-            .where('source_key', '=', observation.sourceKey)
-            .where('chat_id', '=', observation.chatId)
-            .where('provisional_group', '=', observation.replaceProvisionalGroup)
-            .where('provisional_complete', '=', 1)
-            .execute()
-        }
-        const id = observation.cumulative ? key(streamKey, observation.turnId) : streamKey
-        const values = columns(usage)
-        const costs = costColumns(usage)
-        const previousRecord = await trx
-          .selectFrom('token_usage')
-          .selectAll()
-          .where('id', '=', id)
-          .executeTakeFirst()
-        const storedModels = models
-          ? observation.cumulative && previousRecord?.models_json
-            ? [...(JSON.parse(previousRecord.models_json) as ModelTokenUsage[]), ...models]
-            : models
-          : undefined
-        const pricedAt =
-          usage.cost && Object.values(usage.cost).every((value) => value != null)
-            ? Date.now()
-            : null
-        await trx
-          .insertInto('token_usage')
-          .values({
-            id,
-            provider_id: providerId,
-            source_key: observation.sourceKey,
-            chat_id: observation.chatId,
-            turn_id: observation.turnId,
-            recorded_at: observation.timestamp,
-            provisional_group: observation.provisionalGroup ?? null,
-            provisional_complete: observation.provisionalComplete ? 1 : 0,
-            ...costs,
-            models_json: storedModels ? JSON.stringify(storedModels) : null,
-            priced_at: pricedAt,
-            ...values
-          })
-          .onConflict((conflict) =>
-            conflict.column('id').doUpdateSet(
-              observation.cumulative
-                ? {
-                    input_tokens: sql`input_tokens + ${values.input_tokens}`,
-                    cached_input_tokens: sql`cached_input_tokens + ${values.cached_input_tokens}`,
-                    output_tokens: sql`output_tokens + ${values.output_tokens}`,
-                    input_usd: sql`input_usd + ${costs.input_usd}`,
-                    cached_input_usd: sql`cached_input_usd + ${costs.cached_input_usd}`,
-                    output_usd: sql`output_usd + ${costs.output_usd}`,
-                    total_usd: sql`total_usd + ${costs.total_usd}`,
-                    models_json: storedModels ? JSON.stringify(storedModels) : null,
-                    priced_at: previousRecord?.priced_at && pricedAt ? pricedAt : null
-                  }
-                : {
-                    // Native request snapshots can be repeated while streaming or reloading history.
-                    input_tokens: sql`max(input_tokens, ${values.input_tokens})`,
-                    cached_input_tokens: sql`max(cached_input_tokens, ${values.cached_input_tokens})`,
-                    output_tokens: sql`max(output_tokens, ${values.output_tokens})`,
-                    // Do not replace a fuller native estimate with a partial snapshot.
-                    input_usd: sql`case when ${costs.input_usd} is null then input_usd else max(coalesce(input_usd, 0), ${costs.input_usd}) end`,
-                    cached_input_usd: sql`case when ${costs.cached_input_usd} is null then cached_input_usd else max(coalesce(cached_input_usd, 0), ${costs.cached_input_usd}) end`,
-                    output_usd: sql`case when ${costs.output_usd} is null then output_usd else max(coalesce(output_usd, 0), ${costs.output_usd}) end`,
-                    total_usd: sql`case when ${costs.total_usd} is null then total_usd else max(coalesce(total_usd, 0), ${costs.total_usd}) end`,
-                    models_json: storedModels
-                      ? JSON.stringify(storedModels)
-                      : (previousRecord?.models_json ?? null),
-                    priced_at: pricedAt,
-                    turn_id: observation.turnId,
-                    provisional_complete: sql`max(provisional_complete, ${observation.provisionalComplete ? 1 : 0})`
-                  }
-            )
-          )
-          .execute()
-      })
-    })
-    .catch((error: unknown) => console.error('Unable to persist token usage.', error))
+  queuedObservations.push({ providerId, observation, resolved: !observation.models })
+  void scheduleTokenUsageDrain()
 }
 
-export const flushTokenUsage = (): Promise<void> => pendingWrites
+const writeObservation = async (
+  trx: Transaction<LocalDatabase>,
+  providerId: ProviderId,
+  observation: TokenUsageObservation,
+  resolvedModels: ModelTokenUsage[] | undefined
+): Promise<void> => {
+  if (observation.parentChatId && observation.parentChatId !== observation.chatId) {
+    const lineage = {
+      id: key(providerId, observation.sourceKey, observation.chatId),
+      provider_id: providerId,
+      source_key: observation.sourceKey,
+      chat_id: observation.chatId,
+      parent_chat_id: observation.parentChatId,
+      parent_turn_id: observation.parentTurnId ?? null
+    }
+    await trx
+      .insertInto('token_usage_chat_parent')
+      .values(lineage)
+      .onConflict((conflict) =>
+        conflict.column('id').doUpdateSet({
+          parent_chat_id: lineage.parent_chat_id,
+          parent_turn_id: sql`coalesce(${lineage.parent_turn_id}, parent_turn_id)`
+        })
+      )
+      .execute()
+  }
+  const streamKey = key(providerId, observation.sourceKey, observation.chatId, observation.recordId)
+  let usage = observation.usage
+  let models = resolvedModels
+  if (observation.cumulative) {
+    const previous = await trx
+      .selectFrom('token_usage_checkpoint')
+      .selectAll()
+      .where('id', '=', streamKey)
+      .executeTakeFirst()
+    const increment = getTokenUsageIncrement(
+      observation,
+      previous ? { usage: fromRow(previous), timestamp: previous.updated_at } : undefined
+    )
+    if (!increment) return
+    usage = increment
+    if (models)
+      models = differenceModelUsage(
+        models,
+        previous?.models_json ? (JSON.parse(previous.models_json) as ModelTokenUsage[]) : undefined,
+        !previous ? observation.initialUsage : undefined
+      )
+    // Codex counters are thread-wide even when the current turn uses a different model.
+    if (providerId === 'codex' && models?.length === 1)
+      models = [{ ...models[0], usage: increment }]
+    if (models) usage = { ...usage, cost: priceModelUsage(models).cost }
+    await trx
+      .insertInto('token_usage_checkpoint')
+      .values({
+        id: streamKey,
+        ...columns(observation.usage),
+        updated_at: observation.timestamp,
+        models_json: resolvedModels ? JSON.stringify(resolvedModels) : null
+      })
+      .onConflict((conflict) =>
+        conflict.column('id').doUpdateSet({
+          ...columns(observation.usage),
+          updated_at: observation.timestamp,
+          models_json: resolvedModels ? JSON.stringify(resolvedModels) : null
+        })
+      )
+      .execute()
+    if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return
+  }
+  if (models) usage = { ...usage, cost: priceModelUsage(models).cost }
+  if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return
+  if (observation.replaceProvisionalGroup) {
+    await trx
+      .deleteFrom('token_usage')
+      .where('provider_id', '=', providerId)
+      .where('source_key', '=', observation.sourceKey)
+      .where('chat_id', '=', observation.chatId)
+      .where('provisional_group', '=', observation.replaceProvisionalGroup)
+      .where('provisional_complete', '=', 1)
+      .execute()
+  }
+  const id = observation.cumulative ? key(streamKey, observation.turnId) : streamKey
+  const values = columns(usage)
+  const costs = costColumns(usage)
+  const previousRecord = await trx
+    .selectFrom('token_usage')
+    .selectAll()
+    .where('id', '=', id)
+    .executeTakeFirst()
+  const storedModels = models
+    ? observation.cumulative && previousRecord?.models_json
+      ? [...(JSON.parse(previousRecord.models_json) as ModelTokenUsage[]), ...models]
+      : models
+    : undefined
+  const pricedAt =
+    usage.cost && Object.values(usage.cost).every((value) => value != null) ? Date.now() : null
+  await trx
+    .insertInto('token_usage')
+    .values({
+      id,
+      provider_id: providerId,
+      source_key: observation.sourceKey,
+      chat_id: observation.chatId,
+      turn_id: observation.turnId,
+      recorded_at: observation.timestamp,
+      provisional_group: observation.provisionalGroup ?? null,
+      provisional_complete: observation.provisionalComplete ? 1 : 0,
+      ...costs,
+      models_json: storedModels ? JSON.stringify(storedModels) : null,
+      priced_at: pricedAt,
+      ...values
+    })
+    .onConflict((conflict) =>
+      conflict.column('id').doUpdateSet(
+        observation.cumulative
+          ? {
+              input_tokens: sql`input_tokens + ${values.input_tokens}`,
+              cached_input_tokens: sql`cached_input_tokens + ${values.cached_input_tokens}`,
+              output_tokens: sql`output_tokens + ${values.output_tokens}`,
+              input_usd: sql`input_usd + ${costs.input_usd}`,
+              cached_input_usd: sql`cached_input_usd + ${costs.cached_input_usd}`,
+              output_usd: sql`output_usd + ${costs.output_usd}`,
+              total_usd: sql`total_usd + ${costs.total_usd}`,
+              models_json: storedModels ? JSON.stringify(storedModels) : null,
+              priced_at: previousRecord?.priced_at && pricedAt ? pricedAt : null
+            }
+          : {
+              // Native request snapshots can be repeated while streaming or reloading history.
+              input_tokens: sql`max(input_tokens, ${values.input_tokens})`,
+              cached_input_tokens: sql`max(cached_input_tokens, ${values.cached_input_tokens})`,
+              output_tokens: sql`max(output_tokens, ${values.output_tokens})`,
+              // Do not replace a fuller native estimate with a partial snapshot.
+              input_usd: sql`case when ${costs.input_usd} is null then input_usd else max(coalesce(input_usd, 0), ${costs.input_usd}) end`,
+              cached_input_usd: sql`case when ${costs.cached_input_usd} is null then cached_input_usd else max(coalesce(cached_input_usd, 0), ${costs.cached_input_usd}) end`,
+              output_usd: sql`case when ${costs.output_usd} is null then output_usd else max(coalesce(output_usd, 0), ${costs.output_usd}) end`,
+              total_usd: sql`case when ${costs.total_usd} is null then total_usd else max(coalesce(total_usd, 0), ${costs.total_usd}) end`,
+              models_json: storedModels
+                ? JSON.stringify(storedModels)
+                : (previousRecord?.models_json ?? null),
+              priced_at: pricedAt,
+              turn_id: observation.turnId,
+              provisional_complete: sql`max(provisional_complete, ${observation.provisionalComplete ? 1 : 0})`
+            }
+      )
+    )
+    .execute()
+}
+
+export const flushTokenUsage = async (): Promise<void> => {
+  while (draining) await draining
+}
 
 let repricing: Promise<void> | null = null
 /** Fill estimates that were recorded before pricing arrived; never change an existing quote. */

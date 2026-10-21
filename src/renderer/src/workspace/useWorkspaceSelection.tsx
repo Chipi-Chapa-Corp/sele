@@ -110,6 +110,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     newSessionProviderAvailable,
     newSessionSourceAvailabilityReady,
     newSessionCwd,
+    noProject,
     newSessionContainer,
     gitSourceAvailability,
     lastGitAvailable,
@@ -184,7 +185,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     setGitChangeLoadErrorDismissed,
     newChatOpen,
     setDefaultCwd,
-    setNewSessionCwd,
+    initializeNewSessionCwd,
     gitBranchRequestIdRef,
     setGitBranches,
     setGitBranchesScope,
@@ -563,12 +564,15 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   const usageProviderId = selectedProviderId ?? newSessionProvider
   const usageProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const usageProviderAvailabilityReady = selectedChat ? true : newSessionSourceAvailabilityReady
-  const changesCwd = selectedChat ? (chatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
-  const changesProjectCwd = selectedChat
-    ? (chatDetail?.projectCwd ?? selectedChat.projectCwd ?? changesCwd)
-    : newSessionCwd
+  const currentChatDetail = chatDetail?.id === selectedChat?.id ? chatDetail : null
+  const changesCwd = selectedChat ? (currentChatDetail?.cwd ?? selectedChat.cwd) : newSessionCwd
+  const changesProjectCwd = noProject
+    ? null
+    : selectedChat
+      ? (currentChatDetail?.projectCwd ?? selectedChat.projectCwd ?? changesCwd)
+      : newSessionCwd
   const changesContainer = selectedChat
-    ? (chatDetail?.container ?? selectedChat.container)
+    ? (currentChatDetail?.container ?? selectedChat.container)
     : newSessionContainer
   const changesContainerKey = getContainerTargetKey(changesContainer)
   const recentlyOpenedFilesWorkspaceKey = `${changesContainerKey}\0${changesCwd ?? ''}`
@@ -681,6 +685,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   }, [changesContainer, changesContainerKey, gitBranchLoadRequest, gitChangeLoadRequest])
   const handleChangesPaneViewChange = useCallback(
     (view: ChangesPaneView): void => {
+      if (noProject && (view === 'git' || view === 'files')) return
       if (view === 'browser' && !effectiveAppSettings.browser.enabled) return
 
       if (view === 'terminal') {
@@ -692,7 +697,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
 
       setChangesPaneView(view)
     },
-    [effectiveAppSettings.browser.enabled]
+    [effectiveAppSettings.browser.enabled, noProject]
   )
   const handleToggleTerminal = useCallback((): void => {
     handleChangesPaneViewChange(
@@ -1325,7 +1330,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       .then((cwd) => {
         if (active) {
           setDefaultCwd(cwd)
-          setNewSessionCwd(cwd)
+          initializeNewSessionCwd(cwd)
         }
       })
       .catch((error) => {

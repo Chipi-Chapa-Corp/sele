@@ -15,9 +15,10 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import { ChatDetailItem } from './src/renderer/src/components/ChatDetailItem'
+            import { groupWorkingItemsForRenderer } from './src/main/providers/workingStepLazy'
             const root = createRoot(document.getElementById('root'))
             window.renderStep = (items, status = 'working') => flushSync(() => root.render(
-              <ChatDetailItem item={{type: 'working', id: 'step', status, items}} />
+              <ChatDetailItem item={{type: 'working', id: 'step', status, items: groupWorkingItemsForRenderer(items)}} />
             ))
           `,
           resolveDir: path.resolve(__dirname, '../..'),
@@ -65,6 +66,7 @@ if (!process.versions.electron) {
   })
 } else {
   const { app, BrowserWindow } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'profile'))
   app
     .whenReady()
     .then(async () => {
@@ -85,18 +87,37 @@ if (!process.versions.electron) {
       const snapshots = []
       renderStep([]); await settle(); snapshots.push(state())
       renderStep([tool('one')]); await settle(); snapshots.push(state())
-      renderStep([tool('one', 'read', 'completed'), tool('two')]); await settle(); snapshots.push(state())
-      renderStep([tool('one', 'read', 'completed'), tool('two', 'search', 'completed')]); await settle(); snapshots.push(state())
+      renderStep([tool('one', 'read', 'finished'), tool('two')]); await settle(); snapshots.push(state())
+      renderStep([tool('one', 'read', 'finished'), tool('two', 'search', 'finished')]); await settle(); snapshots.push(state())
       renderStep([tool('one'), tool('two'), {type: 'message', id: 'text', content: 'Next action'}]); await settle(); snapshots.push(state())
       renderStep([tool('one'), tool('two'), {type: 'message', id: 'text', content: 'Next action'}, tool('three'), tool('four')]); await settle(); snapshots.push(state())
       const last = [...document.querySelectorAll('.chat-detail__tool-sequence')].at(-1)
       const latestOpen = last.open && last.querySelectorAll('.chat-detail__tool-group')[1].open
       last.querySelector('summary').click(); await settle()
       const manuallyClosed = !last.open
-      renderStep([tool('one'), tool('two'), {type: 'message', id: 'text', content: 'Next action'}, tool('three'), tool('four', 'search', 'completed')]); await settle()
+      renderStep([tool('one'), tool('two'), {type: 'message', id: 'text', content: 'Next action'}, tool('three'), tool('four', 'search', 'finished')]); await settle()
       const stayedClosed = !last.open
       renderStep([]); await settle(); snapshots.push(state())
-      return { snapshots, latestOpen, manuallyClosed, stayedClosed }
+      renderStep([
+        {...tool('fetch', 'other', 'finished'), label: 'Fetched https://example.test', summaryLabel: 'Fetched web pages'},
+        {...tool('plugin', 'other', 'finished'), label: 'Used mcp__example__run'}
+      ]); await settle()
+      const namedHeading = document.querySelector('.chat-detail__tool-sequence > summary').textContent
+      if (!document.querySelector('.chat-detail__tool-sequence').open) {
+        document.querySelector('.chat-detail__tool-sequence > summary').click(); await settle()
+      }
+      const namedRows = document.body.textContent
+      renderStep([{
+        ...tool('grep', 'search', 'finished'), label: 'Searched for quota', command: null,
+        rawInput: {pattern: 'quota', path: '/repo'}, rawOutput: 'match'
+      }]); await settle()
+      const searchDetails = document.body.textContent
+      renderStep([{
+        ...tool('edit', 'edit', 'finished'), label: 'Edited file.ts', command: null, diffs: [],
+        rawInput: {filePath: '/repo/file.ts', oldString: 'before', newString: 'after'}, rawOutput: 'Edit applied'
+      }]); await settle()
+      const editDetails = document.body.textContent
+      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails }
     })()`)
       const [empty, single, grouped, waiting, following, , emptyAgain] = result.snapshots
       assert.equal(empty.wrapper, true)
@@ -111,7 +132,15 @@ if (!process.versions.electron) {
       assert.equal(result.manuallyClosed, true)
       assert.equal(result.stayedClosed, true)
       assert.equal(emptyAgain.wrapper, true)
-      console.log('Tool disclosure transitions passed in Electron.')
+      assert.equal(result.namedHeading, 'Fetched web pages, Used mcp__example__run')
+      assert.match(result.namedRows, /Fetched https:\/\/example.test/)
+      assert.match(result.namedRows, /Used mcp__example__run/)
+      assert.doesNotMatch(result.namedRows, /Used tools/)
+      assert.match(result.searchDetails, /pattern/)
+      assert.match(result.searchDetails, /quota/)
+      assert.match(result.editDetails, /oldString/)
+      assert.match(result.editDetails, /before/)
+      console.log('Tool disclosure transitions and named fallbacks passed in Electron.')
       app.quit()
     })
     .catch((error) => {

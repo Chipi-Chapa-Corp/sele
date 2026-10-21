@@ -349,6 +349,17 @@ const createToolSequence = (
     toolCount,
     toolsStartIndex: singleExistingGroup ? (firstItem.toolsStartIndex ?? 0) : 0,
     toolActivities,
+    otherToolLabels: [
+      ...new Set(
+        items.flatMap((item) =>
+          item.type === 'toolGroup' && item.otherToolLabels?.length
+            ? item.otherToolLabels
+            : (item.type === 'toolGroup' ? item.tools : [item])
+                .filter((tool) => tool.activity === 'other')
+                .map((tool) => tool.summaryLabel ?? tool.label)
+        )
+      )
+    ],
     dominantActivity:
       singleExistingGroup && firstItem.dominantActivity
         ? firstItem.dominantActivity

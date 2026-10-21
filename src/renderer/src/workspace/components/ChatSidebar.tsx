@@ -9,7 +9,7 @@ import type { ChatImportPreview } from '../../../../shared/chatArchive'
 import { providerApi } from '../../providerApi'
 import { ChatImportDialog } from '../../components/ChatImportDialog'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import { Download, LoaderCircle, Search, SquarePen, X } from 'lucide-react'
+import { Download, LoaderCircle, MessageSquare, Search, SquarePen, X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { ChatSidebarLoadingState } from '../../components/AppStatusStates'
@@ -26,6 +26,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     doneChatGroup,
     handleCloseSearch,
     handleNewChat,
+    handleNewChatNoProject,
     handleProjectDrop,
     handleProjectStackDragOver,
     loadState,
@@ -140,6 +141,13 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
                 title="New chat"
                 callback={handleNewChat}
                 icon={<SquarePen aria-hidden="true" />}
+              />
+              <Button
+                theme={chromeControlTheme}
+                aria-label="New chat without a project"
+                title="New chat without a project"
+                callback={handleNewChatNoProject}
+                icon={<MessageSquare aria-hidden="true" />}
               />
               <Button
                 theme={chromeControlTheme}

@@ -1,12 +1,34 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  groupWorkingItemsForRenderer,
   limitWorkingItemPayload,
   prepareWorkingStepPage,
   rendererHistoricalWorkingItemLazyThreshold,
   rendererWorkingItemPayloadPreviewCharacters,
-  unloadHistoricalWorkingSteps
+  unloadHistoricalWorkingSteps,
+  unloadWorkingItemPayload
 } from './workingStepLazy.ts'
+
+test('sequence action names survive when their tools are outside the loaded child page', () => {
+  const tools = Array.from({ length: 60 }, (_, index) => ({
+    ...createImageTool(index, 0),
+    images: [],
+    activity: index === 0 ? 'other' : 'command',
+    label: index === 0 ? 'Fetched https://example.test' : 'Ran command',
+    summaryLabel: index === 0 ? 'Fetched web pages' : undefined
+  }))
+  const [group] = groupWorkingItemsForRenderer(tools)
+  const unloaded = unloadWorkingItemPayload(group)
+  assert.equal(unloaded.tools.length, 50)
+  assert.equal(
+    unloaded.tools.some((tool) => tool.activity === 'other'),
+    false
+  )
+  assert.deepEqual(unloaded.otherToolLabels, ['Fetched web pages'])
+  const [regrouped] = groupWorkingItemsForRenderer([unloaded])
+  assert.deepEqual(regrouped.otherToolLabels, ['Fetched web pages'])
+})
 
 // Test fixtures intentionally omit production-only provider fields.
 const createWorkingItems = (count) =>

@@ -15,7 +15,7 @@ import {
 import { getComposerDraftScopeKey } from '../composerDraft'
 import { getContainerTargetKey } from '../containerSelection'
 import {
-  getChatCwdGroupKey,
+  getChatGroupKey,
   getChatKey,
   getChatProjectCwd,
   mergeProjects
@@ -303,7 +303,7 @@ export function useChatListController(dependencies: ChatListControllerDependenci
       if (
         selectedChat &&
         !selectedChat.done &&
-        getChatCwdGroupKey(getChatProjectCwd(selectedChat)) === getChatCwdGroupKey(group.cwd)
+        getChatGroupKey(selectedChat) === group.key
       ) {
         const currentChat = chatDetail?.id === selectedChat.id ? chatDetail : selectedChat
         showNewChatView(group.cwd, currentChat.container ?? newSessionContainer)

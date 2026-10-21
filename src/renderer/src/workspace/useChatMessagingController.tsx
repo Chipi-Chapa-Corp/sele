@@ -1,5 +1,6 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useCallback, useEffect, useRef } from 'react'
+import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../../shared/noProject'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
   ProviderChat,
@@ -45,8 +46,8 @@ import {
 } from './appearanceControllerUtils'
 import {
   getChatCwdGroupKey,
+  getChatGroupKey,
   getChatKey,
-  getChatProjectCwd,
   getErrorMessage,
   getOptimisticItems,
   getWorktreeBranchGenerationPrompt,
@@ -93,6 +94,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     setSubagentChatView,
     selectedChat,
     newSessionCwd,
+    newSessionNoProject,
     sendInFlightProjectKeyRef,
     setSendInFlightProjectKey,
     chatAutoScrollEnabledRef,
@@ -474,9 +476,11 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         attachments.length > 0 || Boolean(review) || skills.length > 0 || apps.length > 0
       )
     }
-    const sendProjectKey = getChatCwdGroupKey(
-      selectedChat ? (changesProjectCwd ?? getChatProjectCwd(selectedChat)) : newSessionCwd
-    )
+    const sendProjectKey = selectedChat
+      ? getChatGroupKey(selectedChat)
+      : newSessionNoProject
+        ? noProjectGroupKey
+        : getChatCwdGroupKey(newSessionCwd)
     const finishSendInFlight = (): void => {
       sendInFlightRef.current = false
       if (sendInFlightProjectKeyRef.current === sendProjectKey) {
@@ -570,9 +574,13 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         const startingSelectedChat = sendTarget === 'new' ? selectedChat : null
         const startingProviderId = startingSelectedChat?.providerId ?? newSessionProvider
         const startingCwd = startingSelectedChat ? changesProjectCwd : newSessionCwd
+        const noProject =
+          isNoProjectChat(startingSelectedChat) ||
+          isNoProjectCwd(startingCwd) ||
+          (!startingSelectedChat && newSessionNoProject)
         let sessionCwd = startingCwd ?? undefined
 
-        if (!startingSelectedChat && newSessionLocation === 'worktree') {
+        if (!startingSelectedChat && !newSessionNoProject && newSessionLocation === 'worktree') {
           if (!newSessionCwd) throw new Error('Choose a folder before creating a worktree.')
 
           const generationId = crypto.randomUUID()
@@ -615,7 +623,9 @@ export function useChatMessagingController(dependencies: ChatMessagingController
 
         const detail = await providerApi.startChat(startingProviderId, serializedMessage, {
           ...turnOptions,
-          cwd: sessionCwd
+          noProject,
+          cwd: noProject ? undefined : sessionCwd,
+          additionalDirectories: noProject ? undefined : turnOptions.additionalDirectories
         })
         rememberStartedChatSelection(startingProviderId, detail.id, messageBoxSelection)
         const startedChatKey = getChatKey({ providerId: startingProviderId, id: detail.id })
@@ -985,7 +995,9 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         files: filePaths.length > 0 ? filePaths.map((path) => ({ path })) : undefined
       })
 
-      const retryProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
+      const retryProjectKey = selectedChat
+        ? getChatGroupKey(selectedChat)
+        : getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
       sendInFlightRef.current = true
       sendInFlightProjectKeyRef.current = retryProjectKey
       setSendInFlightProjectKey(retryProjectKey)
@@ -1128,7 +1140,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   const handleCompactChat = async (): Promise<void> => {
     if (providerUpdateInProgress || !selectedChat || chatHasActiveTurn || sendInFlightRef.current)
       return
-    const compactProjectKey = getChatCwdGroupKey(getChatProjectCwd(selectedChat))
+    const compactProjectKey = getChatGroupKey(selectedChat)
     sendInFlightRef.current = true
     sendInFlightProjectKeyRef.current = compactProjectKey
     setSendInFlightProjectKey(compactProjectKey)
@@ -1154,7 +1166,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   }
   const handleStopChat = async (): Promise<void> => {
     if (providerUpdateInProgress || !selectedChat || sendInFlightRef.current) return
-    const stopProjectKey = getChatCwdGroupKey(getChatProjectCwd(selectedChat))
+    const stopProjectKey = getChatGroupKey(selectedChat)
     sendInFlightRef.current = true
     sendInFlightProjectKeyRef.current = stopProjectKey
     setSendInFlightProjectKey(stopProjectKey)
@@ -1212,9 +1224,9 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       ) {
         return
       }
-      const pendingMessageProjectKey = getChatCwdGroupKey(
-        selectedChatRef.current ? getChatProjectCwd(selectedChatRef.current) : null
-      )
+      const pendingMessageProjectKey = selectedChatRef.current
+        ? getChatGroupKey(selectedChatRef.current)
+        : getChatCwdGroupKey(null)
       sendInFlightRef.current = true
       sendInFlightProjectKeyRef.current = pendingMessageProjectKey
       setSendInFlightProjectKey(pendingMessageProjectKey)
@@ -1259,9 +1271,9 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       ) {
         return
       }
-      const pendingMessageProjectKey = getChatCwdGroupKey(
-        selectedChatRef.current ? getChatProjectCwd(selectedChatRef.current) : null
-      )
+      const pendingMessageProjectKey = selectedChatRef.current
+        ? getChatGroupKey(selectedChatRef.current)
+        : getChatCwdGroupKey(null)
       sendInFlightRef.current = true
       sendInFlightProjectKeyRef.current = pendingMessageProjectKey
       setSendInFlightProjectKey(pendingMessageProjectKey)

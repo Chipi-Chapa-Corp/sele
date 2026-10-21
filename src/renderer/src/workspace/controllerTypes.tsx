@@ -244,6 +244,7 @@ export const doneGroupKey = 'done'
 export const allDoneProjectsValue = '__sele_all_done_projects__'
 
 export const newSessionProjectPlaceholderValue = '__sele_new_session_project_placeholder__'
+export const newSessionNoProjectValue = '__sele_new_session_no_project__'
 
 export const fallbackDefaultModel = fallbackProviderModels.find((model) => model.isDefault)
 

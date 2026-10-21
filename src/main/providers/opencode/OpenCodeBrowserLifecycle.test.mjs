@@ -33,6 +33,7 @@ const code = ts.transpileModule(
 ).outputText
 const fixture = () => {
   const context = vm.createContext({
+    getContainerTargetKey: () => 'host',
     PendingMessageEdits,
     console,
     getOpenCodePermissionRules,
@@ -91,6 +92,7 @@ const fixture = () => {
   const adapter = Object.assign(new context.Harness(), {
     states: new Map([['chat', state]]),
     oneShotSessionIds: new Set(),
+    freeLimits: { observe() {} },
     sessionContainers: new Map(),
     getClientEntry: async () => entry,
     completionCoordinator: { cancel() {} },

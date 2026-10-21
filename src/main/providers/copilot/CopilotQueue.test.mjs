@@ -40,7 +40,7 @@ await build({
 const { CopilotProviderAdapter } = createRequire(import.meta.url)(join(directory, 'adapter.cjs'))
 test.after(() => rm(directory, { recursive: true, force: true }))
 
-const fixture = () => {
+const fixture = ({ storeEvents = false } = {}) => {
   const adapter = new CopilotProviderAdapter()
   const state = adapter.createState('chat')
   const native = { items: [], steeringMessages: [], inFlightSteeringCount: 0 }
@@ -89,7 +89,7 @@ const fixture = () => {
       return Promise.resolve(true)
     }
   }
-  adapter.storeEvent = () => {}
+  if (!storeEvents) adapter.storeEvent = () => {}
   adapter.reportEventTokenUsage = () => {}
   adapter.queueUpdate = () => {}
   return {
@@ -330,4 +330,35 @@ test('a steering snapshot arriving before send acknowledgment reuses the submitt
   await adapter.beginPendingMessageEdit('chat', id, 'edit')
   await adapter.cancelPendingMessageEdit('chat', id, 'edit')
   assert.ok(updates.every((items) => items.length === 1 && items[0].id === id))
+})
+
+test('Copilot accepts distinct steering events and repeated echoes without replacing the original', async () => {
+  const { adapter, state, native } = fixture({ storeEvents: true })
+  const original = {
+    id: 'original',
+    type: 'user.message',
+    timestamp: new Date(1).toISOString(),
+    data: { content: 'original prompt' }
+  }
+  adapter.handleEvent('chat', original)
+  await adapter.sendActiveChatMessage('chat', 'change direction', 'steer')
+  const steering = {
+    id: 'server-steer',
+    type: 'user.message',
+    timestamp: new Date(2).toISOString(),
+    data: { content: 'change direction' }
+  }
+  adapter.handleEvent('chat', steering)
+  adapter.handleEvent('chat', steering)
+  adapter.handleEvent('chat', original)
+  native.steeringMessages = []
+  await adapter.refreshPendingMessages(state)
+  assert.deepEqual(
+    state.events.map((event) => event.id),
+    ['original', 'server-steer']
+  )
+  assert.equal(state.events[0].data.content, 'original prompt')
+  assert.equal(state.events[1].data.content, 'change direction')
+  assert.equal(state.pendingMessages.length, 0)
+  assert.equal(state.active, true)
 })

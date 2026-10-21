@@ -111,6 +111,8 @@ const setup = async () => {
     require,
     fixture,
     console,
+    // Shared so tests can move the clock for cache expiry.
+    Date,
     URL,
     Buffer,
     AbortSignal,
@@ -144,6 +146,9 @@ const setup = async () => {
   const accounts = new module.exports.ClaudeAccounts()
   return {
     accounts,
+    root,
+    // A second instance over the same fixture, as after an app restart.
+    restart: () => new module.exports.ClaudeAccounts(),
     fixture,
     commands,
     supports: module.exports.supportsClaudeAccounts,
@@ -262,6 +267,86 @@ test('fallback caching never carries usage from Default to the added account', a
     await h.accounts.select('default')
     assert.equal((await h.accounts.getUsageFallback()).seven_day.utilization, 19)
     assert.equal(h.fixture.usageCalls.length, 2)
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('a rate-limited usage refresh keeps the last limits and waits before retrying', async () => {
+  const h = await setup()
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    assert.equal((await h.accounts.getUsageFallback()).seven_day.utilization, 19)
+    const working = h.fixture.usage
+    h.fixture.usage = async (token) => {
+      h.fixture.usageCalls.push(token)
+      throw Object.assign(new Error('Claude usage request failed (HTTP 429). Please try again.'), {
+        retryAfterMs: 300_000
+      })
+    }
+    now += 61_000
+    assert.equal((await h.accounts.getUsageFallback()).seven_day.utilization, 19)
+    assert.equal(h.fixture.usageCalls.length, 2)
+    // Retry-After is respected: no new request until it passes.
+    now += 120_000
+    await h.accounts.getUsageFallback()
+    assert.equal(h.fixture.usageCalls.length, 2)
+    h.fixture.usage = working
+    now += 181_000
+    assert.equal((await h.accounts.getUsageFallback()).seven_day.utilization, 19)
+    assert.equal(h.fixture.usageCalls.length, 3)
+  } finally {
+    Date.now = realNow
+    await h.cleanup()
+  }
+})
+
+test('saved limits and retry time survive a restart', async () => {
+  const h = await setup()
+  const second = h.restart()
+  try {
+    const file = join(h.root, 'claude-usage-cache.json')
+    h.accounts.setUsageCacheFile(file)
+    second.setUsageCacheFile(file)
+    assert.equal((await h.accounts.getUsageFallback()).seven_day.utilization, 19)
+    h.fixture.usage = async (token) => {
+      h.fixture.usageCalls.push(token)
+      throw Object.assign(new Error('Claude usage request failed (HTTP 429). Please try again.'), {
+        retryAfterMs: 600_000
+      })
+    }
+    const realNow = Date.now
+    const start = realNow()
+    Date.now = () => start + 61_000
+    try {
+      assert.equal((await h.accounts.getUsageFallback()).seven_day.utilization, 19)
+    } finally {
+      Date.now = realNow
+    }
+    // Let the cache write finish, then "restart": no request until Retry-After passes.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const calls = h.fixture.usageCalls.length
+    assert.equal((await second.getUsageFallback()).seven_day.utilization, 19)
+    assert.equal((await second.getLastUsage()).seven_day.utilization, 19)
+    assert.equal(h.fixture.usageCalls.length, calls)
+  } finally {
+    second.dispose()
+    await h.cleanup()
+  }
+})
+
+test('a failed first usage request is reported, but not repeated immediately', async () => {
+  const h = await setup()
+  try {
+    h.fixture.usage = async (token) => {
+      h.fixture.usageCalls.push(token)
+      throw new Error('Claude usage request failed (HTTP 429). Please try again.')
+    }
+    await assert.rejects(h.accounts.getUsageFallback(), /HTTP 429/)
+    await assert.rejects(h.accounts.getUsageFallback(), /HTTP 429/)
+    assert.equal(h.fixture.usageCalls.length, 1)
   } finally {
     await h.cleanup()
   }

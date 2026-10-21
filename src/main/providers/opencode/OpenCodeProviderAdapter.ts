@@ -1,6 +1,7 @@
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
 import { encodeOpenCodeHistory, importOpenCodeHistory } from './OpenCodeHistoryImport'
+import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './OpenCodeHistory'
 import { OpenCodeCredentialHealth, checkOpenCodeCredential } from './OpenCodeCredentialHealth'
 import type {
   ProviderConnectInput,
@@ -100,6 +101,7 @@ import {
   OpenCodeGoApiKeyMissingError,
   OpenCodeGoNoSubscriptionError
 } from './OpenCodeUsage'
+import { OpenCodeFreeLimitTracker } from './OpenCodeFreeLimit'
 import {
   getOpenCodeEnvironmentApiKeys,
   OpenCodeBalanceCache,
@@ -450,7 +452,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private connectionChecks = new Map<string, Promise<ProviderConnectionStatus>>()
   private adminKeys = createOpenCodeAdminKeyStore()
   private adminKeyStatuses = new Map<string, ProviderConnectionStatus>()
-  private balanceCache = new OpenCodeBalanceCache()
+  private balanceCache = new OpenCodeBalanceCache(fetch, Date.now, async (models) => {
+    const { resolveModelPricing } = await import('../modelPricing/ModelsDevPricing')
+    return resolveModelPricing(models)
+  })
+  private freeLimits = new OpenCodeFreeLimitTracker()
 
   /** `forceRefresh` (the Refresh button) tests every listed connection with a real request. */
   getConnections = async (options: ProviderSourceOptions = {}): Promise<ProviderConnection[]> => {
@@ -895,7 +901,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         lifetimeTokens: statistics?.lifetimeTokens ?? null
       },
       dailyUsageBuckets: null,
-      rateLimits: rateLimitsResult.status === 'fulfilled' ? rateLimitsResult.value : [],
+      rateLimits: [
+        ...this.freeLimits.getRateLimits(getContainerTargetKey(options.container)),
+        ...(rateLimitsResult.status === 'fulfilled' ? rateLimitsResult.value : [])
+      ],
       rateLimitResetCredits: null,
       balances: balancesResult.status === 'fulfilled' ? balancesResult.value.balances : [],
       errors
@@ -1398,7 +1407,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const state = await this.ensureState(chatId, options?.container)
     if (this.pendingMessageEdits.has(chatId))
       return this.queueMessage(state, message, options, mode === 'steer' ? 'steering' : 'queued')
-    if (mode === 'queue') return this.queueMessage(state, message, options)
+    if (mode === 'queue') {
+      // The renderer may still show a turn that already ended; send instead of parking it.
+      const detail = await this.queueMessage(state, message, options)
+      if (!state.active && !state.stopped) await this.drainQueue(state)
+      return detail
+    }
     if (mode === 'interrupt') {
       await this.abortState(state)
       await this.sendPrompt(state, message, options)
@@ -1801,6 +1815,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     // Title and one-shot sessions count too: they use the same stored credentials.
     if (type === 'message.updated')
       this.credentialHealth.record(getContainerTargetKey(entry.container), properties.info)
+    // The keyless free tier only reports its limit when a request hits it.
+    this.freeLimits.observe(getContainerTargetKey(entry.container), type, properties)
     if (sessionInfo && isOneShotSession(sessionInfo)) {
       this.completionCoordinator.cancel(sessionID)
       this.states.delete(sessionID)
@@ -1850,14 +1866,17 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       // OpenCode publishes a failed or stopped reply's final message.updated after session.error
       // and session.idle. That record ends the turn; treating it as activity flashed the
       // finished turn back to working until the next idle.
+      // User records are not activity either: OpenCode rewrites the user message with its
+      // background summary after session.idle, which left finished turns stuck as working.
       const info = type === 'message.updated' && isRecord(properties.info) ? properties.info : null
-      const finishedReply =
+      const replyInProgress =
         info?.role === 'assistant' &&
-        (Boolean(info.error) || (isRecord(info.time) && typeof info.time.completed === 'number'))
+        !info.error &&
+        !(isRecord(info.time) && typeof info.time.completed === 'number')
       if (
         type === 'session.status'
           ? status?.type === 'busy' || status?.type === 'retry'
-          : !finishedReply
+          : replyInProgress
       ) {
         this.completionCoordinator.cancel(sessionID)
         state.active = true
@@ -2106,13 +2125,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     client: OpencodeClient,
     session: Session | GlobalSession,
     limit?: number
-  ): Promise<OpenCodeMessageWithParts[]> =>
-    requireData(
-      await client.session.messages(
-        { sessionID: session.id, directory: session.directory, ...(limit ? { limit } : {}) },
-        { throwOnError: true }
-      )
-    )
+  ): Promise<OpenCodeMessageWithParts[]> => loadOpenCodeMessages(client, session, limit)
 
   private refreshState = async (
     state: OpenCodeChatState,
@@ -2140,9 +2153,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       client.session
         .get({ sessionID: state.id, directory: state.directory }, { throwOnError: true })
         .then(requireData),
-      client.session
-        .messages({ sessionID: state.id, directory: state.directory }, { throwOnError: true })
-        .then(requireData),
+      loadOpenCodeMessages(client, { id: state.id, directory: state.directory }),
       client.session
         .status({ directory: state.directory }, { throwOnError: true })
         .then(requireData)
@@ -2176,19 +2187,33 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       authoritative: true,
       getId: (message) => message.info.id
     })
-    state.messages.forEach((message) => this.reportMessageTokenUsage(state, message.info))
+    await forEachOpenCodeHistoryMessage(state.messages, (message) =>
+      this.reportMessageTokenUsage(state, message.info)
+    )
     state.messagesHydrated = true
     state.messagesDirty = eventRevision !== state.eventRevision
     state.hydratedUpdatedAt = session.time.updated
     state.client = client
     // A live event may have advanced these fields while the snapshot was in flight.
     // Leave them intact until the dirty state receives its next reconciliation.
+    const status = statuses[state.id]
+    const serverBusy = status?.type === 'busy' || status?.type === 'retry'
     if (eventRevision === state.eventRevision) {
-      const status = statuses[state.id]
-      if (status?.type === 'busy' || status?.type === 'retry') state.active = true
+      const wasActive = state.active
+      if (serverBusy) state.active = true
       else if (!preserveActive) state.active = false
       state.pendingApprovals = permissions.filter((request) => request.sessionID === state.id)
       state.pendingQuestions = questions.filter((request) => request.sessionID === state.id)
+      // session.idle is the usual queue trigger; a refresh that ends the turn must also send it.
+      if (wasActive && !state.active && state.queuedMessages.length > 0 && !state.stopped) {
+        void this.drainQueue(state).catch((error) =>
+          console.error('Unable to resume OpenCode queue after refresh.', error)
+        )
+      }
+    } else if (state.active && !serverBusy && !preserveActive) {
+      // The server is idle but a live event outdated this snapshot; reconcile again rather
+      // than leave the chat working with no further idle event coming.
+      this.scheduleUpdate(state.id)
     }
   }
 

@@ -37,6 +37,18 @@ test('badge is hidden when the provider is ambiguous or reports nothing', () => 
   assert.equal(selectBadgeBalance([], 'deepseek'), null)
 })
 
+test('organization month spend is not shown; the chat cost replaces it', () => {
+  const org = {
+    ...balance('anthropic', 'anthropic:month', 'spent', 9.7),
+    modelProviderName: 'Anthropic'
+  }
+  assert.equal(selectBadgeBalance([org], 'anthropic'), null)
+  assert.deepEqual(
+    groupAccountBalances([org, balances[2]], 'anthropic').map((group) => group.providerId),
+    ['deepseek']
+  )
+})
+
 test('groups put the selected provider first', () => {
   assert.deepEqual(
     groupAccountBalances(balances, 'openrouter').map((group) => [
@@ -62,4 +74,7 @@ test('describes amounts, caps and usage percentages', () => {
   assert.match(describeBalance(balances[1]), /40.*\/.*50/)
   assert.match(describeBalance(balances[0]), /4.*spent$/)
   assert.match(formatBalanceAmount(1.5, 'NOTACURRENCY'), /1\.5 NOTACURRENCY/)
+  // Small spend stays visible instead of rounding to zero.
+  assert.match(formatBalanceAmount(0.001375, 'USD'), /0\.0014/)
+  assert.match(formatBalanceAmount(0, 'USD'), /0\.00/)
 })

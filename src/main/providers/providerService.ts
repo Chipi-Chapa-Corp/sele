@@ -1,7 +1,9 @@
+import { isNoProjectChat } from '../../shared/noProject'
 import { getLastTurnOutcome } from '../../shared/chatTurnOutcome'
 import { getChatTurnOutcomes, setChatTurnOutcome } from '../database/chatTurnOutcome'
 import { ImportedConversations } from './ImportedConversations'
 import { app } from 'electron'
+import { prepareChatWorkspace } from './noProjectWorkspace'
 import { join } from 'node:path'
 import { AccountDisplayNameCache } from './AccountDisplayNameCache'
 import { importedConversationStore } from '../database/importedConversations'
@@ -40,6 +42,7 @@ import {
   getChatMetadataByIds,
   setChatContainer,
   setChatDone,
+  setChatNoProject,
   setChatOrder,
   setChatPinned,
   setChatPurpose,
@@ -92,6 +95,7 @@ const accountDisplayNameCache = new AccountDisplayNameCache(() =>
   join(app.getPath('userData'), 'account-display-names.json')
 )
 const claudeAdapter = new ClaudeProviderAdapter()
+claudeAccounts.setUsageCacheFile(join(app.getPath('userData'), 'claude-usage-cache.json'))
 const openCodeAdapter = new OpenCodeProviderAdapter()
 const connectionAdapter = (providerId: ProviderId): OpenCodeProviderAdapter => {
   if (providerId !== 'opencode') throw new Error('Connections are not available for this provider.')
@@ -159,6 +163,7 @@ const applyMetadataToChat = (
   metadata: ProviderChatMetadata | undefined
 ): ProviderChat => ({
   ...chat,
+  noProject: metadata?.noProject || isNoProjectChat(chat),
   pinned: metadata?.pinned ?? false,
   sidebarOrder: metadata?.sidebarOrder ?? null,
   done: metadata?.done ?? false,
@@ -175,8 +180,9 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
   ])
   return Promise.all(
     chats.map(async (chat) => {
+      const enrichedChat = applyMetadataToChat(chat, metadataById.get(chat.id))
       const [cwdMetadata, reviews] = await Promise.all([
-        getCwdMetadata(chat.cwd),
+        getCwdMetadata(enrichedChat.noProject ? null : chat.cwd),
         getMessageReviews(chat.id)
       ])
       const previewReview = reviews.find(
@@ -188,7 +194,7 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
       )
 
       return {
-        ...applyMetadataToChat(chat, metadataById.get(chat.id)),
+        ...enrichedChat,
         lastTurnOutcome:
           chat.lastTurnOutcome === undefined
             ? outcomes.get(`${chat.providerId}:${chat.id}`)
@@ -213,9 +219,10 @@ const applyMetadataToDetail = async (
   if (lastTurnOutcome !== undefined) {
     await setChatTurnOutcome(providerId, detail.id, lastTurnOutcome)
   }
-  const [metadata, cwdMetadata, reviews] = await Promise.all([
-    getChatMetadata(detail.id),
-    getCwdMetadata(detail.cwd),
+  const metadata = await getChatMetadata(detail.id)
+  const noProject = metadata.noProject || isNoProjectChat(detail)
+  const [cwdMetadata, reviews] = await Promise.all([
+    getCwdMetadata(noProject ? null : detail.cwd),
     getMessageReviews(detail.id)
   ])
   const usage = await getChatTokenUsage(
@@ -233,6 +240,7 @@ const applyMetadataToDetail = async (
 
   return {
     ...detail,
+    noProject,
     lastTurnOutcome,
     cwdKind: cwdMetadata.kind,
     projectCwd: cwdMetadata.projectCwd,
@@ -476,6 +484,7 @@ export const getChatUpdateSummary = (
   const preview = detail.items.findLast((item) => item.type === 'message')?.content.trim() ?? ''
   return {
     id: detail.id,
+    noProject: detail.noProject,
     imported: detail.imported,
     revision: detail.revision,
     createdAt: detail.createdAt,
@@ -849,7 +858,8 @@ export const providerApi: ProviderApi = {
           chat.purpose !== 'commit' &&
           (options?.done === undefined || chat.done === options.done) &&
           (projectCwd === null ||
-            (normalizeCwd(chat.projectCwd) ?? normalizeCwd(chat.cwd)) === projectCwd)
+            (!chat.noProject &&
+              (normalizeCwd(chat.projectCwd) ?? normalizeCwd(chat.cwd)) === projectCwd))
       )
     }
   },
@@ -917,12 +927,14 @@ export const providerApi: ProviderApi = {
   cancelOneShot: (providerId, generationId) => adapters[providerId].cancelOneShot(generationId),
   startChat: async (providerId, message, options, purpose) => {
     try {
+      options = await prepareChatWorkspace(app.getPath('userData'), options)
       const detail = await adapters[providerId].startChat(
         message,
         options,
-        purpose || options?.review || options?.container
+        purpose || options?.review || options?.container || options?.noProject
           ? async (chatId) => {
               await Promise.all([
+                options?.noProject ? setChatNoProject(chatId) : Promise.resolve(),
                 purpose ? setChatPurpose(chatId, purpose) : Promise.resolve(),
                 options?.container
                   ? setChatContainer(chatId, options.container)
@@ -949,6 +961,7 @@ export const providerApi: ProviderApi = {
     ).then((detail) => applyMetadataToDetail(detail, providerId)),
   continueChatInFork: async (providerId, chatId, message, purpose, options) => {
     try {
+      const sourceMetadata = await getChatMetadata(chatId)
       const detail = await adapters[providerId].continueChatInFork(
         chatId,
         message,
@@ -956,6 +969,9 @@ export const providerApi: ProviderApi = {
         async (forkedChatId) => {
           await Promise.all([
             setChatPurpose(forkedChatId, purpose),
+            sourceMetadata.noProject || options?.noProject
+              ? setChatNoProject(forkedChatId)
+              : Promise.resolve(),
             options?.container
               ? setChatContainer(forkedChatId, options.container)
               : Promise.resolve(),
@@ -977,6 +993,7 @@ export const providerApi: ProviderApi = {
   forkChat: async (providerId, chatId, messageId) => {
     const sourceMetadata = await getChatMetadata(chatId)
     const detail = await adapters[providerId].forkChat(chatId, messageId, async (forkedChatId) => {
+      if (sourceMetadata.noProject) await setChatNoProject(forkedChatId)
       if (sourceMetadata.container) {
         await setChatContainer(forkedChatId, sourceMetadata.container)
       }

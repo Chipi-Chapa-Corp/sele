@@ -1,3 +1,4 @@
+import { isNoProjectChat, isNoProjectCwd } from '../../shared/noProject.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -32,6 +33,7 @@ test('import workspaces never become project choices alongside real projects', (
     useMemo: (fn) => fn(),
     chats: [
       { cwd: '/repo', createdAt: 1 },
+      { cwd: '/home/user', noProject: true, createdAt: 2 },
       ...Array.from({ length: 40 }, (_, i) => ({
         cwd: `/sele/imports/${i}`,
         projectCwd: `/sele/imports/${i}`,
@@ -42,7 +44,11 @@ test('import workspaces never become project choices alongside real projects', (
     ],
     projects: [{ cwd: '/saved', name: 'Saved project' }],
     newSessionCwd: '/new-project',
-    getChatProjectCwd: (chat) => chat.projectCwd ?? chat.cwd,
+    newSessionNoProject: false,
+    newSessionNoProjectValue: '__no_project__',
+    isNoProjectCwd,
+    MessageSquare: 'chat-icon',
+    getChatProjectCwd: (chat) => (isNoProjectChat(chat) ? null : (chat.projectCwd ?? chat.cwd)),
     getChatCwdGroupKey: (cwd) => cwd,
     getFolderName: (cwd) => cwd,
     getFolderDescription: (cwd) => cwd,
@@ -53,7 +59,8 @@ test('import workspaces never become project choices alongside real projects', (
     React: { createElement: () => null }
   })
   vm.runInContext(declaration('./useWorkspaceController.tsx', 'projectOptions'), context)
-  assert.deepEqual(Array.from(context.result, (option) => option.value).sort(), [
+  assert.equal(context.result[0].value, '__no_project__')
+  assert.deepEqual(Array.from(context.result.slice(1), (option) => option.value).sort(), [
     '/new-project',
     '/repo',
     '/saved'
@@ -66,6 +73,7 @@ test('marking an imported chat done preserves the regular new-chat project', asy
   const context = vm.createContext({
     providerApi: { markChatDone: async () => ({ done: true }) },
     applyChatMetadata: () => {},
+    updateStoredComposerDrafts: () => {},
     removeRecentChatCacheEntry: () => {},
     selectedChat: selected,
     chatDetail: selected,

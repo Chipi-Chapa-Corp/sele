@@ -1,3 +1,4 @@
+import { isNoProjectChat } from '../../shared/noProject.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -52,6 +53,7 @@ const enrich = (metadata) => {
       { target: ts.ScriptTarget.ES2022 }
     ),
     {
+      isNoProjectChat,
       // A fresh installation/restart has no previously observed outcome cache.
       getChatTurnOutcomes: async () => new Map(),
       getChatMetadataByIds: async (ids) => new Map(ids.map((id) => [id, metadata])),

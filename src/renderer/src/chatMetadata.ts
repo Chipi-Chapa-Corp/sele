@@ -41,6 +41,7 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
   metadata: ProviderChatMetadata
 ): Target => ({
   ...target,
+  noProject: metadata.noProject ?? target.noProject,
   pinned: metadata.pinned,
   sidebarOrder: metadata.sidebarOrder,
   done: metadata.done,

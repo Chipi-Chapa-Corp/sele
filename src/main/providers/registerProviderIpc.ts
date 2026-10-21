@@ -1031,6 +1031,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     approvalsReviewer?: unknown
     container?: unknown
     cwd?: unknown
+    noProject?: unknown
     files?: unknown
     images?: unknown
     model?: unknown
@@ -1127,6 +1128,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     approvalsReviewer,
     container: requireContainerTarget(options.container, { optional: true }),
     cwd: cwd ?? undefined,
+    ...(options.noProject === undefined ? {} : { noProject: requireBoolean(options.noProject) }),
     files,
     images,
     model,

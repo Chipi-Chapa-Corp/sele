@@ -19,7 +19,12 @@ import type {
   ProviderId,
   ProviderUsageOptions
 } from '../../../shared/provider'
-import { formatTokenCostEstimateTitle, formatUsageDollars } from '../../../shared/tokenUsage'
+import {
+  formatTokenCostEstimateTitle,
+  formatUsageDollars,
+  getTokenCost
+} from '../../../shared/tokenUsage'
+import { providerApi } from '../providerApi'
 import {
   groupAccountRateLimits,
   shouldDisableRateLimitReset,
@@ -220,7 +225,9 @@ function BalanceBadge({
   const present = useIsPresent()
   const reduced = useReducedMotionPreference()
   const usedPercent = getBalanceUsedPercent(balance)
-  const title = `${balance.modelProviderName} ${balance.label.toLocaleLowerCase()}: ${describeBalance(balance)}`
+  const title = balance.modelProviderName
+    ? `${balance.modelProviderName} ${balance.label.toLocaleLowerCase()}: ${describeBalance(balance)}`
+    : `${balance.label}: ${describeBalance(balance)}`
   return (
     <MotionButton
       initial={reduced ? false : { opacity: 0, scale: 0.85, y: 6 }}
@@ -355,7 +362,25 @@ export function UsageIndicator({
   const badges = getVisibleUsageBadges(badgeRateLimits, contextUsage, displayUsage)
   const balances =
     accountUsage?.balances ?? (accountUsageState === 'loading' ? previousBalances.current : [])
-  const badgeBalance = selectBadgeBalance(balances, modelProviderId)
+  const balanceGroups = groupAccountBalances(balances, modelProviderId)
+  // Without a separate Usage tab (OpenCode), the popover shows the selected chat's cost.
+  const chatCostSupported = providerId === 'opencode' && Boolean(chatId)
+  const chatCostKey = JSON.stringify([providerId, chatId ?? null, container ?? null])
+  const [chatCost, setChatCost] = useState<{ key: string; usd: number } | null>(null)
+  const chatCostUSD = chatCostSupported && chatCost?.key === chatCostKey ? chatCost.usd : null
+  const chatCostBalance: AccountBalance | null =
+    chatCostUSD == null
+      ? null
+      : {
+          id: 'chat',
+          modelProviderId: modelProviderId ?? '',
+          modelProviderName: '',
+          label: 'This chat',
+          kind: 'spent',
+          amount: chatCostUSD,
+          currency: 'USD'
+        }
+  const badgeBalance = selectBadgeBalance(balances, modelProviderId) ?? chatCostBalance
   const hasUsageBadges = badges.length > 0 || badgeBalance != null
   const [usageView, setUsageView] = useState<UsagePopoverView>('limits')
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
@@ -364,6 +389,28 @@ export function UsageIndicator({
   const [rateLimitRefreshBaseline, setRateLimitRefreshBaseline] = useState<string | null>(null)
   const rateLimitResetBaselineRef = useRef<string | null>(null)
   const usageMenuOpen = usageOpenSource === popoverSourceKey && hasUsageBadges
+  const usageUpdatedAt = accountUsage?.updatedAt
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload after each usage refresh (one per reply) and when the popover opens.
+  useEffect(() => {
+    if (!chatCostSupported) return
+    let active = true
+    const [source, sourceChatId, sourceContainer] = JSON.parse(chatCostKey) as [
+      ProviderId,
+      string,
+      AppContainerTarget | null
+    ]
+    void providerApi
+      .getTokenUsage(source, sourceChatId, { container: sourceContainer })
+      .then((summary) => {
+        const total = summary.chat ? getTokenCost(summary.chat).total : null
+        if (active) setChatCost(total == null ? null : { key: chatCostKey, usd: total })
+      })
+      .catch((error: unknown) => console.error('Unable to load chat cost.', error))
+    return () => {
+      active = false
+    }
+  }, [chatCostKey, chatCostSupported, usageUpdatedAt, usageMenuOpen])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: source changes reset the popover without remounting badges.
   useEffect(() => {
@@ -594,43 +641,45 @@ export function UsageIndicator({
               role="dialog"
               aria-label="Usage"
             >
-              <SegmentedControl
-                aria-label="Usage views"
-                className="message-box__usage-tabs"
-                options={[
-                  { value: 'limits', label: 'Limits' },
-                  {
-                    value: 'usage',
-                    label: 'Usage',
-                    disabled: !tokenUsageSupported,
-                    ariaLabel: tokenUsageSupported ? 'Usage' : 'Usage unavailable for OpenCode'
-                  },
-                  ...(statisticsSupported
-                    ? [
-                        {
-                          value: 'statistics' as const,
-                          label: statisticsLoading
-                            ? 'Statistics'
-                            : statisticsReported
+              {(tokenUsageSupported || statisticsSupported) && (
+                <SegmentedControl
+                  aria-label="Usage views"
+                  className="message-box__usage-tabs"
+                  options={[
+                    { value: 'limits', label: 'Limits' },
+                    {
+                      value: 'usage',
+                      label: 'Usage',
+                      disabled: !tokenUsageSupported,
+                      ariaLabel: tokenUsageSupported ? 'Usage' : 'Usage unavailable for OpenCode'
+                    },
+                    ...(statisticsSupported
+                      ? [
+                          {
+                            value: 'statistics' as const,
+                            label: statisticsLoading
                               ? 'Statistics'
-                              : 'No statistics',
-                          ariaLabel: statisticsLoading
-                            ? 'Statistics loading'
-                            : statisticsReported
-                              ? 'Statistics'
-                              : 'No statistics available',
-                          disabled: !statisticsReported,
-                          icon: statisticsLoading ? (
-                            <LoaderCircle className="app-loading-spinner message-box__usage-loading-icon" />
-                          ) : undefined
-                        }
-                      ]
-                    : [])
-                ]}
-                size="small"
-                value={visibleUsageView}
-                onChange={handleUsageViewChange}
-              />
+                              : statisticsReported
+                                ? 'Statistics'
+                                : 'No statistics',
+                            ariaLabel: statisticsLoading
+                              ? 'Statistics loading'
+                              : statisticsReported
+                                ? 'Statistics'
+                                : 'No statistics available',
+                            disabled: !statisticsReported,
+                            icon: statisticsLoading ? (
+                              <LoaderCircle className="app-loading-spinner message-box__usage-loading-icon" />
+                            ) : undefined
+                          }
+                        ]
+                      : [])
+                  ]}
+                  size="small"
+                  value={visibleUsageView}
+                  onChange={handleUsageViewChange}
+                />
+              )}
 
               {visibleUsageView === 'limits' ? (
                 <div className="message-box__usage-page" role="tabpanel">
@@ -678,11 +727,22 @@ export function UsageIndicator({
                         {accountUsageError ?? 'Limits unavailable.'}
                       </p>
                     )}
-                    {groupAccountBalances(balances, modelProviderId).map((group) => (
+                    {chatCostBalance && (
+                      <div className="message-box__usage-row">
+                        <span>This chat</span>
+                        <strong title="Estimated from each reply's recorded tokens and model price.">
+                          {formatBalanceAmount(chatCostBalance.amount, chatCostBalance.currency)}
+                        </strong>
+                      </div>
+                    )}
+                    {balanceGroups.map((group) => (
                       <div className="message-box__balances" key={group.providerId}>
-                        <span className="message-box__usage-section-title">
-                          {group.providerName}
-                        </span>
+                        {/* The provider is already named next to the badge; only tell groups apart. */}
+                        {balanceGroups.length > 1 && (
+                          <span className="message-box__balance-provider">
+                            {group.providerName}
+                          </span>
+                        )}
                         {group.balances.map((balance) => {
                           const usedPercent = getBalanceUsedPercent(balance)
                           const resetTime = formatResetTime(balance.resetsAt ?? null)
@@ -694,6 +754,14 @@ export function UsageIndicator({
                                   {describeBalance(balance)}
                                 </strong>
                               </div>
+                              {balance.estimatedAmount != null && balance.estimatedAmount > 0 && (
+                                <div className="message-box__usage-row message-box__usage-row--muted">
+                                  <span>Includes today (estimated)</span>
+                                  <strong>
+                                    {formatBalanceAmount(balance.estimatedAmount, balance.currency)}
+                                  </strong>
+                                </div>
+                              )}
                               {usedPercent != null && (
                                 <div className="message-box__usage-meter" aria-hidden="true">
                                   <span style={{ width: `${usedPercent}%` }} />
@@ -802,7 +870,8 @@ export function UsageIndicator({
                     )}
                     {accountUsage &&
                       accountUsage.rateLimits.length === 0 &&
-                      balances.length === 0 &&
+                      balanceGroups.length === 0 &&
+                      !chatCostBalance &&
                       accountUsageErrors.length === 0 && (
                         <p className="message-box__usage-status">Usage unavailable.</p>
                       )}

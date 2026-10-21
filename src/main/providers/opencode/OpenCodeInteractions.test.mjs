@@ -6,6 +6,7 @@ import ts from 'typescript'
 import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
 import { parseOpenCodeSessionEvent } from './OpenCodeEvents.ts'
 import { isOpenCodeChildState } from './OpenCodeSubagents.ts'
+import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './OpenCodeHistory.ts'
 
 const source = ts.createSourceFile(
   'adapter.ts',
@@ -34,11 +35,14 @@ const code = ts.transpileModule(
 
 const fixture = () => {
   const context = vm.createContext({
+    getContainerTargetKey: () => 'host',
     console,
     clearTimeout,
     parseOpenCodeSessionEvent,
     reconcileProviderRecords,
     requireData: (result) => result.data,
+    forEachOpenCodeHistoryMessage,
+    loadOpenCodeMessages,
     isRecord: (value) => !!value && typeof value === 'object' && !Array.isArray(value),
     isOneShotSession: () => false,
     isOpenCodeChildState
@@ -58,6 +62,7 @@ const fixture = () => {
   const adapter = Object.assign(new context.Harness(), {
     states: new Map([['chat', state]]),
     oneShotSessionIds: new Set(),
+    freeLimits: { observe() {} },
     refreshes: new WeakMap(),
     updateTimers: new Map(),
     chatUpdatedListeners: new Set([(detail) => updates.push(detail)]),
@@ -117,7 +122,7 @@ test('an approval arriving during a snapshot is published before the snapshot fi
       approvals: ['approval'],
       questions: []
     })
-    finishMessages({ data: [] })
+    finishMessages({ data: [], response: new Response() })
     await refresh
     assert.equal(
       state.pendingApprovals[0].id,
@@ -125,7 +130,7 @@ test('an approval arriving during a snapshot is published before the snapshot fi
       'a stale snapshot must not hide the request'
     )
   } finally {
-    finishMessages({ data: [] })
+    finishMessages({ data: [], response: new Response() })
     await refresh
   }
 })

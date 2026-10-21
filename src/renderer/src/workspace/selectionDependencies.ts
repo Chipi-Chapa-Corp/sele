@@ -72,6 +72,7 @@ export type WorkspaceSelectionDependencies = {
   newSessionProviderAvailable: boolean
   newSessionSourceAvailabilityReady: boolean
   newSessionCwd: string | null
+  noProject: boolean
   newSessionContainer: AppContainerTarget
   gitSourceAvailability: SourceAvailabilityState | null
   lastGitAvailable: boolean | null
@@ -159,7 +160,7 @@ export type WorkspaceSelectionDependencies = {
   setGitChangeLoadErrorDismissed: React.Dispatch<React.SetStateAction<boolean>>
   newChatOpen: boolean
   setDefaultCwd: React.Dispatch<React.SetStateAction<string | null>>
-  setNewSessionCwd: React.Dispatch<React.SetStateAction<string | null>>
+  initializeNewSessionCwd: (cwd: string | null) => void
   gitBranchRequestIdRef: React.RefObject<number>
   setGitBranches: React.Dispatch<React.SetStateAction<AppGitBranchesResult | null>>
   setGitBranchesScope: React.Dispatch<React.SetStateAction<GitBranchesScope | null>>

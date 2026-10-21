@@ -506,6 +506,8 @@ export type ProviderAccountBalance = {
   amount: number
   /** ISO 4217 currency code, e.g. `USD` or `CNY`. */
   currency: string
+  /** Part of `amount` estimated from token usage because the provider has not billed it yet. */
+  estimatedAmount?: number | null
   /** Spending cap for `spent` amounts, when the provider reports one. */
   limit?: number | null
   resetsAt?: number | null
@@ -612,6 +614,8 @@ export type ProviderUserInputResponse =
 
 export type ProviderChatMetadata = {
   id: string
+  /** User chose No Project, independent of the provider's runtime cwd. */
+  noProject?: boolean
   pinned: boolean
   sidebarOrder: number | null
   done: boolean
@@ -631,6 +635,8 @@ export type ProviderCwdNote = {
 export type ProviderChat = {
   imported?: { providerId: ProviderId; chatId: string }
   id: string
+  /** User chose No Project, independent of the provider's runtime cwd. */
+  noProject?: boolean
   providerId: ProviderId
   title: string
   preview: string
@@ -787,6 +793,8 @@ export type ProviderWorkingTool = {
   activity: ProviderToolActivity
   icon: ProviderToolIcon | null
   label: string
+  /** Short action or exact tool name for collapsed sequences. */
+  summaryLabel?: string
   command: string | null
   cwd: string | null
   stdout: string | null
@@ -814,6 +822,7 @@ export type ProviderWorkingToolGroup = {
   toolCount?: number
   toolsStartIndex?: number
   toolActivities?: ProviderToolActivity[]
+  otherToolLabels?: string[]
   dominantActivity?: ProviderToolActivity
 }
 
@@ -937,6 +946,8 @@ export type ProviderChatGoal = {
 export type ProviderChatDetail = {
   imported?: { providerId: ProviderId; chatId: string }
   id: string
+  /** User chose No Project, independent of the provider's runtime cwd. */
+  noProject?: boolean
   /** Monotonic per-chat snapshot revision used to reject out-of-order delivery. */
   revision: number
   createdAt: number
@@ -1068,6 +1079,8 @@ export type ProviderTurnOptions = {
   approvalsReviewer: ProviderApprovalsReviewer
   container?: AppContainerTarget | null
   cwd?: string
+  /** Start in a Sele-managed workspace instead of an attached project. */
+  noProject?: boolean
   files?: ProviderFileInput[]
   images?: ProviderImageInput[]
   model: ProviderModelId

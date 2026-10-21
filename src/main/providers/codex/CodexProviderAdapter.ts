@@ -6447,20 +6447,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
     nextItems: CodexThreadItem[]
   ): CodexThreadItem[] => {
     const localTurnStartMessage = previousItems.find(isLocalTurnStartUserMessage)
-    const serverUserMessages = nextItems.filter(isCompleteCodexUserMessage)
-    const shouldDropLocalTurnStartMessage = Boolean(
-      localTurnStartMessage &&
-        serverUserMessages.some(
-          (item) => getCodexUserMessageClientId(item) === localTurnStartMessage.clientId
+    // Partial updates can contain only steering messages. Wait for the original's own
+    // complete echo, then replace it in place so late echoes cannot reorder the transcript.
+    const serverTurnStartMessage = localTurnStartMessage
+      ? nextItems.find(
+          (item) =>
+            isCompleteCodexUserMessage(item) &&
+            getCodexUserMessageClientId(item) === localTurnStartMessage.clientId
         )
-    )
-    if (
-      localTurnStartMessage &&
-      serverUserMessages.length > 0 &&
-      !shouldDropLocalTurnStartMessage
-    ) {
-      throw new Error('Codex returned a user message for the wrong submitted-message ID')
-    }
+      : undefined
     const turnSteeringMessages = (this.steeringMessagesByThread.get(threadId) ?? []).filter(
       (message) => message.turnId === turnId && message.status !== 'sent'
     )
@@ -6492,9 +6487,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
       )
     }
 
-    return previousItems.filter((item) => {
-      if (isLocalTurnStartUserMessage(item)) return !shouldDropLocalTurnStartMessage
-      return true
+    return previousItems.flatMap((item) => {
+      if (!serverTurnStartMessage) return [item]
+      if (item === localTurnStartMessage) {
+        const previousEcho = previousItems.find(
+          (candidate) =>
+            candidate !== localTurnStartMessage && candidate.id === serverTurnStartMessage.id
+        )
+        return [
+          previousEcho
+            ? this.mergeItem(previousEcho, serverTurnStartMessage)
+            : serverTurnStartMessage
+        ]
+      }
+      // An empty item/started echo may already occupy a later slot. Fold it into the
+      // replacement above rather than letting it overwrite completed content or status.
+      return item.id === serverTurnStartMessage.id ? [] : [item]
     })
   }
 

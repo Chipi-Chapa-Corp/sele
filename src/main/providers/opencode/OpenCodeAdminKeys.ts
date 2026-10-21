@@ -18,7 +18,15 @@ export const openCodeAdminKeyProviders: Record<
     placeholder: 'sk-ant-admin…'
   },
   openai: { label: 'Admin key (usage only)', pattern: /^sk-admin-/, placeholder: 'sk-admin-…' },
-  openrouter: { label: 'Management key (usage only)', pattern: null, placeholder: 'sk-or-v1-…' }
+  openrouter: { label: 'Management key (usage only)', pattern: null, placeholder: 'sk-or-v1-…' },
+  aihubmix: { label: 'Management key (usage only)', pattern: null, placeholder: 'fd…' },
+  cortecs: { label: 'Management key (usage only)', pattern: null, placeholder: 'Management key' },
+  'merge-gateway': {
+    label: 'Management key (usage only)',
+    pattern: /^mgmt_/,
+    placeholder: 'mgmt_…'
+  },
+  zenmux: { label: 'Management key (usage only)', pattern: null, placeholder: 'Management key' }
 }
 
 export const openCodeAdminKeyMethodId = 'sele-admin'

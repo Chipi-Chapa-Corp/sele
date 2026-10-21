@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import type { AppContainerTarget } from '../../../shared/app'
 import type {
   ProviderAccountConfiguration,
@@ -14,6 +16,13 @@ import { getClaudeExecutable } from './ClaudeExecutable'
 import { parseClaudeVersion } from './ClaudeVersion'
 import { fetchClaudeRateLimits } from './ClaudeUsage'
 import { claudeAccountDisplayName } from '../AccountDisplayName'
+import { isClaudeAuthenticationError } from './ClaudeAuthentication'
+
+const usageFallbackCacheMs = 60_000
+/** Wait before asking again after a failed request, unless Claude says how long. */
+const usageFallbackRetryMs = 2 * 60_000
+/** Keep showing the last limits through short outages and rate limiting. */
+const usageFallbackStaleMs = 6 * 60 * 60_000
 
 type Login = {
   id: string
@@ -36,6 +45,13 @@ export const supportsClaudeAccounts = (version: string): boolean => {
   return true
 }
 
+type ClaudeUsageCacheEntry = {
+  at: number
+  limits: Awaited<ReturnType<typeof fetchClaudeRateLimits>> | null
+  /** Do not ask Claude again before this time (epoch ms). */
+  retryAt: number
+}
+
 export class ClaudeAccounts {
   private stores = new Map<string, Promise<ClaudeAccountStore>>()
   private versions = new Map<string, Promise<string>>()
@@ -47,6 +63,88 @@ export class ClaudeAccounts {
       request: ReturnType<typeof fetchClaudeRateLimits>
     }
   >()
+  /**
+   * Last limits and retry time per source and account, kept on disk: Anthropic rate-limits
+   * this endpoint, and a restart must neither blank the limits nor repeat refused requests.
+   */
+  private usageCacheFile: string | null = null
+  private usageCache: Promise<Map<string, ClaudeUsageCacheEntry>> | null = null
+  private usageCacheWrite: Promise<void> = Promise.resolve()
+
+  setUsageCacheFile = (path: string): void => {
+    this.usageCacheFile = path
+    this.usageCache = null
+  }
+
+  private loadUsageCache = (): Promise<Map<string, ClaudeUsageCacheEntry>> => {
+    this.usageCache ??= (async () => {
+      const entries = new Map<string, ClaudeUsageCacheEntry>()
+      if (!this.usageCacheFile) return entries
+      try {
+        const stored: unknown = JSON.parse(await readFile(this.usageCacheFile, 'utf8'))
+        if (stored && typeof stored === 'object' && !Array.isArray(stored))
+          for (const [key, value] of Object.entries(stored))
+            if (value && typeof value === 'object' && typeof value.at === 'number')
+              entries.set(key, value as ClaudeUsageCacheEntry)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT')
+          console.error('Unable to read the Claude usage cache.', error)
+      }
+      return entries
+    })()
+    return this.usageCache
+  }
+
+  private saveUsageCache = (
+    key: string,
+    update: (entry: ClaudeUsageCacheEntry | undefined) => ClaudeUsageCacheEntry
+  ): Promise<void> => {
+    const write = this.usageCacheWrite.then(async () => {
+      const entries = await this.loadUsageCache()
+      entries.set(key, update(entries.get(key)))
+      const file = this.usageCacheFile
+      if (!file) return
+      const temporary = join(dirname(file), `.claude-usage-${randomUUID()}.json`)
+      try {
+        await mkdir(dirname(file), { recursive: true, mode: 0o700 })
+        await writeFile(temporary, JSON.stringify(Object.fromEntries(entries)), {
+          mode: 0o600,
+          flag: 'wx'
+        })
+        await rename(temporary, file)
+      } catch (error) {
+        console.error('Unable to save the Claude usage cache.', error)
+      } finally {
+        await rm(temporary, { force: true })
+      }
+    })
+    this.usageCacheWrite = write.catch(() => undefined)
+    return write
+  }
+
+  private usageCacheKey = async (options: ProviderSourceOptions): Promise<string> => {
+    const accounts = (await (await this.store(options)).get()).accounts
+    const active = accounts.find((account) => account.active)?.id ?? 'default'
+    return `${getContainerTargetKey(options.container)}:${active}`
+  }
+
+  /** Records limits Claude returned directly, so later failures can still show them. */
+  rememberUsage = async (
+    options: ProviderSourceOptions,
+    limits: ClaudeUsageCacheEntry['limits']
+  ): Promise<void> => {
+    if (!limits) return
+    const key = await this.usageCacheKey(options)
+    await this.saveUsageCache(key, () => ({ at: Date.now(), limits, retryAt: 0 }))
+  }
+
+  /** The last limits for the active account, if recent enough to show. */
+  getLastUsage = async (
+    options: ProviderSourceOptions = {}
+  ): Promise<ClaudeUsageCacheEntry['limits'] | null> => {
+    const entry = (await this.loadUsageCache()).get(await this.usageCacheKey(options))
+    return entry?.limits && Date.now() - entry.at <= usageFallbackStaleMs ? entry.limits : null
+  }
 
   private store = (options: ProviderSourceOptions = {}): Promise<ClaudeAccountStore> => {
     const key = getContainerTargetKey(options.container)
@@ -156,6 +254,10 @@ export class ClaudeAccounts {
   getUsageFallback = async (options: ProviderSourceOptions = {}) => {
     const version = await this.ensureSupported(options)
     const token = await (await this.store(options)).getUsageAccessToken(process.env)
+    const cacheKey = await this.usageCacheKey(options)
+    const saved = (await this.loadUsageCache()).get(cacheKey)
+    const lastLimits = (): ClaudeUsageCacheEntry['limits'] | null =>
+      saved?.limits && Date.now() - saved.at <= usageFallbackStaleMs ? saved.limits : null
     // The SDK normally caches this endpoint for a minute. Keep the fallback equally
     // bounded, but key it by the actual credentials rather than shared profile data.
     const key = `${getContainerTargetKey(options.container)}:${createHash('sha256').update(token).digest('hex')}`
@@ -163,12 +265,43 @@ export class ClaudeAccounts {
       if (value.expiresAt <= Date.now()) this.usageFallbacks.delete(cachedKey)
     const cached = this.usageFallbacks.get(key)
     if (cached) return cached.request
-    const request = fetchClaudeRateLimits(token, version)
-    this.usageFallbacks.set(key, { request, expiresAt: Date.now() + 60_000 })
+    // Claude refused recently (possibly before a restart): wait instead of asking again.
+    if (saved?.retryAt && saved.retryAt > Date.now()) {
+      const limits = lastLimits()
+      if (limits) return limits
+      throw new Error('Claude usage is rate limited. Sele will check again shortly.')
+    }
+    const request = fetchClaudeRateLimits(token, version).then(
+      (limits) => {
+        void this.saveUsageCache(cacheKey, () => ({ at: Date.now(), limits, retryAt: 0 }))
+        return limits
+      },
+      (error: unknown) => {
+        if (isClaudeAuthenticationError(error)) throw error
+        // A failed refresh (usually HTTP 429) should not blank limits that were just shown,
+        // and repeating the request right away only extends the rate limit.
+        const retryAfter = (error as { retryAfterMs?: unknown } | null)?.retryAfterMs
+        const retryAfterMs = typeof retryAfter === 'number' ? retryAfter : usageFallbackRetryMs
+        const entry = this.usageFallbacks.get(key)
+        if (entry?.request === request) entry.expiresAt = Date.now() + retryAfterMs
+        void this.saveUsageCache(cacheKey, (current) => ({
+          at: current?.at ?? 0,
+          limits: current?.limits ?? null,
+          retryAt: Date.now() + retryAfterMs
+        }))
+        const limits = lastLimits()
+        if (!limits) throw error
+        console.warn('Showing the last Claude usage after a failed refresh.', error)
+        return limits
+      }
+    )
+    this.usageFallbacks.set(key, { request, expiresAt: Date.now() + usageFallbackCacheMs })
     try {
       return await request
     } catch (error) {
-      if (this.usageFallbacks.get(key)?.request === request) this.usageFallbacks.delete(key)
+      // Authentication errors must be retried at once after the user signs in again.
+      if (isClaudeAuthenticationError(error) && this.usageFallbacks.get(key)?.request === request)
+        this.usageFallbacks.delete(key)
       throw error
     }
   }

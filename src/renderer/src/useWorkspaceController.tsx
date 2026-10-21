@@ -1,4 +1,5 @@
 import { useChatTerminalActivity } from './useChatTerminalActivity'
+import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../shared/noProject'
 import { chatTerminalActivity } from './chatTerminalActivity'
 import { getVisibleSubagentRows, getWorkingSubagentIds } from './subagentUi'
 import { SubagentCompletionTimeline, type SubagentCompletion } from './subagentTimeline'
@@ -259,6 +260,7 @@ import {
   getFixedChangeSource,
   gitCurrentChatModelValue,
   newSessionProjectPlaceholderValue,
+  newSessionNoProjectValue,
   readChatGroupingPreference,
   readGitCommitMode,
   streamingChatUpdateIntervalMs,
@@ -548,11 +550,44 @@ export const useWorkspaceController = () => {
   const [accountUsageState, setAccountUsageState] = useState<UsageLoadState>('idle')
   const [accountUsageError, setAccountUsageError] = useState<string | null>(null)
   const [newChatOpen, setNewChatOpen] = useState(true)
-  const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null)
-  const settingsProjectCwd = normalizeAppProjectSettingsCwd(
-    selectedChat
-      ? (chatDetail?.projectCwd ?? selectedChat.projectCwd ?? chatDetail?.cwd ?? selectedChat.cwd)
+  const [newSessionProjectSelection, setNewSessionProjectSelection] = useState<string | null>(null)
+  const newSessionNoProject = newSessionProjectSelection === newSessionNoProjectValue
+  const newSessionCwd = newSessionNoProject ? null : newSessionProjectSelection
+  const selectedChatDetail = chatDetail?.id === selectedChat?.id ? chatDetail : null
+  const noProject = selectedChat
+    ? isNoProjectChat(selectedChatDetail) || isNoProjectChat(selectedChat)
+    : newSessionNoProject
+  const setNewSessionCwd = useCallback<React.Dispatch<React.SetStateAction<string | null>>>(
+    (value) => {
+      setNewSessionProjectSelection((previous) => {
+        const cwd =
+          typeof value === 'function'
+            ? value(previous === newSessionNoProjectValue ? null : previous)
+            : value
+        return cwd === null || isNoProjectCwd(cwd) ? newSessionNoProjectValue : cwd
+      })
+    },
+    []
+  )
+  const initializeNewSessionCwd = useCallback((cwd: string | null): void => {
+    setNewSessionProjectSelection((current) =>
+      current === null
+        ? cwd === null || isNoProjectCwd(cwd)
+          ? newSessionNoProjectValue
+          : cwd
+        : current
+    )
+  }, [])
+  const selectedProjectCwd = noProject
+    ? null
+    : selectedChat
+      ? (selectedChatDetail?.projectCwd ??
+        selectedChat.projectCwd ??
+        selectedChatDetail?.cwd ??
+        selectedChat.cwd)
       : newSessionCwd
+  const settingsProjectCwd = normalizeAppProjectSettingsCwd(
+    isNoProjectCwd(selectedProjectCwd) ? null : selectedProjectCwd
   )
   const settingsProjectOverrides = settingsProjectCwd
     ? projectSettingsByCwd[settingsProjectCwd]
@@ -687,7 +722,11 @@ export const useWorkspaceController = () => {
     Record<string, AppProjectIcon | null>
   >({})
   const changeSource = getFixedChangeSource()
-  const [changesPaneView, setChangesPaneView] = useState<ChangesPaneView>('git')
+  const [storedChangesPaneView, setChangesPaneView] = useState<ChangesPaneView>('git')
+  const changesPaneView =
+    noProject && (storedChangesPaneView === 'git' || storedChangesPaneView === 'files')
+      ? 'recents'
+      : storedChangesPaneView
   const [changesSidebarExpanded, setChangesSidebarExpanded] = useState(false)
   const { changesResizeHandleRef, handleStartChatResize, panelsRef, panelsStyle, resizeHandleRef } =
     useChatPaneLayout(changesSidebarExpanded)
@@ -2758,7 +2797,7 @@ export const useWorkspaceController = () => {
       }
       setNewChatOpen(true)
     },
-    [containerSuggestions, resetChatSearch, sshEnvironments]
+    [containerSuggestions, resetChatSearch, setNewSessionCwd, sshEnvironments]
   )
 
   const applyChatMetadata = useCallback((metadataList: ProviderChatMetadata[]): void => {
@@ -3173,6 +3212,7 @@ export const useWorkspaceController = () => {
     newSessionProviderAvailable,
     newSessionSourceAvailabilityReady,
     newSessionCwd,
+    noProject,
     newSessionContainer,
     gitSourceAvailability,
     lastGitAvailable,
@@ -3247,7 +3287,7 @@ export const useWorkspaceController = () => {
     setGitChangeLoadErrorDismissed,
     newChatOpen,
     setDefaultCwd,
-    setNewSessionCwd,
+    initializeNewSessionCwd,
     gitBranchRequestIdRef,
     setGitBranches,
     setGitBranchesScope,
@@ -3351,21 +3391,33 @@ export const useWorkspaceController = () => {
   }, [chatGroups])
   const importedChatGroup = chatGroups.find((group) => group.kind === 'imported') ?? null
   const pinnedChatGroup = chatGroups.find((group) => group.kind === 'pinned') ?? null
-  const activeChatGroups = useMemo(
-    () => chatGroups.filter((group) => group.kind === 'cwd'),
-    [chatGroups]
-  )
+  const activeChatGroups = useMemo(() => {
+    const general = chatGroups.find(
+      (group) => group.key === noProjectGroupKey && group.chats.length > 0
+    )
+    return [
+      ...(general ? [general] : []),
+      ...chatGroups.filter((group) => group.kind === 'cwd' && group.key !== noProjectGroupKey)
+    ]
+  }, [chatGroups])
+  const generalChatGroups = activeChatGroups.filter((group) => group.key === noProjectGroupKey)
+  const projectChatGroups = activeChatGroups.filter((group) => group.key !== noProjectGroupKey)
   const displayedActiveChatGroups =
     chatGroupingPreference === 'grouped' || activeChatGroups.length === 0
       ? activeChatGroups
       : [
-          {
-            key: activeGroupKey,
-            cwd: null,
-            label: 'Active',
-            chats: sortChatsForGroup(activeChatGroups.flatMap((group) => group.chats)),
-            kind: 'active' as const
-          }
+          ...generalChatGroups,
+          ...(projectChatGroups.length > 0
+            ? [
+                {
+                  key: activeGroupKey,
+                  cwd: null,
+                  label: 'Active',
+                  chats: sortChatsForGroup(projectChatGroups.flatMap((group) => group.chats)),
+                  kind: 'active' as const
+                }
+              ]
+            : [])
         ]
   const unfilteredDoneChatGroup = chatGroups.find((group) => group.kind === 'done') ?? null
   const doneChatGroup = useMemo(
@@ -3499,7 +3551,7 @@ export const useWorkspaceController = () => {
       project: AppProject | null = null
     ): void => {
       const normalizedCwd = cwd?.trim()
-      if (!normalizedCwd) return
+      if (!normalizedCwd || isNoProjectCwd(normalizedCwd)) return
 
       const existingProject = projectsByCwd.get(normalizedCwd)
       if (!existingProject || latestChatCreatedAt > existingProject.latestChatCreatedAt) {
@@ -3551,21 +3603,28 @@ export const useWorkspaceController = () => {
         icon: getProjectOptionIcon(project.cwd, project.project)
       }))
 
-    if (!newSessionCwd) {
-      return [
-        {
-          value: newSessionProjectPlaceholderValue,
-          label: 'Choose folder',
-          icon: getProjectOptionIcon(null),
-          disabled: true
-        },
-        ...options
-      ]
-    }
-
-    return options
-  }, [chats, newSessionCwd, projects, projectIconsByGroup])
-  const newSessionProjectValue = newSessionCwd ?? newSessionProjectPlaceholderValue
+    return [
+      {
+        value: newSessionNoProjectValue,
+        label: 'No Project',
+        icon: <MessageSquare aria-hidden="true" />
+      },
+      ...(!newSessionCwd && !newSessionNoProject
+        ? [
+            {
+              value: newSessionProjectPlaceholderValue,
+              label: 'Choose folder',
+              icon: getProjectOptionIcon(null),
+              disabled: true
+            }
+          ]
+        : []),
+      ...options
+    ]
+  }, [chats, newSessionCwd, newSessionNoProject, projects, projectIconsByGroup])
+  const newSessionProjectValue = newSessionNoProject
+    ? newSessionNoProjectValue
+    : (newSessionCwd ?? newSessionProjectPlaceholderValue)
   const handleDeleteSshEnvironment = useCallback(
     async (environment: AppSshEnvironment): Promise<void> => {
       if (deletingSshEnvironmentId) return
@@ -4604,6 +4663,16 @@ export const useWorkspaceController = () => {
     showNewChatView(projectCwd, projectContainer)
   }
 
+  const handleNewChatNoProject = (): void => {
+    markSelectedChatSeen(true)
+    selectedChatKeyRef.current = null
+    selectedChatUpdatedAtRef.current = null
+    subagentChatLoadRequestRef.current += 1
+    setSubagentChatView(null)
+    showNewChatView(null)
+    setNewSessionLocation('folder')
+  }
+
   const handleNewChatInCwd = (group: ChatListGroupData): void => {
     if (group.kind !== 'cwd') return
 
@@ -4898,6 +4967,7 @@ export const useWorkspaceController = () => {
     setSubagentChatView,
     selectedChat,
     newSessionCwd,
+    newSessionNoProject,
     sendInFlightProjectKeyRef,
     setSendInFlightProjectKey,
     chatAutoScrollEnabledRef,
@@ -6066,6 +6136,7 @@ export const useWorkspaceController = () => {
       filteredChats,
       handleCloseSearch,
       handleNewChat,
+      handleNewChatNoProject,
       handleProjectDrop,
       handleProjectStackDragOver,
       loadState,
@@ -6206,6 +6277,7 @@ export const useWorkspaceController = () => {
       newChatOpen,
       newSessionContainerValue,
       newSessionCwd,
+      newSessionNoProject,
       newSessionLocation,
       newSessionLocationOptions,
       newSessionProjectValue,
@@ -6254,6 +6326,7 @@ export const useWorkspaceController = () => {
       worktreeCreationState
     },
     changesHeader: {
+      noProject,
       activeSidebarLoadState,
       activeTreeFolderPaths,
       branchNames,

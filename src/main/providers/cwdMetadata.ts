@@ -5,6 +5,7 @@ import { isExpectedCommandAbsenceError } from '../../shared/expectedAbsence.ts'
 import { getStoredCwdMetadata, setStoredCwdMetadata } from '../database/cwd'
 import { getHostCommand } from '../hostProcess'
 import { isExpectedOptionalGitProbeFailure } from '../optionalProbe'
+import { isNoProjectCwd } from '../../shared/noProject'
 
 const cwdMetadataCache = new Map<string, Promise<ProviderChatCwdMetadata>>()
 
@@ -107,7 +108,8 @@ export const getCwdMetadata = (
   cwd: string | null | undefined
 ): Promise<ProviderChatCwdMetadata> => {
   const normalizedCwd = cwd?.trim()
-  if (!normalizedCwd) return Promise.resolve(getDefaultCwdMetadata(null))
+  if (!normalizedCwd || isNoProjectCwd(normalizedCwd))
+    return Promise.resolve(getDefaultCwdMetadata(null))
 
   const cachedMetadata = cwdMetadataCache.get(normalizedCwd)
   if (cachedMetadata) return cachedMetadata

@@ -1,4 +1,5 @@
 import type { AppProject, AppSelectedAttachment } from '../../../shared/app'
+import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../../shared/noProject'
 
 import type {
   ProviderChat,
@@ -188,7 +189,7 @@ export const getParentPath = (path: string): string => {
 }
 
 export const getFolderName = (path: string | null): string =>
-  path ? getLastPathPart(path) : 'Choose folder'
+  isNoProjectCwd(path) ? 'No Project' : path ? getLastPathPart(path) : 'Choose folder'
 
 export const getFolderDescription = (path: string): string => {
   const parentPath = getParentPath(path)
@@ -197,15 +198,23 @@ export const getFolderDescription = (path: string): string => {
 }
 
 export const getChatCwdLabel = (cwd: string | null): string =>
-  cwd?.trim() ? getLastPathPart(cwd.trim()) : 'Unknown cwd'
+  isNoProjectCwd(cwd) ? 'No Project' : cwd?.trim() ? getLastPathPart(cwd.trim()) : 'Unknown cwd'
 
 export const getChatCwdGroupKey = (cwd: string | null): string => {
+  if (isNoProjectCwd(cwd)) return noProjectGroupKey
   const normalizedCwd = cwd?.trim()
   return normalizedCwd ? `cwd:${normalizedCwd}` : unknownCwdGroupKey
 }
 
-export const getChatProjectCwd = (chat: Pick<ProviderChat, 'cwd' | 'projectCwd'>): string | null =>
-  chat.projectCwd?.trim() || chat.cwd?.trim() || null
+export const getChatProjectCwd = (
+  chat: Pick<ProviderChat, 'cwd' | 'projectCwd' | 'noProject'>
+): string | null =>
+  isNoProjectChat(chat) ? null : chat.projectCwd?.trim() || chat.cwd?.trim() || null
+
+export const getChatGroupKey = (
+  chat: Pick<ProviderChat, 'cwd' | 'projectCwd' | 'noProject'>
+): string =>
+  isNoProjectChat(chat) ? noProjectGroupKey : getChatCwdGroupKey(getChatProjectCwd(chat))
 
 export const getDefaultCollapsedGroupState = (groupKey: string): boolean =>
   groupKey === doneGroupKey
@@ -237,7 +246,7 @@ export const groupChatsForSidebar = (
       continue
     }
     const projectCwd = getChatProjectCwd(chat)
-    const key = getChatCwdGroupKey(projectCwd)
+    const key = getChatGroupKey(chat)
 
     if (chat.pinned) {
       pinnedChats.push(chat)
@@ -258,8 +267,8 @@ export const groupChatsForSidebar = (
 
     groupsByCwd.set(key, {
       key,
-      cwd: projectCwd,
-      label: getChatCwdLabel(projectCwd),
+      cwd: key === noProjectGroupKey ? null : projectCwd,
+      label: key === noProjectGroupKey ? 'Chats' : getChatCwdLabel(projectCwd),
       chats: [chat],
       kind: 'cwd'
     })
@@ -325,6 +334,7 @@ export const getChatFromDetail = (
   updatedAt: number
 ): ProviderChat => ({
   id: detail.id,
+  noProject: detail.noProject ?? existingChat?.noProject,
   imported: detail.imported ?? existingChat?.imported,
   providerId,
   title: detail.title,
@@ -580,6 +590,7 @@ export const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolea
   first.imported?.chatId === second.imported?.chatId &&
   first.title === second.title &&
   first.preview === second.preview &&
+  first.noProject === second.noProject &&
   first.cwd === second.cwd &&
   first.cwdKind === second.cwdKind &&
   first.projectCwd === second.projectCwd &&
@@ -608,6 +619,7 @@ export const getChatFromUpdateSummary = (
   const summaryChanged =
     !existingChat ||
     existingChat.title !== summary.title ||
+    existingChat.noProject !== summary.noProject ||
     existingChat.cwd !== summary.cwd ||
     existingChat.cwdKind !== summary.cwdKind ||
     existingChat.projectCwd !== summary.projectCwd ||
@@ -626,6 +638,7 @@ export const getChatFromUpdateSummary = (
 
   return {
     id: summary.id,
+    noProject: summary.noProject ?? existingChat?.noProject,
     imported: summary.imported ?? existingChat?.imported,
     providerId,
     title: summary.title,

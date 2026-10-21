@@ -14,6 +14,7 @@ import { getContainerTargetKey } from '../../containerSelection'
 import { providerLabels } from '../../providerSettings'
 import { RequestErrorBanner } from '../../components/RequestErrorBanner'
 import { OpenCodeConnectionError } from '../../components/OpenCodeConnectionError'
+import { newSessionNoProjectValue, newSessionProjectPlaceholderValue } from '../controllerTypes'
 
 type ConversationComposerProps = WorkspaceController['conversationComposer']
 
@@ -98,6 +99,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     newChatOpen,
     newSessionContainerValue,
     newSessionCwd,
+    newSessionNoProject,
     newSessionLocation,
     newSessionLocationOptions,
     newSessionProjectValue,
@@ -347,7 +349,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           <span>At</span>
           <Dropdown
             aria-label="Project"
-            title={newSessionCwd ?? 'Choose folder'}
+            title={newSessionNoProject ? 'No Project' : (newSessionCwd ?? 'Choose folder')}
             disabled={providerUpdateInProgress || sendState === 'sending'}
             emptyContent="No matching projects"
             menuActions={[
@@ -365,7 +367,15 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             searchPlaceholder="Search projects"
             size="small"
             value={newSessionProjectValue}
-            onChange={(cwd) => setNewSessionCwd(cwd)}
+            onChange={(value) => {
+              if (value === newSessionNoProjectValue) {
+                setNewSessionCwd(null)
+                setNewSessionLocation('folder')
+                return
+              }
+              if (value === newSessionProjectPlaceholderValue) return
+              setNewSessionCwd(value)
+            }}
           />
           <span>with</span>
           <Dropdown
@@ -386,11 +396,11 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           <span>in</span>
           <Dropdown
             aria-label="Session location"
-            disabled={providerUpdateInProgress || sendState === 'sending'}
+            disabled={providerUpdateInProgress || sendState === 'sending' || newSessionNoProject}
             options={newSessionLocationOptions}
             placement="top"
             size="small"
-            value={newSessionLocation}
+            value={newSessionNoProject ? 'folder' : newSessionLocation}
             onChange={setNewSessionLocation}
           />
           <span>{newSessionSshEnvironmentId ? 'over' : 'from'}</span>

@@ -46,6 +46,7 @@ const fixture = () => {
     oneShotSessionIds: new Set(),
     sessionContainers: new Map(),
     credentialHealth: { record() {} },
+    freeLimits: { observe() {} },
     completionCoordinator: { cancel() {} },
     reportMessageTokenUsage() {},
     closeBrowser() {},
@@ -117,6 +118,21 @@ test('a stopped turn stays stopped when its aborted message arrives after sessio
     timeline.slice(stoppedAt).filter((entry) => entry.active || !entry.stopped),
     []
   )
+})
+
+test('the user message summary written after session.idle does not restart the turn', () => {
+  const { state, send } = fixture()
+  send('session.status', { status: { type: 'busy' } })
+  send('message.updated', reply())
+  send('message.updated', reply({ time: { created: 1, completed: 2 } }))
+  send('session.status', { status: { type: 'idle' } })
+  send('session.idle')
+  assert.equal(state.active, false)
+  // OpenCode's SessionSummary rewrites the user message once the diff is computed.
+  send('message.updated', {
+    info: { id: 'user', sessionID: 'chat', role: 'user', time: { created: 0 }, summary: {} }
+  })
+  assert.equal(state.active, false)
 })
 
 test('a new reply in progress still resumes a failed turn', () => {

@@ -4,6 +4,7 @@ import {
   ChevronRight,
   ChevronUp,
   FolderKanban,
+  MessageSquare,
   PinOff,
   SquarePen
 } from 'lucide-react'
@@ -17,6 +18,7 @@ import {
   type ReactNode
 } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
+import { noProjectGroupKey } from '../../../shared/noProject'
 import { appMaxChatsRenderedDefault } from '../performanceSettings'
 import { formatProjectLabel } from '../projectPresentation'
 import { Button } from './Button'
@@ -168,6 +170,7 @@ export const ChatListGroup = memo(function ChatListGroup({
   selectedChatChildOpen = false
 }: ChatListGroupProps) {
   const projectLike = group.kind === 'cwd' || group.kind === 'imported'
+  const noProject = group.key === noProjectGroupKey
   const groupLabel =
     group.kind === 'cwd'
       ? group.projectName?.trim() || formatProjectLabel(group.label)
@@ -242,11 +245,21 @@ export const ChatListGroup = memo(function ChatListGroup({
               className="chat-list-group__project-icon-button"
               type="button"
               aria-label={`Project: ${groupLabel}`}
-              title={group.kind === 'imported' ? 'Imported chats' : 'Choose project image'}
-              disabled={group.kind === 'imported'}
+              title={
+                noProject
+                  ? 'Chats'
+                  : group.kind === 'imported'
+                    ? 'Imported chats'
+                    : 'Choose project image'
+              }
+              disabled={noProject || group.kind === 'imported'}
               onClick={() => onSelectProjectIcon?.(group)}
             >
-              {projectIcon ?? <FolderKanban aria-hidden="true" />}
+              {noProject ? (
+                <MessageSquare aria-hidden="true" />
+              ) : (
+                (projectIcon ?? <FolderKanban aria-hidden="true" />)
+              )}
             </button>
             {toggle}
           </span>

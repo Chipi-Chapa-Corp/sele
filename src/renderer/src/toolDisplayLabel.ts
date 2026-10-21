@@ -45,6 +45,7 @@ const activeLabelReplacements: Array<[RegExp, string]> = [
   [/^(?:Delete|Deleted)\b/, 'Deleting'],
   [/^Applied\b/, 'Applying'],
   [/^Updated\b/, 'Updating'],
+  [/^Fetched\b/, 'Fetching'],
   [/^Generated\b/, 'Generating'],
   [/^Waited\b/, 'Waiting'],
   [/^Opened\b/, 'Opening'],
@@ -74,6 +75,7 @@ const getActiveToolLabel = (label: string, activity: ProviderToolActivity): stri
     if (pattern.test(label)) return label.replace(pattern, replacement)
   }
 
+  if (activity === 'other' && label && label !== 'Tool use') return `Using ${label}`
   return activeActivityLabels[activity]
 }
 
@@ -97,10 +99,18 @@ export const getToolDisplayLabel = (
 /** A sequence heading describes every activity it contains, including completed children. */
 export const getToolSequenceDisplayLabel = (
   activities: ProviderToolActivity[],
-  active: boolean
+  active: boolean,
+  otherToolLabels: string[] = []
 ): string => {
   const labels = active ? activeActivityLabels : activityLabels
+  const namedLabels = [...new Set(otherToolLabels.filter(Boolean))].map((label) =>
+    getToolDisplayLabel(label, 'other', active)
+  )
   const label =
-    [...new Set(activities)].map((activity) => labels[activity]).join(', ') || labels.other
+    [...new Set(activities)]
+      .flatMap((activity) =>
+        activity === 'other' && namedLabels.length ? namedLabels : [labels[activity]]
+      )
+      .join(', ') || labels.other
   return label.charAt(0).toLocaleUpperCase() + label.slice(1)
 }

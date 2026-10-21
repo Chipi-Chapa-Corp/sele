@@ -8,6 +8,7 @@ import { normalizeTokenUsage, addTokenUsage, emptyTokenUsage } from '../../../sh
 import { ClaudeSessionDiscovery } from './ClaudeSessionDiscovery'
 import { getClaudeSessionTitle } from './ClaudeSessionTitle'
 import { ClaudeRemoteSessionStore as RemoteSessionStore } from './ClaudeRemoteSessionStore'
+import { isCurrentContainerTarget } from '../../currentContainer'
 import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
 import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { getBrowserAutomationService } from '../../browser/BrowserAutomation'
@@ -435,6 +436,29 @@ class ClaudeRemoteSessionStore extends RemoteSessionStore {
       )
     )
   }
+}
+
+/**
+ * A chat bound to the container Sele itself runs in shares this filesystem. Read its
+ * transcript directly, as Claude Code does, instead of spawning a shell per range read.
+ */
+const getRemoteClaudeContainer = async (
+  container: StoredClaudeContainer | null
+): Promise<StoredClaudeContainer | null> =>
+  container && !(await isCurrentContainerTarget(container)) ? container : null
+
+const getClaudeSessionStore = async (
+  container: StoredClaudeContainer | null
+): Promise<ClaudeRemoteSessionStore | undefined> => {
+  const remote = await getRemoteClaudeContainer(container)
+  return remote ? new ClaudeRemoteSessionStore(remote) : undefined
+}
+
+const getClaudeSessionStoreOption = async (
+  container: StoredClaudeContainer | null
+): Promise<{ sessionStore?: ClaudeRemoteSessionStore }> => {
+  const sessionStore = await getClaudeSessionStore(container)
+  return sessionStore ? { sessionStore } : {}
 }
 
 const getString = (value: unknown): string | null =>
@@ -901,6 +925,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         // Claude can report that subscription limits apply while silently returning
         // null after its usage request. Read the same account's endpoint in that case;
         // the SDK has already handled any credential refresh.
+        if (usage.rate_limits) await claudeAccounts.rememberUsage(options, usage.rate_limits)
         const limits =
           usage.rate_limits ??
           (usage.rate_limits_available ? await claudeAccounts.getUsageFallback(options) : null)
@@ -930,13 +955,17 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           }
         }
       }
+      // Keep the last known limits through temporary failures such as rate limiting.
+      const lastLimits = isClaudeAuthenticationError(error)
+        ? null
+        : await claudeAccounts.getLastUsage(options).catch(() => null)
       return {
         authenticationRequired: this.authenticationFailures.has(sourceKey),
         updatedAt: Date.now(),
         statisticsLoaded: false,
         summary: emptyUsageSummary,
         dailyUsageBuckets: null,
-        rateLimits: [],
+        rateLimits: mapClaudeRateLimits(lastLimits),
         rateLimitResetCredits: null,
         errors: [error instanceof Error ? error.message : 'Claude usage is unavailable.']
       }
@@ -1105,7 +1134,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderSubagent[]> => {
     const state = await this.ensureState(chatId, undefined, options.container)
-    const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
+    const sessionStore = await getClaudeSessionStore(state.container)
     const agentIds = await listSubagents(chatId, {
       ...(state.cwd ? { dir: state.cwd } : {}),
       ...(sessionStore ? { sessionStore } : {})
@@ -1164,7 +1193,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     window?: ProviderChatTurnWindow
   ): Promise<ProviderSubagentDetail> => {
     const state = await this.ensureState(chatId, undefined, options.container)
-    const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
+    const sessionStore = await getClaudeSessionStore(state.container)
     const listOptions = {
       ...(state.cwd ? { dir: state.cwd } : {}),
       ...(sessionStore ? { sessionStore } : {})
@@ -1239,7 +1268,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     try {
       await renameSession(chatId, title, {
         ...(state.cwd ? { dir: state.cwd } : {}),
-        ...(state.container ? { sessionStore: new ClaudeRemoteSessionStore(state.container) } : {})
+        ...(await getClaudeSessionStoreOption(state.container))
       })
       state.metadata = state.metadata
         ? { ...state.metadata, customTitle: title, summary: title }
@@ -2233,17 +2262,19 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     window: ProviderChatTurnCursorWindow
   ): Promise<ClaudeHistoryPage> =>
     this.historyPages.read(chatId, getContainerTargetKey(container), window, () =>
-      openClaudeHistorySource(
-        chatId,
-        container
-          ? async (script, args = []) =>
-              runHostCommand(
-                await getHostCommand('sh', ['-lc', script, 'sele-claude-history-page', ...args], {
-                  container,
-                  env: process.env
-                })
-              )
-          : undefined
+      getRemoteClaudeContainer(container).then((remote) =>
+        openClaudeHistorySource(
+          chatId,
+          remote
+            ? async (script, args = []) =>
+                runHostCommand(
+                  await getHostCommand('sh', ['-lc', script, 'sele-claude-history-page', ...args], {
+                    container: remote,
+                    env: process.env
+                  })
+                )
+            : undefined
+        )
       )
     )
 
@@ -2312,10 +2343,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private readCompleteHistory = async (
     state: ClaudeSessionState
   ): Promise<ClaudeTranscriptMessage[]> => {
-    const messages = await loadClaudeHistory(
-      state.id,
-      state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
-    )
+    const messages = await loadClaudeHistory(state.id, await getClaudeSessionStore(state.container))
     if (this.disposed || this.states.get(state.id) !== state)
       throw new Error('Claude session changed.')
     if (state.historyDirty) {
@@ -3533,7 +3561,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   private refreshSessionMetadata = async (state: ClaudeSessionState): Promise<void> => {
-    const sessionStore = state.container ? new ClaudeRemoteSessionStore(state.container) : undefined
+    const sessionStore = await getClaudeSessionStore(state.container)
     const metadata = await getSessionInfo(state.id, { sessionStore })
     if (!metadata || this.states.get(state.id) !== state) return
     if (this.applySessionMetadata(state, metadata)) this.queueUpdate(state, false)

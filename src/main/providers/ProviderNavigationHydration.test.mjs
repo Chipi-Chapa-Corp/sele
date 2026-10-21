@@ -4,6 +4,7 @@ import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { reconcileProviderRecords } from './ProviderConversationEngine.ts'
+import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './opencode/OpenCodeHistory.ts'
 
 const adapterHarness = (provider, name, methods, globals = {}) => {
   const source = ts.createSourceFile(
@@ -185,6 +186,8 @@ const openCodeHarness = (state, client) => {
     ],
     {
       requireData: (result) => result.data,
+      forEachOpenCodeHistoryMessage,
+      loadOpenCodeMessages,
       isOneShotSession: () => false,
       getContainerTargetKey: () => 'host',
       normalizeStoredContainer: (container) => container ?? null,
@@ -201,6 +204,7 @@ const openCodeHarness = (state, client) => {
     getClientEntry: async () => ({ client, container: null }),
     createChatDetailFromState: (current) => ({ count: current.messages.length }),
     reportMessageTokenUsage: () => {},
+    scheduleUpdate: () => {},
     rememberSession: (session) => {
       state.session = session
       return state
@@ -227,7 +231,7 @@ test('OpenCode navigation hydrates once, then detects external changes with sess
       },
       messages: async () => {
         reads++
-        return { data: messages }
+        return { data: messages, response: new Response() }
       },
       status: async () => ({ data: {} })
     },
@@ -290,7 +294,7 @@ test('OpenCode failed or reconnected hydration retries and does not reuse stale 
       messages: async () => {
         reads++
         if (fail) throw new Error('offline')
-        return { data: [{ info: { id: String(reads) }, parts: [] }] }
+        return { data: [{ info: { id: String(reads) }, parts: [] }], response: new Response() }
       },
       status: async () => ({ data: {} })
     },
@@ -327,12 +331,85 @@ test('OpenCode event during hydration leaves state dirty for a follow-up reconci
   state.active = true
   state.pendingApprovals = [{ id: 'new-approval' }]
   state.pendingQuestions = [{ id: 'new-question' }]
-  pending.resolve({ data: [{ info: { id: 'old' }, parts: [] }] })
+  pending.resolve({ data: [{ info: { id: 'old' }, parts: [] }], response: new Response() })
   await loading
   assert.equal(state.messagesDirty, true)
   assert.equal(state.active, true)
   assert.equal(state.pendingApprovals[0].id, 'new-approval')
   assert.equal(state.pendingQuestions[0].id, 'new-question')
+})
+
+test('OpenCode concurrent opening shares all history pages and preserves chronological order', async () => {
+  const state = openCodeState()
+  const messages = Array.from({ length: 75 }, (_, index) => ({
+    info: { id: String(index) },
+    parts: []
+  }))
+  let reads = 0
+  const client = {
+    session: {
+      get: async () => ({ data: state.session }),
+      messages: async ({ limit, before }) => {
+        reads++
+        const end = before ? Number(before) : messages.length
+        const start = Math.max(0, end - limit)
+        return {
+          data: messages.slice(start, end),
+          response: new Response(null, { headers: start ? { 'X-Next-Cursor': String(start) } : {} })
+        }
+      },
+      status: async () => ({ data: {} })
+    },
+    permission: { list: async () => ({ data: [] }) },
+    question: { list: async () => ({ data: [] }) }
+  }
+  const adapter = openCodeHarness(state, client)
+  const pages = await Promise.all(
+    Array.from({ length: 4 }, () => adapter.getChatWindow('chat', { startIndex: null, limit: 10 }))
+  )
+  assert.equal(reads, 3, 'concurrent opens must share the paginated hydration')
+  assert.ok(pages.every((page) => page.count === messages.length))
+  assert.deepEqual(
+    state.messages.map((message) => message.info.id),
+    messages.map((message) => message.info.id)
+  )
+  assert.equal(state.messagesHydrated, true)
+  assert.equal(state.messagesDirty, false)
+})
+
+test('OpenCode live controls arriving during usage processing survive the yielded refresh', async () => {
+  const state = openCodeState()
+  const messages = [
+    { info: { id: 'first' }, parts: [] },
+    { info: { id: 'second' }, parts: [] }
+  ]
+  const client = {
+    session: {
+      get: async () => ({ data: state.session }),
+      messages: async () => ({ data: messages, response: new Response() }),
+      status: async () => ({ data: {} })
+    },
+    permission: { list: async () => ({ data: [] }) },
+    question: { list: async () => ({ data: [] }) }
+  }
+  const adapter = openCodeHarness(state, client)
+  adapter.reportMessageTokenUsage = (_state, info) => {
+    if (info.id !== 'first') return
+    setImmediate(() => {
+      state.eventRevision++
+      state.active = true
+      state.pendingApprovals = [{ id: 'live-approval' }]
+      state.pendingQuestions = [{ id: 'live-question' }]
+    })
+    const started = performance.now()
+    while (performance.now() - started < 10) {}
+  }
+  await adapter.refreshState(state, client)
+  assert.equal(state.messagesHydrated, true)
+  assert.equal(state.messagesDirty, true)
+  assert.equal(state.active, true)
+  assert.equal(state.pendingApprovals[0].id, 'live-approval')
+  assert.equal(state.pendingQuestions[0].id, 'live-question')
 })
 
 test('OpenCode subagent polls and older pages reuse hydrated history', async () => {
@@ -344,6 +421,7 @@ test('OpenCode subagent polls and older pages reuse hydrated history', async () 
       messages: async () => {
         reads++
         return {
+          response: new Response(),
           data: Array.from({ length: 10_000 }, (_, index) => ({
             info: { id: String(index) },
             parts: []
@@ -379,7 +457,7 @@ test('OpenCode concurrent first reads share session discovery', async () => {
       get: async () => ({ data: state.session }),
       messages: async () => {
         reads++
-        return { data: [] }
+        return { data: [], response: new Response() }
       },
       status: async () => ({ data: {} })
     },

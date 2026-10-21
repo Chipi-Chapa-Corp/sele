@@ -75,6 +75,7 @@ export type LocalDatabase = {
     container_runtime_name: string | null
     container_runtime_tool: string | null
     container_tool: string | null
+    no_project: SqliteBooleanColumn
     pinned: SqliteBooleanColumn
     pinned_order: SqliteNullableNumberColumn
     done: SqliteBooleanColumn
@@ -189,6 +190,7 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('container_name', 'text')
     .addColumn('container_runtime_tool', 'text')
     .addColumn('container_runtime_name', 'text')
+    .addColumn('no_project', 'integer', (column) => column.notNull().defaultTo(0))
     .addColumn('pinned', 'integer', (column) => column.notNull().defaultTo(0))
     .addColumn('pinned_order', 'integer')
     .addColumn('done', 'integer', (column) => column.notNull().defaultTo(0))
@@ -293,6 +295,12 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   )
   await ensureColumn(db, 'cwd_metadata', 'worktree_base_branch_name', () =>
     db.schema.alterTable('cwd_metadata').addColumn('worktree_base_branch_name', 'text').execute()
+  )
+  await ensureColumn(db, 'chat', 'no_project', () =>
+    db.schema
+      .alterTable('chat')
+      .addColumn('no_project', 'integer', (column) => column.notNull().defaultTo(0))
+      .execute()
   )
   await ensureColumn(db, 'chat', 'done_at', () =>
     db.schema.alterTable('chat').addColumn('done_at', 'integer').execute()

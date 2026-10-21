@@ -158,3 +158,81 @@ test('renders OpenCode subagent delegation as a compact row without its prompt o
     ]
   )
 })
+
+test('presents OpenCode tools by their operation and preserves unknown tool names', () => {
+  const nativeTool = (tool, input, extra = {}) => ({
+    type: 'tool',
+    id: tool,
+    callID: `${tool}:call`,
+    tool,
+    state: {
+      status: 'completed',
+      input,
+      output: 'result',
+      title: 'Uninformative provider title',
+      metadata: {},
+      time: { start: 1100, end: 1200 },
+      ...extra
+    }
+  })
+  const items = renderOpenCodeChatItems(
+    [
+      {
+        info: { id: 'assistant', role: 'assistant', time: { created: 1100, completed: 1300 } },
+        parts: [
+          nativeTool('webfetch', { url: 'https://opencode.ai/docs' }),
+          nativeTool('todowrite', { todos: [] }),
+          nativeTool('question', { questions: [] }),
+          nativeTool('grep', { pattern: 'rate_limit', path: '/repo/src' }),
+          nativeTool('bash', { command: 'curl https://example.test/rm' }),
+          nativeTool('read', { filePath: '/repo/src/file.ts' }),
+          nativeTool(
+            'edit',
+            { filePath: '/repo/src/file.ts' },
+            { metadata: { diff: '@@ -1 +1 @@\n-old\n+new' } }
+          ),
+          nativeTool('write', { filePath: '/repo/src/new.ts' }),
+          nativeTool('skill', { name: 'review' }),
+          nativeTool('mcp__delete_customer', {
+            command: 'not a shell',
+            prompt: 'delete this',
+            path: '/customer'
+          })
+        ]
+      }
+    ],
+    { active: false, stopped: false }
+  )
+  const group = items.find((item) => item.type === 'working').items[0]
+  const byName = Object.fromEntries(group.tools.map((tool) => [tool.id, tool]))
+  assert.equal(byName.webfetch.label, 'Fetched https://opencode.ai/docs')
+  assert.equal(byName.webfetch.summaryLabel, 'Fetched web pages')
+  assert.equal(byName.todowrite.label, 'Updated plan')
+  assert.equal(byName.question.label, 'Asked a question')
+  assert.equal(byName.grep.label, 'Searched for rate_limit in src')
+  assert.equal(byName.grep.command, null, 'a search pattern is not a shell command')
+  assert.equal(byName.bash.activity, 'command', 'rm in a URL must not hide shell details')
+  assert.equal(byName.bash.command, 'curl https://example.test/rm')
+  assert.equal(byName.read.label, 'Read file.ts')
+  assert.equal(byName.edit.label, 'Edited file.ts')
+  assert.equal(byName.edit.diffs.length, 1)
+  assert.equal(byName.write.label, 'Created new.ts')
+  assert.equal(byName.skill.label, 'Used review skill')
+  assert.equal(byName.skill.activity, 'skill')
+  assert.equal(byName.mcp__delete_customer.activity, 'other')
+  assert.equal(byName.mcp__delete_customer.label, 'Used mcp__delete_customer')
+  assert.equal(byName.mcp__delete_customer.command, null)
+  assert.deepEqual(byName.mcp__delete_customer.rawInput, {
+    command: 'not a shell',
+    prompt: 'delete this',
+    path: '/customer'
+  })
+  assert.deepEqual(group.otherToolLabels, [
+    'Fetched web pages',
+    'Updated plan',
+    'Asked a question',
+    'Used mcp__delete_customer'
+  ])
+  const unloaded = unloadWorkingItemPayload(group)
+  assert.deepEqual(unloaded.otherToolLabels, group.otherToolLabels)
+})

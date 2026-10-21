@@ -299,6 +299,11 @@
   margin-top: 0.2rem;
 }
 
+.message-box__balance-provider {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .message-box__balance {
   display: flex;
   min-width: 0;

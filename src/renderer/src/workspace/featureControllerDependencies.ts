@@ -177,6 +177,7 @@ export type ChatMessagingControllerDependencies = {
   setSubagentChatView: React.Dispatch<React.SetStateAction<SubagentChatView | null>>
   selectedChat: ProviderChat | null
   newSessionCwd: string | null
+  newSessionNoProject: boolean
   sendInFlightProjectKeyRef: React.RefObject<string | null>
   setSendInFlightProjectKey: React.Dispatch<React.SetStateAction<string | null>>
   chatAutoScrollEnabledRef: React.RefObject<boolean>

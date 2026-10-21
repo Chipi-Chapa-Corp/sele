@@ -715,7 +715,7 @@ const Activity: React.FC<{
   const [manualOpen, setManualOpen] = useState<boolean | null>(null)
   const open = manualOpen ?? expanded
   const activity = tools[0]?.activity ?? 'other'
-  const detailKind = getToolDetailKind(activity)
+  const detailKind = getToolDetailKind(activity, tools)
 
   const detailLabel = getToolDisplayLabel(label || tools[0]?.toolId || 'Tool use', activity, active)
 
@@ -760,8 +760,12 @@ const Activity: React.FC<{
 const getToolsFromToolItem = (item: ProviderToolItem): ProviderWorkingTool[] =>
   item.type === 'toolGroup' ? item.tools : [item]
 
-const getToolDetailKind = (activity: ProviderToolActivity): 'diff' | 'command' | 'raw' => {
-  if (activity === 'edit') return 'diff'
+const getToolDetailKind = (
+  activity: ProviderToolActivity,
+  tools: ProviderWorkingTool[]
+): 'diff' | 'command' | 'raw' => {
+  if (activity === 'edit') return tools.some((tool) => tool.diffs.length) ? 'diff' : 'raw'
+  if (activity === 'search' && tools.every((tool) => !tool.command)) return 'raw'
   if (['command', 'search', 'git', 'npm', 'npx', 'script'].includes(activity)) return 'command'
   return 'raw'
 }
@@ -771,7 +775,7 @@ const hasToolValue = (value: unknown): boolean =>
 
 const hasToolDetails = (tool: ProviderWorkingTool, activity: ProviderToolActivity): boolean => {
   // Match the content renderer: hidden metadata must not create an empty disclosure.
-  switch (getToolDetailKind(activity)) {
+  switch (getToolDetailKind(activity, [tool])) {
     case 'diff':
       return tool.diffs.length > 0
     case 'command':
@@ -1668,7 +1672,12 @@ const ToolSequence: React.FC<{
   const sequenceActivities = sequenceItem?.toolActivities?.length
     ? sequenceItem.toolActivities
     : tools.map((tool) => tool.activity)
-  const baseLabel = getToolSequenceDisplayLabel(sequenceActivities, active)
+  const otherToolLabels = sequenceItem?.otherToolLabels?.length
+    ? sequenceItem.otherToolLabels
+    : tools
+        .filter((tool) => tool.activity === 'other')
+        .map((tool) => tool.summaryLabel ?? tool.label)
+  const baseLabel = getToolSequenceDisplayLabel(sequenceActivities, active, otherToolLabels)
   const totalCount = Math.max(sequenceItem?.toolCount ?? 0, tools.length)
   const startIndex = sequenceItem?.toolsStartIndex ?? Math.max(0, totalCount - tools.length)
   const endIndex = Math.min(totalCount, startIndex + tools.length)

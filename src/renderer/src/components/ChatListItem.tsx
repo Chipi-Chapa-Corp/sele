@@ -1,3 +1,4 @@
+import { isNoProjectChat, isNoProjectCwd } from '../../../shared/noProject'
 import {
   Check,
   Folder,
@@ -6,6 +7,7 @@ import {
   GitFork,
   GripVertical,
   LoaderCircle,
+  MessageSquare,
   Pencil,
   Pin,
   Ellipsis,
@@ -94,6 +96,7 @@ const monthMs = 30 * dayMs
 const yearMs = 365 * dayMs
 
 const getChatProjectName = (cwd: string | null): string => {
+  if (isNoProjectCwd(cwd)) return 'No Project'
   const normalizedCwd = getRenderableText(cwd, '').trim()
   return normalizedCwd ? getDefaultProjectName(normalizedCwd) : 'Unknown cwd'
 }
@@ -168,15 +171,17 @@ export const ChatListItem = memo(function ChatListItem({
     () => formatSemanticLexicalDateDifference(chat.updatedAt, { now }),
     [chat.updatedAt, now]
   )
-  const isGitWorktree = chat.cwdKind === 'gitWorktree'
+  const noProject = isNoProjectChat(chat)
+  const isGitWorktree = !noProject && chat.cwdKind === 'gitWorktree'
   const branchName = getRenderableText(
     isGitWorktree ? chat.worktreeBaseBranchName : chat.branchName,
     'Unknown branch'
   )
-  const projectName =
-    getRenderableText(projectDisplayName, '').trim() ||
-    getChatProjectName(chat.projectCwd ?? chat.cwd)
-  const LocationIcon = isGitWorktree ? GitFork : Folder
+  const projectName = noProject
+    ? 'No Project'
+    : getRenderableText(projectDisplayName, '').trim() ||
+      getChatProjectName(chat.projectCwd ?? chat.cwd)
+  const LocationIcon = noProject ? MessageSquare : isGitWorktree ? GitFork : Folder
   const workingStatus =
     chat.status && workingStatuses.has(chat.status)
       ? chat.status
@@ -580,7 +585,7 @@ export const ChatListItem = memo(function ChatListItem({
             {chat.done && (
               <div className="chat-list-item__detail-location">
                 <span className="chat-list-item__detail-project-icon" aria-hidden="true">
-                  {projectIcon ?? <FolderKanban />}
+                  {noProject ? <MessageSquare /> : (projectIcon ?? <FolderKanban />)}
                 </span>
                 <span className="chat-list-item__detail-project">{projectName}</span>
               </div>

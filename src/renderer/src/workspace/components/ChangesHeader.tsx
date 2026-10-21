@@ -21,6 +21,7 @@ type ChangesHeaderProps = WorkspaceController['changesHeader']
 
 export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
   const {
+    noProject,
     activeSidebarLoadState,
     activeTreeFolderPaths,
     branchNames,
@@ -70,20 +71,24 @@ export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
               title: 'Recents',
               icon: <History aria-hidden="true" />
             },
-            {
-              value: 'git',
-              label: null,
-              ariaLabel: 'Git',
-              title: 'Git',
-              icon: <GitBranch aria-hidden="true" />
-            },
-            {
-              value: 'files',
-              label: null,
-              ariaLabel: 'Files',
-              title: 'Files',
-              icon: <Files aria-hidden="true" />
-            },
+            ...(!noProject
+              ? [
+                  {
+                    value: 'git' as const,
+                    label: null,
+                    ariaLabel: 'Git',
+                    title: 'Git',
+                    icon: <GitBranch aria-hidden="true" />
+                  },
+                  {
+                    value: 'files' as const,
+                    label: null,
+                    ariaLabel: 'Files',
+                    title: 'Files',
+                    icon: <Files aria-hidden="true" />
+                  }
+                ]
+              : []),
             {
               value: 'terminal',
               label: null,

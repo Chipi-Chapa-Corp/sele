@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { RunClaudeSessionCommand } from './ClaudeRemoteSessionStore.ts'
 
 export const claudeHistoryBlockSize = 64 * 1024
+const remoteChunkBlocks = 16
 
 export type ClaudeHistorySource = {
   identity: string
@@ -44,16 +45,13 @@ exit 4
     const version = output.slice(newline + 1).trim()
     if (newline < 0 || !identity || !Number.isSafeInteger(Number(size)))
       throw new Error('Invalid Claude transcript metadata')
-    return {
-      identity: `${path}:${identity}`,
-      size: Number(size),
-      modified: Number(modified) * 1000,
-      version,
-      read: async (offset, length) => {
-        const block = Math.floor(offset / claudeHistoryBlockSize)
-        const skip = offset % claudeHistoryBlockSize
-        const count = Math.ceil((skip + length) / claudeHistoryBlockSize)
-        const data = await run(
+    // Every command pays for a process and shell start. Fetch aligned 1 MiB chunks and
+    // serve the reader's backward 64 KiB scan from them instead of one command per block.
+    const chunks = new Map<number, Promise<Buffer>>()
+    const fetchChunk = (chunk: number): Promise<Buffer> => {
+      let pending = chunks.get(chunk)
+      if (!pending) {
+        pending = run(
           `
 current=$(stat -c '%d:%i %s %Y %y' "$1" 2>/dev/null || stat -f '%d:%i %z %m %Sm' -t '%Y-%m-%dT%H:%M:%S' "$1") || exit 5
 [ "\${current%% *}" = "$4" ] || exit 5
@@ -63,11 +61,52 @@ size=\${rest%% *}
 if [ "$size" = "$6" ]; then [ "$current" = "$5" ] || exit 5; fi
 dd if="$1" bs=65536 skip="$2" count="$3" 2>/dev/null | base64
 `,
-          [path, String(block), String(count), identity, version, size]
+          [
+            path,
+            String(chunk * remoteChunkBlocks),
+            String(remoteChunkBlocks),
+            identity,
+            version,
+            size
+          ]
+        ).then((data) => Buffer.from(data, 'base64'))
+        pending.catch(() => chunks.delete(chunk))
+        chunks.set(chunk, pending)
+      }
+      return pending
+    }
+    const chunkSize = remoteChunkBlocks * claudeHistoryBlockSize
+    return {
+      identity: `${path}:${identity}`,
+      size: Number(size),
+      modified: Number(modified) * 1000,
+      version,
+      read: async (offset, length) => {
+        const end = Math.min(offset + length, Number(size))
+        if (end <= offset) return Buffer.alloc(0)
+        const first = Math.floor(offset / chunkSize)
+        const last = Math.floor((end - 1) / chunkSize)
+        const parts = await Promise.all(
+          Array.from({ length: last - first + 1 }, (_, index) => fetchChunk(first + index))
         )
-        return Buffer.from(data, 'base64').subarray(skip, skip + length)
+        const start = offset - first * chunkSize
+        return Buffer.concat(parts).subarray(start, start + (end - offset))
       },
-      close: async () => {}
+      close: async () => {},
+      // Cached chunks cannot reveal a concurrent rewrite; re-check the file itself once.
+      validate: async () => {
+        const current = (
+          await run(
+            `stat -c '%d:%i %s %Y %y' "$1" 2>/dev/null || stat -f '%d:%i %z %m %Sm' -t '%Y-%m-%dT%H:%M:%S' "$1"`,
+            [path]
+          )
+        ).trim()
+        const [currentIdentity, currentSize] = current.split(/\s+/)
+        return (
+          currentIdentity === identity &&
+          (Number(currentSize) > Number(size) || current === version)
+        )
+      }
     }
   }
   const root = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects')

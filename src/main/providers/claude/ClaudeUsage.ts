@@ -34,8 +34,15 @@ export const fetchClaudeRateLimits = async (
     throw new ClaudeAuthenticationError(
       'Claude authentication expired. Sign in again before sending messages.'
     )
-  if (!response.ok)
-    throw new Error(`Claude usage request failed (HTTP ${response.status}). Please try again.`)
+  if (!response.ok) {
+    const error = new Error(
+      `Claude usage request failed (HTTP ${response.status}). Please try again.`
+    ) as Error & { retryAfterMs?: number }
+    // Anthropic rate-limits this endpoint; callers wait this long before asking again.
+    const retryAfter = Number(response.headers?.get?.('retry-after'))
+    if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1_000
+    throw error
+  }
   let limits: SDKControlGetUsageResponse['rate_limits']
   try {
     limits = await response.json()

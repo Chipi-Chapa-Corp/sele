@@ -13,6 +13,8 @@ import {
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
 import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors.ts'
 import { getContainerTargetKey } from '../../containerTarget.ts'
+import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
+import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
 import {
   applyClaudeStreamEvent,
   retainClaudeStreamTiming,
@@ -38,6 +40,9 @@ const methods = new Set([
   'getDrainingMessage',
   'getPendingMessages',
   'handleQueryEvent',
+  'addTranscriptMessage',
+  'addUserMessage',
+  'createUserTranscriptMessage',
   'resumeBackgroundTurn',
   'getOutstandingBackgroundWork',
   'scheduleBackgroundIdleClose',
@@ -68,6 +73,8 @@ const context = vm.createContext({
   isClaudeAuthenticationFailure,
   isExpectedClaudeQueryShutdownError,
   getContainerTargetKey,
+  reconcileProviderRecords,
+  markTranscriptRecordsChanged,
   applyClaudeStreamEvent,
   retainClaudeStreamTiming,
   clearClaudeStreamMessages,
@@ -576,6 +583,54 @@ test('a preceding result keeps SDK-queued steering alive until its own result', 
   )
   assert.equal(state.active, false)
   assert.deepEqual(updates.at(-1), { active: false, completed: true })
+})
+
+test('Claude steering and original echoes reconcile by their own UUIDs without losing attachments', async () => {
+  const instance = new context.Harness()
+  instance.transcriptProjections = new WeakMap()
+  instance.reportLiveTokenUsage = () => false
+  instance.queueUpdate = () => {}
+  const state = { id: 'session', messages: [], messageIds: new Set() }
+  const original = {
+    id: 'original',
+    content: 'original prompt',
+    createdAt: 1,
+    attachments: [{ kind: 'image', path: '/original.png' }]
+  }
+  const steering = {
+    id: 'steer',
+    content: 'change direction',
+    createdAt: 2,
+    attachments: [{ kind: 'image', path: '/steer.png' }]
+  }
+  instance.addUserMessage(state, original)
+  instance.addUserMessage(state, steering, 'Steering with', 'steering')
+  for (const message of [steering, steering, original]) {
+    assert.equal(
+      await instance.handleQueryEvent(
+        state,
+        {},
+        {
+          type: 'user',
+          uuid: message.id,
+          session_id: state.id,
+          message: { role: 'user', content: message.content },
+          parent_tool_use_id: null
+        }
+      ),
+      false
+    )
+  }
+  assert.deepEqual(
+    Array.from(state.messages, (message) => message.uuid),
+    ['original', 'steer']
+  )
+  assert.equal(state.messages[0].message.content, original.content)
+  assert.equal(state.messages[0].attachments, original.attachments)
+  assert.equal(state.messages[1].message.content, steering.content)
+  assert.equal(state.messages[1].attachments, steering.attachments)
+  assert.equal(state.messages[1].kind, 'steering')
+  assert.equal(state.messages[1].label, 'Steering with')
 })
 
 test('background assistant output reopens the finished turn until Claude replies', async () => {

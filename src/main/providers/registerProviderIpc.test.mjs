@@ -41,6 +41,7 @@ const bundled = await build({
                getChat: (...args) => globalThis.harness.getChat(...args),
                getChats: (...args) => globalThis.harness.getChats(...args),
                continueChat: (...args) => globalThis.harness.continueChat(...args),
+               startChat: (...args) => globalThis.harness.startChat(...args),
                updateChatPermissions: (...args) => globalThis.harness.updateChatPermissions(...args),
                resolveUserInput: (...args) => globalThis.harness.resolveUserInput(...args),
                getSubagent: (...args) => globalThis.harness.getSubagent(...args)
@@ -374,6 +375,31 @@ test('other providers retain bounded opening reads', async () => {
   }
   const detail = await h.harness.handlers.get(channels.getChat)({}, 'claude', 'chat')
   assert.equal(detail.id, 'chat')
+})
+
+test('new chats preserve No Project across IPC for every provider', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.startChat = async (providerId, _message, options) => {
+    calls.push({ providerId, options })
+    return { id: 'general-chat', revision: 1, items: [] }
+  }
+  const handler = h.harness.handlers.get(channels.startChat)
+  const options = {
+    model: 'fixture',
+    approvalPolicy: 'on-request',
+    approvalsReviewer: 'user',
+    sandboxMode: 'workspace-write',
+    noProject: true
+  }
+  for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
+    await handler({}, providerId, 'Help me with my computer', options)
+    assert.equal(calls.at(-1).providerId, providerId)
+    assert.equal(calls.at(-1).options.noProject, true)
+    assert.equal(calls.at(-1).options.cwd, undefined)
+  }
+  await assert.rejects(handler({}, 'codex', 'Hello', { ...options, noProject: 'true' }))
+  assert.equal(calls.length, 4)
 })
 
 test('chat IPC forwards validated retry settings and rejects invalid values', async () => {

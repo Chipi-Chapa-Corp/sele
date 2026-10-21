@@ -65,7 +65,7 @@ if (!process.versions.electron) {
                     hasVisibleLimits={getVisibleUsageBadges(s.limits,contextUsage,s.settings.chat.displayUsage).length>0}
                     onSelect={async id=>{window.activeAccount=id}}
                     onCreate={()=>window.createAccount(s.provider)} onDelete={id=>window.deleteAccount(s.provider,id)}/>
-                  <UsageIndicator providerId={s.provider} accountUsage={{rateLimits:s.limits,balances:s.balances??[],errors:[],updatedAt:1}}
+                  <UsageIndicator providerId={s.provider} accountUsage={{rateLimits:s.limits,balances:s.balances??[],errors:[],updatedAt:1}} chatId={s.chatId}
                     modelProviderId={s.modelProviderId}
                     accountUsageState="ready" accountUsageError={null}
                     contextUsage={contextUsage}
@@ -108,7 +108,7 @@ if (!process.versions.electron) {
         window.deletedAccounts=[];window.createdAccounts=[];window.removedWork=false;
         window.deleteAccount=async(provider,id)=>{window.deletedAccounts.push({provider,id});window.removedWork=true;window.activeAccount='default'};
         window.createAccount=async(provider)=>{window.createdAccounts.push({provider});return {userCode:null,completion:new Promise(resolve=>{window.completeAccount=resolve}),authorize:async()=>{},cancel:async()=>{}}};
-        window.providerApi={openChatImport:async()=>{window.importCalls++;return null},getAccounts:async provider=>{
+        window.providerApi={getTokenUsage:async()=>({chat:{inputTokens:1000,cachedInputTokens:0,outputTokens:100,cost:{input:0.3,cachedInput:0,output:0.12,total:0.42}},week:{inputTokens:0,cachedInputTokens:0,outputTokens:0},month:{inputTokens:0,cachedInputTokens:0,outputTokens:0},updatedAt:1}),openChatImport:async()=>{window.importCalls++;return null},getAccounts:async provider=>{
           window.accountReads++;
           const response={available:provider==='codex'||provider==='claude',unavailableMessage:null,accounts:provider==='opencode' ? [{id:'default',displayName:'Default Account',active:true}] : [{id:'default',displayName:provider==='claude'?'Claude Name':'Jane Doe',active:window.activeAccount==='default'},{id:'work',displayName:provider==='claude'?'Claude at Work':'Jane at Work',active:window.activeAccount==='work'}].filter(account=>account.id!=='work'||!window.removedWork)};
           if(window.accountDelay) await new Promise(resolve=>setTimeout(resolve,window.accountDelay));
@@ -237,7 +237,7 @@ if (!process.versions.electron) {
       await waitFor('document.querySelector(".message-box__usage-popover")')
       assert.deepEqual(
         await run(
-          'Array.from(document.querySelectorAll(".message-box__balances .message-box__usage-section-title")).map(node=>node.textContent)'
+          'Array.from(document.querySelectorAll(".message-box__balances .message-box__balance-provider")).map(node=>node.textContent)'
         ),
         ['DeepSeek', 'OpenRouter']
       )
@@ -255,6 +255,34 @@ if (!process.versions.electron) {
       await run('window.renderFixture({modelProviderId:"anthropic"})')
       await waitFor('!document.querySelector("[data-usage-balance]:not([inert])")')
       await run('window.renderFixture({modelProviderId:undefined,balances:[]})')
+      // OpenCode: the chat cost opens a popover with no tabs and a "This chat" row.
+      await run(
+        'window.renderFixture({provider:"opencode",chatId:"chat-1",modelProviderId:"anthropic",balances:[{id:"anthropic:month",modelProviderId:"anthropic",modelProviderName:"Anthropic",label:"This month (organization)",kind:"spent",amount:9.7,currency:"USD"}]})'
+      )
+      await waitFor('document.querySelector("[data-usage-balance=spent]:not([inert])")')
+      assert.match(
+        await run('document.querySelector("[data-usage-balance=spent]").textContent'),
+        /0\.42/
+      )
+      await run('document.querySelector("[data-usage-balance=spent]").click()')
+      await waitFor('document.querySelector(".message-box__usage-popover")')
+      assert.equal(await run('Boolean(document.querySelector(".message-box__usage-tabs"))'), false)
+      assert.equal(
+        await run(
+          'document.querySelector(".message-box__usage-popover").textContent.includes("organization")'
+        ),
+        false
+      )
+      assert.match(
+        await run('document.querySelector(".message-box__usage-popover").textContent'),
+        /This chat\$0\.42/
+      )
+      await run(
+        'document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))'
+      )
+      await run(
+        'window.renderFixture({provider:"codex",chatId:undefined,modelProviderId:undefined,balances:[]})'
+      )
       await run('document.querySelector("[aria-label=\\"Codex account\\"]").click()')
       await waitFor(
         'Array.from(document.querySelectorAll("[role=option]")).some(node=>node.textContent.includes("Jane at Work"))'

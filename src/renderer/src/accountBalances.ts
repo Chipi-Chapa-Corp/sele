@@ -1,5 +1,12 @@
 import type { ProviderAccountBalance } from '../../shared/provider'
 
+/** Organization-wide spend is replaced by the selected chat's own cost in the usage popover. */
+const organizationSpendIds = new Set(['anthropic:month', 'openai:month'])
+
+export const getDisplayedBalances = (
+  balances: readonly ProviderAccountBalance[]
+): ProviderAccountBalance[] => balances.filter((balance) => !organizationSpendIds.has(balance.id))
+
 const balancePriority = (balance: ProviderAccountBalance): number =>
   balance.kind === 'remaining' ? 0 : balance.limit != null ? 1 : 2
 
@@ -11,6 +18,7 @@ export const selectBadgeBalance = (
   balances: readonly ProviderAccountBalance[],
   modelProviderId: string | undefined
 ): ProviderAccountBalance | null => {
+  balances = getDisplayedBalances(balances)
   const providerIds = new Set(balances.map((balance) => balance.modelProviderId))
   const providerId =
     modelProviderId && providerIds.has(modelProviderId)
@@ -38,7 +46,7 @@ export const groupAccountBalances = (
   modelProviderId: string | undefined
 ): AccountBalanceGroup[] => {
   const groups = new Map<string, AccountBalanceGroup>()
-  for (const balance of balances) {
+  for (const balance of getDisplayedBalances(balances)) {
     const group = groups.get(balance.modelProviderId) ?? {
       providerId: balance.modelProviderId,
       providerName: balance.modelProviderName,
@@ -59,17 +67,19 @@ export const formatBalanceAmount = (
   currency: string,
   { compact = false }: { compact?: boolean } = {}
 ): string => {
+  // Keep small nonzero spend visible instead of rounding it to 0.00.
+  const small = amount !== 0 && Math.abs(amount) < 0.01
   const options: Intl.NumberFormatOptions = {
     style: 'currency',
     currency,
-    maximumFractionDigits: 2,
+    maximumFractionDigits: small ? Math.min(6, Math.ceil(-Math.log10(Math.abs(amount))) + 1) : 2,
     ...(compact && Math.abs(amount) >= 1_000 ? { notation: 'compact' as const } : {})
   }
   try {
     return new Intl.NumberFormat(undefined, options).format(amount)
   } catch {
     // Unknown currency codes fall back to a plain number with the code.
-    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(amount)} ${currency}`
+    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: options.maximumFractionDigits }).format(amount)} ${currency}`
   }
 }
 
