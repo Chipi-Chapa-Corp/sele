@@ -1494,8 +1494,14 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.pendingMessageEdits.assert(chatId, messageId)
     const pending = this.takeQueuedMessage(state, messageId)
     if (!pending) throw new Error('Pending message was not found.')
-    await this.abortState(state)
-    await this.sendPrompt(state, pending.content, pending.options, () => true)
+    try {
+      await this.abortState(state)
+      await this.sendPrompt(state, pending.content, pending.options, () => true)
+    } catch (error) {
+      state.queuedMessages.unshift({ ...pending, kind: 'steering' })
+      this.scheduleUpdate(chatId)
+      console.error('[caught:OpenCodeProviderAdapter:interruptPendingMessage]', error)
+    }
     return this.createChatDetail(state, true)
   }
 
@@ -1839,11 +1845,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       return
     }
 
-    if (
-      type === 'message.updated' ||
-      type === 'message.part.updated' ||
-      type === 'session.status'
-    ) {
+    if (type === 'message.updated' || type === 'session.status') {
       const status = isRecord(properties.status) ? properties.status : null
       // OpenCode publishes a failed or stopped reply's final message.updated after session.error
       // and session.idle. That record ends the turn; treating it as activity flashed the
