@@ -1,15 +1,11 @@
 import {
-  type ForwardRefExoticComponent,
-  type HTMLAttributes,
-  type RefAttributes,
-  useEffect,
-  useRef
-} from 'react'
-import {
   Check,
   Download,
   GitBranch,
+  GitCommitHorizontal,
   History,
+  type LucideIcon,
+  MessageSquareMore,
   Minus,
   RefreshCw,
   Sparkles,
@@ -17,29 +13,10 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import {
-  DownloadIcon as AnimatedDownloadIcon,
-  GitBranchIcon as AnimatedGitBranchIcon,
-  GitCommitHorizontalIcon as AnimatedGitCommitHorizontalIcon,
-  MessageSquareMoreIcon as AnimatedMessageSquareMoreIcon,
-  UploadIcon as AnimatedUploadIcon
-} from 'lucide-animated'
 import type { AppGitCommitAction } from '../../../shared/app'
 import type { ProviderId } from '../../../shared/provider'
 import type { ChatCommitMarkerStatus } from '../chatCommitMarker'
 import { Button } from './Button'
-
-type AnimatedIconHandle = {
-  startAnimation: () => void
-  stopAnimation: () => void
-}
-
-type AnimatedIconComponent = ForwardRefExoticComponent<
-  HTMLAttributes<HTMLDivElement> & {
-    size?: number
-    animateOnHover?: boolean
-  } & RefAttributes<AnimatedIconHandle>
->
 
 export type ChatCommitMarker = {
   id: string
@@ -53,49 +30,31 @@ export type ChatCommitMarker = {
   finishedAt: number | null
 }
 
-const refreshIconReplayMs = 1_050
-
 export const GitRefreshIcon: React.FC = () => (
   <RefreshCw className="changes-sidebar__refresh-icon" aria-hidden="true" />
 )
 
+// A CSS animation rather than a per-frame script: busy states often coincide with
+// main-thread work, which would otherwise stall the indicator.
 export const AnimatedStatusIcon: React.FC<{
-  Icon: AnimatedIconComponent
+  Icon: LucideIcon
   active: boolean
   className?: string
   size?: number
-}> = ({ Icon, active, className, size = 20 }) => {
-  const iconRef = useRef<AnimatedIconHandle | null>(null)
-
-  useEffect(() => {
-    const icon = iconRef.current
-
-    if (!active) {
-      icon?.stopAnimation()
-      return undefined
-    }
-
-    icon?.startAnimation()
-    const interval = window.setInterval(() => icon?.startAnimation(), refreshIconReplayMs)
-
-    return () => {
-      window.clearInterval(interval)
-      icon?.stopAnimation()
-    }
-  }, [active])
-
-  return (
-    <Icon
-      ref={iconRef}
-      className={['app-animated-icon', className ?? 'app-animated-icon--control']
-        .filter(Boolean)
-        .join(' ')}
-      size={size}
-      animateOnHover={false}
-      aria-hidden="true"
-    />
-  )
-}
+}> = ({ Icon, active, className, size = 20 }) => (
+  <div
+    className={[
+      'app-animated-icon',
+      className ?? 'app-animated-icon--control',
+      active ? 'app-busy-icon' : null
+    ]
+      .filter(Boolean)
+      .join(' ')}
+    aria-hidden="true"
+  >
+    <Icon size={size} />
+  </div>
+)
 
 const getChatCommitMarkerLabel = (marker: ChatCommitMarker): string => {
   if (marker.status === 'pending') {
@@ -130,7 +89,7 @@ export const ChatCommitMarkerItem: React.FC<{
     <>
       {marker.status === 'pending' ? (
         <AnimatedStatusIcon
-          Icon={AnimatedGitCommitHorizontalIcon}
+          Icon={GitCommitHorizontal}
           active
           className="chat-detail__commit-marker-icon"
         />
@@ -193,7 +152,7 @@ export const ChangesSidebarGitState: React.FC<{ active: boolean; label: string }
   <div className="changes-sidebar__git-state" role="status">
     {active ? (
       <AnimatedStatusIcon
-        Icon={AnimatedGitBranchIcon}
+        Icon={GitBranch}
         active
         className="changes-sidebar__git-state-icon"
         size={72}
@@ -242,7 +201,7 @@ export const ChangesSidebarGitPerformanceWarning: React.FC<{
 export const ChatSidebarLoadingState: React.FC<{ label: string }> = ({ label }) => (
   <div className="chat-sidebar__loading-state" role="status">
     <AnimatedStatusIcon
-      Icon={AnimatedMessageSquareMoreIcon}
+      Icon={MessageSquareMore}
       active
       className="chat-sidebar__loading-icon"
       size={72}
@@ -265,7 +224,7 @@ export const GitSyncCountsLabel: React.FC<{
         <span className="changes-sidebar__sync-label-segment">
           {active ? (
             <AnimatedStatusIcon
-              Icon={AnimatedDownloadIcon}
+              Icon={Download}
               active={active}
               className="changes-sidebar__sync-label-icon"
             />
@@ -281,7 +240,7 @@ export const GitSyncCountsLabel: React.FC<{
         <span className="changes-sidebar__sync-label-segment">
           {active ? (
             <AnimatedStatusIcon
-              Icon={AnimatedUploadIcon}
+              Icon={Upload}
               active={active}
               className="changes-sidebar__sync-label-icon"
             />

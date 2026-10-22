@@ -89,6 +89,13 @@ import {
 } from '../providerResources'
 import { getClaudeExecutable } from './ClaudeExecutable'
 import { loadClaudeHistory } from './ClaudeHistory'
+import { getClaudeLinkedChatSummary } from './ClaudeLinkedChatSummary'
+import {
+  raceLinkedChatCancellation,
+  requireLinkedChatSummary,
+  throwIfLinkedChatCancelled,
+  watchLinkedChatForkTurn
+} from '../linkedChatContext'
 import { ClaudeHistoryPages, type ClaudeHistoryPage } from './ClaudeHistoryPages'
 import { openClaudeHistorySource } from './ClaudeHistorySource'
 import { isClaudeAuthenticationFailure, isClaudeAuthenticationError } from './ClaudeAuthentication'
@@ -930,9 +937,17 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         // null after its usage request. Read the same account's endpoint in that case;
         // the SDK has already handled any credential refresh.
         if (usage.rate_limits) await claudeAccounts.rememberUsage(options, usage.rate_limits)
+        // Missing credentials and an isolated config without the subscription
+        // profile can both look like an API-key session to the usage API.
+        const subscriptionLogin =
+          !usage.rate_limits && !usage.rate_limits_available
+            ? (await claudeAccounts.getAuthenticationMethod(options)) === 'claude.ai'
+            : false
         const limits =
           usage.rate_limits ??
-          (usage.rate_limits_available ? await claudeAccounts.getUsageFallback(options) : null)
+          (usage.rate_limits_available || subscriptionLogin
+            ? await claudeAccounts.getUsageFallback(options)
+            : null)
         return {
           updatedAt: Date.now(),
           statisticsLoaded: false,
@@ -1764,6 +1779,49 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     }
     await this.sendMessageRespectingQueue(state, '/compact')
     return this.createChatDetail(state)
+  }
+
+  summarizeChatInFork = async (
+    chatId: string,
+    { signal }: { summaryPrompt: string; signal: AbortSignal },
+    onForkCreated: (chatId: string) => Promise<void>
+  ): Promise<string> => {
+    throwIfLinkedChatCancelled(signal)
+    const source = await this.ensureState(chatId)
+    const watcher = watchLinkedChatForkTurn(this.onChatUpdated, signal)
+    let forkId: string | null = null
+    try {
+      // Native compaction runs in the fork; the source transcript is untouched.
+      const initial = await raceLinkedChatCancellation(
+        signal,
+        this.continueChatInFork(chatId, '/compact', source.options, async (id) => {
+          forkId = id
+          watcher.track(id)
+          await onForkCreated(id)
+          throwIfLinkedChatCancelled(signal)
+        })
+      )
+      await watcher.finished(initial)
+      const fork = this.states.get(initial.id)
+      const messages = await raceLinkedChatCancellation(
+        signal,
+        loadClaudeHistory(
+          initial.id,
+          await getClaudeSessionStore(fork?.container ?? source.container)
+        )
+      )
+      return requireLinkedChatSummary(getClaudeLinkedChatSummary(messages))
+    } catch (error) {
+      const startedForkId = forkId
+      if (signal.aborted && startedForkId) {
+        void this.stopChat(startedForkId).catch((stopError: unknown) => {
+          console.error('[caught:ClaudeProviderAdapter:summarizeChatInFork:stop]', stopError)
+        })
+      }
+      throw error
+    } finally {
+      watcher.dispose()
+    }
   }
 
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {

@@ -1,4 +1,4 @@
-// Full App + real persisted SQLite previews, with deferred fixture provider replies.
+// Full App + durable conversation views, with deferred fixture provider replies.
 // Run through isolated-gui. No real profile or provider processes.
 const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
@@ -18,6 +18,8 @@ if (!process.versions.electron) {
           contents: `
           export {getDatabase,disposeDatabase} from './src/main/database/sqlite'
           export {SqliteChatHistoryCache} from './src/main/database/chatHistoryCache'
+          export {SqliteConversationViews} from './src/main/database/conversationViews'
+          export {createConversationView} from './src/shared/conversationView'
           export {PersistentChatHistory} from './src/main/providers/PersistentChatHistory'
           export {prepareChatDetailForRenderer} from './src/main/providers/chatDetailLazy'
         `
@@ -41,7 +43,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'preload.cjs'),
-        `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('fixtureNative',{cached:(provider,id,options)=>ipcRenderer.invoke('fixture:cached',provider,id,options)})`
+        `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('fixtureNative',{list:()=>ipcRenderer.invoke('fixture:list'),cached:()=>{throw new Error('Known opening must never read a disk preview after selection')}})`
       )
       await require('esbuild').build({
         stdin: {
@@ -50,13 +52,21 @@ if (!process.versions.electron) {
           contents: `
           import React from 'react'
           import {createRoot} from 'react-dom/client'
+          import {flushSync} from 'react-dom'
           import './src/renderer/src/assets/main.css'
           const noop=()=>{};
-          const chats=['first','second'].map(id=>({id,providerId:'codex',createdAt:1,updatedAt:2,
+          const chats=['first','second','unknown','empty'].map(id=>({id,providerId:'codex',createdAt:1,updatedAt:999,
             title:'Cached '+id,preview:'Saved answer',cwd:'/fixture',cwdKind:'directory',projectCwd:null,
             branchName:null,worktreeBaseBranchName:null,container:null,status:null,pinned:false,sidebarOrder:null,
             done:false,seenUpdatedAt:2,purpose:null,lastTurnOutcome:null,pendingApproval:null}));
-          window.pending={};window.sends=0;
+          window.pending={};window.sends=0;window.discovery=0;
+          window.openChat=id=>{const start=performance.now();flushSync(()=>document.querySelector('[data-chat-id="'+id+'"] .chat-list-item__main').click());
+            return {ms:performance.now()-start,text:document.getElementById('chat-search-content')?.textContent,loader:Boolean(document.querySelector('[aria-label="Loading messages"]'))};};
+          window.openChatBeforePaint=id=>new Promise(resolve=>{const start=performance.now();
+            document.querySelector('[data-chat-id="'+id+'"] .chat-list-item__main').click();
+            requestAnimationFrame(()=>resolve({ms:performance.now()-start,
+              text:document.getElementById('chat-search-content')?.textContent,
+              loader:Boolean(document.querySelector('[aria-label="Loading messages"]'))}));});
           window.setDraft=()=>{const textarea=document.querySelector('.chat-panel__composer textarea');
             Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(textarea,'Draft while refreshing');
             textarea.dispatchEvent(new Event('input',{bubbles:true}));};
@@ -68,7 +78,8 @@ if (!process.versions.electron) {
           const usage={updatedAt:2,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,rateLimits:[],rateLimitResetCredits:null,errors:[]};
           const defaults={
             getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
-            getChats:()=>({chats,nextCursor:null}),
+            getKnownChats:async()=>({chats:chats.filter(chat=>chat.id!=='unknown'),nextCursor:null,conversationViews:await window.fixtureNative.list()}),
+            getChats:()=>new Promise(resolve=>{window.discovery++;window.finishDiscovery=()=>resolve({chats,nextCursor:null,conversationViews:[]})}),
             continueChat:()=>{window.sends++;throw new Error('Unexpected send from cached preview')},
             getCachedChat:(...args)=>window.fixtureNative.cached(...args),
             getChat:(_provider,id)=>new Promise((resolve,reject)=>{window.pending[id]={resolve,reject}}),
@@ -83,7 +94,7 @@ if (!process.versions.electron) {
           };
           const api=new Proxy({}, {get:(_target,name)=>name.startsWith('on')?()=>noop:(...args)=>Promise.resolve(defaults[name]?.(...args)??null)});
           Object.assign(window,{appApi:api,providerApi:api,terminalApi:api,browserApi:api});
-          const stored=new Map([['sele:app-settings:v1',JSON.stringify({appearance:{position:'hidden'}})]]);
+          const stored=new Map([['sele:app-settings:v1',JSON.stringify({appearance:{position:'hidden'},chat:{recentChatCacheLimit:0}})]]);
           window.preferencesApi={getItem:key=>({ok:true,value:stored.get(key)??null}),
             setItem:(key,value)=>{stored.set(key,value);return {ok:true,value:null}},removeItem:key=>{stored.delete(key);return {ok:true,value:null}}};
           window.addEventListener('error',event=>console.error(event.error?.stack??event.message));
@@ -142,7 +153,7 @@ if (!process.versions.electron) {
     let code = 0
     const backend = require(path.join(directory, 'backend.cjs'))
     try {
-      const headers = ['first', 'second'].map((id) => ({
+      const headers = ['first', 'second', 'empty'].map((id) => ({
         providerId: 'codex',
         id,
         createdAt: 1,
@@ -164,37 +175,46 @@ if (!process.versions.electron) {
         )
         cache.observe(headers)
       }
-      let cache = new backend.PersistentChatHistory(
+      let identity = new backend.PersistentChatHistory(
         new backend.SqliteChatHistoryCache(backend.getDatabase)
       )
-      admit(cache)
-      for (const chat of headers)
-        await cache.save(
-          cache.begin('codex', chat.id),
-          backend.prepareChatDetailForRenderer({
-            ...chat,
-            revision: 1000,
-            turnCount: 1,
-            itemsStartTurnIndex: 0,
-            items: [
-              { type: 'message', id: chat.id + ':user', role: 'user', content: 'Question' },
-              {
-                type: 'message',
-                id: chat.id + ':answer',
-                role: 'assistant',
-                content: 'Saved answer ' + chat.id
-              }
-            ]
-          })
+      admit(identity)
+      let views = new backend.SqliteConversationViews(backend.getDatabase)
+      for (const chat of headers) {
+        const detail = backend.prepareChatDetailForRenderer({
+          ...chat,
+          revision: 1000,
+          capabilities: { editMessages: true, activeMessages: true },
+          turnCount: chat.id === 'empty' ? 0 : 1,
+          itemsStartTurnIndex: 0,
+          items:
+            chat.id === 'empty'
+              ? []
+              : [
+                  { type: 'message', id: chat.id + ':user', role: 'user', content: 'Question' },
+                  {
+                    type: 'message',
+                    id: chat.id + ':answer',
+                    role: 'assistant',
+                    content: 'Saved answer ' + chat.id
+                  }
+                ]
+        })
+        await views.write(
+          identity.viewScope('codex', chat.id),
+          backend.createConversationView(detail)
         )
+      }
       await backend.disposeDatabase()
-      cache = new backend.PersistentChatHistory(
+      identity = new backend.PersistentChatHistory(
         new backend.SqliteChatHistoryCache(backend.getDatabase)
       )
-      admit(cache)
-      ipcMain.handle('fixture:cached', (_event, provider, id, options) =>
-        cache.preview(provider, id, options?.container)
-      )
+      admit(identity)
+      views = new backend.SqliteConversationViews(backend.getDatabase)
+      ipcMain.handle('fixture:list', async () => {
+        const scopes = headers.map((chat) => identity.viewScope('codex', chat.id))
+        return [...(await views.read(scopes)).values()]
+      })
       const win = new BrowserWindow({
         show: true,
         width: 1400,
@@ -215,16 +235,31 @@ if (!process.versions.electron) {
           `new Promise((resolve,reject)=>{const deadline=performance.now()+8000;function check(){if(${condition})return resolve();if(performance.now()>deadline)return reject(new Error('Timed out: '+${JSON.stringify(condition)}));requestAnimationFrame(check)}check()})`
         )
       await ready(`document.querySelector('[data-chat-id="first"] .chat-list-item__main')`)
-      await run(
-        `window.openedAt=performance.now();document.querySelector('[data-chat-id="first"] .chat-list-item__main').click()`
+      assert.equal(
+        await run('discovery'),
+        1,
+        'local rows become selectable with native discovery still pending'
       )
+      assert.equal(
+        await run('Object.keys(pending).length'),
+        0,
+        'publishing known views never opens a writable provider chat'
+      )
+      const firstOpen = await run(`openChat('first')`)
+      assert.match(
+        firstOpen.text,
+        /Saved answer first/,
+        'messages commit in the selection task with provider replies withheld'
+      )
+      assert.equal(firstOpen.loader, false, 'no intermediate loading view')
       await ready(
         `document.getElementById('chat-search-content')?.textContent.includes('Saved answer first')`
       )
-      const previewMs = await run('performance.now()-openedAt')
+      const previewMs = firstOpen.ms
       assert.equal(
-        await run(`document.querySelector('.chat-detail__history-preview').textContent`),
-        'Refreshing messages…'
+        await run(`document.querySelector('.chat-detail__history-preview')`),
+        null,
+        'known views do not display a refreshing loader'
       )
       await run('setDraft()')
       await ready(
@@ -262,7 +297,13 @@ if (!process.versions.electron) {
         `!document.querySelector('.chat-panel__composer [aria-label="Send message"]').disabled`
       )
       assert.equal(await run(`document.querySelector('.chat-detail__history-preview')`), null)
-      await run(`document.querySelector('[data-chat-id="second"] .chat-list-item__main').click()`)
+      const secondOpen = await run(`openChatBeforePaint('second')`)
+      assert.match(
+        secondOpen.text,
+        /Saved answer second/,
+        'normal clicks display prepared messages before the next paint'
+      )
+      assert.equal(secondOpen.loader, false)
       await ready(
         `document.getElementById('chat-search-content')?.textContent.includes('Saved answer second')`
       )
@@ -291,14 +332,35 @@ if (!process.versions.electron) {
       await ready(
         `!document.querySelector('.chat-panel__composer [aria-label="Send message"]').disabled`
       )
+      const emptyOpen = await run(`openChat('empty')`)
+      assert.equal(emptyOpen.loader, false, 'a known empty conversation is ready, not loading')
+      await run(`finishDiscovery()`)
+      await ready(`document.querySelector('[data-chat-id="unknown"] .chat-list-item__main')`)
+      const unknownOpen = await run(`openChatBeforePaint('unknown')`)
+      assert.equal(unknownOpen.loader, false, 'the loader is delayed past fast openings')
+      await ready(`document.querySelector('[aria-label="Loading messages"]')`)
+      await run(`pending.unknown.resolve(fresh('unknown'))`)
+      await ready(
+        `document.getElementById('chat-search-content')?.textContent.includes('Fresh authoritative unknown')`
+      )
+      await run(`openChat('first')`)
+      const processedOpen = await run(`openChatBeforePaint('unknown')`)
+      assert.equal(
+        processedOpen.loader,
+        false,
+        'processing establishes the view even with the recent-chat cache disabled'
+      )
+      assert.match(processedOpen.text, /Fresh authoritative unknown/)
       assert.deepEqual(
         errors.filter((error) => !error.includes('Fixture provider offline')),
         []
       )
       console.log(
-        'PASS SQLite opening: actual disk preview ' +
+        'PASS durable known-chat opening: selection commit ' +
           previewMs.toFixed(1) +
-          ' ms, provider remained pending; fresh revision reset, read-only failure and retry passed'
+          ' ms, normal second click visible before next paint (' +
+          secondOpen.ms.toFixed(1) +
+          ' ms); providers remained pending; refresh, read-only failure and retry passed'
       )
     } catch (error) {
       console.error(error)

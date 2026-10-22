@@ -550,7 +550,27 @@ export type ProviderUsageOptions = ProviderSourceOptions & {
 
 export type ProviderChatStatus = 'active' | 'error' | 'waitingOnApproval' | 'waitingOnUserInput'
 export type ProviderChatTurnOutcome = 'failed' | 'stopped'
-export type ProviderChatPurpose = 'commit'
+/** Hidden chats created by Sele for one internal operation; never listed in the sidebar. */
+export type ProviderChatPurpose = 'commit' | 'linkedChat'
+
+export const providerChatPurposes = [
+  'commit',
+  'linkedChat'
+] as const satisfies readonly ProviderChatPurpose[]
+
+export const isProviderChatPurpose = (value: unknown): value is ProviderChatPurpose =>
+  providerChatPurposes.includes(value as ProviderChatPurpose)
+
+export type ProviderLinkedChatContextOptions = {
+  /** Renderer-chosen ID, used to cancel this preparation. */
+  operationId: string
+  /** Sent to providers whose native compaction leaves no readable summary. */
+  summaryPrompt: string
+}
+
+export type ProviderLinkedChatContext = {
+  summary: string
+}
 export type ProviderChatCwdKind = 'directory' | 'gitWorktree'
 export type ProviderChatCwdMetadata = {
   kind: ProviderChatCwdKind
@@ -673,6 +693,8 @@ export type ProviderChatListOptions = ProviderSourceOptions & {
 export type ProviderChatPage = {
   chats: ProviderChat[]
   nextCursor: string | null
+  /** Durable opening views, installed before these sidebar rows become selectable. */
+  conversationViews?: ProviderChatDetail[]
 }
 
 export type ProviderCapabilities = {
@@ -950,6 +972,9 @@ export type ProviderChatDetail = {
   updatedAt?: number
   /** Persisted display-only history awaiting a fresh provider snapshot. */
   historyPreview?: boolean
+  /** Sele has processed this conversation and owns a durable opening view. */
+  conversationView?: boolean
+  conversationViewSourceRevision?: number
   imported?: { providerId: ProviderId; chatId: string }
   id: string
   /** User chose No Project, independent of the provider's runtime cwd. */
@@ -1016,6 +1041,7 @@ export type ProviderChatUpdatedEvent = {
   detail: ProviderChatDetail
   summary: ProviderChatUpdateSummary
   turnCompleted: boolean
+  conversationKnown?: boolean
 }
 
 /**
@@ -1056,6 +1082,7 @@ export type ProviderWorkingToolPage = {
 
 export type ProviderWindowChatUpdatedEvent = Omit<ProviderChatUpdatedEvent, 'detail'> & {
   detail: ProviderChatDetailUpdate | null
+  conversationView?: ProviderChatDetail
   sequence: number
 }
 
@@ -1380,6 +1407,16 @@ export type ProviderApi = {
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
   compactChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
+  /**
+   * Summarize a chat in a hidden fork so another chat can link to its context.
+   * Resolves null when the preparation was cancelled.
+   */
+  prepareLinkedChatContext: (
+    providerId: ProviderId,
+    chatId: string,
+    options: ProviderLinkedChatContextOptions
+  ) => Promise<ProviderLinkedChatContext | null>
+  cancelLinkedChatContext: (operationId: string) => Promise<void>
   stopChat: (providerId: ProviderId, chatId: string) => Promise<ProviderChatDetail>
   markChatDone: (
     providerId: ProviderId,
@@ -1410,6 +1447,11 @@ export type ProviderApi = {
 }
 
 export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
+  /** Local read model; never waits for native discovery or transcript hydration. */
+  getKnownChats: (
+    providerId: ProviderId,
+    options?: ProviderChatListOptions
+  ) => Promise<ProviderChatPage>
   getCachedChat: (
     providerId: ProviderId,
     chatId: string,
@@ -1526,6 +1568,7 @@ export const providerIpcChannels = {
   getChats: 'provider:get-chats',
   getChat: 'provider:get-chat',
   getCachedChat: 'provider:get-cached-chat',
+  getKnownChats: 'provider:get-known-chats',
   getSubagents: 'provider:get-subagents',
   getSubagent: 'provider:get-subagent',
   cancelSubagent: 'provider:cancel-subagent',
@@ -1556,6 +1599,8 @@ export const providerIpcChannels = {
   resolveApproval: 'provider:resolve-approval',
   resolveUserInput: 'provider:resolve-user-input',
   compactChat: 'provider:compact-chat',
+  prepareLinkedChatContext: 'provider:prepare-linked-chat-context',
+  cancelLinkedChatContext: 'provider:cancel-linked-chat-context',
   stopChat: 'provider:stop-chat',
   markChatDone: 'provider:mark-chat-done',
   markChatsDone: 'provider:mark-chats-done',

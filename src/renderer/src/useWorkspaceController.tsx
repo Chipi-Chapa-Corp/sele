@@ -1,6 +1,9 @@
 import { useChatTerminalActivity } from './useChatTerminalActivity'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../shared/noProject'
 import { chatTerminalActivity } from './chatTerminalActivity'
+import { conversationViews } from './conversationViews'
+import { asChatPreview, chatPreviewSourceKey } from '../../shared/chatPreview'
+import type { LinkedChatReference } from './linkedChats'
 import { getVisibleSubagentRows, getWorkingSubagentIds } from './subagentUi'
 import { SubagentCompletionTimeline, type SubagentCompletion } from './subagentTimeline'
 import { SubagentCompletionBubble } from './components/SubagentCompletionBubble'
@@ -48,7 +51,6 @@ import type {
   AppCreateSshEnvironmentOptions,
   AppProject,
   AppSshEnvironment,
-  AppFileTreeResult,
   AppGitBranchesResult,
   AppGitChangesResult,
   AppProjectIcon,
@@ -180,6 +182,7 @@ import {
   type ChatTurnWindow
 } from './chatTurnWindow'
 import { type PatchFilterScope } from './changeTree'
+import type { FileTreeIndex } from './fileTreeIndex'
 import {
   alignChatContentToBottom,
   clamp,
@@ -775,7 +778,7 @@ export const useWorkspaceController = () => {
     useState<ScopedGitOperationError<PatchFilterScope> | null>(null)
   const [cachedPatchChangedFiles, setCachedPatchChangedFiles] =
     useState<CachedPatchChangedFiles | null>(null)
-  const [fileTree, setFileTree] = useState<AppFileTreeResult | null>(null)
+  const [fileTree, setFileTree] = useState<FileTreeIndex | null>(null)
   const [fileTreeScope, setFileTreeScope] = useState<FileTreeScope | null>(null)
   const [fileTreeLoadState, setFileTreeLoadState] = useState<LoadState>('ready')
   const [fileTreeLoadError, setFileTreeLoadError] = useState<string | null>(null)
@@ -786,9 +789,6 @@ export const useWorkspaceController = () => {
   >({})
   const [collapsedFileTreeFolders, setCollapsedFileTreeFolders] = useState<Record<string, boolean>>(
     {}
-  )
-  const [lastOpenedFileTreeFolderPath, setLastOpenedFileTreeFolderPath] = useState<string | null>(
-    null
   )
   const [commitInput, setCommitInput] = useState('')
   const [gitCommitMode, setGitCommitMode] = useState<GitCommitMode>(readGitCommitMode)
@@ -929,7 +929,6 @@ export const useWorkspaceController = () => {
   const sandboxModeManuallySelectedRef = useRef(Boolean(storedMessageBoxSelection.sandboxMode))
   const approvalModeBeforeFullAccessRef = useRef<ProviderApprovalMode | null>(null)
   const collapsedFileTreeFoldersByCwdRef = useRef(new Map<string, Record<string, boolean>>())
-  const lastOpenedFileTreeFolderByCwdRef = useRef(new Map<string, string>())
   const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
 
   const flushDeferredProviderResourceRefreshes = useCallback(async (): Promise<void> => {
@@ -1180,6 +1179,13 @@ export const useWorkspaceController = () => {
 
     trimRecentChatCache(recentChatCacheRef.current, limit)
   }, [effectiveAppSettings.chat.recentChatCacheLimit])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the account revision invalidates both caches
+  useLayoutEffect(() => {
+    // Account changes invalidate pending admissions as well as readable snapshots.
+    recentChatCacheRef.current.clear()
+    conversationViews.clear()
+  }, [providerAccountRevision])
 
   useEffect(() => {
     scopedCommitActivitiesRef.current = scopedCommitActivities
@@ -2029,6 +2035,25 @@ export const useWorkspaceController = () => {
 
       newSessionAvailableProviderIds.forEach((providerId) => {
         const loadProviderChats = async (): Promise<void> => {
+          let knownCursor: string | null = null
+          do {
+            const known = await providerApi.getKnownChats?.(providerId, {
+              container,
+              cursor: knownCursor,
+              limit: chatListFetchPageSize
+            })
+            if (!active) return
+            if (!known) break
+            conversationViews.install(providerId, known.conversationViews ?? [])
+            if (known.chats.length) {
+              loadedProviderCount += 1
+              const initial = initialChatKeysByProvider.get(providerId)
+              known.chats.forEach((chat) => initial?.add(getChatKey(chat)))
+              setChats((current) => mergeChats(current, known.chats))
+              setLoadState('ready')
+            }
+            knownCursor = known.nextCursor
+          } while (knownCursor)
           let cursor: string | null = null
           let firstPage = true
           const loadedProviderChatKeys = new Set<string>()
@@ -2041,6 +2066,8 @@ export const useWorkspaceController = () => {
               limit: chatListFetchPageSize
             })
             if (!active) return
+
+            conversationViews.install(providerId, page.conversationViews ?? [])
 
             if (firstPage) loadedProviderCount += 1
             page.chats.forEach((chat) => loadedProviderChatKeys.add(getChatKey(chat)))
@@ -2145,6 +2172,20 @@ export const useWorkspaceController = () => {
               .map(getChatKey)
           )
           const loadedChatKeys = new Set<string>()
+          let knownCursor: string | null = null
+          do {
+            const known = await providerApi.getKnownChats?.(providerId, {
+              container,
+              cursor: knownCursor,
+              limit: chatListFetchPageSize
+            })
+            if (!active) return
+            if (!known) break
+            conversationViews.install(providerId, known.conversationViews ?? [])
+            known.chats.forEach((chat) => initialChatKeys.add(getChatKey(chat)))
+            setChats((current) => mergeChats(current, known.chats))
+            knownCursor = known.nextCursor
+          } while (knownCursor)
           const seenCursors = new Set<string>()
           let cursor: string | null = null
 
@@ -2156,6 +2197,7 @@ export const useWorkspaceController = () => {
             })
             if (!active) return
 
+            conversationViews.install(providerId, page.conversationViews ?? [])
             page.chats.forEach((chat) => loadedChatKeys.add(getChatKey(chat)))
             setChats((currentChats) => mergeChats(currentChats, page.chats))
 
@@ -2623,10 +2665,11 @@ export const useWorkspaceController = () => {
       force = false
     ): void => {
       const cache = recentChatCacheRef.current
+      if (!detail.historyPreview) conversationViews.install(providerId, [detail])
       const limit = recentChatCacheLimitRef.current
       const cacheKey = getProviderChatKey(providerId, detail.id)
 
-      if (limit === 0 || detail.done || detail.purpose === 'commit') {
+      if (limit === 0 || detail.done || detail.purpose) {
         cache.delete(cacheKey)
         return
       }
@@ -2643,21 +2686,23 @@ export const useWorkspaceController = () => {
   )
 
   const getRecentCachedChatDetail = useCallback((chat: ProviderChat): ProviderChatDetail | null => {
-    if (recentChatCacheLimitRef.current === 0 || chat.done) return null
+    if (recentChatCacheLimitRef.current === 0) return conversationViews.get(chat)
 
     const cache = recentChatCacheRef.current
     const cacheKey = getChatKey(chat)
     const entry = cache.get(cacheKey)
-    if (!entry) return null
+    if (!entry) return conversationViews.get(chat)
+    if (chatPreviewSourceKey(entry.detail.container) !== chatPreviewSourceKey(chat.container))
+      return conversationViews.get(chat)
 
     if (
+      entry.detail.historyPreview ||
       entry.detail.done ||
-      entry.detail.purpose === 'commit' ||
+      entry.detail.purpose ||
       entry.updatedAt < chat.updatedAt ||
       entry.detail.status !== chat.status
     ) {
-      cache.delete(cacheKey)
-      return null
+      return conversationViews.get(chat) ?? asChatPreview(entry.detail)
     }
 
     cache.delete(cacheKey)
@@ -2698,7 +2743,7 @@ export const useWorkspaceController = () => {
       }
       cacheRecentChatDetail(providerId, appliedDetail, updatedAt, options.select)
 
-      const hiddenCommit = appliedDetail.purpose === 'commit'
+      const hiddenCommit = Boolean(appliedDetail.purpose)
       if (hiddenCommit) {
         setChats((currentChats) =>
           currentChats.filter(
@@ -2752,8 +2797,15 @@ export const useWorkspaceController = () => {
       ) {
         return
       }
-      removeRecentChatCacheEntry(providerId, summary.id)
-      const hiddenCommit = summary.purpose === 'commit'
+      const cacheKey = getProviderChatKey(providerId, summary.id)
+      const cached = recentChatCacheRef.current.get(cacheKey)
+      if (cached) {
+        recentChatCacheRef.current.set(cacheKey, {
+          ...cached,
+          detail: asChatPreview(cached.detail)
+        })
+      }
+      const hiddenCommit = Boolean(summary.purpose)
       if (hiddenCommit) {
         setChats((currentChats) =>
           currentChats.filter((chat) => chat.providerId !== providerId || chat.id !== summary.id)
@@ -2787,7 +2839,7 @@ export const useWorkspaceController = () => {
         return mergeChats(currentChats, [nextChat])
       })
     },
-    [removeRecentChatCacheEntry]
+    []
   )
 
   const showNewChatView = useCallback(
@@ -2961,6 +3013,8 @@ export const useWorkspaceController = () => {
   useEffect(
     () =>
       providerApi.onChatUpdated((event) => {
+        if (event.conversationView)
+          conversationViews.install(event.providerId, [event.conversationView], true)
         const updatedChatKey = getChatKey({ providerId: event.providerId, id: event.chatId })
         if (event.detail?.subagents)
           updateSubagentWorkingChat(updatedChatKey, event.detail.subagents)
@@ -3038,7 +3092,17 @@ export const useWorkspaceController = () => {
         } else {
           applyChatSummary(event.providerId, event.summary, event.turnCompleted)
           if (viewingUpdatedChat) {
-            const retainedDetail = chatDetailRef.current
+            const retainedDetail =
+              chatDetailRef.current ??
+              conversationViews.get({
+                ...event.summary,
+                providerId: event.providerId
+              })
+            if (retainedDetail && !chatDetailRef.current) {
+              chatDetailRef.current = retainedDetail
+              setChatDetail(retainedDetail)
+              setChatLoadState('ready')
+            }
             if (retainedDetail?.id === event.chatId) {
               // Keep the selected chat interactive while recovering a missed or unmergeable
               // detail update. Clearing it would disable and blur the focused message composer.
@@ -3328,8 +3392,6 @@ export const useWorkspaceController = () => {
     setFileTreeLoadError,
     setFileTree,
     setFileTreeScope,
-    setLastOpenedFileTreeFolderPath,
-    lastOpenedFileTreeFolderByCwdRef,
     collapsedFileTreeFoldersByCwdRef,
     setCollapsedFileTreeFolders,
     fileTreeLoadRequest
@@ -4020,6 +4082,7 @@ export const useWorkspaceController = () => {
               providerApi.submitAccountLoginCode(providerId, loginId!, code, { container })
           }
         : {}),
+      ...(acceptsCode && authUrl ? { copyLink: () => appApi.writeClipboardText(authUrl!) } : {}),
       authorize: async () => {
         if (!authUrl) return
         if (userCode) await appApi.writeClipboardText(userCode)
@@ -4646,21 +4709,44 @@ export const useWorkspaceController = () => {
     selectedChatUpdatedAtRef.current = chat.updatedAt
     chatDetailRef.current = nextCachedDetail
     setSelectedChat(seenChat)
-    // Cached content can be as expensive to mount as a freshly loaded page.
-    // Let sidebar selection paint before rendering the new conversation.
-    setChatDetail(null)
-    setChatLoadState('loading')
-    if (nextCachedDetail)
-      startTransition(() => {
-        setChatDetail(nextCachedDetail)
-        setChatLoadState('ready')
-      })
+    // Selection and already prepared messages commit together. Provider refreshes
+    // run independently; they never put a loader in front of readable history.
+    setChatDetail(nextCachedDetail)
+    setChatLoadState(nextCachedDetail ? 'ready' : 'loading')
     markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
 
     if (selectingCurrentChat && !cachedDetail) {
       setChatLoadRequest((currentRequest) => currentRequest + 1)
     }
   }
+
+  const handleOpenLinkedChat = (reference: LinkedChatReference): void => {
+    const listedChat = chatsRef.current.find(
+      (chat) => chat.providerId === reference.providerId && chat.id === reference.chatId
+    )
+    if (listedChat) {
+      handleSelectChat(listedChat)
+      return
+    }
+    // Done and unloaded project chats are not in the sidebar list yet.
+    void providerApi
+      .getChat(reference.providerId, reference.chatId)
+      .then((detail) =>
+        handleSelectChat(
+          getChatFromDetail(reference.providerId, detail, null, detail.updatedAt ?? Date.now())
+        )
+      )
+      .catch((error: unknown) => {
+        console.error('Unable to open the linked chat.', error)
+      })
+  }
+  const openLinkedChatRef = useRef(handleOpenLinkedChat)
+  openLinkedChatRef.current = handleOpenLinkedChat
+  // Stable for the context consumers in memoized panels.
+  const openLinkedChat = useCallback(
+    (reference: LinkedChatReference) => openLinkedChatRef.current(reference),
+    []
+  )
 
   const handleBack = (): void => {
     if (activeSubagentChatView) {
@@ -4770,6 +4856,7 @@ export const useWorkspaceController = () => {
     handleChatUsageDisplayChange,
     handleCodexRecommendedPluginsChange,
     handleContinuePromptChange,
+    handleLinkedChatSummaryPromptChange,
     handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange,
     handleGitCommitPromptChange,
@@ -5205,7 +5292,8 @@ export const useWorkspaceController = () => {
     hasUnpushedChanges,
     patchChangeSourceSelected,
     primarySyncAction,
-    repositoryFiles,
+    repositoryFileCount,
+    repositoryFileIndex,
     syncButtonTitle,
     uncommittedChangedFiles,
     unpulledCount,
@@ -5336,8 +5424,7 @@ export const useWorkspaceController = () => {
     chatHasActiveTurn,
     newSessionProviderAvailable,
     changeSource,
-    repositoryFiles,
-    lastOpenedFileTreeFolderPath,
+    repositoryFileIndex,
     changesPaneView,
     collapsedFileTreeFolders,
     collapsedChangeTreeFolders,
@@ -5368,11 +5455,10 @@ export const useWorkspaceController = () => {
   } = useFileNavigationController({
     setCollapsedChangeTreeFolders,
     collapsedFileTreeFolders,
-    setLastOpenedFileTreeFolderPath,
     setCollapsedFileTreeFolders,
     changesCwd,
-    lastOpenedFileTreeFolderByCwdRef,
     collapsedFileTreeFoldersByCwdRef,
+    repositoryFileIndex,
     branchSwitchDisabled,
     gitBranchRequestIdRef,
     setGitBranchActionState,
@@ -5786,6 +5872,7 @@ export const useWorkspaceController = () => {
     },
     handleCodexRecommendedPluginsChange,
     handleContinuePromptChange,
+    handleLinkedChatSummaryPromptChange,
     handleDeleteProviderAccount,
     handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange,
@@ -6014,6 +6101,7 @@ export const useWorkspaceController = () => {
 
   return {
     className: `chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`,
+    openLinkedChat,
     dialogs: {
       settingsCloseButtonRef,
       settingsOpen,
@@ -6185,6 +6273,7 @@ export const useWorkspaceController = () => {
     },
     conversationMessages: {
       visible: Boolean(selectedChat),
+      chatKnown: Boolean(selectedChat && conversationViews.has(selectedChat)),
       chatHistoryPreview: chatDetail?.historyPreview === true,
       cachedChatKeys: Array.from(recentChatCacheRef.current.keys()),
       chatAutoScrollEnabledRef,
@@ -6410,8 +6499,8 @@ export const useWorkspaceController = () => {
       renderChangeTreeNode,
       renderGitAiResolutionButton,
       renderRepositoryFileTreeNode,
+      repositoryFileCount,
       repositoryFileTree,
-      repositoryFiles,
       setGitChangeLoadRequest,
       terminalCommandLaunchRequest,
       terminalOpened,

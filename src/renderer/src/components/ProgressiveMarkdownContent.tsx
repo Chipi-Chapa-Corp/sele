@@ -150,7 +150,6 @@ export function ProgressiveMarkdownContent({
     <div
       ref={ref}
       className="chat-detail__message-markdown chat-detail__message-markdown--progressive"
-      aria-busy={!plan && !failed}
     >
       {failed ? (
         <pre>{content}</pre>
@@ -166,8 +165,17 @@ export function ProgressiveMarkdownContent({
             onCommit={onCommit}
           />
         ))
-      ) : (
-        <span className="chat-detail__messages-status">Rendering message…</span>
+      ) : null}
+      {/* The message is already available. Keep a bounded, readable viewport
+          until the first formatted part commits instead of inserting another loader. */}
+      {!failed && (!plan || revision === 0) && (
+        <div
+          className="chat-detail__message-text"
+          style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+        >
+          {content.length > 8_192 ? '…\n' : ''}
+          {content.slice(-8_192)}
+        </div>
       )}
     </div>
   )

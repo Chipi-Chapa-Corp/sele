@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AppContainerTarget } from '../../../shared/app'
 import type { ProviderChat } from '../../../shared/provider'
 import { providerApi } from '../providerApi'
+import { conversationViews } from '../conversationViews'
 
 type SearchState = {
   key: string
@@ -57,6 +58,7 @@ export function useSidebarSearch(
           failed = true
           cursors[index] = null
         } else if (result.value) {
+          conversationViews.install('codex', result.value.conversationViews ?? [])
           result.value.chats.forEach((chat) => chats.set(chat.id, chat))
           cursors[index] = result.value.nextCursor
         }

@@ -174,7 +174,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
                 (!selectedChat && newSessionProvider === 'codex')
                   ? 'Codex'
                   : 'Claude'}{' '}
-                session expired. Sign in again to send messages.
+                account needs authorization. Sign in again to send messages.
               </span>
             </div>
             <div className="chat-approval__actions">
@@ -481,6 +481,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             chatId={selectedChat?.id}
             contextUsage={messageBoxContextUsage}
             displayUsage={effectiveAppSettings.chat.displayUsage}
+            linkedChatSummaryPrompt={effectiveAppSettings.chat.linkedChatSummaryPrompt}
             showUsageIndicator={narrowLayout}
             draftScopeKey={getComposerDraftScopeKey(
               activeSubagentChatView

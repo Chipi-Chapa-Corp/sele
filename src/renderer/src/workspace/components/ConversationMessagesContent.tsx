@@ -1,4 +1,12 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement
+} from 'react'
 import {
   isNearChatPageBoundary,
   readChatScrollAnchor,
@@ -25,6 +33,27 @@ const ConversationMessagesError: React.FC<{
   </div>
 )
 
+// Fast openings finish before this delay, so they never flash a loader.
+const MESSAGES_LOADER_DELAY_MS = 1000
+
+const DelayedMessagesLoader: React.FC = () => {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setVisible(true), MESSAGES_LOADER_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [])
+  if (!visible) return null
+  return (
+    <div className="chat-detail__messages-status" role="status" aria-label="Loading messages">
+      <LoaderCircle
+        className="chat-detail__messages-status-icon chat-detail__messages-status-icon--loading"
+        aria-hidden="true"
+      />
+      <span>Loading messages…</span>
+    </div>
+  )
+}
+
 export function ConversationMessagesContent(
   props: ConversationMessagesContentProps
 ): ReactElement | null {
@@ -38,6 +67,7 @@ export function ConversationMessagesContent(
     chatMediaTotalCount,
     chatLoadState,
     chatHistoryPreview,
+    chatKnown,
     chatSearchContentRef,
     chatTurnPageLoadDirection,
     commitChatReturnTarget,
@@ -336,7 +366,7 @@ export function ConversationMessagesContent(
           aria-busy={
             activeSubagentChatView
               ? activeSubagentChatView.loadState === 'loading' || activeSubagentChatView.pageLoading
-              : chatLoadState === 'loading' || Boolean(chatTurnPageLoadDirection)
+              : (!chatKnown && chatLoadState === 'loading') || Boolean(chatTurnPageLoadDirection)
           }
           key={
             activeSubagentChatView
@@ -372,7 +402,7 @@ export function ConversationMessagesContent(
             <div className="chat-detail__messages-footer" />
           </div>
         </div>
-        {!activeSubagentChatView && chatHistoryPreview && (
+        {!activeSubagentChatView && chatHistoryPreview && chatLoadState === 'error' && (
           <div className="chat-detail__history-preview" role="status">
             <span>
               {chatLoadState === 'error'
@@ -386,14 +416,14 @@ export function ConversationMessagesContent(
         )}
         {(activeSubagentChatView
           ? activeSubagentChatView.loadState === 'loading' && subagentVisibleChatItems.length === 0
-          : chatLoadState === 'loading' && visibleChatItems.length === 0) && (
-          <div className="chat-detail__messages-status" role="status" aria-label="Loading messages">
-            <LoaderCircle
-              className="chat-detail__messages-status-icon chat-detail__messages-status-icon--loading"
-              aria-hidden="true"
-            />
-            <span>Loading messages…</span>
-          </div>
+          : !chatKnown && chatLoadState === 'loading' && visibleChatItems.length === 0) && (
+          <DelayedMessagesLoader
+            key={
+              activeSubagentChatView
+                ? `${selectedChatKey}:subagent:${activeSubagentChatView.summary.id}`
+                : selectedChatKey
+            }
+          />
         )}
         {!activeSubagentChatView && chatLoadState === 'error' && visibleChatItems.length === 0 && (
           <ConversationMessagesError label="Unable to load messages." />

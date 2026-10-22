@@ -39,9 +39,9 @@ import {
   type ChangedFile,
   type ChangeSource,
   type DisplayTreeFile,
-  type PatchFilterScope,
-  type RepositoryFile
+  type PatchFilterScope
 } from '../changeTree'
+import type { FileTreeIndex } from '../fileTreeIndex'
 
 import { type ChatScrollAnchor } from '../chatLayout'
 
@@ -240,11 +240,10 @@ export type CommitControllerDependencies = {
 export type FileNavigationDependencies = {
   setCollapsedChangeTreeFolders: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
   collapsedFileTreeFolders: Record<string, boolean>
-  setLastOpenedFileTreeFolderPath: React.Dispatch<React.SetStateAction<string | null>>
   setCollapsedFileTreeFolders: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
   changesCwd: string | null
-  lastOpenedFileTreeFolderByCwdRef: React.RefObject<Map<string, string>>
   collapsedFileTreeFoldersByCwdRef: React.RefObject<Map<string, Record<string, boolean>>>
+  repositoryFileIndex: FileTreeIndex | null
   branchSwitchDisabled: boolean
   gitBranchRequestIdRef: React.RefObject<number>
   setGitBranchActionState: React.Dispatch<React.SetStateAction<SendState>>
@@ -343,8 +342,7 @@ export type GitViewModelDependencies = {
   chatHasActiveTurn: boolean
   newSessionProviderAvailable: boolean
   changeSource: ChangeSource
-  repositoryFiles: DisplayTreeFile<RepositoryFile>[]
-  lastOpenedFileTreeFolderPath: string | null
+  repositoryFileIndex: FileTreeIndex | null
   changesPaneView: ChangesPaneView
   collapsedFileTreeFolders: Record<string, boolean>
   collapsedChangeTreeFolders: Record<string, boolean>

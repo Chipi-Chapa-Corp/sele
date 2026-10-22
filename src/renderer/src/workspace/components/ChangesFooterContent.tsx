@@ -1,7 +1,6 @@
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { GitCommitHorizontal, MessageSquare, Sparkles, X } from 'lucide-react'
-import { GitCommitHorizontalIcon as AnimatedGitCommitHorizontalIcon } from 'lucide-animated'
 import { Button, type ButtonDropdownAction } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { AnimatedStatusIcon, GitSyncCountsLabel } from '../../components/AppStatusStates'
@@ -130,7 +129,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
             callback={() => void handleManualCommitChangedFiles()}
             icon={
               directProjectCommitInProgress ? (
-                <AnimatedStatusIcon Icon={AnimatedGitCommitHorizontalIcon} active />
+                <AnimatedStatusIcon Icon={GitCommitHorizontal} active />
               ) : (
                 <GitCommitHorizontal aria-hidden="true" />
               )

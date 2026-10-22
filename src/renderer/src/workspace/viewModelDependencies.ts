@@ -2,7 +2,6 @@ import type * as React from 'react'
 
 import type {
   AppContainerTarget,
-  AppFileTreeResult,
   AppGitBranchesResult,
   AppGitChangesResult
 } from '../../../shared/app'
@@ -26,6 +25,7 @@ import { type AppSettings } from '../settings'
 import { type ChatTurnWindow } from '../chatTurnWindow'
 
 import { type ChangeSource, type PatchFilterScope } from '../changeTree'
+import type { FileTreeIndex } from '../fileTreeIndex'
 
 import { type ChatScrollAnchor } from '../chatLayout'
 
@@ -61,7 +61,7 @@ export type ChangesDataDependencies = {
   gitAvailabilityScopeKey: 'missing' | 'available'
   gitChanges: AppGitChangesResult | null
   fileTreeScope: FileTreeScope | null
-  fileTree: AppFileTreeResult | null
+  fileTree: FileTreeIndex | null
   changesProjectCwd: string | null
   gitChangeLoadScope: GitChangesScope | null
   gitChangeLoadError: ScopedGitOperationError<GitChangesScope> | null

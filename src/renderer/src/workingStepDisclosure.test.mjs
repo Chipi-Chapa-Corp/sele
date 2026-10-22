@@ -173,6 +173,27 @@ test('a status or policy change resets stale manual disclosure state', () => {
   )
 })
 
+test('a new turn preserves manual disclosure unless its policy collapses on the next turn', () => {
+  for (const status of ['working', 'worked', 'stopped', 'failed']) {
+    for (const progressPolicy of ['regular', 'stoppedSteeredFailed']) {
+      const before = getWorkingStepDisclosureKey(status, progressPolicy, defaultSettings, false)
+      const after = getWorkingStepDisclosureKey(status, progressPolicy, defaultSettings, true)
+      assert.equal(after, before)
+      assert.equal(resolveWorkingStepOpen({ key: before, open: true }, after, false), true)
+
+      const settings = {
+        ...defaultSettings,
+        collapseProgressOnNextTurn: true,
+        collapseStoppedSteeredFailedProgressOnNextTurn: true
+      }
+      assert.notEqual(
+        getWorkingStepDisclosureKey(status, progressPolicy, settings, false),
+        getWorkingStepDisclosureKey(status, progressPolicy, settings, true)
+      )
+    }
+  }
+})
+
 test('all steering segments follow the final block through finish and the next ordinary turn', () => {
   const previous = { ...workingStep(), id: 'previous' }
   const middle = { ...workingStep(), id: 'middle' }

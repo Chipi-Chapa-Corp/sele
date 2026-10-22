@@ -67,8 +67,34 @@ const setup = (root, platform) => {
         : require(name)
   }
   vm.runInNewContext(bundled.outputFiles[0].text, context)
-  return { create: module.exports.createClaudeAccountStorage, commands, security }
+  return {
+    create: module.exports.createClaudeAccountStorage,
+    run: module.exports.runClaudeAccountCommand,
+    commands,
+    security
+  }
 }
+
+test('auth status preserves JSON on exit 1 while other command failures stay errors', async () => {
+  const h = setup('/fixture', 'linux')
+  const command = {
+    file: process.execPath,
+    args: [
+      '-e',
+      'console.log(JSON.stringify({loggedIn:false,authMethod:"none"})); process.exit(1)'
+    ],
+    env: process.env
+  }
+  assert.deepEqual(JSON.parse(await h.run(command, { allowUnauthenticatedStatus: true })), {
+    loggedIn: false,
+    authMethod: 'none'
+  })
+  await assert.rejects(h.run(command), /Unable to run Claude account command/)
+  await assert.rejects(
+    h.run({ ...command, args: ['-e', 'process.exit(2)'] }, { allowUnauthenticatedStatus: true }),
+    /Unable to run Claude account command/
+  )
+})
 
 for (const platform of ['linux', 'darwin', 'win32']) {
   test(`${platform}: native storage changes only account files, and scopes Keychain deletion`, async () => {

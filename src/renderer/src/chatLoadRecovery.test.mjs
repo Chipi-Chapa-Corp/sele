@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { asChatPreview, chatPreviewSourceKey } from '../../shared/chatPreview.ts'
 
 // Execute the actual effect and update callback with deferred provider responses.
 const extract = (path, predicate) => {
@@ -41,6 +42,22 @@ const updateCode = extract(
     node.expression.getText(source) === 'useCallback' &&
     ts.isVariableDeclaration(node.parent) &&
     node.parent.name.getText(source) === 'applyChatDetail'
+)
+const summaryCode = extract(
+  './useWorkspaceController.tsx',
+  (node, source) =>
+    ts.isCallExpression(node) &&
+    node.expression.getText(source) === 'useCallback' &&
+    ts.isVariableDeclaration(node.parent) &&
+    node.parent.name.getText(source) === 'applyChatSummary'
+)
+const readCacheCode = extract(
+  './useWorkspaceController.tsx',
+  (node, source) =>
+    ts.isCallExpression(node) &&
+    node.expression.getText(source) === 'useCallback' &&
+    ts.isVariableDeclaration(node.parent) &&
+    node.parent.name.getText(source) === 'getRecentCachedChatDetail'
 )
 const selectCode = extract(
   './useWorkspaceController.tsx',
@@ -245,7 +262,7 @@ test('a failed request from a closed chat is logged without changing the view', 
   assert.match(h.state.errors[0][0], /Unable to load messages/)
 })
 
-test('cached selection stays loading until the deferred messages and ready state commit together', () => {
+test('cached selection commits messages immediately without scheduling a transition', () => {
   const cached = detail()
   const state = { detail: null, loadState: 'ready' }
   const transitions = []
@@ -286,10 +303,7 @@ test('cached selection stays loading until the deferred messages and ready state
     context[name] = () => {}
   vm.runInContext(selectCode, context)
   context.callback({ providerId: 'claude', id: 'chat', updatedAt: 1 })
-  assert.equal(state.detail, null)
-  assert.equal(state.loadState, 'loading')
-  assert.equal(transitions.length, 1)
-  transitions[0]()
+  assert.equal(transitions.length, 0)
   assert.equal(state.detail.id, 'chat')
   assert.equal(state.loadState, 'ready')
 })
@@ -325,4 +339,36 @@ test('delayed metadata cannot make a viewed chat unread again', async () => {
   assert.equal(mergeChatMetadata(current, { id: 'parent', seenUpdatedAt: 300 }).seenUpdatedAt, 500)
   assert.equal(mergeChatMetadata(current, { id: 'parent', seenUpdatedAt: null }).seenUpdatedAt, 500)
   assert.equal(mergeChatMetadata(current, { id: 'parent', seenUpdatedAt: 600 }).seenUpdatedAt, 600)
+})
+
+test('background summaries preserve messages and changed sidebar stamps still open from memory', () => {
+  const cached = { ...detail(4), container: null, status: null }
+  const entries = new Map([['codex:chat', { detail: cached, updatedAt: 1 }]])
+  const context = vm.createContext({
+    recentChatCacheRef: { current: entries },
+    recentChatCacheLimitRef: { current: 10 },
+    selectedChatKeyRef: { current: null },
+    getProviderChatKey: (provider, id) => `${provider}:${id}`,
+    getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
+    asChatPreview,
+    chatPreviewSourceKey,
+    conversationViews: { get: () => null },
+    setSelectedChat: () => {},
+    setChats: () => {}
+  })
+  vm.runInContext(summaryCode, context)
+  context.callback('codex', { id: 'chat', revision: 5, updatedAt: 2, status: 'active' }, false)
+  assert.equal(entries.size, 1)
+  assert.equal(entries.get('codex:chat').detail.items, cached.items)
+  assert.equal(entries.get('codex:chat').detail.historyPreview, true)
+  vm.runInContext(readCacheCode, context)
+  const prepared = context.callback({
+    providerId: 'codex',
+    id: 'chat',
+    updatedAt: 2,
+    status: 'active'
+  })
+  assert.equal(prepared.items, cached.items)
+  assert.equal(prepared.revision, -1)
+  assert.equal(prepared.writeAccess, 'checking')
 })

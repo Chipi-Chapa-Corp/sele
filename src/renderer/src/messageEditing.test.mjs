@@ -211,6 +211,22 @@ test('pending edit acquires a hold before loading attachments and passes its tok
   assert.equal(f.globals.pendingEditRef.current, null)
 })
 
+test('an edit that loses the race to provider acceptance never opens the editor', async () => {
+  const f = pendingEditFixture()
+  f.globals.providerApi.beginPendingMessageEdit = async () => {
+    f.calls.push(['begin'])
+    return { id: 'chat', items: [{ ...f.pending, editable: false }] }
+  }
+  await f.controller.edit(f.pending)
+  assert.deepEqual(
+    f.calls.map((call) => call[0]),
+    ['begin', 'cancel'],
+    'a doomed editor is released instead of shown'
+  )
+  assert.equal(f.editingMessage, null)
+  assert.equal(f.globals.pendingEditRef.current, null)
+})
+
 test('attachment failure releases the backend hold and leaves the editor closed', async () => {
   const f = pendingEditFixture()
   f.globals.appApi.prepareMessageAttachments = async () => {

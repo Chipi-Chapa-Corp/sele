@@ -22,8 +22,21 @@ export const findClaudeAuthorizationUrl = (output: string): string | null => {
         !url.password &&
         url.searchParams.has('state') &&
         url.searchParams.get('response_type') === 'code'
-      )
+      ) {
+        // Older CLIs can print the automatic URL. A pasted code is exchanged
+        // using Claude's hosted manual callback, never the loopback callback.
+        const redirect = url.searchParams.get('redirect_uri')
+        if (redirect && URL.canParse(redirect)) {
+          const callback = new URL(redirect)
+          if (
+            callback.protocol === 'http:' &&
+            ['localhost', '127.0.0.1', '[::1]'].includes(callback.hostname) &&
+            callback.pathname === '/callback'
+          )
+            url.searchParams.set('redirect_uri', 'https://platform.claude.com/oauth/code/callback')
+        }
         return url.href
+      }
     }
   }
   return null

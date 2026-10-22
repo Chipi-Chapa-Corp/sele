@@ -17,9 +17,11 @@ if (!process.versions.electron) {
             import {chatTerminalActivity} from './src/renderer/src/chatTerminalActivity'
             window.setAgentTasks = (id, ids) => {
               window.agentTasks[id] = ids
+              delete window.agentTaskErrors[id]
               const chat = chats.find(chat => chat.id === id)
               chatTerminalActivity.requestProbe(chat.providerId+':'+id)
             }
+            window.failAgentTasks = id => { window.agentTaskErrors[id] = true }
             import './src/renderer/src/assets/styles/tokens.css'
             const root = createRoot(document.getElementById('root'))
             const chats = ['codex', 'claude', 'copilot', 'opencode'].flatMap(providerId => [
@@ -57,7 +59,11 @@ if (!process.versions.electron) {
         body {font:14px system-ui; background:#181818; color:#eee; margin:30px; width:360px}
         #root {display:grid; gap:10px}
         </style><div id="root"></div><script>
-          window.agentTasks={}; window.providerApi={getChatTerminalTasks:async (_provider,id)=>window.agentTasks[id]||[]};
+          window.agentTasks={}; window.agentTaskErrors={};
+          window.providerApi={getChatTerminalTasks:async (_provider,id)=>{
+            if(window.agentTaskErrors[id]) throw new Error('Fixture provider disconnected');
+            return window.agentTasks[id]||[];
+          }};
           window.preferencesApi={getItem:key=>({ok:true,value:localStorage.getItem(key)}),setItem:(key,value)=>{localStorage.setItem(key,value);return{ok:true,value:null}}};
         </script><script src="status.js"></script></html>`
       )
@@ -162,6 +168,15 @@ if (!process.versions.electron) {
         await waitFor(
           `document.querySelector('[data-chat="${id}"] [aria-label="Terminal task running"]') !== null`
         )
+        await run(`window.failAgentTasks('${id}')`)
+        await waitFor(
+          `document.querySelector('[data-chat="${id}"] [aria-label="Terminal task running"]') === null`
+        )
+        assert.equal(await indicator(id), null, 'lost telemetry must not announce completion')
+        await run(`window.setAgentTasks('${id}', ['task'])`)
+        await waitFor(
+          `document.querySelector('[data-chat="${id}"] [aria-label="Terminal task running"]') !== null`
+        )
         await run(`window.setAgentTasks('${id}', [])`)
         await waitFor(
           `document.querySelector('[data-chat="${id}"] [aria-label="Finished since last viewed"]') !== null`
@@ -173,7 +188,7 @@ if (!process.versions.electron) {
         assert.equal((await indicator(provider + '-unread')).label, 'Finished since last viewed')
       }
       console.log(
-        'PASS chat status UI: all four providers, unread startup, persistent red/gray dots after read, window restart, successful continuation, agent terminal polling and persisted unread'
+        'PASS chat status UI: all four providers, unread startup, persistent red/gray dots after read, window restart, successful continuation, agent terminal polling, connection loss and recovery, and persisted unread'
       )
       win.destroy()
       app.exit(0)

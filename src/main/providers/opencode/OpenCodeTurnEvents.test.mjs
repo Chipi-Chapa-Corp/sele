@@ -1,8 +1,10 @@
+import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks.ts'
 import {
   applyOpenCodeMessageEvent,
   parseOpenCodeSessionEvent,
@@ -20,7 +22,9 @@ const declaration = source.statements.find(
 )
 const code = ts.transpileModule(
   `class Harness { ${declaration.members
-    .filter((member) => member.name?.getText(source) === 'handleEvent')
+    .filter((member) =>
+      ['handleEvent', 'failUsageLimitedTurn'].includes(member.name?.getText(source))
+    )
     .map((member) => member.getText(source))
     .join('\n')} }; globalThis.Harness = Harness`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
@@ -29,6 +33,7 @@ const code = ts.transpileModule(
 const fixture = () => {
   const context = vm.createContext({
     console: { ...console, error() {} },
+    getOpenCodeUsageLimitMessage,
     parseOpenCodeSessionEvent,
     applyOpenCodeMessageEvent,
     reconcileOpenCodeMessageSnapshot,
@@ -65,9 +70,12 @@ const fixture = () => {
     getOrCreateState: () => state
   })
   const timeline = []
+  const aborts = []
+  const client = { session: { abort: async (args) => aborts.push(args) } }
+  const terminalTasks = createOpenCodeTerminalTasks(() => 0)
   const send = (type, properties = {}) => {
     adapter.handleEvent(
-      { container: null },
+      { container: null, terminalTasks, client },
       {
         directory: '/project',
         payload: { type, properties: { sessionID: 'chat', ...properties } }
@@ -80,7 +88,7 @@ const fixture = () => {
       stopped: Boolean(state.stopped)
     })
   }
-  return { state, send, timeline }
+  return { adapter, state, send, timeline, aborts, client }
 }
 
 const reply = (fields = {}) => ({
@@ -172,4 +180,57 @@ test('a hidden compaction summary cannot restart a completed turn', () => {
   send('session.idle')
   send('message.updated', reply({ id: 'summary', summary: true }))
   assert.equal(state.active, false)
+})
+
+test('a usage-limit retry fails immediately and aborts the server retry loop once', () => {
+  const { state, send, aborts, timeline } = fixture()
+  state.queuedMessages.push({ id: 'queued', content: 'Next task' })
+  send('message.updated', reply())
+  send('session.status', {
+    status: { type: 'retry', message: 'Free usage exceeded', action: { reason: 'free_tier_limit' } }
+  })
+  assert.equal(state.active, false)
+  assert.equal(state.failed, true)
+  assert.match(state.failureMessage, /Free usage exceeded/)
+  assert.equal(aborts.length, 1)
+  assert.deepEqual({ ...aborts[0] }, { sessionID: 'chat', directory: '/project' })
+  // OpenCode can have already queued another retry and publishes an abort as a stop.
+  send('session.status', { status: { type: 'retry', message: 'Free usage exceeded' } })
+  send('session.status', { status: { type: 'busy' } })
+  send('message.updated', reply())
+  send('session.error', { error: { name: 'MessageAbortedError' } })
+  send('session.status', { status: { type: 'idle' } })
+  send('session.idle')
+  send('message.updated', reply({ error: { name: 'MessageAbortedError' }, time: { completed: 2 } }))
+  assert.equal(aborts.length, 1)
+  assert.equal(state.queuedMessages.length, 1, 'queued work waits for the user to retry')
+  assert.ok(timeline.slice(1).every((entry) => !entry.active && entry.failed && !entry.stopped))
+})
+
+test('limits reported on assistant messages fail without waiting for session.error or idle', () => {
+  const { state, send, aborts } = fixture()
+  send('message.updated', reply({ error: { name: 'APIError', data: { statusCode: 429 } } }))
+  assert.equal(state.active, false)
+  assert.equal(state.failed, true)
+  assert.equal(aborts.length, 1)
+})
+
+test('overload retries remain active and are not aborted', () => {
+  const { state, send, aborts } = fixture()
+  send('session.status', { status: { type: 'retry', message: 'Overloaded' } })
+  assert.equal(state.active, true)
+  assert.equal(Boolean(state.failed), false)
+  assert.equal(aborts.length, 0)
+})
+
+test('an abort failure does not hide the usage-limit failure or reactivate the turn', async () => {
+  const { state, send, client } = fixture()
+  client.session.abort = async () => {
+    throw new Error('Server disconnected')
+  }
+  send('session.status', { status: { type: 'retry', message: 'Rate limit exceeded' } })
+  await Promise.resolve()
+  assert.equal(state.active, false)
+  assert.equal(state.failed, true)
+  assert.match(state.failureMessage, /Rate limit exceeded/)
 })

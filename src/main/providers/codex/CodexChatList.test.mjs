@@ -39,6 +39,7 @@ const fixture = () => {
   })
   Object.assign(adapter, {
     id: 'codex',
+    userQuestions: { getPending: () => null },
     withResolvedThreadName: (value) => value,
     rememberThreadContainer: () => {},
     getProviderPendingApproval: () => null,
@@ -47,6 +48,16 @@ const fixture = () => {
   })
   return adapter
 }
+
+test('pending async questions keep the input indicator across sidebar refreshes until dismissed', async () => {
+  const adapter = fixture()
+  let pending = { isBlocking: false }
+  adapter.userQuestions.getPending = () => pending
+  adapter.client = { request: async () => ({ data: [thread('chat')], nextCursor: null }) }
+  assert.equal((await adapter.getChatsInContext()).chats[0].status, 'waitingOnUserInput')
+  pending = null
+  assert.equal((await adapter.getChatsInContext()).chats[0].status, 'idle')
+})
 
 test('sidebar pages load from the DB without entering the slow rollout scan', async () => {
   const adapter = fixture()

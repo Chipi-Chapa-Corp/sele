@@ -27,6 +27,8 @@ module.exports = async function transcripts(session) {
   let created = {}
 
   await runner.check(`[transcripts] providers write ${turns}-turn histories`, async (context) => {
+    // Sele must not hold provider homes (thread writers, journals) while the CLIs write.
+    await session.stop()
     const started = Date.now()
     const result = await createLongTranscripts({
       env,
@@ -71,18 +73,25 @@ module.exports = async function transcripts(session) {
     await runner.check(name('opens instantly at the latest turn'), async (context) => {
       await page.startProfile()
       await page.startRecording()
-      const openMs = await page.latency(
-        () => sele.selectChat(chatId),
-        `window.__sele.selectedChatId() === ${JSON.stringify(chatId)} && window.__sele.hasText(${JSON.stringify(last.trim())})`,
-        { timeout: 20000, message: 'latest turn did not render' }
-      )
-      // Never an empty transcript without a loader while history loads.
-      await sleep(500)
-      const recording = await page.stopRecording()
-      const hot = await page.stopProfile(`${provider}-open`)
+      let openMs = null
+      let recording
+      let hot = []
+      try {
+        openMs = await page.latency(
+          () => sele.selectChat(chatId),
+          `window.__sele.selectedChatId() === ${JSON.stringify(chatId)} && window.__sele.hasText(${JSON.stringify(last.trim())})`,
+          { timeout: 20000, message: 'latest turn did not render' }
+        )
+        // Never an empty transcript without a loader while history loads.
+        await sleep(500)
+      } finally {
+        recording = await page.stopRecording()
+        hot = await page.stopProfile(`${provider}-open`)
+      }
       context.metric('openMs', openMs, budgets.historyOpen)
       frames(context, recording)
-      if (recording.maxFrame > budgets.maxFrame) context.note(`main thread while opening: ${hot.join(' | ')}`)
+      if (recording.maxFrame > budgets.maxFrame)
+        context.note(`main thread while opening: ${hot.join(' | ')}`)
       assert.ok(await page.eval('window.__sele.atBottom()'), 'opened at the bottom')
       assert.ok(
         !(await sele.q(`window.__sele.hasText(${JSON.stringify(first.trim() + ' #')})`)) ||

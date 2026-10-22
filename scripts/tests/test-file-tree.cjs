@@ -13,19 +13,23 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import { ChangesContent } from './src/renderer/src/workspace/components/ChangesContent'
-            import { getRepositoryFiles, getDefaultFileTreeCollapsedFolders } from './src/renderer/src/changeTree'
+            import {
+              buildFileTreeIndex,
+              getDefaultFileTreeCollapsedFolders,
+              getFileTreeIndexNodes
+            } from './src/renderer/src/fileTreeIndex'
             const root = createRoot(document.getElementById('root'))
             window.retries = 0
             window.renderFiles = (state, error = null) => flushSync(() => root.render(
               <ChangesContent changesPaneView="files" changesCwd="/project/nested"
                 visibleFilesLoadState={state} fileTreeLoadError={error}
-                repositoryFiles={[]} repositoryFileTree={[]} filesEmptyMessage="No files found."
+                repositoryFileCount={0} repositoryFileTree={[]} filesEmptyMessage="No files found."
                 setFileTreeLoadRequest={update => { window.retries = update(window.retries) }} />
             ))
-            window.filePaths = getRepositoryFiles({repositoryRoot: '/project/nested', files: [
-              {path: 'src/main.ts'}, {path: 'docs/guide.md'}
-            ]})
-            window.collapsed = getDefaultFileTreeCollapsedFolders(window.filePaths)
+            const index = buildFileTreeIndex({repositoryRoot: '/project/nested', branchName: null,
+              fileCount: 2, paths: ['src/main.ts', 'docs/guide.md'].join('\0')})
+            window.filePaths = getFileTreeIndexNodes(index, 'src').map((node) => node.file)
+            window.collapsed = getDefaultFileTreeCollapsedFolders(index)
             window.renderFiles('error', "EACCES: permission denied, scandir '/project/nested/private'")
           `,
           resolveDir: path.resolve(__dirname, '../..'),

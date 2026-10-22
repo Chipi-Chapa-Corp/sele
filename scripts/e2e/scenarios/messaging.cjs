@@ -320,10 +320,7 @@ const scenarios = [
         context.note('steering message was accepted by the provider before it could be edited')
         t.release()
         await t.waitReply('H')
-        assert.ok(
-          await sele.q(`window.__sele.replyCount(${JSON.stringify(t.token('S'))}) > 0`),
-          'steer answered'
-        )
+        await t.waitDelivered(['S'])
         await t.settle()
         return
       }
@@ -332,12 +329,16 @@ const scenarios = [
         editMs = await t.editPending(t.token('S'), 'steering')
       } catch (error) {
         // The provider may accept the steer between showing the button and the click.
-        if (
-          !(await sele.q(`Boolean(window.__sele.pendingBlock(${JSON.stringify(t.token('S'))}))`))
-        ) {
+        const stillEditable = await sele
+          .q(
+            `Boolean(${sele.pendingButton(t.token('S'), 'Edit steering message')}) && window.__sele.visible(${sele.pendingButton(t.token('S'), 'Edit steering message')})`
+          )
+          .catch(() => false)
+        if (!stillEditable) {
           context.note('steering message was accepted while the edit was opening')
           t.release()
           await t.waitReply('H')
+          await t.waitDelivered(['S'])
           await t.settle()
           return
         }

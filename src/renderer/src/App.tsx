@@ -17,6 +17,7 @@ import { ConversationQuoteAction } from './workspace/components/ConversationQuot
 import { ConversationSearch } from './workspace/components/ConversationSearch'
 import { WorkspaceShell } from './workspace/components/WorkspaceShell'
 import { useStableProps } from './workspace/stableProps'
+import { LinkedChatOpenerContext } from './components/LinkedChatOpener'
 
 // The controller renders for every workspace state change, including several times
 // per chat switch. Each panel only rerenders when its own props change; see
@@ -51,31 +52,33 @@ export const App: React.FC = () => {
   const changesFooter = useStableProps(workspace.changesFooter)
 
   return (
-    <main className={workspace.className}>
-      <AppDialogs {...workspace.dialogs} />
-      <WorkspaceShell
-        {...workspace.layout}
-        chatSidebar={<MemoChatSidebar {...chatSidebar} />}
-        conversation={
-          <ConversationPanel
-            {...workspace.conversationPanel}
-            header={<MemoConversationHeader {...conversationHeader} />}
-            search={<MemoConversationSearch {...conversationSearch} />}
-            messages={<MemoConversationMessages {...conversationMessages} />}
-            quoteAction={<MemoConversationQuoteAction {...conversationQuote} />}
-            emptyState={<ConversationEmptyState {...workspace.conversationEmptyState} />}
-            plan={<MemoConversationPlan {...conversationPlan} />}
-            composer={<MemoConversationComposer {...conversationComposer} />}
-          />
-        }
-        changesSidebar={
-          <ChangesSidebar
-            header={<MemoChangesHeader {...changesHeader} />}
-            content={<MemoChangesContent {...changesContent} />}
-            footer={<MemoChangesFooter {...changesFooter} />}
-          />
-        }
-      />
-    </main>
+    <LinkedChatOpenerContext.Provider value={workspace.openLinkedChat}>
+      <main className={workspace.className}>
+        <AppDialogs {...workspace.dialogs} />
+        <WorkspaceShell
+          {...workspace.layout}
+          chatSidebar={<MemoChatSidebar {...chatSidebar} />}
+          conversation={
+            <ConversationPanel
+              {...workspace.conversationPanel}
+              header={<MemoConversationHeader {...conversationHeader} />}
+              search={<MemoConversationSearch {...conversationSearch} />}
+              messages={<MemoConversationMessages {...conversationMessages} />}
+              quoteAction={<MemoConversationQuoteAction {...conversationQuote} />}
+              emptyState={<ConversationEmptyState {...workspace.conversationEmptyState} />}
+              plan={<MemoConversationPlan {...conversationPlan} />}
+              composer={<MemoConversationComposer {...conversationComposer} />}
+            />
+          }
+          changesSidebar={
+            <ChangesSidebar
+              header={<MemoChangesHeader {...changesHeader} />}
+              content={<MemoChangesContent {...changesContent} />}
+              footer={<MemoChangesFooter {...changesFooter} />}
+            />
+          }
+        />
+      </main>
+    </LinkedChatOpenerContext.Provider>
   )
 }

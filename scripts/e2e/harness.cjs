@@ -314,6 +314,32 @@ class Cdp {
   }
 }
 
+/**
+ * SIGKILL anything still running with this suite's temporary home. Provider CLIs spawned by an
+ * earlier app instance can otherwise survive a relaunch and keep holding a chat's write lease.
+ */
+function killStrayProcesses(home, logFile) {
+  const killed = []
+  for (const entry of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue
+    let environ
+    try {
+      environ = fs.readFileSync(`/proc/${entry}/environ`, 'utf8')
+    } catch {
+      continue
+    }
+    if (!environ.split('\0').includes(`HOME=${home}`)) continue
+    try {
+      const cmdline = fs.readFileSync(`/proc/${entry}/cmdline`, 'utf8').replaceAll('\0', ' ').trim()
+      process.kill(Number(entry), 'SIGKILL')
+      killed.push(`${entry} ${cmdline.slice(0, 160)}`)
+    } catch {}
+  }
+  if (killed.length)
+    fs.appendFileSync(logFile, `Killed stray processes after app close:\n${killed.join('\n')}\n`)
+  return killed
+}
+
 /** Launch Electron with the private profile and connect over the DevTools protocol. */
 async function launchApp({ outDir, env, logFile }) {
   const port = await freePort()
@@ -344,6 +370,11 @@ async function launchApp({ outDir, env, logFile }) {
     cdp,
     port,
     async close() {
+      // Ask Electron to quit like a user would, so providers release thread writers and
+      // journals cleanly instead of dying with the process group.
+      try {
+        await Promise.race([cdp.send('Browser.close'), sleep(3000)])
+      } catch {}
       try {
         cdp.close()
       } catch {}
@@ -357,6 +388,8 @@ async function launchApp({ outDir, env, logFile }) {
             process.kill(-child.pid, 'SIGKILL')
           } catch {}
       }
+      await sleep(300)
+      killStrayProcesses(env.HOME, logFile)
       fs.closeSync(log)
     }
   }

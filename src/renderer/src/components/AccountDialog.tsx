@@ -1,5 +1,5 @@
 import { MotionSurface } from '../motion/MotionSurface'
-import { Copy, ExternalLink, LogIn, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, LogIn, X } from 'lucide-react'
 import { type FormEvent, type ReactElement, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from './Button'
@@ -13,6 +13,7 @@ export type AccountAuthorizationSession = {
   authorize: () => Promise<void>
   cancel: () => Promise<void>
   submitCode?: (code: string) => Promise<void>
+  copyLink?: () => Promise<void>
 }
 
 type AccountDialogProps = {
@@ -36,6 +37,8 @@ export const AccountDialog = ({
   const [userCode, setUserCode] = useState<string | null>(null)
   const [authorization, setAuthorization] = useState<AccountAuthorizationSession | null>(null)
   const [authorizationActionPending, setAuthorizationActionPending] = useState(false)
+  const [copyLinkPending, setCopyLinkPending] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
   const [code, setCode] = useState('')
   const [codePending, setCodePending] = useState(false)
 
@@ -53,6 +56,7 @@ export const AccountDialog = ({
     if (phase !== 'idle') return
     setPhase('starting')
     setCode('')
+    setLinkCopied(false)
     cancelingRef.current = false
     setError(null)
     try {
@@ -153,6 +157,20 @@ export const AccountDialog = ({
     }
   }
 
+  const handleCopyLink = async (): Promise<void> => {
+    if (!authorization?.copyLink || phase !== 'authorizing' || copyLinkPending) return
+    setCopyLinkPending(true)
+    setError(null)
+    try {
+      await authorization.copyLink()
+      if (mounted.current) setLinkCopied(true)
+    } catch {
+      setError('Unable to copy the sign-in link.')
+    } finally {
+      if (mounted.current) setCopyLinkPending(false)
+    }
+  }
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     if (phase === 'authorizing') void handleSubmitCode()
@@ -190,7 +208,7 @@ export const AccountDialog = ({
         >
           <div className="account-dialog__header">
             {phase === 'authorizing' || phase === 'canceling' ? (
-              <span>Authorize account</span>
+              <span>Sign in to {providerLabel}</span>
             ) : reauthenticate ? (
               <span>Sign in again</span>
             ) : (
@@ -212,15 +230,37 @@ export const AccountDialog = ({
               <p>
                 {userCode
                   ? 'Copy the one-time code and complete authorization in your browser.'
-                  : 'Open the authorization page in your browser.'}{' '}
-                {reauthenticate
-                  ? 'Sending will be enabled after sign-in succeeds.'
-                  : `The account will be added only after ${providerLabel} confirms that sign-in succeeded.`}
+                  : authorization?.submitCode
+                    ? 'Open the sign-in page, then paste the code below. You can also copy the link to another device.'
+                    : 'Open the authorization page in your browser.'}
               </p>
               {authorization?.submitCode && (
                 <>
-                  <label htmlFor="account-dialog-code">
-                    If the browser gives you a code, paste it here
+                  <div className="account-dialog__browser-actions">
+                    <Button
+                      aria-label="Open sign-in page"
+                      callback={handleAuthorize}
+                      disabled={phase === 'canceling' || authorizationActionPending}
+                      icon={<ExternalLink aria-hidden="true" />}
+                      label="Open page"
+                      theme="secondary"
+                    />
+                    {authorization.copyLink && (
+                      <Button
+                        aria-label="Copy sign-in link"
+                        aria-busy={copyLinkPending}
+                        callback={handleCopyLink}
+                        disabled={phase === 'canceling'}
+                        icon={
+                          linkCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />
+                        }
+                        label={<span role="status">{linkCopied ? 'Copied' : 'Copy link'}</span>}
+                        theme="secondary"
+                      />
+                    )}
+                  </div>
+                  <label className="account-dialog__code-label" htmlFor="account-dialog-code">
+                    Authorization code
                   </label>
                   <Input
                     id="account-dialog-code"
@@ -230,12 +270,6 @@ export const AccountDialog = ({
                     maxLength={4096}
                     disabled={phase !== 'authorizing' || codePending}
                     onChange={(event) => setCode(event.currentTarget.value)}
-                  />
-                  <Button
-                    callback={handleSubmitCode}
-                    label={codePending ? 'Submitting…' : 'Submit code'}
-                    disabled={phase !== 'authorizing' || !code.trim() || codePending}
-                    theme="secondary"
                   />
                 </>
               )}
@@ -261,23 +295,32 @@ export const AccountDialog = ({
                   label={phase === 'canceling' ? 'Canceling…' : 'Cancel'}
                   theme="secondary"
                 />
-                <Button
-                  callback={handleAuthorize}
-                  disabled={phase === 'canceling' || authorizationActionPending}
-                  icon={
-                    userCode ? <Copy aria-hidden="true" /> : <ExternalLink aria-hidden="true" />
-                  }
-                  label={
-                    authorizationActionPending
-                      ? userCode
-                        ? 'Copying…'
-                        : 'Opening…'
-                      : userCode
-                        ? `Copy ${userCode}`
-                        : 'Open'
-                  }
-                  theme="primary"
-                />
+                {authorization?.submitCode ? (
+                  <Button
+                    callback={handleSubmitCode}
+                    label={codePending ? 'Submitting…' : 'Submit code'}
+                    disabled={phase !== 'authorizing' || !code.trim() || codePending}
+                    theme="primary"
+                  />
+                ) : (
+                  <Button
+                    callback={handleAuthorize}
+                    disabled={phase === 'canceling' || authorizationActionPending}
+                    icon={
+                      userCode ? <Copy aria-hidden="true" /> : <ExternalLink aria-hidden="true" />
+                    }
+                    label={
+                      authorizationActionPending
+                        ? userCode
+                          ? 'Copying…'
+                          : 'Opening…'
+                        : userCode
+                          ? `Copy ${userCode}`
+                          : 'Open'
+                    }
+                    theme="primary"
+                  />
+                )}
               </>
             ) : (
               <Button

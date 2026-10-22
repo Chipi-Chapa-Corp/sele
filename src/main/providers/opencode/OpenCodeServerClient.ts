@@ -85,9 +85,10 @@ export class OpenCodeServerClient {
     this.targetPid = null
     const browser = this.browser
     this.browser = null
+    // Signal the server first: quitting must not depend on the awaits below finishing.
+    child?.kill()
     await browser?.close()
     if (targetPid != null) await this.stopTargetProcess(targetPid)
-    child?.kill()
   }
 
   private start = async (generation: number): Promise<OpencodeClient> => {

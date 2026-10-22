@@ -1,4 +1,8 @@
+import { extractLinkedChats } from './linkedChats.ts'
+import type { ProviderId } from '../../shared/provider.ts'
+
 export type ChatMessageResource =
+  | { kind: 'linkedChat'; providerId: ProviderId; chatId: string; name: string }
   | { kind: 'skill'; name: string }
   | { kind: 'app'; id: string; name: string }
   | { kind: 'browserContext' }
@@ -45,6 +49,19 @@ const parseResourcePrefix = (line: string): ChatMessageResource[] | null => {
 }
 
 export const getChatMessagePresentation = (content: string): ChatMessagePresentation => {
+  const linked = extractLinkedChats(content)
+  const presentation = getUnlinkedMessagePresentation(linked.content)
+  if (linked.linkedChats.length === 0) return presentation
+  return {
+    content: presentation.content,
+    resources: [
+      ...linked.linkedChats.map((chat): ChatMessageResource => ({ kind: 'linkedChat', ...chat })),
+      ...presentation.resources
+    ]
+  }
+}
+
+const getUnlinkedMessagePresentation = (content: string): ChatMessagePresentation => {
   let hasBrowserContext = false
   const visibleContent = content.replace(inAppBrowserContextPattern, () => {
     hasBrowserContext = true

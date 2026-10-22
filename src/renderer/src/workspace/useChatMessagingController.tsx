@@ -141,7 +141,14 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   }
   const pendingEditRef = useRef<PendingEditSession | null>(null)
   const releasePendingEdit = async (session: PendingEditSession): Promise<ProviderChatDetail> => {
-    await session.ready
+    // A failed begin was already released by the main process; just refresh the chat.
+    if (
+      !(await session.ready.then(
+        () => true,
+        () => false
+      ))
+    )
+      return providerApi.getChat(session.providerId, session.chatId)
     return providerApi.cancelPendingMessageEdit(
       session.providerId,
       session.chatId,
@@ -223,7 +230,10 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       if (!selectedChat || sendInFlightRef.current || editOpeningRef.current) return
       editOpeningRef.current = true
       const chatKey = selectedChatKeyRef.current
+      const editProviderId = selectedChat.providerId
+      const editChatId = selectedChat.id
       let session: PendingEditSession | null = null
+      let opened = false
       try {
         const previous = pendingEditRef.current
         if (previous) {
@@ -248,12 +258,22 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         }
         pendingEditRef.current = session
         const detail = await session.ready
+        opened = true
         if (pendingEditRef.current !== session || chatKey !== selectedChatKeyRef.current) return
         const current = detail.items.find(
           (item): item is ProviderPendingMessage =>
             item.type === 'pendingMessage' && item.id === message.id
         )
         if (!current) throw new Error('The message is no longer pending.')
+        // The provider may accept the message while the editor opens; the main process then
+        // reports the settled chat instead of a hold, so never open an editor that cannot save.
+        if (current.editable === false) {
+          const refreshed = await releasePendingEdit(session).catch(() => detail)
+          if (pendingEditRef.current === session) pendingEditRef.current = null
+          if (chatKey === selectedChatKeyRef.current)
+            applyViewedChatDetail(session.providerId, refreshed, { allowEqualRevision: true })
+          return
+        }
         const attachments = await prepareEditAttachments(current)
         if (
           !attachments ||
@@ -279,12 +299,23 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       } catch (error) {
         if (session && pendingEditRef.current === session) {
           pendingEditRef.current = null
-          void releasePendingEdit(session).catch((releaseError) =>
-            console.error('Unable to release failed edit.', releaseError)
-          )
+          if (opened)
+            void releasePendingEdit(session).catch((releaseError) =>
+              console.error('Unable to release failed edit.', releaseError)
+            )
         }
-        if (chatKey === selectedChatKeyRef.current)
+        if (chatKey === selectedChatKeyRef.current) {
+          const detail = await providerApi.getChat(editProviderId, editChatId).catch(() => null)
+          if (detail) applyViewedChatDetail(editProviderId, detail, { allowEqualRevision: true })
+          // The provider accepted the message while the editor was opening: it is now a normal
+          // pending message, which is not an error worth interrupting the user over.
+          if (
+            detail &&
+            !detail.items.some((item) => item.type === 'pendingMessage' && item.id === message.id)
+          )
+            return
           handleSendFailure(error, 'Unable to edit pending message.')
+        }
       } finally {
         editOpeningRef.current = false
       }

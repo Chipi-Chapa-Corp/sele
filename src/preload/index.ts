@@ -76,6 +76,7 @@ const appApi: AppApi = {
   deleteGitBranch: (options) => ipcRenderer.invoke(appIpcChannels.deleteGitBranch, options),
   createGitWorktree: (options) => ipcRenderer.invoke(appIpcChannels.createGitWorktree, options),
   getFileTree: (options) => ipcRenderer.invoke(appIpcChannels.getFileTree, options),
+  getFileTreeListing: (options) => ipcRenderer.invoke(appIpcChannels.getFileTreeListing, options),
   getFileContents: (options) => ipcRenderer.invoke(appIpcChannels.getFileContents, options),
   openFileInSystemApp: (options) => ipcRenderer.invoke(appIpcChannels.openFileInSystemApp, options),
   downloadFile: (options) => ipcRenderer.invoke(appIpcChannels.downloadFile, options),
@@ -259,6 +260,8 @@ const providerApi: ProviderRendererApi = {
   getChatContainers: () => ipcRenderer.invoke(providerIpcChannels.getChatContainers),
   getChats: (providerId, options) =>
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
+  getKnownChats: (providerId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getKnownChats, providerId, options),
   getChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.getChat, providerId, chatId),
   getCachedChat: (providerId, chatId, options) =>
@@ -441,6 +444,10 @@ const providerApi: ProviderRendererApi = {
     ),
   compactChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.compactChat, providerId, chatId),
+  prepareLinkedChatContext: (providerId, chatId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.prepareLinkedChatContext, providerId, chatId, options),
+  cancelLinkedChatContext: (operationId) =>
+    ipcRenderer.invoke(providerIpcChannels.cancelLinkedChatContext, operationId),
   stopChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.stopChat, providerId, chatId),
   markChatDone: (providerId, chatId, done) =>

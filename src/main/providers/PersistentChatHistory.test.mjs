@@ -207,3 +207,31 @@ test('discovered remote environments can record opening pages without crossing p
   assert.equal(await other.preview('codex', 'chat'), null)
   assert.ok(await other.preview('codex', 'chat', remote))
 })
+
+test('durable view identity survives native freshness/status changes and includes confirmed empty-account configurations', () => {
+  const f = fixture()
+  const scope = f.cache.viewScope('codex', 'chat')
+  f.cache.invalidate('codex', 'chat')
+  f.cache.observe([chat({ updatedAt: 999, status: 'active', done: true })])
+  assert.equal(scope.current(), true, 'metadata freshness never erases durable knowledge')
+  assert.equal(f.cache.begin('codex', 'chat'), null, 'legacy preview eligibility stays independent')
+  f.cache.forgetAccount('codex')
+  assert.equal(scope.current(), false)
+  f.cache.setAccount('codex', null, { accounts: [] }, f.cache.accountEpoch('codex'))
+  const anonymous = f.cache.viewScope('codex', 'chat')
+  assert.ok(anonymous)
+  assert.notEqual(anonymous.key, scope.key)
+})
+
+test('opening view identities resolve discovered remote sources without guessing across collisions', () => {
+  const f = fixture()
+  const remote = { kind: 'container', tool: 'ssh', name: 'remote', runtime: { kind: 'host' } }
+  const identity = new PersistentChatHistory(f.store)
+  account(identity)
+  account(identity, 'account-a', 'codex', remote)
+  identity.observe([chat({ container: remote })])
+  assert.equal(identity.openingViewScope('codex', 'chat').containerKey, 'ssh:remote/from:host')
+  identity.observe([chat()])
+  assert.equal(identity.openingViewScope('codex', 'chat'), null)
+  assert.equal(identity.openingViewScope('codex', 'chat', { kind: 'host' }).containerKey, 'host')
+})

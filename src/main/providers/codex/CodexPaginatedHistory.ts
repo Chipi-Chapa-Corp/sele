@@ -32,6 +32,17 @@ export const assertCodexHistoryWritable = (historyMode: unknown): void => {
   throw new Error(getUnsupportedCodexHistoryMessage(historyMode))
 }
 
+/**
+ * Paginated turn listing is still rolling out by CLI build. Older or transitional app-servers
+ * answer `thread/turns/list` with a method-level rejection even though `thread/read` still
+ * returns the full transcript, so callers fall back to the legacy read instead of failing.
+ */
+const unsupportedTurnPaginationPattern =
+  /(?:list_turns|paginated_threads|thread\/turns\/list)[\s\S]*not supported/i
+
+export const isUnsupportedTurnPaginationError = (error: unknown): boolean =>
+  unsupportedTurnPaginationPattern.test(error instanceof Error ? error.message : String(error))
+
 const emptyRolloutErrorPattern =
   /failed to read session metadata[\s\S]*rollout at [\s\S]* is empty/i
 
@@ -66,7 +77,8 @@ export const retryCodexEmptyRolloutRead = async <Result>(
   }
 }
 
-export const loadCodexLegacyThread = async <
+/** Reads the complete thread with its turns, whatever history protocol it reports. */
+export const loadCodexFullThread = async <
   Thread extends { historyMode?: unknown; turns: CodexTurn[] }
 >(
   request: CodexHistoryRequest,
@@ -79,10 +91,20 @@ export const loadCodexLegacyThread = async <
   if (!response.thread || !Array.isArray(response.thread.turns)) {
     throw new Error('Invalid legacy Codex thread response')
   }
-  if (!isLegacyCodexHistory(response.thread.historyMode)) {
-    throw new Error(getUnsupportedCodexHistoryMessage(response.thread.historyMode))
-  }
   return response.thread
+}
+
+export const loadCodexLegacyThread = async <
+  Thread extends { historyMode?: unknown; turns: CodexTurn[] }
+>(
+  request: CodexHistoryRequest,
+  threadId: string
+): Promise<Thread> => {
+  const thread = await loadCodexFullThread<Thread>(request, threadId)
+  if (!isLegacyCodexHistory(thread.historyMode)) {
+    throw new Error(getUnsupportedCodexHistoryMessage(thread.historyMode))
+  }
+  return thread
 }
 
 export const retainCodexTurnTail = (

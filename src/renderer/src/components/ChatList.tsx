@@ -12,6 +12,7 @@ import {
 } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { ChatListItem } from './ChatListItem'
+import { linkedChatDragType, serializeLinkedChatDrag } from '../linkedChats'
 import './ChatList.css'
 
 type ChatListProps = {
@@ -91,10 +92,18 @@ export const ChatList = memo(function ChatList({
   }
 
   const handleDragStart = (event: React.DragEvent<HTMLElement>, chat: ProviderChat): void => {
-    if (!reorderable) return
+    // Every row can be dropped into a composer as a linked chat.
+    event.dataTransfer.setData(
+      linkedChatDragType,
+      serializeLinkedChatDrag({ providerId: chat.providerId, chatId: chat.id, name: chat.title })
+    )
+    if (!reorderable) {
+      event.dataTransfer.effectAllowed = 'copy'
+      return
+    }
 
     const chatKey = getChatKey(chat)
-    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.effectAllowed = 'copyMove'
     event.dataTransfer.setData('text/plain', chatKey)
     setDraggedChatKey(chatKey)
     setDropInsertionIndex(null)
@@ -219,6 +228,7 @@ export const ChatList = memo(function ChatList({
               canMarkDone={canMarkDone}
               canMarkUndone={canMarkUndone}
               draggable={reorderable}
+              linkDraggable
               dragging={chatKey === draggedChatKey}
               dropPosition={dropPosition}
               approvalDecisionInFlight={

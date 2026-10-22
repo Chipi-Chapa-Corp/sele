@@ -132,9 +132,17 @@ if (!process.versions.electron) {
         `### Finding ${index}\n\nParagraph ${index} with **strong text** and [source](/fixture/source.ts:10).\n\n\x60\x60\x60ts\nconst result${index} = {value: "large", ready: true};\n\x60\x60\x60\n\n`
       const content =
         Array.from({ length: 350 }, (_, i) => paragraph(i)).join('') + '\nFINAL-MARKER\n'
-      await run(
-        `window.gaps=[];window.tasks=[];window.counts=[];window.render(${JSON.stringify(content)},'rich',true)`
+      const firstViewport = await run(
+        `window.gaps=[];window.tasks=[];window.counts=[];window.render(${JSON.stringify(content)},'rich',true);
+        ({text:document.getElementById('root').textContent,loader:document.body.textContent.includes('Rendering message')})`
       )
+      assert.match(
+        firstViewport.text,
+        /FINAL-MARKER/,
+        'available message text appears in its first commit'
+      )
+      assert.equal(firstViewport.loader, false)
+      assert.ok(firstViewport.text.length <= 8_194, 'the initial text viewport stays bounded')
       await waitFor(
         `document.querySelectorAll('h3').length===350 && document.body.textContent.includes('FINAL-MARKER')`
       )

@@ -9,7 +9,10 @@ import { getHostCommand, type HostCommand, isRunningInFlatpak } from '../../host
 import { getCurrentContainerHostBridge } from '../../currentContainer'
 import type { ClaudeAccountStorage } from './ClaudeAccountStore'
 
-export const runClaudeAccountCommand = (command: HostCommand): Promise<string> =>
+export const runClaudeAccountCommand = (
+  command: HostCommand,
+  options: { allowUnauthenticatedStatus?: boolean } = {}
+): Promise<string> =>
   new Promise((resolveResult, reject) => {
     const child = execFile(
       command.file,
@@ -24,7 +27,7 @@ export const runClaudeAccountCommand = (command: HostCommand): Promise<string> =
       },
       (error, stdout) => {
         // Auth commands can print credentials/authorization URLs. Never include their output in errors.
-        if (error)
+        if (error && !(options.allowUnauthenticatedStatus && error.code === 1))
           reject(new Error(`Unable to run Claude account command (${error.code ?? 'failed'}).`))
         else resolveResult(stdout)
       }

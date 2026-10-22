@@ -1,3 +1,4 @@
+import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -23,6 +24,7 @@ const declaration = source.statements.find(
 )
 const names = new Set([
   'getChats',
+  'failUsageLimitedTurn',
   'getOrCreateState',
   'rememberSession',
   'createChat',
@@ -58,7 +60,10 @@ const fixture = (messages, { title = defaultTitle, status } = {}) => {
   const client = {
     experimental: { session: { list: async () => ({ data: [session] }) } },
     session: {
-      status: async () => ({ data: status ? { chat: { type: status } } : {} }),
+      status: async () => ({
+        data: status ? { chat: typeof status === 'string' ? { type: status } : status } : {}
+      }),
+      abort: async () => {},
       messages: async ({ limit, before }) => {
         requests.push({ limit, before })
         const end = before ? Number(before) : messages.length
@@ -74,6 +79,7 @@ const fixture = (messages, { title = defaultTitle, status } = {}) => {
   }
   const context = vm.createContext({
     console,
+    getOpenCodeUsageLimitMessage,
     requireData: (result) => result.data,
     isOneShotSession: () => false,
     isDefaultOpenCodeTitle,
@@ -91,10 +97,12 @@ const fixture = (messages, { title = defaultTitle, status } = {}) => {
     states: new Map(),
     sessionContainers: new Map(),
     getClientEntry: async () => ({ client, container: null }),
+    closeBrowser() {},
+    completeTurn() {},
     loadMessages: loadOpenCodeMessages,
     getContextUsage: () => null
   })
-  return { adapter, requests, session }
+  return { adapter, requests, session, client }
 }
 
 test('restart restores an unfinished turn as stopped and keeps its original prompt name', async () => {
@@ -136,6 +144,36 @@ test('a running reply is active when rediscovered, while named sessions keep bou
   assert.equal(chats[0].lastTurnOutcome, null)
   assert.equal(requests[0].limit, 8)
   assert.equal(requests.length, 1)
+})
+
+test('sidebar discovery fails a retrying limit and later busy snapshots cannot reactivate it', async () => {
+  const messages = [user('first', 'Question'), assistant('limited')]
+  const { adapter, client } = fixture(messages, {
+    status: { type: 'retry', message: 'Free usage exceeded' }
+  })
+  let aborts = 0
+  client.session.abort = async () => {
+    aborts++
+  }
+  const { chats } = await adapter.getChats()
+  assert.equal(chats[0].status, 'error')
+  assert.equal(chats[0].lastTurnOutcome, 'failed')
+  assert.equal(aborts, 1)
+  client.session.status = async () => ({ data: { chat: { type: 'busy' } } })
+  assert.equal((await adapter.getChats()).chats[0].status, 'error')
+  const state = adapter.states.get('chat')
+  state.messages = [
+    messages[0],
+    {
+      ...messages[1],
+      info: { ...messages[1].info, error: { name: 'MessageAbortedError' } }
+    }
+  ]
+  const step = adapter
+    .createChatDetailFromState(state)
+    .items.find((item) => item.type === 'working')
+  assert.equal(step.status, 'failed', 'the cancellation must display as the original failure')
+  assert.match(step.failureMessage, /Free usage exceeded/)
 })
 
 test('a completed tool step without a final reply is stopped only after activity ends', () => {

@@ -16,7 +16,7 @@ import { getClaudeExecutable } from './ClaudeExecutable'
 import { parseClaudeVersion } from './ClaudeVersion'
 import { fetchClaudeRateLimits } from './ClaudeUsage'
 import { claudeAccountDisplayName } from '../AccountDisplayName'
-import { isClaudeAuthenticationError } from './ClaudeAuthentication'
+import { ClaudeAuthenticationError, isClaudeAuthenticationError } from './ClaudeAuthentication'
 
 const usageFallbackCacheMs = 60_000
 /** Wait before asking again after a failed request, unless Claude says how long. */
@@ -165,14 +165,15 @@ export class ClaudeAccounts {
   private command = async (
     args: string[],
     options: ProviderSourceOptions,
-    directory: string | null = null
+    directory: string | null = null,
+    envOverrides: NodeJS.ProcessEnv = {}
   ) =>
     getHostCommand(
       options.container?.kind === 'container' ? 'claude' : getClaudeExecutable(),
       args,
       {
         container: options.container,
-        env: getClaudeAccountEnvironment(process.env, directory)
+        env: { ...getClaudeAccountEnvironment(process.env, directory), ...envOverrides }
       }
     )
 
@@ -249,6 +250,30 @@ export class ClaudeAccounts {
     if ((await store.get()).accounts.length === 1 && !(await store.getPending())) return process.env
     await this.ensureSupported({ container })
     return store.getUsageEnvironment(process.env)
+  }
+
+  /** A usage response without plan limits does not prove that credentials exist. */
+  getAuthenticationMethod = async (options: ProviderSourceOptions = {}): Promise<string> => {
+    const env = await this.getEnvironment(options.container)
+    const command = await getHostCommand(
+      options.container?.kind === 'container' ? 'claude' : getClaudeExecutable(),
+      ['auth', 'status', '--json'],
+      { container: options.container, env }
+    )
+    const output = await runClaudeAccountCommand(command, { allowUnauthenticatedStatus: true })
+    let status: { loggedIn?: boolean; authMethod?: string }
+    try {
+      status = JSON.parse(output)
+    } catch {
+      throw new Error('Unable to read Claude authentication status.')
+    }
+    if (status.loggedIn === false || status.authMethod === 'none')
+      throw new ClaudeAuthenticationError(
+        'Claude is not signed in. Sign in again to send messages.'
+      )
+    if (status.loggedIn !== true || typeof status.authMethod !== 'string')
+      throw new Error('Unable to read Claude authentication status.')
+    return status.authMethod
   }
 
   getUsageFallback = async (options: ProviderSourceOptions = {}) => {
@@ -337,7 +362,11 @@ export class ClaudeAccounts {
     const store = await this.store(options)
     const key = getContainerTargetKey(options.container)
     if (this.logins.has(key)) throw new Error('Claude sign-in is already running.')
-    const command = await this.command(['auth', 'login', '--claudeai'], options, directory)
+    // Sele opens the printed manual URL. The CLI's automatic browser URL uses
+    // localhost, which points at the wrong machine when signing in elsewhere.
+    const command = await this.command(['auth', 'login', '--claudeai'], options, directory, {
+      BROWSER: 'true'
+    })
     // Recheck after command resolution, which can involve SSH and shell discovery.
     const expectedId = reauthentication
       ? ((await store.getSelection())?.id ?? 'default')

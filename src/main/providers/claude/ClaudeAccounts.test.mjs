@@ -253,6 +253,9 @@ test('both credential selections list and read the same shared transcript throug
 
 const authUrl =
   'https://claude.com/cai/oauth/authorize?code=true&client_id=fixture&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A46603%2Fcallback&scope=user%3Ainference&code_challenge=fixture&code_challenge_method=S256&state=fixture'
+const manualUrl = new URL(authUrl)
+manualUrl.searchParams.set('redirect_uri', 'https://platform.claude.com/oauth/code/callback')
+const manualAuthUrl = manualUrl.href
 const loginProcess = (script, timeout) =>
   new ClaudeAccountLogin(
     {
@@ -265,10 +268,11 @@ const loginProcess = (script, timeout) =>
 
 test('authorization URLs require a complete, allowlisted OAuth URL', () => {
   assert.equal(findClaudeAuthorizationUrl(authUrl), null)
-  assert.equal(findClaudeAuthorizationUrl(`${authUrl}\n`), authUrl)
+  assert.equal(findClaudeAuthorizationUrl(`${authUrl}\n`), manualAuthUrl)
+  assert.equal(findClaudeAuthorizationUrl(`${manualAuthUrl}\n`), manualAuthUrl)
   assert.equal(
     findClaudeAuthorizationUrl(`\u001b]8;;${authUrl}\u0007link\u001b]8;;\u0007`),
-    authUrl
+    manualAuthUrl
   )
   assert.equal(
     findClaudeAuthorizationUrl(
@@ -303,7 +307,7 @@ test('recognizes the current CLI sign-in output before the login process exits',
     2_000
   )
   try {
-    assert.equal(await login.ready, authUrl)
+    assert.equal(await login.ready, manualAuthUrl)
     login.submitCode('fixture-code')
     assert.equal((await login.completion).success, true)
   } finally {
@@ -317,7 +321,7 @@ test('CLI login handles chunked URLs, code submission, and successful exit', asy
     process.stdin.once('data',code=>process.exit(code.toString().trim()==='code#state'?0:1));`
   const login = loginProcess(script)
   try {
-    assert.equal(await login.ready, authUrl)
+    assert.equal(await login.ready, manualAuthUrl)
     login.submitCode('code#state')
     assert.deepEqual(await login.completion, { success: true, error: null })
   } finally {

@@ -41,6 +41,7 @@ const setup = async () => {
   await writeFile(
     script,
     `const fs = require('node:fs');
+    if (process.env.BROWSER !== 'true') throw new Error('Automatic browser launch must be disabled');
     const directory = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
     console.log('https://claude.com/cai/oauth/authorize?code=true&response_type=code&state=fixture&client_id=fixture');
     process.stdin.once('data', code => {
@@ -54,6 +55,7 @@ const setup = async () => {
   const fixture = {
     version: '2.1.281',
     authenticated: true,
+    authMethod: 'claude.ai',
     usageCalls: [],
     profileCalls: [],
     usage: async (token) => {
@@ -73,7 +75,7 @@ const setup = async () => {
     run: async (command) =>
       command.args[0] === '--version'
         ? fixture.version
-        : JSON.stringify({ loggedIn: fixture.authenticated, authMethod: 'claude.ai' }),
+        : JSON.stringify({ loggedIn: fixture.authenticated, authMethod: fixture.authMethod }),
     storage: async (container) => {
       const key = container?.name ?? 'host'
       if (!stores.has(key)) {
@@ -159,6 +161,31 @@ const setup = async () => {
   }
 }
 
+test('auth status uses the selected credentials and rejects an unsigned account before sending', async () => {
+  const h = await setup()
+  try {
+    assert.equal(await h.accounts.getAuthenticationMethod(), 'claude.ai')
+    const { accountId } = await h.accounts.create()
+    await h.accounts.complete(accountId)
+    assert.equal(await h.accounts.getAuthenticationMethod(), 'claude.ai')
+    const command = h.commands.findLast((command) => command.args[1] === 'status')
+    assert.ok(command.options.env.CLAUDE_SECURESTORAGE_CONFIG_DIR.endsWith(accountId))
+    assert.equal(command.options.env.ANTHROPIC_API_KEY, '')
+    assert.equal(command.options.env.CLAUDE_CONFIG_DIR, '/shared-config')
+    h.fixture.authenticated = false
+    h.fixture.authMethod = 'none'
+    await assert.rejects(
+      h.accounts.getAuthenticationMethod(),
+      (error) => error.code === 'authentication_failed'
+    )
+    h.fixture.authenticated = true
+    h.fixture.authMethod = 'api_key'
+    assert.equal(await h.accounts.getAuthenticationMethod(), 'api_key')
+  } finally {
+    await h.cleanup()
+  }
+})
+
 test('complete CLI sign-in keeps the shared home and activates only after verified completion', async () => {
   const h = await setup()
   try {
@@ -167,6 +194,7 @@ test('complete CLI sign-in keeps the shared home and activates only after verifi
     assert.equal(login.acceptsCode, true)
     assert.equal((await h.accounts.get()).accounts.length, 1)
     const command = h.commands.find((command) => command.args[1] === 'login')
+    assert.equal(command.options.env.BROWSER, 'true')
     assert.equal(command.options.env.CLAUDE_CONFIG_DIR, '/shared-config')
     assert.equal(command.options.env.ANTHROPIC_API_KEY, '')
     assert.ok(command.options.env.CLAUDE_SECURESTORAGE_CONFIG_DIR.endsWith(accountId))

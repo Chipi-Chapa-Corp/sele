@@ -20,10 +20,11 @@ import { createChatMarkdownRenderer } from '../chatMarkdownRenderer'
 import { WorkingMark, type WorkingMarkAnimation } from './WorkingMark'
 import { visualizationExtension } from '../visualizationReference'
 import {
-  Fragment,
+  createContext,
   memo,
   startTransition,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useMemo,
@@ -73,6 +74,7 @@ import {
   ImageOff,
   ListChecks,
   LoaderCircle,
+  MessagesSquare,
   Package,
   Pencil,
   Pin,
@@ -121,6 +123,7 @@ import { BoundedHighlightedCode } from './BoundedHighlightedCode'
 import { HighlightedCode } from './HighlightedCode'
 import { ImageLightbox } from './ImageLightbox'
 import { ChatMediaScope, useChatMedia } from './ChatMediaGallery'
+import { useLinkedChatOpener } from './LinkedChatOpener'
 import { chatMediaId } from '../chatMedia'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { RateLimitResetButton } from './RateLimitResetButton'
@@ -271,6 +274,30 @@ type ProviderWorkingMessageItem = Extract<ProviderWorkingItem, { type: 'message'
 type WorkingBlock =
   | { type: 'message'; item: ProviderWorkingMessageItem }
   | { type: 'tools'; items: ProviderToolItem[] }
+
+// Keep explicit choices with the chat item, including when a single tool becomes
+// a sequence or an enclosing progress disclosure temporarily unmounts its rows.
+const WorkingDisclosureContext = createContext<Map<string, boolean> | null>(null)
+
+const useWorkingDisclosure = (
+  id: string,
+  defaultOpen: boolean,
+  fallbackId?: string
+): [boolean, (open: boolean) => void] => {
+  const choices = useContext(WorkingDisclosureContext)
+  const [choice, setChoice] = useState(() => ({
+    id,
+    open: choices?.get(id) ?? (fallbackId ? choices?.get(fallbackId) : undefined)
+  }))
+  const open = (choice.id === id ? choice.open : choices?.get(id)) ?? defaultOpen
+  return [
+    open,
+    (nextOpen) => {
+      choices?.set(id, nextOpen)
+      setChoice({ id, open: nextOpen })
+    }
+  ]
+}
 
 const isWorkingItemPayloadLoaded = (item: ProviderWorkingItem): boolean => {
   if (item.type === 'message') return item.contentLoaded !== false
@@ -588,8 +615,7 @@ const Activity: React.FC<{
   onDisclosureToggle?: () => void
   projectCwd?: string | null
 }> = ({ label, tools, active, expanded, onDisclosureToggle, projectCwd }) => {
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
-  const open = manualOpen ?? expanded
+  const [open, setOpen] = useWorkingDisclosure(`tool:${tools[0]?.id}`, expanded)
   const activity = tools[0]?.activity ?? 'other'
   const detailKind = getToolDetailKind(activity, tools)
 
@@ -608,7 +634,7 @@ const Activity: React.FC<{
       <summary
         onClick={(event) => {
           event.preventDefault()
-          setManualOpen(!open)
+          setOpen(!open)
           onDisclosureToggle?.()
         }}
       >
@@ -727,6 +753,7 @@ const MessageAttachments: React.FC<{
   resources?: ChatMessageResource[]
 }> = ({ attachments, onOpenFileLink, projectCwd, resources = [] }) => {
   const { scope } = useChatMedia()
+  const openLinkedChat = useLinkedChatOpener()
   const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image')
   const otherAttachments = attachments.filter((attachment) => attachment.kind !== 'image')
 
@@ -760,45 +787,67 @@ const MessageAttachments: React.FC<{
           role="list"
           aria-label="Other message attachments"
         >
-          {resources.map((resource, index) => (
-            <div
-              className="chat-detail__message-attachment"
-              key={`${resource.kind}:${
-                resource.kind === 'app'
-                  ? resource.id
-                  : resource.kind === 'browserContext'
-                    ? 'browser-context'
-                    : resource.name
-              }:${index}`}
-              role="listitem"
-            >
-              <span
-                className="chat-detail__message-attachment-link chat-detail__message-attachment-resource"
-                title={
-                  resource.kind === 'browserContext'
-                    ? 'Browser context'
-                    : `${resource.kind === 'skill' ? 'Skill' : 'App'}: ${resource.name}`
-                }
+          {resources.map((resource, index) =>
+            resource.kind === 'linkedChat' ? (
+              <div
+                className="chat-detail__message-attachment"
+                key={`linked-chat:${resource.providerId}:${resource.chatId}:${index}`}
+                role="listitem"
               >
-                <span className="chat-detail__message-attachment-icon" aria-hidden="true">
-                  {resource.kind === 'skill' ? (
-                    <Package />
-                  ) : resource.kind === 'app' ? (
-                    <Blocks />
-                  ) : (
-                    <Globe2 />
-                  )}
+                <button
+                  type="button"
+                  className="chat-detail__message-attachment-link chat-detail__message-attachment-resource"
+                  disabled={!openLinkedChat}
+                  title={`Linked chat: ${resource.name}`}
+                  aria-label={`Open linked chat ${resource.name}`}
+                  onClick={() => openLinkedChat?.(resource)}
+                >
+                  <span className="chat-detail__message-attachment-icon" aria-hidden="true">
+                    <MessagesSquare />
+                  </span>
+                  <span className="chat-detail__message-attachment-label">{resource.name}</span>
+                </button>
+              </div>
+            ) : (
+              <div
+                className="chat-detail__message-attachment"
+                key={`${resource.kind}:${
+                  resource.kind === 'app'
+                    ? resource.id
+                    : resource.kind === 'browserContext'
+                      ? 'browser-context'
+                      : resource.name
+                }:${index}`}
+                role="listitem"
+              >
+                <span
+                  className="chat-detail__message-attachment-link chat-detail__message-attachment-resource"
+                  title={
+                    resource.kind === 'browserContext'
+                      ? 'Browser context'
+                      : `${resource.kind === 'skill' ? 'Skill' : 'App'}: ${resource.name}`
+                  }
+                >
+                  <span className="chat-detail__message-attachment-icon" aria-hidden="true">
+                    {resource.kind === 'skill' ? (
+                      <Package />
+                    ) : resource.kind === 'app' ? (
+                      <Blocks />
+                    ) : (
+                      <Globe2 />
+                    )}
+                  </span>
+                  <span className="chat-detail__message-attachment-label">
+                    {resource.kind === 'browserContext'
+                      ? 'Browser context'
+                      : resource.kind === 'app'
+                        ? `$${resource.name}`
+                        : resource.name}
+                  </span>
                 </span>
-                <span className="chat-detail__message-attachment-label">
-                  {resource.kind === 'browserContext'
-                    ? 'Browser context'
-                    : resource.kind === 'app'
-                      ? `$${resource.name}`
-                      : resource.name}
-                </span>
-              </span>
-            </div>
-          ))}
+              </div>
+            )
+          )}
           {otherAttachments.map((attachment, index) =>
             attachment.kind === 'review' ? (
               <div
@@ -1438,19 +1487,22 @@ const MarkdownMessageComponent: React.FC<{
 export const MarkdownMessage = memo(MarkdownMessageComponent)
 
 const ThoughtRow: React.FC<{
+  id: string
   streaming: boolean
   onDisclosureToggle?: () => void
   children: ReactNode
-}> = ({ streaming, onDisclosureToggle, children }) => {
-  const [open, setOpen] = useState(false)
+}> = ({ id, streaming, onDisclosureToggle, children }) => {
+  const [open, setOpen] = useWorkingDisclosure(`thought:${id}`, false)
 
   return (
-    <details
-      className="chat-detail__tool-group chat-detail__thought"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary onClick={onDisclosureToggle}>
+    <details className="chat-detail__tool-group chat-detail__thought" open={open}>
+      <summary
+        onClick={(event) => {
+          event.preventDefault()
+          setOpen(!open)
+          onDisclosureToggle?.()
+        }}
+      >
         <span className="chat-detail__tool-icon">
           <Brain aria-hidden="true" />
         </span>
@@ -1563,11 +1615,14 @@ const ToolSequence: React.FC<{
   onDisclosureToggle,
   projectCwd
 }) => {
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
-  const open = manualOpen ?? expanded
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const sequenceItem = items.length === 1 && items[0]?.type === 'toolGroup' ? items[0] : null
   const tools = items.flatMap(getToolsFromToolItem)
+  const [open, setOpen] = useWorkingDisclosure(
+    `sequence:${items[0]?.id}`,
+    expanded,
+    `tool:${tools[0]?.id}`
+  )
   const activeTools = tools.filter((tool) => activeToolIds.has(tool.id))
   const active = activeTools.length > 0
   const dominantActivity = active
@@ -1609,7 +1664,7 @@ const ToolSequence: React.FC<{
       <summary
         onClick={(event) => {
           event.preventDefault()
-          setManualOpen(!open)
+          setOpen(!open)
           onDisclosureToggle?.()
         }}
       >
@@ -2147,7 +2202,7 @@ const WorkingStep: React.FC<{
         </summary>
         {open && (
           <div ref={workingContentRef} className="chat-detail__step-content">
-            {renderedSegments.map((segment, segmentIndex) => {
+            {renderedSegments.flatMap((segment, segmentIndex) => {
               const previousSegment = renderedSegments[segmentIndex - 1]
               const previousEndIndex = previousSegment
                 ? previousSegment.startIndex + previousSegment.items.length
@@ -2158,119 +2213,121 @@ const WorkingStep: React.FC<{
                 : Math.max(0, segment.startIndex - workingItemPageSize)
               const pageItemCount = Math.min(workingItemPageSize, hiddenItemCount)
 
-              return (
-                <Fragment key={`${segment.kind}:${segment.startIndex}`}>
-                  {hiddenItemCount > 0 && (
-                    <button
-                      className="chat-detail__working-load chat-detail__working-gap"
-                      type="button"
-                      disabled={!onLoad || loadState === 'loading'}
-                      onClick={() => void loadPage(loadStartIndex)}
-                    >
-                      Load {pageItemCount} more · {hiddenItemCount} hidden
-                    </button>
-                  )}
-                  {segment.blocks.map((block) => {
-                    return block.type === 'tools' ? (
-                      <div key={block.items[0]?.id} data-working-motion-id={block.items[0]?.id}>
-                        {block.items.length > 1 ||
-                        block.items.some(
-                          (toolItem) =>
-                            toolItem.type === 'toolGroup' &&
-                            Math.max(toolItem.toolCount ?? 0, toolItem.tools.length) > 1
-                        ) ? (
-                          <ToolSequence
-                            items={block.items}
+              // Offsets move as the live tail grows. Rows must be siblings keyed
+              // by item ID, never children of a fragment keyed by a page offset.
+              return [
+                hiddenItemCount > 0 && (
+                  <button
+                    key={`gap:${segment.startIndex}`}
+                    className="chat-detail__working-load chat-detail__working-gap"
+                    type="button"
+                    disabled={!onLoad || loadState === 'loading'}
+                    onClick={() => void loadPage(loadStartIndex)}
+                  >
+                    Load {pageItemCount} more · {hiddenItemCount} hidden
+                  </button>
+                ),
+                ...segment.blocks.map((block) => {
+                  return block.type === 'tools' ? (
+                    <div key={block.items[0]?.id} data-working-motion-id={block.items[0]?.id}>
+                      {block.items.length > 1 ||
+                      block.items.some(
+                        (toolItem) =>
+                          toolItem.type === 'toolGroup' &&
+                          Math.max(toolItem.toolCount ?? 0, toolItem.tools.length) > 1
+                      ) ? (
+                        <ToolSequence
+                          items={block.items}
+                          activeToolIds={activeToolIds}
+                          expanded={active && block.items.at(-1) === lastWorkingItem}
+                          key={block.items[0]?.id}
+                          onLoadItem={onLoadItem}
+                          onLoadPage={onLoadToolPage}
+                          onDisclosureToggle={onDisclosureToggle}
+                          projectCwd={projectCwd}
+                        />
+                      ) : (
+                        block.items.map((toolItem) => (
+                          <ToolItem
+                            item={toolItem}
                             activeToolIds={activeToolIds}
-                            expanded={active && block.items.at(-1) === lastWorkingItem}
-                            key={block.items[0]?.id}
-                            onLoadItem={onLoadItem}
-                            onLoadPage={onLoadToolPage}
+                            expanded={active && toolItem === lastWorkingItem}
+                            key={toolItem.id}
+                            onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
                             onDisclosureToggle={onDisclosureToggle}
                             projectCwd={projectCwd}
                           />
-                        ) : (
-                          block.items.map((toolItem) => (
-                            <ToolItem
-                              item={toolItem}
-                              activeToolIds={activeToolIds}
-                              expanded={active && toolItem === lastWorkingItem}
-                              key={toolItem.id}
-                              onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
-                              onDisclosureToggle={onDisclosureToggle}
-                              projectCwd={projectCwd}
-                            />
-                          ))
-                        )}
-                      </div>
-                    ) : block.item.kind === 'reasoning' ? (
-                      <ThoughtRow
-                        key={block.item.id}
-                        streaming={
-                          active &&
-                          block.item === lastWorkingItem &&
-                          block.item.status === 'inProgress'
-                        }
-                        onDisclosureToggle={onDisclosureToggle}
-                      >
-                        {!isWorkingItemPayloadLoaded(block.item) ? (
-                          <button
-                            className="chat-detail__working-load"
-                            type="button"
-                            disabled={!onLoadItem}
-                            onClick={() =>
-                              void Promise.resolve(onLoadItem?.(block.item.id)).catch((error) => {
-                                console.error('[caught:ChatDetailItem:WorkingStep]', error)
-                              })
-                            }
-                          >
-                            Load reasoning
-                          </button>
-                        ) : (
-                          <MarkdownMessage
-                            mediaScope={block.item.id}
-                            className="chat-detail__working-message"
-                            content={block.item.content}
-                            localImageContainer={container}
-                            localImageCwd={cwd}
-                            onOpenFileLink={onOpenFileLink}
-                            streaming={
-                              active &&
-                              block.item === lastWorkingItem &&
-                              block.item.status === 'inProgress'
-                            }
-                          />
-                        )}
-                      </ThoughtRow>
-                    ) : !isWorkingItemPayloadLoaded(block.item) ? (
-                      <button
-                        className="chat-detail__working-load"
-                        type="button"
-                        key={block.item.id}
-                        disabled={!onLoadItem}
-                        onClick={() =>
-                          void Promise.resolve(onLoadItem?.(block.item.id)).catch((error) => {
-                            console.error('[caught:ChatDetailItem:WorkingStep]', error)
-                          })
-                        }
-                      >
-                        Load reasoning
-                      </button>
-                    ) : (
-                      <MarkdownMessage
-                        mediaScope={block.item.id}
-                        className="chat-detail__working-message"
-                        content={block.item.content}
-                        key={block.item.id}
-                        localImageContainer={container}
-                        localImageCwd={cwd}
-                        onOpenFileLink={onOpenFileLink}
-                        streaming={active && block.item === lastWorkingItem}
-                      />
-                    )
-                  })}
-                </Fragment>
-              )
+                        ))
+                      )}
+                    </div>
+                  ) : block.item.kind === 'reasoning' ? (
+                    <ThoughtRow
+                      id={block.item.id}
+                      key={block.item.id}
+                      streaming={
+                        active &&
+                        block.item === lastWorkingItem &&
+                        block.item.status === 'inProgress'
+                      }
+                      onDisclosureToggle={onDisclosureToggle}
+                    >
+                      {!isWorkingItemPayloadLoaded(block.item) ? (
+                        <button
+                          className="chat-detail__working-load"
+                          type="button"
+                          disabled={!onLoadItem}
+                          onClick={() =>
+                            void Promise.resolve(onLoadItem?.(block.item.id)).catch((error) => {
+                              console.error('[caught:ChatDetailItem:WorkingStep]', error)
+                            })
+                          }
+                        >
+                          Load reasoning
+                        </button>
+                      ) : (
+                        <MarkdownMessage
+                          mediaScope={block.item.id}
+                          className="chat-detail__working-message"
+                          content={block.item.content}
+                          localImageContainer={container}
+                          localImageCwd={cwd}
+                          onOpenFileLink={onOpenFileLink}
+                          streaming={
+                            active &&
+                            block.item === lastWorkingItem &&
+                            block.item.status === 'inProgress'
+                          }
+                        />
+                      )}
+                    </ThoughtRow>
+                  ) : !isWorkingItemPayloadLoaded(block.item) ? (
+                    <button
+                      className="chat-detail__working-load"
+                      type="button"
+                      key={block.item.id}
+                      disabled={!onLoadItem}
+                      onClick={() =>
+                        void Promise.resolve(onLoadItem?.(block.item.id)).catch((error) => {
+                          console.error('[caught:ChatDetailItem:WorkingStep]', error)
+                        })
+                      }
+                    >
+                      Load reasoning
+                    </button>
+                  ) : (
+                    <MarkdownMessage
+                      mediaScope={block.item.id}
+                      className="chat-detail__working-message"
+                      content={block.item.content}
+                      key={block.item.id}
+                      localImageContainer={container}
+                      localImageCwd={cwd}
+                      onOpenFileLink={onOpenFileLink}
+                      streaming={active && block.item === lastWorkingItem}
+                    />
+                  )
+                })
+              ]
             })}
             {(() => {
               const finalSegment = renderedSegments.at(-1)
@@ -2632,13 +2689,15 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   )
 }
 
-export const ChatDetailItem = memo(
-  (props: ChatDetailItemProps) => (
+export const ChatDetailItem = memo((props: ChatDetailItemProps) => {
+  const disclosureChoices = useRef(new Map<string, boolean>())
+  return (
     <ChatMediaScope id={props.item.id}>
       <McpAppScope value={props.mcpAppScope}>
-        <ChatDetailItemComponent {...props} />
+        <WorkingDisclosureContext.Provider value={disclosureChoices.current}>
+          <ChatDetailItemComponent {...props} />
+        </WorkingDisclosureContext.Provider>
       </McpAppScope>
     </ChatMediaScope>
-  ),
-  areChatDetailItemPropsEqual
-)
+  )
+}, areChatDetailItemPropsEqual)

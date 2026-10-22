@@ -450,6 +450,7 @@ export class ImportedConversations {
             'sendActiveChatMessage',
             'stopChat',
             'compactChat',
+            'summarizeChatInFork',
             'resolveApproval',
             'resolveUserInput',
             'beginPendingMessageEdit',

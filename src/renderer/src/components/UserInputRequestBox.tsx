@@ -60,11 +60,6 @@ export const UserInputRequestBox = ({
         <span className="chat-approval__summary chat-user-input__question" id={questionId}>
           {question}
         </span>
-        {request.isBlocking === false && (
-          <span className="chat-user-input__choice-description">
-            You can answer while the agent keeps working.
-          </span>
-        )}
         {choices.length > 0 && (
           <div
             className={`chat-user-input__choices${choicesHaveDescriptions ? ' chat-user-input__choices--described' : ''}`}

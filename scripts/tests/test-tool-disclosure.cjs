@@ -17,8 +17,11 @@ if (!process.versions.electron) {
             import { ChatDetailItem } from './src/renderer/src/components/ChatDetailItem'
             import { groupWorkingItemsForRenderer } from './src/main/providers/workingStepLazy'
             const root = createRoot(document.getElementById('root'))
-            window.renderStep = (items, status = 'working') => flushSync(() => root.render(
-              <ChatDetailItem item={{type: 'working', id: 'step', status, items: groupWorkingItemsForRenderer(items)}} />
+            window.renderStep = (items, status = 'working', extra = {}) => flushSync(() => root.render(
+              <ChatDetailItem item={{type: 'working', id: 'step', status, items: groupWorkingItemsForRenderer(items), ...extra}} />
+            ))
+            window.renderItems = (items, props = {}) => flushSync(() => root.render(
+              items.map(item => <ChatDetailItem key={item.id} item={item} {...props} />)
             ))
           `,
           resolveDir: path.resolve(__dirname, '../..'),
@@ -117,7 +120,47 @@ if (!process.versions.electron) {
         rawInput: {filePath: '/repo/file.ts', oldString: 'before', newString: 'after'}, rawOutput: 'Edit applied'
       }]); await settle()
       const editDetails = document.body.textContent
-      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails }
+      const thought = id => ({type: 'message', kind: 'reasoning', id, content: 'Reasoning ' + id})
+      const rows = Array.from({length: 50}, (_, i) => thought('thought-' + i))
+      rows[48] = tool('retained-tool', 'command', 'finished')
+      renderStep(rows); await settle()
+      const retainedThought = document.querySelectorAll('.chat-detail__thought')[20]
+      const retainedTool = document.querySelector('[data-working-motion-id="retained-tool"] details')
+      retainedThought.querySelector('summary').click()
+      retainedTool.querySelector('summary').click(); await settle()
+      renderStep([...rows, thought('appended')]); await settle()
+      const tailRetained = {
+        thought: retainedThought.isConnected && retainedThought.open,
+        tool: retainedTool.isConnected && retainedTool.open
+      }
+      renderStep([tool('single-to-group', 'command', 'finished'), thought('separator')]); await settle()
+      document.querySelector('[data-working-motion-id="single-to-group"] summary').click(); await settle()
+      renderStep([tool('single-to-group', 'command', 'finished'), tool('group-new'), thought('separator')]); await settle()
+      const promotedSequence = document.querySelector('.chat-detail__tool-sequence')
+      const promotedToolOpen = promotedSequence.open && promotedSequence.querySelector('.chat-detail__tool-group').open
+      const progress = document.querySelector('details.chat-detail__working')
+      progress.querySelector('summary').click(); await settle()
+      progress.querySelector('summary').click(); await settle()
+      const restoredToolOpen = document.querySelector('.chat-detail__tool-sequence .chat-detail__tool-group').open
+      document.querySelector('.chat-detail__tool-sequence .chat-detail__tool-group > summary').click(); await settle()
+      renderStep([tool('single-to-group', 'command', 'finished'), tool('group-new'), thought('separator'), thought('later')]); await settle()
+      const innerCloseKeptSequenceOpen = document.querySelector('.chat-detail__tool-sequence').open && !document.querySelector('.chat-detail__tool-sequence .chat-detail__tool-group').open
+
+      let messageReads = 0
+      const historyMessage = {type: 'message', id: 'history', role: 'assistant', content: 'Previous answer', get attachments() {messageReads++; return []}}
+      const oldStep = {type: 'working', id: 'old-step', status: 'worked', items: [thought('old-thought')]}
+      renderItems([historyMessage, oldStep]); await settle()
+      const oldProgress = document.querySelector('details.chat-detail__working')
+      oldProgress.querySelector('summary').click(); await settle()
+      const oldThought = document.querySelector('.chat-detail__thought')
+      oldThought.querySelector('summary').click(); await settle()
+      renderItems([historyMessage, oldStep, {type: 'message', id: 'next-message', role: 'user', content: 'Next'}, {type: 'working', id: 'next-step', status: 'working', items: []}], {hasNextWorkingStep: true}); await settle()
+      const nextTurnRetained = oldProgress.isConnected && oldProgress.open && oldThought.isConnected && oldThought.open
+      // Repeat an append with identical historical props to exercise the row memo.
+      const beforeAppendReads = messageReads
+      renderItems([historyMessage, oldStep, {type: 'message', id: 'another-message', role: 'user', content: 'Another'}], {hasNextWorkingStep: true}); await settle()
+      const historySkippedRender = messageReads === beforeAppendReads
+      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails, tailRetained, promotedToolOpen, restoredToolOpen, innerCloseKeptSequenceOpen, nextTurnRetained, historySkippedRender }
     })()`)
       const [empty, single, grouped, waiting, following, , emptyAgain] = result.snapshots
       assert.equal(empty.wrapper, true)
@@ -140,6 +183,36 @@ if (!process.versions.electron) {
       assert.match(result.searchDetails, /quota/)
       assert.match(result.editDetails, /oldString/)
       assert.match(result.editDetails, /before/)
+      assert.deepEqual(
+        result.tailRetained,
+        { thought: true, tool: true },
+        'appending past the activity window must retain existing DOM and disclosures'
+      )
+      assert.equal(
+        result.promotedToolOpen,
+        true,
+        'grouping a manually opened tool must preserve its disclosure'
+      )
+      assert.equal(
+        result.restoredToolOpen,
+        true,
+        'closing and reopening progress preserves child disclosures'
+      )
+      assert.equal(
+        result.innerCloseKeptSequenceOpen,
+        true,
+        'tool and sequence manual choices stay independent'
+      )
+      assert.equal(
+        result.nextTurnRetained,
+        true,
+        'new turns preserve expanded history when collapse on next turn is disabled'
+      )
+      assert.equal(
+        result.historySkippedRender,
+        true,
+        'appending a message skips unchanged historical item renders'
+      )
       console.log('Tool disclosure transitions and named fallbacks passed in Electron.')
       app.quit()
     })

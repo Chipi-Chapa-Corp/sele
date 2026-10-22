@@ -82,6 +82,7 @@ test('Codex cold sidebar reads a stopped last turn before opening it, and after 
     )
     Object.assign(instance, {
       id: 'codex',
+      userQuestions: { getPending: () => null },
       threadListScanClients: new WeakSet(),
       withResolvedThreadName: (value) => value,
       rememberThreadContainer() {},
@@ -489,7 +490,7 @@ const coldFixture = (provider, outcome) => {
     writeAccessChecks: new Set(),
     pendingTurnStarts: new Set(),
     pendingTurnIds: new Map(),
-    userQuestions: { hasBlocking: () => false },
+    userQuestions: { hasBlocking: () => false, getPending: () => null },
     client: {
       request: async (method) =>
         method === 'thread/list' ? { data: [thread], nextCursor: null } : { data: [turns.at(-1)] }

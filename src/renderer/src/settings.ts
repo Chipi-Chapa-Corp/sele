@@ -1,3 +1,4 @@
+import { defaultLinkedChatSummaryPrompt } from './linkedChats.ts'
 import { preferences as preferenceStorage } from './preferences.ts'
 import {
   defaultNetworkRetrySettings,
@@ -187,6 +188,8 @@ export type AppSettings = {
   }
   chat: AppChatProgressSettings & {
     continuePrompt: string
+    /** Summary request for linked chats whose provider has no readable native compaction. */
+    linkedChatSummaryPrompt: string
     networkRetryCount: number
     networkRetryDelaySeconds: number
     recentChatCacheLimit: number
@@ -389,6 +392,7 @@ export const defaultAppSettings: AppSettings = {
   appearance: defaultAppAppearanceSettings,
   chat: {
     continuePrompt: defaultStoppedTurnContinuePrompt,
+    linkedChatSummaryPrompt: defaultLinkedChatSummaryPrompt,
     networkRetryCount: defaultNetworkRetrySettings.count,
     networkRetryDelaySeconds: defaultNetworkRetrySettings.delaySeconds,
     recentChatCacheLimit: 10,
@@ -606,6 +610,12 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
 
   if (hasOwnProperty(chat, 'continuePrompt') && typeof chat.continuePrompt === 'string') {
     overrides.continuePrompt = chat.continuePrompt
+  }
+  if (
+    hasOwnProperty(chat, 'linkedChatSummaryPrompt') &&
+    typeof chat.linkedChatSummaryPrompt === 'string'
+  ) {
+    overrides.linkedChatSummaryPrompt = chat.linkedChatSummaryPrompt
   }
   if (hasOwnProperty(chat, 'recentChatCacheLimit')) {
     overrides.recentChatCacheLimit = getStoredRecentChatCacheLimit(chat.recentChatCacheLimit)
@@ -1113,6 +1123,10 @@ export const readStoredAppSettings = (): AppSettings => {
           typeof chat.continuePrompt === 'string'
             ? chat.continuePrompt
             : defaultAppSettings.chat.continuePrompt,
+        linkedChatSummaryPrompt:
+          typeof chat.linkedChatSummaryPrompt === 'string'
+            ? chat.linkedChatSummaryPrompt
+            : defaultAppSettings.chat.linkedChatSummaryPrompt,
         networkRetryCount: normalizeNetworkRetryCount(chat.networkRetryCount),
         networkRetryDelaySeconds: normalizeNetworkRetryDelaySeconds(chat.networkRetryDelaySeconds),
         recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
@@ -1425,6 +1439,9 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       storedChat.networkRetryDelaySeconds = networkRetryDelaySeconds
     if (settings.chat.continuePrompt !== defaultAppSettings.chat.continuePrompt) {
       storedChat.continuePrompt = settings.chat.continuePrompt
+    }
+    if (settings.chat.linkedChatSummaryPrompt !== defaultAppSettings.chat.linkedChatSummaryPrompt) {
+      storedChat.linkedChatSummaryPrompt = settings.chat.linkedChatSummaryPrompt
     }
     if (settings.chat.recentChatCacheLimit !== defaultAppSettings.chat.recentChatCacheLimit) {
       storedChat.recentChatCacheLimit = settings.chat.recentChatCacheLimit

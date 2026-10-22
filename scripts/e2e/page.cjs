@@ -300,6 +300,8 @@ class Page {
 
   async startProfile() {
     await this.cdp.send('Profiler.enable')
+    // An earlier check may have failed before stopping the profiler.
+    await this.cdp.send('Profiler.stop').catch(() => {})
     await this.cdp.send('Profiler.setSamplingInterval', { interval: 500 })
     await this.cdp.send('Profiler.start')
   }
@@ -309,7 +311,10 @@ class Page {
     const { profile } = await this.cdp.send('Profiler.stop')
     if (this.artifacts) {
       fs.mkdirSync(this.artifacts, { recursive: true })
-      fs.writeFileSync(`${this.artifacts}/${name.replace(/[^a-z0-9._-]+/gi, '-')}.cpuprofile`, JSON.stringify(profile))
+      fs.writeFileSync(
+        `${this.artifacts}/${name.replace(/[^a-z0-9._-]+/gi, '-')}.cpuprofile`,
+        JSON.stringify(profile)
+      )
     }
     const self = new Map()
     const byId = new Map(profile.nodes.map((node) => [node.id, node]))

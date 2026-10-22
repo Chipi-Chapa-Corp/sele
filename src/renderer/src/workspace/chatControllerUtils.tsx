@@ -348,7 +348,10 @@ export const getChatFromDetail = (
     detail.worktreeBaseBranchName ?? existingChat?.worktreeBaseBranchName ?? null,
   createdAt: detail.createdAt,
   updatedAt: detail.updatedAt ?? updatedAt,
-  status: detail.status,
+  status:
+    detail.pendingUserInput && detail.status !== 'waitingOnApproval'
+      ? 'waitingOnUserInput'
+      : detail.status,
   lastTurnOutcome:
     detail.lastTurnOutcome === undefined ? existingChat?.lastTurnOutcome : detail.lastTurnOutcome,
   pendingApproval: detail.pendingApproval,

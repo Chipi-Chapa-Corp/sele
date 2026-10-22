@@ -1,10 +1,4 @@
-import { getFileTreeAbsolutePath } from '../../shared/fileTree'
-import type {
-  AppFileTreeResult,
-  AppGitChangeKind,
-  AppGitChangesResult,
-  AppGitPatchChange
-} from '../../shared/app'
+import type { AppGitChangeKind, AppGitChangesResult, AppGitPatchChange } from '../../shared/app'
 import type {
   ProviderChatItem,
   ProviderFileDiff,
@@ -54,7 +48,6 @@ export type ChangeTreeFolderNode<TFile extends TreeFile = TreeFile> = {
   name: string
   path: string
   children: ChangeTreeNode<TFile>[]
-  childrenPrecomputed: boolean
 }
 
 export type ChangeTreeNode<TFile extends TreeFile = TreeFile> =
@@ -65,7 +58,6 @@ type MutableChangeTreeFolder<TFile extends TreeFile = TreeFile> = {
   path: string
   folders: Map<string, MutableChangeTreeFolder<TFile>>
   files: ChangeTreeFileNode<TFile>[]
-  childrenPrecomputed: boolean
 }
 
 export type PatchFilterScope = {
@@ -79,8 +71,6 @@ const sortTreeFiles = <TFile extends TreeFile>(files: TFile[]): TFile[] =>
   [...files].sort((firstFile, secondFile) => firstFile.path.localeCompare(secondFile.path))
 
 export const sortChangedFiles = (files: ChangedFile[]): ChangedFile[] => sortTreeFiles(files)
-
-const getPathParts = (path: string): string[] => path.replace(/\\/g, '/').split('/').filter(Boolean)
 
 const getLastPathPart = (path: string): string => {
   const parts = path.split(/[\\/]/).filter(Boolean)
@@ -117,14 +107,12 @@ export const getTreeFilesWithDisplayPaths = <TFile extends TreeFile>(
 
 const createMutableChangeTreeFolder = <TFile extends TreeFile>(
   name: string,
-  path: string,
-  childrenPrecomputed = true
+  path: string
 ): MutableChangeTreeFolder<TFile> => ({
   name,
   path,
   folders: new Map(),
-  files: [],
-  childrenPrecomputed
+  files: []
 })
 
 const finalizeChangeTreeFolder = <TFile extends TreeFile>(
@@ -136,8 +124,7 @@ const finalizeChangeTreeFolder = <TFile extends TreeFile>(
       type: 'folder',
       name: childFolder.name,
       path: childFolder.path,
-      children: finalizeChangeTreeFolder(childFolder),
-      childrenPrecomputed: childFolder.childrenPrecomputed
+      children: finalizeChangeTreeFolder(childFolder)
     }))
 
   const files = [...folder.files].sort((firstFile, secondFile) =>
@@ -148,8 +135,7 @@ const finalizeChangeTreeFolder = <TFile extends TreeFile>(
 }
 
 export const buildChangeTree = <TFile extends TreeFile>(
-  files: TFile[],
-  shouldPrecomputeFolderChildren?: (folderPath: string) => boolean
+  files: TFile[]
 ): ChangeTreeNode<TFile>[] => {
   const root = createMutableChangeTreeFolder<TFile>('', '')
 
@@ -160,29 +146,21 @@ export const buildChangeTree = <TFile extends TreeFile>(
     let nextPathPart = pathPartIterator.next()
     let folder = root
     let folderPath = ''
-    let fileParentPrecomputed = true
 
-    while (!pathPart.done && !nextPathPart.done && fileParentPrecomputed) {
+    while (!pathPart.done && !nextPathPart.done) {
       const folderName = pathPart.value[0]
       folderPath = folderPath ? `${folderPath}/${folderName}` : folderName
       let childFolder = folder.folders.get(folderName)
 
       if (!childFolder) {
-        childFolder = createMutableChangeTreeFolder(
-          folderName,
-          folderPath,
-          shouldPrecomputeFolderChildren?.(folderPath) ?? true
-        )
+        childFolder = createMutableChangeTreeFolder(folderName, folderPath)
         folder.folders.set(folderName, childFolder)
       }
 
       folder = childFolder
-      fileParentPrecomputed = childFolder.childrenPrecomputed
       pathPart = nextPathPart
       nextPathPart = pathPartIterator.next()
     }
-
-    if (!fileParentPrecomputed) continue
 
     folder.files.push({
       type: 'file',
@@ -203,42 +181,6 @@ export const getTreeFolderPaths = <TFile extends TreeFile>(
 
 export const getCollapsedTreeFolders = (folderPaths: string[]): Record<string, boolean> =>
   Object.fromEntries(folderPaths.map((folderPath) => [folderPath, true]))
-
-const fileTreePrecomputedLevels = 2
-
-export const buildProgressiveFileTree = <TFile extends TreeFile>(
-  files: TFile[],
-  lastOpenedFolderPath: string | null
-): ChangeTreeNode<TFile>[] => {
-  const lastOpenedFolderDepth = lastOpenedFolderPath ? getPathParts(lastOpenedFolderPath).length : 0
-
-  return buildChangeTree(files, (folderPath) => {
-    const folderDepth = getPathParts(folderPath).length
-    if (folderDepth < fileTreePrecomputedLevels) return true
-    if (!lastOpenedFolderPath) return false
-
-    if (folderPath === lastOpenedFolderPath || lastOpenedFolderPath.startsWith(`${folderPath}/`)) {
-      return true
-    }
-
-    return (
-      folderPath.startsWith(`${lastOpenedFolderPath}/`) &&
-      folderDepth - lastOpenedFolderDepth < fileTreePrecomputedLevels
-    )
-  })
-}
-
-export const getDefaultFileTreeCollapsedFolders = (
-  files: RepositoryFile[]
-): Record<string, boolean> => {
-  const folderPaths = getTreeFolderPaths(buildProgressiveFileTree(files, null))
-
-  if (!folderPaths.includes('src')) return {}
-
-  return Object.fromEntries(
-    folderPaths.filter((folderPath) => folderPath !== 'src').map((folderPath) => [folderPath, true])
-  )
-}
 
 const getWorkingItemDiffs = (item: ProviderWorkingItem): ProviderFileDiff[] => {
   if (item.type === 'tool') return item.diffs
@@ -308,17 +250,6 @@ export const getGitChangedFiles = (result: AppGitChangesResult | null): ChangedF
     })) ?? []
   )
 
-export const getRepositoryFiles = (result: AppFileTreeResult | null): RepositoryFile[] =>
-  sortTreeFiles(
-    result?.files.map((file) => ({
-      path: getFileTreeAbsolutePath(result!.repositoryRoot, file.path),
-      displayPath: file.path,
-      previousPath: file.previousPath,
-      kind: file.kind,
-      status: file.status
-    })) ?? []
-  )
-
 export const getCommitPatches = (files: ChangedFile[]): AppGitPatchChange[] =>
   files.flatMap((file) => file.patches ?? [])
 
@@ -364,12 +295,12 @@ export const isPatchFilterScope = (
 ): boolean =>
   Boolean(
     scope &&
-    cwd &&
-    isPatchChangeSource(source) &&
-    scope.containerKey === containerKey &&
-    scope.cwd === cwd &&
-    scope.source === source &&
-    scope.signature === signature
+      cwd &&
+      isPatchChangeSource(source) &&
+      scope.containerKey === containerKey &&
+      scope.cwd === cwd &&
+      scope.source === source &&
+      scope.signature === signature
   )
 
 const getPatchFileKind = (patches: AppGitPatchChange[]): AppGitPatchChange['kind'] =>

@@ -271,6 +271,57 @@ const turnOptions = {
   showRecommendedPlugins: true
 }
 
+test('async questions show the sidebar input indicator without changing conversation activity', () => {
+  const loadFunction = (path, name, globals) => {
+    const parsed = ts.createSourceFile(
+      path,
+      readFileSync(new URL(path, import.meta.url), 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+      path.endsWith('tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    )
+    const declaration = parsed.statements
+      .filter(ts.isVariableStatement)
+      .flatMap((statement) => [...statement.declarationList.declarations])
+      .find((node) => node.name.getText(parsed) === name)
+    return vm.runInNewContext(
+      ts.transpile(`(${declaration.initializer.getText(parsed)})`, {
+        target: ts.ScriptTarget.ES2022
+      }),
+      globals
+    )
+  }
+  const fromDetail = loadFunction(
+    '../../../renderer/src/workspace/chatControllerUtils.tsx',
+    'getChatFromDetail',
+    {
+      getChatPreview: () => '',
+      mergeSeenUpdatedAt: () => null
+    }
+  )
+  const summarize = loadFunction('../providerService.ts', 'getChatUpdateSummary', {
+    truncateChatUpdateText: (value) => value,
+    chatUpdatePreviewLimit: 100,
+    getChatUpdateActivity: () => null
+  })
+  for (const status of ['active', null, 'waitingOnApproval']) {
+    const detail = {
+      id: 'chat',
+      status,
+      items: [],
+      lastTurnOutcome: null,
+      pendingUserInput: { id: 'question', isBlocking: false }
+    }
+    const expected = status === 'waitingOnApproval' ? status : 'waitingOnUserInput'
+    assert.equal(fromDetail('codex', detail, null, 0).status, expected)
+    assert.equal(summarize(detail, 0).status, expected)
+    assert.equal(detail.status, status)
+    detail.pendingUserInput = null
+    assert.equal(fromDetail('codex', detail, null, 0).status, status)
+    assert.equal(summarize(detail, 0).status, status)
+  }
+})
+
 test('the question UI submits current settings for async answers, including after reopening a chat', async () => {
   const rendererSource = ts.createSourceFile(
     'controller.tsx',

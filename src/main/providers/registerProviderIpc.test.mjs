@@ -48,6 +48,10 @@ const bundled = await build({
              };
              export const getProviderCachedChat = (...args) => globalThis.harness.getCachedChat?.(...args) ?? Promise.resolve(null);
              export const beginProviderChatHistoryRead = async () => globalThis.harness.historyRead ?? null;
+             export const getProviderConversationViews = async (...args) => globalThis.harness.getConversationViews?.(...args) ?? [];
+             export const getProviderKnownChats = async (...args) => globalThis.harness.getKnownChats(...args);
+             export const beginProviderConversationRead = async () => ({key:'fixture',current:()=>true});
+             export const saveProviderConversationView = async (...args) => globalThis.harness.persistView?.(...args) ?? globalThis.harness.savedViews?.push(args);
              export const saveProviderChatHistory = (...args) => globalThis.harness.savedHistory?.push(args);
              export const getChatUpdateSummary = () => {};
              export const getProviderChatCursorWindow = () => {};
@@ -168,6 +172,71 @@ test('opening records renderer-prepared pages and cached IPC preserves source va
   assert.equal(scopes[0][2].container.kind, 'host')
   assert.throws(() => read({}, 'invalid-provider', 'chat'))
   assert.throws(() => read({}, 'codex', 'chat', { container: { kind: 'invalid' } }))
+})
+
+test('local known-chat listing returns views while native discovery is unavailable', async () => {
+  const h = setup()
+  const view = {
+    id: 'known',
+    conversationView: true,
+    items: [{ type: 'message', id: 'answer', role: 'assistant', content: 'Local answer' }]
+  }
+  h.harness.getKnownChats = async () => ({
+    chats: [{ id: 'known', providerId: 'codex' }],
+    nextCursor: null,
+    conversationViews: [view]
+  })
+  h.harness.getChats = () => assert.fail('known listing must not discover native chats')
+  h.harness.getChat = () => assert.fail('known listing must not hydrate native history')
+  const page = await h.harness.handlers.get(channels.getKnownChats)({}, 'codex', {
+    container: { kind: 'host' }
+  })
+  assert.equal(page.conversationViews[0], view)
+  assert.equal(page.chats[0].id, 'known')
+})
+
+test('processed background updates deliver a ready view without requiring a selected transcript', () => {
+  const h=setup()
+  h.harness.publish({providerId:'codex',chatId:'background',conversationKnown:true,
+    turnCompleted:false,summary:{id:'background',revision:1,status:'active'},
+    detail:{id:'background',revision:1,items:[{type:'message',id:'u',role:'user',content:'Background message'}]}})
+  assert.equal(h.sent[0].event.detail,null)
+  assert.equal(h.sent[0].event.conversationView.conversationView,true)
+  assert.equal(h.sent[0].event.conversationView.items[0].content,'Background message')
+})
+
+test('first processing commits its durable view before replying, and discovery attaches known views', async () => {
+  const h = setup()
+  h.harness.getChat = async () => ({ id: 'unknown', revision: 1, items: [] })
+  let release
+  let persisted = false
+  h.harness.persistView = () =>
+    new Promise((resolve) => {
+      release = () => {
+        persisted = true
+        resolve()
+      }
+    })
+  let replied = false
+  const open = h.harness.handlers
+    .get(channels.getChat)({}, 'codex', 'unknown')
+    .then((detail) => {
+      replied = true
+      return detail
+    })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(replied, false)
+  release()
+  const detail = await open
+  assert.equal(persisted, true)
+  const view = { ...detail, conversationView: true }
+  h.harness.getChats = async () => ({
+    chats: [{ id: 'unknown', providerId: 'codex' }],
+    nextCursor: null
+  })
+  h.harness.getConversationViews = async () => [view]
+  const discovered = await h.harness.handlers.get(channels.getChats)({}, 'codex', {})
+  assert.equal(discovered.conversationViews[0], view)
 })
 
 test('subagent IPC bounds a long transcript and serves exact older windows', async () => {

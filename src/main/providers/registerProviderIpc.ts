@@ -15,6 +15,7 @@ import type {
   ProviderChatListOptions,
   ProviderChatPage,
   ProviderChatPurpose,
+  ProviderLinkedChatContextOptions,
   ProviderChatUpdatedEvent,
   ProviderChatTurnPage,
   ProviderCwdNote,
@@ -22,6 +23,7 @@ import type {
   ProviderId,
   ProviderImageInput,
   ProviderOneShotOptions,
+  ProviderPendingMessage,
   ProviderPermissionOptions,
   ProviderApp,
   ProviderResourceUpdateOptions,
@@ -55,10 +57,15 @@ import {
 } from '../../shared/provider'
 import { providerSubagentTurnPageSize } from '../../shared/provider'
 import { requireContainerTarget } from '../containerTarget'
+import { createConversationView } from '../../shared/conversationView'
 import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
 import {
   getChatUpdateSummary,
   getProviderCachedChat,
+  getProviderConversationViews,
+  getProviderKnownChats,
+  beginProviderConversationRead,
+  saveProviderConversationView,
   beginProviderChatHistoryRead,
   saveProviderChatHistory,
   getProviderChatCursorWindow,
@@ -356,6 +363,12 @@ const queueChatUpdateForWindow = (
     providerId: event.providerId,
     chatId: event.chatId,
     detail: state.viewedChatKey === chatKey ? event.detail : null,
+    conversationView:
+      event.conversationKnown &&
+      state.viewedChatKey !== chatKey &&
+      (latestRevision === undefined || event.turnCompleted || pendingUpdate?.turnCompleted)
+        ? prepareChatDetailForRenderer(createConversationView(event.detail))
+        : pendingUpdate?.conversationView,
     summary: event.summary,
     turnCompleted: event.turnCompleted || pendingUpdate?.turnCompleted === true
   } satisfies QueuedWindowChatUpdate
@@ -394,6 +407,28 @@ const requireChatPurpose = (value: unknown): ProviderChatPurpose => {
 
 const requireOptionalChatPurpose = (value: unknown): ProviderChatPurpose | undefined =>
   value == null ? undefined : requireChatPurpose(value)
+
+const maxLinkedChatSummaryPromptLength = 20_000
+
+const requireLinkedChatOperationId = (value: unknown): string => {
+  if (typeof value !== 'string' || !value.trim() || value.length > 200) {
+    throw new Error('Invalid linked chat operation ID')
+  }
+  return value
+}
+
+const requireLinkedChatContextOptions = (value: unknown): ProviderLinkedChatContextOptions => {
+  if (!value || typeof value !== 'object') throw new Error('Invalid linked chat options')
+  const { operationId, summaryPrompt } = value as Record<string, unknown>
+  if (
+    typeof summaryPrompt !== 'string' ||
+    !summaryPrompt.trim() ||
+    summaryPrompt.length > maxLinkedChatSummaryPromptLength
+  ) {
+    throw new Error('Invalid linked chat summary prompt')
+  }
+  return { operationId: requireLinkedChatOperationId(operationId), summaryPrompt }
+}
 
 const requireMessageId = (value: unknown): string => {
   if (typeof value !== 'string' || !value) throw new Error('Invalid message ID')
@@ -1533,13 +1568,18 @@ export const registerProviderIpc = (): void => {
       providerApi.getChatTerminalTasks(requireProviderId(providerId), requireChatId(chatId))
   )
 
+  handleLoggedIpc(providerIpcChannels.getKnownChats, (_, providerId: unknown, options: unknown) =>
+    getProviderKnownChats(requireProviderId(providerId), requireChatListOptions(options))
+  )
+
   handleLoggedIpc(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredOptions = requireChatListOptions(options)
-    return runShutdownTolerantProviderRead(
-      () => providerApi.getChats(requiredProviderId, requiredOptions),
-      getEmptyProviderChatPage
-    )
+    return runShutdownTolerantProviderRead(async () => {
+      const page = await providerApi.getChats(requiredProviderId, requiredOptions)
+      const conversationViews = await getProviderConversationViews(requiredProviderId, page.chats)
+      return { ...page, conversationViews }
+    }, getEmptyProviderChatPage)
   })
 
   handleLoggedIpc(
@@ -1559,6 +1599,7 @@ export const registerProviderIpc = (): void => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredChatId = requireChatId(chatId)
     const historyRead = await beginProviderChatHistoryRead(requiredProviderId, requiredChatId)
+    const viewScope = await beginProviderConversationRead(requiredProviderId, requiredChatId)
     const detail = await getRendererChatDetail(() =>
       // Codex getChat includes the opening-time writer check and already reads a bounded
       // cursor page. History-only reads deliberately do not acquire/probe writer access.
@@ -1570,6 +1611,7 @@ export const registerProviderIpc = (): void => {
           })
     )
     saveProviderChatHistory(historyRead, detail)
+    await saveProviderConversationView(viewScope, detail)
     return detail
   })
 
@@ -2083,6 +2125,16 @@ export const registerProviderIpc = (): void => {
           .catch((releaseError) =>
             console.error('Unable to release failed pending edit.', releaseError)
           )
+        // A queued or steering message can start delivery while its editor is still opening.
+        // The message is now an ordinary pending message, so report the chat instead of failing.
+        const settled = await getRendererChatDetail(() =>
+          providerApi.getChat(providerId, chatId)
+        ).catch(() => null)
+        const pending = settled?.items.find(
+          (item): item is ProviderPendingMessage =>
+            item.type === 'pendingMessage' && item.id === messageId
+        )
+        if (settled && (!pending || pending.editable === false)) return settled
         throw error
       }
     }
@@ -2181,6 +2233,20 @@ export const registerProviderIpc = (): void => {
     getRendererChatDetail(() =>
       providerApi.compactChat(requireProviderId(providerId), requireChatId(chatId))
     )
+  )
+
+  handleLoggedIpc(
+    providerIpcChannels.prepareLinkedChatContext,
+    (_, providerId: unknown, chatId: unknown, options: unknown) =>
+      providerApi.prepareLinkedChatContext(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireLinkedChatContextOptions(options)
+      )
+  )
+
+  handleLoggedIpc(providerIpcChannels.cancelLinkedChatContext, (_, operationId: unknown) =>
+    providerApi.cancelLinkedChatContext(requireLinkedChatOperationId(operationId))
   )
 
   handleLoggedIpc(providerIpcChannels.stopChat, (_, providerId: unknown, chatId: unknown) =>

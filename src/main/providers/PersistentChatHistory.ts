@@ -41,12 +41,20 @@ export type HistoryRead = {
   epoch: number
   accountEpoch: number
 }
+export type ConversationViewScope = {
+  key: string
+  provider: ProviderId
+  chatId: string
+  containerKey: string
+  current: () => boolean
+}
 
 /** A persisted page is a display-only preview until the authoritative provider read finishes. */
 export class PersistentChatHistory {
   private observations = new Map<string, Observation>()
   private byChat = new Map<string, Set<Observation>>()
   private accounts = new Map<string, string>()
+  private viewAccounts = new Map<string, string>()
   private accountEpochs = new Map<string, number>()
   private closed = false
 
@@ -61,6 +69,7 @@ export class PersistentChatHistory {
     this.observations.clear()
     this.byChat.clear()
     this.accounts.clear()
+    this.viewAccounts.clear()
   }
 
   accountEpoch(provider: ProviderId, container?: AppContainerTarget | null): number {
@@ -79,6 +88,7 @@ export class PersistentChatHistory {
       .map((account) => [account.id, account.login ?? null])
       .sort()
     const key = sourceKey(provider, container)
+    this.viewAccounts.set(key, JSON.stringify(active))
     if (active.length) this.accounts.set(key, JSON.stringify(active))
     else this.accounts.delete(key)
   }
@@ -86,7 +96,43 @@ export class PersistentChatHistory {
   forgetAccount(provider: ProviderId, container?: AppContainerTarget | null): void {
     const key = sourceKey(provider, container)
     this.accounts.delete(key)
+    this.viewAccounts.delete(key)
     this.accountEpochs.set(key, this.accountEpoch(provider, container) + 1)
+  }
+
+  /** Stable identity for durable views. Native freshness and RAM budgets are unrelated. */
+  viewScope(
+    provider: ProviderId,
+    id: string,
+    container?: AppContainerTarget | null
+  ): ConversationViewScope | null {
+    const source = sourceKey(provider, container)
+    const account = this.viewAccounts.get(source)
+    if (!account || this.closed) return null
+    const epoch = this.accountEpoch(provider, container)
+    return {
+      key: JSON.stringify([source, account, id]),
+      provider,
+      chatId: id,
+      containerKey: getContainerTargetKey(container),
+      current: () =>
+        !this.closed &&
+        this.viewAccounts.get(source) === account &&
+        this.accountEpoch(provider, container) === epoch
+    }
+  }
+
+  openingViewScope(
+    provider: ProviderId,
+    id: string,
+    container?: AppContainerTarget | null
+  ): ConversationViewScope | null {
+    if (container) return this.viewScope(provider, id, container)
+    const candidates = this.byChat.get(`${provider}:${id}`)
+    if (candidates?.size === 1)
+      return this.viewScope(provider, id, candidates.values().next().value!.chat.container)
+    if (candidates && candidates.size > 1) return null
+    return this.viewScope(provider, id, container)
   }
 
   observe(chats: ProviderChat[]): void {

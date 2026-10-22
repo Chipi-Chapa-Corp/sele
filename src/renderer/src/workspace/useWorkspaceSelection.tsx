@@ -31,14 +31,14 @@ import {
 import {
   getChatChangedFiles,
   getCommitPatches,
-  getDefaultFileTreeCollapsedFolders,
   getLastTurnChangedFiles,
   getPatchFilterSignature,
-  getRepositoryFiles,
   isPatchChangeSource,
   type GitChangeSource,
   type PatchFilterScope
 } from '../changeTree'
+import { getDefaultFileTreeCollapsedFolders } from '../fileTreeIndex'
+import { indexFileTreeListing } from '../fileTreeIndexClient'
 import {
   isScrolledToBottom,
   readChatScrollAnchor,
@@ -141,7 +141,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     setAccountUsage,
     setAccountUsageState,
     setAccountUsageError,
-    loadState,
     providerAccountRevision,
     chatDetailRef,
     cacheRecentChatDetail,
@@ -202,8 +201,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     setFileTreeLoadError,
     setFileTree,
     setFileTreeScope,
-    setLastOpenedFileTreeFolderPath,
-    lastOpenedFileTreeFolderByCwdRef,
     collapsedFileTreeFoldersByCwdRef,
     setCollapsedFileTreeFolders,
     fileTreeLoadRequest
@@ -941,19 +938,11 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   useEffect(() => {
     let active = true
 
-    if (
-      !usageProviderAvailabilityReady ||
-      !usageProviderAvailable ||
-      (!selectedChatId && loadState === 'loading')
-    ) {
+    if (!usageProviderAvailabilityReady || !usageProviderAvailable) {
       queueMicrotask(() => {
         if (!active) return
         setAccountUsage(null)
-        setAccountUsageState(
-          usageProviderAvailabilityReady && usageProviderAvailable && loadState !== 'loading'
-            ? 'ready'
-            : 'loading'
-        )
+        setAccountUsageState('loading')
         setAccountUsageError(null)
       })
 
@@ -995,7 +984,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     }
   }, [
     changesContainer,
-    loadState,
     selectedChatId,
     selectedChatStatus,
     usageProviderAvailabilityReady,
@@ -1099,10 +1087,10 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           selectedChatUpdatedAtRef.current ?? Date.now(),
           true
         )
-        startTransition(() => {
-          setChatDetail(loadedDetail)
-          setChatLoadState('ready')
-        })
+        // Publishing a processed view and revealing it are one urgent commit.
+        // A transition here could leave a known chat blank before its content commits.
+        setChatDetail(loadedDetail)
+        setChatLoadState('ready')
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
       })
       .catch((error) => {
@@ -1682,25 +1670,22 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     })
 
     appApi
-      .getFileTree({ container: changesContainer, cwd: changesCwd })
-      .then((result) => {
+      .getFileTreeListing({ container: changesContainer, cwd: changesCwd })
+      .then(indexFileTreeListing)
+      .then((index) => {
         if (!active) return
-        setFileTree(result)
-        setFileTreeScope(nextFileTreeScope)
-        setFileTreeLoadScope(nextFileTreeScope)
-        setFileTreeLoadState('ready')
-        setLastOpenedFileTreeFolderPath(
-          lastOpenedFileTreeFolderByCwdRef.current.get(nextFileTreeScope.cwd) ?? null
-        )
-        const rememberedCollapsedFolders = collapsedFileTreeFoldersByCwdRef.current.get(
-          nextFileTreeScope.cwd
-        )
         const nextCollapsedFolders =
-          rememberedCollapsedFolders ??
-          getDefaultFileTreeCollapsedFolders(getRepositoryFiles(result))
-
-        setCollapsedFileTreeFolders(nextCollapsedFolders)
+          collapsedFileTreeFoldersByCwdRef.current.get(nextFileTreeScope.cwd) ??
+          getDefaultFileTreeCollapsedFolders(index)
         collapsedFileTreeFoldersByCwdRef.current.set(nextFileTreeScope.cwd, nextCollapsedFolders)
+
+        startTransition(() => {
+          setFileTree(index)
+          setFileTreeScope(nextFileTreeScope)
+          setFileTreeLoadScope(nextFileTreeScope)
+          setFileTreeLoadState('ready')
+          setCollapsedFileTreeFolders(nextCollapsedFolders)
+        })
       })
       .catch((error) => {
         console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)

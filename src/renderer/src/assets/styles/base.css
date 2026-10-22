@@ -108,6 +108,36 @@ summary:focus-visible {
   }
 }
 
+/* Busy icons animate only transform and opacity, which the compositor runs off the main
+   thread, so they keep moving while the renderer is busy. */
+.app-busy-icon {
+  animation: app-busy-pulse 1100ms ease-in-out infinite;
+}
+
+@keyframes app-busy-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes app-busy-fade {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -121,6 +151,12 @@ summary:focus-visible {
   /* Keep compact progress indicators useful when the OS disables UI animations. */
   .app-loading-spinner {
     animation-duration: 900ms !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .app-busy-icon {
+    animation-name: app-busy-fade !important;
+    animation-duration: 1100ms !important;
     animation-iteration-count: infinite !important;
   }
 }

@@ -2,6 +2,11 @@ import { PendingMessageEdits } from '../PendingMessageEdits'
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
 import { encodeOpenCodeHistory, importOpenCodeHistory } from './OpenCodeHistoryImport'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './OpenCodeHistory'
+import {
+  raceLinkedChatCancellation,
+  requireLinkedChatSummary,
+  throwIfLinkedChatCancelled
+} from '../linkedChatContext'
 import { OpenCodeCredentialHealth, checkOpenCodeCredential } from './OpenCodeCredentialHealth'
 import type {
   ProviderConnectInput,
@@ -102,6 +107,7 @@ import {
   OpenCodeGoNoSubscriptionError
 } from './OpenCodeUsage'
 import { OpenCodeFreeLimitTracker } from './OpenCodeFreeLimit'
+import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit'
 import {
   getOpenCodeEnvironmentApiKeys,
   OpenCodeBalanceCache,
@@ -125,6 +131,7 @@ import {
 } from './OpenCodeChatTitle.ts'
 import { getOpenCodePermissionRules } from './OpenCodePermissions'
 import { OpenCodeServerClient } from './OpenCodeServerClient'
+import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks'
 import { getOpenCodeUpdateAvailability, updateOpenCodeProvider } from './OpenCodeProviderUpdate'
 import {
   applyOpenCodeMessageEvent,
@@ -144,6 +151,7 @@ type OpenCodeClientEntry = {
   client: OpencodeClient
   container: AppContainerTarget | null
   eventAbortController: AbortController
+  terminalTasks: ReturnType<typeof createOpenCodeTerminalTasks>
 }
 
 type QueuedOpenCodeMessage = ProviderPendingMessage & {
@@ -160,7 +168,6 @@ type OpenCodeChatState = {
   session: Session | GlobalSession | null
   fallbackTitle?: string
   messages: OpenCodeMessageWithParts[]
-  terminalMessageIds?: Set<string>
   messagesHydrated: boolean
   messagesDirty: boolean
   hydratedUpdatedAt: number | null
@@ -171,6 +178,7 @@ type OpenCodeChatState = {
   stopped: boolean
   failed: boolean
   failureMessage: string | null
+  usageLimitReached: boolean
   pendingApprovals: PermissionRequest[]
   pendingQuestions: QuestionRequest[]
   queuedMessages: QueuedOpenCodeMessage[]
@@ -237,6 +245,10 @@ const oneShotCancellationRetentionMs = 60_000
 const maxPreviewLength = 500
 
 const requireData = <T>(result: { data: T }): T => result.data
+
+/** The summary is the newest assistant record; a bounded tail avoids rereading long histories. */
+const linkedChatSummaryTailLimit = 20
+const linkedChatSummaryPollMs = 1_000
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -922,39 +934,21 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   getChatTerminalTasks = async (chatId: string): Promise<string[]> => {
     const state = this.states.get(chatId)
     if (!state?.session) return []
+    const session = state.session
     const entry = this.clientEntries.get(getContainerTargetKey(state.container))
-    if (!entry) return []
-    const messages = await this.loadMessages(entry.client, state.session, 8)
-    const present = new Set(messages.map((message) => message.info.id))
-    for (const messageId of state.terminalMessageIds ?? []) {
-      if (present.has(messageId)) continue
-      messages.push(
+    if (!entry) throw new Error('OpenCode terminal activity is unavailable.')
+    return entry.terminalTasks.read(
+      chatId,
+      async () =>
         requireData(
-          await entry.client.session.message(
-            {
-              sessionID: chatId,
-              messageID: messageId,
-              directory: state.directory
-            },
-            { throwOnError: true }
-          )
-        )
-      )
-    }
-    const stillRunning = new Set<string>()
-    const taskIds = messages.flatMap((message) =>
-      message.parts.flatMap((part) => {
-        const running =
-          part.type === 'tool' &&
-          /^(?:bash|shell|terminal|exec|command)$/.test(part.tool) &&
-          (part.state.status === 'running' || part.state.status === 'pending')
-        if (!running) return []
-        stillRunning.add(message.info.id)
-        return [part.callID]
-      })
+          await entry.client.session.status({ directory: state.directory }, { throwOnError: true })
+        )[chatId],
+      async () => {
+        const before = state.messages
+        const messages = await this.loadMessages(entry.client, session, 8)
+        return reconcileOpenCodeMessageSnapshot(before, state.messages, messages)
+      }
     )
-    state.terminalMessageIds = stillRunning
-    return taskIds
   }
 
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {
@@ -1004,7 +998,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         const statuses = await statusesByDirectory.get(session.directory)
         if (statuses && state.eventRevision === eventRevision) {
           const status = statuses[session.id]
-          state.active = status?.type === 'busy' || status?.type === 'retry'
+          const limitMessage = getOpenCodeUsageLimitMessage('session.status', { status })
+          if (limitMessage) this.failUsageLimitedTurn(state, entry.client, limitMessage)
+          state.active =
+            !state.usageLimitReached && (status?.type === 'busy' || status?.type === 'retry')
         }
         return this.createChat(session, messages.slice(-8), state)
       })
@@ -1143,6 +1140,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
     this.rememberSession(session, entry.container)
     const state = await this.ensureState(subagentId, entry.container)
+    state.active = true
+    state.eventRevision += 1
+    state.stopped = false
+    state.failed = false
+    state.failureMessage = null
+    state.usageLimitReached = false
     // Unlike root sends, keep the child's own permissions: its task tool scoped them on creation.
     await entry.client.session.promptAsync(
       {
@@ -1153,10 +1156,6 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       },
       { throwOnError: true }
     )
-    state.active = true
-    state.stopped = false
-    state.failed = false
-    state.failureMessage = null
     this.scheduleUpdate(state.id)
     this.scheduleUpdate(chatId)
   }
@@ -1669,6 +1668,69 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state, true)
   }
 
+  summarizeChatInFork = async (
+    chatId: string,
+    { signal }: { summaryPrompt: string; signal: AbortSignal },
+    onForkCreated: (chatId: string) => Promise<void>
+  ): Promise<string> => {
+    const sourceState = await this.ensureState(chatId)
+    if (sourceState.active)
+      throw new Error('Wait for the current response before linking this chat.')
+    throwIfLinkedChatCancelled(signal)
+    const entry = await this.getClientEntry(sourceState.container)
+    const client = entry.client
+    const fork = requireData(
+      await client.session.fork(
+        { sessionID: chatId, directory: sourceState.directory },
+        { throwOnError: true }
+      )
+    )
+    this.rememberSession(fork, entry.container)
+    await onForkCreated(fork.id)
+    const abort = (): void => {
+      void client.session
+        .abort({ sessionID: fork.id, directory: fork.directory }, { throwOnError: true })
+        .catch((error: unknown) => {
+          console.error('[caught:OpenCodeProviderAdapter:summarizeChatInFork:abort]', error)
+        })
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      throwIfLinkedChatCancelled(signal)
+      // Native compaction writes a readable assistant summary record.
+      await raceLinkedChatCancellation(
+        signal,
+        client.session.summarize(
+          { sessionID: fork.id, directory: fork.directory, auto: false },
+          { throwOnError: true }
+        )
+      )
+      for (;;) {
+        const messages = await raceLinkedChatCancellation(
+          signal,
+          loadOpenCodeMessages(client, fork, linkedChatSummaryTailLimit)
+        )
+        const summary = messages.findLast(
+          (message) => message.info.role === 'assistant' && message.info.summary === true
+        )
+        if (summary?.info.role === 'assistant' && summary.info.time.completed != null) {
+          if (summary.info.error) throw new Error('OpenCode could not summarize the linked chat.')
+          return requireLinkedChatSummary(
+            summary.parts
+              .flatMap((part) => (part.type === 'text' && !part.synthetic ? [part.text] : []))
+              .join('\n\n')
+          )
+        }
+        await raceLinkedChatCancellation(
+          signal,
+          new Promise((resolve) => setTimeout(resolve, linkedChatSummaryPollMs))
+        )
+      }
+    } finally {
+      signal.removeEventListener('abort', abort)
+    }
+  }
+
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
     this.closeBrowser(state)
@@ -1710,7 +1772,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return () => this.chatUpdatedListeners.delete(listener)
   }
 
-  dispose = (): void => {
+  dispose = (): Promise<void> => {
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()
     this.completionCoordinator.clear()
@@ -1728,10 +1790,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationIds.clear()
     this.canceledOneShotGenerationTimers.forEach((timer) => clearTimeout(timer))
     this.canceledOneShotGenerationTimers.clear()
-    void this.disposeClients()
+    const clients = this.disposeClients()
     this.states.clear()
     this.sessionDiscoveries.clear()
     this.sessionContainers.clear()
+    return clients
   }
 
   private disposeClients = async (): Promise<void> => {
@@ -1755,6 +1818,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     })
     await Promise.all(
       Array.from(entries, async (entry) => {
+        entry.terminalTasks.dispose()
         entry.eventAbortController.abort()
         await entry.server.dispose()
       })
@@ -1768,14 +1832,17 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): Promise<OpenCodeClientEntry> => {
     const storedContainer = normalizeStoredContainer(container)
     const server = new OpenCodeServerClient(storedContainer)
+    const terminalTasks = createOpenCodeTerminalTasks()
     const client = await server.getClient()
     const entry: OpenCodeClientEntry = {
       server,
       client,
       container: storedContainer,
-      eventAbortController: new AbortController()
+      eventAbortController: new AbortController(),
+      terminalTasks
     }
     server.onExit((error) => {
+      terminalTasks.dispose()
       console.error('[OpenCodeProviderAdapter:createClientEntry] OpenCode server exited', error)
       const key = getContainerTargetKey(storedContainer)
       if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
@@ -1828,6 +1895,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         error
       )
     } finally {
+      entry.terminalTasks.dispose()
       if (!entry.eventAbortController.signal.aborted) {
         const key = getContainerTargetKey(entry.container)
         if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
@@ -1872,6 +1940,15 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       if (type === 'session.deleted') this.oneShotSessionIds.delete(sessionID)
       return
     }
+    if (
+      type === 'session.idle' ||
+      type === 'session.error' ||
+      type === 'session.deleted' ||
+      (type === 'session.status' &&
+        isRecord(properties.status) &&
+        properties.status.type === 'idle')
+    )
+      entry.terminalTasks.invalidate(sessionID)
     const directory = event.directory ?? this.states.get(sessionID)?.directory
     if (!directory) return
     const state = this.getOrCreateState(sessionID, directory, entry.container)
@@ -1902,6 +1979,19 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       return
     }
 
+    const limitMessage = getOpenCodeUsageLimitMessage(type, properties)
+    if (limitMessage) {
+      entry.terminalTasks.invalidate(sessionID)
+      this.failUsageLimitedTurn(state, entry.client, limitMessage)
+      return
+    }
+    // Aborting OpenCode's retry loop emits busy/idle and MessageAbortedError events.
+    // Preserve the limit failure until the user explicitly sends another prompt.
+    if (state.usageLimitReached) {
+      this.scheduleUpdate(sessionID)
+      return
+    }
+
     if (type === 'message.updated' || type === 'session.status') {
       const status = isRecord(properties.status) ? properties.status : null
       // OpenCode publishes a failed or stopped reply's final message.updated after session.error
@@ -1920,6 +2010,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           ? status?.type === 'busy' || status?.type === 'retry'
           : replyInProgress
       ) {
+        entry.terminalTasks.advance(sessionID)
         this.completionCoordinator.cancel(sessionID)
         state.active = true
         state.stopped = false
@@ -1997,6 +2088,27 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.scheduleUpdate(sessionID)
   }
 
+  private failUsageLimitedTurn = (
+    state: OpenCodeChatState,
+    client: OpencodeClient,
+    message: string
+  ): void => {
+    if (state.usageLimitReached) return
+    state.usageLimitReached = true
+    state.eventRevision += 1
+    state.active = false
+    state.stopped = false
+    state.failed = true
+    state.failureMessage = message
+    state.pendingApprovals = []
+    state.pendingQuestions = []
+    this.closeBrowser(state)
+    void this.completeTurn(state)
+    void client.session
+      .abort({ sessionID: state.id, directory: state.directory }, { throwOnError: true })
+      .catch((error) => console.error('Unable to abort usage-limited OpenCode turn', error))
+  }
+
   private publishInteractionUpdate = (state: OpenCodeChatState): void => {
     if (state.session) {
       // Approval controls must not wait on message history or another HTTP request.
@@ -2032,6 +2144,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       stopped: false,
       failed: false,
       failureMessage: null,
+      usageLimitReached: false,
       pendingApprovals: [],
       pendingQuestions: [],
       queuedMessages: []
@@ -2248,6 +2361,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const status = statuses[state.id]
     const serverBusy = status?.type === 'busy' || status?.type === 'retry'
     if (eventRevision === state.eventRevision) {
+      const limitMessage = getOpenCodeUsageLimitMessage('session.status', { status })
+      if (limitMessage) this.failUsageLimitedTurn(state, client, limitMessage)
+      if (state.usageLimitReached) return
       const wasActive = state.active
       if (serverBusy) state.active = true
       else if (!preserveActive) state.active = false
@@ -2502,6 +2618,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       state.stopped = false
       state.failed = false
       state.failureMessage = null
+      state.usageLimitReached = false
       await client.session.promptAsync(
         {
           sessionID: state.id,
@@ -2523,7 +2640,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   private abortState = async (state: OpenCodeChatState): Promise<void> => {
     this.closeBrowser(state)
-    const client = (await this.getClientEntry(state.container)).client
+    const entry = await this.getClientEntry(state.container)
+    entry.terminalTasks.invalidate(state.id)
+    const client = entry.client
     await client.session.abort(
       { sessionID: state.id, directory: state.directory },
       { throwOnError: true }
@@ -2586,7 +2705,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   }
 
   private drainQueue = async (state: OpenCodeChatState): Promise<void> => {
-    if (this.queueDrains.has(state.id) || state.stopped) return
+    if (this.queueDrains.has(state.id) || state.stopped || state.usageLimitReached) return
     const pending = state.active
       ? state.queuedMessages.find(
           (message) =>
@@ -2602,6 +2721,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           this.pendingMessageEdits.blocks(state.id, pending.id) ||
           (state.active && pending.kind !== 'steering') ||
           state.stopped ||
+          state.usageLimitReached ||
           !state.queuedMessages.includes(pending)
         )
           return false
@@ -2621,6 +2741,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       if (
         !failed &&
         !state.stopped &&
+        !state.usageLimitReached &&
         state.queuedMessages.length > 0 &&
         state.queuedMessages.some(
           (message) =>

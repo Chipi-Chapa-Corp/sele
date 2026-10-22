@@ -57,7 +57,10 @@ type ChatListItemProps = {
   latestCommitFinishedAt?: number | null
   canMarkDone?: boolean
   canMarkUndone?: boolean
+  /** Pinned reordering: shows the drag handle and reorder styles. */
   draggable?: boolean
+  /** The row can be dragged into a composer to link this chat. */
+  linkDraggable?: boolean
   dragging?: boolean
   dropPosition?: 'before' | 'after' | null
   onClick: (chat: ProviderChat) => void
@@ -130,6 +133,7 @@ export const ChatListItem = memo(function ChatListItem({
   canMarkDone = true,
   canMarkUndone = false,
   draggable = false,
+  linkDraggable = false,
   dragging = false,
   dropPosition = null,
   onClick,
@@ -315,7 +319,7 @@ export const ChatListItem = memo(function ChatListItem({
       ref={itemRef}
       data-chat-id={chat.id}
       className={`chat-list-item${!committing && workingStatus ? ' chat-list-item--working' : ''}${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
-      draggable={editingName ? false : draggable}
+      draggable={editingName ? false : draggable || linkDraggable}
       onDragEnd={onDragEnd}
       onDragOver={(event) => onDragOver?.(event, chat)}
       onDragStart={(event) => onDragStart?.(event, chat)}

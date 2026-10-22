@@ -79,7 +79,7 @@ if (!process.versions.electron) {
         await run(
           `document.body.textContent.includes('You can answer while the agent keeps working.')`
         ),
-        true
+        false
       )
       await fs.writeFile(
         '/tmp/sele-codex-question-preview.png',

@@ -1,4 +1,10 @@
 import { PendingMessageEdits } from '../PendingMessageEdits'
+import {
+  raceLinkedChatCancellation,
+  requireLinkedChatSummary,
+  throwIfLinkedChatCancelled,
+  watchLinkedChatForkTurn
+} from '../linkedChatContext'
 import type { McpAppConnection } from '../../../shared/mcpApps'
 import { withMigrationNote } from '../ChatTranscript'
 import { isAppVisibleTool } from '../../mcpApps/McpAppHost'
@@ -125,7 +131,9 @@ import {
   getUnsupportedCodexHistoryMessage,
   isLegacyCodexHistory,
   isSupportedCodexHistory,
+  isUnsupportedTurnPaginationError,
   hydrateCodexTurnRange,
+  loadCodexFullThread,
   loadCodexLegacyThread,
   loadCodexTurnCatalog,
   loadCodexTurnCursorWindow,
@@ -1368,6 +1376,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
   })
   private threadRevisions = new Map<string, number>()
   private externallyOwnedThreadIds = new Set<string>()
+  /** Set once the CLI build rejects paginated turn listing; history then uses thread reads. */
+  private turnPaginationUnsupported = false
   private writeAccessChecks = new Map<string, Promise<void>>()
   private goals = new CodexGoals()
   private goalPrompts = new CodexGoalPrompts()
@@ -2279,7 +2289,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
           createdAt: namedThread.createdAt * 1_000,
           // Resuming/claiming a thread can touch its metadata without producing new content.
           updatedAt: latestTurn?.updatedAt || namedThread.updatedAt * 1_000,
-          status: getThreadMetadataStatus(namedThread),
+          status:
+            this.userQuestions.getPending(namedThread.id) &&
+            getThreadMetadataStatus(namedThread) !== 'waitingOnApproval'
+              ? 'waitingOnUserInput'
+              : getThreadMetadataStatus(namedThread),
           lastTurnOutcome: latestTurn?.outcome,
           pendingApproval: this.getProviderPendingApproval(namedThread.id),
           pinned: false,
@@ -2360,19 +2374,33 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.bumpThreadRevision(detail.id)
   }
 
+  private loadFullThread = async (
+    threadId: string,
+    fallbackCwd: string | null = null
+  ): Promise<CodexThread> =>
+    this.hydrateFullThread(
+      await loadCodexFullThread<CodexThread>(() => this.readThread(threadId, true), threadId),
+      fallbackCwd
+    )
+
   private loadLegacyThread = async (
     threadId: string,
     fallbackCwd: string | null = null
-  ): Promise<CodexThread> => {
-    const legacyThread = await loadCodexLegacyThread<CodexThread>(
-      () => this.readThread(threadId, true),
-      threadId
+  ): Promise<CodexThread> =>
+    this.hydrateFullThread(
+      await loadCodexLegacyThread<CodexThread>(() => this.readThread(threadId, true), threadId),
+      fallbackCwd
     )
+
+  private hydrateFullThread = async (
+    loadedThread: CodexThread,
+    fallbackCwd: string | null
+  ): Promise<CodexThread> => {
     const [name, cwd] = await Promise.all([
-      this.resolveThreadName(legacyThread),
-      this.resolveThreadCwd(legacyThread, fallbackCwd)
+      this.resolveThreadName(loadedThread),
+      this.resolveThreadCwd(loadedThread, fallbackCwd)
     ])
-    const thread = { ...legacyThread, name, cwd }
+    const thread = { ...loadedThread, name, cwd }
     await Promise.all([
       this.loadTranscriptMetadata(thread),
       this.goals.read(thread.id, (method, params) => this.client.request(method, params))
@@ -2533,6 +2561,31 @@ export class CodexProviderAdapter implements ProviderAdapter {
       return this.getChatWindowInContext(chatId, { startIndex, limit: boundedLimit })
     })
 
+  private usesLegacyHistory = (historyMode: unknown): boolean =>
+    isLegacyCodexHistory(historyMode) || this.turnPaginationUnsupported
+
+  /** Serve a whole-transcript window through `thread/read` when cursors are unavailable. */
+  private loadLegacyChatWindowInContext = async (
+    chatId: string,
+    window: ProviderChatTurnCursorWindow,
+    cacheLatest: boolean,
+    threadMetadata: CodexThread,
+    cachedThread: CodexThread | null,
+    fullRead = false
+  ): Promise<ProviderChatDetail> => {
+    const thread =
+      cachedThread ??
+      (fullRead
+        ? await this.loadFullThread(chatId, threadMetadata.cwd ?? null)
+        : await this.loadLegacyThread(chatId, threadMetadata.cwd ?? null))
+    if (cacheLatest) this.cacheThread(thread)
+    return this.createChatDetail(thread, {
+      turnWindow: { startIndex: null, limit: window.limit },
+      cursorPendingMessages:
+        window.direction === 'older' ? this.getProviderPendingMessages(chatId) : []
+    })
+  }
+
   private loadChatCursorWindowInContext = async (
     chatId: string,
     window: ProviderChatTurnCursorWindow,
@@ -2542,18 +2595,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const loadStartedAtRevision = this.threadRevisions.get(chatId) ?? 0
     const cachedThread = this.threads.get(chatId)
     const threadMetadata = cachedThread ?? (await this.readThread(chatId, false)).thread
-    if (isLegacyCodexHistory(threadMetadata.historyMode)) {
+    if (this.usesLegacyHistory(threadMetadata.historyMode)) {
       if (window.cursor != null) {
         throw new Error('Legacy Codex history does not support cursor pagination')
       }
-      const thread =
-        cachedThread ?? (await this.loadLegacyThread(chatId, threadMetadata.cwd ?? null))
-      if (cacheLatest) this.cacheThread(thread)
-      return this.createChatDetail(thread, {
-        turnWindow: { startIndex: null, limit: window.limit },
-        cursorPendingMessages:
-          window.direction === 'older' ? this.getProviderPendingMessages(chatId) : []
-      })
+      return this.loadLegacyChatWindowInContext(
+        chatId,
+        window,
+        cacheLatest,
+        threadMetadata,
+        cachedThread ?? null
+      )
     }
     assertSupportedCodexHistory(threadMetadata)
     let requestedCursor = window.cursor
@@ -2582,11 +2634,28 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ? this.getProviderPendingMessages(chatId).slice(-window.limit)
         : []
     const rawLimit = Math.max(1, window.limit - pendingMessages.length)
-    const cursorWindow = await loadCodexTurnCursorWindow(
-      (method, params) => this.client.request(method, params),
-      threadMetadata.id,
-      { ...window, cursor: requestedCursor, limit: rawLimit }
-    )
+    let cursorWindow: Awaited<ReturnType<typeof loadCodexTurnCursorWindow>>
+    try {
+      cursorWindow = await loadCodexTurnCursorWindow(
+        (method, params) => this.client.request(method, params),
+        threadMetadata.id,
+        { ...window, cursor: requestedCursor, limit: rawLimit }
+      )
+    } catch (error) {
+      if (!isUnsupportedTurnPaginationError(error) || window.cursor != null) throw error
+      this.turnPaginationUnsupported = true
+      // A partially cached thread would truncate history; read the whole transcript instead.
+      // Some builds reject cursors for threads they still report as paginated, so skip the
+      // legacy historyMode assertion for that full read.
+      return this.loadLegacyChatWindowInContext(
+        chatId,
+        window,
+        cacheLatest,
+        threadMetadata,
+        null,
+        true
+      )
+    }
     if (
       cacheLatest &&
       window.direction === 'older' &&
@@ -2720,7 +2789,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     // bounded pagination API.
     const response = await this.readThread(chatId, false)
     const threadMetadata = response.thread
-    if (isLegacyCodexHistory(threadMetadata.historyMode)) {
+    if (this.usesLegacyHistory(threadMetadata.historyMode)) {
       const thread = await this.loadLegacyThread(chatId, threadMetadata.cwd ?? null)
       this.cacheThread(thread)
       return this.createChatDetail(thread, { turnWindow: window })
@@ -4181,6 +4250,48 @@ export class CodexProviderAdapter implements ProviderAdapter {
       await this.client.request('thread/compact/start', { threadId: chatId })
       return this.getCachedChatDetail(chatId) ?? this.getChat(chatId)
     })
+
+  /**
+   * Codex stores its compaction summary as encrypted content, so the fork is asked for a
+   * summary instead; its final answer is the linked context.
+   */
+  summarizeChatInFork = async (
+    chatId: string,
+    { summaryPrompt, signal }: { summaryPrompt: string; signal: AbortSignal },
+    onForkCreated: (chatId: string) => Promise<void>
+  ): Promise<string> => {
+    throwIfLinkedChatCancelled(signal)
+    const watcher = watchLinkedChatForkTurn(this.onChatUpdated, signal)
+    let forkId: string | null = null
+    try {
+      const initial = await raceLinkedChatCancellation(
+        signal,
+        this.continueChatInFork(chatId, summaryPrompt, undefined, async (id) => {
+          forkId = id
+          watcher.track(id)
+          await onForkCreated(id)
+          // Cancelled before the turn starts: do not spend a model turn on it.
+          throwIfLinkedChatCancelled(signal)
+        })
+      )
+      await watcher.finished(initial)
+      const turn = this.threads.get(initial.id)?.turns.at(-1)
+      if (turn?.status && turn.status !== 'completed') {
+        throw new Error(getTurnFailureMessage(turn, 'linked chat summary'))
+      }
+      return requireLinkedChatSummary(turn ? getAgentMessageText(turn) : null)
+    } catch (error) {
+      const startedForkId = forkId
+      if (signal.aborted && startedForkId) {
+        void this.stopChat(startedForkId).catch((stopError: unknown) => {
+          console.error('[caught:CodexProviderAdapter:summarizeChatInFork:stop]', stopError)
+        })
+      }
+      throw error
+    } finally {
+      watcher.dispose()
+    }
+  }
 
   stopChat = (chatId: string): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId), () => this.stopChatInContext(chatId))

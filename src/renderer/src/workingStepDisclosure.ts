@@ -114,17 +114,19 @@ export const getWorkingStepDisclosureKey = (
   progressPolicy: WorkingStepProgressPolicy,
   settings: AppChatProgressSettings,
   hasNextWorkingStep: boolean
-): string =>
-  [
+): string => {
+  const policy = getProgressDisclosurePolicy(status, progressPolicy, settings)
+  return [
     status,
     progressPolicy,
-    hasNextWorkingStep ? 'next' : 'latest',
+    hasNextWorkingStep && policy.collapseOnNextTurn ? 'next' : 'latest',
     settings.expandProgressOnStart,
     settings.collapseProgressOnFinish,
     settings.collapseProgressOnNextTurn,
     settings.collapseStoppedSteeredFailedProgressOnFinish,
     settings.collapseStoppedSteeredFailedProgressOnNextTurn
   ].join(':')
+}
 
 export type WorkingStepDisclosureState = {
   key: string

@@ -1,4 +1,9 @@
 import { PendingMessageEdits } from '../PendingMessageEdits'
+import {
+  raceLinkedChatCancellation,
+  requireLinkedChatSummary,
+  throwIfLinkedChatCancelled
+} from '../linkedChatContext'
 import type { McpAppConnection } from '../../../shared/mcpApps'
 import { copilotAccountDisplayName } from '../AccountDisplayName'
 import { encodeCopilotHistory } from '../NativeHistoryImport'
@@ -1989,6 +1994,44 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (!result.success) throw new Error('Copilot could not compact the chat context.')
     this.emitUpdate(state)
     return this.createChatDetail(state)
+  }
+
+  summarizeChatInFork = async (
+    chatId: string,
+    { signal }: { summaryPrompt: string; signal: AbortSignal },
+    onForkCreated: (chatId: string) => Promise<void>
+  ): Promise<string> => {
+    const sourceState = await this.ensureSession(chatId)
+    if (sourceState.active)
+      throw new Error('Wait for the current response before linking this chat.')
+    throwIfLinkedChatCancelled(signal)
+    const fork = await sourceState.client!.rpc.sessions.fork({ sessionId: chatId })
+    this.sessionContainers.set(fork.sessionId, sourceState.container)
+    await onForkCreated(fork.sessionId)
+    throwIfLinkedChatCancelled(signal)
+    const state = await this.ensureSession(
+      fork.sessionId,
+      sourceState.options,
+      sourceState.container
+    )
+    const abort = (): void => {
+      void state.session?.rpc.history.abortManualCompaction().catch((error: unknown) => {
+        console.error('[caught:CopilotProviderAdapter:summarizeChatInFork:abort]', error)
+      })
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      throwIfLinkedChatCancelled(signal)
+      // Native compaction returns its readable summary directly.
+      const result = await raceLinkedChatCancellation(
+        signal,
+        state.session!.rpc.history.compact({ trigger: 'manual' })
+      )
+      if (!result.success) throw new Error('Copilot could not summarize the linked chat.')
+      return requireLinkedChatSummary(result.summaryContent)
+    } finally {
+      signal.removeEventListener('abort', abort)
+    }
   }
 
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {

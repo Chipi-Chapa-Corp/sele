@@ -18,6 +18,12 @@ type SqliteNullableChatPurposeColumn = ColumnType<
 >
 
 export type LocalDatabase = {
+  conversation_view: {
+    scope_key: string
+    format_version: number
+    payload: string
+    updated_at: number
+  }
   chat_history_page: {
     cache_key: string
     fingerprint: string
@@ -174,6 +180,14 @@ const ensureColumn = async (
 
 const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   if (schemaReady) return
+  await db.schema
+    .createTable('conversation_view')
+    .ifNotExists()
+    .addColumn('scope_key', 'text', (c) => c.primaryKey())
+    .addColumn('format_version', 'integer', (c) => c.notNull())
+    .addColumn('payload', 'text', (c) => c.notNull())
+    .addColumn('updated_at', 'integer', (c) => c.notNull())
+    .execute()
   await db.schema
     .createTable('chat_history_page')
     .ifNotExists()

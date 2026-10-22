@@ -7,6 +7,7 @@ type ConversationMessagesProps = WorkspaceController['conversationMessages']
 
 export function ConversationMessages(props: ConversationMessagesProps): ReactElement {
   const loading =
+    !props.chatKnown &&
     !props.activeSubagentChatView &&
     props.chatLoadState === 'loading' &&
     props.visibleChatItems.length === 0

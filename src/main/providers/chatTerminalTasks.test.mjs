@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { createOpenCodeTerminalTasks } from './opencode/OpenCodeTerminalTasks.ts'
+import { reconcileOpenCodeMessageSnapshot } from './opencode/OpenCodeEvents.ts'
 
 const harness = (provider, globals = {}, methods = ['getChatTerminalTasks']) => {
   const name = { codex: 'Codex', claude: 'Claude', copilot: 'Copilot', opencode: 'OpenCode' }[
@@ -28,6 +30,7 @@ const harness = (provider, globals = {}, methods = ['getChatTerminalTasks']) => 
     {
       getContainerTargetKey: (target) => target?.name ?? 'host',
       requireData: (result) => result.data,
+      reconcileOpenCodeMessageSnapshot,
       ...globals
     }
   )
@@ -121,21 +124,33 @@ test('Copilot refreshes detached shells and excludes subagents and finished task
   assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('unopened')), [])
 })
 
-test('OpenCode reads live shell tool statuses and excludes failed, finished and nonterminal tools', async () => {
+test('OpenCode verifies server liveness before reading the current shell step', async () => {
   const adapter = harness('opencode')
-  const state = { session: { id: 'chat' }, container: null }
+  const state = { session: { id: 'chat' }, directory: '/project', container: null, messages: [] }
   adapter.states = new Map([['chat', state]])
-  adapter.clientEntries = new Map([['host', { client: {} }]])
+  let busy = true
+  const entry = {
+    terminalTasks: createOpenCodeTerminalTasks(() => 0),
+    client: {
+      session: {
+        status: async (params) => {
+          assert.equal(params.directory, '/project')
+          return { data: busy ? { chat: { type: 'busy' } } : {} }
+        }
+      }
+    }
+  }
+  adapter.clientEntries = new Map([['host', entry]])
   let finished = false
   adapter.loadMessages = async () => [
     {
-      info: { id: 'message' },
+      info: { id: 'message', role: 'assistant', time: { created: 1 } },
       parts: [
         {
           type: 'tool',
           tool: 'bash',
           callID: 'shell',
-          state: { status: finished ? 'completed' : 'running' }
+          state: { status: finished ? 'completed' : 'running', time: { start: 2 } }
         },
         { type: 'tool', tool: 'read', callID: 'file', state: { status: 'running' } },
         { type: 'tool', tool: 'bash', callID: 'old', state: { status: 'error' } }
@@ -145,27 +160,37 @@ test('OpenCode reads live shell tool statuses and excludes failed, finished and 
   assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), ['shell'])
   finished = true
   assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
+  busy = false
+  adapter.loadMessages = async () => assert.fail('idle sessions must not load history')
+  assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
+  adapter.clientEntries.clear()
+  await assert.rejects(adapter.getChatTerminalTasks('chat'), /unavailable/)
 })
 
-test('OpenCode keeps polling a known terminal after its message leaves the latest page', async () => {
+test('OpenCode never pins an abandoned message after later assistant steps', async () => {
   const adapter = harness('opencode')
-  const state = { session: { id: 'chat' }, directory: '/project', container: null }
+  const state = { session: { id: 'chat' }, directory: '/project', container: null, messages: [] }
   const message = {
-    info: { id: 'terminal-message' },
-    parts: [{ type: 'tool', tool: 'bash', callID: 'shell', state: { status: 'running' } }]
+    info: { id: 'terminal-message', role: 'assistant', time: { created: 1 } },
+    parts: [
+      {
+        type: 'tool',
+        tool: 'bash',
+        callID: 'shell',
+        state: { status: 'running', time: { start: 2 } }
+      }
+    ]
   }
-  const requests = []
   adapter.states = new Map([['chat', state]])
   adapter.clientEntries = new Map([
     [
       'host',
       {
+        terminalTasks: createOpenCodeTerminalTasks(() => 0),
         client: {
           session: {
-            message: async (params) => {
-              requests.push(params)
-              return { data: message }
-            }
+            status: async () => ({ data: { chat: { type: 'busy' } } }),
+            message: async () => assert.fail('historical tool records are not live tasks')
           }
         }
       }
@@ -174,11 +199,144 @@ test('OpenCode keeps polling a known terminal after its message leaves the lates
   let latest = [message]
   adapter.loadMessages = async () => [...latest]
   assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), ['shell'])
-  latest = [{ info: { id: 'new-message' }, parts: [] }]
-  assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), ['shell'])
-  assert.equal(requests[0].messageID, 'terminal-message')
-  message.parts[0].state.status = 'completed'
+  latest = [{ info: { id: 'new-message', role: 'assistant', time: { created: 3 } }, parts: [] }]
   assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
   assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
-  assert.equal(requests.length, 2, 'completed messages no longer need individual polling')
+})
+
+test('OpenCode reconciles live tool completion received during a history poll', async () => {
+  const adapter = harness('opencode')
+  const message = {
+    info: { id: 'reply', role: 'assistant', time: { created: 1 } },
+    parts: [
+      {
+        type: 'tool',
+        tool: 'bash',
+        callID: 'shell',
+        state: { status: 'running', time: { start: 2 } }
+      }
+    ]
+  }
+  const state = {
+    session: { id: 'chat' },
+    directory: '/project',
+    container: null,
+    messages: [message]
+  }
+  adapter.states = new Map([['chat', state]])
+  adapter.clientEntries = new Map([
+    [
+      'host',
+      {
+        terminalTasks: createOpenCodeTerminalTasks(() => 0),
+        client: { session: { status: async () => ({ data: { chat: { type: 'busy' } } }) } }
+      }
+    ]
+  ])
+  adapter.loadMessages = async () => {
+    state.messages = [
+      { ...message, parts: [{ ...message.parts[0], state: { status: 'completed' } }] }
+    ]
+    return [message]
+  }
+  assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
+})
+
+test('OpenCode server exit, event-stream loss and disposal invalidate outstanding reads', async () => {
+  for (const loss of ['exit', 'stream', 'dispose']) {
+    let exit
+    let endStream
+    let eventsDone
+    let finishHistory
+    let historyStarted
+    const started = new Promise((resolve) => {
+      historyStarted = resolve
+    })
+    const history = new Promise((resolve) => {
+      finishHistory = resolve
+    })
+    const streamEnd = new Promise((resolve) => {
+      endStream = resolve
+    })
+    const client = {
+      session: { status: async () => ({ data: { chat: { type: 'busy' } } }) },
+      global: {
+        event: async ({ signal }) => {
+          signal.addEventListener('abort', endStream, { once: true })
+          return {
+            stream: {
+              [Symbol.asyncIterator]: () => ({
+                next: async () => {
+                  await streamEnd
+                  return { done: true }
+                }
+              })
+            }
+          }
+        }
+      }
+    }
+    const adapter = harness(
+      'opencode',
+      {
+        AbortController,
+        console: { error() {} },
+        normalizeStoredContainer: (container) => container ?? null,
+        createOpenCodeTerminalTasks: () => createOpenCodeTerminalTasks(() => 0),
+        OpenCodeServerClient: class {
+          getClient = async () => client
+          onExit = (listener) => {
+            exit = listener
+          }
+          dispose = async () => {}
+        }
+      },
+      ['getChatTerminalTasks', 'createClientEntry', 'consumeEvents', 'disposeClients']
+    )
+    const state = {
+      session: { id: 'chat' },
+      directory: '/project',
+      container: null,
+      messages: [],
+      client
+    }
+    Object.assign(adapter, {
+      states: new Map([['chat', state]]),
+      clientEntries: new Map(),
+      clientEntryPromises: new Map(),
+      closeBrowser() {},
+      loadMessages: async () => {
+        historyStarted()
+        return history
+      }
+    })
+    const consume = adapter.consumeEvents
+    adapter.consumeEvents = (entry) => {
+      eventsDone = consume(entry)
+      return eventsDone
+    }
+    const entry = await adapter.createClientEntry()
+    adapter.clientEntries.set('host', entry)
+    const reading = adapter.getChatTerminalTasks('chat')
+    await started
+    if (loss === 'exit') exit(new Error('server exited'))
+    else if (loss === 'dispose') await adapter.disposeClients()
+    else endStream()
+    await eventsDone
+    finishHistory([
+      {
+        info: { id: 'reply', role: 'assistant', time: { created: 1 } },
+        parts: [
+          {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'shell',
+            state: { status: 'running', time: { start: 2 } }
+          }
+        ]
+      }
+    ])
+    await assert.rejects(reading, /unavailable/, loss)
+    assert.equal(adapter.clientEntries.has('host'), false, loss)
+  }
 })

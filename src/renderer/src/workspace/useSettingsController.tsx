@@ -525,6 +525,19 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
       })
     )
   }
+  const handleLinkedChatSummaryPromptChange = (linkedChatSummaryPrompt: string): void => {
+    updateScopedSetting(
+      { section: 'chat', key: 'linkedChatSummaryPrompt' },
+      linkedChatSummaryPrompt,
+      (currentSettings) => ({
+        ...currentSettings,
+        chat: {
+          ...currentSettings.chat,
+          linkedChatSummaryPrompt
+        }
+      })
+    )
+  }
   const handleGitCommitModelChange = (nextModel: string): void => {
     const commitModel = nextModel === gitCurrentChatModelValue ? null : nextModel
     const commitModels = setAppGitCommitModel(
@@ -816,6 +829,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handleChatUsageDisplayChange,
     handleCodexRecommendedPluginsChange,
     handleContinuePromptChange,
+    handleLinkedChatSummaryPromptChange,
     handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange,
     handleGitCommitPromptChange,

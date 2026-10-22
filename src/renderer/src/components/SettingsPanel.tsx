@@ -136,6 +136,7 @@ export type SettingsPanelProps = {
     value: number
   ) => void
   handleContinuePromptChange: (continuePrompt: string) => void
+  handleLinkedChatSummaryPromptChange: (linkedChatSummaryPrompt: string) => void
   handleProviderConnectionsChanged: (providerId: ProviderId, container: AppContainerTarget) => void
   handleDeleteProviderAccount: (accountId: string) => Promise<void>
   handleGitCommitMessageGenerationChange: (
@@ -376,6 +377,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     handleCodexRecommendedPluginsChange,
     handleNetworkRetrySettingChange,
     handleContinuePromptChange,
+    handleLinkedChatSummaryPromptChange,
     handleProviderConnectionsChanged,
     handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange,
@@ -472,6 +474,10 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
   const chatContinuePromptPath = {
     section: 'chat',
     key: 'continuePrompt'
+  } satisfies AppProjectSettingPath
+  const chatLinkedChatSummaryPromptPath = {
+    section: 'chat',
+    key: 'linkedChatSummaryPrompt'
   } satisfies AppProjectSettingPath
   const browserEnabledPath = {
     section: 'browser',
@@ -1262,6 +1268,35 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 disabled={isScopedSettingControlDisabled(chatContinuePromptPath)}
                 value={settingsPanelSettings.chat.continuePrompt}
                 onChange={(event) => handleContinuePromptChange(event.currentTarget.value)}
+              />
+            </div>
+          </div>
+        </section>
+        <section className="settings-dialog__section" aria-labelledby="settings-chat-linked-chats">
+          <h2 className="settings-dialog__section-heading" id="settings-chat-linked-chats">
+            Linked Chats
+          </h2>
+          <div className="settings-dialog__section-cards">
+            <div className={getSettingsFieldClassName('settings-dialog__field--stack')}>
+              <label
+                className="settings-dialog__field-header"
+                htmlFor="settings-chat-linked-chat-summary-prompt"
+              >
+                <h3>Summary prompt</h3>
+                <p>
+                  Sent to a hidden copy of a chat dropped into the composer when its provider has no
+                  readable compaction summary (Codex). Claude, OpenCode and Copilot use native
+                  compaction.
+                </p>
+              </label>
+              {renderProjectSettingAction(chatLinkedChatSummaryPromptPath, 'Summary prompt')}
+              <textarea
+                id="settings-chat-linked-chat-summary-prompt"
+                className="settings-dialog__prompt-textarea"
+                rows={3}
+                disabled={isScopedSettingControlDisabled(chatLinkedChatSummaryPromptPath)}
+                value={settingsPanelSettings.chat.linkedChatSummaryPrompt}
+                onChange={(event) => handleLinkedChatSummaryPromptChange(event.currentTarget.value)}
               />
             </div>
           </div>

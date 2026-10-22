@@ -18,7 +18,12 @@ const declaration = source.statements.find(
 const code = ts.transpile(
   `class Harness { ${declaration.members
     .filter((node) =>
-      ['getChat', 'loadChatCursorWindowInContext'].includes(node.name?.getText(source))
+      [
+        'getChat',
+        'loadChatCursorWindowInContext',
+        'usesLegacyHistory',
+        'loadLegacyChatWindowInContext'
+      ].includes(node.name?.getText(source))
     )
     .map((node) => node.getText(source))
     .join('\n')} }; new Harness()`,

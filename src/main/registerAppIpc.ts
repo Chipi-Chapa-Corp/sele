@@ -22,7 +22,6 @@ import type {
   AppExternalLinkOptions,
   AppExternalLinkResult,
   AppFileContentsOptions,
-  AppFileTreeFile,
   AppFileTreeOptions,
   AppGitCommitAction,
   AppGitCommitOptions,
@@ -93,7 +92,14 @@ import { setStoredCwdMetadata } from './database/cwd'
 import { getContainerSuggestions } from './containerSuggestions'
 import { showFileInFileManager } from './fileManager'
 import { getFileTargetGitCwd, resolveFileTargetPath } from './fileTarget'
-import { parseTargetFileTree, readLocalFileTree, targetFileTreeScript } from './fileTree'
+import {
+  createFileTreeListing,
+  createFileTreeResult,
+  type FileTreePaths,
+  parseTargetFileTreePaths,
+  readLocalFileTreePaths,
+  targetFileTreeScript
+} from './fileTree'
 import { commitAllGitChanges } from './gitCommit'
 import { summarizeGitNumstat } from './gitCommitMessage'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
@@ -1998,15 +2004,9 @@ const getGitChanges = async (
   }
 }
 
-const getFileTree = async (
-  cwd: string
-): Promise<{
-  repositoryRoot: string
-  branchName: string | null
-  files: AppFileTreeFile[]
-}> => {
+const readFileTreePaths = async (cwd: string): Promise<FileTreePaths> => {
   const container = gitCommandContext.getStore()?.container
-  if (!(await shouldReadFilesThroughTarget(container))) return readLocalFileTree(cwd)
+  if (!(await shouldReadFilesThroughTarget(container))) return readLocalFileTreePaths(cwd)
 
   const output = await runTargetFileCommand(
     container,
@@ -2014,7 +2014,7 @@ const getFileTree = async (
     ['-lc', targetFileTreeScript, 'sele-list-files', cwd],
     { maxBuffer: 32 * 1024 * 1024 }
   )
-  return parseTargetFileTree(output)
+  return parseTargetFileTreePaths(output)
 }
 
 const maxEditableFileBytes = 2 * 1024 * 1024
@@ -3369,7 +3369,16 @@ export const registerAppIpc = (): void => {
 
   handleLoggedIpc(appIpcChannels.getFileTree, async (_event, value: unknown) => {
     const options = getFileTreeOptions(value)
-    return runWithGitContainer(options.container, () => getFileTree(options.cwd ?? process.cwd()))
+    return runWithGitContainer(options.container, async () =>
+      createFileTreeResult(await readFileTreePaths(options.cwd ?? process.cwd()))
+    )
+  })
+
+  handleLoggedIpc(appIpcChannels.getFileTreeListing, async (_event, value: unknown) => {
+    const options = getFileTreeOptions(value)
+    return runWithGitContainer(options.container, async () =>
+      createFileTreeListing(await readFileTreePaths(options.cwd ?? process.cwd()))
+    )
   })
 
   handleLoggedIpc(appIpcChannels.getFileContents, async (_event, value: unknown) => {

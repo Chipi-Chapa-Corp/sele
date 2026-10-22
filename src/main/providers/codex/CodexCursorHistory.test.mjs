@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   assertCodexHistoryWritable,
   getUnsupportedCodexHistoryMessage,
+  isUnsupportedTurnPaginationError,
   loadCodexLegacyThread,
   loadCodexTurnCursorWindow,
   retainCodexTurnTail,
@@ -252,4 +253,16 @@ test('retains only the bounded raw turn tail for a long live chat', () => {
     retained.turns.map(({ id }) => id),
     ['491', '492', '493', '494', '495', '496', '497', '498', '499', '500']
   )
+})
+
+test('recognizes a CLI that rejects paginated turn listing', () => {
+  for (const message of [
+    'list_turns is not supported yet',
+    'paginated_threads is not supported yet',
+    'thread/turns/list is not supported yet'
+  ])
+    assert.equal(isUnsupportedTurnPaginationError(new Error(message)), true, message)
+  for (const message of ['thread/turns/list is unavailable', 'thread not found', 'not supported'])
+    assert.equal(isUnsupportedTurnPaginationError(new Error(message)), false, message)
+  assert.equal(isUnsupportedTurnPaginationError('list_turns is not supported yet'), true)
 })

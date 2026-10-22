@@ -9,7 +9,6 @@ import {
   getGitChangedFiles,
   getLastTurnChangedFiles,
   getPatchFilterSignature,
-  getRepositoryFiles,
   getTreeFilesWithDisplayPaths,
   isPatchChangeSource,
   isPatchFilterScope,
@@ -135,17 +134,8 @@ export function useChangesData(dependencies: ChangesDataDependencies) {
     [changesCwd, gitChanges, uncommittedGitChangesMatchCurrentCwd]
   )
   const fileTreeMatchesCurrentCwd = isFileTreeScope(fileTreeScope, changesContainerKey, changesCwd)
-  const displayedFileTree = fileTreeMatchesCurrentCwd ? fileTree : null
-  const rawRepositoryFiles = useMemo(
-    () => (changesCwd ? getRepositoryFiles(displayedFileTree) : []),
-    [changesCwd, displayedFileTree]
-  )
-  const repositoryFilesDisplayRoot =
-    displayedFileTree?.repositoryRoot ?? changesProjectCwd ?? changesCwd ?? null
-  const repositoryFiles = useMemo(
-    () => getTreeFilesWithDisplayPaths(rawRepositoryFiles, repositoryFilesDisplayRoot),
-    [rawRepositoryFiles, repositoryFilesDisplayRoot]
-  )
+  const repositoryFileIndex = fileTreeMatchesCurrentCwd && changesCwd ? fileTree : null
+  const repositoryFileCount = repositoryFileIndex?.fileCount ?? 0
   const gitChangeLoadMatchesCurrentSource = isGitChangesScope(
     gitChangeLoadScope,
     gitAvailabilityScopeKey,
@@ -200,7 +190,7 @@ export function useChangesData(dependencies: ChangesDataDependencies) {
       ? fileTreeLoadState
       : 'loading'
   const visibleFilesLoadState =
-    filesLoadState === 'loading' && displayedFileTree ? 'ready' : filesLoadState
+    filesLoadState === 'loading' && repositoryFileIndex ? 'ready' : filesLoadState
   const cachedPatchChangedFilesMatch = Boolean(
     cachedPatchChangedFiles &&
     changesCwd &&
@@ -286,7 +276,8 @@ export function useChangesData(dependencies: ChangesDataDependencies) {
     hasUnpushedChanges,
     patchChangeSourceSelected,
     primarySyncAction,
-    repositoryFiles,
+    repositoryFileCount,
+    repositoryFileIndex,
     syncButtonTitle,
     uncommittedChangedFiles,
     unpulledCount,

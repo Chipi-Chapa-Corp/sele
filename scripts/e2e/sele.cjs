@@ -242,10 +242,20 @@ class Sele {
 
   /** Click the chat title text (its hover toolbar covers the rest of the row). */
   async selectChat(id) {
-    await this.page.click(
-      `(window.__sele.chatRow(${JSON.stringify(id)})?.querySelector('.chat-list-item__main'))`,
-      { offsetX: 40 }
-    )
+    const target = JSON.stringify(id)
+    const selected = `window.__sele.selectedChatId() === ${target}`
+    // The sidebar re-renders and re-sorts while chats load, so a single click can land on a
+    // row that just moved; click and verify instead of trusting one event pair.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      if (await this.page.eval(selected)) return
+      const row = `window.__sele.chatRow(${target})?.querySelector('.chat-list-item__main')`
+      if (await this.page.eval(`!!${row}`))
+        await this.page
+          .click(`(${row})`, { offsetX: 40 })
+          .catch(() => {})
+      await sleep(300)
+    }
+    await this.page.waitFor(selected, { timeout: 5000, message: 'chat did not open' })
   }
 
   async waitForReply(needle, { timeout = 60000 } = {}) {
@@ -271,7 +281,8 @@ class Sele {
   }
 
   pendingButton(needle, label) {
-    return `(window.__sele.pendingBlock(${JSON.stringify(needle)}) && [...window.__sele.pendingBlock(${JSON.stringify(needle)}).querySelectorAll('button[aria-label]')].find(button => button.getAttribute('aria-label') === ${JSON.stringify(label)}))`
+    const block = `window.__sele.pendingBlock(${JSON.stringify(needle)})`
+    return `(() => { const block = ${block}; if (!block) return null; return [...block.querySelectorAll('button[aria-label]')].find(button => button.getAttribute('aria-label') === ${JSON.stringify(label)} && window.__sele.visible(button)) ?? null })()`
   }
 
   async pendingAction(needle, label) {

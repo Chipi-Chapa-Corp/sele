@@ -87,7 +87,7 @@ for (const automatic of [true, false]) {
         usageScope: scope,
         usageScopeRef: scopeRef,
         selectedChatId: undefined,
-        loadState: 'ready',
+        loadState: 'loading',
         providerApi: {
           getUsage: async () => {
             requests++
@@ -186,6 +186,7 @@ const setup = () => {
     claudeAccounts: {
       getEnvironment: async () => ({ ...environment }),
       getUsageEnvironment: async () => ({ ...environment, CLAUDE_CONFIG_DIR: '/usage/a' }),
+      getAuthenticationMethod: async () => 'api_key',
       getUsageFallback: async () => {
         calls.push(['usage-fallback'])
         return { seven_day: { utilization: 19, resets_at: null } }
@@ -248,6 +249,52 @@ test('a null subscription SDK response falls back, while API-key and valid respo
   }
   assert.equal((await h.getUsage()).rateLimits[0].usedPercent, 7)
   assert.equal(calls.length, 1)
+})
+
+test('empty SDK usage detects missing credentials and invalid subscription credentials before sending', async () => {
+  for (const method of ['none', 'claude.ai', 'api_key', 'third_party']) {
+    const { h, context } = setup()
+    const chat = { id: 'empty', container: null, queuedMessagesPaused: false }
+    h.states.set(chat.id, chat)
+    h.withControlQuery = async (_options, _profile, run) =>
+      run({
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+          rate_limits_available: false,
+          rate_limits: null
+        })
+      })
+    let checks = 0
+    context.claudeAccounts.getAuthenticationMethod = async () => {
+      checks++
+      if (method === 'none') throw new ClaudeAuthenticationError('Claude is not signed in')
+      return method
+    }
+    context.claudeAccounts.getUsageFallback = async () => {
+      assert.equal(method, 'claude.ai')
+      throw new ClaudeAuthenticationError('Claude subscription credentials are expired')
+    }
+    const usage = await h.getUsage()
+    assert.equal(checks, 1)
+    const required = method === 'none' || method === 'claude.ai'
+    assert.equal(usage.authenticationRequired, required, method)
+    assert.equal(h.authenticationFailures.has('host'), required, method)
+    assert.equal(chat.queuedMessagesPaused, required, method)
+  }
+})
+
+test('subscription credentials still load limits when the SDK config has no profile', async () => {
+  const { h, context } = setup()
+  context.claudeAccounts.getAuthenticationMethod = async () => 'claude.ai'
+  h.withControlQuery = async (_options, _profile, run) =>
+    run({
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+        rate_limits_available: false,
+        rate_limits: null
+      })
+    })
+  const usage = await h.getUsage()
+  assert.equal(usage.authenticationRequired, false)
+  assert.equal(usage.rateLimits[0].usedPercent, 19)
 })
 
 test('usage authentication failure blocks the account before any message is submitted', async () => {

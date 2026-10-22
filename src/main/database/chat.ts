@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderChatMetadata, ProviderChatPurpose } from '../../shared/provider'
+import { isProviderChatPurpose } from '../../shared/provider'
 import { isContainerTool, normalizeContainerTarget } from '../containerTarget'
 import { getDatabase } from './sqlite'
 import { DatabaseReadCache } from './readCache'
@@ -71,7 +72,7 @@ const mapChatMetadataRow = (row: {
   done: toBoolean(row.done),
   doneAt: toNumberOrNull(row.done_at),
   seenUpdatedAt: toNumberOrNull(row.seen_updated_at),
-  purpose: row.purpose === 'commit' ? row.purpose : null,
+  purpose: isProviderChatPurpose(row.purpose) ? row.purpose : null,
   container: mapContainerTarget(
     row.container_tool,
     row.container_name,

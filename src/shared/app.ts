@@ -414,6 +414,15 @@ export type AppFileTreeResult = {
   files: AppFileTreeFile[]
 }
 
+/** The same listing as `AppFileTreeResult`, encoded for large folders. */
+export type AppFileTreeListing = {
+  repositoryRoot: string
+  branchName: string | null
+  fileCount: number
+  /** NUL-separated paths relative to `repositoryRoot`, unsorted. */
+  paths: string
+}
+
 export type AppFileContentsOptions = AppContainerOptions & {
   cwd?: string | null
   path: string
@@ -578,6 +587,7 @@ export type AppApi = {
   deleteGitBranch: (options: AppGitDeleteBranchOptions) => Promise<AppGitDeleteBranchResult>
   createGitWorktree: (options: AppGitCreateWorktreeOptions) => Promise<AppGitCreateWorktreeResult>
   getFileTree: (options?: AppFileTreeOptions) => Promise<AppFileTreeResult>
+  getFileTreeListing: (options?: AppFileTreeOptions) => Promise<AppFileTreeListing>
   getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
   openFileInSystemApp: (options: AppFileContentsOptions) => Promise<void>
   downloadFile: (options: AppFileContentsOptions) => Promise<string | null>
@@ -654,6 +664,7 @@ export const appIpcChannels = {
   deleteGitBranch: 'app:delete-git-branch',
   createGitWorktree: 'app:create-git-worktree',
   getFileTree: 'app:get-file-tree',
+  getFileTreeListing: 'app:get-file-tree-listing',
   getFileContents: 'app:get-file-contents',
   openFileInSystemApp: 'app:open-file-in-system-app',
   downloadFile: 'app:download-file',

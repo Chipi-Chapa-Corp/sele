@@ -29,6 +29,7 @@ import {
   type RepositoryFile,
   type TreeFile
 } from '../changeTree'
+import { getFileTreeIndexNodes, isFileTreeFolderCollapsed } from '../fileTreeIndex'
 import { getContainerTargetKey } from '../containerSelection'
 import { getChatDetailTurnCount, mergeChatDetailTurnPage } from '../chatDetailWindow'
 import { chatTurnWindowSize } from './controllerTypes'
@@ -43,13 +44,16 @@ const renderTreeNode = <TFile extends TreeFile>(
   node: ChangeTreeNode<TFile>,
   depth: number,
   options: {
-    collapsedFolders: Record<string, boolean>
-    onToggleFolder: (folderPath: string, childrenPrecomputed: boolean) => void
+    isCollapsed: (folderPath: string) => boolean
+    /** Children of an expanded folder; file tree folders load theirs from the index. */
+    getChildren: (folderPath: string, children: ChangeTreeNode<TFile>[]) => ChangeTreeNode<TFile>[]
+    onToggleFolder: (folderPath: string) => void
     onOpenFile: (file: TFile) => void
   }
 ): React.ReactElement => {
   if (node.type === 'folder') {
-    const collapsed = !node.childrenPrecomputed || Boolean(options.collapsedFolders[node.path])
+    const collapsed = options.isCollapsed(node.path)
+    const children = collapsed ? [] : options.getChildren(node.path, node.children)
 
     return (
       <li
@@ -63,7 +67,7 @@ const renderTreeNode = <TFile extends TreeFile>(
           type="button"
           title={node.path}
           style={getTreeRowStyle(depth)}
-          onClick={() => options.onToggleFolder(node.path, node.childrenPrecomputed)}
+          onClick={() => options.onToggleFolder(node.path)}
         >
           <span className="changes-sidebar__tree-chevron" aria-hidden="true">
             {collapsed ? <ChevronRight /> : <ChevronDown />}
@@ -73,9 +77,9 @@ const renderTreeNode = <TFile extends TreeFile>(
           </span>
           <span className="changes-sidebar__tree-name">{node.name}</span>
         </button>
-        {!collapsed && node.children.length > 0 && (
+        {children.length > 0 && (
           <ul className="changes-sidebar__tree-group" role="group">
-            {node.children.map((childNode) => renderTreeNode(childNode, depth + 1, options))}
+            {children.map((childNode) => renderTreeNode(childNode, depth + 1, options))}
           </ul>
         )}
       </li>
@@ -122,11 +126,10 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
   const {
     setCollapsedChangeTreeFolders,
     collapsedFileTreeFolders,
-    setLastOpenedFileTreeFolderPath,
     setCollapsedFileTreeFolders,
     changesCwd,
-    lastOpenedFileTreeFolderByCwdRef,
     collapsedFileTreeFoldersByCwdRef,
+    repositoryFileIndex,
     branchSwitchDisabled,
     gitBranchRequestIdRef,
     setGitBranchActionState,
@@ -179,19 +182,12 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
       [folderPath]: !currentFolders[folderPath]
     }))
   }
-  const handleToggleFileTreeFolder = (folderPath: string, childrenPrecomputed: boolean): void => {
-    const collapsed = !childrenPrecomputed || Boolean(collapsedFileTreeFolders[folderPath])
-
-    if (collapsed) setLastOpenedFileTreeFolderPath(folderPath)
-
+  const handleToggleFileTreeFolder = (folderPath: string): void => {
     setCollapsedFileTreeFolders((currentFolders) => {
-      const nextFolders = { ...currentFolders }
-
-      if (collapsed) {
-        delete nextFolders[folderPath]
-        if (changesCwd) lastOpenedFileTreeFolderByCwdRef.current.set(changesCwd, folderPath)
-      } else {
-        nextFolders[folderPath] = true
+      // Record both directions: nested folders start collapsed when no choice is stored.
+      const nextFolders = {
+        ...currentFolders,
+        [folderPath]: !isFileTreeFolderCollapsed(currentFolders, folderPath)
       }
 
       if (changesCwd) collapsedFileTreeFoldersByCwdRef.current.set(changesCwd, nextFolders)
@@ -328,11 +324,14 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
   const handleToggleActiveTreeFolders = (): void => {
     if (activeTreeFolderPaths.length === 0) return
 
-    const nextCollapsedFolders = hasCollapsedActiveTreeFolders
-      ? {}
-      : getCollapsedTreeFolders(activeTreeFolderPaths)
-
     if (changesPaneView === 'files') {
+      // Expanding keeps opened nested folders open; collapsing closes every visible folder.
+      const nextCollapsedFolders = hasCollapsedActiveTreeFolders
+        ? Object.fromEntries(
+            Object.entries(collapsedFileTreeFolders).filter(([, collapsed]) => !collapsed)
+          )
+        : getCollapsedTreeFolders(activeTreeFolderPaths)
+
       if (changesCwd) {
         collapsedFileTreeFoldersByCwdRef.current.set(changesCwd, nextCollapsedFolders)
       }
@@ -340,7 +339,9 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
       return
     }
 
-    setCollapsedChangeTreeFolders(nextCollapsedFolders)
+    setCollapsedChangeTreeFolders(
+      hasCollapsedActiveTreeFolders ? {} : getCollapsedTreeFolders(activeTreeFolderPaths)
+    )
   }
   const openFileEditorTarget = useCallback(
     (target: FileEditorTarget, recordAsOpened = true): void => {
@@ -608,7 +609,8 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
   const renderChangeTreeNode = useCallback(
     (node: ChangeTreeNode<DisplayTreeFile<ChangedFile>>, depth: number): React.ReactElement =>
       renderTreeNode(node, depth, {
-        collapsedFolders: collapsedChangeTreeFolders,
+        isCollapsed: (folderPath) => Boolean(collapsedChangeTreeFolders[folderPath]),
+        getChildren: (_folderPath, children) => children,
         onToggleFolder: toggleChangeTreeFolder,
         onOpenFile: openFile
       }),
@@ -617,11 +619,14 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
   const renderRepositoryFileTreeNode = useCallback(
     (node: ChangeTreeNode<DisplayTreeFile<RepositoryFile>>, depth: number): React.ReactElement =>
       renderTreeNode(node, depth, {
-        collapsedFolders: collapsedFileTreeFolders,
+        isCollapsed: (folderPath) =>
+          isFileTreeFolderCollapsed(collapsedFileTreeFolders, folderPath),
+        getChildren: (folderPath) =>
+          repositoryFileIndex ? getFileTreeIndexNodes(repositoryFileIndex, folderPath) : [],
         onToggleFolder: toggleFileTreeFolder,
         onOpenFile: openFile
       }),
-    [collapsedFileTreeFolders, openFile, toggleFileTreeFolder]
+    [collapsedFileTreeFolders, openFile, repositoryFileIndex, toggleFileTreeFolder]
   )
 
   return {

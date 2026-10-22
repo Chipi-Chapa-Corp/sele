@@ -389,9 +389,9 @@ app.on('before-quit', (event) => {
   if (finishingQuit) return
   finishingQuit = true
   beginProviderIpcShutdown()
-  disposeProviderAdapters()
   disposeTerminalSessions()
-  void stopPtys()
+  void disposeProviderAdapters()
+    .then(stopPtys)
     .then(stopModelPricingRefresh)
     .then(flushTokenUsage)
     .catch((error: unknown) => {

@@ -46,8 +46,8 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
     renderChangeTreeNode,
     renderGitAiResolutionButton,
     renderRepositoryFileTreeNode,
+    repositoryFileCount,
     repositoryFileTree,
-    repositoryFiles,
     setGitChangeLoadRequest,
     terminalChatKey,
     terminalCommandLaunchRequest,
@@ -179,10 +179,10 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
                   </div>
                 </section>
               )}
-              {visibleFilesLoadState === 'ready' && repositoryFiles.length === 0 && (
+              {visibleFilesLoadState === 'ready' && repositoryFileCount === 0 && (
                 <p className="changes-sidebar__status">{filesEmptyMessage}</p>
               )}
-              {visibleFilesLoadState === 'ready' && repositoryFiles.length > 0 && (
+              {visibleFilesLoadState === 'ready' && repositoryFileCount > 0 && (
                 <ul className="changes-sidebar__tree" role="tree">
                   {repositoryFileTree.map((node) => renderRepositoryFileTreeNode(node, 0))}
                 </ul>

@@ -1,8 +1,10 @@
+import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks.ts'
 import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
 import {
   applyOpenCodeMessageEvent,
@@ -41,6 +43,7 @@ const fixture = () => {
   const context = vm.createContext({
     getContainerTargetKey: () => 'host',
     console,
+    getOpenCodeUsageLimitMessage,
     clearTimeout,
     parseOpenCodeSessionEvent,
     applyOpenCodeMessageEvent,
@@ -83,9 +86,10 @@ const fixture = () => {
       questions: Array.from(state.pendingQuestions, (request) => request.id)
     })
   })
+  const terminalTasks = createOpenCodeTerminalTasks(() => 0)
   const send = (type, properties) =>
     adapter.handleEvent(
-      { container: null },
+      { container: null, terminalTasks },
       {
         directory: '/project',
         payload: { type, properties: { sessionID: state.id, ...properties } }

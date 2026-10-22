@@ -1,3 +1,4 @@
+import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit.ts'
 import { PendingMessageEdits } from '../PendingMessageEdits.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -5,6 +6,7 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { getOpenCodePermissionRules } from './OpenCodePermissions.ts'
+import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks.ts'
 import {
   applyOpenCodeMessageEvent,
   parseOpenCodeSessionEvent,
@@ -40,6 +42,7 @@ const fixture = () => {
     getContainerTargetKey: () => 'host',
     PendingMessageEdits,
     console,
+    getOpenCodeUsageLimitMessage,
     getOpenCodePermissionRules,
     parseOpenCodeSessionEvent,
     applyOpenCodeMessageEvent,
@@ -88,6 +91,7 @@ const fixture = () => {
   }
   const entry = {
     client,
+    terminalTasks: createOpenCodeTerminalTasks(() => 0),
     server: {
       async registerBrowser(scope) {
         calls.push(['register', scope])
@@ -149,6 +153,48 @@ test('adapter revokes on idle, error, and deletion, and rejects an aborted regis
   finish(browser)
   await assert.rejects(sending, /startup was canceled/)
   assert.deepEqual(calls, ['close'])
+})
+
+test('idle, error, deletion and abort invalidate terminal reads already in flight', async () => {
+  for (const type of [
+    'session.idle',
+    'session.error',
+    'session.deleted',
+    'session.status',
+    'abort'
+  ]) {
+    const { adapter, state, entry } = fixture()
+    let finish
+    const reading = entry.terminalTasks.read(
+      'chat',
+      async () => ({ type: 'busy' }),
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await Promise.resolve()
+    if (type === 'abort') await adapter.abortState(state)
+    else
+      adapter.handleEvent(entry, {
+        directory: '/project',
+        payload: { type, properties: { sessionID: 'chat', status: { type: 'idle' } } }
+      })
+    finish([
+      {
+        info: { id: 'reply', role: 'assistant', time: { created: 1 } },
+        parts: [
+          {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'shell',
+            state: { status: 'running', time: { start: 2 } }
+          }
+        ]
+      }
+    ])
+    assert.deepEqual(await reading, [], type)
+  }
 })
 
 test('adapter closes the capability if the session permission update fails', async () => {

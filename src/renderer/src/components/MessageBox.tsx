@@ -31,7 +31,9 @@ import {
   FolderPen,
   Gauge,
   ListPlus,
+  LoaderCircle,
   MessageCircleQuestion,
+  MessagesSquare,
   Package,
   Paperclip,
   ShieldQuestionMark,
@@ -89,6 +91,18 @@ import { getReasoningEffortPresentation } from '../reasoningEffortPresentation'
 import { getModifiedActiveSendMode } from '../messageSendMode'
 import type { AppChatUsageDisplay } from '../settings'
 import { AttachmentChip } from './AttachmentChip'
+import { useLinkedChatOpener } from './LinkedChatOpener'
+import {
+  buildLinkedChatPrompt,
+  defaultLinkedChatSummaryPrompt,
+  getLinkedChatKey,
+  hasLinkedChatDrag,
+  linkedChatDragType,
+  maxLinkedChatCount,
+  parseLinkedChatDrag,
+  type ComposerLinkedChat,
+  type LinkedChatReference
+} from '../linkedChats'
 import { ActionsButton } from './ActionsButton'
 import { Button } from './Button'
 import { ChatConfigSectionHeader } from './ChatConfigSectionHeader'
@@ -127,6 +141,8 @@ type MessageBoxProps = {
     type?: 'message' | 'pending'
   } | null
   error?: string | null
+  /** Sent to providers without readable native compaction when a chat is linked. */
+  linkedChatSummaryPrompt?: string
   container?: AppContainerTarget | null
   model: ProviderModelId
   models: ProviderModel[]
@@ -202,6 +218,19 @@ type MessageBoxContextUsage = ChatContextUsage
 const maxSelectedAttachmentCount = 10
 const maxSelectedSkillCount = 20
 const copilotMultipleSkillsTooltip = "Copilot doesn't support multiple skills invocation"
+
+const noLinkedChats: ComposerLinkedChat[] = []
+
+const getComposerDragKind = (dataTransfer: DataTransfer): 'files' | 'chat' | null => {
+  const types = Array.from(dataTransfer.types)
+  if (types.includes('Files')) return 'files'
+  return hasLinkedChatDrag(types) ? 'chat' : null
+}
+
+const getLinkedChatErrorMessage = (error: unknown): string =>
+  (error instanceof Error
+    ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
+    : '') || 'Unable to load the linked chat.'
 const standardServiceTierValue = '__standard__'
 const fastServiceTierIconClassName = 'message-box__fast-speed-icon'
 const maxSelectedAppCount = 20
@@ -991,6 +1020,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   modelsError = null,
   modelsLoading = false,
   modelsUnavailable = false,
+  linkedChatSummaryPrompt,
   operationsDisabled = false,
   pending = false,
   providerId,
@@ -1066,6 +1096,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const [attachmentSelectionPending, setAttachmentSelectionPending] = useState(false)
   const [attachmentSelectionError, setAttachmentSelectionError] = useState<string | null>(null)
   const [attachmentDragActive, setAttachmentDragActive] = useState(false)
+  const [attachmentDragKind, setAttachmentDragKind] = useState<'files' | 'chat'>('files')
+  // Linked chats are summarized live and are not persisted with drafts.
+  const [linkedChatsByScope, setLinkedChatsByScope] = useState<
+    Record<string, ComposerLinkedChat[]>
+  >({})
+  const loadingLinkedChatOperationsRef = useRef(new Set<string>())
+  const openLinkedChat = useLinkedChatOpener()
   const [dismissedError, setDismissedError] = useState<string | null>(null)
   const [fileMention, setFileMention] = useState<FileMention | null>(null)
   const [projectFileCache, setProjectFileCache] = useState<ProjectFileCache | null>(null)
@@ -1093,6 +1130,102 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const mentionMenuRef = useRef<HTMLDivElement>(null)
   const attachmentDragDepthRef = useRef(0)
   const editing = Boolean(editSession)
+  const linkedChats = linkedChatsByScope[draftScopeKey] ?? noLinkedChats
+  const linkedChatsLoading = linkedChats.some((chat) => chat.status === 'loading')
+  const failedLinkedChat = linkedChats.find((chat) => chat.status === 'failed')
+  const linkedChatsBlockSend = linkedChatsLoading || Boolean(failedLinkedChat)
+
+  const updateLinkedChats = useCallback(
+    (scope: string, update: (chats: ComposerLinkedChat[]) => ComposerLinkedChat[]): void => {
+      setLinkedChatsByScope((current) => {
+        const next = update(current[scope] ?? noLinkedChats)
+        if (next === current[scope]) return current
+        const nextByScope = { ...current }
+        if (next.length > 0) nextByScope[scope] = next
+        else delete nextByScope[scope]
+        return nextByScope
+      })
+    },
+    []
+  )
+
+  // Leaving the composer abandons unfinished summaries; their hidden forks stop as well.
+  useEffect(() => {
+    const operations = loadingLinkedChatOperationsRef.current
+    return () => {
+      for (const operationId of operations) {
+        void providerApi.cancelLinkedChatContext(operationId).catch((error: unknown) => {
+          console.error('Unable to cancel linked chat preparation.', error)
+        })
+      }
+      operations.clear()
+    }
+  }, [])
+
+  const handleLinkChat = (reference: LinkedChatReference): void => {
+    const scope = draftScopeKey
+    if (reference.providerId === providerId && reference.chatId === chatId) {
+      setAttachmentSelectionError('A chat cannot be linked to itself.')
+      return
+    }
+    if (linkedChats.some((chat) => getLinkedChatKey(chat) === getLinkedChatKey(reference))) {
+      textareaRef.current?.focus({ preventScroll: true })
+      return
+    }
+    if (linkedChats.length >= maxLinkedChatCount) {
+      setAttachmentSelectionError(`Link up to ${maxLinkedChatCount} chats per message.`)
+      return
+    }
+
+    const operationId = crypto.randomUUID()
+    const settle = (patch: Partial<ComposerLinkedChat>): void => {
+      loadingLinkedChatOperationsRef.current.delete(operationId)
+      updateLinkedChats(scope, (chats) =>
+        chats.some((chat) => chat.operationId === operationId)
+          ? chats.map((chat) => (chat.operationId === operationId ? { ...chat, ...patch } : chat))
+          : chats
+      )
+    }
+    loadingLinkedChatOperationsRef.current.add(operationId)
+    setAttachmentSelectionError(null)
+    updateLinkedChats(scope, (chats) => [
+      ...chats,
+      { ...reference, operationId, status: 'loading' }
+    ])
+    textareaRef.current?.focus({ preventScroll: true })
+    void providerApi
+      .prepareLinkedChatContext(reference.providerId, reference.chatId, {
+        operationId,
+        summaryPrompt: linkedChatSummaryPrompt?.trim() || defaultLinkedChatSummaryPrompt
+      })
+      .then((context) => {
+        // Null means the chip was removed (and the preparation cancelled) meanwhile.
+        if (!context) {
+          loadingLinkedChatOperationsRef.current.delete(operationId)
+          return
+        }
+        settle({ status: 'ready', summary: context.summary })
+      })
+      .catch((linkError: unknown) => {
+        console.error('Unable to prepare the linked chat.', linkError)
+        settle({
+          status: 'failed',
+          error: getLinkedChatErrorMessage(linkError)
+        })
+      })
+  }
+
+  const handleRemoveLinkedChat = (linkedChat: ComposerLinkedChat): void => {
+    if (loadingLinkedChatOperationsRef.current.delete(linkedChat.operationId)) {
+      void providerApi.cancelLinkedChatContext(linkedChat.operationId).catch((error: unknown) => {
+        console.error('Unable to cancel linked chat preparation.', error)
+      })
+    }
+    updateLinkedChats(draftScopeKey, (chats) =>
+      chats.filter((chat) => chat.operationId !== linkedChat.operationId)
+    )
+    textareaRef.current?.focus({ preventScroll: true })
+  }
   const fullAccessSelected = sandboxMode === 'danger-full-access'
   const reviewSelectorVisible = showReviewSelector && !fullAccessSelected
   const effectiveApprovalMode = fullAccessSelected ? 'never' : approvalMode
@@ -1855,9 +1988,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         selectedAttachments.length === 0 &&
         selectedSkillInputs.length === 0 &&
         selectedAppInputs.length === 0 &&
+        linkedChats.length === 0 &&
         !submittingReview) ||
       operationsDisabled ||
       attachmentSelectionPending ||
+      linkedChatsBlockSend ||
       pending ||
       (!active && disabled)
     ) {
@@ -1865,6 +2000,27 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     }
 
     textareaRef.current?.focus({ preventScroll: true })
+
+    const sendScope = draftScopeKey
+    const sentLinkedChats = linkedChats
+    const outgoingMessage = buildLinkedChatPrompt(
+      sentLinkedChats.map((chat) => ({
+        providerId: chat.providerId,
+        chatId: chat.chatId,
+        name: chat.name,
+        summary: chat.summary ?? ''
+      })),
+      nextMessage
+    )
+    const restoreLinkedChats = (): void => {
+      if (sentLinkedChats.length === 0) return
+      updateLinkedChats(sendScope, (chats) => [
+        ...sentLinkedChats.filter(
+          (sent) => !chats.some((chat) => getLinkedChatKey(chat) === getLinkedChatKey(sent))
+        ),
+        ...chats
+      ])
+    }
 
     if (editing) {
       const previousDraft = {
@@ -1875,7 +2031,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       }
       void Promise.resolve(
         onSend(
-          nextMessage,
+          outgoingMessage,
           undefined,
           selectedAttachments,
           undefined,
@@ -1886,6 +2042,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         .then((sent) => {
           if (!sent) return
 
+          updateLinkedChats(sendScope, () => noLinkedChats)
           setMessage(previousDraft.message)
           setSelectedAttachments(previousDraft.attachments)
           setSelectedSkills(previousDraft.skills)
@@ -1907,11 +2064,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     setSelectedAttachments([])
     setSelectedSkills([])
     setSelectedApps([])
+    updateLinkedChats(sendScope, () => noLinkedChats)
     onSelectedReviewChange?.(null)
     setAttachmentSelectionError(null)
     void Promise.resolve(
       onSend(
-        nextMessage,
+        outgoingMessage,
         active ? activeMode : undefined,
         selectedAttachments,
         submittingReview,
@@ -1922,6 +2080,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       .then((sent) => {
         if (sent) return
         cancelFlight()
+        restoreLinkedChats()
         if (!nextMessage) return
 
         setComposerDrafts((drafts) =>
@@ -1931,6 +2090,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       .catch((error: unknown) => {
         cancelFlight()
         console.error('Unable to send the composer message.', error)
+        restoreLinkedChats()
         if (!nextMessage) return
 
         setComposerDrafts((drafts) =>
@@ -2005,24 +2165,27 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleAttachmentDragEnter = (event: React.DragEvent<HTMLDivElement>): void => {
-    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+    const kind = getComposerDragKind(event.dataTransfer)
+    if (!kind) return
 
     event.preventDefault()
     attachmentDragDepthRef.current += 1
-    if (!attachmentSelectionPending) {
+    setAttachmentDragKind(kind)
+    if (kind === 'chat' || !attachmentSelectionPending) {
       setAttachmentDragActive(true)
     }
   }
 
   const handleAttachmentDragOver = (event: React.DragEvent<HTMLDivElement>): void => {
-    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+    const kind = getComposerDragKind(event.dataTransfer)
+    if (!kind) return
 
     event.preventDefault()
-    event.dataTransfer.dropEffect = attachmentSelectionPending ? 'none' : 'copy'
+    event.dataTransfer.dropEffect = kind === 'files' && attachmentSelectionPending ? 'none' : 'copy'
   }
 
   const handleAttachmentDragLeave = (event: React.DragEvent<HTMLDivElement>): void => {
-    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+    if (!getComposerDragKind(event.dataTransfer)) return
 
     event.preventDefault()
     attachmentDragDepthRef.current = Math.max(0, attachmentDragDepthRef.current - 1)
@@ -2030,11 +2193,18 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleAttachmentDrop = async (event: React.DragEvent<HTMLDivElement>): Promise<void> => {
-    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+    const kind = getComposerDragKind(event.dataTransfer)
+    if (!kind) return
 
     event.preventDefault()
     attachmentDragDepthRef.current = 0
     setAttachmentDragActive(false)
+
+    if (kind === 'chat') {
+      const reference = parseLinkedChatDrag(event.dataTransfer.getData(linkedChatDragType))
+      if (reference) handleLinkChat(reference)
+      return
+    }
 
     if (attachmentSelectionPending) return
 
@@ -2407,6 +2577,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const hasContent =
     Boolean(message.trim()) ||
     selectedAttachments.length > 0 ||
+    linkedChats.length > 0 ||
     selectedSkills.length > 0 ||
     selectedApps.length > 0 ||
     Boolean(selectedReview && !editing)
@@ -2481,13 +2652,26 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   ) : (
     <div className="message-box__file-mention-status">No matching files</div>
   )
+  const linkedChatError = failedLinkedChat
+    ? `${failedLinkedChat.name}: ${failedLinkedChat.error ?? 'Unable to load the linked chat.'}`
+    : null
   const messageBoxError =
-    attachmentSelectionError ?? (error && error !== dismissedError ? error : null)
-  const messageBoxErrorLabel = attachmentSelectionError ? 'Attachment failed' : 'Request failed'
+    attachmentSelectionError ??
+    linkedChatError ??
+    (error && error !== dismissedError ? error : null)
+  const messageBoxErrorLabel = attachmentSelectionError
+    ? 'Attachment failed'
+    : linkedChatError
+      ? 'Linked chat failed'
+      : 'Request failed'
 
   const handleDismissMessageBoxError = (): void => {
     if (attachmentSelectionError) {
       setAttachmentSelectionError(null)
+      return
+    }
+    if (failedLinkedChat) {
+      handleRemoveLinkedChat(failedLinkedChat)
       return
     }
 
@@ -2531,11 +2715,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       >
         {attachmentDragActive && (
           <div className="message-box__attachment-drop-target" aria-hidden="true">
-            <Paperclip />
-            <span>Drop files to attach</span>
+            {attachmentDragKind === 'chat' ? <MessagesSquare /> : <Paperclip />}
+            <span>
+              {attachmentDragKind === 'chat' ? 'Drop chat to attach' : 'Drop files to attach'}
+            </span>
           </div>
         )}
         {(selectedAttachments.length > 0 ||
+          linkedChats.length > 0 ||
           selectedSkills.length > 0 ||
           selectedApps.length > 0 ||
           showSelectedReview) && (
@@ -2574,6 +2761,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               </div>
             )}
             {(selectedFiles.length > 0 ||
+              linkedChats.length > 0 ||
               selectedSkills.length > 0 ||
               selectedApps.length > 0 ||
               showSelectedReview) && (
@@ -2582,6 +2770,46 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 aria-label="Selected context"
                 role="list"
               >
+                {linkedChats.map((linkedChat) => (
+                  <AttachmentChip
+                    key={linkedChat.operationId}
+                    className="message-box__linked-chat"
+                    callback={() =>
+                      openLinkedChat?.({
+                        providerId: linkedChat.providerId,
+                        chatId: linkedChat.chatId,
+                        name: linkedChat.name
+                      })
+                    }
+                    callbackAriaLabel={`Open linked chat ${linkedChat.name}`}
+                    callbackDisabled={!openLinkedChat}
+                    callbackTitle={
+                      linkedChat.status === 'loading'
+                        ? `Summarizing ${linkedChat.name}…`
+                        : linkedChat.status === 'failed'
+                          ? (linkedChat.error ?? 'Unable to load the linked chat.')
+                          : `Open ${linkedChat.name}`
+                    }
+                    disabledAppearance={linkedChat.status === 'failed'}
+                    icon={
+                      linkedChat.status === 'loading' ? (
+                        <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
+                      ) : (
+                        <MessagesSquare aria-hidden="true" />
+                      )
+                    }
+                    label={linkedChat.name}
+                    removeAriaLabel={
+                      linkedChat.status === 'loading'
+                        ? `Cancel linking ${linkedChat.name}`
+                        : `Remove linked chat ${linkedChat.name}`
+                    }
+                    removeCallback={() => handleRemoveLinkedChat(linkedChat)}
+                    removeTitle={
+                      linkedChat.status === 'loading' ? 'Cancel loading' : 'Remove linked chat'
+                    }
+                  />
+                ))}
                 {selectedSkills.map((skill, index) => {
                   const disabledByCopilot =
                     providerId === 'copilot' && index < selectedSkills.length - 1
@@ -2811,6 +3039,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               disabled={
                 (activeWithContent ? operationsDisabled : sendBlockedDisplay) ||
                 (attachmentSelectionPending && (!active || activeWithContent)) ||
+                (linkedChatsBlockSend && (!active || activeWithContent)) ||
                 (activeWithContent ? pending : active ? false : pending || !hasContent)
               }
               callback={activeWithContent ? submitMessage : active ? handleStop : submitMessage}

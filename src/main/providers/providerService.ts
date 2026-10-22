@@ -11,6 +11,9 @@ import { getDatabase } from '../database/sqlite'
 import { SqliteChatHistoryCache } from '../database/chatHistoryCache'
 import { PersistentChatHistory, type HistoryRead } from './PersistentChatHistory'
 import { prepareChatDetailForRenderer } from './chatDetailLazy'
+import { SqliteConversationViews } from '../database/conversationViews'
+import { createConversationView, isConversationOpeningDetail } from '../../shared/conversationView'
+import type { ConversationViewScope } from './PersistentChatHistory'
 import type { McpAppScope } from '../../shared/mcpApps'
 import { applyTurnTokenUsage, emptyTokenUsage } from '../../shared/tokenUsage'
 import { randomUUID } from 'node:crypto'
@@ -26,6 +29,8 @@ import type {
   ProviderApi,
   ProviderAccountConfiguration,
   ProviderChat,
+  ProviderChatListOptions,
+  ProviderChatPage,
   ProviderChatActivitySummary,
   ProviderChatDetail,
   ProviderChatMetadata,
@@ -66,6 +71,7 @@ import {
   sliceProviderChatTurns
 } from '../../shared/chatTurns'
 import { withProviderNetworkRetries } from './ProviderNetworkRetry'
+import { isLinkedChatContextCancelled, throwIfLinkedChatCancelled } from './linkedChatContext'
 import { withLiveChatPermissions } from './ProviderLivePermissions'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
 import {
@@ -101,6 +107,172 @@ const accountDisplayNameCache = new AccountDisplayNameCache(() =>
   join(app.getPath('userData'), 'account-display-names.json')
 )
 const persistentChatHistory = new PersistentChatHistory(new SqliteChatHistoryCache(getDatabase))
+const durableConversationViews = new SqliteConversationViews(getDatabase)
+const conversationViewSequences = new Map<string, number>()
+const conversationViewWrites = new Set<Promise<boolean>>()
+const knownConversationScopes = new Set<string>()
+const pendingConversationViews = new Map<
+  string,
+  {
+    scope: ConversationViewScope
+    detail: ProviderChatDetail
+    timer: ReturnType<typeof setTimeout>
+  }
+>()
+
+export const beginProviderConversationRead = async (
+  providerId: ProviderId,
+  chatId: string
+): Promise<ConversationViewScope | null> => {
+  const metadata = await getChatMetadata(chatId)
+  const observed = persistentChatHistory.openingViewScope(providerId, chatId, metadata.container)
+  if (observed) return observed
+  const epoch = persistentChatHistory.accountEpoch(providerId, metadata.container)
+  if (!persistentChatHistory.viewScope(providerId, chatId, metadata.container))
+    await providerApi.getAccounts(providerId, { container: metadata.container })
+  if (persistentChatHistory.accountEpoch(providerId, metadata.container) !== epoch) return null
+  return persistentChatHistory.openingViewScope(providerId, chatId, metadata.container)
+}
+
+export const saveProviderConversationView = async (
+  scope: ConversationViewScope | null,
+  detail: ProviderChatDetail
+): Promise<void> => {
+  if (
+    !scope?.current() ||
+    !isConversationOpeningDetail(detail) ||
+    detail.id !== scope.chatId ||
+    getContainerTargetKey(detail.container) !== scope.containerKey ||
+    detail.revision < (latestProviderChatUpdateRevision.get(`${scope.provider}:${detail.id}`) ?? -1)
+  )
+    return
+  const sequence = (conversationViewSequences.get(scope.key) ?? 0) + 1
+  conversationViewSequences.set(scope.key, sequence)
+  const view = prepareChatDetailForRenderer(createConversationView(detail))
+  const write = durableConversationViews.write(
+    scope,
+    view,
+    () => scope.current() && conversationViewSequences.get(scope.key) === sequence
+  )
+  conversationViewWrites.add(write)
+  try {
+    if (await write) knownConversationScopes.add(scope.key)
+  } finally {
+    conversationViewWrites.delete(write)
+  }
+}
+
+const queueConversationView = (
+  provider: ProviderId,
+  detail: ProviderChatDetail,
+  complete: boolean
+): void => {
+  const scope = persistentChatHistory.viewScope(provider, detail.id, detail.container)
+  if (!scope) return
+  const previous = pendingConversationViews.get(scope.key)
+  if (previous) {
+    previous.detail = detail
+    if (!complete) return
+    clearTimeout(previous.timer)
+  }
+  const flush = (): void => {
+    const pending = pendingConversationViews.get(scope.key)
+    if (!pending) return
+    pendingConversationViews.delete(scope.key)
+    void saveProviderConversationView(pending.scope, pending.detail).catch((error: unknown) =>
+      console.warn('Unable to update conversation view.', error)
+    )
+  }
+  pendingConversationViews.set(scope.key, {
+    scope,
+    detail,
+    timer: setTimeout(flush, complete ? 0 : 250)
+  })
+}
+
+/** Native discovery lists identities. Processed opening views come from our local read model. */
+export const getProviderKnownChats = async (
+  provider: ProviderId,
+  options: ProviderChatListOptions = {}
+): Promise<ProviderChatPage> => {
+  const epoch = persistentChatHistory.accountEpoch(provider, options.container)
+  if (!persistentChatHistory.viewScope(provider, '', options.container))
+    await providerApi.getAccounts(provider, { container: options.container })
+  if (persistentChatHistory.accountEpoch(provider, options.container) !== epoch)
+    return { chats: [], nextCursor: null, conversationViews: [] }
+  const scope = persistentChatHistory.viewScope(provider, '', options.container)
+  if (!scope) return { chats: [], nextCursor: null, conversationViews: [] }
+  const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0)
+  const page = await durableConversationViews.list(
+    scope,
+    offset,
+    Math.max(1, Math.min(options.limit ?? 100, 100))
+  )
+  page.views.forEach((view) => {
+    const viewScope = persistentChatHistory.viewScope(provider, view.id, view.container)
+    if (viewScope?.current()) knownConversationScopes.add(viewScope.key)
+  })
+  const chats = await applyMetadataToChats(
+    page.views.map((view) => ({
+      ...getChatUpdateSummary(view, view.updatedAt ?? view.createdAt),
+      providerId: provider
+    }))
+  )
+  if (!scope.current()) return { chats: [], nextCursor: null, conversationViews: [] }
+  return {
+    chats: chats.filter((chat) => !chat.purpose),
+    nextCursor: page.nextCursor,
+    conversationViews: scope.current() ? page.views : []
+  }
+}
+
+export const getProviderConversationViews = async (
+  provider: ProviderId,
+  chats: ProviderChat[]
+): Promise<ProviderChatDetail[]> => {
+  const sources = new Map(
+    chats.map((chat) => [getContainerTargetKey(chat.container), chat.container])
+  )
+  await Promise.all(
+    [...sources.values()].map(async (container) => {
+      if (!persistentChatHistory.viewScope(provider, '', container))
+        await providerApi.getAccounts(provider, { container })
+    })
+  )
+  const scopes = chats.map((chat) =>
+    persistentChatHistory.viewScope(provider, chat.id, chat.container)
+  )
+  const stored = await durableConversationViews.read(
+    scopes.filter((scope): scope is ConversationViewScope => scope !== null)
+  )
+  for (const key of stored.keys()) knownConversationScopes.add(key)
+  const views: ProviderChatDetail[] = []
+  for (const [index, chat] of chats.entries()) {
+    const scope = scopes[index]
+    if (!scope?.current()) continue
+    let view = stored.get(scope.key)
+    // One-time adoption of still-valid pages from the old disposable cache.
+    if (!view) {
+      const legacy = await persistentChatHistory.preview(provider, chat.id, chat.container)
+      if (legacy) {
+        view = createConversationView(legacy)
+        if (await durableConversationViews.write(scope, view))
+          knownConversationScopes.add(scope.key)
+      }
+    }
+    if (view && scope.current())
+      views.push({
+        ...view,
+        ...chat,
+        revision: -1,
+        historyPreview: true,
+        conversationView: true,
+        pendingApproval: null,
+        pendingUserInput: null
+      })
+  }
+  return views
+}
 
 export const getProviderCachedChat = async (
   providerId: ProviderId,
@@ -168,6 +340,8 @@ export const importedConversations = new ImportedConversations(
 const adapters = Object.fromEntries(
   Object.keys(nativeAdapters).map((id) => [id, importedConversations.wrap(id as ProviderId)])
 ) as Record<ProviderId, ProviderAdapter>
+
+const linkedChatOperations = new Map<string, AbortController>()
 
 export const getProviderMcpApp = (scope: McpAppScope, callId: string) =>
   adapters[scope.providerId].getMcpApp?.(scope.chatId, callId) ?? Promise.resolve(null)
@@ -364,13 +538,23 @@ const drainProviderChatUpdates = async (chatKey: string): Promise<void> => {
         // they were running, discard this one before it can overwrite the newer transcript.
         if (latestProviderChatUpdateRevision.get(chatKey) !== update.detail.revision) continue
 
+        const viewScope = persistentChatHistory.viewScope(
+          update.providerId,
+          enrichedDetail.id,
+          enrichedDetail.container
+        )
+        if (viewScope && !knownConversationScopes.has(viewScope.key))
+          await saveProviderConversationView(viewScope, enrichedDetail)
+        if (latestProviderChatUpdateRevision.get(chatKey) !== update.detail.revision) continue
         const turnCompleted = unreportedTurnCompletions.delete(chatKey)
+        queueConversationView(update.providerId, enrichedDetail, turnCompleted)
         const event = {
           providerId: update.providerId,
           chatId: enrichedDetail.id,
           detail: enrichedDetail,
           summary: getChatUpdateSummary(enrichedDetail, Date.now()),
-          turnCompleted
+          turnCompleted,
+          conversationKnown: Boolean(viewScope && knownConversationScopes.has(viewScope.key))
         } satisfies ProviderChatUpdatedEvent
 
         chatUpdatedListeners.forEach((listener) => listener(event))
@@ -584,7 +768,10 @@ export const getChatUpdateSummary = (
     branchName: detail.branchName,
     worktreeBaseBranchName: detail.worktreeBaseBranchName,
     updatedAt: detail.updatedAt ?? updatedAt,
-    status: detail.status,
+    status:
+      detail.pendingUserInput && detail.status !== 'waitingOnApproval'
+        ? 'waitingOnUserInput'
+        : detail.status,
     lastTurnOutcome:
       detail.lastTurnOutcome === undefined ? getLastTurnOutcome(detail) : detail.lastTurnOutcome,
     pendingApproval: detail.pendingApproval,
@@ -954,7 +1141,7 @@ export const providerApi: ProviderApi = {
       ...page,
       chats: chats.filter(
         (chat) =>
-          chat.purpose !== 'commit' &&
+          !chat.purpose &&
           (options?.done === undefined || chat.done === options.done) &&
           (projectCwd === null ||
             (!chat.noProject &&
@@ -1150,6 +1337,40 @@ export const providerApi: ProviderApi = {
     adapters[providerId]
       .compactChat(chatId)
       .then((detail) => applyMetadataToDetail(detail, providerId)),
+  prepareLinkedChatContext: async (providerId, chatId, options) => {
+    if (linkedChatOperations.has(options.operationId)) {
+      throw new Error('This linked chat is already loading.')
+    }
+    // Registered before the first await, so a cancellation sent right after the request wins.
+    const controller = new AbortController()
+    linkedChatOperations.set(options.operationId, controller)
+    try {
+      const sourceMetadata = await getChatMetadata(chatId)
+      throwIfLinkedChatCancelled(controller.signal)
+      const summary = await adapters[providerId].summarizeChatInFork(
+        chatId,
+        { summaryPrompt: options.summaryPrompt, signal: controller.signal },
+        async (forkedChatId) => {
+          await Promise.all([
+            setChatPurpose(forkedChatId, 'linkedChat'),
+            sourceMetadata.noProject ? setChatNoProject(forkedChatId) : Promise.resolve(),
+            sourceMetadata.container
+              ? setChatContainer(forkedChatId, sourceMetadata.container)
+              : Promise.resolve()
+          ])
+        }
+      )
+      return controller.signal.aborted ? null : { summary }
+    } catch (error) {
+      if (controller.signal.aborted || isLinkedChatContextCancelled(error)) return null
+      throw error
+    } finally {
+      linkedChatOperations.delete(options.operationId)
+    }
+  },
+  cancelLinkedChatContext: async (operationId) => {
+    linkedChatOperations.get(operationId)?.abort()
+  },
   stopChat: (providerId, chatId) =>
     adapters[providerId]
       .stopChat(chatId)
@@ -1167,7 +1388,17 @@ export const providerApi: ProviderApi = {
   }
 }
 
-export const disposeProviderAdapters = (): void => {
-  persistentChatHistory.dispose()
-  Object.values(adapters).forEach((adapter) => adapter.dispose())
+export const disposeProviderAdapters = async (): Promise<void> => {
+  await Promise.allSettled(Object.values(adapters).map((adapter) => adapter.dispose()))
+  for (const pending of pendingConversationViews.values()) clearTimeout(pending.timer)
+  const finalViews = [...pendingConversationViews.values()]
+  pendingConversationViews.clear()
+  try {
+    await Promise.all(
+      finalViews.map((pending) => saveProviderConversationView(pending.scope, pending.detail))
+    )
+    await Promise.all(conversationViewWrites)
+  } finally {
+    persistentChatHistory.dispose()
+  }
 }

@@ -41,7 +41,19 @@ async function main() {
   const args = parseArgs(process.argv.slice(2))
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const artifacts = path.join(harness.root, 'test-results', 'e2e', stamp)
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sele-e2e-'))
+  // Provider homes (SQLite journals, rollouts, sessions) can grow to hundreds of MB; /tmp is
+  // quota-limited on many systems, so allow pointing the run somewhere with real space.
+  const tempRoot = process.env.SELE_E2E_TMP_DIR || os.tmpdir()
+  fs.mkdirSync(tempRoot, { recursive: true })
+  const directory = fs.mkdtempSync(path.join(tempRoot, 'sele-e2e-'))
+  const space = fs.statfsSync(directory)
+  const freeMb = Math.round((space.bavail * space.bsize) / 1024 / 1024)
+  if (freeMb < 1024)
+    throw new Error(
+      `Only ${freeMb} MB free at ${directory}; long histories need space. ` +
+        'Set SELE_E2E_TMP_DIR to a directory on a larger filesystem.'
+    )
+  console.log(`temp space: ${freeMb} MB free at ${directory}`)
   const outDir = path.join(harness.root, 'tmp', 'sele-e2e', 'out')
   fs.mkdirSync(artifacts, { recursive: true })
 
@@ -78,6 +90,14 @@ async function main() {
     executables,
     page: null,
     sele: null,
+    /** Quit Sele before another process writes history into the same provider homes. */
+    async stop() {
+      if (!app) return
+      await app.close()
+      app = null
+      session.page = null
+      session.sele = null
+    },
     /** Start (or restart) Sele with the same profile, like a user reopening the app. */
     async launch() {
       if (app) await app.close()

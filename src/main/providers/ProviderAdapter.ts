@@ -230,9 +230,20 @@ export type ProviderAdapter = {
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
   compactChat: (chatId: string) => Promise<ProviderChatDetail>
+  /**
+   * Fork the complete chat into a hidden copy and summarize that copy for another chat.
+   * Providers with readable native compaction compact the fork; others send `summaryPrompt`.
+   * The source chat is never changed. Rejects with LinkedChatContextCancelledError on abort.
+   */
+  summarizeChatInFork: (
+    chatId: string,
+    options: { summaryPrompt: string; signal: AbortSignal },
+    onForkCreated: (chatId: string) => Promise<void>
+  ) => Promise<string>
   stopChat: (chatId: string) => Promise<ProviderChatDetail>
   onChatUpdated: (
     listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   ) => () => void
-  dispose: () => void
+  /** Release resources; may finish cleanup asynchronously (awaited on app quit). */
+  dispose: () => void | Promise<void>
 }

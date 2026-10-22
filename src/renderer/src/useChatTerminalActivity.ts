@@ -1,6 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { ProviderChat } from '../../shared/provider'
 import { chatTerminalActivity } from './chatTerminalActivity'
+import { createChatTerminalPoller } from './chatTerminalPolling'
 import { preferences } from './preferences'
 import { providerApi } from './providerApi'
 
@@ -42,46 +43,16 @@ export const useChatTerminalActivity = (
     if (selectedKey) chatTerminalActivity.markSeen(selectedKey)
   }, [selectedKey])
   useEffect(() => {
-    let disposed = false
-    let polling = false
-    const discovered = new Set<string>()
-    const running = new Set<string>()
-    const poll = async () => {
-      if (polling) return
-      polling = true
-      const requested = new Set(chatTerminalActivity.takeProbes())
-      const targets = chatsRef.current.filter((chat) => {
-        const key = `${chat.providerId}:${chat.id}`
-        return (
-          !discovered.has(key) || running.has(key) || requested.has(key) || chat.status === 'active'
-        )
-      })
-      try {
-        for (let index = 0; index < targets.length && !disposed; index += 4) {
-          await Promise.all(
-            targets.slice(index, index + 4).map(async (chat) => {
-              const key = `${chat.providerId}:${chat.id}`
-              discovered.add(key)
-              try {
-                const ids = await providerApi.getChatTerminalTasks(chat.providerId, chat.id)
-                if (disposed) return
-                if (ids.length) running.add(key)
-                else running.delete(key)
-                chatTerminalActivity.report(key, 'agent', ids)
-              } catch (error) {
-                console.error('Unable to read chat terminal activity.', error)
-              }
-            })
-          )
-        }
-      } finally {
-        polling = false
-      }
-    }
-    void poll()
-    const timer = window.setInterval(() => void poll(), 1000)
+    const poller = createChatTerminalPoller({
+      getChats: () => chatsRef.current,
+      readTasks: providerApi.getChatTerminalTasks,
+      activity: chatTerminalActivity,
+      onError: (error) => console.error('Unable to read chat terminal activity.', error)
+    })
+    void poller.poll()
+    const timer = window.setInterval(() => void poller.poll(), 1000)
     return () => {
-      disposed = true
+      poller.dispose()
       window.clearInterval(timer)
     }
   }, [])

@@ -4,7 +4,8 @@ import { Download, Upload } from 'lucide-react'
 import { isChatCommitProjectLocked } from '../chatCommitPolicy'
 import { type ButtonDropdownAction } from '../components/Button'
 import { SegmentedControl } from '../components/SegmentedControl'
-import { buildChangeTree, buildProgressiveFileTree, getTreeFolderPaths } from '../changeTree'
+import { buildChangeTree, getTreeFolderPaths } from '../changeTree'
+import { getFileTreeIndexNodes, getVisibleFileTreeFolderPaths } from '../fileTreeIndex'
 import {
   gitCommitModeOptions,
   type GitCommitMode,
@@ -57,8 +58,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     chatHasActiveTurn,
     newSessionProviderAvailable,
     changeSource,
-    repositoryFiles,
-    lastOpenedFileTreeFolderPath,
+    repositoryFileIndex,
     changesPaneView,
     collapsedFileTreeFolders,
     collapsedChangeTreeFolders,
@@ -256,18 +256,24 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
   const filesEmptyMessage = getFileTreeEmptyMessage(changesCwd)
   const changeTree = useMemo(() => buildChangeTree(changedFiles), [changedFiles])
   const repositoryFileTree = useMemo(
-    () => buildProgressiveFileTree(repositoryFiles, lastOpenedFileTreeFolderPath),
-    [lastOpenedFileTreeFolderPath, repositoryFiles]
+    () => (repositoryFileIndex ? getFileTreeIndexNodes(repositoryFileIndex, '') : []),
+    [repositoryFileIndex]
   )
   const changeTreeFolderPaths = useMemo(() => getTreeFolderPaths(changeTree), [changeTree])
+  // Only rendered folders: the index may hold thousands that are never shown.
   const repositoryFileTreeFolderPaths = useMemo(
-    () => getTreeFolderPaths(repositoryFileTree),
-    [repositoryFileTree]
+    () =>
+      repositoryFileIndex
+        ? getVisibleFileTreeFolderPaths(repositoryFileIndex, collapsedFileTreeFolders)
+        : [],
+    [collapsedFileTreeFolders, repositoryFileIndex]
   )
   const activeTreeFolderPaths =
     changesPaneView === 'files' ? repositoryFileTreeFolderPaths : changeTreeFolderPaths
   const activeCollapsedTreeFolders =
     changesPaneView === 'files' ? collapsedFileTreeFolders : collapsedChangeTreeFolders
+  // Explicitly collapsed folders only: "Expand all" opens one level of the file tree, not
+  // every nested folder that starts collapsed.
   const hasCollapsedActiveTreeFolders = activeTreeFolderPaths.some(
     (folderPath) => activeCollapsedTreeFolders[folderPath]
   )

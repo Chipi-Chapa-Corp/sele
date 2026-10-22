@@ -31,6 +31,7 @@ if (!process.versions.electron) {
             window.loginCalls = 0
             window.canceled = 0
             window.authorized = 0
+            window.linksCopied = 0
             window.authenticationRequired = true
             window.dialogOpen = false
             window.newChatMode = false
@@ -41,7 +42,7 @@ if (!process.versions.electron) {
               let finish
               const completion = new Promise(resolve => { finish = resolve })
               window.confirmSignIn = () => { window.authenticationRequired = false; finish(); window.renderFailure() }
-              return { userCode: null, completion, authorize: async () => { window.authorized++ }, cancel: async () => { window.canceled++ }, submitCode: async () => {} }
+              return { userCode: null, completion, authorize: async () => { window.authorized++ }, cancel: async () => { window.canceled++ }, submitCode: async () => {}, copyLink: async () => {window.linksCopied++;await new Promise(resolve => setTimeout(resolve,250))} }
             }
             const noop = () => {}
             const settings = { ...defaultAppSettings, chat: { ...defaultAppSettings.chat, enableActions: false, enableNotesButton: false, displayUsage: {context:true,short:false,long:false} } }
@@ -122,7 +123,15 @@ if (!process.versions.electron) {
         path.join(directory, 'test.html'),
         `<!doctype html><html><head>
         <link rel="stylesheet" href="test.css"><style>body{background:var(--background);color:var(--foreground);font:14px system-ui;margin:24px}#root{display:flex;flex-direction:column;gap:12px}</style>
-        </head><body><div id="root"></div><script>window.appApi={};window.providerApi={getSkills:async()=>[],getApps:async()=>[]}</script><script src="test.js"></script></body></html>`
+        </head><body><div id="root"></div><script>
+          const stored = new Map()
+          window.preferencesApi = {
+            getItem: key => ({ok:true,value:stored.get(key) ?? null}),
+            setItem: (key,value) => {stored.set(key,value);return {ok:true,value:null}},
+            removeItem: key => {stored.delete(key);return {ok:true,value:null}}
+          }
+          window.appApi={};window.providerApi={getSkills:async()=>[],getApps:async()=>[]}
+        </script><script src="test.js"></script></body></html>`
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
@@ -157,6 +166,9 @@ if (!process.versions.electron) {
     })
     let code = 0
     try {
+      win.webContents.on('console-message', (event) => {
+        if (event.level === 'error') console.error('Renderer:', event.message)
+      })
       await win.loadFile(path.join(process.argv[2], 'test.html'))
       const run = async (source) => {
         try {
@@ -165,6 +177,9 @@ if (!process.versions.electron) {
           throw new Error(source + ': ' + error.message)
         }
       }
+      await run(
+        'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+      )
       const state = await run(`({
         assistantCount: document.querySelectorAll('.chat-detail__message--assistant').length,
         failure: document.querySelector('.chat-detail__failure-label')?.textContent,
@@ -242,10 +257,84 @@ if (!process.versions.electron) {
         false,
         'existing account reauthentication needs no new account name'
       )
-      await run(
-        "[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Open').click()"
+      await run('new Promise(resolve => setTimeout(resolve, 200))')
+      await run(`window.dialogBounds = () => {
+        const dialog = document.querySelector('.account-dialog')
+        const bounds = element => {
+          const rect = element.getBoundingClientRect()
+          return [rect.x, rect.y, rect.width, rect.height]
+        }
+        return [bounds(dialog), ...[...dialog.querySelectorAll('button,input')].map(bounds)]
+      }; undefined`)
+      const initialBounds = await run('window.dialogBounds()')
+      await run('document.querySelector(\'[aria-label="Copy sign-in link"]\').click()')
+      const copyFrames = await run(`new Promise(resolve => {
+        const frames = []
+        const sample = () => {
+          frames.push({bounds:window.dialogBounds(),
+            text: document.querySelector('.account-dialog__browser-actions').textContent,
+            opacity: getComputedStyle(document.querySelector('[aria-label="Copy sign-in link"]')).opacity})
+          if (frames.length < 25) requestAnimationFrame(sample)
+          else resolve(frames)
+        }
+        requestAnimationFrame(sample)
+      })`)
+      for (const frame of copyFrames) {
+        assert.deepEqual(
+          frame.bounds,
+          initialBounds,
+          'copying must not resize or shift the dialog or its controls'
+        )
+        assert.match(frame.text, /Open page/, 'copying must not change the browser action')
+        assert.doesNotMatch(frame.text, /Opening/)
+        assert.equal(frame.opacity, '1', 'copying must not fade the button')
+      }
+      assert.equal(await run('window.linksCopied'), 1)
+      assert.equal(
+        await run('document.querySelector(\'[aria-label="Copy sign-in link"]\').textContent'),
+        'Copied'
       )
+      assert.match(
+        await run('document.querySelector(".account-dialog__authorization").textContent'),
+        /another device/
+      )
+      await run('document.querySelector(\'[aria-label="Open sign-in page"]\').click()')
       assert.equal(await run('window.authorized'), 1)
+      await run('document.documentElement.dataset.colorScheme = "dark"')
+      // The footer and fields must fit even in a narrow window with larger text.
+      for (const [width, fontSize] of [
+        [750, '16px'],
+        [360, '16px'],
+        [360, '20px']
+      ]) {
+        win.setSize(width, 720)
+        await run(`document.documentElement.style.fontSize = ${JSON.stringify(fontSize)}`)
+        await run(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+        )
+        assert.equal(
+          await run(`(() => {
+          const dialog = document.querySelector('.account-dialog')
+          const box = dialog.getBoundingClientRect()
+          return dialog.scrollWidth <= dialog.clientWidth &&
+            [...dialog.querySelectorAll('button,input')].every(element => {
+              const rect = element.getBoundingClientRect()
+              return rect.left >= box.left && rect.right <= box.right &&
+                rect.top >= box.top && rect.bottom <= box.bottom
+            })
+        })()`),
+          true,
+          'all controls including Cancel stay inside the dialog'
+        )
+        if (process.env.SELE_AUTH_DIALOG_SCREENSHOT) {
+          await fs.writeFile(
+            `${process.env.SELE_AUTH_DIALOG_SCREENSHOT}-${width}-${fontSize}.png`,
+            (await win.webContents.capturePage()).toPNG()
+          )
+        }
+      }
+      win.setSize(750, 720)
+      await run('document.documentElement.style.fontSize = ""')
       await run(
         "[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Cancel').click()"
       )

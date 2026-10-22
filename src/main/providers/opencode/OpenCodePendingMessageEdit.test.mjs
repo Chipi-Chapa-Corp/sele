@@ -1,3 +1,4 @@
+import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit.ts'
 import assert from 'node:assert/strict'
 import { reconcileOpenCodeMessageSnapshot } from './OpenCodeEvents.ts'
 import { readFileSync } from 'node:fs'
@@ -28,7 +29,8 @@ const names = new Set([
   'sendPrompt',
   'queueMessage',
   'sendActiveChatMessage',
-  'refreshStateNow'
+  'refreshStateNow',
+  'failUsageLimitedTurn'
 ])
 const code = ts.transpile(
   `class Adapter { ${declaration.members
@@ -42,6 +44,7 @@ const fixture = (kind = 'queued') => {
     PendingMessageEdits,
     basename,
     console,
+    getOpenCodeUsageLimitMessage,
     randomUUID: () => 'new',
     createPromptParts: async (text) => [{ type: 'text', text }],
     parseOpenCodeModelId: (model) => model,
@@ -68,6 +71,7 @@ const fixture = (kind = 'queued') => {
   const client = {
     session: {
       async update() {},
+      async abort() {},
       async promptAsync(input) {
         sent.push(input)
       }
@@ -104,6 +108,38 @@ test('OpenCode edit acquired during asynchronous preparation prevents dispatch',
   client.session.update = async () => {}
   await adapter.cancelPendingMessageEdit('chat', 'pending', 'edit')
   assert.equal(sent[0].parts[0].text, 'original')
+})
+
+test('usage-limit failures survive stale busy snapshots and block automatic queue dispatch', async () => {
+  const { adapter, state, sent, client } = fixture()
+  Object.assign(state, { eventRevision: 0, messages: [] })
+  adapter.reportMessageTokenUsage = () => {}
+  adapter.failUsageLimitedTurn(state, client, 'OpenCode usage limit reached.')
+  await adapter.refreshStateNow(state, refreshClient(client, { type: 'busy' }), false)
+  assert.equal(state.active, false)
+  assert.equal(state.failed, true)
+  await adapter.drainQueue(state)
+  assert.equal(sent.length, 0)
+  assert.equal(state.queuedMessages.length, 1)
+  await adapter.sendPrompt(state, 'Try another model', { model: 'other' })
+  assert.equal(state.usageLimitReached, false)
+  assert.equal(state.failed, false)
+  assert.equal(state.active, true)
+  assert.equal(sent.length, 1)
+})
+
+test('refreshing a retrying session detects a limit even when its stream event was missed', async () => {
+  const { adapter, state, client } = fixture()
+  Object.assign(state, { eventRevision: 0, messages: [] })
+  adapter.reportMessageTokenUsage = () => {}
+  const c = refreshClient(client)
+  c.session.status = async () => ({
+    data: { chat: { type: 'retry', message: 'Rate limit exceeded' } }
+  })
+  await adapter.refreshStateNow(state, c, false)
+  assert.equal(state.active, false)
+  assert.equal(state.failed, true)
+  assert.match(state.failureMessage, /Rate limit exceeded/)
 })
 
 test('saving before preparation finishes discards prepared old content and sends the new payload once', async () => {

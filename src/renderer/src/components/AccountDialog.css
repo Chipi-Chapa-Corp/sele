@@ -11,10 +11,10 @@
 
 .account-dialog {
   display: flex;
-  width: min(21rem, 100%);
+  width: min(25rem, 100%);
   flex-direction: column;
-  gap: 0.6rem;
-  padding: 0.6rem;
+  gap: 1rem;
+  padding: 1rem;
   border: 0.0625rem solid var(--menu-border);
   border-radius: 0.6rem;
   color: var(--lead);
@@ -50,15 +50,39 @@
 
 .account-dialog__authorization {
   display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
 }
 
 .account-dialog__authorization p {
   margin: 0;
   color: var(--muted);
+  line-height: 1.5;
+}
+
+.account-dialog__browser-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.account-dialog__browser-actions > .ui-button {
+  padding-inline: 0.4rem;
+}
+
+.account-dialog__header {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.account-dialog__code-label {
+  color: var(--lead);
 }
 
 .account-dialog__footer {
   justify-content: flex-end;
-  padding-top: 0.1rem;
+  flex-wrap: wrap;
+  padding-top: 0.8rem;
 }

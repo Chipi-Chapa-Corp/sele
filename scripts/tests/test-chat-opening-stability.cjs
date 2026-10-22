@@ -229,8 +229,8 @@ if (!process.versions.electron) {
         'cached messages mount'
       )
       assert.ok(
-        cachedOpening.every((frame) => frame.messages || frame.loading),
-        'cached opening never paints empty without a loader'
+        cachedOpening.every((frame) => !frame.loading),
+        'a fast cached opening never flashes a loader'
       )
       await run(`window.pendingChatReads['4']()`)
       const results = []

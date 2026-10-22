@@ -2,7 +2,6 @@ import type * as React from 'react'
 
 import type {
   AppContainerTarget,
-  AppFileTreeResult,
   AppGitBranchesResult,
   AppGitChangesResult
 } from '../../../shared/app'
@@ -25,6 +24,7 @@ import { type AppSettings } from '../settings'
 import { type ChatTurnWindow } from '../chatTurnWindow'
 
 import { type ChangeSource, type PatchFilterScope } from '../changeTree'
+import type { FileTreeIndex } from '../fileTreeIndex'
 
 import { type ChatScrollAnchor } from '../chatLayout'
 
@@ -175,10 +175,8 @@ export type WorkspaceSelectionDependencies = {
   setFileTreeLoadScope: React.Dispatch<React.SetStateAction<FileTreeScope | null>>
   setFileTreeLoadState: React.Dispatch<React.SetStateAction<LoadState>>
   setFileTreeLoadError: React.Dispatch<React.SetStateAction<string | null>>
-  setFileTree: React.Dispatch<React.SetStateAction<AppFileTreeResult | null>>
+  setFileTree: React.Dispatch<React.SetStateAction<FileTreeIndex | null>>
   setFileTreeScope: React.Dispatch<React.SetStateAction<FileTreeScope | null>>
-  setLastOpenedFileTreeFolderPath: React.Dispatch<React.SetStateAction<string | null>>
-  lastOpenedFileTreeFolderByCwdRef: React.RefObject<Map<string, string>>
   collapsedFileTreeFoldersByCwdRef: React.RefObject<Map<string, Record<string, boolean>>>
   setCollapsedFileTreeFolders: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
   fileTreeLoadRequest: number

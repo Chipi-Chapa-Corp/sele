@@ -5,7 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import test from 'node:test'
-import { parseTargetFileTree, readLocalFileTree, targetFileTreeScript } from './fileTree.ts'
+import {
+  createFileTreeListing,
+  parseTargetFileTree,
+  parseTargetFileTreePaths,
+  readLocalFileTree,
+  readLocalFileTreePaths,
+  targetFileTreeScript
+} from './fileTree.ts'
 import { getFileTreeAbsolutePath } from '../shared/fileTree.ts'
 
 const exec = promisify(execFile)
@@ -98,4 +105,31 @@ test('empty folders and root path joining are supported', async (t) => {
   assert.deepEqual(await targetTree(root), await readLocalFileTree(root))
   assert.equal(getFileTreeAbsolutePath('/', 'a.txt'), '/a.txt')
   assert.equal(getFileTreeAbsolutePath('C:\\project\\', 'src/a.txt'), 'C:\\project/src/a.txt')
+})
+
+test('compact listings carry the same files as the object listing, local and remote', async (t) => {
+  const root = await fixture(t)
+  const local = createFileTreeListing(await readLocalFileTreePaths(root))
+  const { stdout } = await exec('sh', ['-c', targetFileTreeScript, 'sele-list-files', root], {
+    encoding: 'buffer'
+  })
+  const remote = createFileTreeListing(parseTargetFileTreePaths(stdout))
+  const expected = (await readLocalFileTree(root)).files.map((file) => file.path)
+
+  for (const listing of [local, remote]) {
+    assert.equal(listing.repositoryRoot, root)
+    assert.equal(listing.branchName, null)
+    assert.equal(listing.fileCount, expected.length)
+    assert.deepEqual(listing.paths.split('\0').sort(), [...expected].sort())
+  }
+  assert.ok(local.paths.split('\0').includes('line\nbreak.txt'))
+
+  const empty = await mkdtemp(join(tmpdir(), 'sele-empty-listing-'))
+  t.after(() => rm(empty, { recursive: true, force: true }))
+  assert.deepEqual(createFileTreeListing(await readLocalFileTreePaths(empty)), {
+    repositoryRoot: empty,
+    branchName: null,
+    fileCount: 0,
+    paths: ''
+  })
 })
