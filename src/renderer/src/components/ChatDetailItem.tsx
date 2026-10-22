@@ -717,7 +717,12 @@ const Activity: React.FC<{
   const activity = tools[0]?.activity ?? 'other'
   const detailKind = getToolDetailKind(activity, tools)
 
-  const detailLabel = getToolDisplayLabel(label || tools[0]?.toolId || 'Tool use', activity, active)
+  const detailLabel = getToolDisplayLabel(
+    label || tools[0]?.toolId || 'Tool use',
+    activity,
+    active,
+    tools[0]?.icon
+  )
 
   return (
     <details
@@ -1213,7 +1218,7 @@ const ToolItem: React.FC<{
     item.type === 'toolGroup' && (item.toolCount ?? item.tools.length) > item.tools.length
       ? `${baseLabel} · showing ${item.tools.length} of ${item.toolCount}`
       : baseLabel
-  const label = getToolDisplayLabel(rawLabel, activity, active)
+  const label = getToolDisplayLabel(rawLabel, activity, active, tools[0]?.icon)
 
   const apps = tools.filter((tool) => tool.status === 'finished' && tool.mcpApp?.resourceUri)
   if (apps.length)

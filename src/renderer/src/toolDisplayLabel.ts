@@ -1,4 +1,4 @@
-import type { ProviderToolActivity } from '../../shared/provider'
+import type { ProviderToolActivity, ProviderToolIcon } from '../../shared/provider'
 
 export const activityLabels: Record<ProviderToolActivity, string> = {
   'image-view': 'read images',
@@ -87,12 +87,24 @@ const getFinishedToolLabel = (label: string, activity: ProviderToolActivity): st
   return fallback.charAt(0).toLocaleUpperCase() + fallback.slice(1)
 }
 
+/** Subagent labels are task descriptions ("Explore chat code"), so they read as-is without "Using". */
+const getSubagentLabel = (label: string, active: boolean): string => {
+  if (!label || label === 'Tool use') return active ? 'Running subagent' : 'Ran subagent'
+  if (!active) return label
+  for (const [pattern, replacement] of activeLabelReplacements) {
+    if (pattern.test(label)) return label.replace(pattern, replacement)
+  }
+  return label
+}
+
 export const getToolDisplayLabel = (
   label: string,
   activity: ProviderToolActivity,
-  active: boolean
+  active: boolean,
+  icon?: ProviderToolIcon | null
 ): string => {
   if (label === 'Asking question' || label === 'Asked a question') return label
+  if (icon === 'subagent') return getSubagentLabel(label, active)
   return active ? getActiveToolLabel(label, activity) : getFinishedToolLabel(label, activity)
 }
 

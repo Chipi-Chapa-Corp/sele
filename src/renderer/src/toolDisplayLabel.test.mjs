@@ -11,6 +11,21 @@ test('unknown tools retain their names while running and after completion', () =
   )
 })
 
+test('subagent rows show their task description without a Using/Used prefix', () => {
+  const label = 'Explore chat switching code'
+  assert.equal(getToolDisplayLabel(label, 'other', true, 'subagent'), label)
+  assert.equal(getToolDisplayLabel(label, 'other', false, 'subagent'), label)
+  assert.equal(
+    getToolDisplayLabel('Started subagent', 'other', true, 'subagent'),
+    'Starting subagent'
+  )
+  assert.equal(
+    getToolDisplayLabel('Started subagent', 'other', false, 'subagent'),
+    'Started subagent'
+  )
+  assert.equal(getToolDisplayLabel('Tool use', 'other', true, 'subagent'), 'Running subagent')
+})
+
 test('collapsed groups retain concrete actions and named fallbacks', () => {
   const labels = ['Fetched web pages', 'Updated plan', 'Used mcp__example__run']
   assert.equal(
