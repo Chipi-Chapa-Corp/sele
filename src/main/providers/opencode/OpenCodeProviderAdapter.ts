@@ -126,7 +126,11 @@ import {
 import { getOpenCodePermissionRules } from './OpenCodePermissions'
 import { OpenCodeServerClient } from './OpenCodeServerClient'
 import { getOpenCodeUpdateAvailability, updateOpenCodeProvider } from './OpenCodeProviderUpdate'
-import { parseOpenCodeSessionEvent } from './OpenCodeEvents'
+import {
+  applyOpenCodeMessageEvent,
+  parseOpenCodeSessionEvent,
+  reconcileOpenCodeMessageSnapshot
+} from './OpenCodeEvents'
 import {
   createOpenCodeSubagentSummary,
   getOpenCodeSubagentPromptSettings,
@@ -154,12 +158,14 @@ type OpenCodeChatState = {
   directory: string
   container: AppContainerTarget | null
   session: Session | GlobalSession | null
+  fallbackTitle?: string
   messages: OpenCodeMessageWithParts[]
   terminalMessageIds?: Set<string>
   messagesHydrated: boolean
   messagesDirty: boolean
   hydratedUpdatedAt: number | null
   eventRevision: number
+  historyInvalidationRevision?: number
   client: OpencodeClient | null
   active: boolean
   stopped: boolean
@@ -962,17 +968,45 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     )
     const visibleSessions = sessions.filter((session) => !isOneShotSession(session))
+    const statusesByDirectory = new Map(
+      [...new Set(visibleSessions.map((session) => session.directory))].map((directory) => [
+        directory,
+        entry.client.session
+          .status({ directory }, { throwOnError: true })
+          .then(requireData)
+          .catch((error) => {
+            console.error('[caught:OpenCodeProviderAdapter:getChats:status]', error)
+            return null
+          })
+      ])
+    )
     const chats = await Promise.all(
       visibleSessions.map(async (session) => {
         const state = this.rememberSession(session, entry.container)
+        const eventRevision = state.eventRevision
+        // Default session names are displayed from the original prompt. A bounded
+        // tail can omit it after restart, or substitute a later follow-up's text.
         const messages =
           state.messagesHydrated && !state.messagesDirty
-            ? state.messages.slice(-8)
-            : await this.loadMessages(entry.client, session, 8).catch((error) => {
+            ? state.messages
+            : await this.loadMessages(
+                entry.client,
+                session,
+                isDefaultOpenCodeTitle(session.title) && !state.fallbackTitle ? undefined : 8
+              ).catch((error) => {
                 console.error('[caught:OpenCodeProviderAdapter:getChats]', error)
                 return []
               })
-        return this.createChat(session, messages, state)
+        if (isDefaultOpenCodeTitle(session.title) && !state.fallbackTitle) {
+          const title = getOpenCodeDisplayTitle(session.title, messages)
+          if (title !== session.title) state.fallbackTitle = title
+        }
+        const statuses = await statusesByDirectory.get(session.directory)
+        if (statuses && state.eventRevision === eventRevision) {
+          const status = statuses[session.id]
+          state.active = status?.type === 'busy' || status?.type === 'retry'
+        }
+        return this.createChat(session, messages.slice(-8), state)
       })
     )
     return {
@@ -1842,7 +1876,14 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (!directory) return
     const state = this.getOrCreateState(sessionID, directory, entry.container)
     state.eventRevision += 1
-    state.messagesDirty = true
+    if (type.startsWith('message.')) {
+      const messages = applyOpenCodeMessageEvent(state.messages, type, properties)
+      if (messages) state.messages = messages
+      else {
+        state.messagesDirty = true
+        state.historyInvalidationRevision = (state.historyInvalidationRevision ?? 0) + 1
+      }
+    }
     if (
       type === 'message.updated' &&
       isRecord(properties.info) &&
@@ -1871,6 +1912,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       const info = type === 'message.updated' && isRecord(properties.info) ? properties.info : null
       const replyInProgress =
         info?.role === 'assistant' &&
+        info.summary !== true &&
         !info.error &&
         !(isRecord(info.time) && typeof info.time.completed === 'number')
       if (
@@ -2149,6 +2191,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     preserveActive: boolean
   ): Promise<void> => {
     const eventRevision = state.eventRevision
+    const historyInvalidationRevision = state.historyInvalidationRevision ?? 0
+    const initialMessages = state.messages
     const [session, messages, statuses, permissions, questions] = await Promise.all([
       client.session
         .get({ sessionID: state.id, directory: state.directory }, { throwOnError: true })
@@ -2183,7 +2227,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     ) {
       state.session = session
     }
-    state.messages = reconcileProviderRecords(state.messages, messages, {
+    const reconciledMessages = reconcileOpenCodeMessageSnapshot(
+      initialMessages,
+      state.messages,
+      messages
+    )
+    state.messages = reconcileProviderRecords(state.messages, reconciledMessages, {
       authoritative: true,
       getId: (message) => message.info.id
     })
@@ -2191,7 +2240,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       this.reportMessageTokenUsage(state, message.info)
     )
     state.messagesHydrated = true
-    state.messagesDirty = eventRevision !== state.eventRevision
+    state.messagesDirty = historyInvalidationRevision !== (state.historyInvalidationRevision ?? 0)
     state.hydratedUpdatedAt = session.time.updated
     state.client = client
     // A live event may have advanced these fields while the snapshot was in flight.
@@ -2213,6 +2262,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     } else if (state.active && !serverBusy && !preserveActive) {
       // The server is idle but a live event outdated this snapshot; reconcile again rather
       // than leave the chat working with no further idle event coming.
+      state.messagesDirty = true
       this.scheduleUpdate(state.id)
     }
   }
@@ -2224,9 +2274,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): ProviderChat => ({
     id: session.id,
     providerId: 'opencode',
-    title: state?.messagesHydrated
-      ? getOpenCodeDisplayTitle(session.title, state.messages)
-      : session.title,
+    title:
+      isDefaultOpenCodeTitle(session.title) && state?.fallbackTitle
+        ? state.fallbackTitle
+        : getOpenCodeDisplayTitle(session.title, messages),
     preview: getMessagePreview(messages),
     cwd: session.directory || null,
     cwdKind: 'directory',
@@ -2447,6 +2498,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         return false
       }
       state.active = true
+      state.eventRevision += 1
       state.stopped = false
       state.failed = false
       state.failureMessage = null
@@ -2701,14 +2753,19 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   }
 
   private scheduleUpdate = (chatId: string): void => {
-    const existingTimer = this.updateTimers.get(chatId)
-    if (existingTimer) clearTimeout(existingTimer)
+    // Throttle publications: restarting this timer on every token starves the display.
+    if (this.updateTimers.has(chatId)) return
     if (isOpenCodeChildState(this.states.get(chatId))) return
     const timer = setTimeout(() => {
       this.updateTimers.delete(chatId)
       const state = this.states.get(chatId)
       if (!state) return
-      void this.createChatDetail(state, false, { startIndex: null, limit: 10 })
+      const window = { startIndex: null, limit: 10 }
+      const detail =
+        state.messagesHydrated && !state.messagesDirty
+          ? Promise.resolve(this.createChatDetailFromState(state, window))
+          : this.createChatDetail(state, false, window)
+      void detail
         .then((detail) => {
           // The first event of a child session arrives before its session record is known.
           if (isOpenCodeChildState(state)) return

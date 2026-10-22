@@ -4,7 +4,7 @@ import { SidebarProviderAccount } from './SidebarProviderAccount'
 import { UsageIndicator } from '../../components/UsageIndicator'
 import { getVisibleUsageBadges } from '../../usageBadges'
 import { selectBadgeBalance } from '../../accountBalances'
-import { useState, type ReactElement } from 'react'
+import { memo, useState, type ReactElement } from 'react'
 import type { ChatImportPreview } from '../../../../shared/chatArchive'
 import { providerApi } from '../../providerApi'
 import { ChatImportDialog } from '../../components/ChatImportDialog'
@@ -60,19 +60,6 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
   const hasVisibleGroups = Boolean(
     pinnedChatGroup || importedChatGroup || displayedActiveChatGroups.length > 0 || doneChatGroup
   )
-
-  const groups = [
-    pinnedChatGroup,
-    importedChatGroup,
-    ...displayedActiveChatGroups,
-    doneChatGroup
-  ].filter((group) => group !== null && group !== undefined)
-  const groupOrder = groups
-    .map(
-      (group) =>
-        `${group.key}:${group.chats.map((chat) => `${chat.providerId}:${chat.id}`).join(',')}`
-    )
-    .join('\n')
 
   return (
     <aside className="chat-sidebar" aria-label="Recent conversations">
@@ -191,18 +178,15 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
             {sidebarSearch.error}
           </p>
         )}
-        <div
-          className="chat-list-stack"
-          onDragOver={handleProjectStackDragOver}
-          onDrop={handleProjectDrop}
-        >
-          {/* groupOrder drives layout changes without broadcasting each workspace render to all rows. */}
-          <AnimatePresence initial={false} mode="sync" presenceAffectsLayout={false}>
-            {groups.map((group) =>
-              renderChatGroup(group, `chat-group-${encodeURIComponent(group.key)}`, groupOrder)
-            )}
-          </AnimatePresence>
-        </div>
+        <ChatSidebarGroups
+          pinnedChatGroup={pinnedChatGroup}
+          importedChatGroup={importedChatGroup}
+          displayedActiveChatGroups={displayedActiveChatGroups}
+          doneChatGroup={doneChatGroup}
+          renderChatGroup={renderChatGroup}
+          handleProjectDrop={handleProjectDrop}
+          handleProjectStackDragOver={handleProjectStackDragOver}
+        />
         {sidebarSearch.hasMore && (
           <Button
             theme="transparent"
@@ -212,34 +196,92 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           />
         )}
       </div>
-      <footer className="chat-sidebar__footer">
-        <AppUpdatePrompt />
-        <div className="chat-sidebar__account-row">
-          <SidebarProviderAccount
-            openCode={providerAccount.openCode}
-            refreshKey={providerAccount.key}
-            providerId={providerAccount.providerId}
-            container={providerAccount.container}
-            available={providerAccount.available}
-            updating={providerAccount.updating}
-            hasVisibleLimits={
-              getVisibleUsageBadges(
-                usageIndicator.accountUsage?.rateLimits ?? [],
-                usageIndicator.contextUsage,
-                usageIndicator.displayUsage
-              ).length > 0 ||
-              selectBadgeBalance(
-                usageIndicator.accountUsage?.balances ?? [],
-                usageIndicator.modelProviderId
-              ) != null
-            }
-            onSelect={providerAccount.onSelect}
-            onCreate={providerAccount.onCreate}
-            onDelete={providerAccount.onDelete}
-          />
-          <UsageIndicator scopeKey={providerAccount.key} {...usageIndicator} />
-        </div>
-      </footer>
+      <ChatSidebarFooter providerAccount={providerAccount} usageIndicator={usageIndicator} />
     </aside>
   )
 }
+
+// Split out and memoized: usage and account updates arrive during chat switches and
+// must not rerender the chat list, and list changes must not rerender the footer.
+const ChatSidebarGroups = memo(function ChatSidebarGroups({
+  pinnedChatGroup,
+  importedChatGroup,
+  displayedActiveChatGroups,
+  doneChatGroup,
+  renderChatGroup,
+  handleProjectDrop,
+  handleProjectStackDragOver
+}: Pick<
+  ChatSidebarProps,
+  | 'pinnedChatGroup'
+  | 'importedChatGroup'
+  | 'displayedActiveChatGroups'
+  | 'doneChatGroup'
+  | 'renderChatGroup'
+  | 'handleProjectDrop'
+  | 'handleProjectStackDragOver'
+>): ReactElement {
+  const groups = [
+    pinnedChatGroup,
+    importedChatGroup,
+    ...displayedActiveChatGroups,
+    doneChatGroup
+  ].filter((group) => group !== null && group !== undefined)
+  const groupOrder = groups
+    .map(
+      (group) =>
+        `${group.key}:${group.chats.map((chat) => `${chat.providerId}:${chat.id}`).join(',')}`
+    )
+    .join('\n')
+
+  return (
+    <div
+      className="chat-list-stack"
+      onDragOver={handleProjectStackDragOver}
+      onDrop={handleProjectDrop}
+    >
+      {/* groupOrder drives layout changes without broadcasting each workspace render to all rows. */}
+      <AnimatePresence initial={false} mode="sync" presenceAffectsLayout={false}>
+        {groups.map((group) =>
+          renderChatGroup(group, `chat-group-${encodeURIComponent(group.key)}`, groupOrder)
+        )}
+      </AnimatePresence>
+    </div>
+  )
+})
+
+const ChatSidebarFooter = memo(function ChatSidebarFooter({
+  providerAccount,
+  usageIndicator
+}: Pick<ChatSidebarProps, 'providerAccount' | 'usageIndicator'>): ReactElement {
+  return (
+    <footer className="chat-sidebar__footer">
+      <AppUpdatePrompt />
+      <div className="chat-sidebar__account-row">
+        <SidebarProviderAccount
+          openCode={providerAccount.openCode}
+          refreshKey={providerAccount.key}
+          providerId={providerAccount.providerId}
+          container={providerAccount.container}
+          available={providerAccount.available}
+          updating={providerAccount.updating}
+          hasVisibleLimits={
+            getVisibleUsageBadges(
+              usageIndicator.accountUsage?.rateLimits ?? [],
+              usageIndicator.contextUsage,
+              usageIndicator.displayUsage
+            ).length > 0 ||
+            selectBadgeBalance(
+              usageIndicator.accountUsage?.balances ?? [],
+              usageIndicator.modelProviderId
+            ) != null
+          }
+          onSelect={providerAccount.onSelect}
+          onCreate={providerAccount.onCreate}
+          onDelete={providerAccount.onDelete}
+        />
+        <UsageIndicator scopeKey={providerAccount.key} {...usageIndicator} />
+      </div>
+    </footer>
+  )
+})

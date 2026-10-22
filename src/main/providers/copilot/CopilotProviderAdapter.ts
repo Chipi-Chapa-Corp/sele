@@ -95,6 +95,11 @@ import {
   type CopilotSubagentFollowUp
 } from './CopilotSubagents'
 import { selectCopilotTitleModel } from './CopilotTitleModel'
+import {
+  getCopilotCustomProvider,
+  getCopilotCustomProviderModels,
+  getCopilotCustomProviderSessionOptions
+} from './CopilotCustomProvider'
 import { CopilotEventStore } from './CopilotEventStore.ts'
 import { SqliteUsageReader } from '../SqliteUsageReader'
 import {
@@ -338,6 +343,17 @@ const mapModel = (model: ModelInfo, isDefault: boolean): ProviderModel => {
     defaultReasoningEffort
   }
 }
+
+const isUnsupportedCopilotMethodError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  ((error as { code?: unknown }).code === -32601 ||
+    /\bunhandled method\b/i.test(String((error as { message?: unknown }).message ?? '')))
+
+const getSessionModelKey = (
+  model: string | undefined,
+  reasoningEffort: string | undefined
+): string => JSON.stringify([model ?? null, reasoningEffort ?? null])
 
 const toMilliseconds = (value: Date | string | number | undefined): number => {
   if (value instanceof Date) return value.getTime()
@@ -693,12 +709,26 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   private completionCoordinator = new ProviderConversationCompletionCoordinator()
   private oneShotGenerations = new Map<string, CopilotOneShotGeneration>()
   private additionalDirectoriesBySession = new WeakMap<CopilotSession, Set<string>>()
+  private sessionModels = new WeakMap<CopilotSession, string>()
+  private clientsWithoutPersistedEvents = new WeakSet<CopilotClient>()
   private canceledOneShotGenerationIds = new Set<string>()
   private canceledOneShotGenerationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private hiddenSessionIds = new Set<string>()
   private browserGeneration = 0
 
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
+    const customProvider = getCopilotCustomProvider()
+    if (customProvider) {
+      // A custom provider needs no GitHub account.
+      const label = (() => {
+        try {
+          return new URL(customProvider.baseUrl).host
+        } catch {
+          return customProvider.baseUrl
+        }
+      })()
+      return { status: 'authenticated', account: { label, displayName: null } }
+    }
     const client = await this.ensureClient(options.container)
     const status = await client.getAuthStatus()
     if (!status.isAuthenticated) {
@@ -753,6 +783,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> => {
+    const customProviderModels = getCopilotCustomProviderModels()
+    if (customProviderModels.length > 0) return customProviderModels
     try {
       const client = await this.ensureClient(options.container)
       const models = await client.listModels()
@@ -1076,6 +1108,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   private getSidebarTurnSummary = async (client: CopilotClient, sessionId: string) => {
+    if (this.clientsWithoutPersistedEvents.has(client)) return undefined
     let cursor: string | undefined
     let updatedAt = 0
     const seenCursors = new Set<string>()
@@ -1098,6 +1131,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         cursor = page.cursor
       }
     } catch (error) {
+      // Older Copilot CLIs (used through a host or container bridge) lack the journal API.
+      // The sidebar then simply shows no last-turn outcome for their sessions.
+      if (isUnsupportedCopilotMethodError(error)) {
+        this.clientsWithoutPersistedEvents.add(client)
+        return undefined
+      }
       console.error('Unable to read latest Copilot sidebar turn.', error)
       return undefined
     }
@@ -2237,7 +2276,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         clientName,
         workingDirectory,
         ...(browser ? { mcpServers: { Sele_Browser: this.browserServerConfig(browser) } } : {}),
-        model: options?.model,
+        ...getCopilotCustomProviderSessionOptions(options?.model),
         ...(reasoningEffort ? { reasoningEffort } : {}),
         streaming: false,
         enableConfigDiscovery: true,
@@ -2253,6 +2292,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
             }
           : {})
       })
+      this.sessionModels.set(session, getSessionModelKey(options?.model, reasoningEffort))
       await this.addAdditionalDirectories(session, options)
       state.session = session
       state.metadata =
@@ -2302,7 +2342,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         clientName: 'Sele',
         ...(browser ? { mcpServers: { Sele_Browser: this.browserServerConfig(browser) } } : {}),
         workingDirectory: options?.cwd ?? state.metadata.context?.workingDirectory,
-        model: options?.model,
+        ...getCopilotCustomProviderSessionOptions(options?.model),
         ...(reasoningEffort ? { reasoningEffort } : {}),
         streaming: false,
         enableConfigDiscovery: true,
@@ -2314,6 +2354,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         onUserInputRequest: (request) => this.handleUserInput(sessionId, request),
         onElicitationRequest: this.createElicitationHandler(sessionId)
       })
+      if (options?.model)
+        this.sessionModels.set(session, getSessionModelKey(options.model, reasoningEffort))
       state.session = session
       await this.addAdditionalDirectories(session, options)
       await this.loadSessionTitle(state)
@@ -2372,7 +2414,17 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.options = options
     await this.addAdditionalDirectories(state.session, options)
     const reasoningEffort = normalizeReasoningEffort(options.reasoningEffort)
-    await state.session.setModel(options.model, reasoningEffort ? { reasoningEffort } : undefined)
+    const session = state.session
+    const key = getSessionModelKey(options.model, reasoningEffort)
+    // A model switch during a turn can leave Copilot without its final session.idle event,
+    // so queued and steering submissions only switch when the selection really changed.
+    if (this.sessionModels.get(session) === key) return
+    const { model } = getCopilotCustomProviderSessionOptions(options.model)
+    await session.setModel(
+      model ?? options.model,
+      reasoningEffort ? { reasoningEffort } : undefined
+    )
+    this.sessionModels.set(session, key)
   }
 
   private addAdditionalDirectories = async (
@@ -2629,6 +2681,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       state.browser?.suspend()
       state.active = false
       state.stopped = Boolean(event.data.aborted)
+      // One-shot generations await their own reply and delete the session right after,
+      // so reconciling it later would only read a session that no longer exists.
+      if (this.hiddenSessionIds.has(state.id)) return
       const completedTurnGeneration = state.turnGeneration
       const isCurrent = (): boolean =>
         this.states.get(state.id) === state && state.turnGeneration === completedTurnGeneration

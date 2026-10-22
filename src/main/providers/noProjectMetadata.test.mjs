@@ -29,6 +29,8 @@ const fixture = () => {
   const native = (id) => ({ id, cwd: '/home/user', items: [], container: null, preview: '' })
   const context = vm.createContext({
     console,
+    persistentChatHistory: { invalidate() {}, observe() {}, beginOpening: () => null },
+    saveProviderChatHistory: () => {},
     isNoProjectChat,
     app: { getPath: () => '/fixture' },
     prepareChatWorkspace: async (_root, options) => options,

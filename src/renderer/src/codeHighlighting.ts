@@ -1,6 +1,7 @@
 import type { RootContent } from 'hast'
 import { refractor } from 'refractor'
 import { createBoundedTextCache } from './boundedTextCache.ts'
+import { getSyntaxTreeCacheSize } from './syntaxTreeSize.ts'
 import jsx from 'refractor/jsx'
 import tsx from 'refractor/tsx'
 
@@ -70,13 +71,23 @@ export const getMarkdownCodeLanguage = (infoString: string | null | undefined): 
 export const isMermaidMarkdownCode = (infoString: string | null | undefined): boolean =>
   getMarkdownFenceLanguage(infoString) === 'mermaid'
 
+// Shared by Markdown and tool output, and retained across component remounts.
+const highlightedCodeCache = createBoundedTextCache<RootContent[]>(
+  100,
+  2_000_000,
+  getSyntaxTreeCacheSize
+)
+
 export const highlightCode = (code: string, language: string | null): RootContent[] | null => {
   if (code.length > maxHighlightedCodeLength || !language || !refractor.registered(language)) {
     return null
   }
 
   try {
-    return refractor.highlight(code, language).children
+    return highlightedCodeCache.get(
+      `${language}:${code}`,
+      () => refractor.highlight(code, language).children
+    )
   } catch (error) {
     console.error('[caught:codeHighlighting:highlightCode]', error)
     return null

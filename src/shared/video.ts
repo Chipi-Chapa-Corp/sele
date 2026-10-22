@@ -7,6 +7,8 @@ const videoMimeTypes: Record<string, string> = {
   ogg: 'video/ogg'
 }
 
+export const videoExtensions = Object.keys(videoMimeTypes)
+
 export const getVideoMimeType = (path: string): string | null => {
   const extension = path.split('.').at(-1)?.toLowerCase() ?? ''
   return Object.hasOwn(videoMimeTypes, extension) ? videoMimeTypes[extension] : null

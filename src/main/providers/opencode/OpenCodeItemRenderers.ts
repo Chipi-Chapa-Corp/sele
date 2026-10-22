@@ -44,6 +44,8 @@ type Segment = {
   rateLimited: boolean
   failureMessage?: string
   stopped?: boolean
+  unfinishedReply?: boolean
+  finalMessageIndex?: number
 }
 
 const maxToolOutputLength = 160_000
@@ -90,7 +92,8 @@ export const getOpenCodeTurnOutcome = (
     }
     if (info.summary) continue
     if (isOpenCodeAbortError(info.error)) return 'stopped'
-    return info.error ? 'failed' : null
+    if (info.error) return 'failed'
+    return info.time.completed == null || info.finish === 'tool-calls' ? 'stopped' : null
   }
   return null
 }
@@ -388,12 +391,20 @@ export const renderOpenCodeChatItems = (
     return segment
   }
 
-  const flushSegment = (isLast: boolean): void => {
+  const flushSegment = (isLast: boolean, inferInterrupted = true): void => {
     if (!segment) return
     const current = segment
     segment = null
     const failed = current.failed || (isLast && options.failed === true)
-    const stopped = current.stopped === true || (isLast && options.stopped)
+    // A killed server cannot persist MessageAbortedError. Its last reply remains
+    // unfinished (possibly between tool calls), even though the new server is idle.
+    const stopped =
+      current.stopped === true ||
+      (isLast && options.stopped) ||
+      (inferInterrupted &&
+        !failed &&
+        !(isLast && options.active) &&
+        current.unfinishedReply === true)
     if (failed && isLast && options.failureMessage && !current.failureMessage) {
       current.entries.push({
         kind: 'working',
@@ -408,10 +419,11 @@ export const renderOpenCodeChatItems = (
       id: current.id,
       timing: current.timing,
       entries: current.entries,
-      finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
+      finalMessageIndex:
+        current.finalMessageIndex ?? getTrailingAssistantEntryIndex(current.entries),
       lifecycle: {
         active: isLast && options.active,
-        completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
+        completed: !failed && !stopped && (!isLast || !options.active),
         failed,
         stopped
       },
@@ -427,7 +439,7 @@ export const renderOpenCodeChatItems = (
     // and synthetic continuation prompt. These records do not start new user turns.
     for (const part of message.parts) {
       if (part.type !== 'compaction') continue
-      flushSegment(false)
+      flushSegment(false, false)
       items.push({ type: 'contextCompaction', id: part.id })
     }
     if (message.info.role === 'user') {
@@ -457,6 +469,10 @@ export const renderOpenCodeChatItems = (
     if (message.info.summary === true) return
 
     const current = ensureSegment(message.info.id)
+    current.finalMessageIndex = undefined
+    const firstEntryIndex = current.entries.length
+    current.unfinishedReply =
+      message.info.time.completed == null || message.info.finish === 'tool-calls'
     const messageCompletedAt = message.info.time.completed
     current.timing = includeConversationTime(
       current.timing,
@@ -520,6 +536,16 @@ export const renderOpenCodeChatItems = (
         })
       }
     })
+    // A completed answer can be followed by reasoning metadata. Its text still belongs
+    // outside Worked; only tool-loop text is progress for the next model step.
+    if (messageCompletedAt != null && message.info.finish === 'stop' && !message.info.error) {
+      for (let index = current.entries.length - 1; index >= firstEntryIndex; index--) {
+        if (current.entries[index].kind === 'assistant') {
+          current.finalMessageIndex = index
+          break
+        }
+      }
+    }
     if (isOpenCodeAbortError(message.info.error)) {
       // A user abort is a stop, not a failure: no error text, just a "Stopped" turn.
       current.stopped = true

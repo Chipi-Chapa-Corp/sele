@@ -4,7 +4,7 @@ import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { sortDoneChats, sortChatsForSidebarSection } from './chatSidebarOrder.ts'
-import { mergeChatMetadata } from './chatMetadata.ts'
+import { mapPreservingIdentity, mergeChatMetadata } from './chatMetadata.ts'
 
 const chat = (id, createdAt, doneAt, sidebarOrder = null, cwd = '/repo') => ({
   id,
@@ -52,6 +52,44 @@ test('metadata updates carry completion times and clear them when undone', () =>
   const undone = mergeChatMetadata(completed, { done: false, doneAt: null })
   assert.equal(undone.doneAt, null)
   assert.equal(undone.done, false)
+})
+
+test('metadata that changes nothing keeps the same chat and list objects', () => {
+  const ssh = { kind: 'container', tool: 'ssh', name: 'box', runtime: { kind: 'host' } }
+  const original = {
+    ...chat('chat', 1, null),
+    pinned: false,
+    done: false,
+    seenUpdatedAt: 50,
+    purpose: null,
+    container: ssh
+  }
+  const metadata = {
+    id: 'chat',
+    pinned: false,
+    sidebarOrder: null,
+    done: false,
+    doneAt: null,
+    seenUpdatedAt: 40,
+    purpose: null,
+    container: { ...ssh, runtime: { kind: 'host' } }
+  }
+  assert.equal(mergeChatMetadata(original, metadata), original)
+  const seen = mergeChatMetadata(original, { ...metadata, seenUpdatedAt: 60 })
+  assert.notEqual(seen, original)
+  assert.equal(seen.seenUpdatedAt, 60)
+  assert.equal(seen.container, ssh, 'an equal container keeps its identity')
+  const moved = mergeChatMetadata(original, { ...metadata, container: { ...ssh, name: 'other' } })
+  assert.equal(moved.container.name, 'other')
+
+  const list = [original, chat('other', 2, null)]
+  assert.equal(
+    mapPreservingIdentity(list, (item) => item),
+    list
+  )
+  const updated = mapPreservingIdentity(list, (item) => (item.id === 'other' ? { ...item } : item))
+  assert.notEqual(updated, list)
+  assert.equal(updated[0], list[0])
 })
 
 // Exercise the actual controller declarations, as in chatLoadRecovery.test.mjs,

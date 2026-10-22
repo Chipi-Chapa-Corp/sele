@@ -110,6 +110,43 @@ test('working and approval indicators keep their existing priority', () => {
   )
 })
 
+for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
+  test(`${providerId}: requests for input or approval take priority over working subagents`, () => {
+    for (const props of [{}, { selected: true }, { childOpen: true }]) {
+      const input = render(
+        null,
+        { providerId, status: 'waitingOnUserInput' },
+        {
+          ...props,
+          descendantWorking: true
+        }
+      )
+      assert.match(input, /chat-list-item--waiting-input/)
+      assert.match(input, /status--waitingOnUserInput/)
+      assert.match(input, /aria-label="Waiting for your input"/)
+      assert.doesNotMatch(input, /chat-list-item--working|chat-list-item__loading/)
+
+      const approval = render(
+        null,
+        { providerId, status: 'waitingOnApproval' },
+        {
+          ...props,
+          descendantWorking: true
+        }
+      )
+      assert.match(approval, /aria-label="Waiting for approval"/)
+      assert.doesNotMatch(approval, /chat-list-item--working|chat-list-item__loading/)
+    }
+
+    for (const status of ['active', null]) {
+      assert.match(
+        render(null, { providerId, status }, { descendantWorking: true }),
+        /aria-label="In progress"/
+      )
+    }
+  })
+}
+
 test('stopped dots use the neutral gray theme color', () => {
   const css = readFileSync(new URL('./ChatListItem.css', import.meta.url), 'utf8')
   assert.match(css, /\.chat-list-item__status--stopped\s*\{\s*background: var\(--muted\)/)
@@ -120,6 +157,14 @@ test('a startup list with no saved read timestamp shows an unread dot', () => {
   assert.doesNotMatch(render(null, { seenUpdatedAt: 2000 }), /status--finished-unseen/)
   assert.match(render('failed', { seenUpdatedAt: null }), /status--error/)
   assert.match(render('stopped', { seenUpdatedAt: null }), /status--stopped/)
+})
+
+test('an already read failed reply keeps its red reminder without making the title bold', () => {
+  const read = render('failed', { updatedAt: 3000, seenUpdatedAt: 4000 })
+  assert.match(read, /status--error/)
+  assert.doesNotMatch(read, /chat-list-item--unread/)
+  const newReply = render('failed', { updatedAt: 5000, seenUpdatedAt: 4000 })
+  assert.match(newReply, /chat-list-item--unread/)
 })
 
 for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {

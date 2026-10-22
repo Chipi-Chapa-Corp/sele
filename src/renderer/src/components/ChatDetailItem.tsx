@@ -1,6 +1,5 @@
 import { McpApp, McpAppScope } from './McpApp'
 import type { McpAppScope as McpAppScopeValue } from '../../../shared/mcpApps'
-import { getVideoMimeType } from '../../../shared/video'
 import { useMarkdownImages } from '../useMarkdownImages'
 import { WorkingElapsedTime } from './WorkingElapsedTime'
 import { useReducedMotionPreference } from '../motion/useReducedMotionPreference'
@@ -13,6 +12,11 @@ import { Marked } from 'marked'
 import markedFootnote from 'marked-footnote'
 import { createBoundedTextCache } from '../boundedTextCache'
 import { MarkdownContent } from './MarkdownContent'
+import {
+  ProgressiveMarkdownContent,
+  progressiveMarkdownThreshold
+} from './ProgressiveMarkdownContent'
+import { createChatMarkdownRenderer } from '../chatMarkdownRenderer'
 import { WorkingMark, type WorkingMarkAnimation } from './WorkingMark'
 import { visualizationExtension } from '../visualizationReference'
 import {
@@ -69,7 +73,6 @@ import {
   ImageOff,
   ListChecks,
   LoaderCircle,
-  Maximize2,
   Package,
   Pencil,
   Pin,
@@ -85,7 +88,6 @@ import {
   Zap
 } from 'lucide-react'
 import DOMPurify from 'dompurify'
-import { Renderer, type Tokens } from 'marked'
 import type { AppContainerTarget, AppLocalImageOptions } from '../../../shared/app'
 import type {
   ProviderChatItem,
@@ -102,11 +104,8 @@ import type {
 } from '../../../shared/provider'
 import { getChatMessagePresentation, type ChatMessageResource } from '../chatMessageResources'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
-import { renderMarkdownCodeBlock } from '../codeHighlighting'
 import { useLocalMedia } from '../useLocalMedia'
-import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from '../markdownFileLink'
 import { hydrateMermaidDiagrams } from '../mermaidRendering'
-import { getBrowserFaviconUrl } from '../../../shared/browser'
 import { getRateLimitResetMessage } from '../rateLimitReset'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { defaultAppChatProgressSettings, type AppChatProgressSettings } from '../settings'
@@ -397,130 +396,7 @@ const placeholderOptions = [
 const longRunningActivities = new Set<ProviderToolActivity>(['npm', 'npx', 'script', 'command'])
 const streamRenderMaxDelayMs = 180
 
-const escapeHtml = (value: string): string =>
-  value.replace(/[&<>"']/g, (character) => {
-    switch (character) {
-      case '&':
-        return '&amp;'
-      case '<':
-        return '&lt;'
-      case '>':
-        return '&gt;'
-      case '"':
-        return '&quot;'
-      default:
-        return '&#39;'
-    }
-  })
-
-const renderHtmlAttributes = (attributes: Record<string, string | number | undefined>): string =>
-  Object.entries(attributes)
-    .flatMap(([name, value]) =>
-      value === undefined || value === '' ? [] : [` ${name}="${escapeHtml(String(value))}"`]
-    )
-    .join('')
-
-const defaultChatMarkdownRenderer = new Renderer()
-const loadingImageIconMarkup = renderToStaticMarkup(<ImageIcon aria-hidden="true" />)
 const brokenImageIconMarkup = renderToStaticMarkup(<ImageOff aria-hidden="true" />)
-const expandTableIconMarkup = renderToStaticMarkup(<Maximize2 aria-hidden="true" />)
-
-const renderLocalMediaButton = (path: string, displayPath: string, name: string): string => {
-  const video = Boolean(getVideoMimeType(path))
-  return `<button${renderHtmlAttributes({
-    class: `chat-detail__markdown-image${video ? ' chat-detail__markdown-video' : ''}`,
-    type: 'button',
-    title: `Open ${displayPath}`,
-    'aria-label': `${video ? 'Play' : 'Open'} ${name}`,
-    'data-local-image-path': path,
-    'data-local-image-name': name,
-    'data-media-type': video ? 'video' : 'image'
-  })}><span class="chat-detail__markdown-image-loading" aria-label="Loading ${escapeHtml(name)}">${loadingImageIconMarkup}</span></button>`
-}
-
-const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => {
-  const renderer = new Renderer()
-
-  renderer.html = ({ text }) =>
-    text
-      .split(/(<\/?(?:details|summary)(?:\s+open)?\s*>|<\/?kbd\s*>)/gi)
-      .map((part) =>
-        /^(?:<\/?(?:details|summary)(?:\s+open)?\s*>|<\/?kbd\s*>)$/i.test(part)
-          ? part
-          : escapeHtml(part)
-      )
-      .join('')
-  renderer.code = ({ lang, text }) => renderMarkdownCodeBlock(text, lang)
-  renderer.link = function (token: Tokens.Link): string {
-    const fileTarget = getMarkdownFileTarget(token.href)
-    if (fileTarget && getVideoMimeType(fileTarget.path)) {
-      return renderLocalMediaButton(
-        fileTarget.path,
-        fileTarget.displayPath,
-        getMarkdownFileLinkLabel(token, fileTarget.line)
-      )
-    }
-    if (fileTarget && interactiveFileLinks) {
-      const label = getMarkdownFileLinkLabel(token, fileTarget.line)
-      const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
-      const iconMarkup = renderToStaticMarkup(
-        <SymbolsFileIcon fileName={fileName} autoAssign aria-hidden="true" />
-      )
-      const title = fileTarget.line
-        ? `Open ${fileTarget.displayPath} at line ${fileTarget.line}`
-        : `Open ${fileTarget.displayPath}`
-      const lineMarkup = fileTarget.line
-        ? `<span class="chat-detail__file-link-separator" aria-hidden="true">·</span><span class="chat-detail__file-link-line" aria-label="Line ${fileTarget.line}">${fileTarget.line}</span>`
-        : ''
-
-      return `<button${renderHtmlAttributes({
-        class: 'chat-detail__file-link',
-        type: 'button',
-        title,
-        'data-file-link-path': fileTarget.path,
-        'data-file-link-display-path': fileTarget.displayPath,
-        'data-file-link-line': fileTarget.line
-      })}><span class="chat-detail__file-link-icon" aria-hidden="true">${iconMarkup}</span><span class="chat-detail__file-link-label">${escapeHtml(label)}</span>${lineMarkup}</button>`
-    }
-
-    const href = token.href
-    const title = token.title ?? undefined
-    const children = this.parser.parseInline(token.tokens)
-    const faviconUrl = getBrowserFaviconUrl(href)
-    const faviconMarkup = faviconUrl
-      ? `<img${renderHtmlAttributes({
-          class: 'chat-detail__link-favicon',
-          src: faviconUrl,
-          alt: ' ',
-          loading: 'lazy',
-          referrerpolicy: 'no-referrer',
-          'aria-hidden': 'true'
-        })}>`
-      : ''
-    return `<a${renderHtmlAttributes({
-      href,
-      title,
-      rel: 'noreferrer',
-      target: '_blank'
-    })}>${faviconMarkup}${children}</a>`
-  }
-  renderer.image = function (token: Tokens.Image): string {
-    const fileTarget = getMarkdownFileTarget(token.href)
-    if (!fileTarget) return defaultChatMarkdownRenderer.image.call(this, token)
-
-    const fileName = fileTarget.displayPath.split('/').at(-1) ?? fileTarget.displayPath
-    const name = token.text.trim() || fileName
-
-    return renderLocalMediaButton(fileTarget.path, fileTarget.displayPath, name)
-  }
-  renderer.table = function (token: Tokens.Table): string {
-    const tableMarkup = defaultChatMarkdownRenderer.table.call(this, token)
-    const renderedTable = tableMarkup.replace('<table>', '<table class="chat-detail__table">')
-    return `<div class="chat-detail__table-frame"><div class="chat-detail__table-scroll">${renderedTable}</div><button class="chat-detail__table-expand" type="button" aria-label="Expand table" aria-haspopup="dialog" title="Expand table">${expandTableIconMarkup}</button></div>`
-  }
-
-  return renderer
-}
 
 const getRandomPlaceholderOption = (): (typeof placeholderOptions)[number] =>
   placeholderOptions[Math.floor(Math.random() * placeholderOptions.length)]
@@ -1164,6 +1040,9 @@ const useStreamRenderedContent = (
     if (!streaming) {
       clearFlushTimer()
       const previousContent = renderedContentRef.current
+      // Already rendered, e.g. on mount. A state update here, even an unchanged
+      // one inside a transition, renders every newly mounted message twice.
+      if (content === previousContent) return
       flushContent(
         content,
         content.startsWith(previousContent) && content.length > previousContent.length
@@ -1361,6 +1240,9 @@ const MarkdownMessageComponent: React.FC<{
   } | null>(null)
   const [expandedTableHtml, setExpandedTableHtml] = useState<string | null>(null)
   const { visibleContent } = useStreamRenderedContent(content, streaming)
+  const progressiveRef = useRef(false)
+  if (visibleContent.length >= progressiveMarkdownThreshold) progressiveRef.current = true
+  const progressive = progressiveRef.current
   const interactiveFileLinks = Boolean(onOpenFileLink)
   const markdownRenderer = useMemo(
     () => createChatMarkdownRenderer(interactiveFileLinks),
@@ -1374,6 +1256,7 @@ const MarkdownMessageComponent: React.FC<{
     [footnotePrefix]
   )
   const renderedMarkdown = useMemo(() => {
+    if (progressive) return ''
     const render = (): string =>
       DOMPurify.sanitize(
         visualizationMarkdown.parse(
@@ -1394,6 +1277,7 @@ const MarkdownMessageComponent: React.FC<{
       render
     )
   }, [
+    progressive,
     interactiveFileLinks,
     markdownRenderer,
     preserveLineBreaks,
@@ -1406,11 +1290,12 @@ const MarkdownMessageComponent: React.FC<{
     renderedMarkdown,
     localImageContainer,
     localImageCwd,
-    brokenImageIconMarkup
+    brokenImageIconMarkup,
+    !progressive
   )
   useStreamReveal(containerRef, renderedMarkdown, streaming)
   useEffect(() => {
-    if (streaming) return undefined
+    if (streaming || progressive) return undefined
 
     const markdownContainer = containerRef.current
     if (!markdownContainer) return undefined
@@ -1511,12 +1396,26 @@ const MarkdownMessageComponent: React.FC<{
   return (
     <>
       <div className={className} ref={containerRef} onClick={handleClick}>
-        <MarkdownContent
-          html={renderedMarkdown}
-          settled={!streaming}
-          container={localImageContainer}
-          cwd={localImageCwd}
-        />
+        {progressive ? (
+          <ProgressiveMarkdownContent
+            content={
+              preserveLineBreaks ? withPromptMarkdownLineBreaks(visibleContent) : visibleContent
+            }
+            interactiveFileLinks={interactiveFileLinks}
+            footnotePrefix={footnotePrefix}
+            streaming={streaming}
+            container={localImageContainer}
+            cwd={localImageCwd}
+            errorMarkup={brokenImageIconMarkup}
+          />
+        ) : (
+          <MarkdownContent
+            html={renderedMarkdown}
+            settled={!streaming}
+            container={localImageContainer}
+            cwd={localImageCwd}
+          />
+        )}
         {selectionQuoteHost && <div className="chat-detail__message-quote-host" />}
       </div>
       {localImagePreview && (
@@ -2511,7 +2410,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
       item.editTargetId !== null &&
       canEditOwnMessages &&
       Boolean(onEditMessage)
-    const canEditPending = pending && Boolean(onEditPendingMessage)
+    const canEditPending = pending && Boolean(onEditPendingMessage) && item.editable !== false
     const canDelete = pending && Boolean(onDeletePendingMessage)
     const canSteer = pending && item.kind === 'queued' && Boolean(onSteerPendingMessage)
     const canInterrupt = pending && Boolean(onInterruptPendingMessage)

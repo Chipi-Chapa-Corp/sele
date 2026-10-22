@@ -62,25 +62,39 @@ export const updateIndexedTranscriptRecord = <T extends { id: string }>(
   records: T[],
   id: string,
   update: (previous: T | null) => T | null
+): T[] => updateIndexedTranscriptRecords(records, [{ id, update }])
+
+export type TranscriptRecordUpdate<T> = { id: string; update: (previous: T | null) => T | null }
+
+/** Copy once per publication, preserving snapshots and branches even when a batch appends IDs. */
+export const updateIndexedTranscriptRecords = <T extends { id: string }>(
+  records: T[],
+  updates: readonly TranscriptRecordUpdate<T>[]
 ): T[] => {
-  const index = indexTranscriptRecords(records)
-  const candidate = index.get(id)
-  // The cached position must belong to this immutable source snapshot.
-  const position =
-    candidate != null && candidate < records.length && records[candidate].id === id
-      ? candidate
-      : records.length
-  const previous = records[position] ?? null
-  const next = update(previous)
-  if (!next || next === previous) return records
-  if (next.id !== id) throw new Error('A transcript update cannot change record identity')
-  const result = records.slice()
-  result[position] = next
-  // Branching from an older source may reuse a position owned by a different descendant.
-  // Only share the index for replacements; copying on append keeps all branches valid.
-  const nextIndex = position === records.length ? new Map(index) : index
-  nextIndex.set(id, position)
-  indexes.set(result, nextIndex)
-  markTranscriptRecordsChanged(records, result, position)
+  let result = records
+  let index = indexTranscriptRecords(records)
+  let copiedIndex = false
+  let changedFrom = records.length
+  for (const { id, update } of updates) {
+    const position = index.get(id) ?? result.length
+    const previous = result[position] ?? null
+    const next = update(previous)
+    if (!next || next === previous) continue
+    if (next.id !== id) throw new Error('A transcript update cannot change record identity')
+    if (result === records) result = records.slice()
+    if (position === result.length) {
+      if (!copiedIndex) {
+        index = new Map(index)
+        copiedIndex = true
+      }
+      index.set(id, position)
+    }
+    result[position] = next
+    changedFrom = Math.min(changedFrom, position)
+  }
+  if (result !== records) {
+    indexes.set(result, index)
+    markTranscriptRecordsChanged(records, result, changedFrom)
+  }
   return result
 }

@@ -5,7 +5,11 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { getOpenCodePermissionRules } from './OpenCodePermissions.ts'
-import { parseOpenCodeSessionEvent } from './OpenCodeEvents.ts'
+import {
+  applyOpenCodeMessageEvent,
+  parseOpenCodeSessionEvent,
+  reconcileOpenCodeMessageSnapshot
+} from './OpenCodeEvents.ts'
 
 const source = ts.createSourceFile(
   'adapter.ts',
@@ -38,6 +42,8 @@ const fixture = () => {
     console,
     getOpenCodePermissionRules,
     parseOpenCodeSessionEvent,
+    applyOpenCodeMessageEvent,
+    reconcileOpenCodeMessageSnapshot,
     createPromptParts: async (text) => [{ type: 'text', text }],
     parseOpenCodeModelId: () => ({}),
     fallbackOpenCodeModels: [{ id: 'fixture' }],

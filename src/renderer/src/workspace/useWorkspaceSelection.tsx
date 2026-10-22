@@ -231,6 +231,10 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   const subagentTreeActive = selectedChatSubagents.some(
     (agent) => agent.status === 'pending' || agent.status === 'running'
   )
+  const committedSubagentStateRef = useRef({ list: subagentListState, view: subagentChatView })
+  useLayoutEffect(() => {
+    committedSubagentStateRef.current = { list: subagentListState, view: subagentChatView }
+  }, [subagentListState, subagentChatView])
   useEffect(() => {
     if (
       !selectedProviderId ||
@@ -239,13 +243,33 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       chatDetail?.id !== selectedChatId ||
       chatDetail.purpose === 'commit'
     ) {
-      setSubagentListState(null)
-      setSubagentChatView(null)
+      // Readers ignore a list for another root chat, so only clear the selected one.
+      // Effects run while a chat switch has a transition pending, so React can't
+      // skip unchanged values; any call costs another full workspace render.
+      if (subagentListState?.rootChatKey === selectedChatKey) setSubagentListState(null)
+      if (subagentChatView) setSubagentChatView(null)
       return
     }
 
     if (chatDetail.subagents !== undefined) {
       const subagents = chatDetail.subagents
+      // Each fetched detail carries a fresh but usually equal list; see the poll below.
+      const committedList = committedSubagentStateRef.current.list
+      const committedView = committedSubagentStateRef.current.view
+      if (
+        committedList?.rootChatKey === selectedChatKey &&
+        committedList.loadState === 'ready' &&
+        committedList.error === null &&
+        areSubagentListsEqual(committedList.items, subagents) &&
+        (committedView?.rootChatKey !== selectedChatKey ||
+          !subagents.some(
+            (subagent) =>
+              subagent.id === committedView.summary.id &&
+              !areSubagentSummariesEqual(committedView.summary, subagent)
+          ))
+      ) {
+        return
+      }
       setSubagentListState((currentState) =>
         currentState?.rootChatKey === selectedChatKey &&
         currentState.loadState === 'ready' &&
@@ -280,11 +304,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       return
     let active = true
     let timeoutId: number | null = null
-    setSubagentListState((currentState) =>
-      currentState?.rootChatKey === selectedChatKey
-        ? currentState
-        : { rootChatKey: selectedChatKey, items: [], loadState: 'loading', error: null }
-    )
+    // No placeholder 'loading' list: every reader treats a list for another root
+    // chat exactly like an empty loading one, and setting it rerendered the workspace.
 
     // Child activity can change without a parent transcript item (including nested agents).
     // Refresh metadata for every provider, even when the chat detail embeds a snapshot.
@@ -298,6 +319,23 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           hasWorkingSubagent = subagents.some(
             (agent) => agent.status === 'pending' || agent.status === 'running'
           )
+          // Polls usually return the same list. Calling the setters anyway forces a
+          // full workspace render whenever a transition is pending, such as while a
+          // newly opened chat is still mounting its history.
+          const committedList = committedSubagentStateRef.current.list
+          const committedView = committedSubagentStateRef.current.view
+          const listUnchanged =
+            committedList?.rootChatKey === selectedChatKey &&
+            committedList.loadState === 'ready' &&
+            committedList.error === null &&
+            areSubagentListsEqual(committedList.items, subagents)
+          const viewSummary =
+            committedView?.rootChatKey === selectedChatKey
+              ? subagents.find((subagent) => subagent.id === committedView.summary.id)
+              : undefined
+          const viewUnchanged =
+            !viewSummary || areSubagentSummariesEqual(committedView!.summary, viewSummary)
+          if (listUnchanged && viewUnchanged) return
           setSubagentListState((currentState) =>
             currentState?.rootChatKey === selectedChatKey &&
             currentState.loadState === 'ready' &&
@@ -521,6 +559,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   )
   const messageBoxPlan =
     extractedChatPlan?.contextKey === selectedChatKey ? extractedChatPlan : null
+  // Latest plan requested from the effect below, the only writer of this state.
+  const requestedChatPlanRef = useRef(extractedChatPlan)
   useEffect(() => {
     if (
       effectiveAppSettings.chat.hidePlans ||
@@ -540,6 +580,16 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         if (!active) return
 
         const nextPlan = getLatestChatPlan(items, contextKey)
+        const requestedPlan = requestedChatPlanRef.current
+        // Calling the setter even with an equal plan rerenders the whole workspace
+        // while a chat switch transition is pending.
+        if (
+          requestedPlan?.contextKey === nextPlan?.contextKey &&
+          requestedPlan?.signature === nextPlan?.signature
+        ) {
+          return
+        }
+        requestedChatPlanRef.current = nextPlan
         setExtractedChatPlan((currentPlan) =>
           currentPlan?.contextKey === nextPlan?.contextKey &&
           currentPlan?.signature === nextPlan?.signature
@@ -622,7 +672,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     lastNonTerminalChangesPaneViewRef.current = lastNonTerminal
     if (view === 'terminal') setTerminalOpened(true)
     if (view === 'browser') setBrowserOpened(true)
-    setChangesPaneView(view)
+    // Layout effect during a chat switch: an unchanged set still forces a render.
+    if (view !== changesPaneView) setChangesPaneView(view)
   }, [changesPaneView, terminalWorkspaceKey])
   const gitAvailableForCurrentSource =
     gitSourceAvailability?.containerKey === changesContainerKey
@@ -997,10 +1048,39 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     if (!selectedProviderId || !selectedChatId) return
 
     let active = true
+    let providerFinished = false
+
+    // The SQLite preview and authoritative read run independently. A slow disk
+    // reply must never replace RAM history, a live update, or the provider reply.
+    if (!chatDetailRef.current && effectiveAppSettings.chat.recentChatCacheLimit > 0) {
+      void providerApi
+        .getCachedChat?.(selectedProviderId, selectedChatId, {
+          container: selectedChat?.container
+        })
+        ?.then((preview) => {
+          if (
+            !active ||
+            providerFinished ||
+            !preview?.historyPreview ||
+            preview.id !== selectedChatId ||
+            chatDetailRef.current
+          )
+            return
+          chatDetailRef.current = preview
+          startTransition(() => {
+            setChatDetail(preview)
+            setChatLoadState('loading')
+          })
+        })
+        .catch((error: unknown) => {
+          console.warn('Unable to read saved chat messages.', error)
+        })
+    }
 
     providerApi
       .getChat(selectedProviderId, selectedChatId)
       .then((detail) => {
+        providerFinished = true
         if (!active) return
         const currentDetail = chatDetailRef.current
         if (isChatDetailSnapshotStale(detail, currentDetail)) {
@@ -1026,6 +1106,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
       })
       .catch((error) => {
+        providerFinished = true
         console.error(
           `Unable to load messages for ${selectedProviderId} chat ${selectedChatId}.`,
           error
@@ -1035,7 +1116,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         // Cached history or a live update may already have supplied this chat. A failed
         // background read must not discard it or leave an error over usable messages.
         if (chatDetailRef.current?.id === selectedChatId) {
-          startTransition(() => setChatLoadState('ready'))
+          startTransition(() =>
+            setChatLoadState(chatDetailRef.current?.historyPreview ? 'error' : 'ready')
+          )
           return
         }
         chatDetailRef.current = null

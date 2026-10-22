@@ -58,6 +58,8 @@ test('import workspaces never become project choices alongside real projects', (
     FolderKanban: 'icon',
     React: { createElement: () => null }
   })
+  vm.runInContext(declaration('./useWorkspaceController.tsx', 'chatProjectCreatedAtKey'), context)
+  context.chatProjectCreatedAtKey = context.result
   vm.runInContext(declaration('./useWorkspaceController.tsx', 'projectOptions'), context)
   assert.equal(context.result[0].value, '__no_project__')
   assert.deepEqual(Array.from(context.result.slice(1), (option) => option.value).sort(), [

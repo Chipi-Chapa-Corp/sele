@@ -863,6 +863,8 @@ export type ProviderPendingMessage = {
   id: string
   kind: ProviderPendingMessageKind
   content: string
+  /** False once the provider has accepted the message and it can no longer be withdrawn. */
+  editable?: boolean
   contentLoaded?: boolean
   contentCharacterCount?: number
   contentTruncated?: boolean
@@ -944,6 +946,10 @@ export type ProviderChatGoal = {
 }
 
 export type ProviderChatDetail = {
+  /** Native conversation activity time in milliseconds, independent of snapshot delivery. */
+  updatedAt?: number
+  /** Persisted display-only history awaiting a fresh provider snapshot. */
+  historyPreview?: boolean
   imported?: { providerId: ProviderId; chatId: string }
   id: string
   /** User chose No Project, independent of the provider's runtime cwd. */
@@ -1404,6 +1410,11 @@ export type ProviderApi = {
 }
 
 export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
+  getCachedChat: (
+    providerId: ProviderId,
+    chatId: string,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderChatDetail | null>
   exportChat: (providerId: ProviderId, chatId: string) => Promise<string | null>
   openChatImport: () => Promise<import('./chatArchive').ChatImportPreview | null>
   importChat: (
@@ -1514,6 +1525,7 @@ export const providerIpcChannels = {
   getChatContainers: 'provider:get-chat-containers',
   getChats: 'provider:get-chats',
   getChat: 'provider:get-chat',
+  getCachedChat: 'provider:get-cached-chat',
   getSubagents: 'provider:get-subagents',
   getSubagent: 'provider:get-subagent',
   cancelSubagent: 'provider:cancel-subagent',

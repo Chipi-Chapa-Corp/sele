@@ -68,7 +68,7 @@ if (!process.versions.electron) {
             getDefaultCwd:()=>'/fixture',getWindowState:()=>({isMaximized:false}),getAppUpdate:()=>null,
             getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
             getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
-            getSkills:()=>[],getApps:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getUpdateAvailability:()=>null,
+            getSkills:()=>[],getApps:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getUpdateAvailability:()=>null,
             getSubagents:()=>window.agents,
             cancelSubagent:(_provider,_root,id)=>{
               window.cancelCalls.push(id)

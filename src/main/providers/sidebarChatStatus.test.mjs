@@ -6,6 +6,7 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import { getCodexTurnOutcome } from './codex/CodexTurnOutcome.ts'
 import * as opencode from './opencode/OpenCodeItemRenderers.ts'
+import { isDefaultOpenCodeTitle } from './opencode/OpenCodeChatTitle.ts'
 import * as claude from './claude/ClaudeItemRenderers.ts'
 import * as copilot from './copilot/CopilotItemRenderers.ts'
 import * as codex from './codex/CodexItemRenderers.ts'
@@ -160,6 +161,7 @@ test('OpenCode native errors survive cold listing, reopening and another list re
       ['getChats', 'createChat', 'getChatStatus', 'createChatDetailFromState'],
       {
         ...opencode,
+        isDefaultOpenCodeTitle,
         requireData: (value) => value.data,
         isOneShotSession: () => false,
         getPendingApproval: () => null,
@@ -184,7 +186,10 @@ test('OpenCode native errors survive cold listing, reopening and another list re
     Object.assign(instance, {
       getClientEntry: async () => ({
         container: null,
-        client: { experimental: { session: { list: async () => ({ data: [session] }) } } }
+        client: {
+          experimental: { session: { list: async () => ({ data: [session] }) } },
+          session: { status: async () => ({ data: {} }) }
+        }
       }),
       rememberSession: () => state,
       loadMessages: async () => messages,
@@ -250,6 +255,7 @@ const coldFixture = (provider, outcome) => {
       authenticationFailures: new Set(),
       sessionMetadata: new Map(),
       hiddenSessionIds: new Set(),
+      clientsWithoutPersistedEvents: new WeakSet(),
       eventStores: new WeakMap(),
       transcriptProjections: new Map(),
       detailRevision: 0,
@@ -401,6 +407,7 @@ const coldFixture = (provider, outcome) => {
         {
           ...bindings,
           ...opencode,
+          isDefaultOpenCodeTitle,
           requireData: (value) => value.data,
           isOneShotSession: () => false,
           getMessagePreview: () => ''
@@ -411,7 +418,10 @@ const coldFixture = (provider, outcome) => {
     Object.assign(instance, {
       getClientEntry: async () => ({
         container: null,
-        client: { experimental: { session: { list: async () => ({ data: [session] }) } } }
+        client: {
+          experimental: { session: { list: async () => ({ data: [session] }) } },
+          session: { status: async () => ({ data: {} }) }
+        }
       }),
       rememberSession: () => state,
       loadMessages: async () => messages
@@ -485,8 +495,31 @@ const coldFixture = (provider, outcome) => {
         method === 'thread/list' ? { data: [thread], nextCursor: null } : { data: [turns.at(-1)] }
     }
   })
-  return { list: () => instance.getChatsInContext(), open: () => instance.createChatDetail(thread) }
+  return {
+    list: () => instance.getChatsInContext(),
+    open: () => instance.createChatDetail(thread),
+    thread
+  }
 }
+
+test('Codex restart and ownership metadata refreshes preserve the last conversation activity time', async () => {
+  const seenUpdatedAt = 4000
+  for (let restart = 0; restart < 3; restart++) {
+    const fixture = coldFixture('codex', 'failed')
+    // Resuming an old chat touches thread metadata, but does not add another reply.
+    fixture.thread.updatedAt = 100 + restart
+    Object.assign(fixture.thread.turns.at(-1), { startedAt: 2, completedAt: 3 })
+    const [chat] = await enrich({ seenUpdatedAt })((await fixture.list()).chats)
+    assert.equal(chat.updatedAt, 3000)
+    assert.equal(fixture.open().updatedAt, chat.updatedAt)
+    assert.ok(chat.updatedAt <= chat.seenUpdatedAt)
+
+    fixture.thread.turns.at(-1).completedAt = 110 + restart
+    const [completed] = await enrich({ seenUpdatedAt })((await fixture.list()).chats)
+    assert.ok(completed.updatedAt > completed.seenUpdatedAt)
+    assert.equal(fixture.open().updatedAt, completed.updatedAt)
+  }
+})
 
 for (const provider of ['codex', 'claude', 'copilot', 'opencode']) {
   for (const outcome of ['failed', 'stopped', null]) {

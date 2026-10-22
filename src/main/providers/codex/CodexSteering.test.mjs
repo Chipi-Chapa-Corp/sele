@@ -320,3 +320,39 @@ for (const successor of [null, 'next-turn']) {
     assert.equal(adapter.getActiveTurnId('chat'), successor)
   })
 }
+
+test('steering accepted by Codex is no longer offered for editing', () => {
+  const pendingMethod = declaration.members.find(
+    (node) => node.name?.getText(source) === 'getProviderPendingMessages'
+  )
+  const adapter = vm.runInNewContext(
+    ts.transpile(`class Adapter { ${pendingMethod.getText(source)} }; new Adapter()`, {
+      target: ts.ScriptTarget.ES2022
+    }),
+    { collectUserInputAttachments: () => [], getMessageAttachments: () => [] }
+  )
+  Object.assign(adapter, {
+    queuedTurnsByThread: new Map([['chat', [{ id: 'queued', text: 'later', createdAt: 3 }]]]),
+    steeringMessagesByThread: new Map([
+      [
+        'chat',
+        [
+          { id: 'local', text: 'still local', status: 'waiting', createdAt: 1 },
+          { id: 'accepted', text: 'handed to Codex', status: 'pending', createdAt: 2 },
+          { id: 'done', text: 'consumed', status: 'sent', createdAt: 0 }
+        ]
+      ]
+    ]),
+    hiddenPendingMessageIdsByThread: new Map()
+  })
+  // The adapter runs in another realm; compare plain data.
+  const pending = JSON.parse(JSON.stringify(adapter.getProviderPendingMessages('chat')))
+  assert.deepEqual(
+    pending.map((message) => [message.id, message.editable !== false]),
+    [
+      ['local', true],
+      ['accepted', false],
+      ['queued', true]
+    ]
+  )
+})

@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { Sparkles } from 'lucide-react'
 import type {
   AppGitPullStrategy,
@@ -435,32 +436,43 @@ export function useGitSyncController(dependencies: GitSyncControllerDependencies
       'new'
     )
   }
-  const renderGitAiResolutionButton = (
-    onResolve: (permanentFix?: boolean) => Promise<void>,
-    placement: 'bottom' | 'top' = 'top'
-  ): React.ReactElement => (
-    <Button
-      title={`Ask ${providerLabels[configProviderId]} to resolve this Git error`}
-      disabled={gitAiResolutionDisabled || !effectiveAppSettings.git.errorResolutionPrompt.trim()}
-      callback={() => void onResolve()}
-      dropdownActions={[
-        {
-          id: 'ai-permanent-fix',
-          label: 'Permanent AI fix',
-          title: `Ask ${providerLabels[configProviderId]} to investigate and prefer a safe permanent fix when one exists`,
-          disabled:
-            gitAiResolutionDisabled ||
-            !effectiveAppSettings.git.permanentErrorResolutionPrompt.trim(),
-          callback: () => void onResolve(true)
-        }
-      ]}
-      dropdownLabel="AI resolution options"
-      dropdownMenuAlign="end"
-      dropdownPlacement={placement}
-      icon={<Sparkles aria-hidden="true" />}
-      label={<span>Resolve with AI</span>}
-      theme="secondary"
-    />
+  const errorResolutionPromptSet = Boolean(effectiveAppSettings.git.errorResolutionPrompt.trim())
+  const permanentErrorResolutionPromptSet = Boolean(
+    effectiveAppSettings.git.permanentErrorResolutionPrompt.trim()
+  )
+  // Memoized so the changes panels can skip renders that don't affect them.
+  const renderGitAiResolutionButton = useCallback(
+    (
+      onResolve: (permanentFix?: boolean) => Promise<void>,
+      placement: 'bottom' | 'top' = 'top'
+    ): React.ReactElement => (
+      <Button
+        title={`Ask ${providerLabels[configProviderId]} to resolve this Git error`}
+        disabled={gitAiResolutionDisabled || !errorResolutionPromptSet}
+        callback={() => void onResolve()}
+        dropdownActions={[
+          {
+            id: 'ai-permanent-fix',
+            label: 'Permanent AI fix',
+            title: `Ask ${providerLabels[configProviderId]} to investigate and prefer a safe permanent fix when one exists`,
+            disabled: gitAiResolutionDisabled || !permanentErrorResolutionPromptSet,
+            callback: () => void onResolve(true)
+          }
+        ]}
+        dropdownLabel="AI resolution options"
+        dropdownMenuAlign="end"
+        dropdownPlacement={placement}
+        icon={<Sparkles aria-hidden="true" />}
+        label={<span>Resolve with AI</span>}
+        theme="secondary"
+      />
+    ),
+    [
+      configProviderId,
+      errorResolutionPromptSet,
+      gitAiResolutionDisabled,
+      permanentErrorResolutionPromptSet
+    ]
   )
   const handleSolveUntrackedFiles = async (): Promise<void> => {
     if (!untrackedFilesHiddenForPerformance || untrackedFilesAiDisabled || !changesCwd) return

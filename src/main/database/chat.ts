@@ -3,6 +3,9 @@ import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderChatMetadata, ProviderChatPurpose } from '../../shared/provider'
 import { isContainerTool, normalizeContainerTarget } from '../containerTarget'
 import { getDatabase } from './sqlite'
+import { DatabaseReadCache } from './readCache'
+
+const metadataCache = new DatabaseReadCache<ProviderChatMetadata>()
 
 const chatMetadataChunkSize = 200
 
@@ -82,26 +85,28 @@ const uniqueChatIds = (chatIds: string[]): string[] =>
 
 export const getChatMetadata = async (chatId: string): Promise<ProviderChatMetadata> => {
   const db = await getDatabase()
-  const row = await db
-    .selectFrom('chat')
-    .select([
-      'id',
-      'container_tool',
-      'container_name',
-      'container_runtime_tool',
-      'container_runtime_name',
-      'no_project',
-      'pinned',
-      'pinned_order',
-      'done',
-      'done_at',
-      'seen_updated_at',
-      'purpose'
-    ])
-    .where('id', '=', chatId)
-    .executeTakeFirst()
+  return metadataCache.read(db, chatId, async () => {
+    const row = await db
+      .selectFrom('chat')
+      .select([
+        'id',
+        'container_tool',
+        'container_name',
+        'container_runtime_tool',
+        'container_runtime_name',
+        'no_project',
+        'pinned',
+        'pinned_order',
+        'done',
+        'done_at',
+        'seen_updated_at',
+        'purpose'
+      ])
+      .where('id', '=', chatId)
+      .executeTakeFirst()
 
-  return row ? mapChatMetadataRow(row) : getDefaultChatMetadata(chatId)
+    return row ? mapChatMetadataRow(row) : getDefaultChatMetadata(chatId)
+  })
 }
 
 export const getChatMetadataByIds = async (
@@ -171,6 +176,7 @@ export const setChatNoProject = async (chatId: string): Promise<ProviderChatMeta
     .values({ id: chatId, pinned: 0, done: 0, no_project: 1 })
     .onConflict((conflict) => conflict.column('id').doUpdateSet({ no_project: 1 }))
     .execute()
+  metadataCache.invalidate(chatId)
   return getChatMetadata(chatId)
 }
 
@@ -191,6 +197,7 @@ export const setChatDone = async (chatId: string, done = true): Promise<Provider
     )
     .execute()
 
+  metadataCache.invalidate(chatId)
   return getChatMetadata(chatId)
 }
 
@@ -212,6 +219,7 @@ export const setChatPinned = async (
     )
     .execute()
 
+  metadataCache.invalidate(chatId)
   return getChatMetadata(chatId)
 }
 
@@ -230,6 +238,7 @@ export const setChatOrder = async (chatIds: string[]): Promise<ProviderChatMetad
     }
   })
 
+  ids.forEach((id) => metadataCache.invalidate(id))
   const metadataById = await getChatMetadataByIds(ids)
   return ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
 }
@@ -251,6 +260,7 @@ export const setChatSeen = async (
     )
     .execute()
 
+  metadataCache.invalidate(chatId)
   return getChatMetadata(chatId)
 }
 
@@ -270,6 +280,7 @@ export const setChatPurpose = async (
     )
     .execute()
 
+  metadataCache.invalidate(chatId)
   return getChatMetadata(chatId)
 }
 
@@ -309,6 +320,7 @@ export const setChatContainer = async (
     )
     .execute()
 
+  metadataCache.invalidate(chatId)
   return getChatMetadata(chatId)
 }
 
@@ -339,8 +351,10 @@ export const setChatsDone = async (
         })
       )
       .execute()
+    chunk.forEach((id) => metadataCache.invalidate(id))
   }
 
+  ids.forEach((id) => metadataCache.invalidate(id))
   const metadataById = await getChatMetadataByIds(ids)
   return ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
 }

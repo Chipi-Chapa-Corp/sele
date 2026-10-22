@@ -7,14 +7,10 @@ import {
   findChangeByNewLineNumber,
   findChangeByOldLineNumber,
   getChangeKey,
-  markEdits,
-  parseDiff,
-  tokenize
+  parseDiff
 } from 'react-diff-view'
-import type { ChangeData, FileData, HunkData, HunkTokens } from 'react-diff-view'
-import { refractor } from 'refractor'
-import jsx from 'refractor/jsx'
-import tsx from 'refractor/tsx'
+import type { ChangeData, FileData } from 'react-diff-view'
+import { getConfiguredLanguage, getRenderedDiffFiles, toUnifiedDiff } from '../unifiedDiffRendering'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { toCssRem } from '../cssUnits'
@@ -23,64 +19,6 @@ import { Button } from './Button'
 import { Input } from './Input'
 import 'react-diff-view/style/index.css'
 import './UnifiedDiff.css'
-
-if (!refractor.registered('jsx')) refractor.register(jsx)
-if (!refractor.registered('tsx')) refractor.register(tsx)
-
-const languageByExtension: Record<string, string> = {
-  bash: 'bash',
-  c: 'c',
-  cc: 'cpp',
-  cjs: 'javascript',
-  cpp: 'cpp',
-  cs: 'csharp',
-  css: 'css',
-  cts: 'typescript',
-  go: 'go',
-  h: 'c',
-  hpp: 'cpp',
-  htm: 'markup',
-  html: 'markup',
-  ini: 'ini',
-  java: 'java',
-  js: 'javascript',
-  json: 'json',
-  jsonc: 'json',
-  jsx: 'jsx',
-  kt: 'kotlin',
-  less: 'less',
-  lua: 'lua',
-  md: 'markdown',
-  mdx: 'markdown',
-  mjs: 'javascript',
-  mts: 'typescript',
-  php: 'php',
-  pl: 'perl',
-  py: 'python',
-  r: 'r',
-  rb: 'ruby',
-  rs: 'rust',
-  sass: 'sass',
-  scss: 'scss',
-  sh: 'bash',
-  sql: 'sql',
-  svg: 'markup',
-  swift: 'swift',
-  ts: 'typescript',
-  tsx: 'tsx',
-  txt: 'plain',
-  vb: 'vbnet',
-  xml: 'markup',
-  yaml: 'yaml',
-  yml: 'yaml',
-  zsh: 'bash'
-}
-
-const languageByFileName: Record<string, string> = {
-  '.bashrc': 'bash',
-  '.zshrc': 'bash',
-  makefile: 'makefile'
-}
 
 const maxStructuredDiffLength = 200_000
 const maxStructuredDiffLines = 4_000
@@ -100,22 +38,6 @@ const hasMoreThanLines = (value: string, maxLines: number): boolean => {
   }
 
   return false
-}
-
-const refractorAdapter = {
-  // react-diff-view expects the pre-refractor@4 array result rather than a HAST root.
-  highlight: (value: string, language: string) => refractor.highlight(value, language).children
-}
-
-const getConfiguredLanguage = (path: string): string | null => {
-  const fileName = path.split(/[\\/]/).at(-1)?.toLocaleLowerCase() ?? ''
-  const extension = fileName.includes('.') ? (fileName.split('.').at(-1) ?? '') : ''
-  return languageByFileName[fileName] ?? languageByExtension[extension] ?? null
-}
-
-const getLanguage = (path: string): string | null => {
-  const language = getConfiguredLanguage(path)
-  return language && refractor.registered(language) ? language : null
 }
 
 const monacoLanguageAliases: Record<string, string> = {
@@ -297,92 +219,6 @@ const pasteIntoEditor = async (editor: monaco.editor.IStandaloneCodeEditor): Pro
 }
 
 let editableDiffInstanceId = 0
-
-const getSyntheticHeader = (kind: ProviderFileDiff['kind']): string => {
-  const paths =
-    kind === 'create'
-      ? '--- /dev/null\n+++ b/file'
-      : kind === 'delete'
-        ? '--- a/file\n+++ /dev/null'
-        : '--- a/file\n+++ b/file'
-
-  return `diff --git a/file b/file\n${paths}\n`
-}
-
-const getContentLines = (content: string): { lines: string[]; endsWithNewLine: boolean } => {
-  const normalized = content.replace(/\r\n?/g, '\n')
-  const endsWithNewLine = normalized.endsWith('\n')
-  const lines = normalized ? normalized.split('\n') : []
-
-  if (endsWithNewLine) lines.pop()
-  return { lines, endsWithNewLine }
-}
-
-const contentToDiff = (content: string, kind: 'create' | 'delete'): string => {
-  const { lines, endsWithNewLine } = getContentLines(content)
-  if (lines.length === 0) return ''
-
-  const marker = kind === 'create' ? '+' : '-'
-  const range = kind === 'create' ? `-0,0 +1,${lines.length}` : `-1,${lines.length} +0,0`
-  const noNewLineMarker = endsWithNewLine ? '' : '\n\\ No newline at end of file'
-
-  return `@@ ${range} @@\n${lines.map((line) => `${marker}${line}`).join('\n')}${noNewLineMarker}\n`
-}
-
-const toUnifiedDiff = ({ diff, kind }: ProviderFileDiff): string => {
-  const normalized = diff.replace(/\r\n?/g, '\n')
-  // jsdiff's createPatch (used by OpenCode) prefixes the patch with an
-  // "Index: <path>" line and a "====" separator before the ---/+++ headers.
-  const trimmed = normalized.trimStart().replace(/^Index: [^\n]*\n(?:=+\n)?/, '')
-
-  if (trimmed.startsWith('diff --git ')) return trimmed
-  if (trimmed.startsWith('--- ')) return `diff --git a/file b/file\n${trimmed}`
-  if (trimmed.startsWith('@@ ')) return `${getSyntheticHeader(kind)}${trimmed}`
-  if (kind === 'create' || kind === 'delete') {
-    return `${getSyntheticHeader(kind)}${contentToDiff(normalized, kind)}`
-  }
-
-  return ''
-}
-
-const getTokens = (hunks: HunkData[], language: string | null): HunkTokens | null => {
-  try {
-    const enhancers = [markEdits(hunks)]
-
-    if (!language) return tokenize(hunks, { enhancers })
-
-    return tokenize(hunks, {
-      highlight: true,
-      refractor: refractorAdapter,
-      language,
-      enhancers
-    })
-  } catch (error) {
-    console.error('[caught:UnifiedDiff:getTokens]', error)
-    return null
-  }
-}
-
-const getRenderedFiles = (
-  fileDiff: ProviderFileDiff
-): Array<{ file: FileData; tokens: HunkTokens | null }> => {
-  const unifiedDiff = toUnifiedDiff(fileDiff)
-  if (!unifiedDiff) return []
-
-  try {
-    const language = getLanguage(fileDiff.path)
-
-    return parseDiff(unifiedDiff)
-      .filter((file) => file.hunks.length > 0)
-      .map((file) => ({
-        file,
-        tokens: getTokens(file.hunks, language)
-      }))
-  } catch (error) {
-    console.error('[caught:UnifiedDiff:getRenderedFiles]', error)
-    return []
-  }
-}
 
 const getOriginalContents = (fileDiff: ProviderFileDiff, currentContents: string): string => {
   const unifiedDiff = toUnifiedDiff(fileDiff)
@@ -1212,7 +1048,7 @@ export const UnifiedDiff = ({
     [fileDiff.diff]
   )
   const files = useMemo(
-    () => (renderStructuredDiff ? getRenderedFiles(fileDiff) : []),
+    () => (renderStructuredDiff ? getRenderedDiffFiles(fileDiff) : []),
     [fileDiff, renderStructuredDiff]
   )
   const reviewGroups = useMemo(() => groupReviewComments(comments), [comments])

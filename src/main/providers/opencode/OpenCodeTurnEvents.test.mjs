@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
-import { parseOpenCodeSessionEvent } from './OpenCodeEvents.ts'
+import {
+  applyOpenCodeMessageEvent,
+  parseOpenCodeSessionEvent,
+  reconcileOpenCodeMessageSnapshot
+} from './OpenCodeEvents.ts'
 
 const source = ts.createSourceFile(
   'adapter.ts',
@@ -26,6 +30,8 @@ const fixture = () => {
   const context = vm.createContext({
     console: { ...console, error() {} },
     parseOpenCodeSessionEvent,
+    applyOpenCodeMessageEvent,
+    reconcileOpenCodeMessageSnapshot,
     getContainerTargetKey: () => 'host',
     isRecord: (value) => !!value && typeof value === 'object' && !Array.isArray(value),
     isOneShotSession: () => false,
@@ -36,6 +42,8 @@ const fixture = () => {
   // A turn Sele just sent: active until OpenCode reports otherwise.
   const state = {
     id: 'chat',
+    messages: [],
+    eventRevision: 0,
     directory: '/project',
     container: null,
     active: true,
@@ -142,4 +150,26 @@ test('a new reply in progress still resumes a failed turn', () => {
   assert.equal(state.active, true)
   assert.equal(state.failed, false)
   assert.equal(state.failureMessage, null)
+})
+
+test('the real event handler updates cached parts and completion before idle', () => {
+  const { state, send } = fixture()
+  send('message.updated', reply())
+  send('message.part.updated', {
+    part: { id: 'part', messageID: 'msg', type: 'text', text: 'Final' }
+  })
+  send('message.part.delta', { messageID: 'msg', partID: 'part', field: 'text', delta: ' answer' })
+  send('message.updated', reply({ finish: 'stop', time: { created: 1, completed: 2 } }))
+  send('session.idle')
+  assert.equal(state.active, false)
+  assert.equal(state.messages[0].info.finish, 'stop')
+  assert.equal(state.messages[0].parts[0].text, 'Final answer')
+  assert.equal(Boolean(state.messagesDirty), false)
+})
+
+test('a hidden compaction summary cannot restart a completed turn', () => {
+  const { state, send } = fixture()
+  send('session.idle')
+  send('message.updated', reply({ id: 'summary', summary: true }))
+  assert.equal(state.active, false)
 })

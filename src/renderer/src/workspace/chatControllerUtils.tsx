@@ -26,6 +26,7 @@ import type {
 
 import { getProviderChatTurns } from '../../../shared/chatTurns'
 import { markChatItemsChanged } from '../chatConversationModel'
+import { mergeSeenUpdatedAt } from '../chatMetadata'
 
 import { type ChatListGroupData } from '../components/ChatListGroup'
 
@@ -346,12 +347,12 @@ export const getChatFromDetail = (
   worktreeBaseBranchName:
     detail.worktreeBaseBranchName ?? existingChat?.worktreeBaseBranchName ?? null,
   createdAt: detail.createdAt,
-  updatedAt,
+  updatedAt: detail.updatedAt ?? updatedAt,
   status: detail.status,
   lastTurnOutcome:
     detail.lastTurnOutcome === undefined ? existingChat?.lastTurnOutcome : detail.lastTurnOutcome,
   pendingApproval: detail.pendingApproval,
-  seenUpdatedAt: detail.seenUpdatedAt ?? existingChat?.seenUpdatedAt ?? null,
+  seenUpdatedAt: mergeSeenUpdatedAt(existingChat?.seenUpdatedAt, detail.seenUpdatedAt),
   pinned: detail.pinned ?? existingChat?.pinned ?? false,
   sidebarOrder: detail.sidebarOrder ?? existingChat?.sidebarOrder ?? null,
   done: detail.done ?? existingChat?.done ?? false,

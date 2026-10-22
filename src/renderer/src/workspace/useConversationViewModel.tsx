@@ -290,6 +290,14 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   ])
   useEffect(() => {
     if (!recentChatReferenceSourceIncludesLatest || !selectedChatKey) return
+    // Already cached. Even an unchanged set rerenders the whole workspace while a
+    // chat switch transition is pending.
+    if (
+      recentChatReferencesCache?.chatKey === selectedChatKey &&
+      recentChatReferencesCache.references === extractedRecentChatReferences
+    ) {
+      return
+    }
 
     let active = true
     queueMicrotask(() => {
@@ -429,6 +437,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       ) {
         return
       }
+      if (currentDetail?.historyPreview && direction !== 'latest') return
 
       const cursorPagination = currentDetail?.id === chat.id ? currentDetail.turnPagination : null
       if (

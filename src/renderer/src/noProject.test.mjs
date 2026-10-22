@@ -4,6 +4,7 @@ import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../shared/noProject.ts'
+import { mergeChatMetadata, mergeSeenUpdatedAt } from './chatMetadata.ts'
 import {
   sortChatsForSidebarSection,
   sortDoneChats,
@@ -156,6 +157,7 @@ test('a saved No Project choice hides project controls for a HOME-backed chat', 
 test('detail, live summaries and metadata changes preserve the saved No Project flag', () => {
   const context = vm.createContext({
     getChatPreview: () => '',
+    mergeSeenUpdatedAt,
     arePendingApprovalsEqual: (a, b) => a === b,
     areContainerTargetsEqual: (a, b) => a === b
   })
@@ -172,6 +174,5 @@ test('detail, live summaries and metadata changes preserve the saved No Project 
   const summaryChat = fromSummary('opencode', { ...detailChat, updatedAt: 3 }, detailChat, false)
   assert.equal(summaryChat.noProject, true)
   assert.equal(areEqual(summaryChat, { ...summaryChat, noProject: false }), false)
-  const merge = expression(source('./chatMetadata.ts'), 'mergeChatMetadata', context)
-  assert.equal(merge(detailChat, { ...detailChat, pinned: true }).noProject, true)
+  assert.equal(mergeChatMetadata(detailChat, { ...detailChat, pinned: true }).noProject, true)
 })

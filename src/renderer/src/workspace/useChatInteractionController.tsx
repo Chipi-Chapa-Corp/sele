@@ -17,6 +17,190 @@ import {
 } from './chatControllerUtils'
 import { allDoneProjectsValue } from './controllerTypes'
 import type { ChatInteractionControllerDependencies } from './featureControllerDependencies'
+import { useLatestHandler, useShallowStable } from './stableProps'
+
+type Dependencies = ChatInteractionControllerDependencies
+
+type ChatGroupRenderInputs = Pick<
+  Dependencies,
+  | 'searchTerms'
+  | 'collapsedCwdGroups'
+  | 'visibleChatPageCountsByGroup'
+  | 'activeChatGroups'
+  | 'chatGroupingPreference'
+  | 'projectDropInsertionIndex'
+  | 'doneProjectFilterValue'
+  | 'handleDoneProjectFilterChange'
+  | 'projectOptions'
+  | 'committingChatKeys'
+  | 'latestCommitFinishedAtByChatKey'
+  | 'draggedProjectGroupKey'
+  | 'projectNamesByCwd'
+  | 'resolvingApprovalId'
+> & {
+  chatPageSize: number
+  selectedChatKey: string | null
+  projectIconsByCwd: Map<string, React.ReactElement>
+  sidebarActions: SidebarActions
+}
+
+type SidebarActions = {
+  [Name in
+    | 'onLoadMoreChats'
+    | 'onShowLessChats'
+    | 'onMarkChatDone'
+    | 'onProjectDragEnd'
+    | 'onProjectDragStart'
+    | 'onMarkCwdChatsDone'
+    | 'onNewChatInCwd'
+    | 'onRenameChat'
+    | 'onSelectProjectIcon'
+    | 'onResolveApproval'
+    | 'onReorderChats'
+    | 'onSelectChat'
+    | 'onToggle'
+    | 'onToggleChatPinned'
+    | 'onUnpinPinnedChats']: NonNullable<React.ComponentProps<typeof AnimatedChatListGroup>[Name]>
+}
+
+// Module scope keeps this pure: everything it shows comes from `inputs`, so the
+// memoized sidebar rerenders exactly when one of those inputs changes.
+const renderChatListGroup = (
+  inputs: ChatGroupRenderInputs,
+  group: ChatListGroupData,
+  contentId: string,
+  selectedChatChildren: React.ReactNode = null,
+  selectedChatChildOpen = false,
+  workingSubagentChatKeys?: ReadonlySet<string>,
+  layoutOrder?: string
+): React.ReactElement => {
+  const {
+    searchTerms,
+    collapsedCwdGroups,
+    chatPageSize,
+    visibleChatPageCountsByGroup,
+    activeChatGroups,
+    chatGroupingPreference,
+    projectDropInsertionIndex,
+    doneProjectFilterValue,
+    handleDoneProjectFilterChange,
+    projectOptions,
+    selectedChatKey,
+    committingChatKeys,
+    latestCommitFinishedAtByChatKey,
+    draggedProjectGroupKey,
+    projectNamesByCwd,
+    projectIconsByCwd,
+    sidebarActions,
+    resolvingApprovalId
+  } = inputs
+  const groupOpen = searchTerms.length > 0 || !getCollapsedGroupState(group.key, collapsedCwdGroups)
+  const visibleChatCount =
+    group.kind === 'pinned'
+      ? group.chats.length
+      : (visibleChatPageCountsByGroup[group.key] ?? 1) * chatPageSize
+  const projectGroupIndex = activeChatGroups.findIndex((candidate) => candidate.key === group.key)
+  const projectDraggable =
+    group.kind === 'cwd' &&
+    chatGroupingPreference === 'grouped' &&
+    searchTerms.length === 0 &&
+    projectGroupIndex >= 0
+  const projectDropPosition =
+    projectDraggable && projectDropInsertionIndex === projectGroupIndex
+      ? 'before'
+      : projectDraggable &&
+          projectGroupIndex === activeChatGroups.length - 1 &&
+          projectDropInsertionIndex === activeChatGroups.length
+        ? 'after'
+        : null
+  const doneProjectFilter =
+    group.kind === 'done' && groupOpen ? (
+      <span className="chat-list-group__done-filter">
+        <Dropdown
+          fill
+          emptyContent="No matching projects"
+          icon={
+            doneProjectFilterValue === allDoneProjectsValue ? (
+              <FolderTree aria-hidden="true" />
+            ) : undefined
+          }
+          menuActions={[
+            {
+              id: 'all-projects',
+              label: 'All projects',
+              icon: <FolderTree aria-hidden="true" />,
+              callback: () => handleDoneProjectFilterChange(allDoneProjectsValue)
+            }
+          ]}
+          options={projectOptions}
+          placement="top"
+          searchable
+          searchPlaceholder="Search projects"
+          size="small"
+          value={doneProjectFilterValue}
+          valueLabel={doneProjectFilterValue === allDoneProjectsValue ? 'All projects' : undefined}
+          aria-label="Filter done chats by project"
+          onChange={handleDoneProjectFilterChange}
+        />
+      </span>
+    ) : null
+  const doneProjectFilterEmptyContent =
+    group.kind !== 'done' || group.chats.length > 0 ? null : (
+      <p className="chat-list-group__empty">
+        {searchTerms.length > 0
+          ? 'No matching done chats in this project.'
+          : 'No done chats in this project.'}
+      </p>
+    )
+
+  return (
+    <AnimatedChatListGroup
+      layoutOrder={layoutOrder}
+      contentId={contentId}
+      group={group}
+      key={group.key}
+      open={groupOpen}
+      selectedChatKey={
+        selectedChatKey && group.chats.some((chat) => getChatKey(chat) === selectedChatKey)
+          ? selectedChatKey
+          : null
+      }
+      workingSubagentChatKeys={workingSubagentChatKeys}
+      committingChatKeys={committingChatKeys}
+      latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
+      canReorderChats={group.kind !== 'done' && searchTerms.length === 0}
+      projectDraggable={projectDraggable}
+      projectDragging={group.key === draggedProjectGroupKey}
+      projectDropPosition={projectDropPosition}
+      visibleChatCount={visibleChatCount}
+      chatPageSize={chatPageSize}
+      deferItems={group.kind === 'done'}
+      emptyContent={doneProjectFilterEmptyContent}
+      headerAction={doneProjectFilter}
+      projectNamesByCwd={projectNamesByCwd}
+      projectIconsByCwd={projectIconsByCwd}
+      onLoadMoreChats={group.kind === 'pinned' ? undefined : sidebarActions.onLoadMoreChats}
+      onShowLessChats={group.kind === 'pinned' ? undefined : sidebarActions.onShowLessChats}
+      projectIcon={projectIconsByCwd.get(group.cwd ?? '')}
+      onMarkChatDone={sidebarActions.onMarkChatDone}
+      onProjectDragEnd={projectDraggable ? sidebarActions.onProjectDragEnd : undefined}
+      onProjectDragStart={projectDraggable ? sidebarActions.onProjectDragStart : undefined}
+      onMarkCwdChatsDone={sidebarActions.onMarkCwdChatsDone}
+      onNewChatInCwd={sidebarActions.onNewChatInCwd}
+      onRenameChat={sidebarActions.onRenameChat}
+      onSelectProjectIcon={sidebarActions.onSelectProjectIcon}
+      onResolveApproval={sidebarActions.onResolveApproval}
+      onReorderChats={sidebarActions.onReorderChats}
+      onSelectChat={sidebarActions.onSelectChat}
+      onToggle={sidebarActions.onToggle}
+      onToggleChatPinned={sidebarActions.onToggleChatPinned}
+      onUnpinPinnedChats={sidebarActions.onUnpinPinnedChats}
+      resolvingApprovalId={resolvingApprovalId}
+      selectedChatChildren={selectedChatChildren}
+      selectedChatChildOpen={selectedChatChildOpen}
+    />
+  )
+}
 
 // Return shape is inferred from the controller declarations below.
 export function useChatInteractionController(dependencies: ChatInteractionControllerDependencies) {
@@ -256,125 +440,48 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       chatUserScrollIntentRef.current = false
     })
   }
-  const renderChatGroup = (
-    group: ChatListGroupData,
-    contentId: string,
-    selectedChatChildren: React.ReactNode = null,
-    selectedChatChildOpen = false,
-    workingSubagentChatKeys?: ReadonlySet<string>,
-    layoutOrder?: string
-  ): React.ReactElement => {
-    const groupOpen =
-      searchTerms.length > 0 || !getCollapsedGroupState(group.key, collapsedCwdGroups)
-    const chatPageSize = effectiveAppSettings.performance.maxChatsRendered
-    const visibleChatCount =
-      group.kind === 'pinned'
-        ? group.chats.length
-        : (visibleChatPageCountsByGroup[group.key] ?? 1) * chatPageSize
-    const projectGroupIndex = activeChatGroups.findIndex((candidate) => candidate.key === group.key)
-    const projectDraggable =
-      group.kind === 'cwd' &&
-      chatGroupingPreference === 'grouped' &&
-      searchTerms.length === 0 &&
-      projectGroupIndex >= 0
-    const projectDropPosition =
-      projectDraggable && projectDropInsertionIndex === projectGroupIndex
-        ? 'before'
-        : projectDraggable &&
-            projectGroupIndex === activeChatGroups.length - 1 &&
-            projectDropInsertionIndex === activeChatGroups.length
-          ? 'after'
-          : null
-    const doneProjectFilter =
-      group.kind === 'done' && groupOpen ? (
-        <span className="chat-list-group__done-filter">
-          <Dropdown
-            fill
-            emptyContent="No matching projects"
-            icon={
-              doneProjectFilterValue === allDoneProjectsValue ? (
-                <FolderTree aria-hidden="true" />
-              ) : undefined
-            }
-            menuActions={[
-              {
-                id: 'all-projects',
-                label: 'All projects',
-                icon: <FolderTree aria-hidden="true" />,
-                callback: () => handleDoneProjectFilterChange(allDoneProjectsValue)
-              }
-            ]}
-            options={projectOptions}
-            placement="top"
-            searchable
-            searchPlaceholder="Search projects"
-            size="small"
-            value={doneProjectFilterValue}
-            valueLabel={
-              doneProjectFilterValue === allDoneProjectsValue ? 'All projects' : undefined
-            }
-            aria-label="Filter done chats by project"
-            onChange={handleDoneProjectFilterChange}
-          />
-        </span>
-      ) : null
-    const doneProjectFilterEmptyContent =
-      group.kind !== 'done' || group.chats.length > 0 ? null : (
-        <p className="chat-list-group__empty">
-          {searchTerms.length > 0
-            ? 'No matching done chats in this project.'
-            : 'No done chats in this project.'}
-        </p>
-      )
-
-    return (
-      <AnimatedChatListGroup
-        layoutOrder={layoutOrder}
-        contentId={contentId}
-        group={group}
-        key={group.key}
-        open={groupOpen}
-        selectedChatKey={
-          selectedChat && group.chats.some((chat) => getChatKey(chat) === getChatKey(selectedChat))
-            ? getChatKey(selectedChat)
-            : null
-        }
-        workingSubagentChatKeys={workingSubagentChatKeys}
-        committingChatKeys={committingChatKeys}
-        latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
-        canReorderChats={group.kind !== 'done' && searchTerms.length === 0}
-        projectDraggable={projectDraggable}
-        projectDragging={group.key === draggedProjectGroupKey}
-        projectDropPosition={projectDropPosition}
-        visibleChatCount={visibleChatCount}
-        chatPageSize={chatPageSize}
-        deferItems={group.kind === 'done'}
-        emptyContent={doneProjectFilterEmptyContent}
-        headerAction={doneProjectFilter}
-        projectNamesByCwd={projectNamesByCwd}
-        projectIconsByCwd={projectIconsByCwd}
-        onLoadMoreChats={group.kind === 'pinned' ? undefined : sidebarActions.onLoadMoreChats}
-        onShowLessChats={group.kind === 'pinned' ? undefined : sidebarActions.onShowLessChats}
-        projectIcon={projectIconsByCwd.get(group.cwd ?? '')}
-        onMarkChatDone={sidebarActions.onMarkChatDone}
-        onProjectDragEnd={projectDraggable ? sidebarActions.onProjectDragEnd : undefined}
-        onProjectDragStart={projectDraggable ? sidebarActions.onProjectDragStart : undefined}
-        onMarkCwdChatsDone={sidebarActions.onMarkCwdChatsDone}
-        onNewChatInCwd={sidebarActions.onNewChatInCwd}
-        onRenameChat={sidebarActions.onRenameChat}
-        onSelectProjectIcon={sidebarActions.onSelectProjectIcon}
-        onResolveApproval={sidebarActions.onResolveApproval}
-        onReorderChats={sidebarActions.onReorderChats}
-        onSelectChat={sidebarActions.onSelectChat}
-        onToggle={sidebarActions.onToggle}
-        onToggleChatPinned={sidebarActions.onToggleChatPinned}
-        onUnpinPinnedChats={sidebarActions.onUnpinPinnedChats}
-        resolvingApprovalId={resolvingApprovalId}
-        selectedChatChildren={selectedChatChildren}
-        selectedChatChildOpen={selectedChatChildOpen}
-      />
-    )
-  }
+  const selectedChatKey = selectedChat ? getChatKey(selectedChat) : null
+  const doneProjectFilterChange = useLatestHandler(handleDoneProjectFilterChange)
+  const chatGroupRenderInputs = useShallowStable<ChatGroupRenderInputs>({
+    searchTerms,
+    collapsedCwdGroups,
+    chatPageSize: effectiveAppSettings.performance.maxChatsRendered,
+    visibleChatPageCountsByGroup,
+    activeChatGroups,
+    chatGroupingPreference,
+    projectDropInsertionIndex,
+    doneProjectFilterValue,
+    handleDoneProjectFilterChange: doneProjectFilterChange,
+    projectOptions,
+    selectedChatKey,
+    committingChatKeys,
+    latestCommitFinishedAtByChatKey,
+    draggedProjectGroupKey,
+    projectNamesByCwd,
+    projectIconsByCwd,
+    sidebarActions,
+    resolvingApprovalId
+  })
+  const renderChatGroup = useCallback(
+    (
+      group: ChatListGroupData,
+      contentId: string,
+      selectedChatChildren: React.ReactNode = null,
+      selectedChatChildOpen = false,
+      workingSubagentChatKeys?: ReadonlySet<string>,
+      layoutOrder?: string
+    ): React.ReactElement =>
+      renderChatListGroup(
+        chatGroupRenderInputs,
+        group,
+        contentId,
+        selectedChatChildren,
+        selectedChatChildOpen,
+        workingSubagentChatKeys,
+        layoutOrder
+      ),
+    [chatGroupRenderInputs]
+  )
   const chatHasActiveTurn = isActiveChatStatus(chatDetail?.status)
   const chatHasPendingSteeringMessage = hasPendingSteeringMessage(chatDetail)
   const chatIsBusy =
@@ -383,6 +490,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     async (message: ProviderMessage): Promise<void> => {
       if (
         message.role !== 'assistant' ||
+        chatDetail?.historyPreview ||
         !selectedChat ||
         chatHasActiveTurn ||
         providerUpdateInProgress ||
@@ -413,6 +521,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     [
       applyViewedChatDetail,
       chatHasActiveTurn,
+      chatDetail?.historyPreview,
       handleSendFailure,
       providerUpdateInProgress,
       selectedChat

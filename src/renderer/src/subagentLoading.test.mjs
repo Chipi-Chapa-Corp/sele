@@ -28,7 +28,9 @@ const setup = (api, items, detailFields = {}, dependencies = {}) => {
     exports: module.exports,
     window: { requestAnimationFrame: (callback) => callback() },
     require: (name) => {
-      if (name === 'react') return { useRef: (current) => ({ current }), useLayoutEffect() {} }
+      if (name === 'react')
+        return { useCallback: (fn) => fn, useRef: (current) => ({ current }), useLayoutEffect() {} }
+      if (name === './stableProps') return { useLatestHandler: (handler) => handler }
       if (name === '../providerApi') return { providerApi: api }
       if (name === '../chatDetailWindow') return merges
       if (name === '../subagentUi') return { beginSubagentPageNavigation, getWorkingSubagentIds }

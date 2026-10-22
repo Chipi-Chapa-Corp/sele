@@ -236,3 +236,38 @@ test('presents OpenCode tools by their operation and preserves unknown tool name
   const unloaded = unloadWorkingItemPayload(group)
   assert.deepEqual(unloaded.otherToolLabels, group.otherToolLabels)
 })
+
+test('a completed answer stays outside Worked when reasoning arrives after its text', () => {
+  const messages = [
+    {
+      info: {
+        id: 'assistant',
+        role: 'assistant',
+        finish: 'stop',
+        time: { created: 1000, completed: 2000 }
+      },
+      parts: [
+        { type: 'text', id: 'answer', text: 'The final answer.' },
+        {
+          type: 'reasoning',
+          id: 'reasoning',
+          text: 'Trailing reasoning',
+          time: { start: 1000, end: 2000 }
+        }
+      ]
+    }
+  ]
+  const items = renderOpenCodeChatItems(messages, { active: false, stopped: false })
+  assert.equal(items[0].type, 'working')
+  assert.deepEqual(
+    items[0].items.map((item) => item.id),
+    ['reasoning']
+  )
+  assert.equal(items.at(-1).role, 'assistant')
+  assert.equal(items.at(-1).content, 'The final answer.')
+  // Text before a tool loop remains progress, even if the step has completed.
+  messages[0].info.finish = 'tool-calls'
+  const toolStep = renderOpenCodeChatItems(messages, { active: true, stopped: false })
+  assert.equal(toolStep.length, 1)
+  assert.equal(toolStep[0].status, 'working')
+})

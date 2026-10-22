@@ -11,8 +11,14 @@ import {
   selectionsEqual
 } from './chatModelPreferences'
 import { useSidebarSearch } from './workspace/useSidebarSearch'
+import { useLatestHandler, useShallowStable } from './workspace/stableProps'
 import {
-  Fragment,
+  renderRootChatTurn,
+  renderSubagentChatTurn as renderSubagentTurn,
+  type RootChatTurnInputs,
+  type SubagentChatTurnInputs
+} from './workspace/chatTurnRendering'
+import {
   startTransition,
   useCallback,
   useEffect,
@@ -89,8 +95,6 @@ import {
   fallbackProviderSandboxModes,
   providerIds
 } from '../../shared/provider'
-import { ChatDetailItem } from './components/ChatDetailItem'
-import { getWorkingStepProgressPolicy } from './workingStepDisclosure'
 import type { AccountAuthorizationSession } from './components/AccountDialog'
 import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
@@ -125,7 +129,9 @@ import { browserApi } from './browserApi'
 import {
   getComparableChatPreview,
   isViewedChatCompletion,
+  mapPreservingIdentity,
   mergeChatMetadata,
+  mergeSeenUpdatedAt,
   type ComparableChatPreview
 } from './chatMetadata'
 import {
@@ -444,7 +450,16 @@ export const useWorkspaceController = () => {
   const [chatTurnWindow, setChatTurnWindow] = useState<ChatTurnWindow | null>(null)
   const [chatTurnPageLoadDirection, setChatTurnPageLoadDirection] =
     useState<ChatTurnPageLoadDirection | null>(null)
-  const [chatAtConversationBottom, setChatAtConversationBottom] = useState(true)
+  const [chatAtConversationBottom, setChatAtConversationBottomState] = useState(true)
+  // Scroll events report this on every scroll, including each turn mounted while
+  // a chat opens. An unchanged set during a pending transition still rerenders the
+  // whole workspace, so only forward real changes. The ref holds the latest request.
+  const setChatAtConversationBottom = useCallback((value: React.SetStateAction<boolean>): void => {
+    const next = typeof value === 'function' ? value(chatAtConversationBottomRef.current) : value
+    if (next === chatAtConversationBottomRef.current) return
+    chatAtConversationBottomRef.current = next
+    setChatAtConversationBottomState(next)
+  }, [])
   const [extractedChatPlan, setExtractedChatPlan] = useState<ChatPlanData | null>(null)
   const [chatLoadState, setChatLoadState] = useState<LoadState>('ready')
   const [chatLoadRequest, setChatLoadRequest] = useState(0)
@@ -917,10 +932,6 @@ export const useWorkspaceController = () => {
   const lastOpenedFileTreeFolderByCwdRef = useRef(new Map<string, string>())
   const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
 
-  useLayoutEffect(() => {
-    chatAtConversationBottomRef.current = chatAtConversationBottom
-  }, [chatAtConversationBottom])
-
   const flushDeferredProviderResourceRefreshes = useCallback(async (): Promise<void> => {
     if (deferredProviderResourceRefreshRunningRef.current) return
     deferredProviderResourceRefreshRunningRef.current = true
@@ -961,10 +972,8 @@ export const useWorkspaceController = () => {
 
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
     alignChatContentToBottom(contentElement)
-    if (!chatAtConversationBottomRef.current) {
-      chatAtConversationBottomRef.current = true
-      setChatAtConversationBottom(true)
-    }
+    // Skips the update itself when already at the bottom.
+    setChatAtConversationBottom(true)
     chatAutoScrollTargetRef.current = {
       element: contentElement,
       top: contentElement.scrollTop
@@ -1454,12 +1463,23 @@ export const useWorkspaceController = () => {
       if (preferencesChanged) {
         writeStoredChatMessageBoxSelections(chatMessageBoxSelectionsRef.current)
       }
-      setAgentMode(restoredSelection.agentMode)
-      setApprovalMode(restoredSelection.approvalMode)
-      setSandboxMode(restoredSelection.sandboxMode)
-      setModel(restoredSelection.model)
-      setReasoningEffort(restoredSelection.reasoningEffort)
-      setServiceTier(restoredSelection.serviceTier)
+      // This layout effect runs while a chat switch still has a transition pending,
+      // so React can't skip even unchanged values: any call forces another full
+      // workspace render before the first paint. Only set what actually changes.
+      if (restoredSelection.agentMode !== agentMode) setAgentMode(restoredSelection.agentMode)
+      if (restoredSelection.approvalMode !== approvalMode) {
+        setApprovalMode(restoredSelection.approvalMode)
+      }
+      if (restoredSelection.sandboxMode !== sandboxMode) {
+        setSandboxMode(restoredSelection.sandboxMode)
+      }
+      if (restoredSelection.model !== model) setModel(restoredSelection.model)
+      if (restoredSelection.reasoningEffort !== reasoningEffort) {
+        setReasoningEffort(restoredSelection.reasoningEffort)
+      }
+      if (restoredSelection.serviceTier !== serviceTier) {
+        setServiceTier(restoredSelection.serviceTier)
+      }
       return
     }
 
@@ -1900,6 +1920,7 @@ export const useWorkspaceController = () => {
     }
   }, [newSessionAvailableProviderIds, newSessionProviderAvailable])
 
+  const hasSelectedChat = Boolean(selectedChat)
   useEffect(() => {
     const queueProviderUpdateClear = (): void => {
       queueMicrotask(() => {
@@ -1908,7 +1929,7 @@ export const useWorkspaceController = () => {
       })
     }
 
-    if (selectedChat || !newChatOpen || !newSessionProviderAvailable) {
+    if (hasSelectedChat || !newChatOpen || !newSessionProviderAvailable) {
       queueProviderUpdateClear()
       return undefined
     }
@@ -1958,7 +1979,10 @@ export const useWorkspaceController = () => {
     newSessionProvider,
     newSessionProviderAvailable,
     providerUpdatePreferences,
-    selectedChat
+    // Only whether a chat is open matters. Depending on the chat object reran
+    // this on every seen or metadata update, and its microtask reset rerendered
+    // the workspace; while a transition was pending that could repeat without end.
+    hasSelectedChat
   ])
 
   useEffect(() => {
@@ -2606,6 +2630,7 @@ export const useWorkspaceController = () => {
         cache.delete(cacheKey)
         return
       }
+      if (detail.historyPreview) return
       if (!force && selectedChatKeyRef.current !== cacheKey && !cache.has(cacheKey)) return
       const cachedDetail = cache.get(cacheKey)?.detail
       if (cachedDetail && detail.revision <= cachedDetail.revision) return
@@ -2646,7 +2671,7 @@ export const useWorkspaceController = () => {
       detail: ProviderChatDetail,
       options: ApplyChatDetailOptions = {}
     ): void => {
-      const updatedAt = Date.now()
+      const updatedAt = detail.updatedAt ?? Date.now()
       const detailKey = getProviderChatKey(providerId, detail.id)
       const currentDetail = chatDetailRef.current
       const replacesEqualRevision =
@@ -2813,14 +2838,12 @@ export const useWorkspaceController = () => {
         continue
       }
 
-      recentChatCache.set(cacheKey, {
-        ...entry,
-        detail: mergeChatMetadata(entry.detail, metadata)
-      })
+      const detail = mergeChatMetadata(entry.detail, metadata)
+      if (detail !== entry.detail) recentChatCache.set(cacheKey, { ...entry, detail })
     }
 
     setChats((currentChats) =>
-      currentChats.map((chat) => {
+      mapPreservingIdentity(currentChats, (chat) => {
         const metadata = metadataById.get(chat.id)
         return metadata ? mergeChatMetadata(chat, metadata) : chat
       })
@@ -2841,36 +2864,37 @@ export const useWorkspaceController = () => {
 
   const applySeenUpdatedAt = useCallback(
     (providerId: ProviderId, chatId: string, seenUpdatedAt: number): void => {
-      const mergeSeenUpdatedAt = (currentSeenUpdatedAt: number | null): number =>
-        currentSeenUpdatedAt == null ? seenUpdatedAt : Math.max(currentSeenUpdatedAt, seenUpdatedAt)
+      // Keep the same object when it has already seen this update, so repeated
+      // seen marks during a chat switch don't rerender the sidebar and conversation.
+      const withSeen = <Target extends { seenUpdatedAt: number | null }>(
+        target: Target
+      ): Target => {
+        const nextSeenUpdatedAt = mergeSeenUpdatedAt(target.seenUpdatedAt, seenUpdatedAt)
+        return nextSeenUpdatedAt === target.seenUpdatedAt
+          ? target
+          : { ...target, seenUpdatedAt: nextSeenUpdatedAt }
+      }
       const cacheKey = getProviderChatKey(providerId, chatId)
       const cacheEntry = recentChatCacheRef.current.get(cacheKey)
       if (cacheEntry) {
-        recentChatCacheRef.current.set(cacheKey, {
-          ...cacheEntry,
-          detail: {
-            ...cacheEntry.detail,
-            seenUpdatedAt: mergeSeenUpdatedAt(cacheEntry.detail.seenUpdatedAt)
-          }
-        })
+        const detail = withSeen(cacheEntry.detail)
+        if (detail !== cacheEntry.detail) {
+          recentChatCacheRef.current.set(cacheKey, { ...cacheEntry, detail })
+        }
       }
 
       setChats((currentChats) =>
-        currentChats.map((chat) =>
-          chat.providerId === providerId && chat.id === chatId
-            ? { ...chat, seenUpdatedAt: mergeSeenUpdatedAt(chat.seenUpdatedAt) }
-            : chat
+        mapPreservingIdentity(currentChats, (chat) =>
+          chat.providerId === providerId && chat.id === chatId ? withSeen(chat) : chat
         )
       )
       setSelectedChat((currentChat) =>
         currentChat?.providerId === providerId && currentChat.id === chatId
-          ? { ...currentChat, seenUpdatedAt: mergeSeenUpdatedAt(currentChat.seenUpdatedAt) }
+          ? withSeen(currentChat)
           : currentChat
       )
       setChatDetail((currentDetail) =>
-        currentDetail?.id === chatId
-          ? { ...currentDetail, seenUpdatedAt: mergeSeenUpdatedAt(currentDetail.seenUpdatedAt) }
-          : currentDetail
+        currentDetail?.id === chatId ? withSeen(currentDetail) : currentDetail
       )
     },
     []
@@ -3539,6 +3563,19 @@ export const useWorkspaceController = () => {
     })
   }, [activeChatGroups, newSessionCwd, projects, projectIconsByGroup])
 
+  // Chat summaries change on every switch (seen times) and update. The project
+  // options only depend on each project's latest chat, so rebuild them, with
+  // their icon elements, only when that changes.
+  const chatProjectCreatedAtKey = useMemo(() => {
+    const latestCreatedAtByCwd = new Map<string, number>()
+    for (const chat of chats) {
+      if (chat.imported) continue
+      const cwd = getChatProjectCwd(chat)?.trim()
+      if (!cwd || isNoProjectCwd(cwd)) continue
+      latestCreatedAtByCwd.set(cwd, Math.max(latestCreatedAtByCwd.get(cwd) ?? 0, chat.createdAt))
+    }
+    return JSON.stringify([...latestCreatedAtByCwd])
+  }, [chats])
   const projectOptions = useMemo<DropdownOption<string>[]>(() => {
     const projectsByCwd = new Map<
       string,
@@ -3564,9 +3601,9 @@ export const useWorkspaceController = () => {
     }
 
     projects.forEach((project) => addProject(project.cwd, 0, project))
-    chats.forEach((chat) => {
-      if (!chat.imported) addProject(getChatProjectCwd(chat), chat.createdAt)
-    })
+    for (const [cwd, createdAt] of JSON.parse(chatProjectCreatedAtKey) as [string, number][]) {
+      addProject(cwd, createdAt)
+    }
     addProject(newSessionCwd, 0)
 
     const getProjectOptionIcon = (
@@ -3621,7 +3658,7 @@ export const useWorkspaceController = () => {
         : []),
       ...options
     ]
-  }, [chats, newSessionCwd, newSessionNoProject, projects, projectIconsByGroup])
+  }, [chatProjectCreatedAtKey, newSessionCwd, newSessionNoProject, projects, projectIconsByGroup])
   const newSessionProjectValue = newSessionNoProject
     ? newSessionNoProjectValue
     : (newSessionCwd ?? newSessionProjectPlaceholderValue)
@@ -5567,69 +5604,118 @@ export const useWorkspaceController = () => {
     }
     return timeline.reconcile(items, selectedChatSubagents, parentId, atLatest)
   }
-  const rootSubagentCompletions = getSubagentCompletionPlacements(
-    selectedChatKey ?? '',
-    visibleChatItems,
-    null,
+  // Placements depend only on these arguments (reconciling the same ones again
+  // returns the same result), so memoize them: the turn renderers use them as inputs.
+  const rootCompletionsAtLatest =
     !chatDetail?.turnPagination?.newerCursor &&
-      (!effectiveChatTurnWindow ||
-        effectiveChatTurnWindow.endIndex === effectiveChatTurnWindow.totalCount)
+    (!effectiveChatTurnWindow ||
+      effectiveChatTurnWindow.endIndex === effectiveChatTurnWindow.totalCount)
+  const rootSubagentCompletions = useMemo(
+    () =>
+      getSubagentCompletionPlacements(
+        selectedChatKey ?? '',
+        visibleChatItems,
+        null,
+        rootCompletionsAtLatest
+      ),
+    [rootCompletionsAtLatest, selectedChatKey, selectedChatSubagents, visibleChatItems]
   )
-  const childSubagentCompletions = getSubagentCompletionPlacements(
-    `${selectedChatKey}:${activeSubagentChatView?.summary.id ?? ''}`,
-    subagentVisibleChatItems,
-    activeSubagentChatView?.summary.id ?? null,
+  const activeSubagentSummaryId = activeSubagentChatView?.summary.id ?? null
+  const childCompletionsAtLatest =
     !activeSubagentChatView?.detail?.turnCount ||
-      (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) +
-        subagentChatConversationModel.turns.length >=
-        activeSubagentChatView.detail.turnCount
+    (activeSubagentChatView.detail.itemsStartTurnIndex ?? 0) +
+      subagentChatConversationModel.turns.length >=
+      activeSubagentChatView.detail.turnCount
+  const childSubagentCompletions = useMemo(
+    () =>
+      getSubagentCompletionPlacements(
+        `${selectedChatKey}:${activeSubagentSummaryId ?? ''}`,
+        subagentVisibleChatItems,
+        activeSubagentSummaryId,
+        childCompletionsAtLatest
+      ),
+    [
+      activeSubagentSummaryId,
+      childCompletionsAtLatest,
+      selectedChatKey,
+      selectedChatSubagents,
+      subagentVisibleChatItems
+    ]
   )
-  const renderSubagentCompletion = (completion: SubagentCompletion): React.ReactElement => (
-    <SubagentCompletionBubble
-      key={completion.id}
-      subagent={completion.subagent}
-      onOpen={(agent) => void handleOpenSubagentChat(agent)}
-    />
+  const openCompletedSubagentChat = useLatestHandler(handleOpenSubagentChat)
+  const renderSubagentCompletion = useCallback(
+    (completion: SubagentCompletion): React.ReactElement => (
+      <SubagentCompletionBubble
+        key={completion.id}
+        subagent={completion.subagent}
+        onOpen={(agent) => void openCompletedSubagentChat(agent)}
+      />
+    ),
+    [openCompletedSubagentChat]
   )
   const selectedChatSubagentError =
     subagentListState?.rootChatKey === selectedChatKey ? subagentListState.error : null
-  const selectedChatSubagentList =
-    selectedChat &&
-    (getVisibleSubagentRows(selectedChatSubagents, activeSubagentChatView?.summary.id ?? null)
-      .length > 0 ||
-      selectedChatSubagentError) ? (
-      <ChatSubagentList
-        activeSubagentId={activeSubagentChatView?.summary.id ?? null}
-        cancelingSubagentIds={cancelingSubagentIds}
-        error={selectedChatSubagentError}
-        parentTitle={getRenderableText(selectedChat.title, 'Untitled chat')}
-        subagents={selectedChatSubagents}
-        onCancel={(subagent) => void handleCancelSubagent(subagent)}
-        onOpen={(subagent) => void handleOpenSubagentChat(subagent)}
-      />
-    ) : null
+  // The sidebar is memoized; this element and the group renderer below must only
+  // change when what they show changes.
+  const cancelSubagent = useLatestHandler(handleCancelSubagent)
+  const openSubagentChat = useLatestHandler(handleOpenSubagentChat)
+  const activeSubagentId = activeSubagentChatView?.summary.id ?? null
+  const selectedChatTitle = selectedChat
+    ? getRenderableText(selectedChat.title, 'Untitled chat')
+    : null
+  const selectedChatSubagentList = useMemo(
+    () =>
+      selectedChatTitle !== null &&
+      (getVisibleSubagentRows(selectedChatSubagents, activeSubagentId).length > 0 ||
+        selectedChatSubagentError) ? (
+        <ChatSubagentList
+          activeSubagentId={activeSubagentId}
+          cancelingSubagentIds={cancelingSubagentIds}
+          error={selectedChatSubagentError}
+          parentTitle={selectedChatTitle}
+          subagents={selectedChatSubagents}
+          onCancel={(subagent) => void cancelSubagent(subagent)}
+          onOpen={(subagent) => void openSubagentChat(subagent)}
+        />
+      ) : null,
+    [
+      activeSubagentId,
+      cancelSubagent,
+      cancelingSubagentIds,
+      openSubagentChat,
+      selectedChatSubagentError,
+      selectedChatSubagents,
+      selectedChatTitle
+    ]
+  )
   // Only the group holding the selected chat receives the subagent list, so other groups keep
   // their memoized rows.
-  const renderSidebarChatGroup = (
-    group: ChatListGroupData,
-    contentId: string,
-    layoutOrder?: string
-  ): React.ReactElement => {
-    const holdsSelectedChat = Boolean(
-      selectedChatKey &&
-        group.chats.some(
-          (chat) => getChatKey({ providerId: chat.providerId, id: chat.id }) === selectedChatKey
-        )
-    )
-    return renderChatGroup(
-      group,
-      contentId,
-      holdsSelectedChat ? selectedChatSubagentList : null,
-      holdsSelectedChat && Boolean(activeSubagentChatView),
-      workingSubagentChatKeys,
-      layoutOrder
-    )
-  }
+  const selectedSubagentChatOpen = Boolean(activeSubagentChatView)
+  const renderSidebarChatGroup = useCallback(
+    (group: ChatListGroupData, contentId: string, layoutOrder?: string): React.ReactElement => {
+      const holdsSelectedChat = Boolean(
+        selectedChatKey &&
+          group.chats.some(
+            (chat) => getChatKey({ providerId: chat.providerId, id: chat.id }) === selectedChatKey
+          )
+      )
+      return renderChatGroup(
+        group,
+        contentId,
+        holdsSelectedChat ? selectedChatSubagentList : null,
+        holdsSelectedChat && selectedSubagentChatOpen,
+        workingSubagentChatKeys,
+        layoutOrder
+      )
+    },
+    [
+      renderChatGroup,
+      selectedChatKey,
+      selectedChatSubagentList,
+      selectedSubagentChatOpen,
+      workingSubagentChatKeys
+    ]
+  )
 
   const handleMinimizeWindow = (): void => {
     void appApi.minimizeWindow()
@@ -5755,54 +5841,64 @@ export const useWorkspaceController = () => {
     windowControlsHidden
   }
 
-  const renderWindowControls = (placement: 'darwin' | 'default'): React.ReactElement | null =>
-    windowControlsHidden ? null : (
-      <div className={`window-controls window-controls--${placement}`} aria-label="Window controls">
-        <button
-          className="window-control window-control--minimize"
-          type="button"
-          aria-label="Minimize"
-          title="Minimize"
-          onClick={handleMinimizeWindow}
+  // Render functions handed to memoized panels must only change with their output.
+  const minimizeWindow = useLatestHandler(handleMinimizeWindow)
+  const toggleWindowMaximized = useLatestHandler(handleToggleWindowMaximized)
+  const closeWindow = useLatestHandler(handleCloseWindow)
+  const windowMaximized = windowState.isMaximized
+  const renderWindowControls = useCallback(
+    (placement: 'darwin' | 'default'): React.ReactElement | null =>
+      windowControlsHidden ? null : (
+        <div
+          className={`window-controls window-controls--${placement}`}
+          aria-label="Window controls"
         >
-          <Minus aria-hidden="true" />
-        </button>
-        <button
-          className="window-control window-control--maximize"
-          type="button"
-          aria-label={windowState.isMaximized ? 'Restore' : 'Maximize'}
-          title={windowState.isMaximized ? 'Restore' : 'Maximize'}
-          onClick={handleToggleWindowMaximized}
-        >
-          {windowState.isMaximized ? (
-            <Minimize2 aria-hidden="true" />
-          ) : (
-            <Maximize2 aria-hidden="true" />
-          )}
-        </button>
-        <button
-          className="window-control window-control--close"
-          type="button"
-          aria-label="Close"
-          title="Close"
-          onClick={handleCloseWindow}
-        >
-          <X aria-hidden="true" />
-        </button>
-      </div>
-    )
+          <button
+            className="window-control window-control--minimize"
+            type="button"
+            aria-label="Minimize"
+            title="Minimize"
+            onClick={minimizeWindow}
+          >
+            <Minus aria-hidden="true" />
+          </button>
+          <button
+            className="window-control window-control--maximize"
+            type="button"
+            aria-label={windowMaximized ? 'Restore' : 'Maximize'}
+            title={windowMaximized ? 'Restore' : 'Maximize'}
+            onClick={toggleWindowMaximized}
+          >
+            {windowMaximized ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+          </button>
+          <button
+            className="window-control window-control--close"
+            type="button"
+            aria-label="Close"
+            title="Close"
+            onClick={closeWindow}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      ),
+    [closeWindow, minimizeWindow, toggleWindowMaximized, windowControlsHidden, windowMaximized]
+  )
 
   const chromeControlTheme: 'transparent' | 'secondary' =
     effectiveAppSettings.appearance.controlStyle === 'transparent' ? 'transparent' : 'secondary'
 
-  const renderSettingsButton = (): React.ReactElement => (
-    <Button
-      theme={chromeControlTheme}
-      aria-label="Settings"
-      title="Settings"
-      callback={() => setSettingsOpen(true)}
-      icon={<Settings aria-hidden="true" />}
-    />
+  const renderSettingsButton = useCallback(
+    (): React.ReactElement => (
+      <Button
+        theme={chromeControlTheme}
+        aria-label="Settings"
+        title="Settings"
+        callback={() => setSettingsOpen(true)}
+        icon={<Settings aria-hidden="true" />}
+      />
+    ),
+    [chromeControlTheme]
   )
 
   const rateLimitResetDisabled = shouldDisableRateLimitReset(
@@ -5810,181 +5906,103 @@ export const useWorkspaceController = () => {
     accountUsage?.rateLimitResetCredits?.credits ?? null
   )
 
-  const renderChatTurn = (turnIndex: number, turn: ProviderChatTurn): React.ReactElement => {
-    const turnIsLatestRendered = turn === renderedChatTurns.at(-1)
-    const lastItemIndex = chatItemIndexesById.get(turn.items.at(-1)?.id ?? '')
-    const nextTurnStartItem =
-      lastItemIndex === undefined ? undefined : visibleChatItems[lastItemIndex + 1]
-
-    return (
-      <div
-        className="chat-detail__turn"
-        data-chat-turn-id={turn.id}
-        data-chat-turn-index={turnIndex}
-        key={turn.id}
-      >
-        {turn.items.map((item) => {
-          const itemIndex = chatItemIndexesById.get(item.id) ?? -1
-          const followingWorkingStep = followingWorkingStepsById.get(item.id)
-
-          return (
-            <Fragment key={item.id}>
-              {rootSubagentCompletions.before.get(item.id)?.map(renderSubagentCompletion)}
-              {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
-              {item.id === firstPendingChatItemId &&
-                trailingChatCommitMarkers.map(renderChatCommitMarker)}
-              <ChatDetailItem
-                mcpAppScope={
-                  selectedChat
-                    ? { providerId: selectedChat.providerId, chatId: selectedChat.id }
-                    : undefined
-                }
-                motionChatKey={selectedChatKey}
-                authenticationRequired={authenticationRequired}
-                availableRateLimitResets={
-                  item.type === 'working' && item.failureReason === 'rateLimit'
-                    ? (accountUsage?.rateLimitResetCredits?.availableCount ?? 0)
-                    : 0
-                }
-                canEditOwnMessages={canEditOwnMessages}
-                container={changesContainer}
-                continuePrompt={effectiveAppSettings.chat.continuePrompt}
-                continueStoppedTurnDisabled={stoppedTurnActionDisabled}
-                continuedStoppedTurn={continuedStoppedWorkingStepIds.has(item.id)}
-                followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
-                followingWorkingStepStatus={followingWorkingStep?.status}
-                hasNextWorkingStep={workingStepIdsWithNextWorkingStep.has(item.id)}
-                item={item}
-                messagePinned={item.type === 'message' && pinnedChatMessageIds.has(item.id)}
-                cwd={changesCwd}
-                modelLabelsById={modelLabelsById}
-                resolvedModelIdsById={resolvedModelIdsById}
-                onDeletePendingMessage={handleDeletePendingMessage}
-                onEditPendingMessage={handleEditPendingMessage}
-                onSteerPendingMessage={
-                  chatHasActiveTurn && !chatHasPendingSteeringMessage
-                    ? handleSteerPendingMessage
-                    : undefined
-                }
-                onInterruptPendingMessage={handleInterruptPendingMessage}
-                onContinueStoppedTurn={
-                  item.type === 'working' && (item.status === 'stopped' || item.status === 'failed')
-                    ? handleContinueStoppedTurn
-                    : undefined
-                }
-                onEditMessage={handleEditMessage}
-                onForkMessage={
-                  chatHasActiveTurn || forkingMessageId ? undefined : handleForkMessage
-                }
-                onLoadWorkingStep={handleLoadWorkingStep}
-                onLoadWorkingItem={handleLoadWorkingItem}
-                onLoadWorkingToolPage={handleLoadWorkingToolPage}
-                onDisclosureToggle={handleChatDisclosureToggle}
-                onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
-                onToggleMessagePinned={handleToggleChatMessagePinned}
-                onRetryStoppedTurn={handleRetryStoppedTurn}
-                onManageAccounts={handleManageChatAccounts}
-                onReauthenticate={handleOpenChatReauthentication}
-                onUsageRefresh={
-                  item.type === 'working' && item.failureReason === 'rateLimit'
-                    ? refreshAccountUsage
-                    : undefined
-                }
-                onUsageReset={
-                  item.type === 'working' && item.failureReason === 'rateLimit'
-                    ? resetAccountRateLimits
-                    : undefined
-                }
-                previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}
-                projectCwd={changesProjectCwd}
-                progressPolicy={
-                  item.type === 'working'
-                    ? getWorkingStepProgressPolicy(item, turn.items, nextTurnStartItem)
-                    : undefined
-                }
-                progressSettings={effectiveAppSettings.chat}
-                progressDisclosureTarget={steeredWorkingStepDisclosureTargets.get(item.id)}
-                rateLimitResetDisabled={rateLimitResetDisabled}
-                retryMessage={canRetryStoppedTurns ? stoppedTurnRetryMessages.get(item.id) : null}
-                retryStoppedTurnDisabled={stoppedTurnActionDisabled}
-                selectedModelId={model}
-                streaming={item.id === streamingChatItemId}
-                turnIndex={turnIndex}
-              />
-              {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
-              {rootSubagentCompletions.after.get(item.id)?.map(renderSubagentCompletion)}
-            </Fragment>
-          )
-        })}
-        {turnIsLatestRendered &&
-          effectiveChatTurnWindow?.endIndex === effectiveChatTurnWindow?.totalCount &&
-          !firstPendingChatItemId &&
-          trailingChatCommitMarkers.map(renderChatCommitMarker)}
-      </div>
-    )
-  }
-
-  const renderSubagentChatTurn = (
-    turnIndex: number,
-    turn: ProviderChatTurn
-  ): React.ReactElement => {
-    const lastItemIndex = subagentChatItemIndexesById.get(turn.items.at(-1)?.id ?? '')
-    const nextTurnStartItem =
-      lastItemIndex === undefined ? undefined : subagentVisibleChatItems[lastItemIndex + 1]
-
-    return (
-      <div
-        className="chat-detail__turn"
-        data-chat-turn-id={turn.id}
-        data-chat-turn-index={turnIndex}
-        key={turn.id}
-      >
-        {turn.items.map((item) => {
-          const itemIndex = subagentChatItemIndexesById.get(item.id) ?? -1
-          const followingWorkingStep = subagentChatConversationModel.followingWorkingStepsById.get(
-            item.id
-          )
-
-          return (
-            <Fragment key={item.id}>
-              {childSubagentCompletions.before.get(item.id)?.map(renderSubagentCompletion)}
-              <ChatDetailItem
-                container={changesContainer}
-                followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
-                followingWorkingStepStatus={followingWorkingStep?.status}
-                hasNextWorkingStep={subagentChatConversationModel.workingStepIdsWithNextWorkingStep.has(
-                  item.id
-                )}
-                item={item}
-                key={item.id}
-                cwd={changesCwd}
-                modelLabelsById={modelLabelsById}
-                resolvedModelIdsById={resolvedModelIdsById}
-                onLoadWorkingStep={handleLoadSubagentWorkingStep}
-                onLoadWorkingItem={handleLoadSubagentWorkingItem}
-                onLoadWorkingToolPage={handleLoadSubagentWorkingToolPage}
-                onOpenFileLink={changesCwd ? handleOpenFileLink : undefined}
-                previousItem={itemIndex > 0 ? subagentVisibleChatItems[itemIndex - 1] : null}
-                projectCwd={changesProjectCwd}
-                progressPolicy={
-                  item.type === 'working'
-                    ? getWorkingStepProgressPolicy(item, turn.items, nextTurnStartItem)
-                    : undefined
-                }
-                progressSettings={effectiveAppSettings.chat}
-                progressDisclosureTarget={subagentChatConversationModel.steeredWorkingStepDisclosureTargets.get(
-                  item.id
-                )}
-                selectedModelId={model}
-                turnIndex={turnIndex}
-              />
-              {childSubagentCompletions.after.get(item.id)?.map(renderSubagentCompletion)}
-            </Fragment>
-          )
-        })}
-      </div>
-    )
-  }
+  const rootChatTurnInputs = useShallowStable<RootChatTurnInputs>({
+    itemIndexesById: chatItemIndexesById,
+    visibleChatItems,
+    followingWorkingStepsById,
+    workingStepIdsWithNextWorkingStep,
+    steeredWorkingStepDisclosureTargets,
+    subagentCompletions: rootSubagentCompletions,
+    renderSubagentCompletion,
+    container: changesContainer,
+    cwd: changesCwd,
+    projectCwd: changesProjectCwd,
+    modelLabelsById,
+    resolvedModelIdsById,
+    progressSettings: effectiveAppSettings.chat,
+    selectedModelId: model,
+    onOpenFileLink: changesCwd ? handleOpenFileLink : undefined,
+    onLoadWorkingStep: handleLoadWorkingStep,
+    onLoadWorkingItem: handleLoadWorkingItem,
+    onLoadWorkingToolPage: handleLoadWorkingToolPage,
+    latestRenderedTurn: renderedChatTurns.at(-1),
+    windowIncludesLatest: effectiveChatTurnWindow?.endIndex === effectiveChatTurnWindow?.totalCount,
+    firstPendingChatItemId,
+    scheduleChatAutoScroll,
+    chatCommitMarkersByBeforeItemId,
+    chatCommitMarkersByAfterItemId,
+    trailingChatCommitMarkers,
+    renderChatCommitMarker,
+    mcpAppScopeProviderId: selectedChat?.providerId ?? null,
+    mcpAppScopeChatId: selectedChat?.id ?? null,
+    motionChatKey: selectedChatKey,
+    authenticationRequired,
+    availableRateLimitResets: accountUsage?.rateLimitResetCredits?.availableCount ?? 0,
+    canEditOwnMessages,
+    continuePrompt: effectiveAppSettings.chat.continuePrompt,
+    stoppedTurnActionDisabled,
+    continuedStoppedWorkingStepIds,
+    pinnedChatMessageIds,
+    rateLimitResetDisabled,
+    canRetryStoppedTurns,
+    stoppedTurnRetryMessages,
+    streamingChatItemId,
+    onDeletePendingMessage: handleDeletePendingMessage,
+    onEditPendingMessage: handleEditPendingMessage,
+    onSteerPendingMessage:
+      chatHasActiveTurn && !chatHasPendingSteeringMessage ? handleSteerPendingMessage : undefined,
+    onInterruptPendingMessage: handleInterruptPendingMessage,
+    onContinueStoppedTurn: handleContinueStoppedTurn,
+    onEditMessage: handleEditMessage,
+    onForkMessage:
+      chatHasActiveTurn || forkingMessageId || chatDetail?.historyPreview
+        ? undefined
+        : handleForkMessage,
+    onDisclosureToggle: handleChatDisclosureToggle,
+    onToggleMessagePinned: handleToggleChatMessagePinned,
+    onRetryStoppedTurn: handleRetryStoppedTurn,
+    onManageAccounts: handleManageChatAccounts,
+    onReauthenticate: handleOpenChatReauthentication,
+    onUsageRefresh: refreshAccountUsage,
+    onUsageReset: resetAccountRateLimits
+  })
+  // Stable while the inputs are, so the memoized message list skips workspace
+  // renders that change nothing it shows.
+  const renderChatTurn = useCallback(
+    (turnIndex: number, turn: ProviderChatTurn): React.ReactElement =>
+      renderRootChatTurn(rootChatTurnInputs, turnIndex, turn),
+    [rootChatTurnInputs]
+  )
+  const loadSubagentWorkingStep = useLatestHandler(handleLoadSubagentWorkingStep)
+  const loadSubagentWorkingItem = useLatestHandler(handleLoadSubagentWorkingItem)
+  const loadSubagentWorkingToolPage = useLatestHandler(handleLoadSubagentWorkingToolPage)
+  const subagentChatTurnInputs = useShallowStable<SubagentChatTurnInputs>({
+    itemIndexesById: subagentChatItemIndexesById,
+    visibleChatItems: subagentVisibleChatItems,
+    followingWorkingStepsById: subagentChatConversationModel.followingWorkingStepsById,
+    workingStepIdsWithNextWorkingStep:
+      subagentChatConversationModel.workingStepIdsWithNextWorkingStep,
+    steeredWorkingStepDisclosureTargets:
+      subagentChatConversationModel.steeredWorkingStepDisclosureTargets,
+    subagentCompletions: childSubagentCompletions,
+    renderSubagentCompletion,
+    container: changesContainer,
+    cwd: changesCwd,
+    projectCwd: changesProjectCwd,
+    modelLabelsById,
+    resolvedModelIdsById,
+    progressSettings: effectiveAppSettings.chat,
+    selectedModelId: model,
+    onOpenFileLink: changesCwd ? handleOpenFileLink : undefined,
+    onLoadWorkingStep: loadSubagentWorkingStep,
+    onLoadWorkingItem: loadSubagentWorkingItem,
+    onLoadWorkingToolPage: loadSubagentWorkingToolPage
+  })
+  const renderSubagentChatTurn = useCallback(
+    (turnIndex: number, turn: ProviderChatTurn): React.ReactElement =>
+      renderSubagentTurn(subagentChatTurnInputs, turnIndex, turn),
+    [subagentChatTurnInputs]
+  )
 
   const showChatTurnDownButton = Boolean(
     !activeSubagentChatView &&
@@ -6167,6 +6185,8 @@ export const useWorkspaceController = () => {
     },
     conversationMessages: {
       visible: Boolean(selectedChat),
+      chatHistoryPreview: chatDetail?.historyPreview === true,
+      cachedChatKeys: Array.from(recentChatCacheRef.current.keys()),
       chatAutoScrollEnabledRef,
       scrollChatContentToBottom,
       changesContainer,
@@ -6474,7 +6494,7 @@ export const useWorkspaceController = () => {
           ? (chatDetail.goal ?? null)
           : null,
       onSaveGoalObjective: async (objective: string | null): Promise<void> => {
-        if (!selectedChat) return
+        if (!selectedChat || chatDetailRef.current?.historyPreview) return
         await providerApi.setChatGoal(selectedChat.providerId, selectedChat.id, objective)
       }
     }

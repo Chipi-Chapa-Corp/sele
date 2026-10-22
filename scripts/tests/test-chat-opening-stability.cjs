@@ -66,7 +66,7 @@ if (!process.versions.electron) {
               getDefaultCwd:()=>'/fixture',getWindowState:()=>({isMaximized:false}),getAppUpdate:()=>null,
               getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
               getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
-              getSkills:()=>[],getApps:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
+              getSkills:()=>[],getApps:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
               getUpdateAvailability:()=>null
             }
             const api=new Proxy({}, {get:(_target,name)=>name==='onChatUpdated' ? listener=>{window.chatListener=listener;return noop} : name.startsWith('on') ? ()=>noop :
@@ -167,10 +167,15 @@ if (!process.versions.electron) {
         await run(`document.querySelector('#chat-search-content').getAttribute('aria-busy')`),
         'true'
       )
-      assert.equal(await run(`document.querySelectorAll('[data-chat-message-id]').length`), 0)
       assert.equal(
         await run(
-          `document.querySelector('.chat-detail__messages-shell').textContent.includes('No messages found.')`
+          `document.querySelectorAll('#chat-search-content [data-chat-message-id]').length`
+        ),
+        0
+      )
+      assert.equal(
+        await run(
+          `document.querySelector('#chat-search-content')?.closest('.chat-detail__messages-shell').textContent.includes('No messages found.')`
         ),
         false
       )
@@ -182,7 +187,9 @@ if (!process.versions.electron) {
         'show a loader throughout a delayed initial history read'
       )
       await run(`window.pendingChatReads['4']()`)
-      await ready(`document.querySelector('[data-chat-message-id="answer-9"] p:last-child')`)
+      await ready(
+        `document.querySelector('#chat-search-content [data-chat-message-id="answer-9"] p:last-child')`
+      )
       assert.equal(
         await run(
           `Boolean(document.querySelector('[role="status"][aria-label="Loading messages"]'))`
@@ -196,7 +203,7 @@ if (!process.versions.electron) {
       )
       await run(`window.pendingChatReads['5']()`)
       await ready(
-        `document.querySelector('.chat-detail__messages-shell')?.textContent.includes('No messages found.')`
+        `document.querySelector('#chat-search-content')?.closest('.chat-detail__messages-shell')?.textContent.includes('No messages found.')`
       )
       assert.equal(
         await run(
@@ -210,7 +217,7 @@ if (!process.versions.electron) {
         document.querySelector('[data-chat-id="4"] .chat-list-item__main').click();
         function check(){
           if(document.querySelector('[data-chat-id="4"].chat-list-item--selected')){
-            const messages=Boolean(document.querySelector('[data-chat-message-id="answer-9"]'));
+            const messages=Boolean(document.querySelector('#chat-search-content [data-chat-message-id="answer-9"]'));
             frames.push({messages,loading:Boolean(document.querySelector('[role="status"][aria-label="Loading messages"]'))});
             if(messages)return resolve(frames)
           }
@@ -234,9 +241,11 @@ if (!process.versions.electron) {
       ]) {
         win.webContents.setZoomFactor(zoom)
         await run(`document.querySelector('[data-chat-id="${id}"] .chat-list-item__main').click()`)
-        await ready(`document.querySelector('[data-chat-message-id="answer-9"] p:last-child')`)
+        await ready(
+          `document.querySelector('#chat-search-content [data-chat-message-id="answer-9"] p:last-child')`
+        )
         const rect =
-          await run(`(()=>{const r=document.querySelector('[data-chat-message-id="answer-9"] p:last-child').getBoundingClientRect();
+          await run(`(()=>{const r=document.querySelector('#chat-search-content [data-chat-message-id="answer-9"] p:last-child').getBoundingClientRect();
           const ratio=devicePixelRatio;return {x:Math.ceil(r.x*ratio),y:Math.ceil(r.y*ratio),width:Math.floor(r.width*ratio)-2,height:Math.floor(r.height*ratio)-2}})()`)
         const frames = []
         const framePNGs = []
@@ -262,13 +271,20 @@ if (!process.versions.electron) {
             await run(`window.growTools(${count})`)
             await run('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
           }
-          assert.equal(await run('document.querySelectorAll("[data-chat-turn-id]").length'), 1)
+          assert.equal(
+            await run(
+              'document.querySelectorAll("#chat-search-content [data-chat-turn-id]").length'
+            ),
+            1
+          )
           assert.ok(
-            await run('document.querySelector(".chat-detail__working").open'),
+            await run('document.querySelector("#chat-search-content .chat-detail__working").open'),
             'render expanded tool history'
           )
         } else {
-          await ready(`document.querySelectorAll('[data-chat-turn-id]').length===10`)
+          await ready(
+            `document.querySelectorAll('#chat-search-content [data-chat-turn-id]').length===10`
+          )
         }
         await run('new Promise(r=>setTimeout(r,150))')
         await win.webContents.debugger.sendCommand('Page.stopScreencast')
@@ -300,7 +316,7 @@ if (!process.versions.electron) {
             'rect before/after',
             rect,
             await run(
-              `document.querySelector('[data-chat-message-id="answer-9"] p:last-child').getBoundingClientRect().toJSON()`
+              `document.querySelector('#chat-search-content [data-chat-message-id="answer-9"] p:last-child').getBoundingClientRect().toJSON()`
             )
           )
         }

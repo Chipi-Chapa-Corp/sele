@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { type CSSProperties, useEffect, useMemo } from 'react'
+import { type CSSProperties, useCallback, useEffect, useMemo } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { isChatCommitProjectLocked } from '../chatCommitPolicy'
 import { type ButtonDropdownAction } from '../components/Button'
@@ -75,6 +75,14 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     const previousProjectKey = visibleGitErrorProjectKeyRef.current
     visibleGitErrorProjectKeyRef.current = currentProjectKey
     if (!previousProjectKey || previousProjectKey === currentProjectKey) return
+    // Setting unchanged state still rerenders the workspace during a chat switch.
+    if (
+      !commitErrorsByProjectKey[previousProjectKey] &&
+      !syncErrorsByProjectKey[previousProjectKey] &&
+      !syncRecoveriesByProjectKey[previousProjectKey]
+    ) {
+      return
+    }
 
     setCommitErrorsByProjectKey((currentErrors) => {
       if (!currentErrors[previousProjectKey]) return currentErrors
@@ -150,7 +158,11 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     commitMessageGenerationInProgress ||
     currentProjectSyncInProgress ||
     aiCommitUnavailable
-  const getAiCommitActionDisabled = (): boolean => aiCommitBaseDisabled
+  // Memoized render-time props let the changes footer skip unrelated renders.
+  const getAiCommitActionDisabled = useCallback(
+    (): boolean => aiCommitBaseDisabled,
+    [aiCommitBaseDisabled]
+  )
   const commitMessageGenerationDisabled =
     providerUpdateInProgress ||
     !changesCwd ||
@@ -176,15 +188,18 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     commitMessageGenerationInProgress ||
     projectCommitInProgress ||
     currentProjectSyncInProgress
-  const gitCommitModeToggle = (
-    <SegmentedControl<GitCommitMode>
-      aria-label="Commit completion mode"
-      className="changes-sidebar__commit-mode"
-      disabled={gitCommitModeDisabled}
-      options={gitCommitModeOptions}
-      value={gitCommitMode}
-      onChange={setGitCommitMode}
-    />
+  const gitCommitModeToggle = useMemo(
+    () => (
+      <SegmentedControl<GitCommitMode>
+        aria-label="Commit completion mode"
+        className="changes-sidebar__commit-mode"
+        disabled={gitCommitModeDisabled}
+        options={gitCommitModeOptions}
+        value={gitCommitMode}
+        onChange={setGitCommitMode}
+      />
+    ),
+    [gitCommitMode, gitCommitModeDisabled]
   )
   const branchSwitchDisabled =
     providerUpdateInProgress ||

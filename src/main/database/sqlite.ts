@@ -18,6 +18,22 @@ type SqliteNullableChatPurposeColumn = ColumnType<
 >
 
 export type LocalDatabase = {
+  chat_history_page: {
+    cache_key: string
+    fingerprint: string
+    format_version: number
+    coordinates: string
+    byte_size: number
+    saved_at: number
+    accessed_at: number
+  }
+  chat_history_turn: {
+    cache_key: string
+    turn_id: string
+    position: number
+    content_hash: string
+    payload: string
+  }
   imported_conversation: { id: string; payload: string; summary: string }
   model_pricing_cache: {
     id: string
@@ -158,6 +174,35 @@ const ensureColumn = async (
 
 const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   if (schemaReady) return
+  await db.schema
+    .createTable('chat_history_page')
+    .ifNotExists()
+    .addColumn('cache_key', 'text', (c) => c.primaryKey())
+    .addColumn('fingerprint', 'text', (c) => c.notNull())
+    .addColumn('format_version', 'integer', (c) => c.notNull())
+    .addColumn('coordinates', 'text', (c) => c.notNull())
+    .addColumn('byte_size', 'integer', (c) => c.notNull())
+    .addColumn('saved_at', 'integer', (c) => c.notNull())
+    .addColumn('accessed_at', 'integer', (c) => c.notNull())
+    .execute()
+  await db.schema
+    .createTable('chat_history_turn')
+    .ifNotExists()
+    .addColumn('cache_key', 'text', (c) =>
+      c.notNull().references('chat_history_page.cache_key').onDelete('cascade')
+    )
+    .addColumn('turn_id', 'text', (c) => c.notNull())
+    .addColumn('position', 'integer', (c) => c.notNull())
+    .addColumn('content_hash', 'text', (c) => c.notNull())
+    .addColumn('payload', 'text', (c) => c.notNull())
+    .addPrimaryKeyConstraint('chat_history_turn_key', ['cache_key', 'turn_id'])
+    .execute()
+  await db.schema
+    .createIndex('chat_history_page_accessed')
+    .ifNotExists()
+    .on('chat_history_page')
+    .column('accessed_at')
+    .execute()
   await db.schema
     .createTable('imported_conversation')
     .ifNotExists()
@@ -430,6 +475,14 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .ifNotExists()
     .on('token_usage')
     .columns(['provider_id', 'recorded_at'])
+    .execute()
+
+  await db.schema
+    .createIndex('token_usage_unpriced')
+    .ifNotExists()
+    .on('token_usage')
+    .column('id')
+    .where(sql<boolean>`priced_at is null and models_json is not null`)
     .execute()
 
   schemaReady = true

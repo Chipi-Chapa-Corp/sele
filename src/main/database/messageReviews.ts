@@ -1,5 +1,8 @@
 import type { ProviderReview, ProviderReviewComment } from '../../shared/provider'
 import { getDatabase } from './sqlite'
+import { DatabaseReadCache } from './readCache'
+
+const reviewCache = new DatabaseReadCache<StoredMessageReview[]>()
 
 export type StoredMessageReview = Omit<ProviderReview, 'prompt'> & {
   chatId: string
@@ -50,22 +53,24 @@ const parseComments = (value: string): ProviderReviewComment[] => {
 
 export const getMessageReviews = async (chatId: string): Promise<StoredMessageReview[]> => {
   const db = await getDatabase()
-  const rows = await db
-    .selectFrom('message_reviews')
-    .select(['id', 'chat_id', 'prompt', 'serialized_content', 'comments_json', 'created_at'])
-    .where('chat_id', '=', chatId)
-    .orderBy('created_at', 'asc')
-    .orderBy('id', 'asc')
-    .execute()
+  return reviewCache.read(db, chatId, async () => {
+    const rows = await db
+      .selectFrom('message_reviews')
+      .select(['id', 'chat_id', 'prompt', 'serialized_content', 'comments_json', 'created_at'])
+      .where('chat_id', '=', chatId)
+      .orderBy('created_at', 'asc')
+      .orderBy('id', 'asc')
+      .execute()
 
-  return rows.map((row) => ({
-    id: row.id,
-    chatId: row.chat_id,
-    prompt: row.prompt,
-    serializedContent: row.serialized_content,
-    comments: parseComments(row.comments_json),
-    createdAt: row.created_at
-  }))
+    return rows.map((row) => ({
+      id: row.id,
+      chatId: row.chat_id,
+      prompt: row.prompt,
+      serializedContent: row.serialized_content,
+      comments: parseComments(row.comments_json),
+      createdAt: row.created_at
+    }))
+  })
 }
 
 export const setMessageReview = async (
@@ -95,9 +100,11 @@ export const setMessageReview = async (
       })
     )
     .execute()
+  reviewCache.invalidate()
 }
 
 export const deleteMessageReview = async (id: string): Promise<void> => {
   const db = await getDatabase()
   await db.deleteFrom('message_reviews').where('id', '=', id).execute()
+  reviewCache.invalidate()
 }

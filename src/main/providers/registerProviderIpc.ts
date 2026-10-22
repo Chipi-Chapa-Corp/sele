@@ -1,6 +1,7 @@
 import type { ProviderConnectInput } from '../../shared/providerConnections'
 import { normalizeNetworkRetrySettings, type NetworkRetrySettings } from '../../shared/networkRetry'
 import { handleLoggedIpc, logDiagnostic } from '../logging'
+import { setChatUpdateInterest } from './chatUpdateInterest'
 import type { ProviderConfigValue } from '../../shared/provider'
 import { isDeepStrictEqual } from 'node:util'
 import { extname, isAbsolute } from 'node:path'
@@ -57,6 +58,9 @@ import { requireContainerTarget } from '../containerTarget'
 import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
 import {
   getChatUpdateSummary,
+  getProviderCachedChat,
+  beginProviderChatHistoryRead,
+  saveProviderChatHistory,
   getProviderChatCursorWindow,
   getProviderChatItemWindow,
   getProviderSubagentItemWindow,
@@ -108,6 +112,7 @@ let providerIpcShuttingDown = false
 
 export const beginProviderIpcShutdown = (): void => {
   providerIpcShuttingDown = true
+  chatUpdateDeliveryByWebContentsId.forEach((_, id) => setChatUpdateInterest(id, null))
   chatUpdateDeliveryByWebContentsId.forEach(clearChatAcknowledgmentTimer)
   chatUpdateDeliveryByWebContentsId.clear()
 }
@@ -233,6 +238,7 @@ const getChatUpdateDeliveryState = (webContents: WebContents): ChatUpdateDeliver
   chatUpdateDeliveryByWebContentsId.set(webContents.id, state)
   webContents.once('destroyed', () => {
     clearChatAcknowledgmentTimer(state)
+    setChatUpdateInterest(webContents.id, null)
     chatUpdateDeliveryByWebContentsId.delete(webContents.id)
   })
   return state
@@ -1167,12 +1173,14 @@ export const registerProviderIpc = (): void => {
   ipcMain.on(providerIpcChannels.chatUpdatesReady, (event) => {
     const state = getChatUpdateDeliveryState(event.sender)
     state.ready = true
+    setChatUpdateInterest(event.sender.id, state.viewedChatKey)
     sendNextChatUpdate(event.sender, state)
   })
 
   ipcMain.on(providerIpcChannels.chatUpdatesStopped, (event) => {
     const state = getChatUpdateDeliveryState(event.sender)
     state.ready = false
+    setChatUpdateInterest(event.sender.id, null)
     clearChatAcknowledgmentTimer(state)
     state.inFlightUpdate = null
     state.acknowledgedDetail = null
@@ -1194,6 +1202,7 @@ export const registerProviderIpc = (): void => {
           : getProviderChatKey(requireProviderId(providerIdValue), requireChatId(chatIdValue))
         if (state.viewedChatKey !== nextViewedChatKey) state.acknowledgedDetail = null
         state.viewedChatKey = nextViewedChatKey
+        setChatUpdateInterest(event.sender.id, state.ready ? nextViewedChatKey : null)
       } catch (error) {
         console.error('[caught:registerProviderIpc:registerProviderIpc]', error)
         return
@@ -1533,10 +1542,24 @@ export const registerProviderIpc = (): void => {
     )
   })
 
-  handleLoggedIpc(providerIpcChannels.getChat, (_, providerId: unknown, chatId: unknown) => {
+  handleLoggedIpc(
+    providerIpcChannels.getCachedChat,
+    (_, providerId: unknown, chatId: unknown, options: unknown) =>
+      getProviderCachedChat(
+        requireProviderId(providerId),
+        requireChatId(chatId),
+        requireSourceOptions(options)
+      ).catch((error: unknown) => {
+        console.warn('Unable to read prepared chat history.', error)
+        return null
+      })
+  )
+
+  handleLoggedIpc(providerIpcChannels.getChat, async (_, providerId: unknown, chatId: unknown) => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredChatId = requireChatId(chatId)
-    return getRendererChatDetail(() =>
+    const historyRead = await beginProviderChatHistoryRead(requiredProviderId, requiredChatId)
+    const detail = await getRendererChatDetail(() =>
       // Codex getChat includes the opening-time writer check and already reads a bounded
       // cursor page. History-only reads deliberately do not acquire/probe writer access.
       requiredProviderId === 'codex'
@@ -1546,6 +1569,8 @@ export const registerProviderIpc = (): void => {
             limit: rendererChatTurnPageSize
           })
     )
+    saveProviderChatHistory(historyRead, detail)
+    return detail
   })
 
   handleLoggedIpc(providerIpcChannels.getSubagents, (_, providerId: unknown, chatId: unknown) =>

@@ -46,6 +46,9 @@ const bundled = await build({
                resolveUserInput: (...args) => globalThis.harness.resolveUserInput(...args),
                getSubagent: (...args) => globalThis.harness.getSubagent(...args)
              };
+             export const getProviderCachedChat = (...args) => globalThis.harness.getCachedChat?.(...args) ?? Promise.resolve(null);
+             export const beginProviderChatHistoryRead = async () => globalThis.harness.historyRead ?? null;
+             export const saveProviderChatHistory = (...args) => globalThis.harness.savedHistory?.push(args);
              export const getChatUpdateSummary = () => {};
              export const getProviderChatCursorWindow = () => {};
              export const getProviderChatItemWindow = () => {};
@@ -134,6 +137,37 @@ test('first-chat updates and completion arrive normally when acknowledged', () =
   assert.equal(h.timers.size, 0)
   h.expire()
   assert.equal(h.harness.logs.length, 0)
+})
+
+test('opening records renderer-prepared pages and cached IPC preserves source validation', async () => {
+  const h = setup()
+  h.harness.historyRead = { token: 'fixture' }
+  h.harness.savedHistory = []
+  h.harness.getChat = async () => ({
+    id: 'chat',
+    revision: 1,
+    status: null,
+    items: [{ type: 'message', id: 'user', role: 'user', content: 'x'.repeat(600_000) }]
+  })
+  const prepared = await h.harness.handlers.get(channels.getChat)({}, 'codex', 'chat')
+  assert.ok(prepared.items[0].content.length < 600_000)
+  assert.equal(h.harness.savedHistory.length, 1)
+  assert.equal(
+    h.harness.savedHistory[0][1],
+    prepared,
+    'persist the bounded renderer payload, not raw history'
+  )
+  const scopes = []
+  h.harness.getCachedChat = async (...args) => {
+    scopes.push(args)
+    return null
+  }
+  const read = h.harness.handlers.get(channels.getCachedChat)
+  assert.equal(await read({}, 'codex', 'chat', { container: { kind: 'host' } }), null)
+  assert.equal(scopes[0][0], 'codex')
+  assert.equal(scopes[0][2].container.kind, 'host')
+  assert.throws(() => read({}, 'invalid-provider', 'chat'))
+  assert.throws(() => read({}, 'codex', 'chat', { container: { kind: 'invalid' } }))
 })
 
 test('subagent IPC bounds a long transcript and serves exact older windows', async () => {

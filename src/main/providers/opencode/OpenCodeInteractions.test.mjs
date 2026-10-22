@@ -4,7 +4,11 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
-import { parseOpenCodeSessionEvent } from './OpenCodeEvents.ts'
+import {
+  applyOpenCodeMessageEvent,
+  parseOpenCodeSessionEvent,
+  reconcileOpenCodeMessageSnapshot
+} from './OpenCodeEvents.ts'
 import { isOpenCodeChildState } from './OpenCodeSubagents.ts'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './OpenCodeHistory.ts'
 
@@ -39,6 +43,8 @@ const fixture = () => {
     console,
     clearTimeout,
     parseOpenCodeSessionEvent,
+    applyOpenCodeMessageEvent,
+    reconcileOpenCodeMessageSnapshot,
     reconcileProviderRecords,
     requireData: (result) => result.data,
     forEachOpenCodeHistoryMessage,
@@ -62,6 +68,8 @@ const fixture = () => {
   const adapter = Object.assign(new context.Harness(), {
     states: new Map([['chat', state]]),
     oneShotSessionIds: new Set(),
+    credentialHealth: { record() {} },
+    completionCoordinator: { cancel() {} },
     freeLimits: { observe() {} },
     refreshes: new WeakMap(),
     updateTimers: new Map(),
@@ -159,4 +167,35 @@ test('questions are published immediately and removed on replies or rejection', 
     send(type, { requestID: question.id })
     assert.deepEqual(updates.at(-1), { status: 'active', approvals: [], questions: [] })
   }
+})
+
+test('a delayed history load cannot replace the final reply received through the event stream', async () => {
+  const { adapter, state, send } = fixture()
+  const info = { id: 'reply', role: 'assistant', time: { created: 1 } }
+  state.messages = [{ info, parts: [] }]
+  let finish
+  const client = {
+    session: {
+      get: async () => ({ data: state.session }),
+      messages: () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+      status: async () => ({ data: { chat: { type: 'busy' } } })
+    },
+    permission: { list: async () => ({ data: [] }) },
+    question: { list: async () => ({ data: [] }) }
+  }
+  const refreshing = adapter.refreshState(state, client)
+  send('message.part.updated', {
+    part: { id: 'answer', messageID: 'reply', type: 'text', text: 'Complete answer' }
+  })
+  send('message.updated', { info: { ...info, finish: 'stop', time: { created: 1, completed: 2 } } })
+  state.active = false
+  finish({ data: [{ info, parts: [] }], response: new Response() })
+  await refreshing
+  assert.equal(state.messages[0].info.finish, 'stop')
+  assert.equal(state.messages[0].parts[0].text, 'Complete answer')
+  assert.equal(state.active, false, 'an old busy status must not reopen the completed turn')
+  assert.equal(state.messagesDirty, false)
 })

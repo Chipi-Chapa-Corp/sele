@@ -261,6 +261,8 @@ const providerApi: ProviderRendererApi = {
     ipcRenderer.invoke(providerIpcChannels.getChats, providerId, options),
   getChat: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.getChat, providerId, chatId),
+  getCachedChat: (providerId, chatId, options) =>
+    ipcRenderer.invoke(providerIpcChannels.getCachedChat, providerId, chatId, options),
   getChatTerminalTasks: (providerId, chatId) =>
     ipcRenderer.invoke(providerIpcChannels.getChatTerminalTasks, providerId, chatId),
   getSubagents: (providerId, chatId) =>

@@ -6,6 +6,44 @@ if (!process.versions.electron) {
   ;(async () => {
     const directory = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'sele-final-ui-'))
     try {
+      const { renderOpenCodeChatItems } = await import(
+        '../../src/main/providers/opencode/OpenCodeItemRenderers.ts'
+      )
+      const openCodeThoughtItems = Object.fromEntries(
+        ['thinking', 'answer', 'finished'].map((stage) => {
+          const completed = stage === 'finished'
+          const items = renderOpenCodeChatItems(
+            [
+              {
+                info: {
+                  id: 'opencode-reply',
+                  role: 'assistant',
+                  finish: completed ? 'stop' : undefined,
+                  time: {
+                    created: 1700000000000,
+                    ...(completed ? { completed: 1700000009000 } : {})
+                  }
+                },
+                parts: [
+                  ...(stage === 'thinking'
+                    ? []
+                    : [
+                        { type: 'text', id: 'opencode-answer', text: 'Done so far: final answer.' }
+                      ]),
+                  {
+                    type: 'reasoning',
+                    id: 'opencode-thought',
+                    text: 'Internal reasoning',
+                    time: { start: 1700000000000, ...(completed ? { end: 1700000009000 } : {}) }
+                  }
+                ]
+              }
+            ],
+            { active: !completed, stopped: false }
+          )
+          return [stage, items]
+        })
+      )
       await require('esbuild').build({
         stdin: {
           contents: `
@@ -38,6 +76,13 @@ if (!process.versions.electron) {
               </React.Fragment>))
             }
             window.renderTurn('early')
+            window.renderOpenCodeThought = (stage = 'thinking') => {
+              const items = ${JSON.stringify(openCodeThoughtItems)}[stage]
+              flushSync(() => root.render(<React.Fragment key="opencode-thought-fixture">
+                {items.map(item => <ChatDetailItem key={item.id} item={item}
+                  progressSettings={{expandProgressOnStart:true, collapseProgressOnFinish:true}} />)}
+              </React.Fragment>))
+            }
             window.renderSteeredTurn = (status, settings, nextTurn = false, finalStage = 'none') => {
               const items = getChatItems([{ id: 'steered', status, items: [
                 { type: 'userMessage', id: 'initial', content: [{ type: 'text', text: 'Start' }] },
@@ -352,6 +397,47 @@ if (!process.versions.electron) {
         (await thoughtState()).markdown,
         true,
         'lazy reasoning loads inside the disclosure'
+      )
+      await run('window.renderOpenCodeThought()')
+      await settle()
+      assert.equal(
+        await run(
+          "document.querySelector('.chat-detail__thought').closest('.chat-detail__working').open"
+        ),
+        true
+      )
+      await run("window.renderOpenCodeThought('answer')")
+      await settle()
+      await run("window.renderOpenCodeThought('finished')")
+      await settle()
+      assert.deepEqual(
+        await run(`({
+        open:document.querySelector('.chat-detail__working').open,
+        thoughtVisible:!!document.querySelector('.chat-detail__thought'),
+        answer:document.querySelector('.chat-detail__message--assistant')?.textContent.trim(),
+        answerInsideWorked:!!document.querySelector('.chat-detail__working .chat-detail__message--assistant')
+      })`),
+        {
+          open: false,
+          thoughtVisible: false,
+          answer: 'Done so far: final answer.',
+          answerInsideWorked: false
+        },
+        'OpenCode completion hides Thought under collapsed Worked and keeps the answer outside it'
+      )
+      await run("document.querySelector('.chat-detail__working > summary').click()")
+      await settle()
+      assert.equal(
+        await run("!!document.querySelector('.chat-detail__working .chat-detail__thought')"),
+        true,
+        'expanding Worked reveals its nested Thought disclosure'
+      )
+      await run("document.querySelector('.chat-detail__working > summary').click()")
+      await settle()
+      assert.equal(
+        await run("!!document.querySelector('.chat-detail__thought')"),
+        false,
+        'collapsing Worked removes Thought from the visible transcript'
       )
       console.log('Final response UI checks passed')
     } catch (error) {

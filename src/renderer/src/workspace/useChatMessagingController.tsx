@@ -465,6 +465,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       providerUpdateInProgress ||
       sendInFlightRef.current ||
       authenticationRequired ||
+      (chatDetailRef.current?.historyPreview && sendTarget !== 'new') ||
       (chatDetailRef.current?.authenticationRequired && sendTarget !== 'new') ||
       (activeSubagentChatView && sendTarget !== 'new' && !activeSubagentChatView.summary.canMessage)
     ) {
@@ -765,7 +766,8 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   }
   const handleContinueStoppedTurn = useCallback(
     async (workingStepId: string, prompt: string): Promise<void> => {
-      if (chatDetailRef.current?.authenticationRequired) return
+      if (chatDetailRef.current?.authenticationRequired || chatDetailRef.current?.historyPreview)
+        return
       const chatKey = selectedChatKeyRef.current
       if (chatKey) {
         setContinuedStoppedWorkingStepsByChat((currentStepsByChat) => {

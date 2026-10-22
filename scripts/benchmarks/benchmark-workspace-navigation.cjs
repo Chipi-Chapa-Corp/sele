@@ -25,7 +25,7 @@ if (!process.versions.electron) {
           import {createRoot} from 'react-dom/client'
           import {App} from './src/renderer/src/App'
           const root=createRoot(document.getElementById('root'));root.render(<App/>);window.unmountFixture=()=>root.unmount();
-          window.frameGaps=[];window.longTasks=[];
+          window.frameGaps=[];window.longTasks=[];window.fixtureTurnNodes=new Map();
           new PerformanceObserver(list=>window.longTasks.push(...list.getEntries().map(e=>e.duration)))
             .observe({type:'longtask',buffered:true});
           let before=performance.now();
@@ -48,6 +48,7 @@ if (!process.versions.electron) {
             const spinner=document.querySelector('[data-chat-id="0"] .chat-list-item__loading');
             if(!spinner)throw new Error('Missing background running spinner');
             const historyRequests=window.fixtureCalls.filter(name=>name==='getChats').length;
+            const detailRequests=window.fixtureCalls.filter(name=>name==='getChat').length;
             const selectedBefore=document.querySelector('.chat-list-item--selected')?.dataset.chatId??null;
             const styleSheetCount=document.styleSheets.length;
             const popLayoutRules=window.fixturePopLayoutRules;
@@ -65,7 +66,13 @@ if (!process.versions.electron) {
             await new Promise(resolve=>setTimeout(resolve,${richHistory ? 650 : 300}));
             measuring=false;
             performance.mark(measurementId+':end');
-            return {measurementId,destination,action,selectedBefore,affectedChatIds,clickMs,
+            const turnNodes=[...document.querySelectorAll('#chat-search-content [data-chat-turn-id]')];
+            const previousNodes=window.fixtureTurnNodes.get(destination);
+            const reusedTurns=previousNodes?turnNodes.filter(node=>previousNodes.get(node.dataset.chatTurnId)===node).length:null;
+            if(action==='select'&&destination!=='new'&&turnNodes.length)
+              window.fixtureTurnNodes.set(destination,new Map(turnNodes.map(node=>[node.dataset.chatTurnId,node])));
+            return {measurementId,destination,action,selectedBefore,affectedChatIds,clickMs,reusedTurns,
+              detailRequests:window.fixtureCalls.filter(name=>name==='getChat').length-detailRequests,
               firstSelectionMs:paintSamples.find(sample=>sample.selected===destination)?.ms??null,
               firstMessagesMs:paintSamples.find(sample=>sample.selected===destination&&sample.turns.some(id=>id.startsWith(destination+':')))?.ms??null,
               allTurnsMs:paintSamples.find(sample=>sample.selected===destination&&sample.turns.length===10)?.ms??null,
@@ -77,7 +84,7 @@ if (!process.versions.electron) {
               selected:document.querySelector('.chat-list-item--selected')?.dataset.chatId??null,
               spinnerRetained:spinner===document.querySelector('[data-chat-id="0"] .chat-list-item__loading'),
               rowRenders:window.fixtureRowRenders.length,rowIds:[...new Set(window.fixtureRowRenders)].slice(0,10),uniqueRows:new Set(window.fixtureRowRenders).size,motionRenders:window.fixtureMotionRenders,
-              historyRequests:window.fixtureCalls.filter(name=>name==='getChats').length-historyRequests,messages:document.querySelectorAll('[data-chat-message-id]').length,
+              historyRequests:window.fixtureCalls.filter(name=>name==='getChats').length-historyRequests,messages:document.querySelectorAll('#chat-search-content [data-chat-message-id]').length,
               done:window.fixtureChats.find(chat=>chat.id===destination)?.done??false,
               activeRowPresent:Boolean(document.querySelector('.chat-list-group--cwd [data-chat-id="'+destination+'"]'))};
           };
@@ -93,6 +100,12 @@ if (!process.versions.electron) {
           {
             name: 'fixture-workers',
             setup(build) {
+              if (process.env.SELE_BENCHMARK_UNRETAINED === '1') {
+                build.onLoad({ filter: /RetainedChatViews\.tsx$/ }, () => ({
+                  contents: 'export function RetainedChatViews({children}) { return children }',
+                  loader: 'tsx'
+                }))
+              }
               build.onLoad(
                 { filter: /(?:ChatListItem\.tsx|ChatListGroup\.tsx|MotionListItem\.tsx)$/ },
                 async (args) => {
@@ -167,7 +180,7 @@ if (!process.versions.electron) {
           getDefaultCwd:()=>'/fixture/project-0',getWindowState:()=>({isMaximized:false}),getAppUpdate:()=>null,
           getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
           getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
-          getSkills:()=>[],getApps:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
+          getSkills:()=>[],getApps:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
           getUpdateAvailability:()=>null
         };
         const api=new Proxy({}, {get:(_target,name)=>{
@@ -351,6 +364,24 @@ if (!process.versions.electron) {
         )
       )
       assert.deepEqual(errors, [])
+      if (
+        process.env.SELE_BENCHMARK_RICH_HISTORY === '1' &&
+        process.env.SELE_BENCHMARK_UNRETAINED !== '1'
+      ) {
+        const warm = results.filter(
+          (result) =>
+            result.action === 'select' &&
+            ['1', '2'].includes(result.destination) &&
+            result.reusedTurns !== null
+        )
+        assert.ok(warm.length >= 2, 'exercise repeated rich-chat reopening')
+        for (const result of warm)
+          assert.equal(
+            result.reusedTurns,
+            10,
+            'warm reopening must reuse every mounted turn: ' + JSON.stringify(result)
+          )
+      }
       for (const result of results) {
         if (process.env.SELE_BENCHMARK_RICH_HISTORY !== '1') {
           assert.equal(result.messages, 0, 'the default regression exercises empty conversations')

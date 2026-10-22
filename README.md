@@ -136,6 +136,15 @@ Regression tests live beside the source they cover (`*.test.mjs`); use the named
 worker integration checks live in `scripts/tests/`, with fixtures in its `fixtures/`
 directory. These checks may require a desktop session or a built app.
 
+`npm run test:e2e` builds Sele and drives the real app against the installed Codex,
+Claude Code, Copilot and OpenCode CLIs. A local scripted model server answers for every
+provider, and all provider homes, the Sele profile and its database are temporary, so no
+account is used. It opens windows; run it on a private display such as Xvfb. Options:
+`--provider codex,claude`, `--phase messaging,navigation,transcripts`, `--only <name>`,
+`--skip-build` and `--keep`; `SELE_E2E_LONG_TURNS` sets the long-transcript length and
+`SELE_E2E_BUDGET_SCALE` relaxes latency and frame budgets on slow machines. Reports and
+failure screenshots go to `test-results/e2e/`.
+
 Reusable performance benchmarks live in `scripts/benchmarks/`. Keep generated
 reports, screenshots, and profiling output in the gitignored `test-results/` or
 `benchmark-results/` directories, and use `tmp/` for local scratch files. The

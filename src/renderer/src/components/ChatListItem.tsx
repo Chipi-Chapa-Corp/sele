@@ -182,14 +182,14 @@ export const ChatListItem = memo(function ChatListItem({
     : getRenderableText(projectDisplayName, '').trim() ||
       getChatProjectName(chat.projectCwd ?? chat.cwd)
   const LocationIcon = noProject ? MessageSquare : isGitWorktree ? GitFork : Folder
+  const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
+  const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
   const workingStatus =
     chat.status && workingStatuses.has(chat.status)
       ? chat.status
-      : descendantWorking
+      : descendantWorking && !approvalStatus && !userInputStatus
         ? 'active'
         : null
-  const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
-  const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
   const turnOutcomeStatus =
     chat.lastTurnOutcome === 'failed'
       ? 'error'

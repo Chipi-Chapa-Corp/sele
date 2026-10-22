@@ -6,7 +6,7 @@ import { Visualization } from './Visualization'
 
 // Keep each Markdown block separate so updating the streaming tail never replaces
 // an iframe's ancestors. Moving even an existing iframe through detached DOM reloads it.
-function MarkdownElement({
+export function MarkdownElement({
   element,
   children
 }: {
@@ -33,6 +33,47 @@ function MarkdownElement({
   return createElement(tag, { ref }, children)
 }
 
+export function MarkdownNodes({
+  parent,
+  container,
+  cwd
+}: {
+  parent: ParentNode
+  container?: AppContainerTarget | null
+  cwd?: string | null
+}): ReactNode {
+  const occurrences = new Map<string, number>()
+  return Array.from(parent.childNodes, (node, index) => {
+    if (!(node instanceof Element))
+      return node.nodeType === Node.TEXT_NODE ? node.textContent : null
+    const reference = decodeVisualizationReference(node.getAttribute('data-visualization') ?? '')
+    if (reference) {
+      const occurrence = occurrences.get(reference.path) ?? 0
+      occurrences.set(reference.path, occurrence + 1)
+      return (
+        <div
+          key={`visualization:${reference.path}:${occurrence}`}
+          data-visualization={node.getAttribute('data-visualization')}
+        >
+          <Visualization reference={reference} container={container} cwd={cwd} />
+        </div>
+      )
+    }
+    const hasVisualization = Boolean(node.querySelector('[data-visualization]'))
+    return (
+      // React must not reconcile children into an element whose DOM it does not own.
+      <MarkdownElement
+        key={`${node.localName}:${index}:${hasVisualization ? 'react' : 'html'}`}
+        element={node}
+      >
+        {hasVisualization ? (
+          <MarkdownNodes parent={node} container={container} cwd={cwd} />
+        ) : undefined}
+      </MarkdownElement>
+    )
+  })
+}
+
 export function MarkdownContent({
   html,
   settled = false,
@@ -51,42 +92,11 @@ export function MarkdownContent({
     return template.content
   }, [html])
 
-  const renderNodes = (parent: ParentNode): ReactNode[] => {
-    const occurrences = new Map<string, number>()
-    return Array.from(parent.childNodes, (node, index) => {
-      if (!(node instanceof Element))
-        return node.nodeType === Node.TEXT_NODE ? node.textContent : null
-      const reference = decodeVisualizationReference(node.getAttribute('data-visualization') ?? '')
-      if (reference) {
-        const occurrence = occurrences.get(reference.path) ?? 0
-        occurrences.set(reference.path, occurrence + 1)
-        return (
-          <div
-            key={`visualization:${reference.path}:${occurrence}`}
-            data-visualization={node.getAttribute('data-visualization')}
-          >
-            <Visualization reference={reference} container={container} cwd={cwd} />
-          </div>
-        )
-      }
-      const hasVisualization = Boolean(node.querySelector('[data-visualization]'))
-      return (
-        // React must not reconcile children into an element whose DOM it does not own.
-        <MarkdownElement
-          key={`${node.localName}:${index}:${hasVisualization ? 'react' : 'html'}`}
-          element={node}
-        >
-          {hasVisualization ? renderNodes(node) : undefined}
-        </MarkdownElement>
-      )
-    })
-  }
-
   const ref = useRef<HTMLDivElement>(null)
   usePatchedHtml(ref, content ? null : html, settled)
   return content ? (
     <div key="react" className="chat-detail__message-markdown">
-      {renderNodes(content)}
+      <MarkdownNodes parent={content} container={container} cwd={cwd} />
     </div>
   ) : (
     <div key="html" className="chat-detail__message-markdown" ref={ref} />

@@ -7,12 +7,17 @@ import { prepareChatWorkspace } from './noProjectWorkspace'
 import { join } from 'node:path'
 import { AccountDisplayNameCache } from './AccountDisplayNameCache'
 import { importedConversationStore } from '../database/importedConversations'
+import { getDatabase } from '../database/sqlite'
+import { SqliteChatHistoryCache } from '../database/chatHistoryCache'
+import { PersistentChatHistory, type HistoryRead } from './PersistentChatHistory'
+import { prepareChatDetailForRenderer } from './chatDetailLazy'
 import type { McpAppScope } from '../../shared/mcpApps'
 import { applyTurnTokenUsage, emptyTokenUsage } from '../../shared/tokenUsage'
 import { randomUUID } from 'node:crypto'
 import {
   getAccountUsageCosts,
   getChatTokenUsage,
+  getLiveChatTokenUsage,
   getTokenUsageSummary,
   recordTokenUsage
 } from '../database/tokenUsage'
@@ -77,6 +82,7 @@ import { claudeAccounts } from './claude/ClaudeAccounts'
 import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
+import { hasChatUpdateInterest } from './chatUpdateInterest'
 import type {
   ProviderAdapter,
   HistoricalTokenUsageSnapshot,
@@ -94,6 +100,52 @@ const codexAdapter = new CodexProviderAdapter()
 const accountDisplayNameCache = new AccountDisplayNameCache(() =>
   join(app.getPath('userData'), 'account-display-names.json')
 )
+const persistentChatHistory = new PersistentChatHistory(new SqliteChatHistoryCache(getDatabase))
+
+export const getProviderCachedChat = async (
+  providerId: ProviderId,
+  chatId: string,
+  options?: { container?: import('../../shared/app').AppContainerTarget | null }
+): Promise<ProviderChatDetail | null> => {
+  const metadata = await getChatMetadata(chatId)
+  if (metadata.done || metadata.purpose) return null
+  return persistentChatHistory.preview(
+    providerId,
+    chatId,
+    options?.container !== undefined ? options.container : metadata.container
+  )
+}
+
+export const beginProviderChatHistoryRead = async (
+  providerId: ProviderId,
+  chatId: string
+): Promise<HistoryRead | null> => {
+  try {
+    const metadata = await getChatMetadata(chatId)
+    return persistentChatHistory.beginOpening(providerId, chatId, metadata.container)
+  } catch (error) {
+    console.warn('Unable to prepare saved chat history.', error)
+    return null
+  }
+}
+
+export const saveProviderChatHistory = (
+  read: HistoryRead | null,
+  detail: ProviderChatDetail,
+  prepare = false
+): void => {
+  if (!read) return
+  // Persist after replying to the opening IPC. Never write streaming chunks.
+  setImmediate(() => {
+    void Promise.resolve()
+      .then(() =>
+        persistentChatHistory.save(read, prepare ? prepareChatDetailForRenderer(detail) : detail)
+      )
+      .catch((error: unknown) => {
+        console.warn('Unable to save prepared chat history.', error)
+      })
+  })
+}
 const claudeAdapter = new ClaudeProviderAdapter()
 claudeAccounts.setUsageCacheFile(join(app.getPath('userData'), 'claude-usage-cache.json'))
 const openCodeAdapter = new OpenCodeProviderAdapter()
@@ -213,7 +265,9 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
 
 const applyMetadataToDetail = async (
   detail: ProviderChatDetail,
-  providerId: ProviderId
+  providerId: ProviderId,
+  includeUsage = true,
+  liveUsage = false
 ): Promise<ProviderChatDetail> => {
   const lastTurnOutcome = getLastTurnOutcome(detail)
   if (lastTurnOutcome !== undefined) {
@@ -225,11 +279,13 @@ const applyMetadataToDetail = async (
     getCwdMetadata(noProject ? null : detail.cwd),
     getMessageReviews(detail.id)
   ])
-  const usage = await getChatTokenUsage(
-    providerId,
-    getContainerTargetKey(metadata.container ?? detail.container),
-    detail.id
-  )
+  const usage = includeUsage
+    ? await (liveUsage && detail.status === 'active' ? getLiveChatTokenUsage : getChatTokenUsage)(
+        providerId,
+        getContainerTargetKey(metadata.container ?? detail.container),
+        detail.id
+      )
+    : null
   const reviewsByContent = new Map<string, typeof reviews>()
 
   reviews.forEach((review) => {
@@ -253,8 +309,8 @@ const applyMetadataToDetail = async (
     seenUpdatedAt: metadata.seenUpdatedAt,
     purpose: metadata.purpose,
     container: metadata.container ?? detail.container ?? null,
-    tokenUsage: usage.total,
-    items: applyTurnTokenUsage(detail.items, usage.byTurn).map((item) => {
+    tokenUsage: usage ? usage.total : detail.tokenUsage,
+    items: (usage ? applyTurnTokenUsage(detail.items, usage.byTurn) : detail.items).map((item) => {
       if (item.type !== 'message' && item.type !== 'pendingMessage') return item
 
       const review = reviewsByContent.get(item.content)?.shift()
@@ -287,7 +343,23 @@ const drainProviderChatUpdates = async (chatKey: string): Promise<void> => {
       pendingProviderChatUpdates.delete(chatKey)
 
       try {
-        const enrichedDetail = await applyMetadataToDetail(update.detail, update.providerId)
+        // Sidebar delivery must not wait on ledger draining, repricing, or accounting scans.
+        // Opening a chat reads complete usage through the ordinary detail API.
+        const includeUsage = hasChatUpdateInterest(chatKey)
+        const liveUsage = !unreportedTurnCompletions.has(chatKey)
+        let enrichedDetail = await applyMetadataToDetail(
+          update.detail,
+          update.providerId,
+          includeUsage,
+          liveUsage
+        )
+        if (!includeUsage && hasChatUpdateInterest(chatKey))
+          enrichedDetail = await applyMetadataToDetail(
+            update.detail,
+            update.providerId,
+            true,
+            liveUsage
+          )
         // Metadata and review reads are asynchronous. If another adapter snapshot arrived while
         // they were running, discard this one before it can overwrite the newer transcript.
         if (latestProviderChatUpdateRevision.get(chatKey) !== update.detail.revision) continue
@@ -302,6 +374,20 @@ const drainProviderChatUpdates = async (chatKey: string): Promise<void> => {
         } satisfies ProviderChatUpdatedEvent
 
         chatUpdatedListeners.forEach((listener) => listener(event))
+        // Ownership/metadata checks can finish during the opening read. Persist
+        // their latest idle snapshot rather than letting that race prevent the
+        // completed page from ever reaching disk. Streaming updates never enter.
+        if (enrichedDetail.status === null) {
+          saveProviderChatHistory(
+            persistentChatHistory.beginOpening(
+              update.providerId,
+              enrichedDetail.id,
+              enrichedDetail.container
+            ),
+            enrichedDetail,
+            true
+          )
+        }
       } catch (error) {
         console.error('Unable to apply chat metadata to update', error)
       }
@@ -320,6 +406,7 @@ const enqueueProviderChatUpdate = (
   const chatKey = `${providerId}:${detail.id}`
   const latestRevision = latestProviderChatUpdateRevision.get(chatKey)
   if (latestRevision != null && detail.revision <= latestRevision) return
+  persistentChatHistory.invalidate(providerId, detail.id)
   latestProviderChatUpdateRevision.set(chatKey, detail.revision)
   if (metadata?.turnCompleted) unreportedTurnCompletions.add(chatKey)
   pendingProviderChatUpdates.set(chatKey, {
@@ -496,7 +583,7 @@ export const getChatUpdateSummary = (
     projectCwd: detail.projectCwd,
     branchName: detail.branchName,
     worktreeBaseBranchName: detail.worktreeBaseBranchName,
-    updatedAt,
+    updatedAt: detail.updatedAt ?? updatedAt,
     status: detail.status,
     lastTurnOutcome:
       detail.lastTurnOutcome === undefined ? getLastTurnOutcome(detail) : detail.lastTurnOutcome,
@@ -523,6 +610,7 @@ const codexReauthentications = new Map<string, { source: string; loginId: string
 
 export const providerApi: ProviderApi = {
   reauthenticateAccount: async (providerId, options) => {
+    persistentChatHistory.forgetAccount(providerId, options?.container)
     if (providerId === 'codex') {
       const source = getContainerTargetKey(options?.container)
       if (Array.from(codexReauthentications.values()).some((value) => value.source === source))
@@ -543,8 +631,12 @@ export const providerApi: ProviderApi = {
       throw new Error('Reauthentication is not available for this provider.')
     return claudeAccounts.reauthenticate(options)
   },
-  login: (providerId, options) => adapters[providerId].login(options),
+  login: (providerId, options) => {
+    persistentChatHistory.forgetAccount(providerId, options?.container)
+    return adapters[providerId].login(options)
+  },
   getAccounts: async (providerId, options) => {
+    const accountEpoch = persistentChatHistory.accountEpoch(providerId, options?.container)
     const load = async (): Promise<ProviderAccountConfiguration> => {
       if (providerId === 'codex') return getCodexAccountsWithDisplayNames(options?.container)
       if (providerId === 'claude') return claudeAccounts.getWithDisplayNames(options)
@@ -567,12 +659,15 @@ export const providerApi: ProviderApi = {
         ]
       }
     }
-    return accountDisplayNameCache.merge(
+    const configuration = await accountDisplayNameCache.merge(
       JSON.stringify([providerId, getContainerTargetKey(options?.container)]),
       await load()
     )
+    persistentChatHistory.setAccount(providerId, options?.container, configuration, accountEpoch)
+    return configuration
   },
   createAccount: async (providerId, options) => {
+    persistentChatHistory.forgetAccount(providerId, options?.container)
     if (providerId === 'claude') return claudeAccounts.create(options)
     if (providerId !== 'codex') {
       throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
@@ -582,6 +677,7 @@ export const providerApi: ProviderApi = {
     return creation
   },
   completeAccountCreation: async (providerId, accountId, loginId, options) => {
+    persistentChatHistory.forgetAccount(providerId, options?.container)
     if (providerId === 'codex' && accountId.startsWith('reauth-')) {
       const pending = codexReauthentications.get(accountId)
       if (
@@ -682,6 +778,7 @@ export const providerApi: ProviderApi = {
     return configuration
   },
   useAccount: async (providerId, accountId, options) => {
+    persistentChatHistory.forgetAccount(providerId, options?.container)
     if (providerId === 'claude') {
       const previous = await claudeAccounts.get(options)
       if (previous.accounts.some((account) => account.id === accountId && account.active))
@@ -697,6 +794,7 @@ export const providerApi: ProviderApi = {
     return configuration
   },
   deleteAccount: async (providerId, accountId, options) => {
+    persistentChatHistory.forgetAccount(providerId, options?.container)
     if (providerId === 'claude') {
       const previous = await claudeAccounts.get(options)
       if (previous.accounts.some((account) => account.id === accountId && account.active)) {
@@ -850,6 +948,7 @@ export const providerApi: ProviderApi = {
     }
     const page = await adapters[providerId].getChats(options)
     const chats = await applyMetadataToChats(page.chats)
+    persistentChatHistory.observe(chats)
     const projectCwd = normalizeCwd(options?.projectCwd)
     return {
       ...page,
@@ -1069,5 +1168,6 @@ export const providerApi: ProviderApi = {
 }
 
 export const disposeProviderAdapters = (): void => {
+  persistentChatHistory.dispose()
   Object.values(adapters).forEach((adapter) => adapter.dispose())
 }

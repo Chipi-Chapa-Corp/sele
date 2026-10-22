@@ -1,4 +1,4 @@
-import { sql, type Transaction } from 'kysely'
+import { sql, type Transaction, type Selectable } from 'kysely'
 import type { ProviderAccountUsageSummary, ProviderId } from '../../shared/provider'
 import type { TokenUsage, TokenUsageSummary } from '../../shared/tokenUsage'
 import {
@@ -12,11 +12,17 @@ import {
   applyFallbackModelPricing,
   differenceModelUsage,
   estimateAggregateTokenRate,
+  getNativeModelPricingRevision,
   priceModelUsage,
   type ModelTokenUsage
 } from '../providers/modelPricing/TokenPricing'
-import { resolveModelPricing } from '../providers/modelPricing/ModelsDevPricing'
+import {
+  getModelPricingRevision,
+  resolveModelPricing
+} from '../providers/modelPricing/ModelsDevPricing'
 import { getDatabase, type LocalDatabase } from './sqlite'
+import { DatabaseReadCache } from './readCache'
+import { TokenUsageAccumulator } from './tokenUsageAccumulator'
 import type { HistoricalTokenUsageSnapshot } from '../providers/ProviderAdapter'
 
 const key = (...parts: (string | null)[]): string => JSON.stringify(parts)
@@ -90,6 +96,7 @@ const drainTokenUsage = async (): Promise<void> => {
       }
       const db = await getDatabase()
       let written = 0
+      const changes: LedgerChange[] = []
       try {
         await db.transaction().execute(async (trx) => {
           const started = performance.now()
@@ -99,21 +106,25 @@ const drainTokenUsage = async (): Promise<void> => {
               (written > 0 && performance.now() - started >= transactionBudgetMs)
             )
               break
-            await writeObservation(trx, item.providerId, item.observation, item.resolvedModels)
+            changes.push(
+              await writeObservation(trx, item.providerId, item.observation, item.resolvedModels)
+            )
             written += 1
           }
         })
+        publishLedgerChanges(db, changes)
         queuedObservations.splice(0, written)
       } catch {
         // The batch rolled back. Retry its members individually so one bad observation
         // cannot discard the others, matching the former per-observation transactions.
         for (const item of queuedObservations.splice(0, written + 1)) {
           try {
-            await db
+            const change = await db
               .transaction()
               .execute((trx) =>
                 writeObservation(trx, item.providerId, item.observation, item.resolvedModels)
               )
+            publishLedgerChanges(db, [change])
           } catch (error) {
             console.error('Unable to persist token usage.', error)
           }
@@ -147,7 +158,13 @@ const writeObservation = async (
   providerId: ProviderId,
   observation: TokenUsageObservation,
   resolvedModels: ModelTokenUsage[] | undefined
-): Promise<void> => {
+): Promise<LedgerChange> => {
+  const change: LedgerChange = {
+    providerId,
+    sourceKey: observation.sourceKey,
+    invalidateSource: false,
+    rows: []
+  }
   if (observation.parentChatId && observation.parentChatId !== observation.chatId) {
     const lineage = {
       id: key(providerId, observation.sourceKey, observation.chatId),
@@ -157,6 +174,15 @@ const writeObservation = async (
       parent_chat_id: observation.parentChatId,
       parent_turn_id: observation.parentTurnId ?? null
     }
+    const previous = await trx
+      .selectFrom('token_usage_chat_parent')
+      .selectAll()
+      .where('id', '=', lineage.id)
+      .executeTakeFirst()
+    change.invalidateSource =
+      !previous ||
+      previous.parent_chat_id !== lineage.parent_chat_id ||
+      (lineage.parent_turn_id !== null && previous.parent_turn_id !== lineage.parent_turn_id)
     await trx
       .insertInto('token_usage_chat_parent')
       .values(lineage)
@@ -181,7 +207,7 @@ const writeObservation = async (
       observation,
       previous ? { usage: fromRow(previous), timestamp: previous.updated_at } : undefined
     )
-    if (!increment) return
+    if (!increment) return change
     usage = increment
     if (models)
       models = differenceModelUsage(
@@ -209,19 +235,21 @@ const writeObservation = async (
         })
       )
       .execute()
-    if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return
+    if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return change
   }
   if (models) usage = { ...usage, cost: priceModelUsage(models).cost }
-  if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return
+  if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return change
   if (observation.replaceProvisionalGroup) {
-    await trx
+    const removed = await trx
       .deleteFrom('token_usage')
       .where('provider_id', '=', providerId)
       .where('source_key', '=', observation.sourceKey)
       .where('chat_id', '=', observation.chatId)
       .where('provisional_group', '=', observation.replaceProvisionalGroup)
       .where('provisional_complete', '=', 1)
+      .returningAll()
       .execute()
+    removed.forEach((previous) => change.rows.push({ previous }))
   }
   const id = observation.cumulative ? key(streamKey, observation.turnId) : streamKey
   const values = columns(usage)
@@ -238,7 +266,7 @@ const writeObservation = async (
     : undefined
   const pricedAt =
     usage.cost && Object.values(usage.cost).every((value) => value != null) ? Date.now() : null
-  await trx
+  const next = await trx
     .insertInto('token_usage')
     .values({
       id,
@@ -287,7 +315,10 @@ const writeObservation = async (
             }
       )
     )
-    .execute()
+    .returningAll()
+    .executeTakeFirstOrThrow()
+  change.rows.push({ previous: previousRecord, next })
+  return change
 }
 
 export const flushTokenUsage = async (): Promise<void> => {
@@ -295,23 +326,41 @@ export const flushTokenUsage = async (): Promise<void> => {
 }
 
 let repricing: Promise<void> | null = null
+const repricedCatalogs = new WeakMap<object, { catalog: object | null; native: number }>()
+const repricingCursors = new WeakMap<
+  object,
+  { catalog: object | null; native: number; id: string }
+>()
 /** Fill estimates that were recorded before pricing arrived; never change an existing quote. */
 const fillMissingPrices = (): Promise<void> => {
   repricing ??= (async () => {
     await flushTokenUsage()
     const db = await getDatabase()
+    const catalog = getModelPricingRevision()
+    const native = getNativeModelPricingRevision()
+    const previous = repricedCatalogs.get(db)
+    if (previous?.catalog === catalog && previous.native === native) return
+    const cursor = repricingCursors.get(db)
+    const after = cursor?.catalog === catalog && cursor.native === native ? cursor.id : null
     const rows = await db
       .selectFrom('token_usage')
       .selectAll()
       .where('priced_at', 'is', null)
       .where('models_json', 'is not', null)
+      .$if(after !== null, (query) => query.where('id', '>', after!))
+      .orderBy('id')
       .limit(500)
       .execute()
+    let started = performance.now()
     for (const row of rows) {
+      if (performance.now() - started >= transactionBudgetMs) {
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        started = performance.now()
+      }
       const models = await resolveModelPricing(JSON.parse(row.models_json!) as ModelTokenUsage[])
       const usage = priceModelUsage(models)
       if (!usage.cost || !Object.values(usage.cost).some((value) => value != null)) continue
-      await db
+      const next = await db
         .updateTable('token_usage')
         .set({
           ...costColumns(usage),
@@ -321,8 +370,22 @@ const fillMissingPrices = (): Promise<void> => {
         .where('id', '=', row.id)
         .where('models_json', '=', row.models_json)
         .where('priced_at', 'is', null)
-        .execute()
+        .returningAll()
+        .executeTakeFirst()
+      if (next)
+        publishLedgerChanges(db, [
+          {
+            providerId: row.provider_id,
+            sourceKey: row.source_key,
+            invalidateSource: true,
+            rows: [{ previous: row, next }]
+          }
+        ])
     }
+    // Keep draining a full batch on subsequent reads. A catalog refresh in flight must also
+    // remain eligible, so remember the revision captured before resolving these rows.
+    if (rows.length < 500) repricedCatalogs.set(db, { catalog, native })
+    else repricingCursors.set(db, { catalog, native, id: rows.at(-1)!.id })
   })().finally(() => {
     repricing = null
   })
@@ -336,52 +399,133 @@ type UsageRow = Parameters<typeof fromRow>[0] & {
   models_json: string | null
 }
 
+const priceFallbackCache = new DatabaseReadCache<(row: UsageRow) => TokenUsage>(32)
+
 /** Fallback quotes stay out of the ledger so a guessed model never becomes historical fact. */
 const getUsagePriceFallbacks = async (providerId?: ProviderId, sourceKey?: string) => {
   const db = await getDatabase()
-  let query = db
-    .selectFrom('token_usage')
-    .select([
-      'provider_id',
-      'source_key',
-      'chat_id',
-      'models_json',
-      'recorded_at',
-      sql<number>`row_number() over (partition by provider_id, source_key, chat_id order by recorded_at desc)`.as(
-        'rank'
+  return priceFallbackCache.read(db, key(providerId ?? null, sourceKey ?? null), async () => {
+    let query = db
+      .selectFrom('token_usage')
+      .select([
+        'provider_id',
+        'source_key',
+        'chat_id',
+        'models_json',
+        'recorded_at',
+        sql<number>`row_number() over (partition by provider_id, source_key, chat_id order by recorded_at desc)`.as(
+          'rank'
+        )
+      ])
+      .where('models_json', 'is not', null)
+      .where(
+        sql<boolean>`exists (select 1 from json_each(models_json) where json_extract(value, '$.rates.input') is not null and json_extract(value, '$.rates.output') is not null)`
       )
-    ])
-    .where('models_json', 'is not', null)
-    .where(
-      sql<boolean>`exists (select 1 from json_each(models_json) where json_extract(value, '$.rates.input') is not null and json_extract(value, '$.rates.output') is not null)`
-    )
-  if (providerId) query = query.where('provider_id', '=', providerId)
-  if (sourceKey) query = query.where('source_key', '=', sourceKey)
-  const rows = await db
-    .selectFrom(query.as('quotes'))
-    .selectAll()
-    .where('rank', '=', 1)
-    .orderBy('recorded_at', 'desc')
-    .execute()
-  const byChat = new Map<string, ModelTokenUsage>()
-  const bySource = new Map<string, ModelTokenUsage>()
-  for (const row of rows) {
-    const chatKey = key(row.provider_id, row.source_key, row.chat_id)
-    if (byChat.has(chatKey)) continue
-    const model = (JSON.parse(row.models_json!) as ModelTokenUsage[]).find((model) => model.rates)
-    if (!model) continue
-    byChat.set(chatKey, model)
-    const sourceKey = key(row.provider_id, row.source_key)
-    if (!bySource.has(sourceKey)) bySource.set(sourceKey, model)
+    if (providerId) query = query.where('provider_id', '=', providerId)
+    if (sourceKey) query = query.where('source_key', '=', sourceKey)
+    const rows = await db
+      .selectFrom(query.as('quotes'))
+      .selectAll()
+      .where('rank', '=', 1)
+      .orderBy('recorded_at', 'desc')
+      .execute()
+    const byChat = new Map<string, ModelTokenUsage>()
+    const bySource = new Map<string, ModelTokenUsage>()
+    for (const row of rows) {
+      const chatKey = key(row.provider_id, row.source_key, row.chat_id)
+      if (byChat.has(chatKey)) continue
+      const model = (JSON.parse(row.models_json!) as ModelTokenUsage[]).find((model) => model.rates)
+      if (!model) continue
+      byChat.set(chatKey, model)
+      const sourceKey = key(row.provider_id, row.source_key)
+      if (!bySource.has(sourceKey)) bySource.set(sourceKey, model)
+    }
+    return (row: UsageRow): TokenUsage => {
+      const usage = fromRow(row)
+      if (row.models_json) return usage
+      return applyFallbackModelPricing(
+        usage,
+        byChat.get(key(row.provider_id, row.source_key, row.chat_id)) ??
+          bySource.get(key(row.provider_id, row.source_key))
+      )
+    }
+  })
+}
+
+type LedgerRow = Selectable<LocalDatabase['token_usage']>
+type LedgerChange = {
+  providerId: ProviderId
+  sourceKey: string
+  invalidateSource: boolean
+  rows: { previous?: LedgerRow; next?: LedgerRow }[]
+}
+type ChatUsageEntry = {
+  providerId: ProviderId
+  sourceKey: string
+  members: Map<string, string | null>
+  total: TokenUsageAccumulator
+  byTurn: Map<string, TokenUsageAccumulator>
+  priceRow: (row: UsageRow) => TokenUsage
+  fallbackEligible: boolean
+  snapshot?: { total: TokenUsage | null; byTurn: Map<string, TokenUsage> }
+}
+const usageCaches = new WeakMap<object, Map<string, ChatUsageEntry>>()
+const usageVersions = new WeakMap<object, number>()
+const getUsageCache = (db: object): Map<string, ChatUsageEntry> => {
+  let cache = usageCaches.get(db)
+  if (!cache) usageCaches.set(db, (cache = new Map()))
+  return cache
+}
+const updateChatUsage = (
+  entry: ChatUsageEntry,
+  row: UsageRow & { turn_id: string | null },
+  direction: number
+): void => {
+  const usage = entry.priceRow(row)
+  entry.total.add(usage, direction)
+  const turnId = entry.members.get(row.chat_id) ?? row.turn_id
+  if (turnId) {
+    let total = entry.byTurn.get(turnId)
+    if (!total) entry.byTurn.set(turnId, (total = new TokenUsageAccumulator()))
+    total.add(usage, direction)
+    if (!total.count) entry.byTurn.delete(turnId)
   }
-  return (row: UsageRow): TokenUsage => {
-    const usage = fromRow(row)
-    if (row.models_json) return usage
-    return applyFallbackModelPricing(
-      usage,
-      byChat.get(key(row.provider_id, row.source_key, row.chat_id)) ??
-        bySource.get(key(row.provider_id, row.source_key))
+  if (direction > 0 && !row.models_json) entry.fallbackEligible = true
+  entry.snapshot = undefined
+}
+const snapshotChatUsage = (entry: ChatUsageEntry) =>
+  (entry.snapshot ??= {
+    total: entry.total.snapshot(),
+    byTurn: new Map([...entry.byTurn].map(([id, usage]) => [id, usage.snapshot()!]))
+  })
+
+// Apply only committed ledger changes. Known-price totals update in O(changed rows), without
+// rereading a conversation. Lineage and fallback-price changes rebuild affected roots safely.
+const publishLedgerChanges = (db: object, changes: LedgerChange[]): void => {
+  if (changes.some((change) => change.invalidateSource || change.rows.length))
+    usageVersions.set(db, (usageVersions.get(db) ?? 0) + 1)
+  const cache = getUsageCache(db)
+  for (const change of changes) {
+    const quoteChanged = change.rows.some(
+      ({ previous, next }) =>
+        Boolean(previous?.models_json || next?.models_json) &&
+        (previous?.models_json !== next?.models_json || previous?.recorded_at !== next?.recorded_at)
     )
+    if (quoteChanged) priceFallbackCache.invalidate()
+    for (const [cacheKey, entry] of cache) {
+      if (entry.providerId !== change.providerId || entry.sourceKey !== change.sourceKey) continue
+      const addsUnknownModel = change.rows.some(
+        ({ next }) => next && entry.members.has(next.chat_id) && !next.models_json
+      )
+      if (change.invalidateSource || addsUnknownModel || (quoteChanged && entry.fallbackEligible)) {
+        cache.delete(cacheKey)
+        continue
+      }
+      for (const { previous, next } of change.rows) {
+        if (previous && entry.members.has(previous.chat_id)) updateChatUsage(entry, previous, -1)
+        if (next && entry.members.has(next.chat_id)) updateChatUsage(entry, next, 1)
+      }
+    }
   }
 }
 
@@ -393,37 +537,86 @@ export const getChatTokenUsage = async (
   await flushTokenUsage()
   await fillMissingPrices()
   const db = await getDatabase()
+  const cache = getUsageCache(db)
+  const cacheKey = key(providerId, sourceKey, chatId)
+  const cached = cache.get(cacheKey)
+  if (cached) {
+    cache.delete(cacheKey)
+    cache.set(cacheKey, cached)
+    return snapshotChatUsage(cached)
+  }
+  const version = usageVersions.get(db) ?? 0
   const priceRow = await getUsagePriceFallbacks(providerId, sourceKey)
   const { rows } = await sql<
-    UsageRow & { root_turn_id: string | null; turn_id: string | null }
+    UsageRow & {
+      id: string | null
+      turn_id: string | null
+      member_chat_id: string
+      root_turn_id: string | null
+    }
   >`with recursive chat_tree(chat_id, root_turn_id) as (
     select ${chatId}, null
     union
     select parent.chat_id, coalesce(tree.root_turn_id, parent.parent_turn_id)
     from token_usage_chat_parent parent join chat_tree tree on parent.parent_chat_id = tree.chat_id
     where parent.provider_id = ${providerId} and parent.source_key = ${sourceKey}
-  ) select usage.provider_id, usage.source_key, usage.chat_id,
+  ) select usage.id, tree.chat_id as member_chat_id, tree.root_turn_id,
+    usage.provider_id, usage.source_key, usage.chat_id, usage.turn_id,
     usage.input_tokens, usage.cached_input_tokens, usage.output_tokens,
     usage.input_usd, usage.cached_input_usd, usage.output_usd, usage.total_usd,
-    case when usage.models_json is null then null else 'known' end as models_json,
-    coalesce(tree.root_turn_id, usage.turn_id) as root_turn_id
-    from token_usage usage join chat_tree tree on usage.chat_id = tree.chat_id
-    where usage.provider_id = ${providerId} and usage.source_key = ${sourceKey}`.execute(db)
-  const byTurn = new Map<string, TokenUsage>()
-  let total: TokenUsage | null = null
+    case when usage.models_json is null then null else 'known' end as models_json
+    from chat_tree tree left join token_usage usage on usage.chat_id = tree.chat_id
+      and usage.provider_id = ${providerId} and usage.source_key = ${sourceKey}`.execute(db)
+  // A cold read can overlap a ledger commit while waiting for SQLite's connection. Do not
+  // seed an aggregate that already includes a change which will also be applied incrementally.
+  await flushTokenUsage()
+  if ((usageVersions.get(db) ?? 0) !== version)
+    return getChatTokenUsage(providerId, sourceKey, chatId)
+  const entry: ChatUsageEntry = {
+    providerId,
+    sourceKey,
+    members: new Map(),
+    total: new TokenUsageAccumulator(),
+    byTurn: new Map(),
+    priceRow,
+    fallbackEligible: false
+  }
   for (const row of rows) {
-    const usage = priceRow(row)
-    total = addTokenUsage(total ?? emptyTokenUsage(), usage)
-    if (row.root_turn_id)
-      byTurn.set(
-        row.root_turn_id,
-        addTokenUsage(byTurn.get(row.root_turn_id) ?? emptyTokenUsage(), usage)
-      )
+    entry.members.set(row.member_chat_id, row.root_turn_id)
+    if (row.id !== null) updateChatUsage(entry, row, 1)
   }
-  return {
-    total,
-    byTurn
+  cache.set(cacheKey, entry)
+  if (cache.size > 64) cache.delete(cache.keys().next().value!)
+  return snapshotChatUsage(entry)
+}
+
+const liveUsageLoads = new WeakMap<object, Set<string>>()
+
+/** Streaming reads the latest committed aggregate. It must not wait for unrelated history
+ * ingestion or pricing I/O. Ordinary reads and completion updates still use the durable path. */
+export const getLiveChatTokenUsage = async (
+  providerId: ProviderId,
+  sourceKey: string,
+  chatId: string
+): Promise<ReturnType<typeof snapshotChatUsage> | null> => {
+  const db = await getDatabase()
+  const cacheKey = key(providerId, sourceKey, chatId)
+  const cache = getUsageCache(db)
+  const entry = cache.get(cacheKey)
+  if (entry) {
+    cache.delete(cacheKey)
+    cache.set(cacheKey, entry)
+    return snapshotChatUsage(entry)
   }
+  let loading = liveUsageLoads.get(db)
+  if (!loading) liveUsageLoads.set(db, (loading = new Set()))
+  if (!loading.has(cacheKey)) {
+    loading.add(cacheKey)
+    void getChatTokenUsage(providerId, sourceKey, chatId)
+      .catch((error) => console.error('Unable to refresh live token usage.', error))
+      .finally(() => loading.delete(cacheKey))
+  }
+  return null
 }
 
 /** Rolling windows include all sources and chats for the selected provider. */

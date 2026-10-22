@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { mergeWorkingStepPage, mergeWorkingToolPage } from '../chatDetailWindow'
 import { readChatScrollAnchor, restoreChatScrollAnchor, type ChatScrollAnchor } from '../chatLayout'
+import { useLatestHandler } from './stableProps'
 import type { SubagentChatView } from './controllerTypes'
 import {
   chatWorkingItemPageSize,
@@ -441,23 +442,37 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
   }
   const handleReturnFromSubagentChat = (): void => returnToParent(false)
   const handleReturnToRootChat = (): void => returnToParent(true)
-  const renderChatCommitMarker = (marker: ChatCommitMarker): React.ReactElement => {
-    const activity = scopedCommitActivitiesByMarkerId.get(marker.id)
-    const activityKey = activity ? getProviderChatKey(activity.providerId, activity.chatId) : null
+  // Memoized: the conversation's turn renderer, and so the message list, depends on it.
+  const cancelAiCommit = useLatestHandler(handleCancelAiCommit)
+  const openAiCommitChat = useLatestHandler(handleOpenAiCommitChat)
+  const renderChatCommitMarker = useCallback(
+    (marker: ChatCommitMarker): React.ReactElement => {
+      const activity = scopedCommitActivitiesByMarkerId.get(marker.id)
+      const activityKey = activity ? getProviderChatKey(activity.providerId, activity.chatId) : null
 
-    return (
-      <ChatCommitMarkerItem
-        marker={marker}
-        canceling={
-          providerUpdateInProgress || Boolean(activityKey && cancelingAiCommitKeys.has(activityKey))
-        }
-        key={marker.id}
-        opening={Boolean(marker.commitChatId && openingAiCommitChatIds.has(marker.commitChatId))}
-        onCancel={activity ? () => handleCancelAiCommit(activity) : undefined}
-        onOpen={marker.commitChatId ? () => handleOpenAiCommitChat(marker) : undefined}
-      />
-    )
-  }
+      return (
+        <ChatCommitMarkerItem
+          marker={marker}
+          canceling={
+            providerUpdateInProgress ||
+            Boolean(activityKey && cancelingAiCommitKeys.has(activityKey))
+          }
+          key={marker.id}
+          opening={Boolean(marker.commitChatId && openingAiCommitChatIds.has(marker.commitChatId))}
+          onCancel={activity ? () => cancelAiCommit(activity) : undefined}
+          onOpen={marker.commitChatId ? () => openAiCommitChat(marker) : undefined}
+        />
+      )
+    },
+    [
+      cancelAiCommit,
+      cancelingAiCommitKeys,
+      openAiCommitChat,
+      openingAiCommitChatIds,
+      providerUpdateInProgress,
+      scopedCommitActivitiesByMarkerId
+    ]
+  )
 
   return {
     handleNavigateSubagentTurns,

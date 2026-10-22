@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback } from 'react'
+import { useCallback, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import {
@@ -34,6 +34,88 @@ import { getChatDetailTurnCount, mergeChatDetailTurnPage } from '../chatDetailWi
 import { chatTurnWindowSize } from './controllerTypes'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
 import type { FileNavigationDependencies } from './controllerDependencies'
+import { useLatestHandler } from './stableProps'
+
+const getTreeRowStyle = (depth: number): CSSProperties =>
+  ({ '--change-tree-depth': depth }) as CSSProperties
+
+const renderTreeNode = <TFile extends TreeFile>(
+  node: ChangeTreeNode<TFile>,
+  depth: number,
+  options: {
+    collapsedFolders: Record<string, boolean>
+    onToggleFolder: (folderPath: string, childrenPrecomputed: boolean) => void
+    onOpenFile: (file: TFile) => void
+  }
+): React.ReactElement => {
+  if (node.type === 'folder') {
+    const collapsed = !node.childrenPrecomputed || Boolean(options.collapsedFolders[node.path])
+
+    return (
+      <li
+        className="changes-sidebar__tree-item changes-sidebar__tree-item--folder"
+        key={node.path}
+        role="treeitem"
+        aria-expanded={!collapsed}
+      >
+        <button
+          className="changes-sidebar__tree-row changes-sidebar__tree-row--folder"
+          type="button"
+          title={node.path}
+          style={getTreeRowStyle(depth)}
+          onClick={() => options.onToggleFolder(node.path, node.childrenPrecomputed)}
+        >
+          <span className="changes-sidebar__tree-chevron" aria-hidden="true">
+            {collapsed ? <ChevronRight /> : <ChevronDown />}
+          </span>
+          <span className="changes-sidebar__tree-icon" aria-hidden="true">
+            <SymbolsFolderIcon folderName={node.name} />
+          </span>
+          <span className="changes-sidebar__tree-name">{node.name}</span>
+        </button>
+        {!collapsed && node.children.length > 0 && (
+          <ul className="changes-sidebar__tree-group" role="group">
+            {node.children.map((childNode) => renderTreeNode(childNode, depth + 1, options))}
+          </ul>
+        )}
+      </li>
+    )
+  }
+
+  const previousDisplayPath = getChangedFileDisplayPreviousPath(node.file)
+  const displayPath = getChangedFileDisplayPath(node.file)
+  const fileTitle = previousDisplayPath ? `${previousDisplayPath} -> ${displayPath}` : displayPath
+  const changeKind = node.file.kind ?? null
+  const fileItemClassName = [
+    'changes-sidebar__tree-item',
+    'changes-sidebar__tree-item--file',
+    changeKind ? 'changes-sidebar__tree-item--changed' : null,
+    changeKind ? `changes-sidebar__tree-item--${changeKind}` : null
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <li className={fileItemClassName} key={node.file.path} role="treeitem">
+      <button
+        className="changes-sidebar__tree-row changes-sidebar__tree-row--file"
+        type="button"
+        aria-label={`Open ${displayPath}`}
+        title={fileTitle}
+        style={getTreeRowStyle(depth)}
+        onClick={() => options.onOpenFile(node.file)}
+      >
+        <span className="changes-sidebar__tree-spacer" aria-hidden="true" />
+        <span className="changes-sidebar__tree-icon" aria-hidden="true">
+          <SymbolsFileIcon fileName={node.name} autoAssign />
+        </span>
+        <span className="changes-sidebar__tree-name" title={fileTitle}>
+          {node.name}
+        </span>
+      </button>
+    </li>
+  )
+}
 
 // Return shape is inferred from the controller declarations below.
 export function useFileNavigationController(dependencies: FileNavigationDependencies) {
@@ -88,7 +170,6 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
     setChatTurnWindow,
     setReviewCommentsDraft,
     setSelectedReview,
-    getChangeTreeRowStyle,
     collapsedChangeTreeFolders
   } = dependencies
 
@@ -520,98 +601,28 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
     },
     [openFileEditorTarget]
   )
-  const renderTreeNode = <TFile extends TreeFile>(
-    node: ChangeTreeNode<TFile>,
-    depth: number,
-    options: {
-      collapsedFolders: Record<string, boolean>
-      onToggleFolder: (folderPath: string, childrenPrecomputed: boolean) => void
-    }
-  ): React.ReactElement => {
-    if (node.type === 'folder') {
-      const collapsed = !node.childrenPrecomputed || Boolean(options.collapsedFolders[node.path])
-
-      return (
-        <li
-          className="changes-sidebar__tree-item changes-sidebar__tree-item--folder"
-          key={node.path}
-          role="treeitem"
-          aria-expanded={!collapsed}
-        >
-          <button
-            className="changes-sidebar__tree-row changes-sidebar__tree-row--folder"
-            type="button"
-            title={node.path}
-            style={getChangeTreeRowStyle(depth)}
-            onClick={() => options.onToggleFolder(node.path, node.childrenPrecomputed)}
-          >
-            <span className="changes-sidebar__tree-chevron" aria-hidden="true">
-              {collapsed ? <ChevronRight /> : <ChevronDown />}
-            </span>
-            <span className="changes-sidebar__tree-icon" aria-hidden="true">
-              <SymbolsFolderIcon folderName={node.name} />
-            </span>
-            <span className="changes-sidebar__tree-name">{node.name}</span>
-          </button>
-          {!collapsed && node.children.length > 0 && (
-            <ul className="changes-sidebar__tree-group" role="group">
-              {node.children.map((childNode) => renderTreeNode(childNode, depth + 1, options))}
-            </ul>
-          )}
-        </li>
-      )
-    }
-
-    const previousDisplayPath = getChangedFileDisplayPreviousPath(node.file)
-    const displayPath = getChangedFileDisplayPath(node.file)
-    const fileTitle = previousDisplayPath ? `${previousDisplayPath} -> ${displayPath}` : displayPath
-    const changeKind = node.file.kind ?? null
-    const fileItemClassName = [
-      'changes-sidebar__tree-item',
-      'changes-sidebar__tree-item--file',
-      changeKind ? 'changes-sidebar__tree-item--changed' : null,
-      changeKind ? `changes-sidebar__tree-item--${changeKind}` : null
-    ]
-      .filter(Boolean)
-      .join(' ')
-
-    return (
-      <li className={fileItemClassName} key={node.file.path} role="treeitem">
-        <button
-          className="changes-sidebar__tree-row changes-sidebar__tree-row--file"
-          type="button"
-          aria-label={`Open ${displayPath}`}
-          title={fileTitle}
-          style={getChangeTreeRowStyle(depth)}
-          onClick={() => handleOpenFile(node.file)}
-        >
-          <span className="changes-sidebar__tree-spacer" aria-hidden="true" />
-          <span className="changes-sidebar__tree-icon" aria-hidden="true">
-            <SymbolsFileIcon fileName={node.name} autoAssign />
-          </span>
-          <span className="changes-sidebar__tree-name" title={fileTitle}>
-            {node.name}
-          </span>
-        </button>
-      </li>
-    )
-  }
-  const renderChangeTreeNode = (
-    node: ChangeTreeNode<DisplayTreeFile<ChangedFile>>,
-    depth: number
-  ): React.ReactElement =>
-    renderTreeNode(node, depth, {
-      collapsedFolders: collapsedChangeTreeFolders,
-      onToggleFolder: handleToggleChangeTreeFolder
-    })
-  const renderRepositoryFileTreeNode = (
-    node: ChangeTreeNode<DisplayTreeFile<RepositoryFile>>,
-    depth: number
-  ): React.ReactElement =>
-    renderTreeNode(node, depth, {
-      collapsedFolders: collapsedFileTreeFolders,
-      onToggleFolder: handleToggleFileTreeFolder
-    })
+  // Stable, so the memoized changes panel only rerenders for its own changes.
+  const openFile = useLatestHandler(handleOpenFile)
+  const toggleChangeTreeFolder = useLatestHandler(handleToggleChangeTreeFolder)
+  const toggleFileTreeFolder = useLatestHandler(handleToggleFileTreeFolder)
+  const renderChangeTreeNode = useCallback(
+    (node: ChangeTreeNode<DisplayTreeFile<ChangedFile>>, depth: number): React.ReactElement =>
+      renderTreeNode(node, depth, {
+        collapsedFolders: collapsedChangeTreeFolders,
+        onToggleFolder: toggleChangeTreeFolder,
+        onOpenFile: openFile
+      }),
+    [collapsedChangeTreeFolders, openFile, toggleChangeTreeFolder]
+  )
+  const renderRepositoryFileTreeNode = useCallback(
+    (node: ChangeTreeNode<DisplayTreeFile<RepositoryFile>>, depth: number): React.ReactElement =>
+      renderTreeNode(node, depth, {
+        collapsedFolders: collapsedFileTreeFolders,
+        onToggleFolder: toggleFileTreeFolder,
+        onOpenFile: openFile
+      }),
+    [collapsedFileTreeFolders, openFile, toggleFileTreeFolder]
+  )
 
   return {
     handleCloseFileEditor,

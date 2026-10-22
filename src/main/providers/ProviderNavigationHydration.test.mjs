@@ -5,6 +5,7 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import { reconcileProviderRecords } from './ProviderConversationEngine.ts'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './opencode/OpenCodeHistory.ts'
+import { reconcileOpenCodeMessageSnapshot } from './opencode/OpenCodeEvents.ts'
 
 const adapterHarness = (provider, name, methods, globals = {}) => {
   const source = ts.createSourceFile(
@@ -188,7 +189,9 @@ const openCodeHarness = (state, client) => {
       requireData: (result) => result.data,
       forEachOpenCodeHistoryMessage,
       loadOpenCodeMessages,
+      reconcileOpenCodeMessageSnapshot,
       isOneShotSession: () => false,
+      isDefaultOpenCodeTitle: () => false,
       getContainerTargetKey: () => 'host',
       normalizeStoredContainer: (container) => container ?? null,
       findOpenCodeItemTurnWindow: () => ({ startIndex: 20, limit: 10 }),
@@ -265,6 +268,7 @@ test('OpenCode sidebar previews request bounded tails without hydrating conversa
   const client = {
     experimental: { session: { list: async () => ({ data: [state.session] }) } },
     session: {
+      status: async () => ({ data: {} }),
       messages: async ({ limit }) => {
         requestedLimit = limit
         return {

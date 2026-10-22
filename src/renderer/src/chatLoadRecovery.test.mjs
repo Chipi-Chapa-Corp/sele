@@ -58,12 +58,14 @@ const setup = (providerId, initial = null) => {
   const key = `${providerId}:chat`
   const context = vm.createContext({
     selectedProviderId: providerId,
+    selectedChat: { providerId, id: 'chat', container: null },
+    effectiveAppSettings: { chat: { recentChatCacheLimit: 10 } },
     selectedChatId: 'chat',
     selectedChatKeyRef: { current: key },
     selectedChatUpdatedAtRef: { current: 1 },
     chatDetailRef: { current: initial },
     providerApi: { getChat: () => response },
-    console: { error: (...args) => state.errors.push(args) },
+    console: { error: (...args) => state.errors.push(args), warn: () => {} },
     setChatDetail: (value) => {
       state.detail = typeof value === 'function' ? value(state.detail) : value
     },
@@ -103,6 +105,84 @@ const detail = (revision = 1) => ({
 const settle = async () => {
   await new Promise((resolve) => setImmediate(resolve))
 }
+
+const savedPreview = () => ({
+  ...detail(-1),
+  historyPreview: true,
+  writeAccess: 'checking',
+  capabilities: { editMessages: false, activeMessages: false }
+})
+
+test('SQLite preview displays while the provider is pending and a fresh low revision replaces it', async () => {
+  const h = setup('codex')
+  const preview = savedPreview()
+  h.context.providerApi.getCachedChat = async () => preview
+  h.startLoad()
+  await settle()
+  assert.equal(h.state.detail, preview)
+  assert.equal(h.state.loadState, 'loading')
+  const fresh = detail(1)
+  h.resolve(fresh)
+  await settle()
+  assert.equal(h.state.detail, fresh)
+  assert.equal(h.state.loadState, 'ready')
+})
+
+for (const outcome of ['provider reply', 'live update', 'closed view']) {
+  test(`late SQLite preview cannot overwrite a ${outcome}`, async () => {
+    const h = setup('codex')
+    let finishDisk
+    h.context.providerApi.getCachedChat = () =>
+      new Promise((resolve) => {
+        finishDisk = resolve
+      })
+    const cleanup = h.startLoad()
+    const fresh = detail(2)
+    if (outcome === 'provider reply') h.resolve(fresh)
+    else if (outcome === 'live update') h.update(fresh)
+    else cleanup()
+    await settle()
+    finishDisk(savedPreview())
+    await settle()
+    assert.equal(h.state.detail, outcome === 'closed view' ? null : fresh)
+    if (outcome !== 'provider reply') {
+      cleanup()
+      h.resolve(fresh)
+      await settle()
+    }
+  })
+}
+
+test('failed provider refresh keeps saved history read-only and reports the failure', async () => {
+  const h = setup('claude')
+  h.context.providerApi.getCachedChat = async () => savedPreview()
+  h.startLoad()
+  await settle()
+  h.reject(new Error('Provider offline'))
+  await settle()
+  assert.equal(h.state.loadState, 'error')
+  assert.equal(h.state.detail.historyPreview, true)
+  assert.equal(h.state.detail.writeAccess, 'checking')
+})
+
+test('RAM history and disabling the chat cache bypass SQLite, while disk failure permits a normal open', async () => {
+  for (const mode of ['ram', 'disabled', 'failed']) {
+    const current = mode === 'ram' ? detail(1) : null
+    const h = setup('codex', current)
+    let calls = 0
+    if (mode === 'disabled') h.context.effectiveAppSettings.chat.recentChatCacheLimit = 0
+    h.context.providerApi.getCachedChat = async () => {
+      calls++
+      throw new Error('Disk unavailable')
+    }
+    h.startLoad()
+    h.resolve(detail(2))
+    await settle()
+    assert.equal(calls, mode === 'failed' ? 1 : 0)
+    assert.equal(h.state.detail.revision, 2)
+    assert.equal(h.state.loadState, 'ready')
+  }
+})
 
 for (const provider of ['codex', 'claude', 'copilot', 'opencode']) {
   test(`${provider}: failed history read preserves a live response`, async () => {

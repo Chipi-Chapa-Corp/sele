@@ -34,7 +34,12 @@ export type ModelTokenUsage = {
 }
 
 const nativeRates = new Map<string, TokenPriceRates>()
+let nativePricingRevision = 0
+export const getNativeModelPricingRevision = (): number => nativePricingRevision
+
 export const setNativeModelPricing = (key: string, rates: TokenPriceRates): void => {
+  if (JSON.stringify(nativeRates.get(key)) === JSON.stringify(rates)) return
+  nativePricingRevision++
   nativeRates.set(key, rates)
 }
 export const getNativeModelPricing = (key: string): TokenPriceRates | undefined =>

@@ -18,7 +18,8 @@ export function useMarkdownImages(
   html: string,
   container: AppContainerTarget | null | undefined,
   cwd: string | null | undefined,
-  errorMarkup: string
+  errorMarkup: string,
+  enabled = true
 ): void {
   const retained = useRef<RetainedImage[]>([])
   useLayoutEffect(
@@ -31,7 +32,14 @@ export function useMarkdownImages(
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: HTML signals replacement of the DOM-owned Markdown subtree.
   useLayoutEffect(() => {
-    const root = ref.current?.querySelector('.chat-detail__message-markdown')
+    if (!enabled) {
+      retained.current.forEach((entry) => entry.dispose())
+      retained.current = []
+      return
+    }
+    const root = ref.current?.matches('.chat-detail__message-markdown')
+      ? ref.current
+      : ref.current?.querySelector('.chat-detail__message-markdown')
     if (!root) return
     const available = new Map<string, RetainedImage[]>()
     for (const entry of retained.current) {
@@ -126,5 +134,5 @@ export function useMarkdownImages(
     }
     available.forEach((entries) => entries.forEach((entry) => entry.dispose()))
     retained.current = next
-  }, [container, cwd, errorMarkup, html, ref])
+  }, [container, cwd, errorMarkup, html, ref, enabled])
 }

@@ -71,6 +71,10 @@ let timer: ReturnType<typeof setInterval> | null = null
 let stopped = false
 let controller: AbortController | null = null
 
+// Accounting retries unpriced historical rows when the catalog changes, rather than on every
+// streamed transcript update. Identity also changes when saved rates first become available.
+export const getModelPricingRevision = (): object | null => cached
+
 const loadSaved = (): Promise<void> => {
   initialized ??= (async () => {
     const db = await getDatabase()

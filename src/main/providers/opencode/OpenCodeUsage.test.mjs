@@ -234,7 +234,7 @@ test('completed assistant messages do not end a still-active tool loop', () => {
   )
   assert.equal(
     renderOpenCodeChatItems(messages, { active: false, stopped: false })[0].status,
-    'worked'
+    'stopped'
   )
   assert.equal(
     renderOpenCodeChatItems(messages, { active: false, stopped: true })[0].status,

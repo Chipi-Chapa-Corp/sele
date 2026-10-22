@@ -209,6 +209,10 @@ type ClaudeSessionState = {
   terminalTaskIds: Set<string>
   subagentTaskStatuses: Map<string, ProviderSubagent['status']>
   waitingForSessionIdle: boolean
+  /** A prompt was sent and Claude has not started answering it yet. */
+  turnAwaitingStart: boolean
+  /** Steering held until the turn starts, so it cannot overtake the turn's own prompt. */
+  deferredSteering: SDKUserMessage[]
   /** The SDK may be preparing a follow-up before any assistant output arrives. */
   sessionBusy: boolean
   /** A background task finished and Claude has not started the turn that reads its result. */
@@ -1519,7 +1523,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       const queued = this.createQueuedMessage(message, options)
       state.waitingForSessionIdle = false
       this.addUserMessage(state, queued, 'Steering with', 'steering')
-      state.input!.push(createSdkUserMessage(state.id, queued.id, queued.prompt, 'now'))
+      this.pushSteering(state, createSdkUserMessage(state.id, queued.id, queued.prompt, 'now'))
       this.emitUpdate(state)
     }
     return this.createChatDetail(state)
@@ -1563,7 +1567,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.queuedMessages.shift()
       state.waitingForSessionIdle = false
       this.addUserMessage(state, pending, 'Steering with', 'steering')
-      state.input.push(createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
+      this.pushSteering(state, createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
     } else {
       await this.drainNextQueuedMessage(state)
     }
@@ -1637,7 +1641,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
     state.waitingForSessionIdle = false
     this.addUserMessage(state, pending, 'Steering with', 'steering')
-    state.input!.push(createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
+    this.pushSteering(state, createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
     this.emitUpdate(state)
     return this.createChatDetail(state)
   }
@@ -2013,6 +2017,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       terminalTaskIds: new Set(),
       subagentTaskStatuses: new Map(),
       waitingForSessionIdle: false,
+      turnAwaitingStart: false,
+      deferredSteering: [],
       sessionBusy: false,
       taskNotificationPending: false,
       interruptRequested: false
@@ -2487,6 +2493,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.backgroundTaskIds.clear()
     state.terminalTaskIds?.clear()
     state.waitingForSessionIdle = false
+    state.turnAwaitingStart = false
+    state.deferredSteering = []
     state.sessionBusy = false
     state.taskNotificationPending = false
     state.interruptRequested = false
@@ -2852,6 +2860,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       (event.type === 'stream_event' || event.type === 'assistant') &&
       event.parent_tool_use_id == null
     ) {
+      if (state.turnAwaitingStart) this.releaseDeferredSteering(state, true)
       this.resumeBackgroundTurn(state, control)
     }
     if (event.type === 'stream_event') {
@@ -2961,6 +2970,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return true
     }
     if (event.type !== 'result') return false
+    const releasedSteeringTurns = state.turnAwaitingStart
+      ? this.releaseDeferredSteering(state, false)
+      : 0
 
     // Keep elapsed wall time on the existing transcript path. API duration excludes tool/wait time.
     this.addTranscriptMessage(state, {
@@ -3043,7 +3055,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
     // Steering is already in the SDK's queue, not queuedMessages. This result can
     // belong to the preceding turn; closing the query here kills the follow-up.
-    if (!wasStopped && (event.queued_turn_count ?? 0) > 0) {
+    if (!wasStopped && (event.queued_turn_count ?? 0) + releasedSteeringTurns > 0) {
       state.active = true
       state.waitingForSessionIdle = false
       this.emitUpdate(state)
@@ -3108,6 +3120,28 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     attachments: getAttachments(options),
     createdAt: Date.now()
   })
+
+  /**
+   * Claude Code moves priority "now" input ahead of input it has not started yet. Steering
+   * sent before the turn begins would be answered before the prompt it is meant to steer.
+   */
+  private pushSteering = (state: ClaudeSessionState, message: SDKUserMessage): void => {
+    if (state.turnAwaitingStart) state.deferredSteering.push(message)
+    else state.input!.push(message)
+  }
+
+  /** Returns how many follow-up turns this queued in Claude Code. */
+  private releaseDeferredSteering = (state: ClaudeSessionState, steer: boolean): number => {
+    state.turnAwaitingStart = false
+    const messages = state.deferredSteering.splice(0)
+    if (!messages.length || !state.input) return 0
+    for (const message of messages)
+      state.input.push(steer ? message : { ...message, priority: 'next' })
+    if (steer) return 0
+    // The turn ended before it started, so the steering is the next prompt instead.
+    state.turnAwaitingStart = true
+    return messages.length
+  }
 
   private sendMessageNow = (
     state: ClaudeSessionState,
@@ -3207,6 +3241,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.queuedMessagesPaused = false
     state.options = message.options ?? state.options
     this.addUserMessage(state, message)
+    state.turnAwaitingStart = true
     state.input.push(createSdkUserMessage(state.id, message.id, message.prompt))
     this.emitUpdate(state)
   }

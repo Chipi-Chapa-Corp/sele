@@ -1,6 +1,10 @@
 // Synthetic CPU/payload measurements; no provider requests or user chat data.
 // Run: node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/benchmarks/benchmark-performance-hotpaths.mjs
 import { performance } from 'node:perf_hooks'
+import {
+  updateIndexedTranscriptRecord,
+  updateIndexedTranscriptRecords
+} from '../../src/main/providers/transcriptProjection/recordChanges.ts'
 import { anchorCodexCommandsByStart } from '../../src/main/providers/codex/CodexCommandStartAnchors.ts'
 import { CopilotEventStore } from '../../src/main/providers/copilot/CopilotEventStore.ts'
 import { reconcileProviderRecords } from '../../src/main/providers/ProviderConversationEngine.ts'
@@ -20,6 +24,27 @@ const median = (operation, repetitions = 7) => {
   }
   return Number(
     samples.sort((first, second) => first - second)[Math.floor(samples.length / 2)].toFixed(3)
+  )
+}
+
+for (const count of [1_000, 10_000, 100_000]) {
+  const records = Array.from({ length: count }, (_, index) => ({ id: String(index) }))
+  const updates = Array.from({ length: 100 }, (_, index) => ({
+    id: `appended-${index}`,
+    update: () => ({ id: `appended-${index}` })
+  }))
+  console.log(
+    JSON.stringify({
+      operation: 'codex-record-batch',
+      historyRecords: count,
+      appendedRecords: updates.length,
+      perEventSnapshotsMs: median(() => {
+        let snapshot = records
+        for (const { id, update } of updates)
+          snapshot = updateIndexedTranscriptRecord(snapshot, id, update)
+      }, 3),
+      batchedSnapshotMs: median(() => updateIndexedTranscriptRecords(records, updates), 5)
+    })
   )
 }
 

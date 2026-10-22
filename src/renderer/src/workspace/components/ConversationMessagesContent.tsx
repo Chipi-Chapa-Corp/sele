@@ -1,5 +1,9 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, type ReactElement } from 'react'
-import { isNearChatPageBoundary } from '../../chatLayout'
+import {
+  isNearChatPageBoundary,
+  readChatScrollAnchor,
+  restoreChatScrollAnchor
+} from '../../chatLayout'
 import { getProviderChatTurns } from '../../../../shared/chatTurns'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { ArrowLeft, ChevronDown, CircleAlert, LoaderCircle } from 'lucide-react'
@@ -33,6 +37,7 @@ export function ConversationMessagesContent(
     chatMediaStartIndex,
     chatMediaTotalCount,
     chatLoadState,
+    chatHistoryPreview,
     chatSearchContentRef,
     chatTurnPageLoadDirection,
     commitChatReturnTarget,
@@ -61,7 +66,103 @@ export function ConversationMessagesContent(
     visibleChatItems
   } = props
 
+  const attachedContent = useRef<HTMLDivElement | null>(null)
+  const showingSubagent = Boolean(activeSubagentChatView)
+  const attachContent = useCallback(
+    (element: HTMLDivElement | null) => {
+      const previous = attachedContent.current
+      if (previous && previous !== element) previous.removeAttribute('id')
+      if (!element) {
+        // A hidden Activity releases its refs. It must not clear another chat's
+        // newly attached viewport, and only the visible viewport owns this ID.
+        if (contentRef.current === previous) contentRef.current = null
+        if (subagentContentRef.current === previous) subagentContentRef.current = null
+        if (chatSearchContentRef.current === previous) chatSearchContentRef.current = null
+      } else {
+        element.id = 'chat-search-content'
+        if (showingSubagent) {
+          subagentContentRef.current = element
+          contentRef.current = null
+        } else {
+          contentRef.current = element
+          subagentContentRef.current = null
+        }
+        chatSearchContentRef.current = element
+      }
+      attachedContent.current = element
+    },
+    [contentRef, subagentContentRef, chatSearchContentRef, showingSubagent]
+  )
   const subagentScroll = useRef({ id: '', start: 0, top: 0 })
+  const subagentWindowId = activeSubagentChatView?.summary.id ?? ''
+  const subagentWindowStart = activeSubagentChatView?.detail?.itemsStartTurnIndex ?? 0
+  const subagentWindowReady = Boolean(activeSubagentChatView?.detail)
+  const subagentHasDeferredContent = subagentChatConversationModel.turns.some(
+    (turn) =>
+      turn.items.length > 12 ||
+      turn.items.reduce(
+        (total, item) => total + (item.type === 'message' ? item.content.length : 0),
+        0
+      ) > 12_000
+  )
+  useLayoutEffect(() => {
+    const element = subagentContentRef.current
+    const inner = element?.querySelector('.chat-detail__messages-inner')
+    if (
+      !subagentWindowId ||
+      !subagentWindowReady ||
+      !subagentHasDeferredContent ||
+      !element ||
+      !inner
+    )
+      return
+    let followBottom = true
+    let firstResize = true
+    const anchorKey = `${selectedChatKey}:subagent:${subagentWindowId}`
+    let anchor = readChatScrollAnchor(element, anchorKey)
+    let adjustedTop: number | null = null
+    const onScroll = () => {
+      if (adjustedTop !== null && Math.abs(element.scrollTop - adjustedTop) < 1) {
+        adjustedTop = null
+        return
+      }
+      followBottom = element.scrollHeight - element.clientHeight - element.scrollTop < 2
+      anchor = readChatScrollAnchor(element, anchorKey)
+    }
+    const observer = new ResizeObserver(() => {
+      if (firstResize) {
+        // Controller layout effects may restore a saved viewport after this child mounts.
+        // Learn that position before following later asynchronous Markdown growth.
+        firstResize = false
+        followBottom = element.scrollHeight - element.clientHeight - element.scrollTop < 2
+        anchor = readChatScrollAnchor(element, anchorKey)
+        return
+      }
+      if (followBottom) scrollChatContentToBottom(element)
+      else if (anchor) restoreChatScrollAnchor(element, anchor)
+      adjustedTop = element.scrollTop
+      // Resizing Markdown is programmatic positioning, not a request for another page.
+      subagentScroll.current = {
+        id: subagentWindowId,
+        start: subagentWindowStart,
+        top: element.scrollTop
+      }
+    })
+    observer.observe(inner)
+    element.addEventListener('scroll', onScroll)
+    return () => {
+      observer.disconnect()
+      element.removeEventListener('scroll', onScroll)
+    }
+  }, [
+    subagentWindowId,
+    subagentWindowStart,
+    subagentWindowReady,
+    subagentHasDeferredContent,
+    subagentContentRef,
+    selectedChatKey,
+    scrollChatContentToBottom
+  ])
   const loadSubagentPageNearBoundary = (
     element: HTMLDivElement,
     direction: 'older' | 'newer'
@@ -232,7 +333,6 @@ export function ConversationMessagesContent(
         )}
         <div
           className="chat-detail__messages"
-          id="chat-search-content"
           aria-busy={
             activeSubagentChatView
               ? activeSubagentChatView.loadState === 'loading' || activeSubagentChatView.pageLoading
@@ -259,16 +359,9 @@ export function ConversationMessagesContent(
                 }
               : handleNativeChatContentWheel
           }
-          ref={(element) => {
-            if (activeSubagentChatView) {
-              subagentContentRef.current = element
-              if (element) contentRef.current = null
-            } else {
-              contentRef.current = element
-              if (element) subagentContentRef.current = null
-            }
-            chatSearchContentRef.current = element
-          }}
+          // Child paging also reassigns the shared viewport during controller
+          // layout effects. Reattach on its commits, as in the uncached view.
+          ref={showingSubagent ? (element) => attachContent(element) : attachContent}
         >
           <div className="chat-detail__messages-layout">
             <div className="chat-detail__messages-header" />
@@ -279,6 +372,18 @@ export function ConversationMessagesContent(
             <div className="chat-detail__messages-footer" />
           </div>
         </div>
+        {!activeSubagentChatView && chatHistoryPreview && (
+          <div className="chat-detail__history-preview" role="status">
+            <span>
+              {chatLoadState === 'error'
+                ? 'Unable to refresh. Showing saved messages.'
+                : 'Refreshing messages…'}
+            </span>
+            {chatLoadState === 'error' && (
+              <Button label="Retry" callback={() => loadChatTurnPage('latest')} theme="secondary" />
+            )}
+          </div>
+        )}
         {(activeSubagentChatView
           ? activeSubagentChatView.loadState === 'loading' && subagentVisibleChatItems.length === 0
           : chatLoadState === 'loading' && visibleChatItems.length === 0) && (

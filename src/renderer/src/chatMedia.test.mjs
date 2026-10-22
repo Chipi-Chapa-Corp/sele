@@ -32,6 +32,26 @@ test('indexes media occurrences in order, excluding links, code and raw HTML', (
   assert.equal(sources[2].localImageOptions, undefined)
 })
 
+test('finds video links regardless of extension case or link form, and ignores media-free text', () => {
+  const paths = (content) =>
+    getMarkdownMedia(content, 'response').map(({ path, url, mediaType }) => [
+      path ?? url,
+      mediaType
+    ])
+  assert.deepEqual(paths('[Clip](./clip.MOV) and [Angle](<./angle clip.mp4>)'), [
+    ['./clip.MOV', 'video'],
+    ['./angle clip.mp4', 'video']
+  ])
+  assert.deepEqual(paths('[Encoded](./clip%2Ewebm) [Escaped](./take\\.mp4)'), [
+    ['./clip.webm', 'video'],
+    ['./take.mp4', 'video']
+  ])
+  assert.deepEqual(
+    paths('Remove the [movie notes](./notes.md), see [docs](https://example.com) and `x.mp4`.'),
+    []
+  )
+})
+
 test('includes all attachments before response content and keeps data-only images', () => {
   const sources = getChatItemMedia({
     type: 'message',

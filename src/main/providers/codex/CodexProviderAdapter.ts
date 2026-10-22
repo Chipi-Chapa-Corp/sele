@@ -22,8 +22,10 @@ import {
   markTranscriptRecordsChanged,
   getUnchangedTranscriptPrefix,
   indexTranscriptRecords,
-  updateIndexedTranscriptRecord
+  updateIndexedTranscriptRecords,
+  type TranscriptRecordUpdate
 } from '../transcriptProjection/recordChanges.ts'
+import { BufferedSnapshotMap } from '../transcriptProjection/BufferedSnapshotMap'
 import { isBrowserPermissionRequest } from './CodexBrowserPermissions'
 import { codexFeatureSchemas } from './CodexFeatureSchemas'
 import { updateConfigFeatureValue } from './CodexConfigValues'
@@ -989,6 +991,9 @@ const chatUpdateDebounceMs = 250
 const rendererWorkingItemTailLimit = 50
 const rendererChatUpdateTurnLimit = 10
 
+const isCodexThreadNotLoadedError = (error: unknown): boolean =>
+  error instanceof Error && /\bthread not (?:found|loaded)\b/i.test(error.message)
+
 const isExpectedCodexMetadataCapabilityError = (error: unknown): boolean => {
   const candidate = error as { code?: unknown; message?: unknown } | null
   if (candidate?.code === 'ERR_UNSUPPORTED' || candidate?.code === -32601) return true
@@ -1337,7 +1342,30 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()
-  private threads = new Map<string, CodexThread>()
+  private threads = new BufferedSnapshotMap<
+    string,
+    CodexThread,
+    TranscriptRecordUpdate<CodexThreadItem> & { turnId: string }
+  >((thread, updates) => {
+    const byTurn = new Map<string, TranscriptRecordUpdate<CodexThreadItem>[]>()
+    for (const update of updates) {
+      const batch = byTurn.get(update.turnId)
+      if (batch) batch.push(update)
+      else byTurn.set(update.turnId, [update])
+    }
+    const turns = thread.turns.map((turn) => {
+      const batch = byTurn.get(turn.id)
+      if (!batch) return turn
+      byTurn.delete(turn.id)
+      const items = updateIndexedTranscriptRecords(turn.items, batch)
+      return items === turn.items ? turn : { ...turn, items }
+    })
+    for (const [id, batch] of byTurn)
+      turns.push({ id, status: 'inProgress', items: updateIndexedTranscriptRecords([], batch) })
+    const next = { ...thread, updatedAt: nowSeconds(), turns }
+    this.cacheThread(next, false)
+    return next
+  })
   private threadRevisions = new Map<string, number>()
   private externallyOwnedThreadIds = new Set<string>()
   private writeAccessChecks = new Map<string, Promise<void>>()
@@ -2169,12 +2197,19 @@ export class CodexProviderAdapter implements ProviderAdapter {
     let cursor: string | null = null
     const seen = new Set<string>()
     do {
-      const page: { data: { processId: string }[]; nextCursor?: string | null } =
-        await client.request('thread/backgroundTerminals/list', {
+      let page: { data: { processId: string }[]; nextCursor?: string | null }
+      try {
+        page = await client.request('thread/backgroundTerminals/list', {
           threadId: chatId,
           cursor,
           limit: 100
         })
+      } catch (error) {
+        // Background terminals live in the app-server process. A thread it has not loaded,
+        // such as any chat after a restart until it is opened again, has none.
+        if (!cursor && isCodexThreadNotLoadedError(error)) return []
+        throw error
+      }
       ids.push(...page.data.map((task) => task.processId))
       cursor = page.nextCursor ?? null
       if (cursor && seen.has(cursor)) throw new Error('Repeated background terminal cursor')
@@ -2242,7 +2277,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
           branchName: null,
           worktreeBaseBranchName: null,
           createdAt: namedThread.createdAt * 1_000,
-          updatedAt: Math.max(namedThread.updatedAt * 1_000, latestTurn?.updatedAt ?? 0),
+          // Resuming/claiming a thread can touch its metadata without producing new content.
+          updatedAt: latestTurn?.updatedAt || namedThread.updatedAt * 1_000,
           status: getThreadMetadataStatus(namedThread),
           lastTurnOutcome: latestTurn?.outcome,
           pendingApproval: this.getProviderPendingApproval(namedThread.id),
@@ -4595,6 +4631,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (!cwd) throw new Error('Unable to load chat: working directory is missing.')
 
     const allRenderableTurns = this.getRenderableTurns(thread)
+    const latestTurn = allRenderableTurns.at(-1)
     const allPendingMessages =
       options.cursorPendingMessages ?? this.getProviderPendingMessages(thread.id)
     const loadedTurnStartIndex = thread.turnWindowStartIndex ?? 0
@@ -4640,6 +4677,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       id: thread.id,
       revision: this.threadRevisions.get(thread.id) ?? 0,
       createdAt: thread.createdAt * 1_000,
+      updatedAt:
+        (Math.max(latestTurn?.startedAt ?? 0, latestTurn?.completedAt ?? 0) || thread.updatedAt) *
+        1_000,
       title: getThreadTitle(thread),
       cwd,
       cwdKind: 'directory' as const,
@@ -4703,7 +4743,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
   }
 
-  private cacheThread = (thread: CodexThread): void => {
+  private cacheThread = (thread: CodexThread, bumpRevision = true): void => {
     assertUniqueCodexSnapshotIds(thread.turns, 'thread turns')
     // Indexed live updates preserve uniqueness; validate unknown snapshots once on ingestion.
     thread.turns.forEach((turn) => indexTranscriptRecords(turn.items))
@@ -4720,7 +4760,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         : null
     )
 
-    this.bumpThreadRevision(thread.id)
+    if (bumpRevision) this.bumpThreadRevision(thread.id)
     const overlays = this.agentResponseOverlays.get(thread.id)
     if (overlays) {
       const turnsById = new Map(thread.turns.map((turn) => [turn.id, turn]))
@@ -6061,6 +6101,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
           id: steeringMessage.id,
           kind: 'steering' as const,
           content: steeringMessage.text,
+          // turn/steer has no withdrawal API: only still-local steering can be edited.
+          ...(steeringMessage.status === 'waiting' ? {} : { editable: false }),
           attachments: steeringMessage.input
             ? collectUserInputAttachments(steeringMessage.input)
             : getMessageAttachments(steeringMessage.options),
@@ -6666,12 +6708,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
     itemId: string,
     update: (item: CodexThreadItem | null) => CodexThreadItem | null
   ): void => {
-    this.updateTurnItems(
-      threadId,
-      turnId,
-      (items) => updateIndexedTranscriptRecord(items, itemId, update),
-      true
-    )
+    if (this.isRolledBackTurn(threadId, turnId)) return
+    const thread = this.threads.peek(threadId)
+    if (!thread) return
+    if (
+      !thread.turns.some((turn) => turn.id === turnId) &&
+      this.activeTurnIds.get(threadId) !== turnId &&
+      !this.pendingTurnIds.has(threadId)
+    ) {
+      this.refreshLatestThread(threadId)
+      return
+    }
+    // A read, control transition, authoritative merge, or the update timer seals this batch.
+    // No caller can retain a working array that later notifications mutate.
+    this.threads.enqueue(threadId, { turnId, id: itemId, update })
+    // In-flight RPC reconciliation must see that native events arrived, even before a read
+    // materializes the queued edits into a new immutable thread snapshot.
+    this.bumpThreadRevision(threadId)
   }
 
   private updateTurnItems = (
@@ -6849,7 +6902,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
       // New work for the child supersedes whatever its previous turn ended with.
       if (childThreadId) this.subagentRunOutcomes.delete(childThreadId)
     })
-    this.upsertItems(threadId, turnId, items)
+    if (items.some((item) => item.type === 'userMessage')) {
+      // User echoes also reconcile local prompts and steering-message identity.
+      this.upsertItems(threadId, turnId, items)
+    } else {
+      items.forEach((item) =>
+        this.updateItem(threadId, turnId, item.id, (previous) =>
+          previous ? this.mergeItem(previous, item) : item
+        )
+      )
+    }
     if (items.some((item) => item.type === 'agentMessage')) {
       this.clearAgentResponseOverlay(threadId, turnId)
     }
@@ -6863,9 +6925,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const delta = getDelta(params)
     if (!threadId || !turnId || !itemId || delta == null) return
 
+    const startedAtMs = Date.now()
     this.updateItem(threadId, turnId, itemId, (item) => ({
       ...(item?.type === 'agentMessage' ? item : { type: 'agentMessage', id: itemId }),
-      startedAtMs: item?.startedAtMs ?? Date.now(),
+      startedAtMs: item?.startedAtMs ?? startedAtMs,
       text: `${item?.type === 'agentMessage' ? (item.text ?? '') : ''}${delta}`,
       phase: item?.type === 'agentMessage' ? (item.phase ?? null) : null
     }))

@@ -17,6 +17,31 @@
   max-width: 100%;
   flex-direction: column;
   gap: 0.7rem;
+  /* Opening a chat scrolls to its newest turn. Skip style, layout and paint for
+     turns outside the viewport; otherwise every switch lays out the whole
+     transcript. `auto` keeps each turn's last rendered height once it has been
+     shown. The clip margin keeps shadows and focus rings from being cut at the
+     turn edge by the paint containment this implies. */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 37.5rem;
+  overflow-clip-margin: 3rem;
+}
+
+/* New messages are appended below the viewport before the conversation follows them.
+   With a placeholder size they would paint 37.5rem tall for a frame and then collapse,
+   bouncing the transcript on every send. The newest turns are always laid out anyway. */
+.chat-detail__turn:nth-last-child(-n + 4) {
+  content-visibility: visible;
+}
+
+/* Containment also makes each turn a stacking context. Interactive overlays
+   that can extend past their turn must stay above the following turn. */
+.chat-detail__turn:has(
+  .unified-diff__review-form,
+  .unified-diff__review-overlay,
+  .message-selection-quote
+) {
+  content-visibility: visible;
 }
 
 .chat-detail__messages-header {

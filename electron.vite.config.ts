@@ -12,7 +12,12 @@ const config = defineConfig({
   renderer: {
     resolve: {
       alias: {
-        '@renderer': resolve('src/renderer/src')
+        '@renderer': resolve('src/renderer/src'),
+        // Refractor's entity decoder selects a DOM implementation under the browser
+        // condition. Its equivalent table implementation also works inside our worker.
+        'decode-named-character-reference': resolve(
+          'node_modules/decode-named-character-reference/index.js'
+        )
       }
     },
     plugins: [react()]

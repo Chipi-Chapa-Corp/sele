@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { reconcileOpenCodeMessageSnapshot } from './OpenCodeEvents.ts'
 import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import vm from 'node:vm'
@@ -50,6 +51,7 @@ const fixture = (kind = 'queued') => {
     requireData: (response) => response.data,
     forEachOpenCodeHistoryMessage,
     loadOpenCodeMessages,
+    reconcileOpenCodeMessageSnapshot,
     reconcileProviderRecords
   })
   const state = {
