@@ -4,7 +4,13 @@ import { setImmediate } from 'node:timers/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
-import { loadCodexTurnCursorWindow } from './CodexPaginatedHistory.ts'
+import {
+  isLegacyCodexHistory,
+  isUnsupportedTurnPaginationError,
+  loadCodexFullThread,
+  loadCodexLegacyThread,
+  loadCodexTurnCursorWindow
+} from './CodexPaginatedHistory.ts'
 
 const source = ts.createSourceFile(
   'CodexProviderAdapter.ts',
@@ -21,6 +27,11 @@ const code = ts.transpile(
     .filter((node) =>
       [
         'getChat',
+        'getChatWindowInContext',
+        'getChatWindowForItem',
+        'loadFullThread',
+        'loadLegacyThread',
+        'loadThreadWithoutPagination',
         'loadChatCursorWindowInContext',
         'usesLegacyHistory',
         'loadLegacyChatWindowInContext'
@@ -37,6 +48,7 @@ const fixture = () => {
     finishMetadata = resolve
   })
   const requests = []
+  const reads = []
   const publications = []
   const turns = Array.from({ length: 10 }, (_, index) => ({
     id: `turn-${index}`,
@@ -45,8 +57,12 @@ const fixture = () => {
   }))
   const adapter = vm.runInNewContext(code, {
     loadCodexTurnCursorWindow,
-    isLegacyCodexHistory: () => false,
+    loadCodexFullThread,
+    loadCodexLegacyThread,
+    isLegacyCodexHistory,
+    isUnsupportedTurnPaginationError,
     assertSupportedCodexHistory: () => {},
+    assertReadableCodexHistory: () => {},
     rendererChatUpdateTurnLimit: 10,
     getContainerTargetKey: () => 'host'
   })
@@ -56,15 +72,15 @@ const fixture = () => {
     runWithContainer: (_container, run) => run(),
     getThreadContainer: () => null,
     rememberThreadContainer: () => {},
-    readThread: async (_id, includeTurns) => {
-      assert.equal(includeTurns, false)
+    readThread: async (id, includeTurns) => {
+      reads.push({ id, includeTurns })
       return {
         thread: {
-          id: 'chat',
+          id,
           path: '/rollout',
           historyMode: 'paginated',
           preview: 'Saved chat',
-          turns: []
+          turns: includeTurns ? [...turns] : []
         }
       }
     },
@@ -77,22 +93,97 @@ const fixture = () => {
     getProviderPendingMessages: () => [],
     attachSubmittedUserMessages: async (_id, items) => items,
     filterRolledBackTurns: (_id, items) => items,
+    getRenderableTurns: (thread) => thread.turns,
+    hydrateFullThread: async (thread) => thread,
     resolveThreadName: async () => 'Saved chat',
     resolveThreadCwd: async () => '/repo',
     cacheThread: (thread) => adapter.threads.set(thread.id, thread),
     loadTranscriptMetadata: () => metadata,
     goals: { read: async () => {} },
-    createChatDetail: (thread, options) => ({
-      id: thread.id,
-      items: [...thread.turns, ...(options.cursorPendingMessages ?? [])]
-    }),
+    createChatDetail: (thread, options) => {
+      const start =
+        options.turnWindow?.startIndex ??
+        Math.max(0, thread.turns.length - (options.turnWindow?.limit ?? thread.turns.length))
+      const end = start + (options.turnWindow?.limit ?? thread.turns.length)
+      return {
+        id: thread.id,
+        items: [...thread.turns.slice(start, end), ...(options.cursorPendingMessages ?? [])]
+      }
+    },
     checkChatWriteAccessInBackground: () => {},
     getCachedChatDetail: () => null,
     scheduleChatUpdated: (id) => publications.push(id),
     scheduleQueueDrain() {}
   })
-  return { adapter, finishMetadata, requests, publications }
+  return { adapter, finishMetadata, requests, reads, publications }
 }
+
+test('pagination rejection falls back for the first open, another chat, and retries', async () => {
+  const { adapter, requests, reads } = fixture()
+  adapter.client.request = async (method) => {
+    requests.push(method)
+    throw new Error('list_turns is not supported yet')
+  }
+  // The failed native read must not reuse a previously cached partial transcript.
+  adapter.threads.set('chat', {
+    id: 'chat',
+    historyMode: 'paginated',
+    preview: 'Saved chat',
+    turns: [{ id: 'partial-tail', items: [] }]
+  })
+
+  for (const id of ['chat', 'other-chat', 'other-chat']) {
+    adapter.threads.delete('other-chat')
+    const detail = await adapter.getChat(id)
+    assert.equal(detail.id, id)
+    assert.deepEqual(
+      Array.from(detail.items, (item) => item.id),
+      Array.from({ length: 10 }, (_, index) => `turn-${index}`)
+    )
+  }
+  assert.equal(adapter.turnPaginationUnsupported, true)
+  assert.deepEqual(requests, ['thread/turns/list'])
+  assert.deepEqual(
+    reads.filter((read) => read.includeTurns).map((read) => read.id),
+    ['chat', 'other-chat', 'other-chat']
+  )
+})
+
+test('indexed and item history reads use full transcripts after pagination is rejected', async () => {
+  const { adapter, requests, reads } = fixture()
+  adapter.turnPaginationUnsupported = true
+  const indexed = await adapter.getChatWindowInContext('indexed', { startIndex: 0, limit: 3 })
+  assert.deepEqual(
+    Array.from(indexed.items, (item) => item.id),
+    ['turn-0', 'turn-1', 'turn-2']
+  )
+
+  const item = await adapter.getChatWindowForItem('item', 'turn-4:message', 3)
+  assert.deepEqual(
+    Array.from(item.items, (item) => item.id),
+    ['turn-3', 'turn-4', 'turn-5']
+  )
+  assert.deepEqual(requests, [])
+  assert.deepEqual(
+    reads.filter((read) => read.includeTurns).map((read) => read.id),
+    ['indexed', 'item']
+  )
+})
+
+test('true legacy chats keep using the legacy reader', async () => {
+  const { adapter, reads } = fixture()
+  const readThread = adapter.readThread
+  adapter.readThread = async (...args) => {
+    const response = await readThread(...args)
+    response.thread.historyMode = 'legacy'
+    return response
+  }
+  // A broad full-reader replacement must not bypass the legacy validation path.
+  adapter.loadFullThread = () => assert.fail('legacy chats must use the legacy reader')
+  const detail = await adapter.getChat('legacy')
+  assert.equal(detail.items.length, 10)
+  assert.equal(reads.filter((read) => read.includeTurns).length, 1)
+})
 
 test('first chat open returns ten native turns while cold metadata is still pending', async () => {
   const { adapter, finishMetadata, requests, publications } = fixture()

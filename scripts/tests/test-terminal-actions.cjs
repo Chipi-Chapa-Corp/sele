@@ -163,6 +163,16 @@ if (!process.versions.electron) {
         await run(String.raw`window.text = terminal => Array.from({length: terminal.buffer.active.length},
         (_, index) => terminal.buffer.active.getLine(index).translateToString(true)).join('\n'); undefined`)
 
+        // Auto-closing actions leave an existing empty tab available for the next action.
+        const autoCloseMarker = path.join(directory, 'auto-close-empty')
+        await run(`window.emptySession = document.querySelector('[aria-label="Terminal 1"][role="region"]');
+          window.launch(${JSON.stringify(`printf done > '${autoCloseMarker}'`)}, true)`)
+        await waitFor(
+          `window.terminals.length >= 2 && document.querySelectorAll('.terminal-panel__session').length === 1`
+        )
+        assert.equal(await fs.readFile(autoCloseMarker, 'utf8'), 'done')
+        assert.equal(await run('window.emptySession.isConnected'), true)
+
         // A function records SSH arguments without making any network connection.
         const command = process.env.SELE_TERMINAL_FIXTURE_SHELL?.endsWith('fish')
           ? `function ssh; printf 'OUTPUT:<%s>\\\\n' $argv; end; ssh -t user@fixture 'pm3 restart fixture'`
@@ -179,6 +189,8 @@ if (!process.versions.electron) {
           await run(`document.querySelectorAll('[aria-label="Deploy"][role="region"]').length`),
           1
         )
+        assert.equal(await run('window.emptySession.isConnected'), true, 'Reuses the empty tab')
+        assert.equal(await run(`document.querySelectorAll('.terminal-panel__session').length`), 1)
         await waitFor(
           `window.taskSnapshot('codex:fixture').unread === true && !window.taskSnapshot('codex:fixture').running`
         )
@@ -194,16 +206,31 @@ if (!process.versions.electron) {
 
         // The close-on-finish mode must execute once, then remove just its action tab.
         const marker = path.join(directory, 'completed')
-        await run(`window.launch(${JSON.stringify(`printf 'ran\n' >> '${marker}'`)}, true)`)
+        await run(`window.terminalCount = window.terminals.length;
+          window.launch(${JSON.stringify(`printf 'ran\n' >> '${marker}'`)}, true)`)
         await waitFor(`document.querySelectorAll('[aria-label="Deploy"][role="region"]').length === 1
-        && window.terminals.length >= 3`)
+        && window.terminals.length > window.terminalCount`)
         assert.equal(await fs.readFile(marker, 'utf8'), 'ran\n', 'Action runs exactly once')
         assert.equal(
           await run(`document.querySelectorAll('[aria-label="Terminal 1"][role="region"]').length`),
-          1
+          0
         )
         await run(`window.readTasks('codex:fixture')`)
         const once = path.join(directory, 'task-once')
+        // A shell with a draft is not empty. Find another blank tab even when it is inactive.
+        await run(`window.terminalCount = window.terminals.length;
+          document.querySelector('[aria-label="New terminal"]').click()`)
+        await waitFor(`window.terminals.length > window.terminalCount &&
+          window.terminals.at(-1).options.disableStdin === false`)
+        await run(`window.terminals.at(-1).input('printf DRAFT', true)`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('printf DRAFT')`)
+        await run(`window.draftTerminal = window.terminals.at(-1);
+          window.launch('printf USED_TAB_PRESERVED', false)`)
+        await waitFor(`document.querySelectorAll('.terminal-panel__session').length === 3`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('USED_TAB_PRESERVED')`)
+        await run(`document.querySelector('[aria-label="New terminal"]').click()`)
+        await waitFor(`document.querySelectorAll('.terminal-panel__session').length === 4`)
+        await run(`document.querySelector('[aria-label="Terminal 2"][aria-pressed]').click()`)
         await run(`window.launch(${JSON.stringify(`sleep 0.6; printf done >> '${once}'`)}, false)`)
         await waitFor(`document.querySelector('[aria-label="Terminal task running"]') !== null`)
         if (process.env.SELE_TERMINAL_TASK_SCREENSHOT) {
@@ -222,6 +249,8 @@ if (!process.versions.electron) {
           'done',
           'Switching chats must not restart the terminal command'
         )
+        assert.equal(await run(`document.querySelectorAll('.terminal-panel__session').length`), 4)
+        assert.ok(await run(`window.text(window.draftTerminal).includes('printf DRAFT')`))
         assert.equal(
           await run(`document.querySelector('[aria-label="Finished since last viewed"]') !== null`),
           true

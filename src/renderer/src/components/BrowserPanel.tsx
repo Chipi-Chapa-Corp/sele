@@ -117,6 +117,20 @@ const restoreBrowserTab = (tab: StoredBrowserTab): BrowserTab =>
     title: tab.title
   })
 
+const openBrowserPage = (workspace: BrowserWorkspace, url: string): BrowserWorkspace => {
+  const isEmptyTab = (tab: BrowserTab): boolean => !tab.url || tab.url === 'about:blank'
+  const emptyTab =
+    workspace.tabs.find((tab) => tab.id === workspace.activeTabId && isEmptyTab(tab)) ??
+    workspace.tabs.find(isEmptyTab)
+  const tab = createBrowserTab(url, { id: emptyTab?.id })
+  return {
+    activeTabId: tab.id,
+    tabs: emptyTab
+      ? workspace.tabs.map((candidate) => (candidate.id === emptyTab.id ? tab : candidate))
+      : [...workspace.tabs, tab]
+  }
+}
+
 const createInitialBrowserWorkspaces = (
   workspaceKey: string,
   openRequest: BrowserOpenRequest | null
@@ -132,12 +146,10 @@ const createInitialBrowserWorkspaces = (
   )
   const storedWorkspace = workspaces.get(workspaceKey)
   let tabs = storedWorkspace?.tabs ?? []
-  let activeTabId = storedWorkspace?.activeTabId ?? tabs[0]?.id ?? null
+  let activeTabId: string | null = storedWorkspace?.activeTabId ?? tabs[0]?.id ?? null
 
   if (openRequest && isBrowserPageUrl(openRequest.url)) {
-    const requestedTab = createBrowserTab(openRequest.url)
-    tabs = [...tabs, requestedTab]
-    activeTabId = requestedTab.id
+    ;({ tabs, activeTabId } = openBrowserPage({ tabs, activeTabId }, openRequest.url))
   } else if (tabs.length === 0) {
     const blankTab = createBrowserTab()
     tabs = [blankTab]
@@ -487,7 +499,6 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     handledOpenRequestIdsRef.current.add(openRequest.id)
     if (!isBrowserPageUrl(openRequest.url)) return
 
-    const tab = createBrowserTab(openRequest.url)
     let active = true
     queueMicrotask(() => {
       if (!active) return
@@ -497,10 +508,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
           tabs: []
         }
         const nextWorkspaces = new Map(currentWorkspaces)
-        nextWorkspaces.set(workspaceKey, {
-          activeTabId: tab.id,
-          tabs: [...currentWorkspace.tabs, tab]
-        })
+        nextWorkspaces.set(workspaceKey, openBrowserPage(currentWorkspace, openRequest.url))
         return nextWorkspaces
       })
     })

@@ -2404,6 +2404,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       fallbackCwd
     )
 
+  /** A pagination capability fallback does not change the thread's history protocol. */
+  private loadThreadWithoutPagination = (thread: CodexThread): Promise<CodexThread> =>
+    isLegacyCodexHistory(thread.historyMode)
+      ? this.loadLegacyThread(thread.id, thread.cwd ?? null)
+      : this.loadFullThread(thread.id, thread.cwd ?? null)
+
   private hydrateFullThread = async (
     loadedThread: CodexThread,
     fallbackCwd: string | null
@@ -2530,8 +2536,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
         )
       }
       const response = await this.readThread(chatId, false)
-      if (isLegacyCodexHistory(response.thread.historyMode)) {
-        const thread = await this.loadLegacyThread(chatId, response.thread.cwd ?? null)
+      if (this.usesLegacyHistory(response.thread.historyMode)) {
+        const thread = await this.loadThreadWithoutPagination(response.thread)
         const renderableTurns = this.getRenderableTurns(thread)
         const targetTurnIndex = renderableTurns.findIndex(
           (turn) => itemId === turn.id || itemId.startsWith(`${turn.id}:`)
@@ -2582,14 +2588,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     window: ProviderChatTurnCursorWindow,
     cacheLatest: boolean,
     threadMetadata: CodexThread,
-    cachedThread: CodexThread | null,
-    fullRead = false
+    cachedThread: CodexThread | null
   ): Promise<ProviderChatDetail> => {
-    const thread =
-      cachedThread ??
-      (fullRead
-        ? await this.loadFullThread(chatId, threadMetadata.cwd ?? null)
-        : await this.loadLegacyThread(chatId, threadMetadata.cwd ?? null))
+    const thread = cachedThread ?? (await this.loadThreadWithoutPagination(threadMetadata))
     if (cacheLatest) this.cacheThread(thread)
     return this.createChatDetail(thread, {
       turnWindow: { startIndex: null, limit: window.limit },
@@ -2657,16 +2658,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
       if (!isUnsupportedTurnPaginationError(error) || window.cursor != null) throw error
       this.turnPaginationUnsupported = true
       // A partially cached thread would truncate history; read the whole transcript instead.
-      // Some builds reject cursors for threads they still report as paginated, so skip the
-      // legacy historyMode assertion for that full read.
-      return this.loadLegacyChatWindowInContext(
-        chatId,
-        window,
-        cacheLatest,
-        threadMetadata,
-        null,
-        true
-      )
+      // Some builds reject cursors for threads they still report as paginated.
+      return this.loadLegacyChatWindowInContext(chatId, window, cacheLatest, threadMetadata, null)
     }
     if (
       cacheLatest &&
@@ -2803,7 +2796,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const response = await this.readThread(chatId, false)
     const threadMetadata = response.thread
     if (this.usesLegacyHistory(threadMetadata.historyMode)) {
-      const thread = await this.loadLegacyThread(chatId, threadMetadata.cwd ?? null)
+      const thread = await this.loadThreadWithoutPagination(threadMetadata)
       this.cacheThread(thread)
       return this.createChatDetail(thread, { turnWindow: window })
     }

@@ -58,6 +58,7 @@ type TerminalSessionProps = {
   tabId: string
   visible: boolean
   onCommandFinish: (tabId: string) => void
+  onInput: (tabId: string) => void
   onStateChange: (tabId: string, state: TerminalState, sessionId: string | null) => void
 }
 
@@ -186,6 +187,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
   tabId,
   visible,
   onCommandFinish,
+  onInput,
   onStateChange
 }) => {
   const chatKeyRef = useRef(chatKey)
@@ -467,6 +469,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
 
         terminal.onData((data) => {
           if (sessionCreated) {
+            onInput(tabId)
             task.input(data)
             terminalApi.write(sessionId, data)
           }
@@ -509,6 +512,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
     initialCommand,
     initialChatKey,
     onCommandFinish,
+    onInput,
     onStateChange,
     tabId
   ])
@@ -550,6 +554,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 }) => {
   const nextTabNumberByWorkspaceRef = useRef(new Map<string, number>([[workspaceKey, 2]]))
   const closingTabsRef = useRef(new Set<string>())
+  const usedTabIdsRef = useRef(new Set<string>())
   const handledCommandLaunchRequestIdsRef = useRef(new Set<string>())
   const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
   const [workspaces, setWorkspaces] = useState(() => {
@@ -560,6 +565,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     ])
   })
   const workspace = workspaces.get(workspaceKey) ?? null
+
+  const handleTabInput = useCallback((tabId: string): void => {
+    usedTabIdsRef.current.add(tabId)
+  }, [])
 
   const handleTabStateChange = useCallback(
     (tabId: string, state: TerminalState, sessionId: string | null): void => {
@@ -615,12 +624,28 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       if (!currentWorkspace) {
         nextTabNumberByWorkspaceRef.current.set(commandLaunchRequest.workspaceKey, 2)
       }
+      const isEmptyTab = (candidate: TerminalTab): boolean =>
+        !candidate.initialCommand &&
+        !candidate.closeOnCommandFinish &&
+        !usedTabIdsRef.current.has(candidate.id) &&
+        !closingTabsRef.current.has(candidate.id)
+      // Auto-closing actions get a dedicated tab so the user's empty shell stays open.
+      const emptyTab = commandLaunchRequest.closeOnFinish
+        ? null
+        : (targetWorkspace.tabs.find(
+            (candidate) => candidate.id === targetWorkspace.activeTabId && isEmptyTab(candidate)
+          ) ?? targetWorkspace.tabs.find(isEmptyTab))
+      const commandTab = emptyTab ? { ...tab, id: emptyTab.id } : tab
       nextWorkspaces.set(commandLaunchRequest.workspaceKey, {
         activeTabId:
           commandLaunchRequest.focus || !targetWorkspace.activeTabId
-            ? tab.id
+            ? commandTab.id
             : targetWorkspace.activeTabId,
-        tabs: [...targetWorkspace.tabs, tab]
+        tabs: emptyTab
+          ? targetWorkspace.tabs.map((candidate) =>
+              candidate.id === emptyTab.id ? commandTab : candidate
+            )
+          : [...targetWorkspace.tabs, commandTab]
       })
       return nextWorkspaces
     })
@@ -657,6 +682,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   }
 
   const handleCommandFinish = useCallback((tabId: string): void => {
+    usedTabIdsRef.current.delete(tabId)
     tabRuntimesRef.current.delete(tabId)
     setWorkspaces((currentWorkspaces) => {
       for (const [currentWorkspaceKey, currentWorkspace] of currentWorkspaces) {
@@ -709,6 +735,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       }
 
       tabRuntimesRef.current.delete(tab.id)
+      usedTabIdsRef.current.delete(tab.id)
       setWorkspaces((currentWorkspaces) => {
         const currentWorkspace = currentWorkspaces.get(closingWorkspaceKey)
         if (!currentWorkspace) return currentWorkspaces
@@ -798,6 +825,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                 tab.id === currentWorkspace.activeTabId
               }
               onCommandFinish={handleCommandFinish}
+              onInput={handleTabInput}
               onStateChange={handleTabStateChange}
             />
           ))

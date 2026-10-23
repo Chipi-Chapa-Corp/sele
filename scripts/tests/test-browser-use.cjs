@@ -459,6 +459,51 @@ if (!process.versions.electron) {
       })
       await replacement.attach(remainingTab.id)
       replacement.close()
+      const run = (source) => window.webContents.executeJavaScript(source)
+      const waitForSession = async (predicate) => {
+        const deadline = Date.now() + 8000
+        while (Date.now() < deadline) {
+          const stored = await run(`window.preferencesApi.getItem('sele:browser-tabs:v2').value`)
+          const session = JSON.parse(stored || '{}')['tab-reuse']
+          if (session && predicate(session)) return session
+          await new Promise((resolve) => setTimeout(resolve, 25))
+        }
+        assert.fail('Timed out waiting for browser tab reuse')
+      }
+      await run(`window.browserTabReuseFixture.active(true);
+        window.browserTabReuseFixture.workspace('tab-reuse')`)
+      const emptySession = await waitForSession((session) => session.tabs.length === 1)
+      const emptyId = emptySession.tabs[0].id
+      await run(`window.browserTabReuseFixture.open(${JSON.stringify(url + '/reuse-first')})`)
+      await waitForSession((session) => session.tabs[0]?.url === url + '/reuse-first')
+      const reused = await waitForSession((session) => session.tabs.length === 1)
+      assert.equal(reused.activeTabId, emptyId, 'Opening a URL reuses an empty tab')
+      await run(`window.browserTabReuseFixture.open(${JSON.stringify(url + '/reuse-second')})`)
+      await waitForSession((session) => session.tabs.length === 2)
+      await run(`document.querySelector('[aria-label="New browser tab"]').click()`)
+      const withBlank = await waitForSession((session) => session.tabs.length === 3)
+      const blankId = withBlank.activeTabId
+      await run(`document.querySelector('[aria-label="Browser tabs"] [aria-pressed]').click()`)
+      await run(`window.browserTabReuseFixture.open(${JSON.stringify(url + '/reuse-background')})`)
+      const backgroundReused = await waitForSession((session) =>
+        session.tabs.some((tab) => tab.url === url + '/reuse-background')
+      )
+      assert.equal(backgroundReused.tabs.length, 3)
+      assert.equal(backgroundReused.activeTabId, blankId, 'Reuses an inactive blank tab')
+      await run(`document.querySelector('[aria-label="New browser tab"]').click()`)
+      const beforeRemount = await waitForSession((session) => session.tabs.length === 4)
+      await run(`window.browserTabReuseFixture.mount(false)`)
+      await run(
+        `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
+      )
+      assert.equal(await run(`document.querySelector('.browser-panel') === null`), true)
+      await run(`window.browserTabReuseFixture.open(${JSON.stringify(url + '/reuse-restored')})`)
+      const restored = await waitForSession((session) =>
+        session.tabs.some((tab) => tab.url === url + '/reuse-restored')
+      )
+      assert.equal(restored.tabs.length, 4)
+      assert.equal(restored.activeTabId, beforeRemount.activeTabId, 'Reuses a restored blank tab')
+      console.log('PASS: browser URL requests reuse active, inactive and restored blank tabs')
       console.log(
         'PASS: native Browser Use discovery, real BrowserPanel tabs, CDP events, navigation, typing, clicking, screenshots, closing and session/tab isolation'
       )
