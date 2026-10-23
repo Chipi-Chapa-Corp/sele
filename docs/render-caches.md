@@ -40,17 +40,25 @@ display with fixture data.
 ## Retained turn views
 
 Reopening a chat previously reused its recent-chat data but remounted the entire
-message tree. `RetainedChatViews` now preserves up to three finished conversation
+message tree. `RetainedChatViews` now preserves up to three root conversation
 trees using [React Activity](https://react.dev/reference/react/Activity). Hidden
 effects are paused; reopening updates handlers and props while reusing existing
 turn nodes and local state. The loading shell has its own key so a pending cached
 detail transition cannot erase warm turns or evict its destination.
 
-Retention follows the existing recent-chat cache keys. Updates, completion, cache
-eviction, and disabling that cache also discard corresponding hidden views. Active
-chats, subagent views, embedded apps, videos, and views with open dialogs retain
-their normal lifecycle. Hidden DOM is limited to 30,000 elements, in addition to
-the three-conversation limit. Transient loading shells are counted separately.
+Retention follows the existing recent-chat cache keys, including running chats.
+Hidden effects pause while provider data continues to update independently; revealing
+a view reconciles the latest selected props and resumes its effects. Cache eviction
+and disabling that cache discard corresponding hidden views. Subagent views, embedded
+apps, videos, and views with open dialogs retain their normal lifecycle. Hidden DOM
+is limited to 30,000 elements, in addition to the three-conversation limit. Transient
+loading shells are counted separately.
+
+Background stream summaries mark cached details as previews. Reopening a running
+chat keeps that full cached window as a read-only preview while the provider refresh
+runs. Replacing it with the one-turn durable opening view would remove the other
+mounted turns and rebuild them when the refresh returned. Previews cannot grant
+stale sending, editing, approval, or user-input permissions.
 
 Before hiding a view, the cache measures its turn heights. On commit it enables
 `content-visibility: auto` with those intrinsic sizes, allowing offscreen turns to
@@ -75,7 +83,13 @@ unlabelled loading frames.
 
 Run `npm run test:retained-chats` through isolated-gui for DOM/state reuse, current
 handlers, paused effects, viewport refs, loading transitions, LRU eviction,
-invalidation, scrolling, and retention bounds. For the full-app comparison, run
+invalidation, scrolling, retention bounds, concurrent streams, and completion.
+`npm run test:active-chat-switching`, also through isolated-gui, exercises the full
+workspace with 400 sidebar chats, two running rich conversations, selected detail
+updates and background summaries every 100 ms. It checks all ten turn nodes are
+reused on each warm switch, the selected stream catches up, and no mixed-chat or
+blank frames appear. Frame gaps and long tasks are reported as fixture measurements.
+For the finished-chat full-app comparison, run
 `scripts/benchmarks/benchmark-workspace-navigation.cjs` with
 `SELE_BENCHMARK_RICH_HISTORY=1` and `SELE_BENCHMARK_CHAT_COUNT=400`; add
 `SELE_BENCHMARK_UNRETAINED=1` for the remount control. Both use fixture APIs and
@@ -88,3 +102,11 @@ subagent GUI suite still fails its nested-parent viewport assertion; the control
 run using the original `ConversationMessages` and `ConversationMessagesContent`
 components fails the same assertion. That existing failure is not counted as a
 passing check for this change.
+
+Active-chat validation (2026-10-23): the retained-view concurrent-stream fixture,
+the full-workspace active-switch fixture, scrolling, message selection, renderer
+typechecking, and the cache-recovery tests pass. Follow-up fixture repair
+(2026-10-24) supplies the real `getOpenCodeUsageLimitMessage` helper and a
+pending-message persistence stub to the extracted OpenCode test adapters.
+All 16 sidebar-status tests and all 220 chat-state tests now pass. Application
+behavior and status assertions are unchanged by this test setup repair.

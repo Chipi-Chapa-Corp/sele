@@ -286,3 +286,133 @@ test('Done appends to existing new-chat drafts without replacing input or other 
     state.promptDraftsByScope.get('new-chat:host\0/b')
   )
 })
+
+test('typing saves only text and image references, including after restart and scope moves', async () => {
+  const disk = {}
+  const client = await makeClient(disk)
+  const writes = []
+  const setItem = client.setItem
+  client.setItem = (key, value) => {
+    writes.push({ key, bytes: value.length })
+    return setItem(key, value)
+  }
+  const largeImage = { ...image, dataUrl: image.dataUrl + 'A'.repeat(4 * 1024 * 1024) }
+  let state = {
+    composerDrafts: new Map([
+      [
+        'new',
+        {
+          message: 'long prompt\n'.repeat(1000),
+          attachments: [largeImage],
+          skills: [],
+          apps: []
+        }
+      ]
+    ]),
+    promptDraftsByScope: new Map()
+  }
+  writeStoredComposerDrafts(state)
+  assert.equal(writes.filter((write) => write.bytes > 1024 * 1024).length, 1)
+  await client.flush()
+  const imageKey = JSON.parse(disk[composerDraftsStorageKey]).imageKeys[0]
+  assert.equal(disk[imageKey], largeImage.dataUrl)
+  writes.length = 0
+  for (let i = 0; i < 20; i++) {
+    state = {
+      ...state,
+      composerDrafts: updateComposerDraft(
+        state.composerDrafts,
+        'new',
+        'message',
+        (text) => text + 'x'
+      )
+    }
+    writeStoredComposerDrafts(state)
+  }
+  assert.equal(writes.length, 20)
+  assert.ok(writes.every((write) => write.key === composerDraftsStorageKey && write.bytes < 20000))
+  await client.flush()
+  const restarted = await makeClient(disk)
+  state = readStoredComposerDrafts()
+  assert.deepEqual(state.composerDrafts.get('new').attachments, [largeImage])
+  state = moveComposerDraftScope(state, 'new', 'codex:created')
+  writeStoredComposerDrafts(state)
+  await restarted.flush()
+  assert.deepEqual(JSON.parse(disk[composerDraftsStorageKey]).imageKeys, [imageKey])
+  assert.deepEqual(readStoredComposerDrafts(), state)
+  state = {
+    ...state,
+    composerDrafts: updateComposerDraft(state.composerDrafts, 'codex:created', 'attachments', [])
+  }
+  writeStoredComposerDrafts(state)
+  await restarted.flush()
+  assert.equal(disk[imageKey], undefined, 'removed image payload is reclaimed')
+  writeStoredComposerDrafts({ composerDrafts: new Map(), promptDraftsByScope: new Map() })
+  await restarted.flush()
+  assert.deepEqual(disk, {})
+})
+
+test('inline legacy images migrate without losing draft resources', async () => {
+  const state = {
+    composerDrafts: new Map([
+      ['legacy', { message: 'keep', attachments: [image], skills: [skill], apps: [app] }]
+    ]),
+    promptDraftsByScope: new Map([['legacy', [{ id: 'saved', prompt: 'later' }]]])
+  }
+  const disk = {
+    [composerDraftsStorageKey]: JSON.stringify({
+      composerDrafts: [...state.composerDrafts],
+      promptDraftsByScope: [...state.promptDraftsByScope]
+    })
+  }
+  const client = await makeClient(disk)
+  const restored = readStoredComposerDrafts()
+  assert.deepEqual(restored, state)
+  writeStoredComposerDrafts(restored)
+  await client.flush()
+  assert.equal(disk[composerDraftsStorageKey].includes(image.dataUrl), false)
+  await makeClient(disk)
+  assert.deepEqual(readStoredComposerDrafts(), state)
+})
+
+test('missing or invalid image references preserve text and never read unrelated preferences', () => {
+  const reads = []
+  const parsed = parseStoredComposerDrafts(
+    JSON.stringify({
+      composerDrafts: [
+        [
+          'chat',
+          {
+            message: 'keep',
+            skills: [],
+            apps: [],
+            attachments: [
+              {
+                kind: 'image',
+                name: 'missing',
+                path: '/missing',
+                imageKey: 'sele:composer-image:v1:missing'
+              },
+              {
+                kind: 'image',
+                name: 'invalid',
+                path: '/invalid',
+                imageKey: 'sele:other-preference'
+              },
+              { kind: 'file', name: 'file', path: '/file' }
+            ]
+          }
+        ]
+      ]
+    }),
+    (key) => {
+      reads.push(key)
+      return null
+    }
+  )
+  assert.deepEqual(reads, ['sele:composer-image:v1:missing'])
+  assert.equal(parsed.composerDrafts.get('chat').message, 'keep')
+  assert.deepEqual(parsed.composerDrafts.get('chat').attachments, [
+    { kind: 'file', name: 'file', path: '/file' }
+  ])
+})

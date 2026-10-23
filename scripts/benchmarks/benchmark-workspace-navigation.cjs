@@ -1,9 +1,12 @@
 // Full App/controller navigation and completion with synthetic data.
 // Set SELE_BENCHMARK_RICH_HISTORY=1 to include rich transcripts and cached switches.
+// Set SELE_BENCHMARK_ACTIVE_CHATS=1 to switch rich conversations while both stream.
 // Run through isolated-gui. Never starts provider processes or opens real profiles.
 const fs = require('node:fs/promises')
 const path = require('node:path')
 const assert = require('node:assert/strict')
+const activeChats = process.env.SELE_BENCHMARK_ACTIVE_CHATS === '1'
+if (activeChats) process.env.SELE_BENCHMARK_RICH_HISTORY = '1'
 if (!process.versions.electron) {
   ;(async () => {
     const root = path.resolve(__dirname, '../..')
@@ -64,6 +67,11 @@ if (!process.versions.electron) {
             button.click();
             const clickMs=performance.now()-start;
             await new Promise(resolve=>setTimeout(resolve,${richHistory ? 650 : 300}));
+            if(${activeChats})await new Promise((resolve,reject)=>{
+              const deadline=performance.now()+10000;
+              function check(){if(document.querySelectorAll('#chat-search-content [data-chat-turn-id]').length===10)return resolve();
+                if(performance.now()>deadline)return reject(new Error('Running history did not finish mounting'));requestAnimationFrame(check)}check()
+            });
             measuring=false;
             performance.mark(measurementId+':end');
             const turnNodes=[...document.querySelectorAll('#chat-search-content [data-chat-turn-id]')];
@@ -154,19 +162,20 @@ if (!process.versions.electron) {
         const transfer=HTMLCanvasElement.prototype.transferControlToOffscreen;
         if(transfer)HTMLCanvasElement.prototype.transferControlToOffscreen=function(...args){fixtureCanvasTransfers++;return transfer.apply(this,args)};
         window.fixtureChats=Array.from({length:${chatCount}},(_,i)=>({id:String(i),providerId:'codex',title:'Empty conversation '+i,
-          preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
+          preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0||(${activeChats}&&i<3)?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
           cwdKind:'directory',projectCwd:null,branchName:null,worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,
           done:false,seenUpdatedAt:now,purpose:null,container:null}));
         window.fixtureCalls=[];
         window.fixtureRowRenders=[];window.fixtureMotionRenders=0;window.fixtureGroupRenders=[];
         const usage={updatedAt:now,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,rateLimits:[],rateLimitResetCredits:null,errors:[]};
-        const history=id=>${richHistory} ? Array.from({length:10},(_,i)=>[
+        const histories=new Map();
+        const history=id=>histories.get(id)??(${richHistory} ? Array.from({length:10},(_,i)=>[
           {id:id+':user-'+i,type:'message',role:'user',content:'Inspect '+id+' task '+i},
           {id:id+':answer-'+i,type:'message',role:'assistant',content:Array.from({length:40},(_,n)=>
             '### Section '+id+'-'+i+'-'+n+'\\n\\nFindings with **important text** and [source](/fixture/source'+n+'.ts:10).\\n\\n'+
             String.fromCharCode(96).repeat(3)+'ts\\nconst result'+n+' = {value: "'+id+'-'+i+'", ready: true};\\n'+String.fromCharCode(96).repeat(3)+'\\n\\n').join('')}
-        ]).flat() : [];
-        const detail=id=>({...fixtureChats.find(chat=>chat.id===id),revision:1,capabilities:{editMessages:true,activeMessages:true},
+        ]).flat() : []);
+        const detail=id=>({...fixtureChats.find(chat=>chat.id===id),revision:window.fixtureRevision??1,capabilities:{editMessages:true,activeMessages:true},
           pendingApproval:null,pendingUserInput:null,contextUsage:null,items:history(id),subagents:[],turnCount:${richHistory ? 10 : 0},itemsStartTurnIndex:0});
         const defaults={
           getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
@@ -181,7 +190,8 @@ if (!process.versions.electron) {
           getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
           getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
           getSkills:()=>[],getApps:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
-          getUpdateAvailability:()=>null
+          getUpdateAvailability:()=>null,
+          setViewedChat:(_provider,id)=>{window.fixtureViewedChat=id}
         };
         const api=new Proxy({}, {get:(_target,name)=>{
           if(name==='onChatUpdated')return listener=>{window.fixtureChatListener=listener;return ()=>{if(window.fixtureChatListener===listener)window.fixtureChatListener=null}};
@@ -191,6 +201,19 @@ if (!process.versions.electron) {
         window.appApi=api;window.providerApi=api;window.terminalApi=api;window.browserApi=api;
         window.beginBackgroundUpdates=()=>{let revision=10;return setInterval(()=>{
           revision++;
+          window.fixtureRevision=revision;
+          if(${activeChats}){
+            for(const id of ['1','2']){
+              const items=history(id);histories.set(id,items.map((item,index)=>index===items.length-1?
+                {...item,content:item.content+'\\n\\nLive '+id+' update '+revision+'.'}:item));
+              const chat=fixtureChats.find(chat=>chat.id===id);chat.updatedAt=Date.now();
+              const snapshot=detail(id);
+              window.fixtureChatListener?.({providerId:'codex',chatId:id,sequence:revision*10+Number(id),turnCompleted:false,
+                detail:fixtureViewedChat===id?{...snapshot,baseRevision:null,baseItemIds:null,
+                  itemIds:snapshot.items.map(item=>item.id),changedItems:snapshot.items}:null,
+                summary:{...chat,revision,currentActivity:null,previewLength:0}});
+            }
+          }
           window.fixtureChatListener?.({providerId:'codex',chatId:'0',detail:null,sequence:revision,turnCompleted:false,
             summary:{...fixtureChats[0],revision,currentActivity:null,previewLength:0,updatedAt:Date.now()}})
         },100)};
@@ -261,12 +284,37 @@ if (!process.versions.electron) {
         })
       }
       const results = []
-      const destinations =
-        process.env.SELE_BENCHMARK_RICH_HISTORY === '1'
+      const destinations = activeChats
+        ? ['1', '2', '1', '2', '1', '2']
+        : process.env.SELE_BENCHMARK_RICH_HISTORY === '1'
           ? ['1', '2', '1', '2', 'new', '1', 'new', '3', 'new']
           : ['1', '2', 'new', '1', 'new', '3', 'new']
       for (const destination of destinations) {
         results.push(await run('window.measureNavigation(' + JSON.stringify(destination) + ')'))
+      }
+      if (activeChats) {
+        await run('clearInterval(window.backgroundUpdates)')
+        const warm = results.filter((result) => result.reusedTurns !== null)
+        assert.equal(warm.length, 4, 'exercise both running chats repeatedly')
+        for (const result of warm) {
+          assert.equal(result.reusedTurns, 10, 'streaming chats reuse every mounted turn')
+          assert.equal(result.mixedChatFrames, 0, 'never paint the other running chat')
+          assert.equal(result.blankFrames, 0, 'warm streaming chats stay readable')
+          assert.equal(result.selected, result.destination)
+        }
+        const caughtUp = await run(`new Promise(resolve=>{const deadline=performance.now()+3000;
+          function check(){if(document.querySelector('#chat-search-content')?.textContent.includes('Live 2 update '+fixtureRevision+'.'))return resolve(true);
+            if(performance.now()>deadline)return resolve(false);requestAnimationFrame(check)}check()})`)
+        assert.equal(
+          caughtUp,
+          true,
+          'the selected stream catches up to the latest provider revision'
+        )
+        assert.deepEqual(errors, [])
+        console.log(JSON.stringify({ activeChats: true, results, errors }, null, 2))
+        await run('window.unmountFixture()')
+        app.exit(0)
+        return
       }
       for (const id of ['1', '2', '3']) {
         await run('window.measureNavigation(' + JSON.stringify(id) + ')')

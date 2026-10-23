@@ -5,6 +5,10 @@ import { preferences } from './preferences.ts'
 import { flushAfterPaintWriters } from './afterPaintWriter.ts'
 
 export const composerDraftsStorageKey = 'sele:composer-drafts:v1'
+const imageStoragePrefix = 'sele:composer-image:v1:'
+const storedImageKeys = new WeakMap<AppSelectedAttachment, string>()
+const isImageKey = (key: unknown): key is string =>
+  typeof key === 'string' && key.startsWith(imageStoragePrefix)
 
 export type ComposerDraftState = {
   composerDrafts: ReadonlyMap<string, ComposerDraft>
@@ -122,7 +126,10 @@ const isApp = (value: unknown): value is ProviderApp =>
 const isPromptDraft = (value: unknown): value is PromptDraft =>
   isRecord(value) && typeof value.id === 'string' && typeof value.prompt === 'string'
 
-export const parseStoredComposerDrafts = (value: string | null): ComposerDraftState => {
+export const parseStoredComposerDrafts = (
+  value: string | null,
+  readImage: (key: string) => string | null = () => null
+): ComposerDraftState => {
   const state: ComposerDraftState = {
     composerDrafts: new Map(),
     promptDraftsByScope: new Map()
@@ -144,9 +151,30 @@ export const parseStoredComposerDrafts = (value: string | null): ComposerDraftSt
       if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !isRecord(entry[1])) continue
       const [key, draft] = entry
       if (typeof draft.message !== 'string') continue
-      const attachments = Array.isArray(draft.attachments)
-        ? draft.attachments.filter(isAttachment)
-        : []
+      const attachments: AppSelectedAttachment[] = []
+      if (Array.isArray(draft.attachments)) {
+        for (const attachment of draft.attachments) {
+          if (isAttachment(attachment)) attachments.push(attachment)
+          else if (
+            isRecord(attachment) &&
+            attachment.kind === 'image' &&
+            typeof attachment.name === 'string' &&
+            typeof attachment.path === 'string' &&
+            isImageKey(attachment.imageKey)
+          ) {
+            const dataUrl = readImage(attachment.imageKey)
+            if (dataUrl === null) continue
+            const image: AppSelectedAttachment = {
+              kind: 'image',
+              name: attachment.name,
+              path: attachment.path,
+              dataUrl
+            }
+            storedImageKeys.set(image, attachment.imageKey)
+            attachments.push(image)
+          }
+        }
+      }
       const skills = Array.isArray(draft.skills) ? draft.skills.filter(isSkill) : []
       const apps = Array.isArray(draft.apps) ? draft.apps.filter(isApp) : []
       if (draft.message || attachments.length || skills.length || apps.length) {
@@ -174,19 +202,57 @@ export const parseStoredComposerDrafts = (value: string | null): ComposerDraftSt
 }
 
 export const readStoredComposerDrafts = (): ComposerDraftState =>
-  parseStoredComposerDrafts(preferences.getItem(composerDraftsStorageKey))
+  parseStoredComposerDrafts(preferences.getItem(composerDraftsStorageKey), preferences.getItem)
 
 export const writeStoredComposerDrafts = (state: ComposerDraftState): void => {
+  // Read only the small manifest. Image payloads are immutable and stay outside
+  // the document that is serialized and sent through the preload on each edit.
+  let previousImageKeys = new Set<string>()
+  const previous = preferences.getItem(composerDraftsStorageKey)
+  if (previous) {
+    try {
+      const parsed: unknown = JSON.parse(previous)
+      if (isRecord(parsed) && Array.isArray(parsed.imageKeys)) {
+        previousImageKeys = new Set(parsed.imageKeys.filter(isImageKey))
+      }
+    } catch (error) {
+      console.error('Unable to read previous composer image references.', error)
+    }
+  }
+  const imageKeys = new Set<string>()
+  const composerDrafts = [...state.composerDrafts].map(([scope, draft]) => [
+    scope,
+    {
+      ...draft,
+      attachments: draft.attachments.map((attachment) => {
+        if (attachment.kind !== 'image') return attachment
+        let imageKey = storedImageKeys.get(attachment)
+        if (!imageKey || (!previousImageKeys.has(imageKey) && !imageKeys.has(imageKey))) {
+          imageKey = `${imageStoragePrefix}${crypto.randomUUID()}`
+          // Persist the payload before publishing a reference to it.
+          preferences.setItem(imageKey, attachment.dataUrl)
+          storedImageKeys.set(attachment, imageKey)
+        }
+        imageKeys.add(imageKey)
+        return { kind: attachment.kind, name: attachment.name, path: attachment.path, imageKey }
+      })
+    }
+  ])
   if (state.composerDrafts.size === 0 && state.promptDraftsByScope.size === 0) {
     preferences.removeItem(composerDraftsStorageKey)
-    return
+  } else {
+    // Keep both maps together so stashing/restoring cannot save half the move.
+    preferences.setItem(
+      composerDraftsStorageKey,
+      JSON.stringify({
+        composerDrafts,
+        promptDraftsByScope: [...state.promptDraftsByScope],
+        imageKeys: [...imageKeys]
+      })
+    )
   }
-  // Store both maps together so stashing/restoring a prompt cannot save only half the move.
-  preferences.setItem(
-    composerDraftsStorageKey,
-    JSON.stringify({
-      composerDrafts: [...state.composerDrafts],
-      promptDraftsByScope: [...state.promptDraftsByScope]
-    })
-  )
+  // Delete unreferenced payloads only after the new manifest has been published.
+  for (const key of previousImageKeys) {
+    if (!imageKeys.has(key)) preferences.removeItem(key)
+  }
 }

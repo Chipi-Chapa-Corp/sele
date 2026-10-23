@@ -20,12 +20,7 @@ export function ConversationMessages(props: ConversationMessagesProps): ReactEle
     <RetainedChatViews
       activeKey={activeKey}
       cachedChatKeys={props.cachedChatKeys}
-      retain={
-        !loading &&
-        !props.activeSubagentChatView &&
-        !props.chatHasActiveTurn &&
-        props.renderedChatTurns.length > 0
-      }
+      retain={!loading && !props.activeSubagentChatView && props.renderedChatTurns.length > 0}
     >
       {props.visible ? <ConversationMessagesContent {...props} /> : null}
     </RetainedChatViews>

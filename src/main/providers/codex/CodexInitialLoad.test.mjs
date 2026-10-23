@@ -4,6 +4,7 @@ import { setImmediate } from 'node:timers/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
+import { projectCodexTurnTail } from './CodexLiveMerge.ts'
 import {
   isLegacyCodexHistory,
   isUnsupportedTurnPaginationError,
@@ -61,6 +62,7 @@ const fixture = () => {
     loadCodexLegacyThread,
     isLegacyCodexHistory,
     isUnsupportedTurnPaginationError,
+    projectCodexTurnTail,
     assertSupportedCodexHistory: () => {},
     assertReadableCodexHistory: () => {},
     rendererChatUpdateTurnLimit: 10,
@@ -94,6 +96,9 @@ const fixture = () => {
     attachSubmittedUserMessages: async (_id, items) => items,
     filterRolledBackTurns: (_id, items) => items,
     getRenderableTurns: (thread) => thread.turns,
+    reconcileAuthoritativeTurnLifecycles: () => {},
+    getLiveOverlayTurnIds: () => new Set(),
+    mergeTurn: (_threadId, previous, next) => ({ ...previous, ...next }),
     hydrateFullThread: async (thread) => thread,
     resolveThreadName: async () => 'Saved chat',
     resolveThreadCwd: async () => '/repo',
@@ -129,7 +134,7 @@ test('pagination rejection falls back for the first open, another chat, and retr
     id: 'chat',
     historyMode: 'paginated',
     preview: 'Saved chat',
-    turns: [{ id: 'partial-tail', items: [] }]
+    turns: [{ id: 'turn-9', status: 'completed', items: [] }]
   })
 
   for (const id of ['chat', 'other-chat', 'other-chat']) {
@@ -147,6 +152,85 @@ test('pagination rejection falls back for the first open, another chat, and retr
     reads.filter((read) => read.includeTurns).map((read) => read.id),
     ['chat', 'other-chat', 'other-chat']
   )
+})
+
+test('pagination fallback preserves a submitted turn absent from the history projector', async () => {
+  const { adapter } = fixture()
+  const live = {
+    id: 'submitted',
+    status: 'inProgress',
+    items: [{ type: 'userMessage', text: 'Hello' }]
+  }
+  adapter.threads.set('chat', { id: 'chat', historyMode: 'paginated', preview: '', turns: [live] })
+  adapter.getLiveOverlayTurnIds = () => new Set([live.id])
+  adapter.client.request = async () => {
+    throw new Error('list_turns is not supported yet')
+  }
+  adapter.readThread = async () => ({
+    thread: { id: 'chat', historyMode: 'paginated', preview: '', turns: [] }
+  })
+  const detail = await adapter.getChat('chat')
+  assert.deepEqual(
+    Array.from(detail.items, (item) => item.id),
+    ['submitted']
+  )
+  assert.equal(adapter.threads.get('chat').turns[0].items[0].text, 'Hello')
+})
+
+test('compatibility history cannot overwrite events received during its read', async () => {
+  const { adapter } = fixture()
+  adapter.turnPaginationUnsupported = true
+  let finishRead
+  adapter.readThread = () =>
+    new Promise((resolve) => {
+      finishRead = resolve
+    })
+  const opening = adapter.getChat('chat')
+  await setImmediate()
+  const live = {
+    id: 'chat',
+    historyMode: 'paginated',
+    preview: 'Hello',
+    turns: [
+      { id: 'submitted', status: 'completed', items: [{ type: 'agentMessage', text: 'Answer' }] }
+    ]
+  }
+  adapter.threads.set('chat', live)
+  adapter.threadRevisions.set('chat', 2)
+  finishRead({ thread: { id: 'chat', historyMode: 'paginated', preview: '', turns: [] } })
+  // The metadata read precedes the full read when the chat was initially uncached.
+  await setImmediate()
+  finishRead({ thread: { id: 'chat', historyMode: 'paginated', preview: '', turns: [] } })
+  const detail = await opening
+  assert.equal(detail.items[0].items[0].text, 'Answer')
+  assert.equal(adapter.threads.get('chat'), live)
+})
+
+test('empty compatibility history cannot erase a completed cached transcript', async () => {
+  const { adapter } = fixture()
+  const cached = {
+    id: 'chat',
+    historyMode: 'paginated',
+    preview: 'Hello',
+    turns: [{ id: 'saved', status: 'completed', items: [] }]
+  }
+  adapter.threads.set('chat', cached)
+  adapter.client.request = async () => {
+    throw new Error('list_turns is not supported yet')
+  }
+  adapter.readThread = async () => ({ thread: { ...cached, turns: [] } })
+  await assert.rejects(adapter.getChat('chat'), /history is unavailable/)
+  assert.equal(adapter.threads.get('chat'), cached)
+})
+
+test('empty compatibility history for a known nonempty chat reports a load failure', async () => {
+  const { adapter } = fixture()
+  adapter.turnPaginationUnsupported = true
+  adapter.readThread = async () => ({
+    thread: { id: 'chat', historyMode: 'paginated', preview: 'Saved message', turns: [] }
+  })
+  await assert.rejects(adapter.getChat('chat'), /history is unavailable/)
+  assert.equal(adapter.threads.has('chat'), false)
 })
 
 test('indexed and item history reads use full transcripts after pagination is rejected', async () => {

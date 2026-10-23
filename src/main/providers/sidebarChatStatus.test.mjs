@@ -7,6 +7,7 @@ import ts from 'typescript'
 import { getCodexTurnOutcome } from './codex/CodexTurnOutcome.ts'
 import * as opencode from './opencode/OpenCodeItemRenderers.ts'
 import { isDefaultOpenCodeTitle } from './opencode/OpenCodeChatTitle.ts'
+import { getOpenCodeUsageLimitMessage } from './opencode/OpenCodeUsageLimit.ts'
 import * as claude from './claude/ClaudeItemRenderers.ts'
 import * as copilot from './copilot/CopilotItemRenderers.ts'
 import * as codex from './codex/CodexItemRenderers.ts'
@@ -163,6 +164,7 @@ test('OpenCode native errors survive cold listing, reopening and another list re
       {
         ...opencode,
         isDefaultOpenCodeTitle,
+        getOpenCodeUsageLimitMessage,
         requireData: (value) => value.data,
         isOneShotSession: () => false,
         getPendingApproval: () => null,
@@ -194,6 +196,8 @@ test('OpenCode native errors survive cold listing, reopening and another list re
       }),
       rememberSession: () => state,
       loadMessages: async () => messages,
+      // Pending-message durability is exercised by PersistentPendingMessages.test.mjs.
+      persistPendingMessages() {},
       getContextUsage: () => null
     })
     const enrichChats = enrich({ seenUpdatedAt })
@@ -267,6 +271,7 @@ const coldFixture = (provider, outcome) => {
       getDrainingMessage: () => null,
       getTitle: () => 'Chat',
       getCwd: () => '/repo',
+      persistPendingMessages() {},
       applySessionMetadata() {}
     })
   if (provider === 'claude') {
@@ -409,6 +414,7 @@ const coldFixture = (provider, outcome) => {
           ...bindings,
           ...opencode,
           isDefaultOpenCodeTitle,
+          getOpenCodeUsageLimitMessage,
           requireData: (value) => value.data,
           isOneShotSession: () => false,
           getMessagePreview: () => ''

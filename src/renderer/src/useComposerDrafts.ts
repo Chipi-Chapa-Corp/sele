@@ -12,7 +12,9 @@ const resolveAction = <T>(current: T, action: SetStateAction<T>): T =>
 
 export const useComposerDrafts = (editing: boolean) => {
   const [state, setState] = useState(readStoredComposerDrafts)
-  const [writer] = useState(() => createAfterPaintWriter(writeStoredComposerDrafts))
+  const [writer] = useState(() =>
+    createAfterPaintWriter(writeStoredComposerDrafts, { debounceMs: 300 })
+  )
   useLayoutEffect(() => subscribeComposerDrafts(setState), [])
   const setComposerDrafts = useCallback(
     (action: SetStateAction<ComposerDraftState['composerDrafts']>) => {

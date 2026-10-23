@@ -174,3 +174,47 @@ test('pending preferences flush on close, hiding and suspended animation frames'
     })
   }
 })
+
+test('draft saves wait for a typing pause with a bounded maximum delay', () =>
+  withScheduler(({ frame, frames, timers }) => {
+    const writes = []
+    const writer = createAfterPaintWriter((value) => writes.push(value), {
+      debounceMs: 300,
+      maxWaitMs: 2000
+    })
+    writer.schedule('first')
+    const maximum = [...timers.entries()].find(([, timer]) => timer.delay === 2000)
+    const firstPause = [...timers.keys()].find((id) => id !== maximum[0])
+    frame()
+    writer.schedule('latest')
+    assert.equal(timers.has(firstPause), false, 'typing resets the pause timer')
+    assert.equal(timers.get(maximum[0]), maximum[1], 'typing never resets the maximum delay')
+    assert.equal(frames.size, 0)
+    assert.deepEqual(writes, [])
+    maximum[1].fn()
+    assert.deepEqual(writes, ['latest'])
+    assert.equal(timers.size, 0)
+    writer.schedule('after pause')
+    ;[...timers.values()].find((timer) => timer.delay === 300).fn()
+    assert.deepEqual(writes, ['latest', 'after pause'])
+    assert.equal(timers.size, 0)
+  }))
+
+test('debounced draft saves flush immediately at lifecycle boundaries', () => {
+  for (const trigger of ['beforeunload', 'pagehide', 'visibilitychange', 'explicit']) {
+    withScheduler(({ window, document, timers }) => {
+      const writes = []
+      const writer = createAfterPaintWriter((value) => writes.push(value), { debounceMs: 300 })
+      writer.schedule('last keystroke')
+      if (trigger === 'explicit') writer.flush()
+      else if (trigger === 'visibilitychange') {
+        document.visibilityState = 'hidden'
+        document.dispatchEvent(new Event(trigger))
+      } else window.dispatchEvent(new Event(trigger))
+      assert.deepEqual(writes, ['last keystroke'])
+      assert.equal(timers.size, 0)
+      writer.flush()
+      assert.equal(writes.length, 1)
+    })
+  }
+})

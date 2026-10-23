@@ -2588,10 +2588,37 @@ export class CodexProviderAdapter implements ProviderAdapter {
     window: ProviderChatTurnCursorWindow,
     cacheLatest: boolean,
     threadMetadata: CodexThread,
-    cachedThread: CodexThread | null
+    cachedThread: CodexThread | null,
+    loadStartedAtRevision: number
   ): Promise<ProviderChatDetail> => {
-    const thread = cachedThread ?? (await this.loadThreadWithoutPagination(threadMetadata))
-    if (cacheLatest) this.cacheThread(thread)
+    let thread = cachedThread ?? (await this.loadThreadWithoutPagination(threadMetadata))
+    if (cacheLatest) {
+      const currentThread = this.threads.get(chatId)
+      if (!cachedThread && currentThread) {
+        // The compatibility reader can lag behind turn/start too. Apply the same live
+        // overlay/revision rules as cursor history, so opening a just-created chat
+        // cannot erase its accepted prompt or events received during the read.
+        if ((this.threadRevisions.get(chatId) ?? 0) !== loadStartedAtRevision) {
+          thread = currentThread
+        } else {
+          this.reconcileAuthoritativeTurnLifecycles(chatId, thread.turns)
+          thread = {
+            ...thread,
+            turns: projectCodexTurnTail(
+              thread.turns,
+              currentThread.turns,
+              Math.max(1, thread.turns.length + currentThread.turns.length),
+              this.getLiveOverlayTurnIds(chatId),
+              (previous, next) => this.mergeTurn(chatId, previous, next)
+            )
+          }
+        }
+      }
+      if (thread.turns.length === 0 && threadMetadata.preview.trim().length > 0) {
+        throw new Error('Codex message history is unavailable. Please retry.')
+      }
+      this.cacheThread(thread)
+    }
     return this.createChatDetail(thread, {
       turnWindow: { startIndex: null, limit: window.limit },
       cursorPendingMessages:
@@ -2617,7 +2644,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
         window,
         cacheLatest,
         threadMetadata,
-        cachedThread ?? null
+        cachedThread ?? null,
+        loadStartedAtRevision
       )
     }
     assertSupportedCodexHistory(threadMetadata)
@@ -2659,7 +2687,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.turnPaginationUnsupported = true
       // A partially cached thread would truncate history; read the whole transcript instead.
       // Some builds reject cursors for threads they still report as paginated.
-      return this.loadLegacyChatWindowInContext(chatId, window, cacheLatest, threadMetadata, null)
+      return this.loadLegacyChatWindowInContext(
+        chatId,
+        window,
+        cacheLatest,
+        threadMetadata,
+        null,
+        loadStartedAtRevision
+      )
     }
     if (
       cacheLatest &&

@@ -59,6 +59,7 @@
     "test:claude-discovery": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/claude/ClaudeSessionDiscovery.test.mjs src/main/providers/claude/ClaudeSessionCatalog.test.mjs src/main/providers/claude/ClaudeRemoteSessionDiscovery.test.mjs && node scripts/tests/test-claude-discovery.mjs",
     "test:chat-scroll-visual": "node scripts/tests/test-chat-scroll-visual.cjs",
     "test:retained-chats": "node scripts/tests/test-retained-chats.cjs",
+    "test:active-chat-switching": "SELE_BENCHMARK_ACTIVE_CHATS=1 SELE_BENCHMARK_CHAT_COUNT=400 node scripts/benchmarks/benchmark-workspace-navigation.cjs",
     "test:chat-opening-stability": "node scripts/tests/test-chat-opening-stability.cjs",
     "test:chat-scroll": "node scripts/tests/test-chat-scroll.cjs",
     "test:chat-opening": "node scripts/tests/test-chat-opening.cjs",

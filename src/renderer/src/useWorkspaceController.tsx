@@ -2702,6 +2702,11 @@ export const useWorkspaceController = () => {
       entry.updatedAt < chat.updatedAt ||
       entry.detail.status !== chat.status
     ) {
+      // A background stream makes the cached detail stale, but it still contains
+      // the mounted history window. Replacing it with the one-turn opening view
+      // would unmount that history on every switch. Keep it read-only until the
+      // independent provider refresh supplies the current transcript/permissions.
+      if (isActiveChatStatus(chat.status)) return asChatPreview(entry.detail)
       return conversationViews.get(chat) ?? asChatPreview(entry.detail)
     }
 

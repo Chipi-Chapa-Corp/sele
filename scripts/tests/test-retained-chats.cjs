@@ -29,17 +29,22 @@ if (!process.versions.electron) {
             window.allowed=['a','b','c','d','big','embedded'].map(id=>'codex:'+id);
             const contentRef={current:null},searchRef={current:null},subagentRef={current:null};
             window.refs={contentRef,searchRef,subagentRef};
-            function Turn({turn,version,id}) {
+            function Turn({turn,version,id,streaming}) {
               const [count,setCount]=useState(()=>{window.created.push(turn.id);return 0});
               useEffect(()=>{window.effects.add(turn.id);return ()=>window.effects.delete(turn.id)},[turn.id]);
               return <div data-chat-turn-id={turn.id}>
                 <button onClick={()=>{setCount(n=>n+1);window.actions.push([id,version])}}>{count}</button>
-                <MarkdownMessage className="fixture-message" content={turn.items[0].content}/>
+                <MarkdownMessage className="fixture-message" content={turn.items[0].content} streaming={streaming}/>
                 {id==='big' && Array.from({length:31000},(_,i)=><i key={i}/>)}
                 {id==='embedded' && <iframe src="about:blank"/>}
               </div>
             }
+            window.appendChatText=(id,text)=>{
+              const items=histories.get(id);
+              histories.set(id,items.map((item,index)=>index===items.length-1?{...item,content:item.content+text}:item));
+            };
             window.renderChat=(id,{loading=false,version=1,active=false,subagent=false}={})=>{
+              window.currentChat={id,loading,version,active,subagent};
               if(id&&!histories.has(id)) histories.set(id,Array.from({length:['big','embedded'].includes(id)?1:10},(_,i)=>({
                 id:id+'-'+i,type:'message',role:'user',content:'### '+id+' turn '+i+'\\n\\n'+Array.from({length:10},()=>
                 'A **cached** paragraph with some text.').join('\\n\\n')})));
@@ -53,7 +58,8 @@ if (!process.versions.electron) {
                 contentRef,editingMessage:null,effectiveChatTurnWindow:{startIndex:0,endIndex:model.turns.length},
                 handleNativeChatContentScroll:noop,handleNativeChatContentWheel:noop,handleReturnFromAiCommitChat:noop,
                 handleReturnFromSubagentChat:noop,handleNavigateSubagentTurns:noop,loadChatTurnPage:noop,
-                renderChatTurn:(_index,turn)=><Turn turn={turn} version={version} id={id}/>,
+                renderChatTurn:(_index,turn)=><Turn turn={turn} version={version} id={id}
+                  streaming={active&&turn===model.turns.at(-1)}/>,
                 renderSubagentChatTurn:noop,renderedChatTurns:model.turns,
                 selectedChat:id?{id,providerId:'codex'}:null,selectedChatCommitMarkers:[],selectedChatKey:id?'codex:'+id:null,
                 selectedChatSubagents:[],sendState:'idle',showChatTurnDownButton:false,
@@ -256,12 +262,92 @@ if (!process.versions.electron) {
         'open dialogs retain their normal lifecycle'
       )
       await run(`document.getElementById('fixture-dialog').remove()`)
+      // Both running conversations keep receiving provider data while only the
+      // selected view renders. Revealing the other view reconciles its latest data.
+      await run(`allowed=[];renderChat(null);allowed=['codex:a','codex:b'];created.length=0`)
       await open('a', { active: true })
-      await open('b')
+      await run(`window.runningA=[...document.querySelectorAll('#chat-search-content [data-chat-turn-id]')];
+        runningA.at(-1).querySelector('button').click()`)
+      await open('b', { active: true })
       assert.equal(
-        await run(`Boolean(document.querySelector('[data-chat-view="codex:a"]'))`),
+        await run('runningA.every(node=>node.isConnected)'),
+        true,
+        'running conversations retain their mounted turns'
+      )
+      await run(`window.runningB=[...document.querySelectorAll('#chat-search-content [data-chat-turn-id]')];
+        window.streamTick=0;window.activeSwitchGaps=[];window.activeSwitchTasks=[];
+        window.activeSwitchObserver=new PerformanceObserver(list=>activeSwitchTasks.push(...list.getEntries().map(e=>e.duration)));
+        activeSwitchObserver.observe({type:'longtask'});
+        let before=performance.now();window.sampleActiveSwitches=true;
+        requestAnimationFrame(function sample(now){if(!sampleActiveSwitches)return;
+          activeSwitchGaps.push(now-before);before=now;requestAnimationFrame(sample)});
+        window.streamTimer=setInterval(()=>{
+          streamTick++;
+          for(const id of ['a','b'])appendChatText(id,'\\n\\nStream '+id+' update '+streamTick+'.');
+          const {id,...options}=currentChat;renderChat(id,options);
+        },30)`)
+      for (const id of ['a', 'b', 'a', 'b']) {
+        await open(id, { active: true, version: 2 })
+        await run(`new Promise(resolve=>setTimeout(resolve,75))`)
+        assert.equal(
+          await run(`(() => {const saved=${id === 'a' ? 'runningA' : 'runningB'};
+            return [...document.querySelectorAll('#chat-search-content [data-chat-turn-id]')].every((node,index)=>node===saved[index])})()`),
+          true,
+          'stream updates and switching reuse every existing turn node'
+        )
+        assert.equal(await run(`document.querySelectorAll('#chat-search-content').length`), 1)
+        assert.equal(
+          await run(`refs.contentRef.current===refs.searchRef.current &&
+            refs.contentRef.current===document.getElementById('chat-search-content')`),
+          true,
+          'only the selected running chat owns the viewport'
+        )
+        assert.equal(
+          await run(`[...effects].every(id=>id.startsWith('${id}-'))`),
+          true,
+          'hidden running-chat effects stay paused'
+        )
+      }
+      await run(
+        `clearInterval(streamTimer);sampleActiveSwitches=false;activeSwitchObserver.disconnect()`
+      )
+      assert.equal(
+        await run('created.length'),
+        20,
+        'warm running-chat switches never remount turns'
+      )
+      for (const id of ['a', 'b']) {
+        await open(id, { active: true, version: 3 })
+        await run(`new Promise((resolve,reject)=>{const deadline=performance.now()+3000;
+          function check(){if(document.querySelector('#chat-search-content').textContent.includes('Stream ${id} update '+streamTick+'.'))return resolve();
+            if(performance.now()>deadline)return reject(new Error('Missing latest streamed text'));requestAnimationFrame(check)}check()})`)
+      }
+      await open('a', { active: false, version: 4 })
+      assert.equal(
+        await run(
+          `document.querySelector('#chat-search-content [data-chat-turn-id="a-9"]')===runningA.at(-1)`
+        ),
+        true,
+        'completion reuses the running view'
+      )
+      assert.equal(await run(`runningA.at(-1).querySelector('button').textContent`), '1')
+      await run(`runningA.at(-1).querySelector('button').click()`)
+      assert.deepEqual(
+        await run('actions.at(-1)'),
+        ['a', 4],
+        'running views refresh action handlers'
+      )
+      console.log(
+        'Active switch measurements:',
+        await run(`JSON.stringify({
+        turnsMounted:created.length,maxFrameGap:Math.max(...activeSwitchGaps),longTasks:activeSwitchTasks})`)
+      )
+      await open('b', { active: true })
+      await run(`allowed=allowed.filter(key=>key!=='codex:a');renderChat('b',{active:true})`)
+      assert.equal(
+        await run('runningA.some(node=>node.isConnected)'),
         false,
-        'active conversations are not retained'
+        'invalidating a formerly active chat releases its retained view'
       )
       await run(`allowed=[];renderChat(null)`)
       assert.equal(
@@ -271,7 +357,7 @@ if (!process.versions.electron) {
       )
       assert.deepEqual(errors, [])
       console.log(
-        'Retained chat checks passed: DOM/state reuse, live handlers, loading, refs, paused effects, invalidation, LRU, memory bounds, and embedded/active exclusions.'
+        'Retained chat checks passed: DOM/state reuse, concurrent streams, completion, live handlers, loading, refs, paused effects, invalidation, LRU, memory bounds, and embedded exclusions.'
       )
     } catch (error) {
       console.error(error)

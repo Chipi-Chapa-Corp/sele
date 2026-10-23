@@ -26,6 +26,8 @@ if (!process.versions.electron) {
             }
             window.render = editing => flushSync(() => root.render(<React.StrictMode><Fixture editing={editing} /></React.StrictMode>))
             window.setMessage = (key, message) => flushSync(() => window.drafts.setComposerDrafts(drafts => updateComposerDraft(drafts, key, 'message', message)))
+            window.image = {kind: 'image', name: 'fixture.png', path: '/fixture.png', dataUrl: 'data:image/png;base64,' + 'A'.repeat(2 * 1024 * 1024)}
+            window.setImages = (key, attachments) => flushSync(() => window.drafts.setComposerDrafts(drafts => updateComposerDraft(drafts, key, 'attachments', attachments)))
             window.stash = (key, id, prompt) => flushSync(() => {
               window.drafts.setPromptDraftsByScope(drafts => addPromptDraft(drafts, key, {id, prompt}))
               window.drafts.setComposerDrafts(drafts => updateComposerDraft(drafts, key, 'message', ''))
@@ -147,6 +149,7 @@ if (!process.versions.electron) {
       const releasedScope = 'new-chat:host\0/a'
       await run(`window.releasedScope = ${JSON.stringify(releasedScope)}`)
       if (mode === 'save') {
+        await run(`window.setImages('new-chat:cwd:/a', [window.image])`)
         await run(
           `window.setMessage('new-chat:cwd:/a', 'first draft'); window.stash('new-chat:cwd:/a', 'one', 'first draft'); window.setMessage('new-chat:cwd:/a', 'second draft'); window.stash('new-chat:cwd:/a', 'two', 'second draft'); window.setMessage('new-chat:cwd:/b', 'other project'); window.setMessage('codex:chat', 'chat draft'); window.move('new-chat:cwd:/a', 'codex:created'); window.flush()`
         )
@@ -167,6 +170,10 @@ if (!process.versions.electron) {
         ])
         assert.equal(new Map(state.composerDrafts).get('new-chat:cwd:/b').message, 'other project')
         assert.equal(new Map(state.composerDrafts).get('codex:chat').message, 'chat draft')
+        assert.equal(
+          new Map(state.composerDrafts).get('codex:created').attachments[0].dataUrl.length,
+          2 * 1024 * 1024 + 22
+        )
         await run(`window.rejectDone = true; window.complete(['codex:chat'])`)
         assert.equal(
           new Map((await run('window.snapshot()')).composerDrafts).get('codex:chat').message,
@@ -175,12 +182,16 @@ if (!process.versions.electron) {
         await run(`window.rejectDone = false`)
         // Close in the same task as the mutation, before the deferred writer can run.
         await run(
-          `window.pop('codex:created', 'two', 'second draft'); window.setMessage('codex:chat', 'last keystroke'); window.close()`
+          `window.pop('codex:created', 'two', 'second draft'); window.setMessage('codex:chat', 'last keystroke'); window.setImages('codex:chat', [window.image]); window.close()`
         )
       } else if (mode === 'verify') {
         const state = await run('window.snapshot()')
         assert.equal(new Map(state.composerDrafts).get('codex:chat').message, 'last keystroke')
         assert.equal(new Map(state.composerDrafts).get('codex:created').message, 'second draft')
+        assert.equal(
+          new Map(state.composerDrafts).get('codex:chat').attachments[0].dataUrl.length,
+          2 * 1024 * 1024 + 22
+        )
         assert.deepEqual(state.promptDraftsByScope, [
           ['codex:created', [{ id: 'one', prompt: 'first draft' }]]
         ])
@@ -205,7 +216,7 @@ if (!process.versions.electron) {
           new Map(state.promptDraftsByScope).get(releasedScope)
         )
         await run(
-          `window.pop(window.releasedScope, 'one', ''); window.pop(window.releasedScope, 'bulk', ''); window.pop(window.releasedScope, 'third', ''); window.setMessage('codex:next', ''); window.setMessage('new-chat:cwd:/b', ''); window.close()`
+          `window.pop(window.releasedScope, 'one', ''); window.pop(window.releasedScope, 'bulk', ''); window.pop(window.releasedScope, 'third', ''); window.setMessage('codex:next', ''); window.setImages('codex:next', []); window.setMessage('new-chat:cwd:/b', ''); window.close()`
         )
       } else {
         assert.deepEqual(await run('window.snapshot()'), {

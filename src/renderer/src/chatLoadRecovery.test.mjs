@@ -342,7 +342,13 @@ test('delayed metadata cannot make a viewed chat unread again', async () => {
 })
 
 test('background summaries preserve messages and changed sidebar stamps still open from memory', () => {
-  const cached = { ...detail(4), container: null, status: null }
+  const cached = {
+    ...detail(4),
+    container: null,
+    status: 'active',
+    items: [{ id: 'older', type: 'message', content: 'Earlier turn' }, ...detail(4).items]
+  }
+  const openingView = { ...savedPreview(), items: cached.items.slice(-1) }
   const entries = new Map([['codex:chat', { detail: cached, updatedAt: 1 }]])
   const context = vm.createContext({
     recentChatCacheRef: { current: entries },
@@ -352,7 +358,8 @@ test('background summaries preserve messages and changed sidebar stamps still op
     getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
     asChatPreview,
     chatPreviewSourceKey,
-    conversationViews: { get: () => null },
+    conversationViews: { get: () => openingView },
+    isActiveChatStatus: (status) => status === 'active',
     setSelectedChat: () => {},
     setChats: () => {}
   })
@@ -371,4 +378,12 @@ test('background summaries preserve messages and changed sidebar stamps still op
   assert.equal(prepared.items, cached.items)
   assert.equal(prepared.revision, -1)
   assert.equal(prepared.writeAccess, 'checking')
+  assert.equal(prepared.capabilities.activeMessages, false)
+  assert.equal(prepared.pendingApproval, null)
+  assert.equal(prepared.pendingUserInput, null)
+  assert.equal(
+    context.callback({ providerId: 'codex', id: 'chat', status: null }),
+    openingView,
+    'completed chats may use their newer saved opening view'
+  )
 })
