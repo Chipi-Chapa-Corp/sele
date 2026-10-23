@@ -125,6 +125,16 @@ export type LocalDatabase = {
     input_json: string
     created_at: number
   }
+  pending_messages: {
+    provider_id: ProviderId
+    chat_id: string
+    message_id: string
+    position: number
+    kind: string
+    submitted: number
+    payload: string
+    created_at: number
+  }
   project_icons: {
     cwd_key: string
     image_path: string
@@ -293,6 +303,20 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .unique()
     .on('codex_submitted_messages')
     .columns(['chat_id', 'turn_id'])
+    .execute()
+
+  await db.schema
+    .createTable('pending_messages')
+    .ifNotExists()
+    .addColumn('provider_id', 'text', (column) => column.notNull())
+    .addColumn('chat_id', 'text', (column) => column.notNull())
+    .addColumn('message_id', 'text', (column) => column.notNull())
+    .addColumn('position', 'integer', (column) => column.notNull())
+    .addColumn('kind', 'text', (column) => column.notNull())
+    .addColumn('submitted', 'integer', (column) => column.notNull().defaultTo(0))
+    .addColumn('payload', 'text', (column) => column.notNull())
+    .addColumn('created_at', 'integer', (column) => column.notNull())
+    .addPrimaryKeyConstraint('pending_messages_key', ['provider_id', 'chat_id', 'message_id'])
     .execute()
 
   await db.schema

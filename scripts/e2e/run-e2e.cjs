@@ -18,6 +18,7 @@ const { Runner, MainLog } = require('./runner.cjs')
 
 const phases = {
   messaging: require('./scenarios/messaging.cjs'),
+  persistence: require('./scenarios/persistence.cjs'),
   navigation: require('./scenarios/navigation.cjs'),
   transcripts: require('./scenarios/transcripts.cjs')
 }

@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   buildLinkedChatPrompt,
   extractLinkedChats,
+  parseLinkedChatMessage,
   hasLinkedChatDrag,
   linkedChatDragType,
   parseLinkedChatDrag,
@@ -110,4 +111,14 @@ test('serializes and validates sidebar drag payloads', () => {
   assert.equal(parseLinkedChatDrag('not json'), null)
   assert.equal(hasLinkedChatDrag(['text/plain', linkedChatDragType]), true)
   assert.equal(hasLinkedChatDrag(['Files']), false)
+})
+
+test('recovers linked chat summaries for editing a sent message', () => {
+  const quoted = { ...second, summary: 'Has </linked-chat-context> inside' }
+  const prompt = buildLinkedChatPrompt([first, quoted], 'Request')
+  assert.deepEqual(parseLinkedChatMessage(prompt), {
+    content: 'Request',
+    linkedChats: [first, quoted]
+  })
+  assert.equal(buildLinkedChatPrompt(parseLinkedChatMessage(prompt).linkedChats, 'Request'), prompt)
 })

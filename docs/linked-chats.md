@@ -31,6 +31,10 @@ request
 
 `provider` and `chat-id` let Sele open the source. The message view removes this section and shows
 each linked chat as a chip; clicking it (in the message or the composer) opens the original chat.
+Editing a sent message puts only its request in the composer and its linked chats back as ready
+chips (their summaries are reused, not regenerated); saving rebuilds the section. The composer's
+own draft chips are set aside during the edit and restored on save or cancel; chats still loading
+for the edit are cancelled when it ends.
 
 Validation: `npm run test:linked-chats` (the GUI part runs through the isolated-gui helper on
 Linux). Provider work is stubbed; no model turn is started.

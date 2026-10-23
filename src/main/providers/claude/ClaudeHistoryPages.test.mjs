@@ -97,6 +97,21 @@ test('opening reads a bounded tail; older/newer pages round-trip with identical 
   )
 })
 
+test('pages list the user input Claude Code recorded, including folded-in steering', async () => {
+  const entries = turns(2)
+  entries.splice(3, 0, {
+    type: 'attachment',
+    uuid: 'attachment-1',
+    parentUuid: 'u1',
+    sessionId,
+    timestamp: '2026-09-24T12:00:00.000Z',
+    attachment: { type: 'queued_command', prompt: 'Steer', source_uuid: 'steer-1' }
+  })
+  entries.push({ type: 'queue-operation', operation: 'enqueue', content: 'Never folded in' })
+  const page = await fixture(entries).read()
+  assert.deepEqual(page.inputIds, ['u0', 'u1', 'steer-1'])
+})
+
 test('all cursor pages exactly match full SDK recovery across branches, compactions and tools', async () => {
   const entries = turns(30, 'z'.repeat(6000))
   entries.push(

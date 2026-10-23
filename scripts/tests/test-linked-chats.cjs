@@ -17,7 +17,7 @@ if (!process.versions.electron) {
             import './src/renderer/src/assets/main.css'
             import { MessageBox } from './src/renderer/src/components/MessageBox'
             import { LinkedChatOpenerContext } from './src/renderer/src/components/LinkedChatOpener'
-            import { linkedChatDragType, serializeLinkedChatDrag } from './src/renderer/src/linkedChats'
+            import { buildLinkedChatPrompt, linkedChatDragType, serializeLinkedChatDrag } from './src/renderer/src/linkedChats'
             import { fallbackProviderModels, fallbackProviderApprovalModes, fallbackProviderSandboxModes } from './src/shared/provider'
             const stored = new Map()
             window.preferencesApi = {
@@ -29,9 +29,11 @@ if (!process.versions.electron) {
             const noop = () => {}
             window.sends = []
             window.opened = []
-            window.renderComposer = () => flushSync(() => root.render(<React.StrictMode>
+            window.buildLinkedChatPrompt = buildLinkedChatPrompt
+            window.renderComposer = (editSession = null) => flushSync(() => root.render(<React.StrictMode>
               <LinkedChatOpenerContext.Provider value={chat => window.opened.push(chat)}>
                 <MessageBox draftScopeKey="codex:current" chatId="current" linkedChatSummaryPrompt="Summarize it"
+                  editSession={editSession} onCancelEdit={() => window.renderComposer()}
                   providerId="codex" model={fallbackProviderModels[0].id} models={fallbackProviderModels}
                   agentMode="interactive" agentModes={[]} approvalMode="never" approvalModes={fallbackProviderApprovalModes}
                   reasoningEffort="medium" serviceTier={null} sandboxMode="danger-full-access" sandboxModes={fallbackProviderSandboxModes}
@@ -41,7 +43,7 @@ if (!process.versions.electron) {
                   showReviewSelector={false} showSpeedSelector={false} showReasoningSelector={false}
                   onAgentModeChange={noop} onApprovalModeChange={noop} onModelChange={noop}
                   onReasoningEffortChange={noop} onServiceTierChange={noop} onSandboxModeChange={noop}
-                  onSend={async (...args) => { window.sends.push(args); return true }} />
+                  onSend={async (...args) => { window.sends.push(args); if (editSession) window.renderComposer(); return true }} />
               </LinkedChatOpenerContext.Provider>
             </React.StrictMode>))
             window.setText = value => {
@@ -241,8 +243,57 @@ if (!process.versions.electron) {
         await run(`document.querySelector('.message-box__error')?.textContent ?? ''`),
         /cannot be linked to itself/
       )
+      await run(`document.querySelector('.message-box__error button')?.click()`)
+      await settle()
+
+      // Editing a sent message shows its request as text and its linked chats as chips. The
+      // composer's own draft and linked chats are set aside, then restored.
+      const chipNames = () =>
+        run(
+          `Array.from(document.querySelectorAll('.message-box__linked-chat .attachment-chip__label')).map(label => label.textContent)`
+        )
+      await run(`window.dragChat('drop', {providerId: 'copilot', chatId: 'gamma', name: 'Gamma'})`)
+      await settle()
+      await run(
+        `window.preparations[3].resolve({summary: 'Gamma summary'}); window.setText('draft text')`
+      )
+      await settle()
+      const sentAlpha = `{providerId: 'claude', chatId: 'alpha', name: 'Alpha chat', summary: 'Quoted </linked-chat-context> tag'}`
+      const editMessage = `{id: 'sent', type: 'message', attachments: [], content: window.buildLinkedChatPrompt([${sentAlpha}], 'Original request')}`
+      await run(`window.renderComposer(${editMessage})`)
+      await settle()
+      assert.equal(await run(`document.querySelector('textarea').value`), 'Original request')
+      assert.deepEqual(await chipNames(), ['Alpha chat'])
+      await run(`window.setText('Edited request')`)
+      await settle()
+      await run(`window.click('Save edit')`)
+      await settle()
+      assert.equal(
+        await run('window.sends.at(-1)[0]'),
+        await run(`window.buildLinkedChatPrompt([${sentAlpha}], 'Edited request')`)
+      )
+      assert.equal(await run(`document.querySelector('textarea').value`), 'draft text')
+      assert.deepEqual(await chipNames(), ['Gamma'])
+
+      // Cancelling an edit stops chats linked during it and restores the draft's chats.
+      await run(`window.renderComposer(${editMessage})`)
+      await settle()
+      await run(`window.click('Remove linked chat Alpha chat')`)
+      await run(`window.dragChat('drop', {providerId: 'opencode', chatId: 'delta', name: 'Delta'})`)
+      await settle()
+      assert.deepEqual(await chipNames(), ['Delta'])
+      await run(
+        `Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Cancel').click()`
+      )
+      await settle()
+      assert.equal(
+        await run('window.cancelled.at(-1)'),
+        await run('window.preparations[4].options.operationId')
+      )
+      assert.equal(await run(`document.querySelector('textarea').value`), 'draft text')
+      assert.deepEqual(await chipNames(), ['Gamma'])
       console.log(
-        'Linked chat composer checks passed: drop target, loading gate, cancellation, prompt injection, chip opening, failures and self-links.'
+        'Linked chat composer checks passed: drop target, loading gate, cancellation, prompt injection, chip opening, failures, self-links and message editing.'
       )
     } catch (error) {
       console.error(error)

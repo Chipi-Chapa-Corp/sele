@@ -29,6 +29,7 @@ const names = new Set([
   'sendPrompt',
   'queueMessage',
   'sendActiveChatMessage',
+  'resumeRestoredQueue',
   'refreshStateNow',
   'failUsageLimitedTurn'
 ])

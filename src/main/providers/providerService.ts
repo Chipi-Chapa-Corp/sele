@@ -89,6 +89,7 @@ import { CopilotProviderAdapter } from './copilot/CopilotProviderAdapter'
 import { OpenCodeProviderAdapter } from './opencode/OpenCodeProviderAdapter'
 import { getCwdMetadata } from './cwdMetadata'
 import { hasChatUpdateInterest } from './chatUpdateInterest'
+import { flushPersistentPendingMessages } from './PersistentPendingMessages'
 import type {
   ProviderAdapter,
   HistoricalTokenUsageSnapshot,
@@ -1390,6 +1391,7 @@ export const providerApi: ProviderApi = {
 
 export const disposeProviderAdapters = async (): Promise<void> => {
   await Promise.allSettled(Object.values(adapters).map((adapter) => adapter.dispose()))
+  await flushPersistentPendingMessages()
   for (const pending of pendingConversationViews.values()) clearTimeout(pending.timer)
   const finalViews = [...pendingConversationViews.values()]
   pendingConversationViews.clear()

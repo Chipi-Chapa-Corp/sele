@@ -15,8 +15,9 @@ const source = ts.createSourceFile(
 const declaration = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name?.text === 'CodexProviderAdapter'
 )
+// Persistence of queued and steering messages is covered by PendingMessageRestore.test.mjs.
 const code = ts.transpile(
-  `class Harness { ${declaration.members
+  `class Harness { pendingMessageRestores = new Map(); persistPendingMessages() {} startPendingMessageRestore() {}  ${declaration.members
     .filter((node) =>
       [
         'getChat',

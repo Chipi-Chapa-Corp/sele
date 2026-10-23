@@ -37,6 +37,8 @@ const methods = new Set([
   'touchState',
   'trimIdleStates',
   'ensureState',
+  'restorePendingMessages',
+  'persistPendingMessages',
   'getChat',
   'continueChat',
   'queueUpdate',
@@ -48,8 +50,9 @@ const methods = new Set([
   'startStateQuery',
   'dispose'
 ])
+// Persistence of queued and steering messages is covered by PendingMessageRestore.test.mjs.
 const code = ts.transpileModule(
-  `class Harness { ${adapter.members
+  `class Harness { pendingMessageStore = { restore: async () => [], save() {}, track() {}, invalidate() {}, close: async () => {} };  ${adapter.members
     .filter((member) => methods.has(member.name?.getText(source)))
     .map((member) => member.getText(source))
     .join('\n')} }; globalThis.Harness = Harness`,

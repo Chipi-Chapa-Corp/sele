@@ -70,6 +70,9 @@ const unescapeAttribute = (value: string): string =>
 const escapeSummary = (summary: string): string =>
   summary.trim().replace(/<\/linked-chat-context/gi, '<\\/linked-chat-context')
 
+const unescapeSummary = (summary: string): string =>
+  summary.replace(/<\\\/linked-chat-context/gi, '</linked-chat-context')
+
 /**
  * Prompt sent to the provider. The source provider and chat ID let Sele open the original
  * chat later; the agent only needs the name and summary.
@@ -93,7 +96,7 @@ export const buildLinkedChatPrompt = (
 const linkedChatSectionPattern =
   /(^|\r?\n)# Linked chats\r?\n((?:<linked-chat-context\b[^>\n]*>\r?\n[\s\S]*?\r?\n<\/linked-chat-context>\r?\n)+)# User request:[ \t]*(?:\r?\n|$)/
 const linkedChatBlockPattern =
-  /<linked-chat-context\b([^>\n]*)>\r?\n[\s\S]*?\r?\n<\/linked-chat-context>/g
+  /<linked-chat-context\b([^>\n]*)>\r?\n([\s\S]*?)\r?\n<\/linked-chat-context>/g
 const attributePattern = /([a-z][a-z-]*)="([^"]*)"/g
 
 const parseAttributes = (source: string): Record<string, string> =>
@@ -104,10 +107,13 @@ const parseAttributes = (source: string): Record<string, string> =>
     ])
   )
 
-/** Removes the injected section from a sent message, returning chips for its linked chats. */
-export const extractLinkedChats = (
+/**
+ * Splits a sent message into the user's request and its linked chats, including each
+ * summary, so an edit can resend the same context without showing it as text.
+ */
+export const parseLinkedChatMessage = (
   content: string
-): { content: string; linkedChats: LinkedChatReference[] } => {
+): { content: string; linkedChats: LinkedChatContext[] } => {
   const section = linkedChatSectionPattern.exec(content)
   if (!section) return { content, linkedChats: [] }
 
@@ -117,9 +123,10 @@ export const extractLinkedChats = (
     return {
       providerId: isProviderId(providerId) ? providerId : null,
       chatId: attributes['chat-id'] ?? '',
-      name: attributes.name?.trim() || 'Chat'
+      name: attributes.name?.trim() || 'Chat',
+      summary: unescapeSummary(block[2]!)
     }
-  }).filter((chat): chat is LinkedChatReference => chat.providerId !== null && Boolean(chat.chatId))
+  }).filter((chat): chat is LinkedChatContext => chat.providerId !== null && Boolean(chat.chatId))
 
   // Text before the section comes from the provider (for example a skill invocation).
   const before = content.slice(0, section.index).trimEnd()
@@ -127,5 +134,20 @@ export const extractLinkedChats = (
   return {
     content: before ? `${before}${section[1] || '\n'}${after}` : after,
     linkedChats
+  }
+}
+
+/** Removes the injected section from a sent message, returning chips for its linked chats. */
+export const extractLinkedChats = (
+  content: string
+): { content: string; linkedChats: LinkedChatReference[] } => {
+  const parsed = parseLinkedChatMessage(content)
+  return {
+    content: parsed.content,
+    linkedChats: parsed.linkedChats.map(({ providerId, chatId, name }) => ({
+      providerId,
+      chatId,
+      name
+    }))
   }
 }

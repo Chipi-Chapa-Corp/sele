@@ -97,6 +97,11 @@ import {
   watchLinkedChatForkTurn
 } from '../linkedChatContext'
 import { ClaudeHistoryPages, type ClaudeHistoryPage } from './ClaudeHistoryPages'
+import {
+  PersistentPendingMessages,
+  type PersistedPendingMessage
+} from '../PersistentPendingMessages'
+import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
 import { openClaudeHistorySource } from './ClaudeHistorySource'
 import { isClaudeAuthenticationFailure, isClaudeAuthenticationError } from './ClaudeAuthentication'
 import { claudeAccounts } from './ClaudeAccounts'
@@ -201,6 +206,8 @@ type ClaudeSessionState = {
   pendingApprovals: ClaudePendingApproval[]
   pendingUserInputs: ClaudePendingUserInput[]
   queuedMessages: QueuedClaudeMessage[]
+  /** Steering handed to Claude Code that it may not have folded into a turn yet. */
+  submittedSteering: QueuedClaudeMessage[]
   queuedMessagesPaused: boolean
   queueDrainInProgress: boolean
   /**
@@ -628,6 +635,10 @@ const getTokenBreakdown = (
 
 export class ClaudeProviderAdapter implements ProviderAdapter {
   private pendingMessageEdits = new PendingMessageEdits()
+  private pendingMessageStore = new PersistentPendingMessages<QueuedClaudeMessage>(
+    'claude',
+    sqlitePendingMessageBackend
+  )
   private readonly sessionDiscovery = new ClaudeSessionDiscovery()
   id = 'claude' as const
   private tokenUsageReporter = new TokenUsageReporter()
@@ -1442,6 +1453,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const state = this.createState(id, options)
     this.requireAuthentication(state)
     this.states.set(id, state)
+    this.pendingMessageStore.track(id)
     this.sessionContainers.set(id, state.container)
     await this.startStateQuery(state, options)
     await onChatCreated?.(id)
@@ -1474,6 +1486,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.messages = source.messages.map((entry) => ({ ...entry, session_id: id }))
     state.messageIds = new Set(state.messages.map((entry) => entry.uuid))
     this.states.set(id, state)
+    this.pendingMessageStore.track(id)
     this.sessionContainers.set(id, state.container)
     await this.startStateQuery(state, options, { forkFrom: chatId })
     await onForkCreated?.(id)
@@ -1504,6 +1517,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       .map((entry) => ({ ...entry, session_id: id }))
     state.messageIds = new Set(state.messages.map((entry) => entry.uuid))
     this.states.set(id, state)
+    this.pendingMessageStore.track(id)
     this.sessionContainers.set(id, state.container)
     await this.startStateQuery(state, source.options, { forkFrom: chatId, resumeAt: targetUuid })
     await onForkCreated?.(id)
@@ -1535,10 +1549,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     } else if (mode === 'interrupt') {
       await this.interruptWithMessage(state, this.createQueuedMessage(message, options))
     } else {
-      const queued = this.createQueuedMessage(message, options)
-      state.waitingForSessionIdle = false
-      this.addUserMessage(state, queued, 'Steering with', 'steering')
-      this.pushSteering(state, createSdkUserMessage(state.id, queued.id, queued.prompt, 'now'))
+      this.steerWithMessage(state, this.createQueuedMessage(message, options))
       this.emitUpdate(state)
     }
     return this.createChatDetail(state)
@@ -1580,9 +1591,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const pending = state.queuedMessages[0]
     if (pending?.kind === 'steering' && state.active && state.input) {
       state.queuedMessages.shift()
-      state.waitingForSessionIdle = false
-      this.addUserMessage(state, pending, 'Steering with', 'steering')
-      this.pushSteering(state, createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
+      this.steerWithMessage(state, pending)
     } else {
       await this.drainNextQueuedMessage(state)
     }
@@ -1654,9 +1663,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return this.createChatDetail(state)
     }
 
-    state.waitingForSessionIdle = false
-    this.addUserMessage(state, pending, 'Steering with', 'steering')
-    this.pushSteering(state, createSdkUserMessage(state.id, pending.id, pending.prompt, 'now'))
+    this.steerWithMessage(state, pending)
     this.emitUpdate(state)
     return this.createChatDetail(state)
   }
@@ -1856,6 +1863,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
+    // Record the final live lists, then keep them: closing queries below would discard them.
+    this.states.forEach((state) => this.persistPendingMessages(state))
+    void this.pendingMessageStore.close()
     this.disposed = true
     this.stateGeneration += 1
     this.sessionDiscovery.dispose()
@@ -2064,6 +2074,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       pendingApprovals: [],
       pendingUserInputs: [],
       queuedMessages: [],
+      submittedSteering: [],
       queuedMessagesPaused: false,
       queueDrainInProgress: false,
       resultSettling: false,
@@ -2259,11 +2270,14 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const state = this.createState(chatId, rememberedOptions, rememberedContainer)
     const generation = this.stateGeneration
     const pending = (async (): Promise<ClaudeSessionState> => {
-      const page = await this.readHistoryPage(chatId, state.container, {
-        cursor: null,
-        direction: 'older',
-        limit: 10
-      })
+      const [page, stored] = await Promise.all([
+        this.readHistoryPage(chatId, state.container, {
+          cursor: null,
+          direction: 'older',
+          limit: 10
+        }),
+        this.pendingMessageStore.restore(chatId)
+      ])
       // The page already contains display metadata. Keep catalog fields that the bounded
       // read could not find, and refresh local SDK metadata after messages are available.
       // A remote SessionStore's metadata API loads the whole file, so avoid it on open.
@@ -2304,8 +2318,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         }
       }
       state.messageIds = new Set(messages.map((message) => message.uuid))
+      this.restorePendingMessages(state, stored, page.inputIds)
       this.rememberStateTranscriptSize(state)
       this.states.set(chatId, state)
+      this.persistPendingMessages(state)
       this.sessionContainers.set(chatId, state.container)
       if (!state.container) this.scheduleSessionMetadataRefresh(state)
       this.leaseStateForAdmission(state)
@@ -2553,6 +2569,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.waitingForSessionIdle = false
     state.turnAwaitingStart = false
     state.deferredSteering = []
+    // Closing the query discards input Claude Code had not consumed, as Stop always has.
+    state.submittedSteering = []
     state.sessionBusy = false
     state.taskNotificationPending = false
     state.interruptRequested = false
@@ -3125,6 +3143,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.active = false
     state.stopped = wasStopped
     state.waitingForSessionIdle = false
+    // Claude Code drains its own input queue before it reports an idle result.
+    state.submittedSteering = []
 
     if (this.getQueueDrainDecision(state) === 'start') {
       this.emitUpdate(state, true)
@@ -3178,6 +3198,58 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     attachments: getAttachments(options),
     createdAt: Date.now()
   })
+
+  private persistPendingMessages = (state: ClaudeSessionState): void => {
+    this.pendingMessageStore.save(state.id, [
+      ...state.submittedSteering.map((message) => ({
+        id: message.id,
+        kind: 'steering' as const,
+        submitted: true,
+        createdAt: message.createdAt,
+        payload: message
+      })),
+      ...state.queuedMessages.map((message) => ({
+        id: message.id,
+        kind: message.kind ?? 'queued',
+        submitted: false,
+        createdAt: message.createdAt,
+        payload: message
+      }))
+    ])
+  }
+
+  /**
+   * The previous process ended with these messages undelivered. Nothing is running now, so they
+   * wait in a paused queue, as after Stop. Steering Claude Code already recorded is dropped.
+   */
+  private restorePendingMessages = (
+    state: ClaudeSessionState,
+    stored: PersistedPendingMessage<QueuedClaudeMessage>[],
+    deliveredIds: readonly string[]
+  ): void => {
+    const delivered = new Set(deliveredIds)
+    const restored = stored
+      .filter((message) => !(message.submitted && delivered.has(message.id)))
+      .map(
+        (message): QueuedClaudeMessage => ({
+          ...message.payload,
+          id: message.id,
+          kind: message.kind,
+          createdAt: message.createdAt
+        })
+      )
+    if (!restored.length) return
+    state.queuedMessages = [...restored, ...state.queuedMessages]
+    state.queuedMessagesPaused = true
+  }
+
+  /** Sends steering into the running turn and keeps it until Claude Code has consumed it. */
+  private steerWithMessage = (state: ClaudeSessionState, message: QueuedClaudeMessage): void => {
+    state.waitingForSessionIdle = false
+    this.addUserMessage(state, message, 'Steering with', 'steering')
+    state.submittedSteering.push({ ...message, kind: 'steering' })
+    this.pushSteering(state, createSdkUserMessage(state.id, message.id, message.prompt, 'now'))
+  }
 
   /**
    * Claude Code moves priority "now" input ahead of input it has not started yet. Steering
@@ -3695,6 +3767,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     conversationChanged = true
   ): void => {
     if (this.disposed || this.states.get(state.id) !== state) return
+    this.persistPendingMessages(state)
     if (turnCompleted) {
       // The ordered SDK result/error event is the lifecycle boundary. Provisional fragments are
       // no longer needed once that event has supplied the completed message collection.

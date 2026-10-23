@@ -1,5 +1,10 @@
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import {
+  PersistentPendingMessages,
+  type PersistedPendingMessage
+} from '../PersistentPendingMessages'
+import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
+import {
   raceLinkedChatCancellation,
   requireLinkedChatSummary,
   throwIfLinkedChatCancelled
@@ -360,6 +365,9 @@ const getSessionModelKey = (
   reasoningEffort: string | undefined
 ): string => JSON.stringify([model ?? null, reasoningEffort ?? null])
 
+/** A delivered message is recorded after Sele created it; allow for clock differences. */
+const restoredMessageClockSkewMs = 5_000
+
 const toMilliseconds = (value: Date | string | number | undefined): number => {
   if (value instanceof Date) return value.getTime()
   const timestamp = typeof value === 'number' ? value : value ? Date.parse(value) : Number.NaN
@@ -639,6 +647,10 @@ const getRuntimeEnvironment = (env: NodeJS.ProcessEnv | undefined): Record<strin
 export class CopilotProviderAdapter implements ProviderAdapter {
   id = 'copilot' as const
   private pendingMessageEdits = new PendingMessageEdits()
+  private pendingMessageStore = new PersistentPendingMessages<CopilotPendingMessage>(
+    'copilot',
+    sqlitePendingMessageBackend
+  )
   private historicalUsageReader = new SqliteUsageReader<HistoricalUsageRow>()
   private tokenUsageReporter = new TokenUsageReporter()
   onTokenUsage = this.tokenUsageReporter.subscribe
@@ -1479,6 +1491,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const sessionId = randomUUID()
     const state = this.createState(sessionId, options)
+    this.pendingMessageStore.track(sessionId)
     const session = await this.createSession(state, options)
     await onChatCreated?.(sessionId)
     state.active = true
@@ -1726,6 +1739,65 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         }))
       ]
     }
+  }
+
+  private persistPendingMessages = (state: CopilotSessionState): void => {
+    this.pendingMessageStore.save(
+      state.id,
+      state.pendingMessages.map((message) => ({
+        id: message.id,
+        kind: message.kind,
+        submitted: message.delivery !== 'local',
+        createdAt: message.createdAt ?? Date.now(),
+        payload: message
+      }))
+    )
+  }
+
+  /**
+   * The previous process ended with these messages undelivered; the SDK's own queue did not
+   * survive it. They wait in a paused queue, as after Stop. Steering the session already
+   * recorded as a user message is dropped.
+   */
+  private restorePendingMessages = (
+    state: CopilotSessionState,
+    stored: PersistedPendingMessage<CopilotPendingMessage>[]
+  ): void => {
+    if (!stored.length) return
+    const userMessages = state.events.filter(
+      (event): event is Extract<SessionEvent, { type: 'user.message' }> =>
+        event.type === 'user.message' && !event.agentId
+    )
+    const restored = stored
+      .filter(
+        (message) =>
+          !(
+            message.submitted &&
+            userMessages.some(
+              (event) =>
+                event.data.content.trim() === message.payload.content &&
+                toMilliseconds(event.timestamp) >= message.createdAt - restoredMessageClockSkewMs
+            )
+          )
+      )
+      .map(
+        (message): CopilotPendingMessage => ({
+          ...message.payload,
+          id: message.id,
+          kind: message.kind,
+          createdAt: message.createdAt,
+          delivery: 'local'
+        })
+      )
+    if (restored.length) {
+      const restoredIds = new Set(restored.map((message) => message.id))
+      state.pendingMessages = [
+        ...restored,
+        ...state.pendingMessages.filter((message) => !restoredIds.has(message.id))
+      ]
+      state.queuePaused = true
+    }
+    this.persistPendingMessages(state)
   }
 
   private enqueueMessage = (
@@ -2055,6 +2127,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
+    // Record the final live lists; stopping the clients below ends the SDK queues.
+    this.states.forEach((state) => this.persistPendingMessages(state))
+    void this.pendingMessageStore.close()
     this.browserGeneration += 1
     this.historicalUsageReader.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
@@ -2403,6 +2478,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       await this.addAdditionalDirectories(session, options)
       await this.loadSessionTitle(state)
       await this.loadEvents(state)
+      this.restorePendingMessages(state, await this.pendingMessageStore.restore(sessionId))
       await this.refreshPendingMessages(state)
       await this.refreshPlan(state)
       return state
@@ -2961,7 +3037,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       clearTimeout(timer)
       this.updateTimers.delete(state.id)
     }
-    if (this.hiddenSessionIds.has(state.id) || this.states.get(state.id) !== state) return
+    if (this.states.get(state.id) !== state) return
+    this.persistPendingMessages(state)
+    if (this.hiddenSessionIds.has(state.id)) return
     const detail = this.createChatDetail(state, { startIndex: null, limit: 10 })
     this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
   }

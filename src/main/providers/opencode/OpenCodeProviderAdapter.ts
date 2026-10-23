@@ -1,4 +1,6 @@
 import { PendingMessageEdits } from '../PendingMessageEdits'
+import { PersistentPendingMessages } from '../PersistentPendingMessages'
+import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
 import { encodeOpenCodeHistory, importOpenCodeHistory } from './OpenCodeHistoryImport'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './OpenCodeHistory'
@@ -182,6 +184,8 @@ type OpenCodeChatState = {
   pendingApprovals: PermissionRequest[]
   pendingQuestions: QuestionRequest[]
   queuedMessages: QueuedOpenCodeMessage[]
+  /** Messages restored after a restart wait until the user sends again, as after Stop. */
+  queuePaused: boolean
 }
 
 type OpenCodeOneShotGeneration = {
@@ -441,6 +445,10 @@ const getPendingUserInput = (
 export class OpenCodeProviderAdapter implements ProviderAdapter {
   id = 'opencode' as const
   private pendingMessageEdits = new PendingMessageEdits()
+  private pendingMessageStore = new PersistentPendingMessages<QueuedOpenCodeMessage>(
+    'opencode',
+    sqlitePendingMessageBackend
+  )
   private queueDrains = new Set<string>()
   private tokenUsageReporter = new TokenUsageReporter()
   onTokenUsage = this.tokenUsageReporter.subscribe
@@ -1359,6 +1367,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     )
     const state = this.rememberSession(session, entry.container)
+    this.pendingMessageStore.track(session.id)
     await onChatCreated?.(session.id)
     await this.sendPrompt(state, text, options)
     return this.createChatDetail(state, true)
@@ -1371,6 +1380,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options?.container)
     if (state.active || this.pendingMessageEdits.has(chatId) || state.queuedMessages.length > 0) {
+      this.resumeRestoredQueue(state)
       const detail = await this.queueMessage(state, message, options)
       if (!state.active && !state.stopped) await this.drainQueue(state)
       return detail
@@ -1395,6 +1405,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     )
     const state = this.rememberSession(fork, entry.container)
+    this.pendingMessageStore.track(fork.id)
     await onForkCreated?.(fork.id)
     await this.sendPrompt(state, message, options)
     return this.createChatDetail(state, true)
@@ -1426,6 +1437,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     )
     const state = this.rememberSession(fork, entry.container)
+    this.pendingMessageStore.track(fork.id)
     await this.refreshState(state, entry.client)
     await onForkCreated?.(fork.id)
     return this.createChatDetail(state, true)
@@ -1441,6 +1453,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (this.pendingMessageEdits.has(chatId))
       return this.queueMessage(state, message, options, mode === 'steer' ? 'steering' : 'queued')
     if (mode === 'queue') {
+      this.resumeRestoredQueue(state)
       // The renderer may still show a turn that already ended; send instead of parking it.
       const detail = await this.queueMessage(state, message, options)
       if (!state.active && !state.stopped) await this.drainQueue(state)
@@ -1490,6 +1503,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const index = state.queuedMessages.findIndex((message) => message.id === messageId)
     if (index < 0) throw new Error('Pending message was not found.')
     state.queuedMessages.splice(index, 1)
+    if (state.queuedMessages.length === 0) state.queuePaused = false
     this.scheduleUpdate(chatId)
     return this.createChatDetail(state, true)
   }
@@ -1590,6 +1604,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     for (const pending of state.queuedMessages) {
       if (pending.options) pending.options = { ...pending.options, ...options }
     }
+    // The queued objects keep their identity for in-flight drains; resave their new options.
+    this.pendingMessageStore.invalidate(chatId)
+    this.persistPendingMessages(state)
   }
 
   resolveApproval = async (
@@ -1790,6 +1807,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationIds.clear()
     this.canceledOneShotGenerationTimers.forEach((timer) => clearTimeout(timer))
     this.canceledOneShotGenerationTimers.clear()
+    // Record the final live lists, then keep them: the states are discarded below.
+    this.states.forEach((state) => this.persistPendingMessages(state))
+    void this.pendingMessageStore.close()
     const clients = this.disposeClients()
     this.states.clear()
     this.sessionDiscoveries.clear()
@@ -2147,7 +2167,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       usageLimitReached: false,
       pendingApprovals: [],
       pendingQuestions: [],
-      queuedMessages: []
+      queuedMessages: [],
+      queuePaused: false
     }
     this.states.set(sessionId, state)
     this.sessionContainers.set(sessionId, container)
@@ -2245,6 +2266,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       }
       state = await discovery
     }
+    this.restorePendingMessages(state, await this.pendingMessageStore.restore(chatId))
     if (!state.messagesHydrated || state.messagesDirty || state.client !== entry.client) {
       await this.refreshState(state, entry.client)
     } else {
@@ -2515,6 +2537,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     state: OpenCodeChatState,
     window?: ProviderChatTurnWindow
   ): ProviderChatDetail => {
+    this.persistPendingMessages(state)
     const session = state.session
     if (!session) throw new Error('Unable to load OpenCode session.')
     state.revision += 1
@@ -2616,6 +2639,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       state.active = true
       state.eventRevision += 1
       state.stopped = false
+      state.queuePaused = false
       state.failed = false
       state.failureMessage = null
       state.usageLimitReached = false
@@ -2704,8 +2728,60 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return state.queuedMessages.splice(index, 1)[0] ?? null
   }
 
+  private persistPendingMessages = (state: OpenCodeChatState): void => {
+    this.pendingMessageStore.save(
+      state.id,
+      state.queuedMessages.map((message) => ({
+        id: message.id,
+        kind: message.kind,
+        submitted: false,
+        createdAt: message.createdAt ?? Date.now(),
+        payload: message
+      }))
+    )
+  }
+
+  /**
+   * A new send resumes a queue restored after a restart, as it does for the other providers.
+   * The restart also left the interrupted turn stopped; that must not park the queue again.
+   */
+  private resumeRestoredQueue = (state: OpenCodeChatState): void => {
+    if (!state.queuePaused) return
+    state.queuePaused = false
+    state.stopped = false
+  }
+
+  /** Messages left undelivered by the previous process wait in a paused queue. */
+  private restorePendingMessages = (
+    state: OpenCodeChatState,
+    stored: Awaited<ReturnType<typeof this.pendingMessageStore.restore>>
+  ): void => {
+    if (!stored.length) return
+    const restoredIds = new Set(stored.map((message) => message.id))
+    state.queuedMessages = [
+      ...stored.map(
+        (message): QueuedOpenCodeMessage => ({
+          ...message.payload,
+          id: message.id,
+          kind: message.kind,
+          createdAt: message.createdAt
+        })
+      ),
+      ...state.queuedMessages.filter((message) => !restoredIds.has(message.id))
+    ]
+    state.queuePaused = true
+    this.persistPendingMessages(state)
+    this.scheduleUpdate(state.id)
+  }
+
   private drainQueue = async (state: OpenCodeChatState): Promise<void> => {
-    if (this.queueDrains.has(state.id) || state.stopped || state.usageLimitReached) return
+    if (
+      this.queueDrains.has(state.id) ||
+      state.stopped ||
+      state.queuePaused ||
+      state.usageLimitReached
+    )
+      return
     const pending = state.active
       ? state.queuedMessages.find(
           (message) =>

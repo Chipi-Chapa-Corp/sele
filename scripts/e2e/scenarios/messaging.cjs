@@ -396,3 +396,4 @@ module.exports = async function messaging({ runner, sele, page, mock, providers 
 }
 
 module.exports.scenarios = scenarios
+module.exports.scenarioTools = scenarioTools

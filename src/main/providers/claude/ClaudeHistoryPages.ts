@@ -30,6 +30,18 @@ export type ClaudeHistoryPage = {
   messages: ClaudeTranscriptMessage[]
   pagination: ProviderChatTurnPagination
   metadata: SDKSessionInfo
+  /** Ids of user input Claude Code recorded on this page, including steering it folded in. */
+  inputIds: string[]
+}
+const getInputId = (entry: SessionStoreEntry): string | null => {
+  if (entry.type === 'user') return typeof entry.uuid === 'string' ? entry.uuid : null
+  const attachment = entry.type === 'attachment' ? entry.attachment : null
+  return attachment &&
+    typeof attachment === 'object' &&
+    (attachment as { type?: unknown }).type === 'queued_command' &&
+    typeof (attachment as { source_uuid?: unknown }).source_uuid === 'string'
+    ? (attachment as { source_uuid: string }).source_uuid
+    : null
 }
 const prefix = 'sele:claude-history:'
 const digest = (buffer: Buffer): string => createHash('sha256').update(buffer).digest('hex')
@@ -191,7 +203,8 @@ export class ClaudeHistoryPages {
           cwd: typeof latest?.cwd === 'string' ? latest.cwd : undefined,
           gitBranch: typeof latest?.gitBranch === 'string' ? latest.gitBranch : undefined,
           lastModified: snapshot.modified
-        }
+        },
+        inputIds: rows.flatMap((row) => getInputId(row.entry) ?? [])
       }
     } finally {
       await source.close()

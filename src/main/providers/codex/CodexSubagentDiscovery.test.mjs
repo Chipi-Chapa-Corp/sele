@@ -22,8 +22,9 @@ const methods = [
   'emitChatUpdated',
   'handleNotification'
 ]
+// Persistence of queued and steering messages is covered by PendingMessageRestore.test.mjs.
 const code = ts.transpile(
-  `class Harness { ${declaration.members
+  `class Harness { pendingMessageRestores = new Map(); persistPendingMessages() {} startPendingMessageRestore() {}  ${declaration.members
     .filter((node) => methods.includes(node.name?.getText(source)))
     .map((node) => node.getText(source))
     .join('\n')} }; new Harness()`,

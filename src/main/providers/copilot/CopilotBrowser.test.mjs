@@ -20,7 +20,7 @@ await build({
       name: 'browser-lifecycle-fixture',
       setup(builder) {
         builder.onResolve(
-          { filter: /(?:BrowserAutomation|BrowserMcpServer|SqliteUsageReader)$/ },
+          { filter: /(?:BrowserAutomation|BrowserMcpServer|SqliteUsageReader|pendingMessages)$/ },
           (args) => ({ path: args.path.split('/').at(-1), namespace: 'fixture' })
         )
         builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => ({
@@ -29,7 +29,9 @@ await build({
               'export const getBrowserAutomationService = () => globalThis.__seleCopilotBrowser.service',
             BrowserMcpServer:
               'export const createBrowserMcpServer = (...args) => globalThis.__seleCopilotBrowser.create(...args)',
-            SqliteUsageReader: 'export class SqliteUsageReader { dispose() {} }'
+            SqliteUsageReader: 'export class SqliteUsageReader { dispose() {} }',
+            pendingMessages:
+              'export const sqlitePendingMessageBackend = { read: async () => [], replace: async () => {} }'
           }[args.path]
         }))
       }

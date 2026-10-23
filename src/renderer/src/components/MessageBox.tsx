@@ -100,6 +100,7 @@ import {
   linkedChatDragType,
   maxLinkedChatCount,
   parseLinkedChatDrag,
+  parseLinkedChatMessage,
   type ComposerLinkedChat,
   type LinkedChatReference
 } from '../linkedChats'
@@ -1125,12 +1126,18 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const attachmentsBeforeEditRef = useRef<AppSelectedAttachment[] | null>(null)
   const skillsBeforeEditRef = useRef<ProviderSkill[] | null>(null)
   const appsBeforeEditRef = useRef<ProviderApp[] | null>(null)
+  // The composer's own linked chats, set aside while a sent message is edited in their place.
+  const linkedChatsBeforeEditRef = useRef<{ scope: string; chats: ComposerLinkedChat[] } | null>(
+    null
+  )
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const textareaWrapRef = useRef<HTMLDivElement>(null)
   const mentionMenuRef = useRef<HTMLDivElement>(null)
   const attachmentDragDepthRef = useRef(0)
   const editing = Boolean(editSession)
   const linkedChats = linkedChatsByScope[draftScopeKey] ?? noLinkedChats
+  const linkedChatsRef = useRef(linkedChats)
+  const linkedChatsByScopeRef = useRef(linkedChatsByScope)
   const linkedChatsLoading = linkedChats.some((chat) => chat.status === 'loading')
   const failedLinkedChat = linkedChats.find((chat) => chat.status === 'failed')
   const linkedChatsBlockSend = linkedChatsLoading || Boolean(failedLinkedChat)
@@ -1214,6 +1221,25 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         })
       })
   }
+
+  /** Ends an edit's linked chats: unfinished ones stop, and the saved draft chats return. */
+  const restoreLinkedChatsBeforeEdit = useCallback((): void => {
+    const saved = linkedChatsBeforeEditRef.current
+    if (!saved) return
+    linkedChatsBeforeEditRef.current = null
+    const keptOperations = new Set(saved.chats.map((chat) => chat.operationId))
+    for (const chat of linkedChatsByScopeRef.current[saved.scope] ?? noLinkedChats) {
+      if (
+        !keptOperations.has(chat.operationId) &&
+        loadingLinkedChatOperationsRef.current.delete(chat.operationId)
+      ) {
+        void providerApi.cancelLinkedChatContext(chat.operationId).catch((error: unknown) => {
+          console.error('Unable to cancel linked chat preparation.', error)
+        })
+      }
+    }
+    updateLinkedChats(saved.scope, () => saved.chats)
+  }, [updateLinkedChats])
 
   const handleRemoveLinkedChat = (linkedChat: ComposerLinkedChat): void => {
     if (loadingLinkedChatOperationsRef.current.delete(linkedChat.operationId)) {
@@ -1758,6 +1784,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [selectedApps])
 
   useEffect(() => {
+    linkedChatsRef.current = linkedChats
+    linkedChatsByScopeRef.current = linkedChatsByScope
+  }, [linkedChats, linkedChatsByScope])
+
+  useEffect(() => {
     if (
       !fileMentionMenuOpen ||
       !projectCwd ||
@@ -1863,6 +1894,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       attachmentsBeforeEditRef.current = null
       skillsBeforeEditRef.current = null
       appsBeforeEditRef.current = null
+      restoreLinkedChatsBeforeEdit()
       return
     }
 
@@ -1875,7 +1907,21 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       skillsBeforeEditRef.current = selectedSkillsRef.current
       appsBeforeEditRef.current = selectedAppsRef.current
     }
-    setMessage(editSession.content)
+    if (linkedChatsBeforeEditRef.current === null) {
+      linkedChatsBeforeEditRef.current = { scope: draftScopeKey, chats: linkedChatsRef.current }
+    }
+    // The sent linked-chat section becomes chips again; saving rebuilds it from them.
+    const editedMessage = parseLinkedChatMessage(editSession.content)
+    updateLinkedChats(linkedChatsBeforeEditRef.current.scope, () =>
+      editedMessage.linkedChats.map(
+        (chat): ComposerLinkedChat => ({
+          ...chat,
+          operationId: crypto.randomUUID(),
+          status: 'ready'
+        })
+      )
+    )
+    setMessage(editedMessage.content)
     setSelectedAttachments(editSession.attachments)
     setSelectedSkills([])
     setSelectedApps([])
@@ -1886,7 +1932,16 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     })
 
     return () => window.cancelAnimationFrame(animationFrame)
-  }, [editSession, setMessage, setSelectedApps, setSelectedAttachments, setSelectedSkills])
+  }, [
+    draftScopeKey,
+    editSession,
+    restoreLinkedChatsBeforeEdit,
+    setMessage,
+    setSelectedApps,
+    setSelectedAttachments,
+    setSelectedSkills,
+    updateLinkedChats
+  ])
 
   useEffect(() => {
     if (!quoteRequest || editing || handledQuoteRequestIdRef.current === quoteRequest.id) {
@@ -2042,7 +2097,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         .then((sent) => {
           if (!sent) return
 
-          updateLinkedChats(sendScope, () => noLinkedChats)
+          restoreLinkedChatsBeforeEdit()
           setMessage(previousDraft.message)
           setSelectedAttachments(previousDraft.attachments)
           setSelectedSkills(previousDraft.skills)
@@ -2110,6 +2165,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleCancelEdit = (): void => {
+    restoreLinkedChatsBeforeEdit()
     setMessage(messageBeforeEditRef.current ?? '')
     setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
     setSelectedSkills(skillsBeforeEditRef.current ?? [])

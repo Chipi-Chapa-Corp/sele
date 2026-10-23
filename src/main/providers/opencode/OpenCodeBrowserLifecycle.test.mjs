@@ -30,8 +30,9 @@ const methods = new Set([
   'handleEvent',
   'updateChatPermissions'
 ])
+// Persistence of queued and steering messages is covered by PendingMessageRestore.test.mjs.
 const code = ts.transpileModule(
-  `class Harness { ${declaration.members
+  `class Harness { pendingMessageStore = { restore: async () => [], save() {}, track() {}, invalidate() {}, close: async () => {} }; persistPendingMessages() {} restorePendingMessages() {}  ${declaration.members
     .filter((x) => methods.has(x.name?.getText(source)))
     .map((x) => x.getText(source))
     .join('\n')} }; globalThis.Harness = Harness`,

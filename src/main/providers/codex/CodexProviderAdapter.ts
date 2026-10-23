@@ -109,6 +109,11 @@ import {
   getCodexSubmittedMessages,
   saveCodexSubmittedMessage
 } from '../../database/codexSubmittedMessages'
+import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
+import {
+  PersistentPendingMessages,
+  type PersistedPendingMessage
+} from '../PersistentPendingMessages'
 import {
   isRecoverableCodexLoginAccountReadError,
   isRecoverableCodexStopError
@@ -496,6 +501,8 @@ type CodexPendingApproval = {
 
 type QueuedTurn = {
   id: string
+  /** Steering restored after a restart waits in the queue, but keeps its label. */
+  kind?: 'steering'
   text: string
   createdAt: number
   options?: ProviderTurnOptions
@@ -1411,6 +1418,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private queuedTurnStartThreads = new Set<string>()
   private pausedQueuedTurnThreads = new Set<string>()
   private queuedTurnRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private pendingMessageStore = new PersistentPendingMessages<QueuedTurn | SteeringMessage>(
+    'codex',
+    sqlitePendingMessageBackend
+  )
+  private pendingMessageRestores = new Map<string, Promise<void>>()
   private latestThreadRefreshes = new Map<string, Promise<void>>()
   private completionCoordinator = new ProviderConversationCompletionCoordinator()
   private chatUpdatedTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -2735,6 +2747,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           this.scheduleChatUpdated(chatId)
       })
       await this.goals.read(thread.id, (method, params) => this.client.request(method, params))
+      await this.pendingMessageRestores.get(chatId)
       this.scheduleQueueDrain(chatId)
     } else {
       await Promise.all([
@@ -2907,6 +2920,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
         limit: rendererChatUpdateTurnLimit
       })
     }
+    // Queue actions must see messages restored from the previous run, ahead of new ones.
+    await this.pendingMessageRestores.get(chatId)
     const thread = this.threads.get(chatId)
     if (!thread) throw new Error('Unable to load chat')
     return thread
@@ -4314,6 +4329,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   dispose = (): void => {
+    // Record the final live lists, then keep them: the teardown below clears them in memory.
+    for (const threadId of this.threads.keys()) this.persistPendingMessages(threadId)
+    void this.pendingMessageStore.close()
+    this.pendingMessageRestores.clear()
     this.chatUpdatedTimers.forEach((timer) => clearTimeout(timer))
     this.chatUpdatedTimers.clear()
     this.transcriptProjection.clear()
@@ -4859,6 +4878,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     // Indexed live updates preserve uniqueness; validate unknown snapshots once on ingestion.
     thread.turns.forEach((turn) => indexTranscriptRecords(turn.items))
     this.threads.set(thread.id, thread)
+    this.startPendingMessageRestore(thread)
     const parentThreadId = getCodexSubagentParentThreadId(thread)
     const parent = parentThreadId ? this.threads.get(parentThreadId) : undefined
     this.tokenUsageReporter.linkChat(
@@ -5579,6 +5599,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
     const thread = this.threads.get(threadId)
     if (!thread) return
+    this.persistPendingMessages(threadId)
     if (isCodexSubagentThread(thread)) {
       // Descendant events update the root's sidebar without publishing a separate root chat.
       const visited = new Set<string>([threadId])
@@ -6224,7 +6245,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         .map((queuedTurn) => ({
           type: 'pendingMessage' as const,
           id: queuedTurn.id,
-          kind: 'queued' as const,
+          kind: queuedTurn.kind ?? ('queued' as const),
           content: queuedTurn.text,
           attachments: queuedTurn.input
             ? collectUserInputAttachments(queuedTurn.input)
@@ -6232,6 +6253,89 @@ export class CodexProviderAdapter implements ProviderAdapter {
           createdAt: queuedTurn.createdAt
         }))
     ]
+  }
+
+  private persistPendingMessages = (threadId: string): void => {
+    const hiddenMessageIds = this.hiddenPendingMessageIdsByThread.get(threadId)
+    this.pendingMessageStore.save(threadId, [
+      ...(this.steeringMessagesByThread.get(threadId) ?? [])
+        .filter((message) => message.status !== 'sent' && !hiddenMessageIds?.has(message.id))
+        .map((message) => ({
+          id: message.id,
+          kind: 'steering' as const,
+          // turn/steer accepted it; Codex records it once it reaches the model.
+          submitted: message.status === 'pending',
+          createdAt: message.createdAt,
+          payload: message
+        })),
+      ...(this.queuedTurnsByThread.get(threadId) ?? [])
+        .filter((queuedTurn) => !hiddenMessageIds?.has(queuedTurn.id))
+        .map((queuedTurn) => ({
+          id: queuedTurn.id,
+          kind: queuedTurn.kind ?? ('queued' as const),
+          submitted: false,
+          createdAt: queuedTurn.createdAt,
+          payload: queuedTurn
+        }))
+    ])
+  }
+
+  private startPendingMessageRestore = (thread: CodexThread): void => {
+    if (isCodexSubagentThread(thread) || this.pendingMessageRestores.has(thread.id)) return
+    this.pendingMessageRestores.set(
+      thread.id,
+      this.pendingMessageStore
+        .restore(thread.id)
+        .then((stored) => this.applyRestoredPendingMessages(thread.id, stored))
+        .catch((error: unknown) => {
+          console.error(`Unable to restore pending Codex messages for ${thread.id}.`, error)
+        })
+    )
+  }
+
+  /**
+   * The previous process ended with these messages undelivered. Its turn is gone, so steering
+   * waits in the paused queue with the queued messages, as after Stop. Steering that Codex
+   * already recorded in the thread is dropped.
+   */
+  private applyRestoredPendingMessages = (
+    threadId: string,
+    stored: PersistedPendingMessage<QueuedTurn | SteeringMessage>[]
+  ): void => {
+    if (!stored.length) return
+    const deliveredClientIds = new Set(
+      (this.threads.get(threadId)?.turns ?? []).flatMap((turn) =>
+        turn.items.flatMap((item) => getCodexUserMessageClientId(item) ?? [])
+      )
+    )
+    const restored = stored
+      .filter(
+        (message) =>
+          !(
+            message.submitted &&
+            'itemId' in message.payload &&
+            deliveredClientIds.has(message.payload.itemId)
+          )
+      )
+      .map(
+        (message): QueuedTurn => ({
+          id: message.id,
+          ...(message.kind === 'steering' ? { kind: 'steering' as const } : {}),
+          text: message.payload.text,
+          createdAt: message.createdAt,
+          options: message.payload.options,
+          input: message.payload.input
+        })
+      )
+    if (restored.length) {
+      this.queuedTurnsByThread.set(threadId, [
+        ...restored,
+        ...(this.queuedTurnsByThread.get(threadId) ?? [])
+      ])
+      this.pausedQueuedTurnThreads.add(threadId)
+    }
+    this.persistPendingMessages(threadId)
+    if (this.threads.has(threadId)) this.scheduleChatUpdated(threadId)
   }
 
   private clearAgentResponseOverlay = (threadId: string, turnId: string): void => {
@@ -6252,10 +6356,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
           )
         )
       )
-
-  private setTurnStatus = (threadId: string, turnId: string, status: string): void => {
-    this.commitThreadAction(threadId, { type: 'turnStatusSet', turnId, status })
-  }
 
   private getQueueDrainDecision = (
     threadId: string,
@@ -6480,7 +6580,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       this.clearPendingTurnId(threadId, queuedTurn.id)
       console.error(`Unable to start queued Codex turn ${queuedTurn.id}`, error)
-      if (pendingTurn) this.setTurnStatus(threadId, queuedTurn.id, 'failed')
+      // Keep the message at the head of a paused queue, as the other providers do, so a failed
+      // start (for example another Codex process still owning the thread) cannot lose it or
+      // cascade through the rest of the queue. The next send or explicit action retries it.
+      if (pendingTurn) this.removeSyntheticTurn(threadId, queuedTurn.id)
+      this.queuedTurnsByThread.set(threadId, [
+        queuedTurn,
+        ...(this.queuedTurnsByThread.get(threadId) ?? [])
+      ])
+      this.pausedQueuedTurnThreads.add(threadId)
       this.setThreadStatus(threadId, { type: 'idle' })
       this.emitChatUpdated(threadId)
     }

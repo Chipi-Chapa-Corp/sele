@@ -14,11 +14,12 @@ const source = ts.createSourceFile(
 const declaration = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name?.text === 'CodexProviderAdapter'
 )
+// Persistence of queued and steering messages is covered by PendingMessageRestore.test.mjs.
 const extract = (names, globals = {}) => {
   const members = declaration.members.filter((node) => names.includes(node.name?.getText(source)))
   return vm.runInNewContext(
     ts.transpile(
-      `class Harness { ${members.map((node) => node.getText(source)).join('\n')} }; new Harness()`,
+      `class Harness { pendingMessageRestores = new Map(); persistPendingMessages() {} startPendingMessageRestore() {}  ${members.map((node) => node.getText(source)).join('\n')} }; new Harness()`,
       {
         target: ts.ScriptTarget.ES2022
       }
@@ -209,7 +210,7 @@ test('host bridge uses the app-server source even without an explicit container 
   let remoteReads = 0
   const client = {
     request: async (method) => {
-    if (method === 'command/exec') throw new Error('Method not found')
+      if (method === 'command/exec') throw new Error('Method not found')
       if (method === 'fs/getMetadata') return { modifiedAtMs: 1, createdAtMs: 1 }
       if (method === 'fs/readFile') {
         remoteReads++
