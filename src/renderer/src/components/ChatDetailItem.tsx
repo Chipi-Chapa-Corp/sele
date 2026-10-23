@@ -50,7 +50,7 @@ import {
   WrenchIcon as AnimatedWrenchIcon,
   ZapIcon as AnimatedZapIcon
 } from 'lucide-animated'
-import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
+import { FileIcon as SymbolsFileIcon } from './SymbolIcons'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ArrowUp,

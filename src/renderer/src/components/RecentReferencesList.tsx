@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowUpRight, ChevronRight, GripVertical, Link2, Pin, PinOff } from 'lucide-react'
-import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
+import { FileIcon as SymbolsFileIcon } from './SymbolIcons'
 import type { AppContainerTarget } from '../../../shared/app'
 import {
   getRecentChatReferenceKey,

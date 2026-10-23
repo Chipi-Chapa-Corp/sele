@@ -35,7 +35,7 @@ import {
 import {
   FileIcon as SymbolsFileIcon,
   FolderIcon as SymbolsFolderIcon
-} from '@react-symbols/icons/utils'
+} from './SymbolIcons'
 import type {
   AppContainerSuggestion,
   AppContainerTarget,

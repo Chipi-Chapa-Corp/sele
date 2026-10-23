@@ -18,7 +18,7 @@ import {
   useState
 } from 'react'
 import { createPortal } from 'react-dom'
-import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
+import { FileIcon as SymbolsFileIcon } from './SymbolIcons'
 import {
   ArrowUp,
   BadgeCheck,

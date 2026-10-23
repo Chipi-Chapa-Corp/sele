@@ -1,6 +1,6 @@
 import { AnimatePresence } from 'motion/react'
 import { MotionSurface } from '../motion/MotionSurface'
-import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
+import { FileIcon as SymbolsFileIcon } from './SymbolIcons'
 import { MessageSquare } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'

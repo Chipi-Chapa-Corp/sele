@@ -75,7 +75,15 @@
         "useAsConstAssertion": "error",
         "useBlockStatements": "off",
         "useConsistentArrowReturn": "off",
-        "noDefaultExport": "error"
+        "noDefaultExport": "error",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "@react-symbols/icons/utils": "Use src/renderer/src/components/SymbolIcons: the library maps names such as `constructor` to Object.prototype and crashes React."
+            }
+          }
+        }
       },
       "suspicious": {
         "noAsyncPromiseExecutor": "error",
@@ -181,6 +189,16 @@
         "rules": {
           "style": {
             "noCommonJs": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/renderer/src/components/SymbolIcons.tsx", "src/renderer/src/components/SymbolIcons.test.mjs"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
           }
         }
       }

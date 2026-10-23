@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import {
   FileIcon as SymbolsFileIcon,
   FolderIcon as SymbolsFolderIcon
-} from '@react-symbols/icons/utils'
+} from '../components/SymbolIcons'
 import type { AppSelectedAttachment, AppGitDeleteBranchScope } from '../../../shared/app'
 import type {
   ProviderMessage,

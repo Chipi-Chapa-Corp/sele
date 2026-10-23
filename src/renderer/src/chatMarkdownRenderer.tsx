@@ -1,6 +1,6 @@
 import { Renderer, type Tokens } from 'marked'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { FileIcon as SymbolsFileIcon } from '@react-symbols/icons/utils'
+import { FileIcon as SymbolsFileIcon } from './components/SymbolIcons'
 import { Image as ImageIcon, Maximize2 } from 'lucide-react'
 import { getVideoMimeType } from '../../shared/video'
 import { getBrowserFaviconUrl } from '../../shared/browser'
