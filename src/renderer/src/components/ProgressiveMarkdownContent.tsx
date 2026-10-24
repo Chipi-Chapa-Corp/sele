@@ -55,8 +55,14 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
   onCommit
 }: Omit<PartProps, 'node' | 'priority'> & { html: string }) {
   const fragment = useMemo(() => sanitizedFragment(html, parent), [html, parent])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a changed fragment signals a DOM commit that can add images or diagrams.
-  useLayoutEffect(onCommit, [fragment, onCommit])
+  const committedFragment = useRef<DocumentFragment | null>(null)
+  useLayoutEffect(() => {
+    // Revealing an Activity reconnects effects without inserting any new DOM.
+    // Replaying every leaf's commit would rerender the whole message again.
+    if (committedFragment.current === fragment) return
+    committedFragment.current = fragment
+    onCommit()
+  }, [fragment, onCommit])
   return <MarkdownNodes parent={fragment} container={container} cwd={cwd} />
 })
 
@@ -121,12 +127,21 @@ export function ProgressiveMarkdownContent({
   const [revision, setRevision] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
   const onCommit = useCallback(() => setRevision((value) => value + 1), [])
+  const input = useMemo(
+    () => ({ content, interactiveFileLinks, footnotePrefix }),
+    [content, interactiveFileLinks, footnotePrefix]
+  )
+  const resolvedInput = useRef<typeof input | null>(null)
   useEffect(() => {
+    // Keep a completed plan across Activity hide/reveal. A pending request is
+    // still cancelled on hide and retried, and changed source gets a new plan.
+    if (resolvedInput.current === input) return
     let current = true
-    const request = requestMarkdownPlan({ content, interactiveFileLinks, footnotePrefix })
+    const request = requestMarkdownPlan(input)
     request.result
       .then((next) => {
         if (current) {
+          resolvedInput.current = input
           setPlan(next)
           setFailed(false)
         }
@@ -140,7 +155,7 @@ export function ProgressiveMarkdownContent({
       current = false
       request.cancel()
     }
-  }, [content, interactiveFileLinks, footnotePrefix])
+  }, [input])
   useMarkdownImages(ref, String(revision), container, cwd, errorMarkup)
   // biome-ignore lint/correctness/useExhaustiveDependencies: leaf commits change the DOM without changing the source message.
   useEffect(() => {

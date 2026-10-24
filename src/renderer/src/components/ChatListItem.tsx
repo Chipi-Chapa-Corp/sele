@@ -10,7 +10,7 @@ import {
   MessageSquare,
   Pencil,
   Pin,
-  Ellipsis,
+  Menu,
   Download,
   PinOff,
   Save,
@@ -525,18 +525,18 @@ export const ChatListItem = memo(function ChatListItem({
             />
           )}
           <Dropdown
+            className="chat-list-item__menu"
             appearance="inline"
             size="small"
             menuAlign="end"
             value=""
-            valueDisplay="icon"
             aria-label="Chat menu"
             title="Chat menu"
-            icon={
+            valueContent={
               exporting ? (
                 <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
               ) : (
-                <Ellipsis aria-hidden="true" />
+                <Menu aria-hidden="true" />
               )
             }
             disabled={exporting}

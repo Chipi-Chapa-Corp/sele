@@ -306,6 +306,26 @@
   box-shadow: var(--secondary-shadow-hover);
 }
 
+.chat-list-item__menu .ui-dropdown__trigger {
+  width: var(--control-height-small);
+  height: var(--control-height-small);
+  justify-content: center;
+  padding: 0;
+}
+
+.chat-list-item__menu .ui-dropdown__value {
+  flex: none;
+}
+
+.chat-list-item__menu .ui-dropdown__value > svg {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+}
+
+.chat-list-item__menu .ui-dropdown__chevron {
+  display: none;
+}
+
 .chat-list-item__detail-card {
   position: fixed;
   z-index: 1000;

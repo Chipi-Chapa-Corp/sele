@@ -39,12 +39,7 @@ import {
 } from '../changeTree'
 import { getDefaultFileTreeCollapsedFolders } from '../fileTreeIndex'
 import { indexFileTreeListing } from '../fileTreeIndexClient'
-import {
-  isScrolledToBottom,
-  readChatScrollAnchor,
-  resetDocumentScroll,
-  restoreChatScrollAnchor
-} from '../chatLayout'
+import { isScrolledToBottom, readChatScrollAnchor, restoreChatScrollAnchor } from '../chatLayout'
 import { getContainerTargetKey, normalizeContainerTarget } from '../containerSelection'
 import {
   preserveOptimisticChatDetail,
@@ -1187,7 +1182,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     chatViewportAnchorRef.current = null
     previousChatScrollTopRef.current = null
     scheduleChatAutoScroll()
-    resetDocumentScroll()
   }, [scheduleChatAutoScroll, selectedProviderId, selectedChatId])
   useEffect(() => {
     if (!selectedChatKey) return
@@ -1241,7 +1235,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     pendingChatScrollAnchorRef.current = null
     chatViewportAnchorRef.current = null
     previousChatScrollTopRef.current = null
-    // The selection-key effect already resets document scroll once per navigation.
   }, [selectedChat])
   const focusSearchInput = useCallback((searchInput: HTMLInputElement | null): void => {
     if (!searchInput) return

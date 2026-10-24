@@ -23,7 +23,7 @@ if (!process.versions.electron) {
             import './src/renderer/src/App.css'
             const noop=()=>{};
             window.appApi={}; window.providerApi={};
-            window.created=[];window.effects=new Set();window.actions=[];
+            window.created=[];window.effects=new Set();window.actions=[];window.bottomAlignments=0;
             const root=createRoot(document.getElementById('root'));
             const histories=new Map();
             window.allowed=['a','b','c','d','big','embedded'].map(id=>'codex:'+id);
@@ -51,7 +51,7 @@ if (!process.versions.electron) {
               const items=id&&!loading?histories.get(id):[];
               const model=buildChatConversationModel(items);
               const props={visible:Boolean(id),cachedChatKeys:window.allowed,
-                chatAutoScrollEnabledRef:{current:true},scrollChatContentToBottom:noop,
+                chatAutoScrollEnabledRef:{current:true},scrollChatContentToBottom:()=>window.bottomAlignments++,
                 changesContainer:null,changesCwd:'/fixture',chatMediaTotalCount:model.turns.length,chatMediaStartIndex:0,
                 activeSubagentChatView:null,chatHasActiveTurn:active,chatLoadState:loading?'loading':'ready',
                 chatSearchContentRef:searchRef,chatTurnPageLoadDirection:null,commitChatReturnTarget:null,
@@ -162,7 +162,31 @@ if (!process.versions.electron) {
       await run(`renderChat('a',{loading:true})`)
       assert.equal(await run('saved.isConnected'), true, 'loading must not discard warm turns')
       assert.equal(await run(`document.querySelectorAll('#chat-search-content').length`), 1)
+      await run(`window.bottomAlignments=0;window.turnMeasurements=0;
+        window.originalBounds=Element.prototype.getBoundingClientRect;
+        Element.prototype.getBoundingClientRect=function(){
+          if(this.hasAttribute('data-chat-turn-id'))window.turnMeasurements++;
+          return originalBounds.call(this)
+        };undefined`)
       await open('a', { version: 2 })
+      assert.equal(
+        await run('window.bottomAlignments'),
+        0,
+        'revealing retained turns must not replay their initial scroll corrections'
+      )
+      assert.equal(
+        await run('window.turnMeasurements'),
+        0,
+        'navigation must not synchronously measure the outgoing transcript'
+      )
+      await run('window.turnMeasurements=0;renderChat(null)')
+      assert.equal(
+        await run('window.turnMeasurements'),
+        0,
+        'opening the empty composer must not synchronously measure the outgoing transcript'
+      )
+      await open('a', { version: 2 })
+      await run('Element.prototype.getBoundingClientRect=originalBounds;undefined')
       assert.equal(
         await run(
           `document.querySelector('#chat-search-content [data-chat-turn-id="a-9"]')===saved`

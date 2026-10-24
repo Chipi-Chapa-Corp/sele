@@ -5,6 +5,8 @@
 const fs = require('node:fs/promises')
 const path = require('node:path')
 const assert = require('node:assert/strict')
+const providerId = process.env.SELE_BENCHMARK_PROVIDER || 'codex'
+const historySections = Math.max(1, Number(process.env.SELE_BENCHMARK_HISTORY_SECTIONS) || 40)
 const activeChats = process.env.SELE_BENCHMARK_ACTIVE_CHATS === '1'
 if (activeChats) process.env.SELE_BENCHMARK_RICH_HISTORY = '1'
 if (!process.versions.electron) {
@@ -20,6 +22,20 @@ if (!process.versions.electron) {
         outfile: path.join(directory, 'art.worker.js')
       })
       await require('esbuild').build({
+        entryPoints: [path.join(root, 'src/renderer/src/chatMarkdown.worker.ts')],
+        bundle: true,
+        platform: 'browser',
+        jsx: 'automatic',
+        define: { 'process.env.NODE_ENV': '"production"' },
+        alias: {
+          'decode-named-character-reference': path.join(
+            root,
+            'node_modules/decode-named-character-reference/index.js'
+          )
+        },
+        outfile: path.join(directory, 'markdown.worker.js')
+      })
+      await require('esbuild').build({
         stdin: {
           resolveDir: root,
           loader: 'tsx',
@@ -27,6 +43,7 @@ if (!process.versions.electron) {
           import React from 'react'
           import {createRoot} from 'react-dom/client'
           import {App} from './src/renderer/src/App'
+          import './src/renderer/src/assets/main.css'
           const root=createRoot(document.getElementById('root'));root.render(<App/>);window.unmountFixture=()=>root.unmount();
           window.frameGaps=[];window.longTasks=[];window.fixtureTurnNodes=new Map();
           new PerformanceObserver(list=>window.longTasks.push(...list.getEntries().map(e=>e.duration)))
@@ -48,6 +65,7 @@ if (!process.versions.electron) {
               if(measuring)requestAnimationFrame(sample);
             };
             window.fixtureRowRenders=[];window.fixtureMotionRenders=0;window.fixtureGroupRenders=[];
+            window.fixtureAlignments=[];
             const spinner=document.querySelector('[data-chat-id="0"] .chat-list-item__loading');
             if(!spinner)throw new Error('Missing background running spinner');
             const historyRequests=window.fixtureCalls.filter(name=>name==='getChats').length;
@@ -56,6 +74,7 @@ if (!process.versions.electron) {
             const styleSheetCount=document.styleSheets.length;
             const popLayoutRules=window.fixturePopLayoutRules;
             const canvasTransfers=window.fixtureCanvasTransfers;
+            const markdownRequests=window.fixtureMarkdownRequests??0;
             const start=performance.now();
             const measurementId='navigate:'+action+':'+destination+':'+start;
             const button=action==='done-project' ? document.querySelector('[data-chat-id="'+destination+'"]')?.closest('.chat-list-group').querySelector('[title="Mark project chats done"]') : action==='done' ? document.querySelector('[data-chat-id="'+destination+'"] [aria-label="Mark chat done"]') : destination==='new' ? document.querySelector('button[aria-label="New chat"]') :
@@ -67,7 +86,7 @@ if (!process.versions.electron) {
             button.click();
             const clickMs=performance.now()-start;
             await new Promise(resolve=>setTimeout(resolve,${richHistory ? 650 : 300}));
-            if(${activeChats})await new Promise((resolve,reject)=>{
+            if(${activeChats}&&destination!=='new')await new Promise((resolve,reject)=>{
               const deadline=performance.now()+10000;
               function check(){if(document.querySelectorAll('#chat-search-content [data-chat-turn-id]').length===10)return resolve();
                 if(performance.now()>deadline)return reject(new Error('Running history did not finish mounting'));requestAnimationFrame(check)}check()
@@ -80,6 +99,8 @@ if (!process.versions.electron) {
             if(action==='select'&&destination!=='new'&&turnNodes.length)
               window.fixtureTurnNodes.set(destination,new Map(turnNodes.map(node=>[node.dataset.chatTurnId,node])));
             return {measurementId,destination,action,selectedBefore,affectedChatIds,clickMs,reusedTurns,
+              bottomAlignments:window.fixtureAlignments.length,bottomAlignmentMs:window.fixtureAlignments.reduce((sum,ms)=>sum+ms,0),
+              markdownRequests:(window.fixtureMarkdownRequests??0)-markdownRequests,
               detailRequests:window.fixtureCalls.filter(name=>name==='getChat').length-detailRequests,
               firstSelectionMs:paintSamples.find(sample=>sample.selected===destination)?.ms??null,
               firstMessagesMs:paintSamples.find(sample=>sample.selected===destination&&sample.turns.some(id=>id.startsWith(destination+':')))?.ms??null,
@@ -108,6 +129,19 @@ if (!process.versions.electron) {
           {
             name: 'fixture-workers',
             setup(build) {
+              build.onLoad({ filter: /chatLayout\.ts$/ }, async (args) => ({
+                contents: (await fs.readFile(args.path, 'utf8'))
+                  .replace(
+                    "  const inner = element.querySelector<HTMLElement>('.chat-detail__messages-inner')",
+                    "  const fixtureStart = performance.now();\n  const inner = element.querySelector<HTMLElement>('.chat-detail__messages-inner')"
+                  )
+                  .replace(
+                    '  element.scrollTop = element.scrollHeight',
+                    '  element.scrollTop = element.scrollHeight;\n  (window.fixtureAlignments??=[]).push(performance.now()-fixtureStart)'
+                  ),
+                loader: 'ts',
+                resolveDir: path.dirname(args.path)
+              }))
               if (process.env.SELE_BENCHMARK_UNRETAINED === '1') {
                 build.onLoad({ filter: /RetainedChatViews\.tsx$/ }, () => ({
                   contents: 'export function RetainedChatViews({children}) { return children }',
@@ -142,7 +176,9 @@ if (!process.versions.electron) {
               build.onLoad({ filter: /.*/, namespace: 'worker' }, (args) => ({
                 contents: args.path.includes('vegvisir')
                   ? "export default class extends Worker {constructor(){super(new URL('art.worker.js',document.baseURI));window.fixtureArtWorkers=(window.fixtureArtWorkers??0)+1} postMessage(...args){if(args[0]?.type==='active')window.fixtureArtActive=args[0].active;return super.postMessage(...args)} terminate(){window.fixtureArtTerminated=(window.fixtureArtTerminated??0)+1;return super.terminate()}}"
-                  : 'export default class {constructor(){throw new Error("Editor outside navigation fixture")}}'
+                  : args.path.includes('chatMarkdown')
+                    ? "export default class extends Worker {constructor(){super(new URL('markdown.worker.js',document.baseURI))} postMessage(...args){window.fixtureMarkdownRequests=(window.fixtureMarkdownRequests??0)+1;return super.postMessage(...args)}}"
+                    : 'export default class {constructor(){throw new Error("Editor outside navigation fixture")}}'
               }))
             }
           }
@@ -161,7 +197,7 @@ if (!process.versions.electron) {
         window.fixtureCanvasTransfers=0;
         const transfer=HTMLCanvasElement.prototype.transferControlToOffscreen;
         if(transfer)HTMLCanvasElement.prototype.transferControlToOffscreen=function(...args){fixtureCanvasTransfers++;return transfer.apply(this,args)};
-        window.fixtureChats=Array.from({length:${chatCount}},(_,i)=>({id:String(i),providerId:'codex',title:'Empty conversation '+i,
+        window.fixtureChats=Array.from({length:${chatCount}},(_,i)=>({id:String(i),providerId:'${providerId}',title:'Empty conversation '+i,
           preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0||(${activeChats}&&i<3)?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
           cwdKind:'directory',projectCwd:null,branchName:null,worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,
           done:false,seenUpdatedAt:now,purpose:null,container:null}));
@@ -171,14 +207,14 @@ if (!process.versions.electron) {
         const histories=new Map();
         const history=id=>histories.get(id)??(${richHistory} ? Array.from({length:10},(_,i)=>[
           {id:id+':user-'+i,type:'message',role:'user',content:'Inspect '+id+' task '+i},
-          {id:id+':answer-'+i,type:'message',role:'assistant',content:Array.from({length:40},(_,n)=>
+          {id:id+':answer-'+i,type:'message',role:'assistant',content:Array.from({length:${historySections}},(_,n)=>
             '### Section '+id+'-'+i+'-'+n+'\\n\\nFindings with **important text** and [source](/fixture/source'+n+'.ts:10).\\n\\n'+
             String.fromCharCode(96).repeat(3)+'ts\\nconst result'+n+' = {value: "'+id+'-'+i+'", ready: true};\\n'+String.fromCharCode(96).repeat(3)+'\\n\\n').join('')}
         ]).flat() : []);
         const detail=id=>({...fixtureChats.find(chat=>chat.id===id),revision:window.fixtureRevision??1,capabilities:{editMessages:true,activeMessages:true},
           pendingApproval:null,pendingUserInput:null,contextUsage:null,items:history(id),subagents:[],turnCount:${richHistory ? 10 : 0},itemsStartTurnIndex:0});
         const defaults={
-          getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
+          getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'${providerId}',available:true}]}),
           // IPC returns fresh objects; sharing the fixture's source objects hides list reloads.
           getChats:()=>({chats:fixtureChats.map(chat=>({...chat})),nextCursor:null}),getChat:(_provider,id)=>detail(id),
           markChatDone:(_provider,id,done=true)=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done,doneAt:done?Date.now():null});return {...chat}},
@@ -208,13 +244,13 @@ if (!process.versions.electron) {
                 {...item,content:item.content+'\\n\\nLive '+id+' update '+revision+'.'}:item));
               const chat=fixtureChats.find(chat=>chat.id===id);chat.updatedAt=Date.now();
               const snapshot=detail(id);
-              window.fixtureChatListener?.({providerId:'codex',chatId:id,sequence:revision*10+Number(id),turnCompleted:false,
+              window.fixtureChatListener?.({providerId:'${providerId}',chatId:id,sequence:revision*10+Number(id),turnCompleted:false,
                 detail:fixtureViewedChat===id?{...snapshot,baseRevision:null,baseItemIds:null,
                   itemIds:snapshot.items.map(item=>item.id),changedItems:snapshot.items}:null,
                 summary:{...chat,revision,currentActivity:null,previewLength:0}});
             }
           }
-          window.fixtureChatListener?.({providerId:'codex',chatId:'0',detail:null,sequence:revision,turnCompleted:false,
+          window.fixtureChatListener?.({providerId:'${providerId}',chatId:'0',detail:null,sequence:revision,turnCompleted:false,
             summary:{...fixtureChats[0],revision,currentActivity:null,previewLength:0,updatedAt:Date.now()}})
         },100)};
         const stored=new Map();
@@ -237,7 +273,7 @@ if (!process.versions.electron) {
         { env, encoding: 'utf8', timeout: 60000 }
       )
       process.stdout.write(result.stdout || '')
-      if (result.status !== 0) {
+      if (result.status !== 0 || !result.stdout?.trim()) {
         process.stderr.write(result.stderr || String(result.error))
         process.exitCode = 1
       }
@@ -263,6 +299,10 @@ if (!process.versions.electron) {
         height: 950,
         webPreferences: { backgroundThrottling: false }
       })
+      win.webContents.on('render-process-gone', (_event, details) => {
+        console.error('Navigation fixture renderer exited:', details)
+        app.exit(1)
+      })
       win.webContents.on('console-message', (event) => {
         if (event.level === 'error') errors.push(event.message)
       })
@@ -285,22 +325,55 @@ if (!process.versions.electron) {
       }
       const results = []
       const destinations = activeChats
-        ? ['1', '2', '1', '2', '1', '2']
+        ? [
+            '1',
+            '2',
+            '1',
+            '2',
+            '1',
+            '2',
+            'new',
+            '1',
+            '3',
+            '4',
+            'new',
+            '2',
+            'new',
+            '2',
+            '3',
+            '4',
+            '3',
+            '4',
+            'new',
+            '2'
+          ]
         : process.env.SELE_BENCHMARK_RICH_HISTORY === '1'
           ? ['1', '2', '1', '2', 'new', '1', 'new', '3', 'new']
           : ['1', '2', 'new', '1', 'new', '3', 'new']
       for (const destination of destinations) {
         results.push(await run('window.measureNavigation(' + JSON.stringify(destination) + ')'))
+        if (process.env.SELE_BENCHMARK_PROGRESS) console.error('Navigated:', destination)
       }
       if (activeChats) {
         await run('clearInterval(window.backgroundUpdates)')
-        const warm = results.filter((result) => result.reusedTurns !== null)
-        assert.equal(warm.length, 4, 'exercise both running chats repeatedly')
+        const warm = results.slice(0, 6).filter((result) => result.reusedTurns !== null)
+        assert.equal(warm.length, 4, 'exercise both running chats repeatedly before LRU eviction')
         for (const result of warm) {
           assert.equal(result.reusedTurns, 10, 'streaming chats reuse every mounted turn')
           assert.equal(result.mixedChatFrames, 0, 'never paint the other running chat')
           assert.equal(result.blankFrames, 0, 'warm streaming chats stay readable')
           assert.equal(result.selected, result.destination)
+        }
+        for (const result of results) {
+          assert.equal(result.selected, result.destination === 'new' ? null : result.destination)
+          assert.equal(result.mixedChatFrames, 0, 'never paint a different conversation')
+          if (['3', '4'].includes(result.destination) && result.reusedTurns === 10) {
+            assert.equal(
+              result.markdownRequests,
+              0,
+              'unchanged inactive chats reuse their Markdown plans'
+            )
+          }
         }
         const caughtUp = await run(`new Promise(resolve=>{const deadline=performance.now()+3000;
           function check(){if(document.querySelector('#chat-search-content')?.textContent.includes('Live 2 update '+fixtureRevision+'.'))return resolve(true);
@@ -311,7 +384,7 @@ if (!process.versions.electron) {
           'the selected stream catches up to the latest provider revision'
         )
         assert.deepEqual(errors, [])
-        console.log(JSON.stringify({ activeChats: true, results, errors }, null, 2))
+        console.log(JSON.stringify({ providerId, activeChats: true, results, errors }, null, 2))
         await run('window.unmountFixture()')
         app.exit(0)
         return

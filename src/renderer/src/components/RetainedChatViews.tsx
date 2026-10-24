@@ -6,7 +6,7 @@ type View = {
   host: RefObject<HTMLDivElement | null>
   retain: boolean
   nodes: number
-  turnSizes?: { node: HTMLElement; height: number }[]
+  turnSizes: Map<HTMLElement, number>
 }
 
 const maxViews = 3
@@ -49,14 +49,7 @@ export function RetainedChatViews({
       return [
         {
           ...view,
-          nodes: host.querySelectorAll('*').length,
-          turnSizes: Array.from(
-            host.querySelectorAll<HTMLElement>('[data-chat-turn-id]'),
-            (node) => ({
-              node,
-              height: node.getBoundingClientRect().height
-            })
-          )
+          nodes: host.querySelectorAll('*').length
         }
       ]
     })
@@ -70,7 +63,8 @@ export function RetainedChatViews({
         content: children,
         host: existing?.host ?? { current: null },
         retain,
-        nodes: existing?.nodes ?? 0
+        nodes: existing?.nodes ?? 0,
+        turnSizes: existing?.turnSizes ?? new Map()
       }
     ]
   }
@@ -88,14 +82,59 @@ export function RetainedChatViews({
     // when revealed. Keep measured turn sizes so offscreen turns can skip that
     // work until scrolled into view. Apply only after commit, never during render.
     for (const view of views) {
-      for (const { node, height } of view.turnSizes ?? []) {
+      if (view.key === activeKey) continue
+      for (const [node, height] of view.turnSizes) {
         node.style.contentVisibility = 'auto'
         node.style.containIntrinsicBlockSize = `auto ${height}px`
       }
     }
     // Abandoned concurrent renders must not replace the committed cache.
-    committed.current = { activeKey, views: views.map(({ turnSizes: _, ...view }) => view) }
+    committed.current = { activeKey, views }
   })
+  useLayoutEffect(() => {
+    const view = committed.current.views.find((view) => view.key === activeKey)
+    const host = view?.host.current
+    if (!view || !host) return
+    // ResizeObserver supplies sizes from completed layout. Reading every turn's
+    // bounds during navigation instead forces offscreen content to lay out and
+    // makes even switching to an empty composer wait for the old transcript.
+    const sizes = view.turnSizes
+    let observed = new Set<HTMLElement>()
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const height = entry.borderBoxSize[0]?.blockSize
+        if (height !== undefined && height > 0) sizes.set(entry.target as HTMLElement, height)
+      }
+    })
+    const syncTurns = (): void => {
+      const turns = new Set(host.querySelectorAll<HTMLElement>('[data-chat-turn-id]'))
+      for (const node of observed) {
+        if (turns.has(node)) continue
+        observer.unobserve(node)
+        sizes.delete(node)
+      }
+      for (const node of turns) {
+        if (!observed.has(node)) observer.observe(node)
+      }
+      observed = turns
+    }
+    syncTurns()
+    const mutations = new MutationObserver((records) => {
+      // Streaming text/Markdown inside an existing turn cannot add a root turn.
+      if (
+        records.every(
+          ({ target }) => target instanceof Element && target.closest('[data-chat-turn-id]')
+        )
+      )
+        return
+      syncTurns()
+    })
+    mutations.observe(host, { childList: true, subtree: true })
+    return () => {
+      mutations.disconnect()
+      observer.disconnect()
+    }
+  }, [activeKey])
   return (
     <>
       {views.map((view) => (

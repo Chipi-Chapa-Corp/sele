@@ -240,9 +240,13 @@ if (!process.versions.electron) {
         [1.25, '3']
       ]) {
         win.webContents.setZoomFactor(zoom)
+        // Electron applies the new viewport asynchronously. Settle that resize
+        // before measuring history growth, rather than comparing two zoom layouts.
+        await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
         await run(`document.querySelector('[data-chat-id="${id}"] .chat-list-item__main').click()`)
         await ready(
-          `document.querySelector('#chat-search-content [data-chat-message-id="answer-9"] p:last-child')`
+          `document.querySelector('[data-chat-id="${id}"].chat-list-item--selected') &&
+           document.querySelector('[data-chat-view="codex:${id}"] #chat-search-content [data-chat-message-id="answer-9"] p:last-child')`
         )
         const rect =
           await run(`(()=>{const r=document.querySelector('#chat-search-content [data-chat-message-id="answer-9"] p:last-child').getBoundingClientRect();

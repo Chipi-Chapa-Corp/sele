@@ -137,17 +137,6 @@ export const restoreChatScrollAnchor = (
   return true
 }
 
-export const resetDocumentScroll = (): void => {
-  window.scrollTo(0, 0)
-  document.body.scrollLeft = 0
-  document.body.scrollTop = 0
-
-  if (document.scrollingElement instanceof HTMLElement) {
-    document.scrollingElement.scrollLeft = 0
-    document.scrollingElement.scrollTop = 0
-  }
-}
-
 const roundPanePercent = (value: number): number => Math.round(value * 1000) / 1000
 
 export const getChatPanePercentsFromWidths = (

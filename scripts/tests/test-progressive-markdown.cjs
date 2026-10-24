@@ -44,7 +44,7 @@ if (!process.versions.electron) {
           resolveDir: root,
           loader: 'tsx',
           contents: `
-          import React,{useState} from 'react'
+          import React,{Activity,useState} from 'react'
           import {createRoot} from 'react-dom/client'
           import {flushSync} from 'react-dom'
           import {MarkdownMessage} from './src/renderer/src/components/ChatDetailItem'
@@ -52,9 +52,10 @@ if (!process.versions.electron) {
           import './src/renderer/src/App.css'
           const root=createRoot(document.getElementById('root'))
           const noop=()=>{}
-          window.render=(content,key='large',streaming=false)=>flushSync(()=>root.render(
-            <MarkdownMessage key={key} className="chat-detail__message chat-detail__message--assistant"
-              content={content} streaming={streaming} onOpenFileLink={(...args)=>window.links.push(args)}/>))
+          window.render=(content,key='large',streaming=false,visible=true)=>flushSync(()=>root.render(
+            <Activity mode={visible?'visible':'hidden'}><MarkdownMessage key={key} className="chat-detail__message chat-detail__message--assistant"
+              content={content} streaming={streaming} onOpenFileLink={(...args)=>window.links.push(args)}/></Activity>))
+          window.planRequests=0;
           window.links=[];window.errors=[];window.gaps=[];window.tasks=[];window.counts=[]
           new MutationObserver(()=>window.counts.push(document.querySelectorAll('p').length))
             .observe(document.getElementById('root'),{childList:true,subtree:true})
@@ -68,13 +69,21 @@ if (!process.versions.electron) {
           {
             name: 'fixture-workers',
             setup(build) {
+              build.onLoad({ filter: /ProgressiveMarkdownContent\.tsx$/ }, async (args) => ({
+                contents: (await fs.readFile(args.path, 'utf8')).replace(
+                  'const onCommit = useCallback(() => setRevision((value) => value + 1), [])',
+                  'const onCommit = useCallback(() => {window.leafCommits=(window.leafCommits??0)+1;setRevision((value) => value + 1)}, [])'
+                ),
+                loader: 'tsx',
+                resolveDir: path.dirname(args.path)
+              }))
               build.onResolve({ filter: /\?worker$/ }, (args) => ({
                 path: args.path,
                 namespace: 'worker'
               }))
               build.onLoad({ filter: /.*/, namespace: 'worker' }, ({ path: worker }) => ({
                 contents: worker.includes('chatMarkdown.worker')
-                  ? `export default class extends Worker { constructor(){super('./markdown-worker.js')} }`
+                  ? `export default class extends Worker { constructor(){super('./markdown-worker.js')} postMessage(...args){window.planRequests++;return super.postMessage(...args)} }`
                   : 'export default class {}'
               }))
             }
@@ -182,6 +191,39 @@ if (!process.versions.electron) {
         await run('getSelection().toString()===window.selectedText'),
         true,
         'completion preserves selection'
+      )
+      const requestsBeforeReveal = await run('window.planRequests')
+      const commitsBeforeReveal = await run('window.leafCommits')
+      const completedContent = content + '\nAPPENDED-MARKER\n'
+      await run(`window.render(${JSON.stringify(completedContent)},'rich',false,false)`)
+      await run(`window.render(${JSON.stringify(completedContent)},'rich',false,true)`)
+      await run('new Promise(resolve=>setTimeout(resolve,300))')
+      assert.equal(
+        await run('window.planRequests'),
+        requestsBeforeReveal,
+        'revealing unchanged Markdown must reuse its completed worker plan'
+      )
+      assert.equal(
+        await run('window.firstHeading===document.querySelector("h3")'),
+        true,
+        'revealing a message reuses its rendered blocks'
+      )
+      assert.equal(
+        await run('window.leafCommits'),
+        commitsBeforeReveal,
+        'revealing unchanged blocks must not replay DOM commit notifications'
+      )
+      await run(
+        `window.render(${JSON.stringify(completedContent + '\nHIDDEN-UPDATE\n')},'rich',true,false)`
+      )
+      await run(
+        `window.render(${JSON.stringify(completedContent + '\nHIDDEN-UPDATE\n')},'rich',true,true)`
+      )
+      await waitFor(`document.body.textContent.includes('HIDDEN-UPDATE')`)
+      assert.equal(
+        await run('window.planRequests > ' + requestsBeforeReveal),
+        true,
+        'source changed while hidden still requests a fresh plan'
       )
       const table =
         '<details open><summary>Results</summary>\n\n| Name | Value |\n| --- | --- |\n' +
