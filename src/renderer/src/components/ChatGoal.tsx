@@ -2,6 +2,7 @@ import { useId, useRef, useState } from 'react'
 import { ChevronUp, Pencil, Target, X } from 'lucide-react'
 import type { ProviderChatGoal } from '../../../shared/provider'
 import { Button } from './Button'
+import { Textarea } from './Textarea'
 import './ChatPlan.css'
 import './ChatGoal.css'
 
@@ -91,7 +92,7 @@ export const ChatGoal: React.FC<ChatGoalProps> = ({ goal, onSaveObjective }) => 
               <label className="sr-only" htmlFor={`${drawerId}-objective`}>
                 Goal objective
               </label>
-              <textarea
+              <Textarea
                 id={`${drawerId}-objective`}
                 className="chat-goal__objective"
                 autoFocus

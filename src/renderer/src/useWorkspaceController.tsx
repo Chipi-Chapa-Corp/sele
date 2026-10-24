@@ -42,6 +42,7 @@ import {
   Pencil,
   Server,
   Settings,
+  Trash2,
   X
 } from 'lucide-react'
 import type {
@@ -412,6 +413,7 @@ export const useWorkspaceController = () => {
   const [reauthenticationTarget, setReauthenticationTarget] = useState<{
     providerId: 'codex' | 'claude'
     container: AppContainerTarget | null
+    chatId?: string
   } | null>(null)
   const [providerResourcesLoadState, setProviderResourcesLoadState] =
     useState<ProviderResourcesLoadState>('idle')
@@ -680,7 +682,7 @@ export const useWorkspaceController = () => {
   const configProviderHasSelectedChat = Boolean(selectedChat)
   const configProviderContainer = selectedChat ? selectedChat.container : newSessionContainer
   const configProviderContainerKey = getContainerTargetKey(configProviderContainer)
-  const configProviderModelCatalogKey = `${configProviderId}:${configProviderContainerKey}`
+  const configProviderModelCatalogKey = `${configProviderId}:${configProviderContainerKey}${selectedChat ? `:${selectedChat.accountId ?? selectedChat.id}` : ''}`
   const configProviderContainerRef = useRef(configProviderContainer)
   useEffect(() => {
     configProviderContainerRef.current = configProviderContainer
@@ -716,6 +718,9 @@ export const useWorkspaceController = () => {
   const gitSettingsModelsReady =
     newSessionSourceAvailabilityReady && newSessionProviderAvailable && loadState !== 'loading'
   const [projects, setProjects] = useState<AppProject[]>([])
+  const [deletedProjectCwds, setDeletedProjectCwds] = useState<Set<string>>(() => new Set())
+  const [deletingProject, setDeletingProject] = useState(false)
+  const deletingProjectRef = useRef(false)
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -2241,10 +2246,11 @@ export const useWorkspaceController = () => {
   useEffect(() => {
     let active = true
 
-    appApi
-      .getProjects()
-      .then((storedProjects) => {
-        if (active) setProjects(mergeProjects(storedProjects))
+    Promise.all([appApi.getProjects(), appApi.getDeletedProjectCwds()])
+      .then(([storedProjects, deletedCwds]) => {
+        if (!active) return
+        setProjects(mergeProjects(storedProjects))
+        setDeletedProjectCwds(new Set(deletedCwds))
       })
       .catch((error: unknown) => {
         console.error('Unable to load projects.', error)
@@ -2444,11 +2450,13 @@ export const useWorkspaceController = () => {
     })
 
     Promise.all([
-      providerApi.getModels(configProviderId, { container }),
-      providerApi.getAccounts(configProviderId, { container }).catch((error: unknown) => {
-        console.error('Unable to identify the account for model preferences.', error)
-        return null
-      })
+      providerApi.getModels(configProviderId, { container, chatId: selectedChat?.id }),
+      providerApi
+        .getAccounts(configProviderId, { container, chatId: selectedChat?.id })
+        .catch((error: unknown) => {
+          console.error('Unable to identify the account for model preferences.', error)
+          return null
+        })
     ])
       .then(([nextModels, configuration]) => {
         if (!active) return
@@ -2498,7 +2506,8 @@ export const useWorkspaceController = () => {
     configProviderId,
     configProviderModelCatalogKey,
     configProviderModelsReady,
-    providerModelsRevision
+    providerModelsRevision,
+    selectedChat?.id
   ])
 
   useEffect(() => {
@@ -3643,6 +3652,33 @@ export const useWorkspaceController = () => {
     }
     return JSON.stringify([...latestCreatedAtByCwd])
   }, [chats])
+  const handleDeleteProject = useCallback(async (cwd: string, name: string): Promise<void> => {
+    if (
+      deletingProjectRef.current ||
+      !window.confirm(
+        `Remove the project “${name}” from the project list? Its files and chats will be kept.`
+      )
+    )
+      return
+
+    deletingProjectRef.current = true
+    setDeletingProject(true)
+    setSendError(null)
+    try {
+      await appApi.deleteProject(cwd)
+      setProjects((current) => current.filter((project) => project.cwd !== cwd))
+      setDeletedProjectCwds((current) => new Set([...current, cwd]))
+      setNewSessionProjectSelection((current) =>
+        current === cwd ? newSessionNoProjectValue : current
+      )
+    } catch (error) {
+      console.error('Unable to remove the project.', error)
+      setSendError(getErrorMessage(error, 'Unable to remove the project.'))
+    } finally {
+      deletingProjectRef.current = false
+      setDeletingProject(false)
+    }
+  }, [])
   const projectOptions = useMemo<DropdownOption<string>[]>(() => {
     const projectsByCwd = new Map<
       string,
@@ -3655,7 +3691,8 @@ export const useWorkspaceController = () => {
       project: AppProject | null = null
     ): void => {
       const normalizedCwd = cwd?.trim()
-      if (!normalizedCwd || isNoProjectCwd(normalizedCwd)) return
+      if (!normalizedCwd || isNoProjectCwd(normalizedCwd) || deletedProjectCwds.has(normalizedCwd))
+        return
 
       const existingProject = projectsByCwd.get(normalizedCwd)
       if (!existingProject || latestChatCreatedAt > existingProject.latestChatCreatedAt) {
@@ -3704,7 +3741,23 @@ export const useWorkspaceController = () => {
           ? getProjectDisplayName(project.project)
           : getFolderName(project.cwd),
         description: getFolderDescription(project.cwd),
-        icon: getProjectOptionIcon(project.cwd, project.project)
+        icon: getProjectOptionIcon(project.cwd, project.project),
+        inlineActions: [
+          {
+            id: 'delete-project',
+            ariaLabel: `Remove project ${project.project ? getProjectDisplayName(project.project) : getFolderName(project.cwd)}`,
+            title: 'Remove project',
+            icon: <Trash2 aria-hidden="true" />,
+            disabled: deletingProject,
+            callback: () =>
+              handleDeleteProject(
+                project.cwd,
+                project.project
+                  ? getProjectDisplayName(project.project)
+                  : getFolderName(project.cwd)
+              )
+          }
+        ]
       }))
 
     return [
@@ -3725,7 +3778,16 @@ export const useWorkspaceController = () => {
         : []),
       ...options
     ]
-  }, [chatProjectCreatedAtKey, newSessionCwd, newSessionNoProject, projects, projectIconsByGroup])
+  }, [
+    chatProjectCreatedAtKey,
+    newSessionCwd,
+    newSessionNoProject,
+    projects,
+    projectIconsByGroup,
+    deletedProjectCwds,
+    deletingProject,
+    handleDeleteProject
+  ])
   const newSessionProjectValue = newSessionNoProject
     ? newSessionNoProjectValue
     : (newSessionCwd ?? newSessionProjectPlaceholderValue)
@@ -3934,19 +3996,33 @@ export const useWorkspaceController = () => {
   const switchProviderAccount = async (
     accountId: string,
     providerId: ProviderId,
-    sourceContainer: AppContainerTarget | null
+    sourceContainer: AppContainerTarget | null,
+    chatId?: string
   ): Promise<void> => {
     if (providerAccountUpdatingId) return
     const container = normalizeContainerTarget(sourceContainer)
     setProviderAccountUpdatingId(accountId)
     setProviderAccountsError(null)
     try {
-      applyProviderAccountConfiguration(
+      const configuration =
         // biome-ignore lint/correctness/useHookAtTopLevel: Provider IPC method, not a React hook.
-        await providerApi.useAccount(providerId, accountId, { container }),
-        providerId,
-        container
-      )
+        await providerApi.useAccount(providerId, accountId, { container, chatId })
+      setAccountUsage(null)
+      setAccountUsageState('loading')
+      setAccountUsageError(null)
+      if (chatId) {
+        setChats((current) =>
+          current.map((chat) => (chat.id === chatId ? { ...chat, accountId } : chat))
+        )
+        setSelectedChat((current) => (current?.id === chatId ? { ...current, accountId } : current))
+        setChatDetail((current) =>
+          current?.id === chatId
+            ? { ...current, accountId, authenticationRequired: false }
+            : current
+        )
+        setProviderModelsRevision((revision) => revision + 1)
+        setChatLoadRequest((request) => request + 1)
+      } else applyProviderAccountConfiguration(configuration, providerId, container)
       setProviderAccountRevision((revision) => revision + 1)
     } finally {
       setProviderAccountUpdatingId(null)
@@ -4001,7 +4077,11 @@ export const useWorkspaceController = () => {
     }
   }
   const handleCreateProviderAccount = async (
-    reauthentication?: { providerId: 'codex' | 'claude'; container: AppContainerTarget | null },
+    reauthentication?: {
+      providerId: 'codex' | 'claude'
+      container: AppContainerTarget | null
+      chatId?: string
+    },
     target?: { providerId: ProviderId; container: AppContainerTarget | null }
   ): Promise<AccountAuthorizationSession> => {
     const providerId = reauthentication?.providerId ?? target?.providerId ?? newSessionProvider
@@ -4012,16 +4092,17 @@ export const useWorkspaceController = () => {
           ? target.container
           : newSessionContainer
     )
+    const chatId = reauthentication?.chatId
     const restart = reauthentication
-      ? await providerApi.reauthenticateAccount(providerId, { container })
+      ? await providerApi.reauthenticateAccount(providerId, { container, chatId })
       : null
-    const creation = restart ?? (await providerApi.createAccount(providerId, { container }))
+    const creation = restart ?? (await providerApi.createAccount(providerId, { container, chatId }))
     let loginId: string | null = null
     let userCode: string | null = null
     let authUrl: string | null = null
     let acceptsCode = false
     try {
-      const login = restart?.login ?? (await providerApi.login(providerId, { container }))
+      const login = restart?.login ?? (await providerApi.login(providerId, { container, chatId }))
       if (login.status === 'pending') {
         loginId = login.loginId
         userCode = login.userCode ?? null
@@ -4034,7 +4115,7 @@ export const useWorkspaceController = () => {
           providerId,
           creation.accountId,
           loginId,
-          { container }
+          { container, chatId }
         )
         applyProviderAccountConfiguration(restoredConfiguration, providerId, container)
         if (!reauthentication) setProviderAccountRevision((revision) => revision + 1)
@@ -4051,7 +4132,7 @@ export const useWorkspaceController = () => {
           providerId,
           creation.accountId,
           loginId,
-          { container }
+          { container, chatId }
         )
         applyProviderAccountConfiguration(result.configuration, providerId, container)
         if (!result.success) {
@@ -4064,7 +4145,7 @@ export const useWorkspaceController = () => {
         }
       } catch (error) {
         const restoredConfiguration = await providerApi
-          .getAccounts(providerId, { container })
+          .getAccounts(providerId, { container, chatId })
           .catch((restoreError: unknown) => {
             console.error(
               'Unable to restore provider accounts after authorization failed.',
@@ -4084,7 +4165,7 @@ export const useWorkspaceController = () => {
       ...(acceptsCode && loginId
         ? {
             submitCode: (code: string) =>
-              providerApi.submitAccountLoginCode(providerId, loginId!, code, { container })
+              providerApi.submitAccountLoginCode(providerId, loginId!, code, { container, chatId })
           }
         : {}),
       ...(acceptsCode && authUrl ? { copyLink: () => appApi.writeClipboardText(authUrl!) } : {}),
@@ -4098,7 +4179,7 @@ export const useWorkspaceController = () => {
           providerId,
           creation.accountId,
           loginId,
-          { container }
+          { container, chatId }
         )
         applyProviderAccountConfiguration(configuration, providerId, container)
         if (!reauthentication) setProviderAccountRevision((revision) => revision + 1)
@@ -4660,9 +4741,14 @@ export const useWorkspaceController = () => {
     if (group.cwd) {
       void appApi
         .addProject({ cwd: group.cwd, icon: 'image' })
-        .then((project) =>
+        .then((project) => {
           setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
-        )
+          setDeletedProjectCwds((current) => {
+            const next = new Set(current)
+            next.delete(project.cwd)
+            return next
+          })
+        })
         .catch((error: unknown) => {
           console.error('Unable to save the selected project icon.', error)
         })
@@ -4910,6 +4996,7 @@ export const useWorkspaceController = () => {
     newSessionProvider,
     newSessionContainerKey,
     setProjects,
+    setDeletedProjectCwds,
     setNewSessionCwd,
     setProjectDialogOpen,
     setProjectIconsByGroup,
@@ -4987,7 +5074,8 @@ export const useWorkspaceController = () => {
     const container = normalizeContainerTarget(changesContainer)
     setReauthenticationTarget({
       providerId,
-      container: container.kind === 'container' ? container : null
+      container: container.kind === 'container' ? container : null,
+      chatId: selectedChat?.id
     })
   }, [selectedChat, changesContainer, newSessionProvider])
 
@@ -6223,6 +6311,7 @@ export const useWorkspaceController = () => {
           ),
         key: `${selectedProviderId ?? newSessionProvider}:${changesContainerKey}:${providerAccountRevision}:${providerAccountsRefresh}`,
         providerId: selectedProviderId ?? newSessionProvider,
+        chatId: selectedChat?.id,
         container: changesContainer,
         available: Boolean(selectedChat) || newSessionProviderAvailable,
         updating: Boolean(providerAccountUpdatingId),
@@ -6230,7 +6319,8 @@ export const useWorkspaceController = () => {
           switchProviderAccount(
             accountId,
             selectedProviderId ?? newSessionProvider,
-            changesContainer
+            changesContainer,
+            selectedChat?.id
           )
       },
       importedChatGroup,

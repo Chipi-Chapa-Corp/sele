@@ -5,6 +5,7 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
 import { getCodexAccountViewCommand } from './CodexAccountView'
+import { ensureCodexAccountView } from './CodexAccounts'
 import { CodexDynamicTools } from './CodexDynamicTools'
 import { registerCodexDesktopTools } from './CodexDesktopTools'
 
@@ -49,13 +50,16 @@ type AppServerCommand = {
 
 const getAppServerCommand = (
   binary: string,
-  options: { container?: AppContainerTarget | null } = {}
+  options: { container?: AppContainerTarget | null; accountId?: string } = {}
 ): AppServerCommand => {
-  const appServerArgs = ['app-server', '--listen', 'stdio://']
+  // Account handoffs must release the writer as soon as we unsubscribe, rather
+  // than retaining it for Codex's default inactive-thread grace period.
+  const appServerArgs = ['app-server', '-c', 'thread_unload_delay_secs=0', '--listen', 'stdio://']
   const accountViewCommand = getCodexAccountViewCommand(
     binary,
     appServerArgs,
-    process.platform === 'linux' || options.container?.kind === 'container'
+    process.platform === 'linux' || options.container?.kind === 'container',
+    options.accountId
   )
   const canUseSystemd =
     process.platform === 'linux' &&
@@ -92,7 +96,10 @@ const getAppServerCommand = (
 }
 
 export class CodexAppServerClient {
-  constructor(private readonly container: AppContainerTarget | null = null) {
+  constructor(
+    private readonly container: AppContainerTarget | null = null,
+    private readonly accountId?: string
+  ) {
     if (!container) this.desktopTools = registerCodexDesktopTools(this.dynamicTools)
   }
   private desktopTools: ReturnType<typeof registerCodexDesktopTools> | null = null
@@ -123,6 +130,45 @@ export class CodexAppServerClient {
   }
 
   ownsThread = (threadId: string): boolean => this.ownedThreadIds.has(threadId)
+
+  releaseThread = async (threadId: string): Promise<void> => {
+    let closed!: () => void
+    let failed!: (error: Error) => void
+    const completion = new Promise<void>((resolve, reject) => {
+      closed = resolve
+      failed = reject
+    })
+    // Subscribe before the request: thread/closed can precede its response.
+    const unsubscribe = this.onNotification((notification) => {
+      if (
+        notification.method === 'thread/closed' &&
+        (notification.params as { threadId?: string } | undefined)?.threadId === threadId
+      )
+        closed()
+    })
+    const unsubscribeStopped = this.onStopped(failed)
+    const timeout = setTimeout(
+      () =>
+        failed(
+          new Error('Codex is still releasing this chat. Please try switching accounts again.')
+        ),
+      requestTimeoutMs
+    )
+    try {
+      await Promise.all([
+        completion,
+        this.request<{ status: string }>('thread/unsubscribe', { threadId }).then((result) => {
+          if (result.status === 'notLoaded') closed()
+        })
+      ])
+      this.ownedThreadIds.delete(threadId)
+      this.browserSessionCwds.delete(threadId)
+    } finally {
+      clearTimeout(timeout)
+      unsubscribe()
+      unsubscribeStopped()
+    }
+  }
 
   request = async <Result>(
     method: string,
@@ -177,6 +223,14 @@ export class CodexAppServerClient {
         this.browserSessionCwds.set(thread.id, cwd)
         registerBrowserUseSession(this, thread.id, cwd, this.container)
       }
+    }
+    if (
+      method === 'thread/unsubscribe' &&
+      typeof input.threadId === 'string' &&
+      (result as { status?: string })?.status === 'notLoaded'
+    ) {
+      this.ownedThreadIds.delete(input.threadId)
+      this.browserSessionCwds.delete(input.threadId)
     }
     return result
   }
@@ -239,9 +293,10 @@ export class CodexAppServerClient {
   }
 
   private initialize = async (): Promise<void> => {
+    if (this.accountId && this.accountId !== 'default') await ensureCodexAccountView(this.container)
     const appServerCommand = getAppServerCommand(
       this.container?.kind === 'container' ? 'codex' : getCodexExecutable(),
-      { container: this.container }
+      { container: this.container, accountId: this.accountId }
     )
     const hostCommand = await getHostCommand(appServerCommand.command, appServerCommand.args, {
       container: this.container,
@@ -377,6 +432,13 @@ export class CodexAppServerClient {
           params: 'params' in message ? message.params : undefined
         }
 
+        if (method === 'thread/closed') {
+          const threadId = (notification.params as { threadId?: string } | undefined)?.threadId
+          if (threadId) {
+            this.ownedThreadIds.delete(threadId)
+            this.browserSessionCwds.delete(threadId)
+          }
+        }
         this.notificationListeners.forEach((listener) => listener(notification))
       }
 

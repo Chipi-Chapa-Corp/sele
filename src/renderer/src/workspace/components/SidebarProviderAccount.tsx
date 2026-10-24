@@ -7,11 +7,12 @@ import { ProviderIcon } from '../../components/ProviderIcon'
 import { providerApi } from '../../providerApi'
 import { providerLabels } from '../../providerSettings'
 import { useFeedbackMotion } from '../../motion/useFeedbackMotion'
-import { Plus, X } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { AccountDialog, type AccountAuthorizationSession } from '../../components/AccountDialog'
 
 type SidebarProviderAccountProps = {
   providerId: ProviderId
+  chatId?: string
   openCode?: OpenCodeProviderPicker
   refreshKey?: string
   container: AppContainerTarget | null
@@ -25,6 +26,7 @@ type SidebarProviderAccountProps = {
 
 export function SidebarProviderAccount({
   providerId,
+  chatId,
   openCode,
   refreshKey,
   container,
@@ -45,7 +47,7 @@ export function SidebarProviderAccount({
     Record<string, ProviderAccountConfiguration>
   >({})
   const [failure, setFailure] = useState<{ sourceKey: string; message: string } | null>(null)
-  const sourceKey = JSON.stringify([providerId, container])
+  const sourceKey = JSON.stringify([providerId, container, chatId])
   const configuration = configurations[sourceKey] ?? null
   const error = failure?.sourceKey === sourceKey ? failure.message : null
   const labelRef = useRef<HTMLSpanElement>(null)
@@ -64,7 +66,10 @@ export function SidebarProviderAccount({
     setFailure(null)
     let active = true
     void providerApi
-      .getAccounts(providerId, { container: JSON.parse(sourceKey)[1] })
+      .getAccounts(providerId, {
+        container: JSON.parse(sourceKey)[1],
+        chatId: JSON.parse(sourceKey)[2] ?? undefined
+      })
       .then((configuration) => {
         if (!active) return
         setConfigurations((current) => ({ ...current, [sourceKey]: configuration }))
@@ -113,7 +118,7 @@ export function SidebarProviderAccount({
   const refreshNames = (): void => {
     const revision = sourceRevision.current
     void providerApi
-      .getAccounts(providerId, { container })
+      .getAccounts(providerId, { container, chatId })
       .then((next) => {
         if (revision === sourceRevision.current)
           setConfigurations((current) => ({ ...current, [sourceKey]: next }))
@@ -128,7 +133,7 @@ export function SidebarProviderAccount({
     setFailure(null)
     try {
       await onSelect(accountId)
-      const next = await providerApi.getAccounts(providerId, { container })
+      const next = await providerApi.getAccounts(providerId, { container, chatId })
       setConfigurations((current) => ({ ...current, [sourceKey]: next }))
     } catch (reason) {
       console.error('Unable to switch the sidebar provider account.', reason)
@@ -158,7 +163,7 @@ export function SidebarProviderAccount({
     setFailure(null)
     try {
       await onDelete(candidate.id)
-      const next = await providerApi.getAccounts(providerId, { container })
+      const next = await providerApi.getAccounts(providerId, { container, chatId })
       setConfigurations((current) => ({ ...current, [sourceKey]: next }))
     } catch (reason) {
       setFailure({ sourceKey, message: reason instanceof Error ? reason.message : String(reason) })
@@ -215,7 +220,7 @@ export function SidebarProviderAccount({
                           id: 'delete-account',
                           ariaLabel: `Delete account ${accountName(candidate)}`,
                           title: 'Delete account',
-                          icon: <X aria-hidden="true" />,
+                          icon: <Trash2 aria-hidden="true" />,
                           disabled: updating || deleting,
                           callback: () => deleteAccount(candidate)
                         }

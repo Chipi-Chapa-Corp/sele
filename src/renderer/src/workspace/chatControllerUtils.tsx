@@ -335,6 +335,7 @@ export const getChatFromDetail = (
   updatedAt: number
 ): ProviderChat => ({
   id: detail.id,
+  accountId: detail.accountId ?? existingChat?.accountId,
   noProject: detail.noProject ?? existingChat?.noProject,
   imported: detail.imported ?? existingChat?.imported,
   providerId,
@@ -623,6 +624,7 @@ export const getChatFromUpdateSummary = (
   const summaryChanged =
     !existingChat ||
     existingChat.title !== summary.title ||
+    existingChat.accountId !== summary.accountId ||
     existingChat.noProject !== summary.noProject ||
     existingChat.cwd !== summary.cwd ||
     existingChat.cwdKind !== summary.cwdKind ||
@@ -642,6 +644,7 @@ export const getChatFromUpdateSummary = (
 
   return {
     id: summary.id,
+    accountId: summary.accountId ?? existingChat?.accountId,
     noProject: summary.noProject ?? existingChat?.noProject,
     imported: summary.imported ?? existingChat?.imported,
     providerId,

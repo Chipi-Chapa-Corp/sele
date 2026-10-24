@@ -124,7 +124,7 @@ export class ClaudeAccounts {
 
   private usageCacheKey = async (options: ProviderSourceOptions): Promise<string> => {
     const accounts = (await (await this.store(options)).get()).accounts
-    const active = accounts.find((account) => account.active)?.id ?? 'default'
+    const active = options.accountId ?? accounts.find((account) => account.active)?.id ?? 'default'
     return `${getContainerTargetKey(options.container)}:${active}`
   }
 
@@ -231,9 +231,24 @@ export class ClaudeAccounts {
     return (await this.store(options)).create()
   }
 
-  getEnvironment = async (container?: AppContainerTarget | null): Promise<NodeJS.ProcessEnv> => {
+  getSelectedId = async (container?: AppContainerTarget | null): Promise<string> =>
+    (await (await this.store({ container })).getSelection())?.id ?? 'default'
+
+  getEnvironment = async (
+    container?: AppContainerTarget | null,
+    accountId?: string
+  ): Promise<NodeJS.ProcessEnv> => {
     const store = await this.store({ container })
-    const account = await store.getSelection()
+    const account =
+      accountId === undefined
+        ? await store.getSelection()
+        : accountId === 'default'
+          ? null
+          : { id: accountId }
+    if (accountId && !(await store.get()).accounts.some((candidate) => candidate.id === accountId))
+      throw new Error(
+        'This chat’s Claude account is no longer available. Select another account for this chat.'
+      )
     if (!account) return process.env
     await this.ensureSupported({ container })
     return getClaudeAccountEnvironment(process.env, store.credentialDirectory(account.id))
@@ -243,18 +258,24 @@ export class ClaudeAccounts {
   // usage cache by oauthAccount in .claude.json, which stays stale when only the
   // secure store changes. Normal sessions must keep the shared config/history.
   getUsageEnvironment = async (
-    container?: AppContainerTarget | null
+    container?: AppContainerTarget | null,
+    accountId?: string
   ): Promise<NodeJS.ProcessEnv> => {
     const store = await this.store({ container })
     // Preserve usage support on older CLIs until account switching is enabled.
-    if ((await store.get()).accounts.length === 1 && !(await store.getPending())) return process.env
+    if (
+      (!accountId || accountId === 'default') &&
+      (await store.get()).accounts.length === 1 &&
+      !(await store.getPending())
+    )
+      return process.env
     await this.ensureSupported({ container })
-    return store.getUsageEnvironment(process.env)
+    return store.getUsageEnvironment(process.env, accountId)
   }
 
   /** A usage response without plan limits does not prove that credentials exist. */
   getAuthenticationMethod = async (options: ProviderSourceOptions = {}): Promise<string> => {
-    const env = await this.getEnvironment(options.container)
+    const env = await this.getEnvironment(options.container, options.accountId)
     const command = await getHostCommand(
       options.container?.kind === 'container' ? 'claude' : getClaudeExecutable(),
       ['auth', 'status', '--json'],
@@ -278,7 +299,10 @@ export class ClaudeAccounts {
 
   getUsageFallback = async (options: ProviderSourceOptions = {}) => {
     const version = await this.ensureSupported(options)
-    const token = await (await this.store(options)).getUsageAccessToken(process.env)
+    const token = await (await this.store(options)).getUsageAccessToken(
+      process.env,
+      options.accountId
+    )
     const cacheKey = await this.usageCacheKey(options)
     const saved = (await this.loadUsageCache()).get(cacheKey)
     const lastLimits = (): ClaudeUsageCacheEntry['limits'] | null =>
@@ -343,10 +367,12 @@ export class ClaudeAccounts {
     if (await store.getPending())
       throw new Error('Finish or cancel the current Claude sign-in first.')
     const selected = await store.getSelection()
-    const accountId = selected?.id ?? 'default'
+    const accountId = options.accountId ?? selected?.id ?? 'default'
+    if (!(await store.get()).accounts.some((account) => account.id === accountId))
+      throw new Error('Claude account was not found.')
     const login = await this.startLogin(
       accountId,
-      selected ? store.credentialDirectory(accountId) : null,
+      accountId !== 'default' ? store.credentialDirectory(accountId) : null,
       true,
       options
     )
@@ -369,7 +395,9 @@ export class ClaudeAccounts {
     })
     // Recheck after command resolution, which can involve SSH and shell discovery.
     const expectedId = reauthentication
-      ? ((await store.getSelection())?.id ?? 'default')
+      ? (await store.get()).accounts.some((account) => account.id === accountId)
+        ? accountId
+        : undefined
       : (await store.getPending())?.id
     if (expectedId !== accountId || this.logins.has(key)) {
       throw new Error('Claude sign-in is no longer available.')
@@ -420,7 +448,9 @@ export class ClaudeAccounts {
     if (!result.success) throw new Error(result.error || 'Claude sign-in failed.')
     const store = await this.store(options)
     const expectedId = login.reauthentication
-      ? ((await store.getSelection())?.id ?? 'default')
+      ? (await store.get()).accounts.some((account) => account.id === accountId)
+        ? accountId
+        : undefined
       : (await store.getPending())?.id
     if (this.logins.get(key) !== login || expectedId !== accountId)
       throw new Error('Claude sign-in was canceled.')

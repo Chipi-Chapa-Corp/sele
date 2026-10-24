@@ -30,6 +30,9 @@ const bundled = await build({
                beginPendingMessageEdit: (...args) => globalThis.harness.beginPendingMessageEdit(...args),
                cancelPendingMessageEdit: (...args) => globalThis.harness.cancelPendingMessageEdit(...args),
                editPendingMessage: (...args) => globalThis.harness.editPendingMessage(...args),
+               getAccounts: (...args) => globalThis.harness.getAccounts(...args),
+               useAccount: (...args) => globalThis.harness.useAccount(...args),
+               getUsage: (...args) => globalThis.harness.getUsage(...args),
                createAccount: (...args) => globalThis.harness.createAccount(...args),
                getConnections: (...args) => globalThis.harness.connection('list', ...args),
                connectProvider: (...args) => globalThis.harness.connection('connect', ...args),
@@ -196,13 +199,22 @@ test('local known-chat listing returns views while native discovery is unavailab
 })
 
 test('processed background updates deliver a ready view without requiring a selected transcript', () => {
-  const h=setup()
-  h.harness.publish({providerId:'codex',chatId:'background',conversationKnown:true,
-    turnCompleted:false,summary:{id:'background',revision:1,status:'active'},
-    detail:{id:'background',revision:1,items:[{type:'message',id:'u',role:'user',content:'Background message'}]}})
-  assert.equal(h.sent[0].event.detail,null)
-  assert.equal(h.sent[0].event.conversationView.conversationView,true)
-  assert.equal(h.sent[0].event.conversationView.items[0].content,'Background message')
+  const h = setup()
+  h.harness.publish({
+    providerId: 'codex',
+    chatId: 'background',
+    conversationKnown: true,
+    turnCompleted: false,
+    summary: { id: 'background', revision: 1, status: 'active' },
+    detail: {
+      id: 'background',
+      revision: 1,
+      items: [{ type: 'message', id: 'u', role: 'user', content: 'Background message' }]
+    }
+  })
+  assert.equal(h.sent[0].event.detail, null)
+  assert.equal(h.sent[0].event.conversationView.conversationView, true)
+  assert.equal(h.sent[0].event.conversationView.items[0].content, 'Background message')
 })
 
 test('first processing commits its durable view before replying, and discovery attaches known views', async () => {
@@ -827,4 +839,80 @@ test('a full renderer reload releases its edit while hash and subframe navigatio
   h.contents.emit('did-start-navigation', {}, 'about:blank', false, true)
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(Array.from(released[0]), ['copilot', 'chat', 'message', 'edit'])
+})
+
+test('account IPC preserves validated chat scope and rejects malformed IDs', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.createAccount = async (...args) => {
+    calls.push(JSON.parse(JSON.stringify(args)))
+  }
+  const create = h.harness.handlers.get(channels.createAccount)
+  await create({}, 'claude', { chatId: 'saved-chat', accountId: 'cannot-override-credentials' })
+  assert.deepEqual(calls, [['claude', { chatId: 'saved-chat' }]])
+  for (const chatId of ['', 42, 'a\0b', 'x'.repeat(513)])
+    assert.throws(() => create({}, 'claude', { chatId }), /Invalid chat ID/)
+})
+
+test('new-chat account operations accept the null scope produced by JSON serialization', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.createAccount = async (...args) => {
+    calls.push(JSON.parse(JSON.stringify(args)))
+  }
+  const create = h.harness.handlers.get(channels.createAccount)
+  await create({}, 'codex', { chatId: null })
+  assert.deepEqual(calls, [['codex', {}]])
+})
+
+test('new-chat picker reads and switches the default without a chat ID', async () => {
+  const h = setup()
+  let account = 'personal'
+  h.harness.getAccounts = async (_provider, options) => {
+    assert.equal(options.chatId, undefined)
+    return account
+  }
+  h.harness.useAccount = async (_provider, id, options) => {
+    assert.equal(options.chatId, undefined)
+    account = id
+  }
+  const read = h.harness.handlers.get(channels.getAccounts)
+  const select = h.harness.handlers.get(channels.useAccount)
+  const serializedScope = JSON.parse(
+    JSON.stringify({
+      container: null,
+      chatId: JSON.parse(JSON.stringify(['codex', null, undefined]))[2]
+    })
+  )
+  assert.equal(await read({}, 'codex', serializedScope), 'personal')
+  await select({}, 'codex', 'work', serializedScope)
+  assert.equal(await read({}, 'codex', serializedScope), 'work')
+})
+
+test('usage IPC follows each chat account and preserves the default for new chats', async () => {
+  const h = setup()
+  const accounts = new Map([['chat', 'personal']])
+  let defaultAccount = 'work'
+  h.harness.useAccount = async (_provider, account, options) => {
+    if (options?.chatId) accounts.set(options.chatId, account)
+    else defaultAccount = account
+  }
+  h.harness.getUsage = async (_provider, options) => {
+    const account = options?.chatId ? accounts.get(options.chatId) : defaultAccount
+    return {
+      rateLimits: [{ usedPercent: account === 'personal' ? 10 : 80 }],
+      statisticsLoaded: options?.includeStatistics
+    }
+  }
+  const usage = h.harness.handlers.get(channels.getUsage)
+  const select = h.harness.handlers.get(channels.useAccount)
+  assert.equal((await usage({}, 'codex', { chatId: 'chat' })).rateLimits[0].usedPercent, 10)
+  await select({}, 'codex', 'work', { chatId: 'chat' })
+  assert.equal((await usage({}, 'codex', { chatId: 'chat' })).rateLimits[0].usedPercent, 80)
+  await select({}, 'codex', 'personal', { chatId: null })
+  assert.equal((await usage({}, 'codex', { chatId: 'chat' })).rateLimits[0].usedPercent, 80)
+  const nextChat = await usage({}, 'codex', { chatId: null, includeStatistics: true })
+  assert.equal(nextChat.rateLimits[0].usedPercent, 10)
+  assert.equal(nextChat.statisticsLoaded, true)
+  assert.throws(() => usage({}, 'codex', { chatId: 42 }), /Invalid chat ID/)
 })

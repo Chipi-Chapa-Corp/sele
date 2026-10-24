@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
-import { Settings2, X } from 'lucide-react'
+import { Settings2, Trash2, X } from 'lucide-react'
 import type { AppContainerTarget } from '../../../../shared/app'
 import type { ProviderConnection } from '../../../../shared/providerConnections'
 import { Dropdown } from '../../components/Dropdown'
@@ -98,7 +98,7 @@ export function useSidebarOpenCodeProvider(
               id: 'delete-connection',
               ariaLabel: `Delete ${provider.name} connection`,
               title: 'Delete connection',
-              icon: <X aria-hidden="true" />,
+              icon: <Trash2 aria-hidden="true" />,
               disabled: deleting,
               callback: () => remove(provider)
             }

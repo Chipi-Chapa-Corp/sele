@@ -97,9 +97,15 @@ export class ClaudeAccountStore {
       return value.accounts.find((account) => account.id === value.activeId) ?? null
     })
 
-  getUsageEnvironment = (env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> =>
+  getUsageEnvironment = (env: NodeJS.ProcessEnv, accountId?: string): Promise<NodeJS.ProcessEnv> =>
     this.serialize(async () => {
-      const { activeId } = await this.load()
+      const value = await this.load()
+      const activeId = accountId ?? value.activeId
+      if (
+        activeId !== claudeDefaultAccountId &&
+        !value.accounts.some((account) => account.id === activeId)
+      )
+        throw new Error('Claude account was not found.')
       return this.storage.usageEnvironment(
         activeId,
         getClaudeAccountEnvironment(
@@ -109,9 +115,15 @@ export class ClaudeAccountStore {
       )
     })
 
-  getUsageAccessToken = (env: NodeJS.ProcessEnv): Promise<string> =>
+  getUsageAccessToken = (env: NodeJS.ProcessEnv, accountId?: string): Promise<string> =>
     this.serialize(async () => {
-      const { activeId } = await this.load()
+      const value = await this.load()
+      const activeId = accountId ?? value.activeId
+      if (
+        activeId !== claudeDefaultAccountId &&
+        !value.accounts.some((account) => account.id === activeId)
+      )
+        throw new Error('Claude account was not found.')
       if (activeId === claudeDefaultAccountId && env.CLAUDE_CODE_OAUTH_TOKEN)
         return env.CLAUDE_CODE_OAUTH_TOKEN
       const content = await this.storage.readCredentials(activeId)

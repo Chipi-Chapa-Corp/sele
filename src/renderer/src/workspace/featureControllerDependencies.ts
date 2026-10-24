@@ -288,6 +288,7 @@ export type SettingsControllerDependencies = {
   newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode'
   newSessionContainerKey: string
   setProjects: React.Dispatch<React.SetStateAction<AppProject[]>>
+  setDeletedProjectCwds: React.Dispatch<React.SetStateAction<Set<string>>>
   setNewSessionCwd: React.Dispatch<React.SetStateAction<string | null>>
   setProjectDialogOpen: React.Dispatch<React.SetStateAction<boolean>>
   setProjectIconsByGroup: React.Dispatch<

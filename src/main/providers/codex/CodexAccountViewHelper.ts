@@ -1,4 +1,4 @@
-export const codexAccountViewHelperVersion = '4'
+export const codexAccountViewHelperVersion = '5'
 export const codexAccountViewHelperPath = '/usr/local/libexec/sele-codex-account-view'
 
 export const codexAccountViewHelperScript = String.raw`#!/bin/sh
@@ -62,37 +62,12 @@ install_helper() {
 
 supervise_command() {
   [ "$#" -ge 3 ] || fail 'invalid supervisor arguments'
-  codex_home=$1
-  account_id=$2
   shift 2
   PATH=$caller_path
   export PATH
-  exec 3<&0
-  "$@" <&3 &
-  command_pid=$!
-  (
-    exec 3<&-
-    while kill -0 "$command_pid" 2>/dev/null; do
-      sleep 1
-      current=''
-      if [ -r "$codex_home/sele/active-account" ]; then
-        IFS= read -r current < "$codex_home/sele/active-account" || true
-      fi
-      [ "$current" = "$account_id" ] || {
-        kill "$command_pid" 2>/dev/null || true
-        exit 0
-      }
-    done
-  ) </dev/null >/dev/null 2>&1 &
-  watcher_pid=$!
-  trap 'kill "$command_pid" "$watcher_pid" 2>/dev/null || true' HUP INT TERM
-  if wait "$command_pid"; then
-    status=0
-  else
-    status=$?
-  fi
-  kill "$watcher_pid" 2>/dev/null || true
-  exit "$status"
+  # The outer account-view process watches default-account changes. Pinned chat
+  # runtimes must survive those changes, including after dropping privileges.
+  exec "$@"
 }
 
 case "${'${'}1:-}" in

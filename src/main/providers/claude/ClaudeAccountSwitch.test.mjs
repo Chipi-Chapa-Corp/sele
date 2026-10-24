@@ -60,7 +60,7 @@ const findAutomaticUsage = (node) => {
   if (
     ts.isCallExpression(node) &&
     node.expression.getText(selectionSource) === 'useEffect' &&
-    /\.getUsage\(providerId, \{ container \}\)/.test(
+    /\.getUsage\(providerId, \{ container, chatId: selectedChatId \}\)/.test(
       node.arguments[0]?.getText(selectionSource) ?? ''
     )
   ) {
@@ -140,6 +140,7 @@ for (const fail of [false, true]) {
       changesContainer: null,
       normalizeContainerTarget,
       usageScope: scope,
+      selectedChatId: undefined,
       usageScopeRef: scopeRef,
       providerApi: {
         getUsage: async () => {

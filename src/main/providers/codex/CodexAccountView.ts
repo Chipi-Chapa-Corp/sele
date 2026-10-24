@@ -1,14 +1,23 @@
+import { isCodexAccountId } from './CodexAccountConfig.ts'
+
 const accountViewScript = String.raw`
 set -eu
+pinned=$1
+shift
 platform=$(uname -s 2>/dev/null || printf 'Unknown')
 if [ "$platform" != 'Linux' ]; then
   exec "$@"
 fi
 codex_home=${'${'}CODEX_HOME:-"$HOME/.codex"}
 sele_home="$codex_home/sele"
-active=''
-if [ -r "$sele_home/active-account" ]; then
+active=$pinned
+if [ "$active" = '' ] && [ -r "$sele_home/active-account" ]; then
   IFS= read -r active < "$sele_home/active-account" || true
+fi
+if [ "$active" = 'default' ]; then active=''; fi
+if [ "$pinned" != '' ] && [ "$pinned" != 'default' ] && [ ! -f "$sele_home/accounts/$pinned/auth.json" ]; then
+  printf 'This chat account is no longer available. Select another account for this chat.\n' >&2
+  exit 1
 fi
 selected=''
 exec 3<&0
@@ -69,7 +78,7 @@ codex_pid=$!
         current=''
         ;;
     esac
-    if [ "$current" != "$selected" ]; then
+    if [ "$pinned" = '' ] && [ "$current" != "$selected" ]; then
       kill "$codex_pid" 2>/dev/null || true
       exit 0
     fi
@@ -94,11 +103,15 @@ export type CodexAccountViewCommand = {
 export const getCodexAccountViewCommand = (
   binary: string,
   args: string[],
-  enabled = process.platform === 'linux'
-): CodexAccountViewCommand =>
-  enabled
+  enabled = process.platform === 'linux',
+  accountId?: string
+): CodexAccountViewCommand => {
+  if (accountId && accountId !== 'default' && !isCodexAccountId(accountId))
+    throw new Error('Invalid Codex account ID')
+  return enabled
     ? {
         file: 'sh',
-        args: ['-c', accountViewScript, 'sele-codex-view', binary, ...args]
+        args: ['-c', accountViewScript, 'sele-codex-view', accountId ?? '', binary, ...args]
       }
     : { file: binary, args }
+}

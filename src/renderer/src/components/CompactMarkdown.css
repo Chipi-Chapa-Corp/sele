@@ -1,0 +1,67 @@
+.compact-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.compact-markdown > :first-child {
+  margin-top: 0;
+}
+
+.compact-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.compact-markdown p {
+  margin: 0 0 0.6em;
+}
+
+.compact-markdown :is(ul, ol) {
+  margin: 0.4em 0 0.6em;
+  padding-left: 1.4em;
+}
+
+.compact-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0.8em 0 0.4em;
+  font-size: 1.1em;
+}
+
+.compact-markdown code {
+  padding: 0.1em 0.25em;
+  border-radius: 0.2rem;
+  background: var(--depth-popup-surface);
+  font-family: var(--code-font-family);
+  font-size: 0.9em;
+}
+
+.compact-markdown pre {
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre;
+}
+
+.compact-markdown pre code {
+  display: block;
+  padding: 0.5em;
+}
+
+.compact-markdown blockquote {
+  margin: 0.5em 0;
+  padding-left: 0.75em;
+  border-left: 0.15rem solid var(--panel-border);
+}
+
+.compact-markdown a {
+  color: var(--lead);
+  text-decoration: underline;
+}
+
+.compact-markdown img {
+  max-width: 100%;
+}
+
+.compact-markdown--inline {
+  white-space: inherit;
+  line-height: inherit;
+}

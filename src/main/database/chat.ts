@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 import type { AppContainerTarget } from '../../shared/app'
-import type { ProviderChatMetadata, ProviderChatPurpose } from '../../shared/provider'
+import type { ProviderChat, ProviderChatMetadata, ProviderChatPurpose } from '../../shared/provider'
 import { isProviderChatPurpose } from '../../shared/provider'
 import { isContainerTool, normalizeContainerTarget } from '../containerTarget'
 import { getDatabase } from './sqlite'
@@ -52,6 +52,7 @@ const mapContainerTarget = (
 }
 
 const mapChatMetadataRow = (row: {
+  account_id: string | null
   container_name: string | null
   container_runtime_name: string | null
   container_runtime_tool: string | null
@@ -66,6 +67,7 @@ const mapChatMetadataRow = (row: {
   purpose: ProviderChatPurpose | null
 }): ProviderChatMetadata => ({
   id: row.id,
+  accountId: row.account_id,
   noProject: toBoolean(row.no_project),
   pinned: toBoolean(row.pinned),
   sidebarOrder: toNumberOrNull(row.pinned_order),
@@ -91,6 +93,7 @@ export const getChatMetadata = async (chatId: string): Promise<ProviderChatMetad
       .selectFrom('chat')
       .select([
         'id',
+        'account_id',
         'container_tool',
         'container_name',
         'container_runtime_tool',
@@ -125,6 +128,7 @@ export const getChatMetadataByIds = async (
       .selectFrom('chat')
       .select([
         'id',
+        'account_id',
         'container_tool',
         'container_name',
         'container_runtime_tool',
@@ -358,4 +362,76 @@ export const setChatsDone = async (
   ids.forEach((id) => metadataCache.invalidate(id))
   const metadataById = await getChatMetadataByIds(ids)
   return ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
+}
+
+/** Bind only once unless the user explicitly changes this chat's account. */
+export const setChatAccount = async (
+  chatId: string,
+  accountId: string,
+  replace = false
+): Promise<string> => {
+  const db = await getDatabase()
+  await db
+    .insertInto('chat')
+    .values({ id: chatId, pinned: 0, done: 0, account_id: accountId })
+    .onConflict((conflict) =>
+      conflict.column('id').doUpdateSet({
+        account_id: replace ? accountId : sql<string>`coalesce(chat.account_id, ${accountId})`
+      })
+    )
+    .execute()
+  metadataCache.invalidate(chatId)
+  return (await getChatMetadata(chatId)).accountId!
+}
+
+export const bindChatAccounts = async (
+  chats: Pick<ProviderChat, 'id' | 'container'>[],
+  accountId: string
+): Promise<Map<string, ProviderChatMetadata>> => {
+  const ids = uniqueChatIds(chats.map((chat) => chat.id))
+  const byId = new Map(chats.map((chat) => [chat.id, chat]))
+  const existing = await getChatMetadataByIds(ids)
+  const unbound = ids.filter(
+    (id) =>
+      !existing.get(id)?.accountId ||
+      (!existing.get(id)?.container && byId.get(id)?.container?.kind === 'container')
+  )
+  if (!unbound.length) return existing
+  const db = await getDatabase()
+  for (let index = 0; index < unbound.length; index += chatMetadataChunkSize) {
+    await db
+      .insertInto('chat')
+      .values(
+        unbound.slice(index, index + chatMetadataChunkSize).map((id) => {
+          const target = normalizeContainerTarget(byId.get(id)?.container)
+          const container = target.kind === 'container' ? target : null
+          const runtime =
+            container?.tool === 'ssh' && container.runtime?.kind === 'container'
+              ? container.runtime
+              : null
+          return {
+            id,
+            pinned: 0,
+            done: 0,
+            account_id: accountId,
+            container_tool: container?.tool ?? null,
+            container_name: container?.name ?? null,
+            container_runtime_tool: runtime?.tool ?? null,
+            container_runtime_name: runtime?.name ?? null
+          }
+        })
+      )
+      .onConflict((conflict) =>
+        conflict.column('id').doUpdateSet({
+          account_id: sql<string>`coalesce(chat.account_id, ${accountId})`,
+          container_tool: sql<string>`coalesce(chat.container_tool, excluded.container_tool)`,
+          container_name: sql<string>`coalesce(chat.container_name, excluded.container_name)`,
+          container_runtime_tool: sql<string>`coalesce(chat.container_runtime_tool, excluded.container_runtime_tool)`,
+          container_runtime_name: sql<string>`coalesce(chat.container_runtime_name, excluded.container_runtime_name)`
+        })
+      )
+      .execute()
+  }
+  unbound.forEach((id) => metadataCache.invalidate(id))
+  return getChatMetadataByIds(ids)
 }

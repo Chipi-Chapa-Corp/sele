@@ -1,6 +1,7 @@
 import { preferences as preferenceStorage } from '../preferences.ts'
 import { useEffect, useId, useRef, useState } from 'react'
 import { ArrowRight, Check, ChevronUp, Minus } from 'lucide-react'
+import { CompactMarkdown } from './CompactMarkdown'
 import './ChatPlan.css'
 
 const seenPlansStorageKey = 'sele:seen-chat-plans:v1'
@@ -134,7 +135,7 @@ export const ChatPlan: React.FC<ChatPlanProps> = ({ plan }) => {
         </span>
         {currentItem && (
           <span className="chat-plan__current" aria-hidden="true">
-            {currentItem.step}
+            <CompactMarkdown content={currentItem.step} inline />
           </span>
         )}
         <span className="chat-plan__progress" aria-hidden="true">
@@ -149,6 +150,11 @@ export const ChatPlan: React.FC<ChatPlanProps> = ({ plan }) => {
           role="region"
           aria-label="Plan items"
         >
+          {plan.explanation && (
+            <div className="chat-plan__explanation">
+              <CompactMarkdown content={plan.explanation} />
+            </div>
+          )}
           <ol className="chat-plan__list">
             {plan.items.map((item, index) => (
               <li
@@ -172,7 +178,7 @@ export const ChatPlan: React.FC<ChatPlanProps> = ({ plan }) => {
                       ? 'In progress: '
                       : 'Pending: '}
                 </span>
-                <span>{item.step}</span>
+                <CompactMarkdown content={item.step} />
               </li>
             ))}
           </ol>

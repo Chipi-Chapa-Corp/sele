@@ -4,6 +4,7 @@ import { getElicitationDefaults, record } from '../../../shared/elicitation'
 import { appApi } from '../appApi'
 import { Button } from './Button'
 import { Checkbox } from './Checkbox'
+import { CompactMarkdown } from './CompactMarkdown'
 import { Input } from './Input'
 
 type Props = {
@@ -106,9 +107,9 @@ export const ElicitationRequestBox = ({
           {interaction.serverName} ·{' '}
           {interaction.mode === 'url' ? 'External interaction' : 'Input needed'}
         </span>
-        <span id={id} className="chat-approval__summary chat-user-input__question">
-          {request.question}
-        </span>
+        <div id={id} className="chat-approval__summary chat-user-input__question">
+          <CompactMarkdown content={request.question} />
+        </div>
         {interaction.mode === 'form' && (
           <form
             ref={formRef}

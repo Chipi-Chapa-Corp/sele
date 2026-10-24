@@ -572,6 +572,8 @@ export type AppApi = {
   handleExternalLink: (options: AppExternalLinkOptions) => Promise<AppExternalLinkResult | null>
   getDefaultCwd: () => Promise<string>
   getProjects: () => Promise<AppProject[]>
+  getDeletedProjectCwds: () => Promise<string[]>
+  deleteProject: (cwd: string) => Promise<void>
   addProject: (options: AppAddProjectOptions) => Promise<AppProject>
   setProjectOrder: (cwds: string[]) => Promise<AppProject[]>
   getSshEnvironments: () => Promise<AppSshEnvironment[]>
@@ -649,6 +651,8 @@ export const appIpcChannels = {
   handleExternalLink: 'app:handle-external-link',
   getDefaultCwd: 'app:get-default-cwd',
   getProjects: 'app:get-projects',
+  getDeletedProjectCwds: 'app:get-deleted-project-cwds',
+  deleteProject: 'app:delete-project',
   addProject: 'app:add-project',
   setProjectOrder: 'app:set-project-order',
   getSshEnvironments: 'app:get-ssh-environments',

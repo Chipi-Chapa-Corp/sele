@@ -79,6 +79,8 @@ import {
 } from './database/projectIcons'
 import {
   addProject as addStoredProject,
+  deleteProject as deleteStoredProject,
+  getDeletedProjectCwds as getStoredDeletedProjectCwds,
   getProjects as getStoredProjects,
   setProjectOrder as setStoredProjectOrder
 } from './database/projects'
@@ -3157,6 +3159,12 @@ export const registerAppIpc = (): void => {
   handleLoggedIpc(appIpcChannels.getDefaultCwd, () => process.cwd())
 
   handleLoggedIpc(appIpcChannels.getProjects, () => getStoredProjects())
+  handleLoggedIpc(appIpcChannels.getDeletedProjectCwds, () => getStoredDeletedProjectCwds())
+  handleLoggedIpc(appIpcChannels.deleteProject, (_event, value: unknown) => {
+    const cwd = getOptionalCwd(value)
+    if (!cwd) throw new Error('Invalid project cwd')
+    return deleteStoredProject(cwd)
+  })
 
   handleLoggedIpc(appIpcChannels.addProject, async (_event, value: unknown) => {
     const options = getAddProjectOptions(value)

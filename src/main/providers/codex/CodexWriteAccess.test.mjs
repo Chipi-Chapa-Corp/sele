@@ -148,3 +148,157 @@ test('client ownership lasts through idle turns and clears on disposal or proces
     assert.equal(client.ownsThread('chat'), false)
   }
 })
+
+const releaseFixture = (globals = {}) => {
+  const client = extract(
+    './CodexAppServerClient.ts',
+    'CodexAppServerClient',
+    [
+      'ownedThreadIds',
+      'browserSessionCwds',
+      'notificationListeners',
+      'stoppedListeners',
+      'requestFailureListeners',
+      'onNotification',
+      'onStopped',
+      'ownsThread',
+      'request',
+      'releaseThread',
+      'handleLine'
+    ],
+    {
+      setTimeout,
+      clearTimeout,
+      requestTimeoutMs: 30_000,
+      registerBrowserUseSession() {},
+      ...globals
+    }
+  )
+  Object.assign(client, {
+    start: async () => {},
+    dynamicTools: { specs: [] },
+    sendRequest: async () => ({ status: 'unsubscribed' })
+  })
+  client.ownedThreadIds.add('chat')
+  client.ownedThreadIds.add('sibling')
+  client.browserSessionCwds.set('chat', '/chat')
+  const notify = (threadId) =>
+    client.handleLine(JSON.stringify({ method: 'thread/closed', params: { threadId } }))
+  return { client, notify }
+}
+
+test('account handoff waits for thread closure after unsubscribe without releasing sibling chats', async () => {
+  const { client, notify } = releaseFixture()
+  let released = false
+  const release = client.releaseThread('chat').then(() => {
+    released = true
+  })
+  await new Promise(setImmediate)
+  assert.equal(released, false)
+  assert.equal(client.ownsThread('chat'), true)
+  notify('unrelated')
+  await new Promise(setImmediate)
+  assert.equal(released, false)
+  notify('chat')
+  await release
+  assert.equal(client.ownsThread('chat'), false)
+  assert.equal(client.ownsThread('sibling'), true)
+  assert.equal(client.browserSessionCwds.has('chat'), false)
+  assert.equal(client.notificationListeners.size, 0)
+  assert.equal(client.stoppedListeners.size, 0)
+})
+
+test('account handoff handles closure before the unsubscribe response and already unloaded threads', async () => {
+  for (const status of ['unsubscribed', 'notLoaded']) {
+    const { client, notify } = releaseFixture()
+    client.sendRequest = async () => {
+      if (status === 'unsubscribed') notify('chat')
+      return { status }
+    }
+    await client.releaseThread('chat')
+    assert.equal(client.ownsThread('chat'), false)
+    assert.equal(client.notificationListeners.size, 0)
+  }
+})
+
+test('failed or timed out handoffs retain ownership and clean up before a retry', async () => {
+  for (const failure of ['request', 'timeout', 'stopped']) {
+    let expire
+    let cleared = false
+    const { client, notify } = releaseFixture({
+      setTimeout: (callback) => {
+        expire = callback
+        return 1
+      },
+      clearTimeout: () => {
+        cleared = true
+      }
+    })
+    if (failure === 'request')
+      client.sendRequest = async () => {
+        throw new Error('unsubscribe failed')
+      }
+    const release = client.releaseThread('chat')
+    if (failure === 'timeout') expire()
+    if (failure === 'stopped')
+      client.stoppedListeners.forEach((listener) => listener(new Error('stopped')))
+    await assert.rejects(release, /failed|still releasing|stopped/)
+    assert.equal(client.ownsThread('chat'), true)
+    assert.equal(client.notificationListeners.size, 0)
+    assert.equal(client.stoppedListeners.size, 0)
+    assert.equal(cleared, true)
+    // A timeout must still permit another unsubscribe and a successful handoff.
+    client.sendRequest = async () => ({ status: 'notSubscribed' })
+    const retry = client.releaseThread('chat')
+    notify('chat')
+    await retry
+    assert.equal(client.ownsThread('chat'), false)
+  }
+})
+
+test('switching an active chat stops it and waits for an outstanding ownership check before release', async () => {
+  const events = []
+  let checked
+  const check = new Promise((resolve) => {
+    checked = resolve
+  })
+  let closed
+  const adapter = extract('./CodexProviderAdapter.ts', 'CodexProviderAdapter', ['releaseChat'])
+  Object.assign(adapter, {
+    activeTurnIds: new Map([['chat', 'turn']]),
+    pendingTurnIds: new Map(),
+    pendingTurnStarts: new Map(),
+    pendingApprovalsByThread: new Map(),
+    queuedTurnsByThread: new Map(),
+    writeAccessChecks: new Map([['chat', check]]),
+    getThreadContainer: (_id, options) => options.container,
+    runWithContainer: (container, run) => {
+      assert.equal(container, 'fixture-container')
+      return run()
+    },
+    stopChat: async () => {
+      events.push('stop')
+    },
+    client: {
+      ownsThread: () => true,
+      releaseThread: () => {
+        events.push('release')
+        return new Promise((resolve) => {
+          closed = resolve
+        })
+      }
+    }
+  })
+  let released = false
+  const release = adapter.releaseChat('chat', { container: 'fixture-container' }).then(() => {
+    released = true
+  })
+  await new Promise(setImmediate)
+  assert.deepEqual(events, ['stop'])
+  checked()
+  await new Promise(setImmediate)
+  assert.deepEqual(events, ['stop', 'release'])
+  assert.equal(released, false)
+  closed()
+  await release
+})

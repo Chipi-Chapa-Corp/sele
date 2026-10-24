@@ -3,6 +3,7 @@ import { useId, useState } from 'react'
 import type { ProviderPendingUserInput } from '../../../shared/provider'
 import { getOptionalRenderableText, getRenderableText } from '../renderableText'
 import { Button } from './Button'
+import { CompactMarkdown } from './CompactMarkdown'
 import { Input } from './Input'
 
 type UserInputRequestBoxProps = {
@@ -57,9 +58,9 @@ export const UserInputRequestBox = ({
         />
       </span>
       <div className="chat-approval__main">
-        <span className="chat-approval__summary chat-user-input__question" id={questionId}>
-          {question}
-        </span>
+        <div className="chat-approval__summary chat-user-input__question" id={questionId}>
+          <CompactMarkdown content={question} />
+        </div>
         {choices.length > 0 && (
           <div
             className={`chat-user-input__choices${choicesHaveDescriptions ? ' chat-user-input__choices--described' : ''}`}
@@ -74,13 +75,15 @@ export const UserInputRequestBox = ({
                 label={
                   choice.description ? (
                     <span className="chat-user-input__choice-content">
-                      <span className="chat-user-input__choice-label">{choice.label}</span>
+                      <span className="chat-user-input__choice-label">
+                        <CompactMarkdown content={choice.label} inline />
+                      </span>
                       <span className="chat-user-input__choice-description">
-                        {choice.description}
+                        <CompactMarkdown content={choice.description} inline />
                       </span>
                     </span>
                   ) : (
-                    <span>{choice.label}</span>
+                    <CompactMarkdown content={choice.label} inline />
                   )
                 }
                 size="small"

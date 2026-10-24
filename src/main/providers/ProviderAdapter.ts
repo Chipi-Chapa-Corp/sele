@@ -51,6 +51,8 @@ export type HistoricalTokenUsageSnapshot = TokenUsageSummary & { sourceIdentity?
 
 export type ProviderAdapter = {
   id: ProviderId
+  /** Release one conversation before changing its credential runtime. */
+  releaseChat?: (chatId: string, options?: ProviderSourceOptions) => Promise<void>
   getChatTerminalTasks?: (chatId: string, options?: ProviderSourceOptions) => Promise<string[]>
   /** Import text exchanges while idle, preserving the session's own tool history. */
   importHistory?: (

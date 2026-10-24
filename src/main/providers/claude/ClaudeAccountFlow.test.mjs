@@ -465,3 +465,34 @@ test('fetches display names for saved accounts that have not been selected', asy
     await h.cleanup()
   }
 })
+
+test('chat reauthentication refreshes its saved account even while another account is selected', async () => {
+  const h = await setup()
+  try {
+    const a = await h.accounts.create()
+    await h.accounts.complete(a.accountId)
+    const b = await h.accounts.create()
+    await h.accounts.complete(b.accountId)
+    const { accountId, login } = await h.accounts.reauthenticate({ accountId: a.accountId })
+    assert.equal(accountId, a.accountId)
+    const command = h.commands.findLast((entry) => entry.args[1] === 'login')
+    assert.ok(command.options.env.CLAUDE_SECURESTORAGE_CONFIG_DIR.endsWith(a.accountId))
+    await h.accounts.select('default')
+    await h.accounts.submitCode(login.loginId, 'fixture-code')
+    await h.accounts.waitForLogin(accountId, login.loginId)
+    await h.accounts.complete(accountId)
+    assert.equal((await h.accounts.get()).accounts.find((account) => account.active).id, 'default')
+    assert.ok(
+      (await h.accounts.getEnvironment(null, a.accountId)).CLAUDE_SECURESTORAGE_CONFIG_DIR.endsWith(
+        a.accountId
+      )
+    )
+    await h.accounts.getUsageFallback({ accountId: a.accountId })
+    assert.equal(h.fixture.usageCalls.at(-1), `fixture-${a.accountId}`)
+    await h.accounts.remove(a.accountId)
+    await h.accounts.remove(b.accountId)
+    await assert.rejects(h.accounts.getUsageEnvironment(null, a.accountId), /not found/)
+  } finally {
+    await h.cleanup()
+  }
+})

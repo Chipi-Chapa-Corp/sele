@@ -262,6 +262,7 @@ const ChatSidebarFooter = memo(function ChatSidebarFooter({
           openCode={providerAccount.openCode}
           refreshKey={providerAccount.key}
           providerId={providerAccount.providerId}
+          chatId={providerAccount.chatId}
           container={providerAccount.container}
           available={providerAccount.available}
           updating={providerAccount.updating}

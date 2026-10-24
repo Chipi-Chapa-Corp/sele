@@ -11,6 +11,7 @@ import {
   Search,
   Sparkles,
   Terminal,
+  Trash2,
   X,
   Zap
 } from 'lucide-react'
@@ -348,7 +349,7 @@ export const ActionsButton = ({
             id: `delete-${action.id}`,
             ariaLabel: `Delete ${action.name}`,
             title: `Delete ${action.name}`,
-            icon: <X aria-hidden="true" />,
+            icon: <Trash2 aria-hidden="true" />,
             callback: () => handleDeleteAction(action.id)
           }
         ]

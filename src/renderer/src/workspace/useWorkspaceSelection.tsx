@@ -873,9 +873,16 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       container: changesContainer,
       providerId: usageProviderId,
       available: usageProviderAvailable,
-      revision: providerAccountRevision
+      revision: providerAccountRevision,
+      chatId: selectedChatId
     }),
-    [changesContainerKey, usageProviderId, usageProviderAvailable, providerAccountRevision]
+    [
+      changesContainerKey,
+      usageProviderId,
+      usageProviderAvailable,
+      providerAccountRevision,
+      selectedChatId
+    ]
   )
   const usageScopeRef = useRef<object | null>(usageScope)
   const [usageAuthentication, setUsageAuthentication] = useState<{
@@ -885,6 +892,11 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   const usageAuthenticationRequired =
     usageAuthentication?.scope === usageScope && usageAuthentication.required
   useLayoutEffect(() => {
+    if (usageScopeRef.current !== usageScope) {
+      setAccountUsage(null)
+      setAccountUsageState('loading')
+      setAccountUsageError(null)
+    }
     usageScopeRef.current = usageScope
     return () => {
       usageScopeRef.current = null
@@ -905,7 +917,11 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       setAccountUsageError(null)
 
       try {
-        const usage = await providerApi.getUsage(providerId, { ...options, container })
+        const usage = await providerApi.getUsage(providerId, {
+          ...options,
+          container,
+          chatId: selectedChatId
+        })
         if (usageScopeRef.current !== usageScope) return
         setUsageAuthentication({
           scope: usageScope,
@@ -925,16 +941,18 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       usageProviderAvailabilityReady,
       usageProviderAvailable,
       usageProviderId,
-      usageScope
+      usageScope,
+      selectedChatId
     ]
   )
   const resetAccountRateLimits = useCallback(() => {
     if (!usageProviderAvailable) return Promise.resolve('nothingToReset' as const)
 
     return providerApi.resetRateLimits(usageProviderId, {
-      container: normalizeContainerTarget(changesContainer)
+      container: normalizeContainerTarget(changesContainer),
+      chatId: selectedChatId
     })
-  }, [changesContainer, usageProviderAvailable, usageProviderId])
+  }, [changesContainer, usageProviderAvailable, usageProviderId, selectedChatId])
   useEffect(() => {
     let active = true
 
@@ -961,7 +979,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     })
 
     providerApi
-      .getUsage(providerId, { container })
+      .getUsage(providerId, { container, chatId: selectedChatId })
       .then((usage) => {
         if (!active || usageScopeRef.current !== usageScope) return
         setUsageAuthentication({
@@ -974,7 +992,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       .catch((error) => {
         console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
 
-        if (!active) return
+        if (!active || usageScopeRef.current !== usageScope) return
         setAccountUsageState('error')
         setAccountUsageError(getErrorMessage(error, 'Unable to load usage.'))
       })

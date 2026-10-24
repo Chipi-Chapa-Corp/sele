@@ -93,6 +93,7 @@ export type LocalDatabase = {
   }
   chat: {
     id: string
+    account_id: string | null
     container_name: string | null
     container_runtime_name: string | null
     container_runtime_tool: string | null
@@ -148,6 +149,9 @@ export type LocalDatabase = {
     sidebar_order: SqliteNullableNumberColumn
     added_at: number
     updated_at: number
+  }
+  deleted_projects: {
+    cwd: string
   }
   ssh_environments: {
     id: string
@@ -340,6 +344,12 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .execute()
 
   await db.schema
+    .createTable('deleted_projects')
+    .ifNotExists()
+    .addColumn('cwd', 'text', (column) => column.primaryKey())
+    .execute()
+
+  await db.schema
     .createTable('ssh_environments')
     .ifNotExists()
     .addColumn('id', 'text', (column) => column.primaryKey())
@@ -379,6 +389,28 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   await ensureColumn(db, 'cwd_metadata', 'worktree_base_branch_name', () =>
     db.schema.alterTable('cwd_metadata').addColumn('worktree_base_branch_name', 'text').execute()
   )
+  await ensureColumn(db, 'chat', 'account_id', async () => {
+    await db.transaction().execute(async (transaction) => {
+      await transaction.schema.alterTable('chat').addColumn('account_id', 'text').execute()
+      // Codex and Claude share native history across credentials. Preserve the newest
+      // opening view when moving from a global-account namespace to chat-owned accounts.
+      const scope = JSON.stringify([['chat-accounts', null]])
+      await sql`insert into conversation_view (scope_key, format_version, payload, updated_at)
+        select json_set(scope_key, '$[1]', ${scope}), format_version, payload, updated_at
+        from conversation_view
+        where (json_extract(scope_key, '$[0]') like '["codex",%'
+          or json_extract(scope_key, '$[0]') like '["claude",%')
+          and json_extract(scope_key, '$[1]') != ${scope}
+        on conflict(scope_key) do update set
+          format_version = excluded.format_version, payload = excluded.payload,
+          updated_at = excluded.updated_at
+        where excluded.updated_at > conversation_view.updated_at`.execute(transaction)
+      await sql`delete from conversation_view
+        where (json_extract(scope_key, '$[0]') like '["codex",%'
+          or json_extract(scope_key, '$[0]') like '["claude",%')
+          and json_extract(scope_key, '$[1]') != ${scope}`.execute(transaction)
+    })
+  })
   await ensureColumn(db, 'chat', 'no_project', () =>
     db.schema
       .alterTable('chat')

@@ -59,11 +59,12 @@ flushes promptly. Shutdown awaits pending and in-flight view writes before closi
 storage. Background UI deliveries include a ready viewport on first ingestion and
 completion; selected chats continue receiving ordinary incremental updates.
 
-Namespaces include the provider, active account identity, environment/runtime, and
-chat ID. Confirmed configurations without an active account have a separate empty
-account namespace. Account mutations invalidate pending reads/writes. Source keys
-prevent host, container, and SSH runtime collisions. Local display state is cleared
-on account revision changes, then repopulated from the matching namespace.
+Namespaces include the provider, environment/runtime, and chat ID. Codex and Claude
+share native history between credentials, so their opening views use a shared
+account namespace: changing the new-chat default keeps existing chats visible.
+The upgrade merges older account namespaces and retains the newest opening view.
+Each chat's credential binding is stored independently in `chat.account_id`.
+Other providers retain their account-scoped namespaces and invalidation behavior.
 
 The previous expiring `chat_history_page`/`chat_history_turn` cache is legacy storage.
 Still-valid legacy pages are adopted into the durable model during discovery. Its

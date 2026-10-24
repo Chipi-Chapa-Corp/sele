@@ -20,6 +20,23 @@ const source = (path) =>
     ts.ScriptTarget.Latest,
     true
   )
+const codexStatusSource = source('./codex/CodexProviderAdapter.ts')
+const codexStatuses = vm.runInNewContext(
+  ts.transpile(
+    `${codexStatusSource.statements
+      .filter(ts.isVariableStatement)
+      .flatMap((node) => [...node.declarationList.declarations])
+      .filter((node) =>
+        ['getThreadMetadataStatus', 'getHydratedThreadStatus'].includes(
+          node.name.getText(codexStatusSource)
+        )
+      )
+      .map((node) => `const ${node.getText(codexStatusSource)}`)
+      .join('\n')}
+    ({ getThreadMetadataStatus, getHydratedThreadStatus })`,
+    { target: ts.ScriptTarget.ES2022 }
+  )
+)
 const adapter = (path, methods, globals) => {
   const parsed = source(path)
   const declaration = parsed.statements.find(
@@ -73,18 +90,20 @@ test('Codex cold sidebar reads a stopped last turn before opening it, and after 
       './codex/CodexProviderAdapter.ts',
       ['getChatsInContext', 'getSidebarTurnSummary'],
       {
+        ...codexStatuses,
         getCodexTurnOutcome,
         isCodexSubagentThread: () => false,
         loadSessionThreadNames: async () => new Map(),
         getThreadTitle: () => 'Chat',
-        getThreadApiCwd: () => '/repo',
-        getThreadMetadataStatus: () => null
+        getThreadApiCwd: () => '/repo'
       }
     )
     Object.assign(instance, {
       id: 'codex',
       userQuestions: { getPending: () => null },
       threadListScanClients: new WeakSet(),
+      pendingTurnStarts: new Map(),
+      pendingTurnIds: new Map(),
       withResolvedThreadName: (value) => value,
       rememberThreadContainer() {},
       getProviderPendingApproval: () => null,
@@ -470,8 +489,7 @@ const coldFixture = (provider, outcome) => {
         loadSessionThreadNames: async () => new Map(),
         getThreadTitle: () => 'Chat',
         getThreadApiCwd: () => '/repo',
-        getThreadMetadataStatus: () => null,
-        getHydratedThreadStatus: () => null,
+        ...codexStatuses,
         assertReadableCodexHistory() {},
         isLegacyCodexHistory: () => false,
         codexCapabilities: {}
@@ -505,9 +523,51 @@ const coldFixture = (provider, outcome) => {
   return {
     list: () => instance.getChatsInContext(),
     open: () => instance.createChatDetail(thread),
-    thread
+    thread,
+    instance
   }
 }
+
+test('Codex sidebar refresh agrees with terminal turns despite stale active metadata', async () => {
+  for (const outcome of ['stopped', 'failed', null]) {
+    for (const activeFlags of [[], ['waitingOnApproval'], ['waitingOnUserInput']]) {
+      const fixture = coldFixture('codex', outcome)
+      fixture.thread.status = { type: 'active', activeFlags }
+      for (let refresh = 0; refresh < 2; refresh++) {
+        const [listed] = (await fixture.list()).chats
+        const opened = fixture.open()
+        assert.equal(listed.status, null)
+        assert.equal(listed.status, opened.status)
+        assert.equal(listed.lastTurnOutcome, outcome)
+        assert.equal(listed.lastTurnOutcome, opened.lastTurnOutcome)
+      }
+    }
+  }
+})
+
+test('Codex sidebar keeps live turns and local submissions active', async () => {
+  for (const type of ['notLoaded', 'idle', 'active']) {
+    const fixture = coldFixture('codex', 'stopped')
+    fixture.thread.status = { type, activeFlags: [] }
+    fixture.thread.turns.at(-1).status = 'inProgress'
+    const [listed] = (await fixture.list()).chats
+    assert.equal(listed.status, 'active')
+    assert.equal(listed.lastTurnOutcome, null)
+  }
+  for (const pending of ['pendingTurnStarts', 'pendingTurnIds']) {
+    const fixture = coldFixture('codex', 'stopped')
+    fixture.instance[pending] = new Map([['chat', 'new-turn']])
+    const [listed] = (await fixture.list()).chats
+    assert.equal(listed.status, 'active')
+    assert.equal(listed.lastTurnOutcome, null)
+  }
+  for (const flag of ['waitingOnApproval', 'waitingOnUserInput']) {
+    const fixture = coldFixture('codex', null)
+    fixture.thread.status = { type: 'active', activeFlags: [flag] }
+    fixture.thread.turns.at(-1).status = 'inProgress'
+    assert.equal((await fixture.list()).chats[0].status, flag)
+  }
+})
 
 test('Codex restart and ownership metadata refreshes preserve the last conversation activity time', async () => {
   const seenUpdatedAt = 4000

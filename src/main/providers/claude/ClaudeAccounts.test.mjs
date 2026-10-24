@@ -357,3 +357,22 @@ test('legacy custom labels are discarded without changing account selection or c
   assert.deepEqual(h.saved(), { activeId: id, accounts: [{ id }] })
   assert.deepEqual(h.removed, [])
 })
+
+test('explicit chat credentials and usage stay pinned while the default account changes', async () => {
+  const h = fixture()
+  h.storage.usageEnvironment = async (id, env) => ({ ...env, usageAccount: id })
+  h.storage.readCredentials = async (id) =>
+    JSON.stringify({ claudeAiOauth: { accessToken: `token-${id}` } })
+  const a = await h.store.create()
+  await h.store.complete(a.accountId)
+  const b = await h.store.create()
+  await h.store.complete(b.accountId)
+  assert.equal((await h.store.getUsageEnvironment({}, a.accountId)).usageAccount, a.accountId)
+  assert.equal(await h.store.getUsageAccessToken({}, a.accountId), `token-${a.accountId}`)
+  await h.store.select('default')
+  assert.equal((await h.store.getUsageEnvironment({}, a.accountId)).usageAccount, a.accountId)
+  assert.equal(await h.store.getUsageAccessToken({}, a.accountId), `token-${a.accountId}`)
+  assert.equal((await h.store.get()).accounts.find((account) => account.active).id, 'default')
+  await h.store.remove(a.accountId)
+  await assert.rejects(h.store.getUsageAccessToken({}, a.accountId), /not found/)
+})

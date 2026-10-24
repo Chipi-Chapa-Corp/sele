@@ -101,6 +101,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     newSessionProvider,
     newSessionContainerKey,
     setProjects,
+    setDeletedProjectCwds,
     setNewSessionCwd,
     setProjectDialogOpen,
     setProjectIconsByGroup,
@@ -645,20 +646,36 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
       }
     }))
   }
-  const rememberProject = useCallback(async (cwd: string | null | undefined): Promise<void> => {
-    const normalizedCwd = cwd?.trim()
-    if (!normalizedCwd) return
+  const restoreProject = useCallback(
+    (cwd: string): void => {
+      setDeletedProjectCwds((current) => {
+        if (!current.has(cwd)) return current
+        const next = new Set(current)
+        next.delete(cwd)
+        return next
+      })
+    },
+    [setDeletedProjectCwds]
+  )
+  const rememberProject = useCallback(
+    async (cwd: string | null | undefined): Promise<void> => {
+      const normalizedCwd = cwd?.trim()
+      if (!normalizedCwd) return
 
-    try {
-      const project = await appApi.addProject({ cwd: normalizedCwd })
-      setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
-    } catch (error) {
-      console.error('[caught:useSettingsController:useSettingsController]', error)
-      // Keep the project selected even if local persistence fails.
-    }
-  }, [])
+      try {
+        const project = await appApi.addProject({ cwd: normalizedCwd })
+        setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
+        restoreProject(project.cwd)
+      } catch (error) {
+        console.error('[caught:useSettingsController:useSettingsController]', error)
+        // Keep the project selected even if local persistence fails.
+      }
+    },
+    [restoreProject, setProjects]
+  )
   const handleProjectSaved = (project: AppProject, image: AppProjectIcon | null): void => {
     setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
+    restoreProject(project.cwd)
     setNewSessionCwd(project.cwd)
     setProjectDialogOpen(false)
 

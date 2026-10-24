@@ -1,7 +1,7 @@
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { AnimatePresence } from 'motion/react'
 import { MotionSurface } from '../motion/MotionSurface'
-import { Plus, StickyNote, X } from 'lucide-react'
+import { Plus, StickyNote, Trash2 } from 'lucide-react'
 import {
   type CSSProperties,
   type FormEvent,
@@ -178,7 +178,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
                   ariaLabel: 'Remove note',
                   title: 'Remove note',
                   callback: () => handleRemoveNote(note.id),
-                  icon: <X aria-hidden="true" />
+                  icon: <Trash2 aria-hidden="true" />
                 }
               ]}
               key={note.id}

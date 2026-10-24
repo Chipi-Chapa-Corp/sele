@@ -1318,6 +1318,8 @@ const getTurnAccessOptions = (options?: ProviderTurnOptions): CodexTurnAccessOpt
 }
 
 export class CodexProviderAdapter implements ProviderAdapter {
+  constructor(private readonly accountId?: string) {}
+
   private pendingMessageEdits = new PendingMessageEdits()
   private authenticationFailures = new Set<string>()
 
@@ -1466,7 +1468,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const existingClient = this.clients.get(key)
     if (existingClient) return existingClient
 
-    const client = new CodexAppServerClient(storedContainer)
+    const client = new CodexAppServerClient(storedContainer, this.accountId)
     client.onRequestFailed((method, _params, error) => {
       if (!/^(?:account|thread|turn|model)\//.test(method) || !isCodexAuthenticationFailure(error))
         return
@@ -1559,6 +1561,20 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.emitChatUpdated(threadId)
     })
   }
+
+  releaseChat = (chatId: string, options: ProviderSourceOptions = {}): Promise<void> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      if (
+        this.activeTurnIds.has(chatId) ||
+        this.pendingTurnIds.has(chatId) ||
+        this.pendingTurnStarts.has(chatId) ||
+        this.pendingApprovalsByThread.get(chatId)?.length ||
+        this.queuedTurnsByThread.get(chatId)?.length
+      )
+        await this.stopChat(chatId)
+      await this.writeAccessChecks.get(chatId)
+      if (this.client.ownsThread(chatId)) await this.client.releaseThread(chatId)
+    })
 
   waitForLogin = (
     loginId: string,
@@ -2287,6 +2303,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         // Listing metadata has no turn outcome. Read only the latest native turn shell;
         // never hydrate or resume sidebar conversations just to draw their status dots.
         const latestTurn = await this.getSidebarTurnSummary(namedThread)
+        const status = latestTurn ? latestTurn.status : getThreadMetadataStatus(namedThread)
 
         return {
           id: namedThread.id,
@@ -2302,10 +2319,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
           // Resuming/claiming a thread can touch its metadata without producing new content.
           updatedAt: latestTurn?.updatedAt || namedThread.updatedAt * 1_000,
           status:
-            this.userQuestions.getPending(namedThread.id) &&
-            getThreadMetadataStatus(namedThread) !== 'waitingOnApproval'
+            this.userQuestions.getPending(namedThread.id) && status !== 'waitingOnApproval'
               ? 'waitingOnUserInput'
-              : getThreadMetadataStatus(namedThread),
+              : status,
           lastTurnOutcome: latestTurn?.outcome,
           pendingApproval: this.getProviderPendingApproval(namedThread.id),
           pinned: false,
@@ -2339,8 +2355,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
       })
     if (!response) return undefined
     const latest = response.data[0]
+    const hasPendingLocalActivity =
+      this.pendingTurnStarts.has(thread.id) || this.pendingTurnIds.has(thread.id)
     return {
-      outcome: thread.status.type === 'active' ? null : getCodexTurnOutcome(latest),
+      // Use the same activity check as the conversation: thread/list metadata can remain
+      // active after the latest turn has stopped or completed.
+      status: getHydratedThreadStatus(
+        { ...thread, turns: latest ? [latest] : [] },
+        hasPendingLocalActivity
+      ),
+      outcome: hasPendingLocalActivity ? null : getCodexTurnOutcome(latest),
       updatedAt: Math.max(latest?.startedAt ?? 0, latest?.completedAt ?? 0) * 1_000
     }
   }
@@ -3305,7 +3329,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const text = message.trim()
     if (!text) throw new Error('Cannot generate from an empty message')
 
-    const client = new CodexAppServerClient(this.getCurrentContainer())
+    const client = new CodexAppServerClient(this.getCurrentContainer(), this.accountId)
     const generationId = options?.generationId?.trim() || null
     const canceledBeforeStart = generationId
       ? this.takeCanceledOneShotGeneration(generationId)

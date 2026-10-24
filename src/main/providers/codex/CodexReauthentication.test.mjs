@@ -46,6 +46,7 @@ function fixture() {
   }
   const context = vm.createContext({
     codexAdapter: adapter,
+    persistentChatHistory: { forgetAccount: () => {} },
     codexReauthentications: pending,
     randomUUID: () => String(++sequence),
     getContainerTargetKey: (container) => container?.id ?? 'host',
@@ -60,7 +61,7 @@ function fixture() {
     }),
     context
   )
-  return { api: context.api, events, adapter, configuration, pending }
+  return { api: context.api, events, adapter, configuration, pending, context }
 }
 
 test('Codex re-login preserves existing account on success, failure and cancel', async () => {
@@ -108,4 +109,44 @@ test('Codex re-login cannot cross environments or publish a canceled late comple
   finish({ success: true, error: null })
   await assert.rejects(completion, /canceled/)
   assert.deepEqual(h.events, ['login', 'cancel'])
+})
+
+test('chat reauthentication and cancellation use its pinned runtime rather than the default', async () => {
+  const h = fixture()
+  const scopedCalls = []
+  const scoped = {
+    reauthenticate: async () => {
+      scopedCalls.push('login')
+      return { status: 'pending', loginId: 'scoped' }
+    },
+    waitForLogin: async () => {
+      scopedCalls.push('wait')
+      return { success: true, error: null }
+    },
+    cancelLogin: async () => {
+      scopedCalls.push('cancel')
+    },
+    clearAuthenticationFailure: () => {
+      scopedCalls.push('clear')
+    }
+  }
+  h.context.accountRuntimes = {
+    codex: {
+      account: async (id) => {
+        assert.equal(id, 'chat')
+        return 'saved'
+      }
+    }
+  }
+  h.context.codexAccountAdapter = (account) => {
+    assert.equal(account, 'saved')
+    return scoped
+  }
+  const options = { chatId: 'chat' }
+  const first = await h.api.reauthenticateAccount('codex', options)
+  await h.api.completeAccountCreation('codex', first.accountId, 'scoped', options)
+  const next = await h.api.reauthenticateAccount('codex', options)
+  await h.api.cancelAccountCreation('codex', next.accountId, 'scoped', options)
+  assert.deepEqual(scopedCalls, ['login', 'wait', 'clear', 'login', 'cancel'])
+  assert.deepEqual(h.events, ['reset'])
 })

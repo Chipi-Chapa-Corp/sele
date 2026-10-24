@@ -85,6 +85,27 @@ export const getProjects = async (): Promise<ProjectRecord[]> => {
   return rows.map(mapProjectRow)
 }
 
+// Keep a tombstone for projects inferred from chat history so they stay removed
+// from the selector without deleting their chats or files.
+export const getDeletedProjectCwds = async (): Promise<string[]> => {
+  const db = await getDatabase()
+  const rows = await db.selectFrom('deleted_projects').select('cwd').execute()
+  return rows.map((row) => row.cwd)
+}
+
+export const deleteProject = async (cwd: string): Promise<void> => {
+  const normalizedCwd = normalizeProjectCwd(cwd)
+  const db = await getDatabase()
+  await db.transaction().execute(async (transaction) => {
+    await transaction.deleteFrom('projects').where('cwd', '=', normalizedCwd).execute()
+    await transaction
+      .insertInto('deleted_projects')
+      .values({ cwd: normalizedCwd })
+      .onConflict((conflict) => conflict.column('cwd').doNothing())
+      .execute()
+  })
+}
+
 export const addProject = async (options: AddProjectRecordOptions): Promise<ProjectRecord> => {
   const db = await getDatabase()
   const normalizedCwd = normalizeProjectCwd(options.cwd)
@@ -101,19 +122,22 @@ export const addProject = async (options: AddProjectRecordOptions): Promise<Proj
       : {})
   }
 
-  await db
-    .insertInto('projects')
-    .values({
-      cwd: normalizedCwd,
-      name,
-      icon,
-      additional_cwds_json: JSON.stringify(additionalCwds),
-      sidebar_order: null,
-      added_at: updatedAt,
-      updated_at: updatedAt
-    })
-    .onConflict((conflict) => conflict.column('cwd').doUpdateSet(update))
-    .execute()
+  await db.transaction().execute(async (transaction) => {
+    await transaction.deleteFrom('deleted_projects').where('cwd', '=', normalizedCwd).execute()
+    await transaction
+      .insertInto('projects')
+      .values({
+        cwd: normalizedCwd,
+        name,
+        icon,
+        additional_cwds_json: JSON.stringify(additionalCwds),
+        sidebar_order: null,
+        added_at: updatedAt,
+        updated_at: updatedAt
+      })
+      .onConflict((conflict) => conflict.column('cwd').doUpdateSet(update))
+      .execute()
+  })
 
   const row = await db
     .selectFrom('projects')
@@ -140,7 +164,14 @@ export const setProjectOrder = async (projectCwds: string[]): Promise<ProjectRec
   const db = await getDatabase()
   const addedAt = Date.now()
   await db.transaction().execute(async (transaction) => {
+    const deletedCwds = new Set(
+      (await transaction.selectFrom('deleted_projects').select('cwd').execute()).map(
+        (row) => row.cwd
+      )
+    )
     for (const [sidebarOrder, cwd] of cwds.entries()) {
+      // Reordering chat groups must not restore a removed selector entry.
+      if (deletedCwds.has(cwd)) continue
       await transaction
         .insertInto('projects')
         .values({

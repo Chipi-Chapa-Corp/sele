@@ -634,6 +634,8 @@ const getTokenBreakdown = (
 })
 
 export class ClaudeProviderAdapter implements ProviderAdapter {
+  constructor(private readonly accountId?: string) {}
+
   private pendingMessageEdits = new PendingMessageEdits()
   private pendingMessageStore = new PersistentPendingMessages<QueuedClaudeMessage>(
     'claude',
@@ -704,6 +706,20 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Claude is not authenticated. Run \`claude auth login\` first. ${detail}`)
     })
+  }
+
+  releaseChat = async (chatId: string): Promise<void> => {
+    const state = this.states.get(chatId)
+    if (!state) return
+    if (
+      state.active ||
+      state.queueDrainInProgress ||
+      state.pendingApprovals.length ||
+      state.pendingUserInputs.length
+    )
+      await this.stopChat(chatId)
+    await this.closeStateQuery(state)
+    this.states.delete(chatId)
   }
 
   changeAccount = <T>(
@@ -937,6 +953,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     })
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
+    options = { ...options, accountId: this.accountId }
     const sourceKey = getContainerTargetKey(options.container)
     const accountRevision = this.accountRevisions.get(sourceKey) ?? 0
     try {
@@ -1991,8 +2008,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       container: storedContainer,
       cwd: cwd ?? undefined,
       env: usageOnly
-        ? await claudeAccounts.getUsageEnvironment(storedContainer)
-        : await claudeAccounts.getEnvironment(storedContainer)
+        ? await claudeAccounts.getUsageEnvironment(storedContainer, this.accountId)
+        : await claudeAccounts.getEnvironment(storedContainer, this.accountId)
     })
     if (accountRevision !== (this.accountRevisions.get(key) ?? 0) || this.accountChanges.has(key)) {
       throw new Error('Claude account changed while starting the session. Please try again.')

@@ -1,6 +1,7 @@
 import { isNoProjectChat } from '../../shared/noProject'
 import { getLastTurnOutcome } from '../../shared/chatTurnOutcome'
 import { getChatTurnOutcomes, setChatTurnOutcome } from '../database/chatTurnOutcome'
+import { ChatAccounts } from './ChatAccounts'
 import { ImportedConversations } from './ImportedConversations'
 import { app } from 'electron'
 import { prepareChatWorkspace } from './noProjectWorkspace'
@@ -51,6 +52,8 @@ import {
   getChatMetadata,
   getChatMetadataByIds,
   setChatContainer,
+  setChatAccount,
+  bindChatAccounts,
   setChatDone,
   setChatNoProject,
   setChatOrder,
@@ -327,9 +330,49 @@ const connectionAdapter = (providerId: ProviderId): OpenCodeProviderAdapter => {
   return openCodeAdapter
 }
 
+const codexAccountAdapters = new Map<string, CodexProviderAdapter>()
+const claudeAccountAdapters = new Map<string, ClaudeProviderAdapter>()
+const codexAccountAdapter = (account: string): CodexProviderAdapter => {
+  let adapter = codexAccountAdapters.get(account)
+  if (!adapter) {
+    adapter = new CodexProviderAdapter(account)
+    codexAccountAdapters.set(account, adapter)
+  }
+  return adapter
+}
+const claudeAccountAdapter = (account: string): ClaudeProviderAdapter => {
+  let adapter = claudeAccountAdapters.get(account)
+  if (!adapter) {
+    adapter = new ClaudeProviderAdapter(account)
+    claudeAccountAdapters.set(account, adapter)
+  }
+  return adapter
+}
+
+const accountRuntimes = {
+  codex: new ChatAccounts(codexAdapter, {
+    metadata: getChatMetadata,
+    save: setChatAccount,
+    bindListed: bindChatAccounts,
+    selected: async (container) =>
+      (await getCodexAccounts(container)).accounts.find((account) => account.active)?.id ??
+      'default',
+    create: (account) =>
+      withLiveChatPermissions(withProviderNetworkRetries(codexAccountAdapter(account)))
+  }),
+  claude: new ChatAccounts(claudeAdapter, {
+    metadata: getChatMetadata,
+    save: setChatAccount,
+    bindListed: bindChatAccounts,
+    selected: (container) => claudeAccounts.getSelectedId(container),
+    create: (account) =>
+      withLiveChatPermissions(withProviderNetworkRetries(claudeAccountAdapter(account)))
+  })
+}
+
 const nativeAdapters: Record<ProviderId, ProviderAdapter> = {
-  codex: withLiveChatPermissions(withProviderNetworkRetries(codexAdapter)),
-  claude: withLiveChatPermissions(withProviderNetworkRetries(claudeAdapter)),
+  codex: accountRuntimes.codex.adapter,
+  claude: accountRuntimes.claude.adapter,
   copilot: withLiveChatPermissions(withProviderNetworkRetries(new CopilotProviderAdapter())),
   opencode: withLiveChatPermissions(withProviderNetworkRetries(openCodeAdapter))
 }
@@ -391,6 +434,7 @@ const applyMetadataToChat = (
 ): ProviderChat => ({
   ...chat,
   noProject: metadata?.noProject || isNoProjectChat(chat),
+  accountId: metadata?.accountId ?? chat.accountId,
   pinned: metadata?.pinned ?? false,
   sidebarOrder: metadata?.sidebarOrder ?? null,
   done: metadata?.done ?? false,
@@ -472,6 +516,7 @@ const applyMetadataToDetail = async (
   return {
     ...detail,
     noProject,
+    accountId: metadata.accountId ?? detail.accountId,
     lastTurnOutcome,
     cwdKind: cwdMetadata.kind,
     projectCwd: cwdMetadata.projectCwd,
@@ -756,6 +801,7 @@ export const getChatUpdateSummary = (
   const preview = detail.items.findLast((item) => item.type === 'message')?.content.trim() ?? ''
   return {
     id: detail.id,
+    accountId: detail.accountId,
     noProject: detail.noProject,
     imported: detail.imported,
     revision: detail.revision,
@@ -794,7 +840,10 @@ for (const adapter of Object.values(adapters)) {
   })
 }
 
-const codexReauthentications = new Map<string, { source: string; loginId: string | null }>()
+const codexReauthentications = new Map<
+  string,
+  { source: string; loginId: string | null; adapter: CodexProviderAdapter }
+>()
 
 export const providerApi: ProviderApi = {
   reauthenticateAccount: async (providerId, options) => {
@@ -804,10 +853,13 @@ export const providerApi: ProviderApi = {
       if (Array.from(codexReauthentications.values()).some((value) => value.source === source))
         throw new Error('Codex sign-in is already in progress for this environment.')
       const accountId = `reauth-${randomUUID()}`
-      const pending = { source, loginId: null as string | null }
+      const adapter = options?.chatId
+        ? codexAccountAdapter(await accountRuntimes.codex.account(options.chatId))
+        : codexAdapter
+      const pending = { source, loginId: null as string | null, adapter }
       codexReauthentications.set(accountId, pending)
       try {
-        const login = await codexAdapter.reauthenticate(options)
+        const login = await adapter.reauthenticate(options)
         pending.loginId = login.status === 'pending' ? login.loginId : null
         return { accountId, login }
       } catch (error) {
@@ -817,7 +869,11 @@ export const providerApi: ProviderApi = {
     }
     if (providerId !== 'claude')
       throw new Error('Reauthentication is not available for this provider.')
-    return claudeAccounts.reauthenticate(options)
+    return claudeAccounts.reauthenticate(
+      options?.chatId
+        ? { ...options, accountId: await accountRuntimes.claude.account(options.chatId) }
+        : options
+    )
   },
   login: (providerId, options) => {
     persistentChatHistory.forgetAccount(providerId, options?.container)
@@ -851,7 +907,26 @@ export const providerApi: ProviderApi = {
       JSON.stringify([providerId, getContainerTargetKey(options?.container)]),
       await load()
     )
-    persistentChatHistory.setAccount(providerId, options?.container, configuration, accountEpoch)
+    if (options?.chatId && (providerId === 'codex' || providerId === 'claude')) {
+      const accountId = await accountRuntimes[providerId].account(options.chatId)
+      return {
+        ...configuration,
+        accounts: configuration.accounts.map((account) => ({
+          ...account,
+          active: account.id === accountId
+        }))
+      }
+    }
+    // These providers share history between credentials; changing the new-chat
+    // default must not hide another account’s conversations or opening views.
+    persistentChatHistory.setAccount(
+      providerId,
+      options?.container,
+      providerId === 'codex' || providerId === 'claude'
+        ? { ...configuration, accounts: [{ id: 'chat-accounts', active: true }] }
+        : configuration,
+      accountEpoch
+    )
     return configuration
   },
   createAccount: async (providerId, options) => {
@@ -876,12 +951,12 @@ export const providerApi: ProviderApi = {
         throw new Error('This Codex sign-in is no longer pending.')
       try {
         const completion = loginId
-          ? await codexAdapter.waitForLogin(loginId, options)
+          ? await pending.adapter.waitForLogin(loginId, options)
           : { success: true, error: null }
         if (codexReauthentications.get(accountId) !== pending)
           throw new Error('Codex sign-in was canceled.')
         if (completion.success) {
-          codexAdapter.clearAuthenticationFailure(options?.container)
+          pending.adapter.clearAuthenticationFailure(options?.container)
           codexAdapter.resetClientsForContainer(options?.container)
         }
         return { ...completion, configuration: await getCodexAccounts(options?.container) }
@@ -892,9 +967,9 @@ export const providerApi: ProviderApi = {
     if (providerId === 'claude') {
       try {
         await claudeAccounts.waitForLogin(accountId, loginId, options)
-        const configuration = await claudeAdapter.changeAccount(options?.container, () =>
-          claudeAccounts.complete(accountId, options)
-        )
+        const configuration = await (
+          claudeAccountAdapters.get(accountId) ?? claudeAdapter
+        ).changeAccount(options?.container, () => claudeAccounts.complete(accountId, options))
         return { success: true, error: null, configuration }
       } catch (error) {
         console.error('Unable to complete Claude account sign-in.', error)
@@ -949,7 +1024,7 @@ export const providerApi: ProviderApi = {
         pending.loginId === loginId
       ) {
         codexReauthentications.delete(accountId)
-        if (loginId) await codexAdapter.cancelLogin(loginId, options)
+        if (loginId) await pending.adapter.cancelLogin(loginId, options)
       }
       return getCodexAccounts(options?.container)
     }
@@ -966,6 +1041,13 @@ export const providerApi: ProviderApi = {
     return configuration
   },
   useAccount: async (providerId, accountId, options) => {
+    if (options?.chatId && (providerId === 'codex' || providerId === 'claude')) {
+      const configuration = await providerApi.getAccounts(providerId, options)
+      if (!configuration.accounts.some((account) => account.id === accountId))
+        throw new Error('Provider account was not found.')
+      await accountRuntimes[providerId].select(options.chatId, accountId)
+      return providerApi.getAccounts(providerId, options)
+    }
     persistentChatHistory.forgetAccount(providerId, options?.container)
     if (providerId === 'claude') {
       const previous = await claudeAccounts.get(options)

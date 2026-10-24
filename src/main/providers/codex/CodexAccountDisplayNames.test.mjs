@@ -43,7 +43,7 @@ test('Codex reads default and managed display names in the selected runtime with
             }))
             build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
               contents:
-                'export const getHostCommand = async (file, args, options) => args[2]?.includes("expected_version=$1") ? ({file:process.execPath,args:["-e",""],env:process.env}) : ({ file, args, env: { ...process.env, CODEX_HOME: options.container ? fixture.remote : fixture.root } })'
+                'export const getHostCommand = async (file, args, options) => args[1]?.includes("expected_version=$1") ? ({file:process.execPath,args:["-e",""],env:process.env}) : ({ file, args, env: { ...process.env, CODEX_HOME: options.container ? fixture.remote : fixture.root } })'
             }))
           }
         }

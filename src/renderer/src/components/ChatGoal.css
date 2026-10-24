@@ -23,27 +23,12 @@
 
 .chat-goal__drawer {
   border-top: 0.0625rem solid var(--panel-border);
-  padding-top: 0.75rem;
+  padding-block: 0.6rem;
 }
 
 .chat-goal__objective {
-  box-sizing: border-box;
   display: block;
-  width: 100%;
   min-height: 6rem;
-  resize: vertical;
-  padding: 0.6rem;
-  border: 0.0625rem solid var(--panel-border);
-  border-radius: 0.5rem;
-  background: var(--composer-bg);
-  color: var(--ink);
-  font: inherit;
-  line-height: 1.5;
-}
-
-.chat-goal__objective:focus-visible {
-  outline: 0.125rem solid var(--focus-ring);
-  outline-offset: 0.125rem;
 }
 
 .chat-goal__actions {

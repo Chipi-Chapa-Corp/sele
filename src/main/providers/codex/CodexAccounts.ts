@@ -255,7 +255,7 @@ const runAccountCommand = async (
   })
 }
 
-const ensureCodexAccountView = async (
+export const ensureCodexAccountView = async (
   container: AppContainerTarget | null | undefined
 ): Promise<void> => {
   await runAccountCommand(

@@ -100,6 +100,14 @@ export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapt
 
   return {
     ...adapter,
+    releaseChat: adapter.releaseChat
+      ? async (id, options) => {
+          policies.delete(id)
+          attempted.delete(id)
+          latest.delete(id)
+          await adapter.releaseChat!(id, options)
+        }
+      : undefined,
     onChatUpdated: (listener) => {
       listeners.add(listener)
       return () => {

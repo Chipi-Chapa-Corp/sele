@@ -43,7 +43,7 @@ const fixture = () => {
     withResolvedThreadName: (value) => value,
     rememberThreadContainer: () => {},
     getProviderPendingApproval: () => null,
-    getSidebarTurnSummary: async () => ({ outcome: null, updatedAt: 0 }),
+    getSidebarTurnSummary: async () => ({ status: 'idle', outcome: null, updatedAt: 0 }),
     getCurrentContainer: () => null
   })
   return adapter

@@ -751,7 +751,7 @@ const requireSourceOptions = (value: unknown): ProviderSourceOptions | undefined
     throw new Error('Invalid provider source options')
   }
 
-  const options = value as { container?: unknown; forceRefresh?: unknown }
+  const options = value as { container?: unknown; forceRefresh?: unknown; chatId?: unknown }
   const container =
     options.container === undefined ? undefined : requireContainerTarget(options.container)
   const forceRefresh =
@@ -759,7 +759,10 @@ const requireSourceOptions = (value: unknown): ProviderSourceOptions | undefined
 
   return {
     ...(container === undefined ? {} : { container }),
-    ...(forceRefresh === undefined ? {} : { forceRefresh })
+    ...(forceRefresh === undefined ? {} : { forceRefresh }),
+    ...(options.chatId == null
+      ? {}
+      : { chatId: requireProviderResourceString(options.chatId, 'chat ID', 512) })
   }
 }
 
@@ -874,18 +877,15 @@ const requireChatListOptions = (value: unknown): ProviderChatListOptions | undef
 
 const requireUsageOptions = (value: unknown): ProviderUsageOptions | undefined => {
   if (value == null) return undefined
-  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid usage options')
-
-  const options = value as { container?: unknown; includeStatistics?: unknown }
-  const container =
-    options.container === undefined ? undefined : requireContainerTarget(options.container)
+  const sourceOptions = requireSourceOptions(value)
+  const options = value as { includeStatistics?: unknown }
   const includeStatistics = options.includeStatistics
   if (includeStatistics != null && typeof includeStatistics !== 'boolean') {
     throw new Error('Invalid usage statistics option')
   }
 
   return {
-    ...(container !== undefined ? { container } : {}),
+    ...sourceOptions,
     includeStatistics: includeStatistics ?? false
   }
 }

@@ -526,6 +526,10 @@ export type ProviderAccountUsage = {
 }
 
 export type ProviderSourceOptions = {
+  /** Scope account operations to this chat instead of the new-chat default. */
+  chatId?: string
+  /** Internal credential selection for account-bound runtimes. */
+  accountId?: string
   container?: AppContainerTarget | null
   forceRefresh?: boolean
 }
@@ -633,6 +637,7 @@ export type ProviderUserInputResponse =
     }
 
 export type ProviderChatMetadata = {
+  accountId?: string | null
   id: string
   /** User chose No Project, independent of the provider's runtime cwd. */
   noProject?: boolean
@@ -653,6 +658,7 @@ export type ProviderCwdNote = {
 }
 
 export type ProviderChat = {
+  accountId?: string | null
   imported?: { providerId: ProviderId; chatId: string }
   id: string
   /** User chose No Project, independent of the provider's runtime cwd. */
@@ -968,6 +974,7 @@ export type ProviderChatGoal = {
 }
 
 export type ProviderChatDetail = {
+  accountId?: string | null
   /** Native conversation activity time in milliseconds, independent of snapshot delivery. */
   updatedAt?: number
   /** Persisted display-only history awaiting a fresh provider snapshot. */

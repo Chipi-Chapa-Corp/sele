@@ -212,6 +212,12 @@ export const withProviderNetworkRetries = (adapter: ProviderAdapter): ProviderAd
 
   const wrapped: ProviderAdapter = {
     ...adapter,
+    releaseChat: adapter.releaseChat
+      ? async (id, options) => {
+          cancel(id)
+          await adapter.releaseChat!(id, options)
+        }
+      : undefined,
     onChatUpdated: (listener) => {
       listeners.add(listener)
       return () => {

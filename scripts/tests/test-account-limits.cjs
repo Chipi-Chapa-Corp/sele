@@ -41,7 +41,7 @@ if (!process.versions.electron) {
                   renderSettingsButton={()=><button aria-label="Settings">Settings</button>} renderChatGroup={()=>null}
                   handleNewChat={noop} handleCloseSearch={noop} handleProjectDrop={noop} handleProjectStackDragOver={noop} handleImportedChat={noop}
                   setSearchOpen={noop} setSearchQuery={noop}
-                  providerAccount={{openCode:{loading:s.providersLoading??false,providers:s.providers??[],selectedId:s.selectedProvider??'',error:null,manageOpen:false,onManage:noop,onClose:noop,onChanged:noop,onSelect:id=>window.renderFixture({selectedProvider:id})},key:'fixture:'+s.accountRevision,providerId:s.provider,container:s.container??null,available:true,updating:false,onSelect:async id=>{window.activeAccount=id},onCreate:()=>window.createAccount(s.provider),onDelete:id=>window.deleteAccount(s.provider,id)}}
+                  providerAccount={{openCode:{loading:s.providersLoading??false,providers:s.providers??[],selectedId:s.selectedProvider??'',error:null,manageOpen:false,onManage:noop,onClose:noop,onChanged:noop,onSelect:id=>window.renderFixture({selectedProvider:id})},key:'fixture:'+s.accountRevision,providerId:s.provider,chatId:s.chatId,container:s.container??null,available:true,updating:false,onSelect:async id=>{if(s.chatId)window.chatAccounts[s.chatId]=id;else window.activeAccount=id},onCreate:()=>window.createAccount(s.provider),onDelete:id=>window.deleteAccount(s.provider,id)}}
                   usageIndicator={{chatId:s.chatId,providerId:s.provider,accountUsage:s.usageLoading?null:{rateLimits:s.limits,errors:[],updatedAt:1},accountUsageError:null,accountUsageState:s.usageLoading?'loading':'ready',contextUsage,displayUsage:s.settings.chat.displayUsage}}
                 />))
                 return
@@ -61,9 +61,9 @@ if (!process.versions.electron) {
               }
               flushSync(()=>root.render(<main style={{padding:24,width:700}}>
                 <div className="chat-sidebar__account-row" style={{width:340,marginBottom:24}}>
-                  <SidebarProviderAccount refreshKey={String(s.accountRevision)} providerId={s.provider} container={null} available updating={false}
+                  <SidebarProviderAccount refreshKey={String(s.accountRevision)} providerId={s.provider} chatId={s.chatId} container={null} available updating={false}
                     hasVisibleLimits={getVisibleUsageBadges(s.limits,contextUsage,s.settings.chat.displayUsage).length>0}
-                    onSelect={async id=>{window.activeAccount=id}}
+                    onSelect={async id=>{if(s.chatId)window.chatAccounts[s.chatId]=id;else window.activeAccount=id}}
                     onCreate={()=>window.createAccount(s.provider)} onDelete={id=>window.deleteAccount(s.provider,id)}/>
                   <UsageIndicator providerId={s.provider} accountUsage={{rateLimits:s.limits,balances:s.balances??[],errors:[],updatedAt:1}} chatId={s.chatId}
                     modelProviderId={s.modelProviderId}
@@ -102,15 +102,16 @@ if (!process.versions.electron) {
       await fs.writeFile(
         path.join(directory, 'bootstrap.js'),
         `
-        const stored=new Map();window.activeAccount='default';
+        const stored=new Map();window.activeAccount='default';window.chatAccounts={};
         window.preferencesApi={getItem:key=>({ok:true,value:stored.get(key)??null}),setItem:(key,value)=>{stored.set(key,value);return {ok:true,value:null}},removeItem:key=>{stored.delete(key);return {ok:true,value:null}}};
         window.accountDelay=0;window.accountReads=0;window.importCalls=0;
         window.deletedAccounts=[];window.createdAccounts=[];window.removedWork=false;
         window.deleteAccount=async(provider,id)=>{window.deletedAccounts.push({provider,id});window.removedWork=true;window.activeAccount='default'};
         window.createAccount=async(provider)=>{window.createdAccounts.push({provider});return {userCode:null,completion:new Promise(resolve=>{window.completeAccount=resolve}),authorize:async()=>{},cancel:async()=>{}}};
-        window.providerApi={getTokenUsage:async()=>({chat:{inputTokens:1000,cachedInputTokens:0,outputTokens:100,cost:{input:0.3,cachedInput:0,output:0.12,total:0.42}},week:{inputTokens:0,cachedInputTokens:0,outputTokens:0},month:{inputTokens:0,cachedInputTokens:0,outputTokens:0},updatedAt:1}),openChatImport:async()=>{window.importCalls++;return null},getAccounts:async provider=>{
+        window.providerApi={getTokenUsage:async()=>({chat:{inputTokens:1000,cachedInputTokens:0,outputTokens:100,cost:{input:0.3,cachedInput:0,output:0.12,total:0.42}},week:{inputTokens:0,cachedInputTokens:0,outputTokens:0},month:{inputTokens:0,cachedInputTokens:0,outputTokens:0},updatedAt:1}),openChatImport:async()=>{window.importCalls++;return null},getAccounts:async (provider,options)=>{
+          const selected=options?.chatId ? (window.chatAccounts[options.chatId]??window.activeAccount) : window.activeAccount;
           window.accountReads++;
-          const response={available:provider==='codex'||provider==='claude',unavailableMessage:null,accounts:provider==='opencode' ? [{id:'default',displayName:'Default Account',active:true}] : [{id:'default',displayName:provider==='claude'?'Claude Name':'Jane Doe',active:window.activeAccount==='default'},{id:'work',displayName:provider==='claude'?'Claude at Work':'Jane at Work',active:window.activeAccount==='work'}].filter(account=>account.id!=='work'||!window.removedWork)};
+          const response={available:provider==='codex'||provider==='claude',unavailableMessage:null,accounts:provider==='opencode' ? [{id:'default',displayName:'Default Account',active:true}] : [{id:'default',displayName:provider==='claude'?'Claude Name':'Jane Doe',active:selected==='default'},{id:'work',displayName:provider==='claude'?'Claude at Work':'Jane at Work',active:selected==='work'}].filter(account=>account.id!=='work'||!window.removedWork)};
           if(window.accountDelay) await new Promise(resolve=>setTimeout(resolve,window.accountDelay));
           return response;
         }};
@@ -344,6 +345,39 @@ if (!process.versions.electron) {
       await waitFor(
         'document.querySelector("[aria-label=\\"Codex account\\"]")?.textContent.includes("Jane at Work")'
       )
+      // A chat retains its own account when the new-chat default changes.
+      await run(
+        "window.chatAccounts['bound-chat']='default';window.renderFixture({chatId:'bound-chat'})"
+      )
+      await waitFor(
+        `document.querySelector('[aria-label="Codex account"]')?.textContent.includes('Jane Doe')`
+      )
+      await run("window.activeAccount='work';window.renderFixture({accountRevision:2})")
+      await waitFor(
+        `document.querySelector('[aria-label="Codex account"]')?.textContent.includes('Jane Doe')`
+      )
+      await run(`document.querySelector('[aria-label="Codex account"]').click()`)
+      await waitFor(
+        `Array.from(document.querySelectorAll('[role=option]')).some(node=>node.textContent.includes('Jane at Work'))`
+      )
+      await run(
+        `Array.from(document.querySelectorAll('[role=option]')).find(node=>node.textContent.includes('Jane at Work')).click()`
+      )
+      await waitFor(
+        `document.querySelector('[aria-label="Codex account"]')?.textContent.includes('Jane at Work')`
+      )
+      assert.equal(await run("window.chatAccounts['bound-chat']"), 'work')
+      await run(
+        "window.activeAccount='default';window.renderFixture({chatId:undefined,accountRevision:3})"
+      )
+      await waitFor(
+        `document.querySelector('[aria-label="Codex account"]')?.textContent.includes('Jane Doe')`
+      )
+      await run("window.renderFixture({chatId:'bound-chat'})")
+      await waitFor(
+        `document.querySelector('[aria-label="Codex account"]')?.textContent.includes('Jane at Work')`
+      )
+      await run("window.activeAccount='work';window.renderFixture({chatId:undefined})")
       // Existing usage badges survive chat/account switches; only changed values pop and pulse.
       await new Promise((resolve) => setTimeout(resolve, 250))
       await run(`
@@ -621,7 +655,7 @@ if (!process.versions.electron) {
       )
       assert.equal(
         await run(
-          'Boolean(document.querySelector("[aria-label=\\"Delete account Jane at Work\\"] svg.lucide-x"))'
+          'Boolean(document.querySelector("[aria-label=\\"Delete account Jane at Work\\"] svg.lucide-trash-2"))'
         ),
         true
       )
