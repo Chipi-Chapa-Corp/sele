@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { SessionStoreEntry, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderChatTurnCursorWindow } from '../ProviderAdapter'
-import type { ProviderChatTurnPagination } from '../../../shared/provider'
+import type { ProviderChatGoal, ProviderChatTurnPagination } from '../../../shared/provider'
+import { readClaudeHistoryGoal } from './ClaudeGoals.ts'
 import { classifyClaudeTurnRecord, type ClaudeTranscriptMessage } from './ClaudeItemRenderers.ts'
 import { restoreClaudeHistory } from './ClaudeHistory.ts'
 import { claudeHistoryBlockSize, type ClaudeHistorySource } from './ClaudeHistorySource.ts'
@@ -32,6 +33,7 @@ export type ClaudeHistoryPage = {
   metadata: SDKSessionInfo
   /** Ids of user input Claude Code recorded on this page, including steering it folded in. */
   inputIds: string[]
+  goal?: ProviderChatGoal | null
 }
 const getInputId = (entry: SessionStoreEntry): string | null => {
   if (entry.type === 'user') return typeof entry.uuid === 'string' ? entry.uuid : null
@@ -204,7 +206,11 @@ export class ClaudeHistoryPages {
           gitBranch: typeof latest?.gitBranch === 'string' ? latest.gitBranch : undefined,
           lastModified: snapshot.modified
         },
-        inputIds: rows.flatMap((row) => getInputId(row.entry) ?? [])
+        inputIds: rows.flatMap((row) => getInputId(row.entry) ?? []),
+        goal: readClaudeHistoryGoal(
+          sessionId,
+          rows.map((row) => row.entry)
+        )
       }
     } finally {
       await source.close()

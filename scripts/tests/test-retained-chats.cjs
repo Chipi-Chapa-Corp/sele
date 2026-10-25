@@ -13,18 +13,27 @@ if (!process.versions.electron) {
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx',
           contents: `
-            import React, {useEffect, useState} from 'react'
+            import React, {Activity, useEffect, useState} from 'react'
             import {createRoot} from 'react-dom/client'
             import {flushSync} from 'react-dom'
             import {ConversationMessages} from './src/renderer/src/workspace/components/ConversationMessages'
             import {MarkdownMessage} from './src/renderer/src/components/ChatDetailItem'
             import {buildChatConversationModel} from './src/renderer/src/chatConversationModel'
+            import {DeferredChatTurn} from './src/renderer/src/components/DeferredChatTurn'
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/App.css'
             const noop=()=>{};
             window.appApi={}; window.providerApi={};
             window.created=[];window.effects=new Set();window.actions=[];window.bottomAlignments=0;
             const root=createRoot(document.getElementById('root'));
+            const probeHost=document.createElement('div');document.body.append(probeHost);
+            const probeRoot=createRoot(probeHost);window.mountNotifications=0;
+            window.renderMountProbe=(hidden=false)=>flushSync(()=>probeRoot.render(
+              <Activity mode={hidden?'hidden':'visible'}>
+                <DeferredChatTurn eager={true} priority={0} onMount={()=>window.mountNotifications++}>
+                  <span>Mounted turn</span>
+                </DeferredChatTurn>
+              </Activity>));
             const histories=new Map();
             window.allowed=['a','b','c','d','big','embedded'].map(id=>'codex:'+id);
             const contentRef={current:null},searchRef={current:null},subagentRef={current:null};
@@ -131,6 +140,12 @@ if (!process.versions.electron) {
       })
       await win.loadFile(path.join(directory, 'index.html'))
       const run = (source) => win.webContents.executeJavaScript(source)
+      await run('renderMountProbe();renderMountProbe();renderMountProbe(true);renderMountProbe()')
+      assert.equal(
+        await run('window.mountNotifications'),
+        1,
+        'callback changes and cached reveals must not replay a turn mount notification'
+      )
       const open = async (id, options = {}, count = 10) => {
         await run(`renderChat(${JSON.stringify(id)},${JSON.stringify(options)})`)
         await run(`new Promise((resolve,reject)=>{

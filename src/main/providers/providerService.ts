@@ -1296,6 +1296,8 @@ export const providerApi: ProviderApi = {
   cancelOneShot: (providerId, generationId) => adapters[providerId].cancelOneShot(generationId),
   startChat: async (providerId, message, options, purpose) => {
     try {
+      if (options?.initialGoal && !adapters[providerId].setChatGoal)
+        throw new Error('This provider does not support goals.')
       options = await prepareChatWorkspace(app.getPath('userData'), options)
       const detail = await adapters[providerId].startChat(
         message,

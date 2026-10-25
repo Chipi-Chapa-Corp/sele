@@ -404,7 +404,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
       }
     }))
   }
-  const handleChatForcedDropdownChange = <Key extends keyof AppChatDropdownSettings>(
+  const handleChatDropdownSettingChange = <Key extends keyof AppChatDropdownSettings>(
     key: Key,
     value: AppChatDropdownSettings[Key]
   ): void => {
@@ -842,7 +842,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handleBrowserEnabledChange,
     handleBrowserViewChange,
     handleChatDropdownPreferenceChange,
-    handleChatForcedDropdownChange,
+    handleChatDropdownSettingChange,
     handleChatUsageDisplayChange,
     handleCodexRecommendedPluginsChange,
     handleContinuePromptChange,

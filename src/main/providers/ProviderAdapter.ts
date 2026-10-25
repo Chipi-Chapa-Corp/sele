@@ -23,6 +23,7 @@ import type {
   ProviderUsageOptions,
   ProviderActiveSendMode,
   ProviderTurnOptions,
+  ProviderStartChatOptions,
   ProviderPermissionOptions,
   ProviderOneShotOptions,
   ProviderSubagent,
@@ -170,7 +171,7 @@ export type ProviderAdapter = {
   cancelOneShot: (generationId: string) => Promise<void>
   startChat: (
     message: string,
-    options?: ProviderTurnOptions,
+    options?: ProviderStartChatOptions,
     onChatCreated?: (chatId: string) => Promise<void>
   ) => Promise<ProviderChatDetail>
   continueChat: (

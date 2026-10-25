@@ -59,7 +59,7 @@ items between paints. User prompts, pending messages, and the latest item remain
 immediate. Existing turn keys, order, page coordinates, and mounted-item updates are
 preserved.
 
-Messages reaching 12,000 characters move parsing and syntax highlighting into one
+Messages reaching 4,096 characters move parsing and syntax highlighting into one
 shared worker. The worker coalesces superseded requests and is released after idle.
 Small messages keep their synchronous cached path. Completed HTML is planned into
 leaves of at most 8,192 characters or 100 elements where structural splitting is

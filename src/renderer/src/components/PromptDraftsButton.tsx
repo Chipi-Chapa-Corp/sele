@@ -53,7 +53,7 @@ export const PromptDraftsButton = ({
         aria-label={`Restore latest draft: ${latestPreview}`}
         callback={() => onPop(latestDraft)}
         disabled={disabled}
-        dropdownActions={dropdownActions}
+        dropdownActions={drafts.length > 1 ? dropdownActions : undefined}
         dropdownLabel="Drafts"
         dropdownMenuAlign="end"
         dropdownPlacement="top"

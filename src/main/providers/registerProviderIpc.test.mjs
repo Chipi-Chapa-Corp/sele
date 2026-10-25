@@ -517,6 +517,33 @@ test('new chats preserve No Project across IPC for every provider', async () => 
   assert.equal(calls.length, 4)
 })
 
+test('new-chat IPC preserves native goals and rejects blank or malformed objectives', async () => {
+  const h = setup()
+  const received = []
+  h.harness.startChat = async (provider, message, options) => {
+    received.push({ provider, message, options })
+    return { id: 'goal-chat', revision: 1, items: [] }
+  }
+  const handler = h.harness.handlers.get(channels.startChat)
+  const options = {
+    model: 'fixture',
+    approvalPolicy: 'on-request',
+    sandboxMode: 'workspace-write',
+    initialGoal: '  Checks pass\nand lint is clean  '
+  }
+  for (const provider of ['codex', 'claude', 'copilot']) {
+    await handler({}, provider, 'Checks pass', options)
+    assert.equal(received.at(-1).options.initialGoal, 'Checks pass\nand lint is clean')
+    assert.equal(received.at(-1).options.model, 'fixture')
+  }
+  for (const initialGoal of ['', '   ', null, 42, {}, ['goal']])
+    await assert.rejects(
+      handler({}, 'codex', 'Checks pass', { ...options, initialGoal }),
+      /Invalid initial goal/
+    )
+  assert.equal(received.length, 3)
+})
+
 test('chat IPC forwards validated retry settings and rejects invalid values', async () => {
   const h = setup()
   let received

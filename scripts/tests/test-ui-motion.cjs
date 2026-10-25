@@ -77,7 +77,7 @@ if (!process.versions.electron) {
                         {s.bottomAligned && <div className="chat-detail__messages-footer"/>}
                       </div>
                     </div>
-                    {s.realComposer ? <MessageBox draftScopeKey="codex:chat"
+                    {s.realComposer ? <MessageBox draftScopeKey="codex:chat" presetsEnabled={false} selectionAction="stay" onPresetChange={noop}
                       providerId="codex" model="test" models={[{id:'test', label:'Test', description:'Test model', isDefault:true,
                         supportedReasoningEfforts:[{id:'low',label:'Low',description:'Low effort'},{id:'high',label:'High',description:'High effort'}],defaultReasoningEffort:'low'},
                         {id:'other',label:'Other',description:'Other model',supportedReasoningEfforts:[],defaultReasoningEffort:'low'}]}
@@ -273,6 +273,13 @@ if (!process.versions.electron) {
       )
       // Portal exits survive the trigger's conditional; reopening must not retain duplicates.
       await run(`document.getElementById('test-dropdown').click()`)
+      await frames()
+      assert.equal(
+        await run(`document.querySelector('.ui-dropdown__menu').getAnimations().some(animation =>
+          animation.effect.getKeyframes().some(frame => frame.transform))`),
+        true,
+        'popup movement runs on the browser timeline while JavaScript is busy'
+      )
       await wait(200)
       await run(`document.getElementById('test-dropdown').click()`)
       assert.equal(
@@ -558,6 +565,27 @@ if (!process.versions.electron) {
           'flight cleans up'
         )
       }
+      // Provider reconciliation can replace an optimistic row before either
+      // startup frame. Repeated replacements must not keep restarting the wait.
+      const startup = await run(`new Promise(resolve => {
+        window.renderFixture({users:[],content:''});
+        window.sendFixture('startup-0','Continuous provider reconciliation');
+        let updates = 0;
+        let firstFlight = null;
+        const sample = () => {
+          updates++;
+          window.renderFixture({users:[{...window.state.users[0],id:'startup-'+updates}]});
+          if (document.querySelector('.message-flight') && firstFlight === null) firstFlight = updates;
+          if (updates < 8) requestAnimationFrame(sample);
+          else resolve(firstFlight);
+        };
+        requestAnimationFrame(sample);
+      })`)
+      assert.ok(
+        startup !== null && startup <= 3,
+        'provider replacements must not postpone startup; first flight on update: ' + startup
+      )
+      await wait(450)
       await run(
         `window.renderFixture({users:[]}); window.sendFixture('optimistic','Persistent send'); window.flightNode=document.querySelector('.message-flight')`
       )
@@ -693,6 +721,27 @@ if (!process.versions.electron) {
       await run(
         `window.renderFixture({bottomAligned:false,conversationActive:false,tailWorking:null,tailHeight:0,messageInset:undefined})`
       )
+      // Seek the browser timeline without yielding to completion callbacks. A
+      // busy renderer must not leave the real row hidden after travel ends.
+      await run(`window.renderFixture({users:[],content:''});
+        window.sendFixture('busy-landing','Landing while other chats are busy')`)
+      await frames()
+      const busyLanding = await run(`(() => {
+        const ghost = document.querySelector('.message-flight');
+        const target = document.querySelector('[data-motion-message-id="busy-landing"]');
+        const animations = [...ghost.getAnimations(), ...target.getAnimations()];
+        for (const animation of animations) {
+          animation.pause();
+          animation.currentTime = 1000;
+        }
+        const result = {copy:Number(getComputedStyle(ghost).opacity),
+          row:Number(getComputedStyle(target).opacity)};
+        window.renderFixture({users:[]});
+        return result;
+      })()`)
+      assert.equal(busyLanding.row, 1, 'landing reveals the row without a completion callback')
+      assert.equal(busyLanding.copy, 0, 'landing hides the copy without a completion callback')
+      await frames()
       // Scrolling preserves the path and clock. A moved row is revealed by
       // opacity at landing, including replacement during that handover.
       await run(`(() => {
@@ -705,8 +754,11 @@ if (!process.versions.electron) {
       const beforeScroll = await run(`(() => {
         const ghost = document.querySelector('.message-flight');
         const animation = ghost.getAnimations()[0];
-        animation.pause();
-        animation.currentTime = 180;
+        const targetRow = document.querySelector('[data-motion-message-id="scrolling"]');
+        for (const part of [...ghost.getAnimations(), ...targetRow.getAnimations()]) {
+          part.pause();
+          part.currentTime = 180;
+        }
         const bounds = ghost.getBoundingClientRect();
         const viewport = document.querySelector('.chat-detail__messages');
         const top = viewport.scrollTop;
@@ -725,7 +777,11 @@ if (!process.versions.electron) {
         animation.currentTime = 360;
         const landing = ghost.getBoundingClientRect();
         const target = document.querySelector('[data-motion-message-id="scrolling"] .chat-detail__message--user').getBoundingClientRect();
-        animation.finish();
+        const targetRow = document.querySelector('[data-motion-message-id="scrolling"]');
+        for (const part of [...ghost.getAnimations(), ...targetRow.getAnimations()]) {
+          part.currentTime = 360;
+          part.play();
+        }
         return {x:bounds.x,y:bounds.y,time,landingX:landing.x,landingY:landing.y,targetY:target.y};
       })()`)
       assert.equal(afterScroll.time, 180, 'scrolling preserves the animation clock')
@@ -792,9 +848,15 @@ if (!process.versions.electron) {
       await wait(220)
       for (const section of ['Reasoning', 'Model']) {
         await run(
-          `Array.from(document.querySelectorAll('.message-box__chat-config-section-button')).find(b=>b.textContent==='${section}').click()`
+          `document.querySelector('[data-chat-config-section="${section.toLowerCase()}"]').click()`
         )
         await frames()
+        assert.equal(
+          await run(`document.querySelector('[data-menu-page]').getAnimations().some(animation =>
+            animation.effect.getKeyframes().some(frame => frame.transform))`),
+          true,
+          'menu-page movement runs on the browser timeline'
+        )
         assert.equal(
           await run(`document.querySelector('[data-menu-page]').dataset.menuPage`),
           section.toLowerCase()

@@ -42,7 +42,10 @@ export function MenuPageTransition({
     )
     const slide = animate(
       content,
-      { x: [page === 'root' ? -18 : 18, 0], opacity: [0.45, 1] },
+      {
+        transform: [`translateX(${page === 'root' ? -18 : 18}px)`, 'translateX(0px)'],
+        opacity: [0.45, 1]
+      },
       {
         duration: 0.2,
         ease: 'easeOut'

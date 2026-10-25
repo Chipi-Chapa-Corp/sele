@@ -43,6 +43,7 @@ test('Codex lists actual background terminals across pages without opening a cha
     [
       'host',
       {
+        connectionIdentity: {},
         request: async (method, params) => {
           requests.push({ method, params })
           return params.cursor
@@ -58,6 +59,43 @@ test('Codex lists actual background terminals across pages without opening a cha
     Array.from(await adapter.getChatTerminalTasks('chat', { container: { name: 'unopened' } })),
     []
   )
+})
+
+test('Codex polling never restarts a stopped server with an unavailable account', async () => {
+  const adapter = harness('codex')
+  let requests = 0
+  const client = {
+    connectionIdentity: null,
+    request: async () => {
+      requests++
+      throw new Error('This chat account is no longer available.')
+    }
+  }
+  adapter.clients = new Map([['host', client]])
+  for (let index = 0; index < 100; index++)
+    assert.deepEqual(Array.from(await adapter.getChatTerminalTasks(`chat-${index}`)), [])
+  assert.equal(requests, 0, 'background polling must not use auto-starting requests')
+  client.connectionIdentity = {}
+  client.request = async () => ({ data: [{ processId: 'recovered' }] })
+  assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), ['recovered'])
+})
+
+test('Codex pagination cannot restart a server or mix tasks from a replacement process', async () => {
+  for (const nextConnection of [null, {}]) {
+    const adapter = harness('codex')
+    let requests = 0
+    const client = {
+      connectionIdentity: {},
+      request: async () => {
+        requests++
+        client.connectionIdentity = nextConnection
+        return { data: [{ processId: 'old-task' }], nextCursor: 'next' }
+      }
+    }
+    adapter.clients = new Map([['host', client]])
+    assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
+    assert.equal(requests, 1)
+  }
 })
 
 test('Claude uses shell-only nonambient task membership and notices its completion while idle', async () => {

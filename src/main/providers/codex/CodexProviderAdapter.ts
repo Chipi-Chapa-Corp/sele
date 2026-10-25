@@ -86,6 +86,7 @@ import type {
   ProviderSubagentDetail,
   ProviderChatTurnPagination,
   ProviderTurnOptions,
+  ProviderStartChatOptions,
   ProviderOneShotOptions
 } from '../../../shared/provider'
 import {
@@ -946,7 +947,8 @@ const isCompleteCodexUserMessage = (item: CodexThreadItem): boolean =>
 
 const codexCapabilities = {
   editMessages: true,
-  activeMessages: true
+  activeMessages: true,
+  setGoal: true
 } satisfies ProviderCapabilities
 
 const assertSupportedCodexHistory = (thread: Pick<CodexThread, 'historyMode'>): void => {
@@ -2230,11 +2232,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options: ProviderSourceOptions = {}
   ): Promise<string[]> => {
     const client = this.clients.get(getContainerTargetKey(options.container))
-    if (!client) return []
+    const connection = client?.connectionIdentity
+    // Terminals belong to this process. Polling must never start a stopped server,
+    // especially when its pinned account is unavailable and startup cannot succeed.
+    if (!client || !connection) return []
     const ids: string[] = []
     let cursor: string | null = null
     const seen = new Set<string>()
     do {
+      if (client.connectionIdentity !== connection) return []
       let page: { data: { processId: string }[]; nextCursor?: string | null }
       try {
         page = await client.request('thread/backgroundTerminals/list', {
@@ -3535,7 +3541,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   startChat = (
     message: string,
-    options?: ProviderTurnOptions,
+    options?: ProviderStartChatOptions,
     onChatCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> =>
     this.runWithContainer(options?.container, () =>
@@ -3544,7 +3550,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private startChatInContext = async (
     message: string,
-    options?: ProviderTurnOptions,
+    options?: ProviderStartChatOptions,
     onChatCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
@@ -3575,6 +3581,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       turns: getThreadTurns(startedThread.thread)
     } satisfies CodexThread
     this.cacheThread(thread)
+
+    if (options?.initialGoal) {
+      await this.goals.save(thread.id, options.initialGoal, (method, params) =>
+        this.client.request(method, params)
+      )
+    }
 
     const pendingTurn = await this.addSubmittedPendingTurn(thread.id, text, options)
     if (pendingTurn) this.emitChatUpdated(thread.id)

@@ -23,6 +23,7 @@ export function DeferredChatTurn({
 }): ReactNode {
   const [mounted, setMounted] = useState(eager)
   const wasShown = useRef(mounted)
+  const notifiedMount = useRef(false)
   const complete = useRef<(() => void) | null>(null)
   const ready = eager || mounted || wasShown.current
   useLayoutEffect(() => {
@@ -30,7 +31,13 @@ export function DeferredChatTurn({
     wasShown.current = true
     // Correct the viewport in this commit; a ResizeObserver may run after the
     // compositor has already prepared a frame for the newly inserted history.
-    onMount?.()
+    // Activity reconnects effects when a cached chat is revealed. Its DOM is
+    // already mounted; replaying every turn/item's correction forces repeated
+    // layouts during a single chat switch. Selection owns the reveal scroll.
+    if (!notifiedMount.current) {
+      notifiedMount.current = true
+      onMount?.()
+    }
     complete.current?.()
     complete.current = null
   }, [ready, onMount])

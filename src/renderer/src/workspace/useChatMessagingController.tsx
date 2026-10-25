@@ -489,7 +489,8 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     skills: ProviderSkillInput[] = [],
     apps: ProviderAppInput[] = [],
     turnOptionsOverride?: ProviderTurnOptions,
-    sendTarget?: 'current' | 'new'
+    sendTarget?: 'current' | 'new',
+    initialGoal?: string
   ): Promise<boolean> => {
     if (
       (configProviderId === 'opencode' && !selectedEffectiveModel) ||
@@ -634,6 +635,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           )
           if (worktreeCreationCanceledRef.current) {
             setSendState('idle')
+            if (initialGoal) throw new Error('Worktree creation was canceled.')
             return true
           }
 
@@ -647,6 +649,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           })
           if (worktreeCreationCanceledRef.current) {
             setSendState('idle')
+            if (initialGoal) throw new Error('Worktree creation was canceled.')
             return true
           }
 
@@ -655,6 +658,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
 
         const detail = await providerApi.startChat(startingProviderId, serializedMessage, {
           ...turnOptions,
+          ...(initialGoal ? { initialGoal } : {}),
           noProject,
           cwd: noProject ? undefined : sessionCwd,
           additionalDirectories: noProject ? undefined : turnOptions.additionalDirectories
@@ -673,7 +677,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         }
         applyViewedChatDetail(
           startingProviderId,
-          !hasProviderUserMessage(detail.items)
+          !initialGoal && !hasProviderUserMessage(detail.items)
             ? {
                 ...detail,
                 items: getOptimisticItems([], messageWithComposerMentions, attachments, review)
@@ -705,6 +709,11 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         return true
       } catch (error) {
         console.error('[caught:useChatMessagingController:handleSendMessage]', error)
+        // Keep the goal dialog open with the native error so its draft can be retried.
+        if (initialGoal) {
+          setSendState('idle')
+          throw error
+        }
         if (
           worktreeCreationCanceledRef.current ||
           (error instanceof Error && error.message === providerOneShotGenerationCanceledMessage)
@@ -795,6 +804,26 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       finishSendInFlight()
     }
   }
+
+  const handleStartGoalChat = async (objective: string): Promise<void> => {
+    const goal = objective.trim()
+    if (!goal) throw new Error('Enter a goal description.')
+    if (selectedChat) throw new Error('Select a new chat before starting a goal.')
+    const started = await handleSendMessage(
+      goal,
+      undefined,
+      [],
+      null,
+      [],
+      [],
+      undefined,
+      'new',
+      goal
+    )
+    if (!started)
+      throw new Error('Unable to start a goal right now. Try again when the chat is ready.')
+  }
+
   const handleContinueStoppedTurn = useCallback(
     async (workingStepId: string, prompt: string): Promise<void> => {
       if (chatDetailRef.current?.authenticationRequired || chatDetailRef.current?.historyPreview)
@@ -1358,6 +1387,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     handleResolveChatApproval,
     handleRetryStoppedTurn,
     handleSendMessage,
+    handleStartGoalChat,
     handleSteerPendingMessage,
     handleCompactChat,
     handleStopChat,

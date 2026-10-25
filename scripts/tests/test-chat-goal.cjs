@@ -13,6 +13,7 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import { ConversationPlan } from './src/renderer/src/workspace/components/ConversationPlan'
+            import { ChatGoalButton } from './src/renderer/src/components/ChatGoalButton'
             import './src/renderer/src/assets/styles/tokens.css'
             const root = createRoot(document.getElementById('root'))
             window.saved = []
@@ -29,6 +30,15 @@ if (!process.versions.electron) {
                 }}
               />))
             }
+            window.newGoalAttempts = 0
+            window.renderNewChatGoal = () => flushSync(() => root.render(<ChatGoalButton
+              onSetGoal={async objective => {
+                window.newGoalAttempts++
+                if (window.failSave) throw new Error('Native goal unavailable')
+                await new Promise(resolve => { window.finishGoalStart = resolve })
+                window.saved.push(objective)
+              }}
+            />))
             window.renderGoal()
           `,
           resolveDir: path.resolve(__dirname, '../..'),
@@ -129,6 +139,39 @@ if (!process.versions.electron) {
         await run(`window.renderGoal({status:${JSON.stringify(status)}})`)
         assert.equal(await run("document.querySelector('.chat-goal')"), null)
       }
+
+      await run('window.renderNewChatGoal()')
+      await click('Set goal')
+      assert.equal(await run('document.querySelector("dialog").open'), true)
+      assert.equal(await run('document.activeElement.tagName'), 'TEXTAREA')
+      assert.equal(
+        await run('document.querySelector("dialog footer button:last-child").disabled'),
+        true
+      )
+      await setText('Start from an empty chat')
+      await run('window.failSave = true')
+      await save()
+      assert.equal(
+        await run('document.querySelector("[role=alert]").textContent'),
+        'Native goal unavailable'
+      )
+      assert.equal(
+        await run('document.querySelector("textarea").value'),
+        'Start from an empty chat'
+      )
+      await run('window.failSave = false')
+      await save()
+      assert.equal(await run('document.querySelector("textarea").disabled'), true)
+      assert.equal(
+        await run('document.querySelector("dialog footer button:last-child").disabled'),
+        true
+      )
+      await save()
+      assert.equal(await run('window.newGoalAttempts'), 2)
+      await run('window.finishGoalStart()')
+      await settle()
+      assert.equal(await run('document.querySelector("dialog")'), null)
+      assert.equal(await run('window.saved.at(-1)'), 'Start from an empty chat')
       await run("window.renderGoal({status:'active', objective:'Build the requested feature'})")
       await settle()
       if (process.env.SELE_GOAL_SCREENSHOT) {
@@ -146,7 +189,7 @@ if (!process.versions.electron) {
         )
       }
       console.log(
-        'Goal UI checks passed: edit, save, failed save, empty clear, cancel, inactive removal'
+        'Goal UI checks passed: edit, clear, cancel, native startup errors, retry, pending submission'
       )
     } catch (error) {
       console.error(error)

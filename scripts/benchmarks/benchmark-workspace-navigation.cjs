@@ -1,6 +1,7 @@
 // Full App/controller navigation and completion with synthetic data.
 // Set SELE_BENCHMARK_RICH_HISTORY=1 to include rich transcripts and cached switches.
 // Set SELE_BENCHMARK_ACTIVE_CHATS=1 to switch rich conversations while both stream.
+// Set SELE_BENCHMARK_PROFILE to a path to save the active-chat CPU profile and bundle.
 // Run through isolated-gui. Never starts provider processes or opens real profiles.
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -384,6 +385,15 @@ if (!process.versions.electron) {
           'the selected stream catches up to the latest provider revision'
         )
         assert.deepEqual(errors, [])
+        if (process.env.SELE_BENCHMARK_PROFILE) {
+          const { profile } = await win.webContents.debugger.sendCommand('Profiler.stop')
+          await fs.mkdir(path.dirname(process.env.SELE_BENCHMARK_PROFILE), { recursive: true })
+          await fs.writeFile(process.env.SELE_BENCHMARK_PROFILE, JSON.stringify(profile))
+          await fs.copyFile(
+            path.join(directory, 'fixture.js'),
+            process.env.SELE_BENCHMARK_PROFILE + '.fixture.js'
+          )
+        }
         console.log(JSON.stringify({ providerId, activeChats: true, results, errors }, null, 2))
         await run('window.unmountFixture()')
         app.exit(0)

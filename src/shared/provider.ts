@@ -706,6 +706,7 @@ export type ProviderChatPage = {
 export type ProviderCapabilities = {
   editMessages: boolean
   activeMessages: boolean
+  setGoal?: boolean
 }
 
 export type ProviderChatWriteAccess = 'checking' | 'writable' | 'readOnly' | 'unknown'
@@ -1132,6 +1133,11 @@ export type ProviderTurnOptions = {
   skills?: ProviderSkillInput[]
 }
 
+export type ProviderStartChatOptions = ProviderTurnOptions & {
+  /** Establish the native goal before starting work in the new session. */
+  initialGoal?: string
+}
+
 export type ProviderOneShotOptions = ProviderTurnOptions & {
   generationId?: string
 }
@@ -1326,7 +1332,7 @@ export type ProviderApi = {
   startChat: (
     providerId: ProviderId,
     message: string,
-    options?: ProviderTurnOptions,
+    options?: ProviderStartChatOptions,
     purpose?: ProviderChatPurpose
   ) => Promise<ProviderChatDetail>
   continueChat: (

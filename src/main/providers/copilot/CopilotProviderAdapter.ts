@@ -46,6 +46,7 @@ import type {
   ProviderChat,
   ProviderChatContextUsage,
   ProviderChatDetail,
+  ProviderChatGoal,
   ProviderChatListOptions,
   ProviderChatPage,
   ProviderLoginResult,
@@ -63,6 +64,7 @@ import type {
   ProviderSubagentDetail,
   ProviderTokenUsageBreakdown,
   ProviderTurnOptions,
+  ProviderStartChatOptions,
   ProviderUserInputResponse,
   ProviderUsageOptions,
   ProviderUpdateAvailability
@@ -111,6 +113,7 @@ import {
   getCopilotCustomProviderSessionOptions
 } from './CopilotCustomProvider'
 import { CopilotEventStore } from './CopilotEventStore.ts'
+import { getCopilotGoalInput, mapCopilotGoal, runCopilotGoal } from './CopilotGoals.ts'
 import { SqliteUsageReader } from '../SqliteUsageReader'
 import {
   bindCopilotUsageQuery,
@@ -174,6 +177,13 @@ type CopilotSessionState = {
   plan: CopilotRenderedPlan | null
   planRefreshSequence: number
   turnGeneration: number
+  goal: ProviderChatGoal | null
+  goalNativeId?: number
+  goalCommand: string | null
+  goalSupportSession?: CopilotSession
+  goalRefreshSequence: number
+  goalMutation?: boolean
+  goalMutationCanceled?: boolean
 }
 
 const copilotTurnActivityEventTypes: ReadonlySet<SessionEvent['type']> = new Set([
@@ -523,7 +533,12 @@ const getContextUsage = (events: SessionEvent[]): ProviderChatContextUsage | nul
   }
 }
 
-const getPermissionDescription = (request: PermissionRequest): string => {
+// Older external CLIs still emit factory requests; the bundled SDK now calls them workflows.
+type CopilotDisplayPermissionRequest =
+  | PermissionRequest
+  | { kind: 'factory'; name: string; description?: string }
+
+const getPermissionDescription = (request: CopilotDisplayPermissionRequest): string => {
   switch (request.kind) {
     case 'shell':
       return request.fullCommandText
@@ -544,6 +559,7 @@ const getPermissionDescription = (request: PermissionRequest): string => {
     case 'extension-management':
       return `${request.operation} ${request.extensionName ?? 'extension'}`
     case 'factory':
+    case 'workflow':
       return request.description || request.name
     case 'extension-env-access':
       return request.extensionName
@@ -552,7 +568,7 @@ const getPermissionDescription = (request: PermissionRequest): string => {
   }
 }
 
-const getPermissionReason = (request: PermissionRequest): string | null => {
+const getPermissionReason = (request: CopilotDisplayPermissionRequest): string | null => {
   switch (request.kind) {
     case 'shell':
     case 'write':
@@ -571,6 +587,8 @@ const getPermissionReason = (request: PermissionRequest): string | null => {
       return `Manage Copilot extension ${request.extensionName ?? ''}`.trim()
     case 'factory':
       return `Run Copilot factory ${request.name}`
+    case 'workflow':
+      return `Run Copilot workflow ${request.name}`
     case 'extension-env-access':
       return `Access environment variables ${request.environmentVariables.join(', ')}`
     case 'extension-permission-access':
@@ -1486,17 +1504,22 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   startChat = async (
     message: string,
-    options?: ProviderTurnOptions,
+    options?: ProviderStartChatOptions,
     onChatCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
+    if (options?.initialGoal) getCopilotGoalInput(options.initialGoal)
     const sessionId = randomUUID()
     const state = this.createState(sessionId, options)
     this.pendingMessageStore.track(sessionId)
     const session = await this.createSession(state, options)
     await onChatCreated?.(sessionId)
-    state.active = true
-    state.browser?.resume()
-    await session.send(getMessageOptions(message, options))
+    if (options?.initialGoal) {
+      await this.setChatGoal(sessionId, options.initialGoal, { container: options.container })
+    } else {
+      state.active = true
+      state.browser?.resume()
+      await session.send(getMessageOptions(message, options))
+    }
     this.startChatTitleGeneration(state, message || 'File attachment', options)
     return this.createChatDetail(state)
   }
@@ -1511,6 +1534,72 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.queuePaused = false
     await this.drainQueue(state)
     return this.createChatDetail(state)
+  }
+
+  setChatGoal = async (
+    chatId: string,
+    objective: string | null,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatGoal | null> => {
+    const text = getCopilotGoalInput(objective)
+    const state = await this.ensureSession(
+      chatId,
+      undefined,
+      this.getSessionContainer(chatId, options)
+    )
+    if (state.goalMutation || state.queueDrainInProgress)
+      throw new Error('Wait for the current Copilot update before changing the goal.')
+    await this.refreshGoal(state)
+    if (!state.goalCommand)
+      throw new Error('This Copilot runtime does not support goal controls. Update Copilot.')
+    if (state.goalMutation || state.queueDrainInProgress)
+      throw new Error('Wait for the current Copilot update before changing the goal.')
+    state.goalMutation = true
+    state.goalMutationCanceled = false
+    state.goalRefreshSequence += 1
+    const session = state.session!
+    try {
+      this.completionCoordinator.cancel(state.id)
+      if (
+        state.active ||
+        state.goal?.status === 'active' ||
+        state.pendingPermissions.length ||
+        state.pendingUserInputs.length
+      ) {
+        state.browser?.suspend()
+        state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
+        this.cancelPendingUserInputs(state)
+        await session.abort()
+        state.active = false
+      }
+      if (state.goalMutationCanceled || state.session !== session)
+        throw new Error('The Copilot goal update was stopped.')
+      await runCopilotGoal(session, state.goalCommand, text, () => {
+        if (
+          state.goalMutationCanceled ||
+          state.session !== session ||
+          this.states.get(state.id) !== state
+        )
+          throw new Error('The Copilot goal update was stopped.')
+        state.active = true
+        state.stopped = false
+        state.failed = false
+        state.browser?.resume()
+      })
+      await this.refreshGoal(state)
+      return state.goal
+    } catch (error) {
+      if (state.active) await session.abort()
+      state.active = false
+      state.browser?.suspend()
+      throw error
+    } finally {
+      await this.refreshGoal(state)
+      state.goalMutation = false
+      if (state.goalMutationCanceled) state.queuePaused = true
+      this.emitUpdate(state)
+      if (!state.queuePaused) this.scheduleQueueDrain(state)
+    }
   }
 
   continueChatInFork = async (
@@ -1859,6 +1948,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   private drainQueue = async (state: CopilotSessionState): Promise<void> => {
     if (
+      state.goalMutation ||
       state.queuePaused ||
       state.queueDrainInProgress ||
       state.pendingPermissions.length ||
@@ -1891,6 +1981,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (
       this.pendingMessageEdits.blocks(state.id, pending.id) ||
       state.queueDrainInProgress ||
+      state.goalMutation ||
       pending.delivery !== 'local' ||
       (pending.kind === 'steering' &&
         state.pendingMessages.some(
@@ -1904,6 +1995,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       this.completionCoordinator.cancel(state.id)
       await this.applyTurnOptions(state, pending.options)
       if (
+        state.goalMutation ||
         this.pendingMessageEdits.blocks(state.id, pending.id) ||
         state.queuePaused ||
         !state.pendingMessages.includes(pending)
@@ -2108,6 +2200,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
+    if (state.goalMutation) state.goalMutationCanceled = true
     state.queuePaused = true
     state.stopped = true
     state.active = false
@@ -2289,7 +2382,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       pendingUserInputs: [],
       plan: null,
       planRefreshSequence: 0,
-      turnGeneration: 0
+      turnGeneration: 0,
+      goal: null,
+      goalCommand: null,
+      goalRefreshSequence: 0
     }
     this.sessionContainers.set(sessionId, storedContainer)
     this.states.set(sessionId, state)
@@ -2420,6 +2516,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         })) ?? null
       await this.loadSessionTitle(state)
       await this.loadEvents(state)
+      await this.refreshGoal(state)
       return session
     } catch (error) {
       this.closeBrowserIntegration(state)
@@ -2481,6 +2578,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       this.restorePendingMessages(state, await this.pendingMessageStore.restore(sessionId))
       await this.refreshPendingMessages(state)
       await this.refreshPlan(state)
+      await this.refreshGoal(state)
       return state
     })()
     this.sessionLoads.set(state, load)
@@ -2513,7 +2611,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         await Promise.all([
           this.loadSessionTitle(state),
           this.refreshPendingMessages(state),
-          this.refreshPlan(state)
+          this.refreshPlan(state),
+          this.refreshGoal(state)
         ])
       }
     })()
@@ -2745,6 +2844,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.storeEvent(state, event)
     this.reportEventTokenUsage(state, event)
 
+    if (event.type === 'session.autopilot_objective_changed') {
+      void this.refreshGoal(state).then(() => this.emitUpdate(state))
+      return
+    }
+
     if (event.type === 'elicitation.requested') {
       const pending = state.pendingUserInputs.findLast(
         (value) =>
@@ -2815,7 +2919,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
           const results = await Promise.allSettled([
             this.loadEvents(state, { retainLive: true, isCurrent }),
             this.loadSessionTitle(state),
-            this.refreshPlan(state)
+            this.refreshPlan(state),
+            this.refreshGoal(state)
           ])
           const rejected = results.find(
             (result): result is PromiseRejectedResult => result.status === 'rejected'
@@ -3022,6 +3127,57 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         : parseMarkdownPlan(planResult?.exists ? planResult.content : null)
   }
 
+  private refreshGoal = async (state: CopilotSessionState): Promise<void> => {
+    if (this.hiddenSessionIds.has(state.id)) return
+    const session = state.session
+    if (!session?.rpc?.autopilotObjective?.getState) {
+      state.goalCommand = null
+      state.goalSupportSession = undefined
+      return
+    }
+    const sequence = ++state.goalRefreshSequence
+    try {
+      const [result, commands] = await Promise.all([
+        session.rpc.autopilotObjective.getState(),
+        state.goalSupportSession === session ? null : session.rpc.commands.list()
+      ])
+      if (
+        state.session !== session ||
+        this.states.get(state.id) !== state ||
+        state.goalRefreshSequence !== sequence
+      )
+        return
+      if (commands) {
+        state.goalCommand =
+          commands.commands.find(
+            (command) =>
+              command.kind === 'builtin' &&
+              (command.name === 'goal' ||
+                command.name === 'autopilot' ||
+                command.aliases?.includes('goal'))
+          )?.name ?? null
+        state.goalSupportSession = session
+      }
+      state.goal = mapCopilotGoal(
+        state.id,
+        result.state,
+        state.goal && state.goalNativeId !== undefined
+          ? { id: state.goalNativeId, goal: state.goal }
+          : undefined
+      )
+      state.goalNativeId = result.state?.id
+    } catch (error) {
+      if (state.session !== session || state.goalRefreshSequence !== sequence) return
+      const unsupported =
+        typeof error === 'object' && error !== null && 'code' in error && error.code === -32601
+      if (state.goalSupportSession !== session || unsupported) {
+        state.goalCommand = null
+        state.goalSupportSession = undefined
+      }
+      console.warn(`Unable to read optional Copilot goal for session ${state.id}`, error)
+    }
+  }
+
   private queueUpdate = (state: CopilotSessionState): void => {
     if (this.updateTimers.has(state.id)) return
     const timer = setTimeout(() => {
@@ -3128,8 +3284,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       container: state.container,
       capabilities: {
         editMessages: true,
-        activeMessages: true
+        activeMessages: true,
+        setGoal: Boolean(state.goalCommand)
       },
+      goal: state.goal,
       pendingApproval: this.getPendingApproval(state),
       pendingUserInput: this.getPendingUserInput(state),
       contextUsage: getContextUsage(state.events),

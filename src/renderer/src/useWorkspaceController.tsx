@@ -4927,6 +4927,46 @@ export const useWorkspaceController = () => {
     }
   }
 
+  const handleChatPresetChange = (selection: Partial<MessageBoxSelection>): void => {
+    // Apply the complete combination in one render, including transitions out of full access.
+    if (selection.model !== undefined) {
+      modelManuallySelectedRef.current = true
+      setModel(selection.model)
+      if (selection.reasoningEffort === undefined) {
+        reasoningManuallySelectedRef.current = false
+        setReasoningEffort(
+          getDefaultReasoningEffort(models.find((candidate) => candidate.id === selection.model))
+        )
+      }
+    }
+    if (selection.reasoningEffort !== undefined) {
+      reasoningManuallySelectedRef.current = true
+      setReasoningEffort(selection.reasoningEffort)
+    }
+    if (selection.sandboxMode !== undefined) {
+      sandboxModeManuallySelectedRef.current = true
+      if (selection.sandboxMode === 'danger-full-access') {
+        if (sandboxMode !== 'danger-full-access') {
+          approvalModeBeforeFullAccessRef.current = approvalMode === 'never' ? null : approvalMode
+        }
+        setApprovalMode('never')
+      } else if (sandboxMode === 'danger-full-access') {
+        setApprovalMode(approvalModeBeforeFullAccessRef.current ?? 'ask-user')
+        approvalModeBeforeFullAccessRef.current = null
+      }
+      setSandboxMode(selection.sandboxMode)
+    }
+    if (
+      selection.approvalMode !== undefined &&
+      (selection.sandboxMode ?? effectiveSandboxMode) !== 'danger-full-access'
+    ) {
+      approvalModeManuallySelectedRef.current = true
+      setApprovalMode(selection.approvalMode)
+    }
+    if (selection.agentMode !== undefined) setAgentMode(selection.agentMode)
+    if (selection.serviceTier !== undefined) setServiceTier(selection.serviceTier)
+  }
+
   const {
     getSettingsFieldClassName,
     handleActionsChange,
@@ -4943,7 +4983,7 @@ export const useWorkspaceController = () => {
     handleBrowserEnabledChange,
     handleBrowserViewChange,
     handleChatDropdownPreferenceChange,
-    handleChatForcedDropdownChange,
+    handleChatDropdownSettingChange,
     handleChatUsageDisplayChange,
     handleCodexRecommendedPluginsChange,
     handleContinuePromptChange,
@@ -5138,6 +5178,7 @@ export const useWorkspaceController = () => {
     handleResolveChatApproval,
     handleRetryStoppedTurn,
     handleSendMessage,
+    handleStartGoalChat,
     handleSteerPendingMessage,
     handleCompactChat,
     handleStopChat,
@@ -5955,7 +5996,7 @@ export const useWorkspaceController = () => {
     handleBrowserEnabledChange,
     handleBrowserViewChange,
     handleChatDropdownPreferenceChange,
-    handleChatForcedDropdownChange,
+    handleChatDropdownSettingChange,
     handleChatUsageDisplayChange,
     groupChatsByProject: chatGroupingPreference === 'grouped',
     handleGroupChatsByProjectChange: (enabled) => {
@@ -6192,6 +6233,15 @@ export const useWorkspaceController = () => {
         Boolean(chatDetail?.turnPagination?.newerCursor))
   )
 
+  const handleSaveGoalObjective = async (objective: string | null): Promise<void> => {
+    if (!selectedChat) {
+      if (objective) await handleStartGoalChat(objective)
+      return
+    }
+    if (chatDetailRef.current?.historyPreview) return
+    await providerApi.setChatGoal(selectedChat.providerId, selectedChat.id, objective)
+  }
+
   return {
     className: `chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`,
     openLinkedChat,
@@ -6411,6 +6461,7 @@ export const useWorkspaceController = () => {
       visibleChatItems
     },
     conversationComposer: {
+      handleChatPresetChange,
       openCodeConnectionFailure,
       handleManageOpenCodeProviders,
       authenticationRequired,
@@ -6474,6 +6525,19 @@ export const useWorkspaceController = () => {
       messageBoxDisabled,
       messageBoxNotesGroup,
       messageBoxProviderAvailable,
+      goalObjective:
+        selectedChat && chatDetail?.id === selectedChat.id
+          ? (chatDetail.goal?.objective ?? null)
+          : null,
+      onSetGoal:
+        !activeSubagentChatView &&
+        (selectedChat
+          ? chatDetail?.id === selectedChat.id &&
+            chatDetail.capabilities.setGoal &&
+            !chatDetail.historyPreview
+          : newChatOpen && newSessionProviderAvailable && newSessionProvider !== 'opencode')
+          ? handleSaveGoalObjective
+          : undefined,
       messageBoxQuoteRequest,
       models,
       modelsError,
@@ -6674,13 +6738,10 @@ export const useWorkspaceController = () => {
       selectedChatKey,
       messageBoxPlan: effectiveAppSettings.chat.hidePlans ? null : messageBoxPlan,
       goal:
-        selectedChat?.providerId === 'codex' && chatDetail?.id === selectedChat.id
+        selectedChat && chatDetail?.id === selectedChat.id && chatDetail.capabilities.setGoal
           ? (chatDetail.goal ?? null)
           : null,
-      onSaveGoalObjective: async (objective: string | null): Promise<void> => {
-        if (!selectedChat || chatDetailRef.current?.historyPreview) return
-        await providerApi.setChatGoal(selectedChat.providerId, selectedChat.id, objective)
-      }
+      onSaveGoalObjective: handleSaveGoalObjective
     }
   }
 }

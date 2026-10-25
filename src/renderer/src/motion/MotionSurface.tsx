@@ -35,8 +35,9 @@ export const MotionSurface = forwardRef<
         ? { opacity: present ? [0, 1] : 0 }
         : {
             opacity: present ? [0, 1] : 0,
-            y: present ? [5, 0] : 3,
-            scale: present ? [0.98, 1] : 0.99
+            transform: present
+              ? ['translateY(5px) scale(0.98)', 'translateY(0px) scale(1)']
+              : 'translateY(3px) scale(0.99)'
           },
       {
         duration: present ? 0.16 : 0.12,

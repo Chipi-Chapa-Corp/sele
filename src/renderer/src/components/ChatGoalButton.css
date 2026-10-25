@@ -1,0 +1,52 @@
+.chat-goal-dialog {
+  width: min(28rem, calc(100vw - 1.8rem));
+  padding: 0;
+  border: 0.0625rem solid var(--menu-border);
+  border-radius: 0.6rem;
+  color: var(--lead);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+}
+
+.chat-goal-dialog::backdrop {
+  background: rgb(0 0 0 / 34%);
+}
+
+.chat-goal-dialog__form {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.chat-goal-dialog__header,
+.chat-goal-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem;
+}
+
+.chat-goal-dialog__header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.chat-goal-dialog__body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0 0.6rem;
+}
+
+.chat-goal-dialog__body textarea {
+  min-height: 6rem;
+}
+
+.chat-goal-dialog__error {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

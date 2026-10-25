@@ -7,11 +7,14 @@ export const createChatTerminalPoller = (options: {
   activity: ReturnType<typeof createChatTerminalActivity>
   onError: (error: unknown) => void
   timeoutMs?: number
+  now?: () => number
 }) => {
   let disposed = false
   let polling = false
   const discovered = new Set<string>()
   const running = new Set<string>()
+  const failures = new Map<string, { attempts: number; retryAt: number }>()
+  const now = options.now ?? Date.now
   return {
     dispose: () => {
       disposed = true
@@ -22,6 +25,8 @@ export const createChatTerminalPoller = (options: {
       const requested = new Set(options.activity.takeProbes())
       const targets = options.getChats().filter((chat) => {
         const key = `${chat.providerId}:${chat.id}`
+        const failure = failures.get(key)
+        if (failure && now() < failure.retryAt) return false
         return (
           !discovered.has(key) || running.has(key) || requested.has(key) || chat.status === 'active'
         )
@@ -43,6 +48,7 @@ export const createChatTerminalPoller = (options: {
                   })
                 ])
                 if (disposed) return
+                failures.delete(key)
                 discovered.add(key)
                 if (ids.length) running.add(key)
                 else running.delete(key)
@@ -50,11 +56,18 @@ export const createChatTerminalPoller = (options: {
               } catch (error) {
                 if (disposed) return
                 // Losing contact is unknown, not proof of continued execution or
-                // successful completion. Clear the claim and retry even idle chats.
+                // successful completion. Retry even idle chats, with backoff so a
+                // persistent failure cannot flood IPC or repeatedly launch a provider.
                 discovered.delete(key)
                 running.delete(key)
                 options.activity.report(key, 'agent', [], false)
-                options.onError(error)
+                const previous = failures.get(key)
+                const attempts = (previous?.attempts ?? 0) + 1
+                failures.set(key, {
+                  attempts,
+                  retryAt: now() + Math.min(60_000, 1000 * 2 ** Math.min(attempts - 1, 6))
+                })
+                if (!previous) options.onError(error)
               } finally {
                 clearTimeout(timeout)
               }

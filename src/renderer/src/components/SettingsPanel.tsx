@@ -56,6 +56,7 @@ import {
   type AppAppearanceStylePreference,
   type AppBrowserView,
   type AppChatDropdownSettings,
+  type AppChatDropdownSelectionAction,
   type AppChatUsageDisplay,
   type AppGitCommitMessageGenerationSettings,
   type AppGitCommitPromptSettings,
@@ -125,7 +126,7 @@ export type SettingsPanelProps = {
   handleBrowserEnabledChange: (enabled: boolean) => void
   handleBrowserViewChange: (view: AppBrowserView) => void
   handleChatDropdownPreferenceChange: (key: ChatBooleanSettingKey, value: boolean) => void
-  handleChatForcedDropdownChange: <Key extends keyof AppChatDropdownSettings>(
+  handleChatDropdownSettingChange: <Key extends keyof AppChatDropdownSettings>(
     key: Key,
     value: AppChatDropdownSettings[Key]
   ) => void
@@ -372,7 +373,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     handleBrowserEnabledChange,
     handleBrowserViewChange,
     handleChatDropdownPreferenceChange,
-    handleChatForcedDropdownChange,
+    handleChatDropdownSettingChange,
     handleChatUsageDisplayChange,
     handleCodexRecommendedPluginsChange,
     handleNetworkRetrySettingChange,
@@ -450,6 +451,10 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
   const chatDisplayUsagePath = {
     section: 'chat',
     key: 'displayUsage'
+  } satisfies AppProjectSettingPath
+  const chatSelectionActionPath = {
+    section: 'chat',
+    key: 'selectionAction'
   } satisfies AppProjectSettingPath
   const chatForceAccessPath = {
     section: 'chat',
@@ -1081,6 +1086,29 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
             Dropdowns
           </h2>
           <div className="settings-dialog__section-cards">
+            {chatDropdownSettingFields
+              .filter((field) => field.key === 'presets')
+              .map(renderChatBooleanSettingField)}
+            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
+              <div className="settings-dialog__field-header">
+                <h3>Action on selection</h3>
+                <p>Choose what happens after selecting a model or another parameter.</p>
+              </div>
+              {renderProjectSettingAction(chatSelectionActionPath, 'Action on selection')}
+              <Dropdown<AppChatDropdownSelectionAction>
+                id="settings-chat-selection-action"
+                aria-label="Action on selection"
+                disabled={isScopedSettingControlDisabled(chatSelectionActionPath)}
+                menuAlign="end"
+                options={[
+                  { value: 'stay', label: 'Stay' },
+                  { value: 'back', label: 'Back' },
+                  { value: 'close', label: 'Close' }
+                ]}
+                value={settingsPanelSettings.chat.selectionAction}
+                onChange={(value) => handleChatDropdownSettingChange('selectionAction', value)}
+              />
+            </div>
             <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
               <div className="settings-dialog__field-header">
                 <h3>Force access</h3>
@@ -1094,7 +1122,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 menuAlign="end"
                 options={forceAccessOptions}
                 value={settingsPanelSettings.chat.forceAccess}
-                onChange={(value) => handleChatForcedDropdownChange('forceAccess', value)}
+                onChange={(value) => handleChatDropdownSettingChange('forceAccess', value)}
               />
             </div>
             <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
@@ -1110,7 +1138,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 menuAlign="end"
                 options={forceReviewOptions}
                 value={settingsPanelSettings.chat.forceReview}
-                onChange={(value) => handleChatForcedDropdownChange('forceReview', value)}
+                onChange={(value) => handleChatDropdownSettingChange('forceReview', value)}
               />
             </div>
             <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
@@ -1129,7 +1157,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 menuAlign="end"
                 options={forceModelOptions}
                 value={settingsPanelSettings.chat.forceModel}
-                onChange={(value) => handleChatForcedDropdownChange('forceModel', value)}
+                onChange={(value) => handleChatDropdownSettingChange('forceModel', value)}
               />
             </div>
             <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
@@ -1148,7 +1176,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 menuAlign="end"
                 options={forceReasoningOptions}
                 value={settingsPanelSettings.chat.forceReasoning}
-                onChange={(value) => handleChatForcedDropdownChange('forceReasoning', value)}
+                onChange={(value) => handleChatDropdownSettingChange('forceReasoning', value)}
               />
             </div>
             <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
@@ -1167,10 +1195,12 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 menuAlign="end"
                 options={forceSpeedOptions}
                 value={settingsPanelSettings.chat.forceSpeed}
-                onChange={(value) => handleChatForcedDropdownChange('forceSpeed', value)}
+                onChange={(value) => handleChatDropdownSettingChange('forceSpeed', value)}
               />
             </div>
-            {chatDropdownSettingFields.map(renderChatBooleanSettingField)}
+            {chatDropdownSettingFields
+              .filter((field) => field.key !== 'presets')
+              .map(renderChatBooleanSettingField)}
           </div>
         </section>
         <section className="settings-dialog__section" aria-labelledby="settings-chat-progress">

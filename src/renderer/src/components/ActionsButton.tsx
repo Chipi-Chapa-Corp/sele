@@ -177,6 +177,7 @@ export const ActionsButton = ({
   const keybindingDescriptionId = `cwd-actions-keybinding-description-${reactId}`
   const normalizedProjectCwd = projectCwd?.trim() || null
   const visibleActions = getAppActionsForProject(actions, normalizedProjectCwd)
+  const showDropdown = visibleActions.length > 0
   const primaryAction =
     visibleActions.find((action) => action.id === lastActionId) ?? visibleActions[0] ?? null
   const draftOpen = draft !== null
@@ -529,19 +530,15 @@ export const ActionsButton = ({
     <span className="cwd-actions">
       <Button
         theme="secondary"
-        aria-label={primaryAction ? `Run ${primaryAction.name}` : `${label} actions`}
+        aria-label={primaryAction ? `Run ${primaryAction.name}` : 'Create action'}
         title={primaryAction ? primaryAction.name : 'Create action'}
         disabled={disabled || Boolean(runningActionId)}
-        dropdownActions={dropdownActions}
+        dropdownActions={showDropdown ? dropdownActions : undefined}
         dropdownLabel="Actions"
         dropdownMenuAlign="end"
         dropdownPlacement="top"
         callback={handlePrimaryAction}
-        icon={
-          primaryAction
-            ? renderActionIcon(primaryAction.icon)
-            : renderActionIcon(defaultAppActionIcon)
-        }
+        icon={primaryAction ? renderActionIcon(primaryAction.icon) : <Plus aria-hidden="true" />}
         label={showLabel && primaryAction ? primaryAction.name : null}
       />
       {dialog && createPortal(dialog, document.body)}

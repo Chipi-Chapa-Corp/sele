@@ -35,6 +35,7 @@ import type {
   ProviderSubagentDetail,
   ProviderWindowChatUpdatedEvent,
   ProviderTurnOptions,
+  ProviderStartChatOptions,
   ProviderUpdateOptions,
   ProviderUserInputResponse,
   ProviderUsageOptions,
@@ -1182,6 +1183,16 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   }
 }
 
+const requireStartChatOptions = (value: unknown): ProviderStartChatOptions | undefined => {
+  const options = requireTurnOptions(value)
+  if (!options) return options
+  const initialGoal = (value as { initialGoal?: unknown }).initialGoal
+  if (initialGoal === undefined) return options
+  if (typeof initialGoal !== 'string' || !initialGoal.trim())
+    throw new Error('Invalid initial goal objective')
+  return { ...options, initialGoal: initialGoal.trim() }
+}
+
 const requireOneShotOptions = (value: unknown): ProviderOneShotOptions | undefined => {
   const turnOptions = requireTurnOptions(value)
   if (value == null) return turnOptions
@@ -1948,7 +1959,7 @@ export const registerProviderIpc = (): void => {
         providerApi.startChat(
           requireProviderId(providerId),
           requireMessage(message),
-          requireTurnOptions(options),
+          requireStartChatOptions(options),
           requireOptionalChatPurpose(purpose)
         )
       )

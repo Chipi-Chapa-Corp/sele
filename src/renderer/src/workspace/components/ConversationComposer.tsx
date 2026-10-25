@@ -62,6 +62,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     effectiveSandboxMode,
     effectiveServiceTier,
     getProviderUpdateSummary,
+    handleChatPresetChange,
     handleActionsChange,
     handleApprovalModeChange,
     handleCancelEditMessage,
@@ -92,6 +93,8 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     messageBoxDisabled,
     messageBoxNotesGroup,
     messageBoxProviderAvailable,
+    goalObjective,
+    onSetGoal,
     messageBoxQuoteRequest,
     models,
     modelsError,
@@ -490,6 +493,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
               terminalWorkspaceKey
             )}
             lastActionId={appSettings.lastActionId}
+            goalObjective={goalObjective}
             model={effectiveModel}
             models={models}
             modelsError={modelsError}
@@ -520,6 +524,9 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
               messageBoxProviderAvailable &&
               effectiveAppSettings.chat.forceAccess === appChatManualDropdownValue
             }
+            presetsEnabled={effectiveAppSettings.chat.presets}
+            selectionAction={effectiveAppSettings.chat.selectionAction}
+            onPresetChange={handleChatPresetChange}
             showActions={effectiveAppSettings.chat.enableActions}
             showActionLabel={hasForcedChatDropdown}
             showModelSelector={effectiveAppSettings.chat.forceModel === appChatManualDropdownValue}
@@ -542,6 +549,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             onApprovalModeChange={handleApprovalModeChange}
             onCancelEdit={handleCancelEditMessage}
             onModelChange={handleModelChange}
+            onSetGoal={onSetGoal}
             onNotesChange={
               messageBoxNotesGroup
                 ? (notes) => handleCwdNotesChange(messageBoxNotesGroup, notes)

@@ -377,6 +377,13 @@ export const chatPromptBoxSettingFields = [
 ] satisfies ChatBooleanSettingField[]
 
 export const chatDropdownSettingFields = [
+  {
+    key: 'presets',
+    label: 'Presets',
+    description:
+      'Show saved configurations in the picker. Turn off to open configuration sections directly.',
+    id: 'settings-chat-presets'
+  },
   { key: 'updateExistingChats', label: 'Update all existing chats', id: 'settings-chat-existing' },
   { key: 'updateNewChats', label: 'Update all new chats', id: 'settings-chat-new' }
 ] satisfies ChatBooleanSettingField[]

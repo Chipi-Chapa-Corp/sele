@@ -7,6 +7,7 @@ import { TokenUsageReporter } from '../TokenUsageReporter.ts'
 import { normalizeTokenUsage, addTokenUsage, emptyTokenUsage } from '../../../shared/tokenUsage.ts'
 import { ClaudeSessionDiscovery } from './ClaudeSessionDiscovery'
 import { getClaudeSessionTitle } from './ClaudeSessionTitle'
+import { getClaudeGoalCommand, mapClaudeActiveGoal } from './ClaudeGoals.ts'
 import { ClaudeRemoteSessionStore as RemoteSessionStore } from './ClaudeRemoteSessionStore'
 import { isCurrentContainerTarget } from '../../currentContainer'
 import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
@@ -28,6 +29,7 @@ import {
   type PermissionResult,
   type Query,
   type SDKMessage,
+  type SDKActiveGoalMessage,
   type SDKSessionInfo,
   type SDKUserMessage,
   type SessionMessage
@@ -47,6 +49,7 @@ import {
   type ProviderChat,
   type ProviderChatContextUsage,
   type ProviderChatDetail,
+  type ProviderChatGoal,
   type ProviderChatListOptions,
   type ProviderChatPage,
   type ProviderLoginResult,
@@ -64,6 +67,7 @@ import {
   type ProviderSubagentDetail,
   type ProviderTokenUsageBreakdown,
   type ProviderTurnOptions,
+  type ProviderStartChatOptions,
   type ProviderUpdateAvailability,
   type ProviderUsageOptions,
   type ProviderUserInputResponse
@@ -189,6 +193,17 @@ type ClaudeSessionState = {
   container: StoredClaudeContainer | null
   cwd: string | null
   metadata: SDKSessionInfo | null
+  goal: ProviderChatGoal | null
+  goalUpdatedAt?: number
+  goalMutation?: boolean
+  goalRequest?: {
+    id: string
+    objective: string | null
+    queueWasPaused: boolean
+    control?: Query
+    resolve: () => void
+    reject: (error: Error) => void
+  }
   messages: ClaudeTranscriptMessage[]
   /** The stored prefix is retrieved through cursors, independently of the live tail. */
   historyPagination?: ProviderChatDetail['turnPagination']
@@ -1463,9 +1478,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   startChat = async (
     message: string,
-    options?: ProviderTurnOptions,
+    options?: ProviderStartChatOptions,
     onChatCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
+    if (options?.initialGoal) getClaudeGoalCommand(options.initialGoal)
     const id = randomUUID()
     const state = this.createState(id, options)
     this.requireAuthentication(state)
@@ -1474,7 +1490,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.sessionContainers.set(id, state.container)
     await this.startStateQuery(state, options)
     await onChatCreated?.(id)
-    this.sendMessageNow(state, message, options)
+    if (options?.initialGoal) {
+      await this.setChatGoal(id, options.initialGoal, { container: options.container })
+    } else {
+      this.sendMessageNow(state, message, options)
+    }
     this.scheduleSessionMetadataRefresh(state)
     return this.createChatDetail(state)
   }
@@ -1487,6 +1507,74 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const state = await this.ensureState(chatId, options)
     await this.sendMessageRespectingQueue(state, message, options)
     return this.createChatDetail(state)
+  }
+
+  setChatGoal = async (
+    chatId: string,
+    objective: string | null,
+    sourceOptions: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatGoal | null> => {
+    const command = getClaudeGoalCommand(objective)
+    const state = await this.ensureState(chatId, undefined, sourceOptions.container)
+    this.requireAuthentication(state)
+    if (state.goalMutation) throw new Error('A Claude goal update is already in progress.')
+    state.goalMutation = true
+    this.pinState(state)
+    const hadQuery = state.query !== null
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      await this.ensureStateQuery(state, state.options)
+      const commands = await state.query!.supportedCommands()
+      if (!commands.some((item) => item.name === 'goal'))
+        throw new Error(
+          'This Claude CLI does not expose /goal. Update Claude Code or check its hook policy.'
+        )
+      // A slash command must stay at the start of the prompt. Do not reuse the last send's
+      // skill invocation or attachments as part of the condition (or the clear command).
+      const options = state.options
+        ? { ...state.options, skills: undefined, files: undefined, images: undefined }
+        : undefined
+      const message = this.createQueuedMessage(command, options)
+      const acknowledged = new Promise<void>((resolve, reject) => {
+        state.goalRequest = {
+          id: message.id,
+          objective: objective?.trim() || null,
+          queueWasPaused: state.queuedMessagesPaused,
+          resolve,
+          reject
+        }
+        timeout = setTimeout(
+          () => reject(new Error('Claude did not acknowledge the goal update.')),
+          15000
+        )
+      })
+      // Attach the rejection handler before dispatch, which may itself wait on an interrupt.
+      state.queuedMessagesPaused = false
+      const dispatch = state.active
+        ? this.interruptWithMessage(state, message)
+        : (async () => {
+            state.queuedMessages.unshift(message)
+            state.queuedMessagesPaused = false
+            await this.drainNextQueuedMessage(state)
+          })()
+      await Promise.all([dispatch, acknowledged])
+      return state.goal
+    } finally {
+      if (timeout) clearTimeout(timeout)
+      const pending = state.goalRequest
+      if (pending && !pending.control) {
+        const previousLength = state.queuedMessages.length
+        state.queuedMessages = state.queuedMessages.filter((message) => message.id !== pending.id)
+        state.queuedMessagesPaused = pending.queueWasPaused
+        if (state.queuedMessages.length !== previousLength) this.emitUpdate(state)
+      }
+      if (!hadQuery && !state.active && state.query && !pending?.control)
+        await this.closeStateQuery(state)
+      state.goalRequest = undefined
+      state.goalMutation = false
+      this.unpinState(state)
+      this.trimIdleStates(state)
+    }
   }
 
   continueChatInFork = async (
@@ -2078,6 +2166,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       container: normalized.kind === 'container' ? normalized : null,
       cwd: options?.cwd ?? null,
       metadata: null,
+      goal: null,
       messages: [],
       messageIds: new Set(),
       partialMessages: new Map(),
@@ -2316,6 +2405,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.cwd = metadata?.cwd ?? rememberedOptions?.cwd ?? null
       state.messages = messages
       state.historyPagination = page.pagination
+      state.goal = page.goal ?? null
       state.failed = isClaudeAuthenticationFailure(
         messages.findLast(
           (message) =>
@@ -2417,6 +2507,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.historyDirty = false
     state.messageIds = new Set(page.messages.map((message) => message.uuid))
     state.historyPagination = page.pagination
+    if (page.goal !== undefined && page.metadata.lastModified >= (state.goalUpdatedAt ?? 0))
+      state.goal = page.goal
     state.failed = isClaudeAuthenticationFailure(
       page.messages.findLast(
         (message) =>
@@ -2574,6 +2666,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.browser?.close()
     state.browser = null
     if (!control) return
+    if (state.goalRequest?.control === control)
+      state.goalRequest.reject(
+        new Error('Claude disconnected before acknowledging the goal update.')
+      )
     this.rejectPendingRequests(state)
     state.input?.close()
     state.query = null
@@ -2947,8 +3043,39 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private handleQueryEvent = async (
     state: ClaudeSessionState,
     control: Query,
-    event: SDKMessage
+    // The SDK forwards active_goal at runtime but omits it from Query's SDKMessage union.
+    event: SDKMessage | SDKActiveGoalMessage
   ): Promise<boolean> => {
+    if (event.type === 'active_goal') {
+      state.goalUpdatedAt = Date.now()
+      state.goal = mapClaudeActiveGoal(state.id, event.value)
+      const pending = state.goalRequest
+      if (pending?.control === control && (state.goal?.objective ?? null) === pending.objective)
+        pending.resolve()
+      this.emitUpdate(state, false, false)
+      return false
+    }
+    if (event.type === 'system' && event.subtype === 'local_command_output') {
+      const pending = state.goalRequest
+      if (pending?.control === control) {
+        if (/^(Goal set:|Goal cleared:|No goal set\b)/.test(event.content)) {
+          if (!pending.objective) {
+            state.goalUpdatedAt = Date.now()
+            state.goal = null
+            pending.resolve()
+          }
+        } else pending.reject(new Error(event.content))
+      }
+      this.addTranscriptMessage(state, {
+        type: 'system',
+        uuid: event.uuid,
+        session_id: event.session_id,
+        message: { content: event.content },
+        parent_tool_use_id: null
+      })
+      this.queueUpdate(state)
+      return false
+    }
     if (
       (event.type === 'stream_event' || event.type === 'assistant') &&
       event.parent_tool_use_id == null
@@ -3387,6 +3514,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.failed = false
     state.queuedMessagesPaused = false
     state.options = message.options ?? state.options
+    if (state.goalRequest?.id === message.id) {
+      state.goalRequest.control = state.query ?? undefined
+      if (!state.goalRequest.objective)
+        state.queuedMessagesPaused = state.goalRequest.queueWasPaused
+    }
     this.addUserMessage(state, message)
     state.turnAwaitingStart = true
     state.input.push(createSdkUserMessage(state.id, message.id, message.prompt))
@@ -3658,7 +3790,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       seenUpdatedAt: null,
       purpose: null,
       container: state.container,
-      capabilities: { editMessages: true, activeMessages: true },
+      capabilities: { editMessages: true, activeMessages: true, setGoal: true },
+      goal: state.goal,
       authenticationRequired: this.authenticationFailures.has(
         getContainerTargetKey(state.container)
       ),

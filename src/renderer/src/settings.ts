@@ -113,7 +113,15 @@ export type AppChatProgressSettings = {
 export const appChatManualDropdownValue = 'manual'
 export const appChatStandardSpeedValue = 'standard'
 
+export type AppChatDropdownSelectionAction = 'stay' | 'back' | 'close'
+
+export const isAppChatDropdownSelectionAction = (
+  value: unknown
+): value is AppChatDropdownSelectionAction =>
+  value === 'stay' || value === 'back' || value === 'close'
+
 export type AppChatDropdownSettings = {
+  selectionAction: AppChatDropdownSelectionAction
   forceAccess: typeof appChatManualDropdownValue | ProviderSandboxMode
   forceReview: typeof appChatManualDropdownValue | ProviderApprovalMode
   forceModel: typeof appChatManualDropdownValue | ProviderModelId
@@ -195,6 +203,7 @@ export type AppSettings = {
     recentChatCacheLimit: number
     displayUsage: AppChatUsageDisplay
     hidePlans: boolean
+    presets: boolean
     enableActions: boolean
     enableNotesButton: boolean
     updateExistingChats: boolean
@@ -252,6 +261,7 @@ export const defaultAppChatProgressSettings: AppChatProgressSettings = {
 }
 
 export const defaultAppChatDropdownSettings: AppChatDropdownSettings = {
+  selectionAction: 'back',
   forceAccess: appChatManualDropdownValue,
   forceReview: appChatManualDropdownValue,
   forceModel: appChatManualDropdownValue,
@@ -403,6 +413,7 @@ export const defaultAppSettings: AppSettings = {
     updateExistingChats: false,
     updateNewChats: true,
     ...defaultAppChatDropdownSettings,
+    presets: true,
     ...defaultAppChatProgressSettings
   },
   links: {
@@ -536,6 +547,7 @@ const getStoredChatBoolean = (
   chat: Record<string, unknown>,
   key:
     | keyof AppChatProgressSettings
+    | 'presets'
     | 'enableActions'
     | 'enableNotesButton'
     | 'hidePlans'
@@ -632,8 +644,12 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
   if (hasOwnProperty(chat, 'displayUsage') && displayUsage) {
     overrides.displayUsage = displayUsage
   }
+  if (isAppChatDropdownSelectionAction(chat.selectionAction)) {
+    overrides.selectionAction = chat.selectionAction
+  }
 
   const booleanKeys = [
+    'presets',
     'hidePlans',
     'enableActions',
     'enableNotesButton',
@@ -1132,6 +1148,10 @@ export const readStoredAppSettings = (): AppSettings => {
         recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
         displayUsage:
           getStoredChatUsageDisplay(chat.displayUsage) ?? defaultAppSettings.chat.displayUsage,
+        presets: getStoredChatBoolean(chat, 'presets'),
+        selectionAction: isAppChatDropdownSelectionAction(chat.selectionAction)
+          ? chat.selectionAction
+          : defaultAppChatDropdownSettings.selectionAction,
         hidePlans: getStoredChatBoolean(chat, 'hidePlans'),
         enableActions: getStoredChatBoolean(chat, 'enableActions'),
         enableNotesButton: getStoredChatBoolean(chat, 'enableNotesButton'),
@@ -1454,6 +1474,12 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       )
     ) {
       storedChat.displayUsage = settings.chat.displayUsage
+    }
+    if (settings.chat.presets !== defaultAppSettings.chat.presets) {
+      storedChat.presets = settings.chat.presets
+    }
+    if (settings.chat.selectionAction !== defaultAppSettings.chat.selectionAction) {
+      storedChat.selectionAction = settings.chat.selectionAction
     }
     if (settings.chat.hidePlans !== defaultAppSettings.chat.hidePlans) {
       storedChat.hidePlans = settings.chat.hidePlans

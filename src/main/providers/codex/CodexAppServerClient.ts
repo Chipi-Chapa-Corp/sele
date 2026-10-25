@@ -283,10 +283,11 @@ export class CodexAppServerClient {
 
   private start = async (): Promise<void> => {
     if (!this.startPromise) {
-      this.startPromise = this.initialize().catch((error: unknown) => {
-        this.startPromise = null
+      const startPromise = this.initialize().catch((error: unknown) => {
+        if (this.startPromise === startPromise) this.startPromise = null
         throw error
       })
+      this.startPromise = startPromise
     }
 
     return this.startPromise
@@ -312,20 +313,27 @@ export class CodexAppServerClient {
     this.process = child
     this.stderr = ''
 
-    createInterface({ input: child.stdout }).on('line', this.handleLine)
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      if (this.process === child) this.handleLine(line)
+    })
 
     child.stderr.on('data', (chunk: Buffer) => {
+      if (this.process !== child) return
       this.stderr = `${this.stderr}${chunk.toString()}`.slice(-2_000)
     })
 
-    child.on('error', (error) => {
-      this.handleProcessEnd(error)
-    })
+    const handleError = (error: Error): void => {
+      if (this.process === child) this.handleProcessEnd(error)
+    }
+    // Pipe failures are emitted asynchronously by stdin, outside sendRequest's
+    // try/catch. Keep this listener even after disposal to absorb late EPIPEs.
+    child.stdin.on('error', handleError)
+    child.on('error', handleError)
 
     child.on('close', (code) => {
       const detail = this.stderr.trim()
       const message = detail || `Codex app-server exited with code ${code ?? 'unknown'}`
-      this.handleProcessEnd(new Error(message))
+      handleError(new Error(message))
     })
 
     await this.sendRequest('initialize', {
@@ -508,11 +516,12 @@ export class CodexAppServerClient {
     this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
-    const hadProcess = Boolean(this.process)
+    const child = this.process
     this.process = null
     this.startPromise = null
     this.rejectPending(error)
-    if (hadProcess) {
+    child?.kill()
+    if (child) {
       console.error('Codex app-server stopped unexpectedly', error)
       this.stoppedListeners.forEach((listener) => listener(error))
     }

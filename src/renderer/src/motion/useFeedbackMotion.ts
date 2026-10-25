@@ -20,7 +20,9 @@ export function useFeedbackMotion<T extends HTMLElement>(
     if (targets.length === 0) return
     const controls = animate(
       targets,
-      kind === 'bump' ? { scale: [1, 1.045, 1] } : { opacity: [0.55, 1] },
+      kind === 'bump'
+        ? { transform: ['scale(1)', 'scale(1.045)', 'scale(1)'] }
+        : { opacity: [0.55, 1] },
       { duration: kind === 'bump' ? 0.2 : 0.16, ease: 'easeOut' }
     )
     return () => controls.cancel()

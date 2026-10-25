@@ -10,7 +10,9 @@ const fixture = (options = {}) => {
   const errors = []
   let tasks = ['shell']
   let reads = 0
+  let time = 0
   const poller = createChatTerminalPoller({
+    now: () => time,
     getChats: () => [{ id: 'chat', providerId: 'opencode', status: null }],
     readTasks: async () => {
       reads++
@@ -27,6 +29,9 @@ const fixture = (options = {}) => {
     errors,
     poller,
     reads: () => reads,
+    advance: (ms) => {
+      time += ms
+    },
     setTasks: (value) => {
       tasks = value
     }
@@ -42,6 +47,7 @@ test('connection loss clears the running claim without a completion notification
   assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
   assert.equal(f.errors.length, 1)
   f.setTasks([])
+  f.advance(1000)
   await f.poller.poll()
   assert.equal(f.reads(), 3)
   assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
@@ -54,6 +60,7 @@ test('failed initial discovery retries and verified task completion still marks 
   f.setTasks(new Error('temporarily offline'))
   await f.poller.poll()
   f.setTasks(['shell'])
+  f.advance(1000)
   await f.poller.poll()
   assert.equal(f.activity.getSnapshot(f.key).running, true)
   f.setTasks([])
@@ -106,6 +113,56 @@ test('an unresponsive provider loses its running claim and late replies cannot r
   assert.match(f.errors[0].message, /Timed out/)
   finish(['shell'])
   f.setTasks([])
+  f.advance(1000)
   await f.poller.poll()
   assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+})
+
+test('persistent failures back off to one retry per minute and report once until recovery', async () => {
+  const f = fixture()
+  f.setTasks(new Error('account unavailable'))
+  await f.poller.poll()
+  for (const delay of [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]) {
+    const before = f.reads()
+    f.activity.requestProbe(f.key)
+    await f.poller.poll()
+    assert.equal(f.reads(), before, 'probes must respect backoff')
+    f.advance(delay - 1)
+    await f.poller.poll()
+    assert.equal(f.reads(), before)
+    f.advance(1)
+    await f.poller.poll()
+    assert.equal(f.reads(), before + 1)
+  }
+  assert.equal(f.errors.length, 1)
+  f.setTasks(['shell'])
+  f.advance(60000)
+  await f.poller.poll()
+  assert.equal(f.activity.getSnapshot(f.key).running, true)
+  f.setTasks(new Error('new outage'))
+  await f.poller.poll()
+  assert.equal(f.errors.length, 2, 'recovery resets error reporting and backoff')
+  f.advance(1000)
+  f.setTasks([])
+  await f.poller.poll()
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+})
+
+test('a failing chat does not delay healthy active chats', async () => {
+  const reads = []
+  const f = fixture({
+    getChats: () => [
+      { id: 'failed', providerId: 'codex', status: 'active' },
+      { id: 'healthy', providerId: 'codex', status: 'active' }
+    ],
+    readTasks: async (_providerId, id) => {
+      reads.push(id)
+      if (id === 'failed') throw new Error('unavailable')
+      return ['shell']
+    }
+  })
+  await f.poller.poll()
+  await f.poller.poll()
+  assert.deepEqual(reads, ['failed', 'healthy', 'healthy'])
+  assert.equal(f.activity.getSnapshot('codex:healthy').running, true)
 })

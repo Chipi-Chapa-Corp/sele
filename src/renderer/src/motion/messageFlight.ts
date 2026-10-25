@@ -9,28 +9,29 @@ type Flight = {
   existingIds: Set<string>
   started: number
   timer: number
+  launchFrame: number
   detachFrame: number
   target: HTMLElement | null
   restore: () => void
   ghost: HTMLDivElement | null
   animation: Animation | null
-  destination: DOMRect | null
-  landingAnimation: Animation | null
   arrivalAnimation: Animation | null
   stopListening: () => void
 }
 const flights = new Set<Flight>()
 const duration = 360
 const landingDuration = 80
+const totalDuration = duration + landingDuration
+const landingOffset = duration / totalDuration
 const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const finishFlight = (flight: Flight): void => {
   window.clearTimeout(flight.timer)
+  window.cancelAnimationFrame(flight.launchFrame)
   window.cancelAnimationFrame(flight.detachFrame)
   flight.stopListening()
   flight.restore()
   flight.animation?.cancel()
-  flight.landingAnimation?.cancel()
   flight.ghost?.remove()
   flights.delete(flight)
   flight.target = null
@@ -58,13 +59,12 @@ export function captureMessageFlight(
       )
     ),
     timer: 0,
+    launchFrame: 0,
     detachFrame: 0,
     target: null,
     restore: () => {},
     ghost: null,
     animation: null,
-    destination: null,
-    landingAnimation: null,
     arrivalAnimation: null,
     stopListening: () => {}
   }
@@ -76,50 +76,19 @@ export function captureMessageFlight(
 }
 
 function revealLandingTarget(flight: Flight): void {
-  if (!flight.target || !flight.landingAnimation) return
+  if (!flight.target || !flight.animation) return
   flight.arrivalAnimation?.cancel()
-  flight.arrivalAnimation = flight.target.animate([{ opacity: 0 }, { opacity: 1 }], {
-    duration: landingDuration,
-    fill: 'both'
-  })
+  flight.arrivalAnimation = flight.target.animate(
+    [{ opacity: 0 }, { opacity: 0, offset: landingOffset }, { opacity: 1 }],
+    { duration: totalDuration, fill: 'both' }
+  )
   // A provider can replace the row during the handover, too. Continue its fade
   // at the same age instead of briefly exposing or hiding the replacement.
-  if (flight.landingAnimation.startTime !== null) {
-    flight.arrivalAnimation.startTime = flight.landingAnimation.startTime
+  if (flight.animation.startTime !== null) {
+    flight.arrivalAnimation.startTime = flight.animation.startTime
   } else {
-    flight.arrivalAnimation.currentTime = flight.landingAnimation.currentTime
+    flight.arrivalAnimation.currentTime = flight.animation.currentTime
   }
-}
-
-function landFlight(flight: Flight): void {
-  if (!flights.has(flight)) return
-  const bubble = flight.target?.querySelector<HTMLElement>('.chat-detail__message--user')
-  const bounds = bubble?.getBoundingClientRect()
-  const destination = flight.destination
-  if (
-    !flight.target?.isConnected ||
-    !bounds ||
-    !destination ||
-    !flight.ghost ||
-    reducedMotion() ||
-    (Math.abs(bounds.left - destination.left) < 1 &&
-      Math.abs(bounds.top - destination.top) < 1 &&
-      Math.abs(bounds.width - destination.width) < 1 &&
-      Math.abs(bounds.height - destination.height) < 1)
-  ) {
-    finishFlight(flight)
-    return
-  }
-  // A moving destination cannot be followed while keeping a straight path.
-  // Finish the original flight, then dissolve into the row at its current
-  // position. Never steer, resize or jump the travelling copy mid-flight.
-  flight.landingAnimation = flight.ghost.animate([{ opacity: 1 }, { opacity: 0 }], {
-    duration: landingDuration,
-    fill: 'both'
-  })
-  flight.landingAnimation.startTime = document.timeline.currentTime
-  revealLandingTarget(flight)
-  flight.landingAnimation.onfinish = () => finishFlight(flight)
 }
 
 function flyToTarget(flight: Flight): void {
@@ -141,7 +110,6 @@ function flyToTarget(flight: Flight): void {
     finishFlight(flight)
     return
   }
-  flight.destination = bounds
   const ghost = document.createElement('div')
   ghost.className = `${target.className} message-flight`
   const copy = bubble.cloneNode(true) as HTMLElement
@@ -162,6 +130,7 @@ function flyToTarget(flight: Flight): void {
     pointerEvents: 'none',
     zIndex: '1000',
     transformOrigin: 'top left',
+    willChange: 'transform, opacity',
     left: `${bounds.left}px`,
     top: `${bounds.top}px`,
     width: `${bounds.width}px`,
@@ -170,7 +139,7 @@ function flyToTarget(flight: Flight): void {
   document.body.append(ghost)
   flight.ghost = ghost
   window.clearTimeout(flight.timer)
-  flight.timer = window.setTimeout(() => finishFlight(flight), duration + landingDuration + 80)
+  flight.timer = window.setTimeout(() => finishFlight(flight), totalDuration + 80)
   const cancel = (): void => finishFlight(flight)
   window.addEventListener('wheel', cancel, { passive: true, capture: true })
   window.addEventListener('resize', cancel)
@@ -181,13 +150,21 @@ function flyToTarget(flight: Flight): void {
   flight.animation = ghost.animate(
     [
       {
-        transform: `translate(${flight.source.left - bounds.left}px, ${flight.source.top - bounds.top}px)`
+        transform: `translate(${flight.source.left - bounds.left}px, ${flight.source.top - bounds.top}px)`,
+        opacity: 1,
+        easing: 'cubic-bezier(0.25, 0.65, 0.3, 1)'
       },
-      { transform: 'translate(0, 0)' }
+      { transform: 'translate(0, 0)', opacity: 1, offset: landingOffset },
+      { transform: 'translate(0, 0)', opacity: 0 }
     ],
-    { duration, easing: 'cubic-bezier(0.25, 0.65, 0.3, 1)', fill: 'both' }
+    { duration: totalDuration, fill: 'both' }
   )
-  flight.animation.onfinish = () => landFlight(flight)
+  // Schedule both sides of the handover now. Provider updates can occupy the
+  // renderer when travel ends; only DOM cleanup should wait for JavaScript.
+  // The fixed endpoint keeps the path straight even if the live row moves.
+  flight.animation.startTime = document.timeline.currentTime
+  revealLandingTarget(flight)
+  flight.animation.onfinish = () => finishFlight(flight)
 }
 
 export function useMessageArrival(
@@ -228,13 +205,17 @@ export function useMessageArrival(
     }
     revealLandingTarget(flight)
     // Existing scroll-to-latest and composer resizing get their normal commit.
-    let frame = window.requestAnimationFrame(() => {
-      frame = window.requestAnimationFrame(() => {
-        if (flights.has(flight) && flight.target === target) flyToTarget(flight)
+    // The flight owns this wait so optimistic/provider row replacements cannot
+    // restart it on every frame. Launch toward whichever row is bound then.
+    if (!flight.ghost && !flight.launchFrame) {
+      flight.launchFrame = window.requestAnimationFrame(() => {
+        flight.launchFrame = window.requestAnimationFrame(() => {
+          flight.launchFrame = 0
+          if (flights.has(flight) && flight.target) flyToTarget(flight)
+        })
       })
-    })
+    }
     return () => {
-      window.cancelAnimationFrame(frame)
       if (flight.target !== target) return
       flight.restore()
       flight.target = null

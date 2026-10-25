@@ -270,6 +270,18 @@ if (!process.versions.electron) {
       await run('new Promise(resolve=>setTimeout(resolve,400))')
       assert.equal(await run('document.querySelectorAll("h3").length'), 0)
       assert.equal(await run('document.body.textContent.includes("Empty chat")'), true)
+      // Ordinary rich replies used to stay on the synchronous path until 12 KB,
+      // blocking navigation with parsing, highlighting and sanitizing together.
+      const medium = Array.from({ length: 40 }, (_, i) => paragraph(i)).join('')
+      assert.ok(medium.length < 12_000)
+      const mediumRequests = await run('window.planRequests')
+      await run(`window.render(${JSON.stringify(medium)},'medium',true)`)
+      await waitFor(`document.querySelectorAll('h3').length===40`)
+      assert.ok(
+        (await run('window.planRequests')) > mediumRequests,
+        'ordinary rich replies must parse in the worker'
+      )
+      assert.equal(await run(`document.querySelectorAll('code .token').length>0`), true)
       assert.deepEqual(errors, [])
       console.log(
         JSON.stringify({

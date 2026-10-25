@@ -1,9 +1,6 @@
 import { UsageIndicator, type ChatContextUsage } from './UsageIndicator'
-import { MenuPageTransition } from '../motion/MenuPageTransition'
 import { captureMessageFlight } from '../motion/messageFlight'
 import { ComposerPlaceholder } from './ComposerPlaceholder'
-import { useFeedbackMotion } from '../motion/useFeedbackMotion'
-import { AnimatePresence } from 'motion/react'
 import {
   type CSSProperties,
   type Dispatch,
@@ -23,9 +20,6 @@ import {
   ArrowUp,
   BadgeCheck,
   Blocks,
-  Check,
-  ChevronDown,
-  ChevronRight,
   CornerDownRight,
   FileLock,
   FolderPen,
@@ -74,6 +68,9 @@ import type {
   ProviderUsageOptions
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import type { MessageBoxSelection } from '../messageBoxPreferences'
+import { getChatPresetChanges } from '../chatPresets'
+import { selectionsEqual } from '../chatModelPreferences'
 import type { AppAction } from '../actions'
 import {
   addPromptDraft,
@@ -89,7 +86,7 @@ import { useComposerDrafts } from '../useComposerDrafts'
 import { providerApi } from '../providerApi'
 import { getReasoningEffortPresentation } from '../reasoningEffortPresentation'
 import { getModifiedActiveSendMode } from '../messageSendMode'
-import type { AppChatUsageDisplay } from '../settings'
+import type { AppChatDropdownSelectionAction, AppChatUsageDisplay } from '../settings'
 import { AttachmentChip } from './AttachmentChip'
 import { useLinkedChatOpener } from './LinkedChatOpener'
 import {
@@ -106,12 +103,17 @@ import {
 } from '../linkedChats'
 import { ActionsButton } from './ActionsButton'
 import { Button } from './Button'
-import { ChatConfigSectionHeader } from './ChatConfigSectionHeader'
+import {
+  ChatConfigDropdown,
+  type ChatConfigSection,
+  type ChatConfigOptionGroup,
+  type SelectorIconItem,
+  type ChatConfigPresetDetails
+} from './ChatConfigDropdown'
+import { ChatGoalButton } from './ChatGoalButton'
 import { CwdNotesButton } from './CwdNotesButton'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { ImageLightbox } from './ImageLightbox'
-import { Input } from './Input'
-import { MenuSurface } from './MenuSurface'
 import { PromptDraftsButton } from './PromptDraftsButton'
 import { ProviderIcon } from './ProviderIcon'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
@@ -169,9 +171,13 @@ type MessageBoxProps = {
   contextUsage: MessageBoxContextUsage
   displayUsage: AppChatUsageDisplay
   lastActionId?: string | null
+  goalObjective?: string | null
   notes?: ProviderCwdNote[]
   notesContextKey?: string
   notesLabel?: string
+  presetsEnabled?: boolean
+  selectionAction?: AppChatDropdownSelectionAction
+  onPresetChange: (selection: Partial<MessageBoxSelection>) => void
   showAccessSelector?: boolean
   showActions?: boolean
   showActionLabel?: boolean
@@ -187,6 +193,7 @@ type MessageBoxProps = {
   onLastActionChange?: (actionId: string | null) => void
   onCancelEdit?: () => void
   onModelChange: (model: ProviderModelId) => void
+  onSetGoal?: (objective: string) => Promise<void>
   onNotesChange?: (notes: ProviderCwdNote[]) => void
   onOpenAttachment?: (attachment: AppSelectedAttachment) => void
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
@@ -291,44 +298,6 @@ const isComposerCacheCurrent = (
   cache.providerResourcesRevision === providerResourcesRevision
 
 type ComposerResult = { kind: 'skill'; skill: ProviderSkill } | { kind: 'app'; app: ProviderApp }
-type SelectorIconItem = {
-  icon: ReactNode
-  key: string
-  title?: string
-}
-type ChatConfigSectionId = 'model' | 'reasoning' | 'questions' | 'access' | 'speed'
-
-type ChatConfigOptionGroup = {
-  id: string
-  label?: string
-  options: readonly DropdownOption<string>[]
-  selectedValue: string
-  onChange: (value: string) => void
-}
-
-type ChatConfigSection = {
-  disabled?: boolean
-  id: ChatConfigSectionId
-  icon: ReactNode
-  label: string
-  groups: readonly ChatConfigOptionGroup[]
-}
-
-type ChatConfigDropdownProps = {
-  id: string
-  modelsError?: string | null
-  modelLabel: string
-  providerIcon: ReactNode
-  reasoningLabel?: string | null
-  sections: readonly ChatConfigSection[]
-  statusIcons: readonly SelectorIconItem[]
-  title: string
-}
-
-type ChatConfigMenuStyle = CSSProperties & {
-  '--chat-config-menu-max-height': string
-}
-
 type MentionMenuStyle = CSSProperties & {
   '--menu-surface-max-height': string
 }
@@ -359,386 +328,6 @@ const getMentionMenuStyle = (anchorRect: DOMRect): MentionMenuStyle => {
   }
 
   return menuStyle
-}
-
-const getChatConfigMenuStyle = (buttonRect: DOMRect): ChatConfigMenuStyle => {
-  const viewportInset = 9.6
-  const menuOffset = 4.8
-  const maxMenuHeight = 608
-  const menuWidth = Math.min(288, Math.max(208, window.innerWidth - viewportInset * 2))
-  const maxLeft = Math.max(viewportInset, window.innerWidth - menuWidth - viewportInset)
-  const spaceAbove = Math.max(0, buttonRect.top - menuOffset - viewportInset)
-  const spaceBelow = Math.max(
-    0,
-    window.innerHeight - buttonRect.bottom - menuOffset - viewportInset
-  )
-  const openUp = spaceAbove >= spaceBelow
-  const availableHeight = Math.min(maxMenuHeight, openUp ? spaceAbove : spaceBelow)
-
-  const menuStyle: ChatConfigMenuStyle = {
-    '--chat-config-menu-max-height': toCssRem(availableHeight),
-    left: toCssRem(Math.min(Math.max(viewportInset, buttonRect.left), maxLeft)),
-    minWidth: toCssRem(buttonRect.width),
-    width: toCssRem(menuWidth)
-  }
-
-  if (openUp) {
-    menuStyle.bottom = toCssRem(window.innerHeight - buttonRect.top + menuOffset)
-  } else {
-    menuStyle.top = toCssRem(buttonRect.bottom + menuOffset)
-  }
-
-  return menuStyle
-}
-
-const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
-  id,
-  modelsError,
-  modelLabel,
-  providerIcon,
-  reasoningLabel,
-  sections,
-  statusIcons,
-  title
-}) => {
-  const reactId = useId().replace(/:/g, '')
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const modelSearchInputRef = useRef<HTMLInputElement>(null)
-  const [open, setOpen] = useState(false)
-  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
-  const [activeSectionId, setActiveSectionId] = useState<ChatConfigSectionId | null>(null)
-  const [modelSearchQuery, setModelSearchQuery] = useState('')
-  const labelRef = useRef<HTMLSpanElement>(null)
-  useFeedbackMotion(labelRef, `${modelLabel}:${reasoningLabel}`)
-  const menuId = `${id}-${reactId}-menu`
-  const menuOpen = open && sections.length > 0
-  const activeSection = sections.find((section) => section.id === activeSectionId) ?? null
-  const normalizedModelSearchQuery = modelSearchQuery.trim().toLocaleLowerCase()
-  const visibleSectionGroups =
-    activeSection?.id === 'model' && normalizedModelSearchQuery
-      ? activeSection.groups
-          .map((group) => ({
-            ...group,
-            options: group.options.filter((option) =>
-              [option.label, option.menuLabel, option.value, option.description]
-                .filter((searchableValue): searchableValue is string => Boolean(searchableValue))
-                .some((searchableValue) =>
-                  searchableValue.toLocaleLowerCase().includes(normalizedModelSearchQuery)
-                )
-            )
-          }))
-          .filter((group) => group.options.length > 0)
-      : (activeSection?.groups ?? [])
-
-  const closeMenu = useCallback((): void => {
-    setOpen(false)
-    setMenuStyle(null)
-    setActiveSectionId(null)
-    setModelSearchQuery('')
-  }, [])
-
-  const focusFirstMenuButton = useCallback((): void => {
-    window.requestAnimationFrame(() => {
-      menuRef.current
-        ?.querySelector<HTMLButtonElement>('button:not(:disabled)')
-        ?.focus({ preventScroll: true })
-    })
-  }, [])
-
-  const focusModelSearchInput = useCallback((): void => {
-    window.requestAnimationFrame(() => modelSearchInputRef.current?.focus({ preventScroll: true }))
-  }, [])
-
-  const updateMenuPosition = useCallback((): void => {
-    const buttonRect = buttonRef.current?.getBoundingClientRect()
-    if (!buttonRect) return
-
-    setMenuStyle(getChatConfigMenuStyle(buttonRect))
-  }, [])
-
-  const openMenu = useCallback((): void => {
-    if (sections.length === 0) return
-
-    updateMenuPosition()
-    setActiveSectionId(null)
-    setOpen(true)
-    focusFirstMenuButton()
-  }, [focusFirstMenuButton, sections.length, updateMenuPosition])
-
-  useEffect(() => {
-    if (!menuOpen) return
-
-    const handlePointerDown = (event: PointerEvent): void => {
-      const target = event.target as Node
-      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return
-
-      closeMenu()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    const handleScroll = (event: Event): void => {
-      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return
-
-      updateMenuPosition()
-    }
-
-    window.addEventListener('resize', updateMenuPosition)
-    window.addEventListener('scroll', handleScroll, true)
-
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      window.removeEventListener('resize', updateMenuPosition)
-      window.removeEventListener('scroll', handleScroll, true)
-    }
-  }, [closeMenu, menuOpen, updateMenuPosition])
-
-  useEffect(() => {
-    if (!open || sections.length > 0) return
-
-    const frame = window.requestAnimationFrame(closeMenu)
-    return () => window.cancelAnimationFrame(frame)
-  }, [closeMenu, open, sections.length])
-
-  const handleTriggerClick = (): void => {
-    if (menuOpen) {
-      closeMenu()
-      return
-    }
-
-    openMenu()
-  }
-
-  const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
-    if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowUp') {
-      if (event.key !== 'ArrowDown') return
-    }
-
-    event.preventDefault()
-    openMenu()
-  }
-
-  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      closeMenu()
-      buttonRef.current?.focus({ preventScroll: true })
-      return
-    }
-
-    if (
-      (event.key === 'ArrowLeft' || event.key === 'Backspace') &&
-      activeSection &&
-      event.target !== modelSearchInputRef.current
-    ) {
-      event.preventDefault()
-      setActiveSectionId(null)
-      setModelSearchQuery('')
-      focusFirstMenuButton()
-    }
-  }
-
-  const renderSectionRoot = (): ReactNode => (
-    <div className="message-box__chat-config-sections">
-      {sections.map((section) => (
-        <button
-          className="message-box__chat-config-section-button"
-          disabled={section.disabled}
-          key={section.id}
-          type="button"
-          onClick={() => {
-            setActiveSectionId(section.id)
-            if (section.id === 'model') {
-              focusModelSearchInput()
-            } else {
-              focusFirstMenuButton()
-            }
-          }}
-        >
-          <span className="message-box__chat-config-section-icon" aria-hidden="true">
-            {section.icon}
-          </span>
-          <span className="message-box__chat-config-section-label">{section.label}</span>
-          <ChevronRight className="message-box__chat-config-section-chevron" aria-hidden="true" />
-        </button>
-      ))}
-    </div>
-  )
-
-  const renderSectionOptions = (section: ChatConfigSection): ReactNode => (
-    <div className="message-box__chat-config-section">
-      <div className="message-box__chat-config-option-groups">
-        {visibleSectionGroups.map((group, groupIndex) => (
-          <div
-            className="message-box__chat-config-option-group"
-            key={group.id}
-            role="group"
-            aria-label={group.label}
-          >
-            {groupIndex > 0 && (
-              <div className="message-box__chat-config-separator" role="presentation" />
-            )}
-            {group.options.map((option) => {
-              const selected = option.value === group.selectedValue
-
-              return (
-                <button
-                  className={[
-                    'message-box__chat-config-option',
-                    option.icon ? 'message-box__chat-config-option--has-icon' : null,
-                    option.description ? 'message-box__chat-config-option--has-description' : null,
-                    selected ? 'message-box__chat-config-option--selected' : null
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  disabled={option.disabled}
-                  key={option.value}
-                  type="button"
-                  aria-pressed={selected}
-                  title={option.description}
-                  onClick={() => group.onChange(option.value)}
-                >
-                  {option.description ? (
-                    <span className="message-box__chat-config-option-copy">
-                      <span className="message-box__chat-config-option-row">
-                        {option.icon && (
-                          <span className="message-box__chat-config-option-icon" aria-hidden="true">
-                            {option.icon}
-                          </span>
-                        )}
-                        <span className="message-box__chat-config-option-label">
-                          {option.menuLabel ?? option.label}
-                        </span>
-                        {selected && (
-                          <Check className="message-box__chat-config-check" aria-hidden="true" />
-                        )}
-                      </span>
-                      <span className="message-box__chat-config-option-description">
-                        {option.description}
-                      </span>
-                    </span>
-                  ) : (
-                    <>
-                      {option.icon && (
-                        <span className="message-box__chat-config-option-icon" aria-hidden="true">
-                          {option.icon}
-                        </span>
-                      )}
-                      <span className="message-box__chat-config-option-copy">
-                        <span className="message-box__chat-config-option-label">
-                          {option.menuLabel ?? option.label}
-                        </span>
-                      </span>
-                      {selected && (
-                        <Check className="message-box__chat-config-check" aria-hidden="true" />
-                      )}
-                    </>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        ))}
-        {section.id === 'model' && visibleSectionGroups.length === 0 && (
-          <div className="message-box__chat-config-empty" role="status">
-            No models found
-          </div>
-        )}
-      </div>
-      <div className="message-box__chat-config-footer">
-        {section.id === 'model' && (
-          <div className="message-box__chat-config-search">
-            <Input
-              ref={modelSearchInputRef}
-              type="search"
-              aria-label="Search models"
-              autoComplete="off"
-              placeholder="Search models"
-              value={modelSearchQuery}
-              onChange={(event) => setModelSearchQuery(event.target.value)}
-            />
-          </div>
-        )}
-        <ChatConfigSectionHeader
-          modelError={section.id === 'model' ? modelsError : null}
-          onBack={() => {
-            setActiveSectionId(null)
-            setModelSearchQuery('')
-            focusFirstMenuButton()
-          }}
-        />
-      </div>
-    </div>
-  )
-
-  const menu = menuOpen ? (
-    <div
-      ref={menuRef}
-      className="message-box__chat-config-menu-root"
-      style={menuStyle ?? undefined}
-      onKeyDown={handleMenuKeyDown}
-    >
-      <MenuSurface
-        className="message-box__chat-config-menu"
-        id={menuId}
-        role="dialog"
-        aria-label="Chat settings"
-      >
-        <MenuPageTransition page={activeSection?.id ?? 'root'}>
-          {activeSection ? renderSectionOptions(activeSection) : renderSectionRoot()}
-        </MenuPageTransition>
-      </MenuSurface>
-    </div>
-  ) : null
-
-  return (
-    <span className="message-box__chat-config">
-      <button
-        ref={buttonRef}
-        className="message-box__chat-config-trigger"
-        id={id}
-        type="button"
-        aria-controls={menuOpen ? menuId : undefined}
-        aria-expanded={menuOpen}
-        aria-haspopup="dialog"
-        disabled={sections.length === 0}
-        title={title}
-        onClick={handleTriggerClick}
-        onKeyDown={handleTriggerKeyDown}
-      >
-        <span className="message-box__chat-config-value">
-          {statusIcons.length > 0 && (
-            <span className="message-box__chat-config-status-icons">
-              {statusIcons.map((item) => (
-                <span
-                  className="message-box__chat-config-status-icon"
-                  key={item.key}
-                  title={item.title}
-                  aria-label={item.title}
-                >
-                  {item.icon}
-                </span>
-              ))}
-            </span>
-          )}
-          <span className="message-box__chat-config-provider-icon" aria-hidden="true">
-            {providerIcon}
-          </span>
-          <span ref={labelRef} className="message-box__chat-config-label">
-            <span className="message-box__chat-config-label-part">{modelLabel}</span>
-            {reasoningLabel && (
-              <>
-                <span className="message-box__chat-config-dot" aria-hidden="true" />
-                <span className="message-box__chat-config-label-part">{reasoningLabel}</span>
-              </>
-            )}
-          </span>
-        </span>
-        <ChevronDown className="message-box__chat-config-trigger-chevron" aria-hidden="true" />
-      </button>
-      {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
-    </span>
-  )
 }
 
 const getFileMentionAtCaret = (message: string, caret: number): FileMention | null => {
@@ -1004,9 +593,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   chatId,
   displayUsage,
   lastActionId,
+  goalObjective,
   notes = [],
   notesContextKey,
   notesLabel,
+  presetsEnabled = true,
+  selectionAction = 'back',
+  onPresetChange,
   showAccessSelector = true,
   showActions = false,
   showActionLabel = false,
@@ -1040,6 +633,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   onLastActionChange,
   onCancelEdit,
   onModelChange,
+  onSetGoal,
   onNotesChange,
   onOpenAttachment,
   onOpenFileLink,
@@ -1411,7 +1005,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           {
             id: 'model',
             icon: <ProviderIcon providerId={providerId} aria-hidden="true" />,
-            label: 'Model',
+            label: modelSelectionUnavailable ? 'Model' : selectedModelLabel,
             groups: [
               {
                 id: 'model',
@@ -1431,13 +1025,16 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ? [
           {
             id: 'reasoning',
-            disabled: !reasoningSelectionAvailable,
+            disabled: modelSelectionUnavailable || !reasoningSelectionAvailable,
             icon: reasoningSelectionAvailable ? (
               selectedReasoningEffortPresentation.icon
             ) : (
               <Sparkles />
             ),
-            label: 'Reasoning',
+            label:
+              !modelSelectionUnavailable && reasoningSelectionAvailable
+                ? selectedReasoningEffortLabel
+                : 'Reasoning',
             groups: [
               {
                 id: 'reasoning',
@@ -1461,7 +1058,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               ) : (
                 <MessageCircleQuestion aria-hidden="true" />
               ),
-            label: 'Questions',
+            label:
+              agentModesLoading || agentModes.length === 0
+                ? 'Questions'
+                : (selectedAgentMode?.label ?? formatOptionLabel(agentMode)),
             groups: [
               {
                 id: 'questions',
@@ -1480,7 +1080,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             icon: showAccessSelector
               ? sandboxModeIcons[sandboxMode]
               : approvalModeIcons[effectiveApprovalMode],
-            label: 'Access',
+            label: showAccessSelector
+              ? selectedSandboxModeLabel
+              : (selectedApprovalMode?.label ?? formatOptionLabel(effectiveApprovalMode)),
             groups: [
               ...(showAccessSelector
                 ? [
@@ -1518,9 +1120,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ? [
           {
             id: 'speed',
-            disabled: !serviceTierSelectionAvailable,
+            disabled: modelSelectionUnavailable || !serviceTierSelectionAvailable,
             icon: selectedServiceTierOption?.icon ?? <Gauge aria-hidden="true" />,
-            label: 'Speed',
+            label:
+              !modelSelectionUnavailable && serviceTierSelectionAvailable
+                ? selectedServiceTierLabel
+                : 'Speed',
             groups: [
               {
                 id: 'speed',
@@ -1591,6 +1196,103 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             ]
           : [])
       ]
+  const currentPresetSelection: MessageBoxSelection = {
+    agentMode,
+    approvalMode: effectiveApprovalMode,
+    model,
+    reasoningEffort,
+    sandboxMode,
+    serviceTier
+  }
+  const presetEditableFields = {
+    model: showModelSelector,
+    reasoningEffort: showReasoningSelector,
+    sandboxMode: showAccessSelector,
+    approvalMode: showReviewSelector,
+    agentMode: questionsSelectorVisible && !agentModesLoading,
+    serviceTier: showSpeedSelector
+  }
+  const resolvePreset = (preset: MessageBoxSelection): MessageBoxSelection => {
+    const resolved = {
+      ...currentPresetSelection,
+      ...getChatPresetChanges(preset, presetEditableFields)
+    }
+    if (resolved.sandboxMode === 'danger-full-access') resolved.approvalMode = 'never'
+    return resolved
+  }
+  const getPresetDetails = (preset: MessageBoxSelection): ChatConfigPresetDetails => {
+    const resolved = resolvePreset(preset)
+    const presetModel = models.find((candidate) => candidate.id === resolved.model)
+    const reasoning = getReasoningEffortPresentation(resolved.reasoningEffort)
+    const hasReasoning = Boolean(presetModel?.supportedReasoningEfforts.length)
+    const tier = presetModel?.supportedServiceTiers?.find(
+      (option) => option.id === resolved.serviceTier
+    )
+    const fast =
+      resolved.serviceTier != null && isFastServiceTier(resolved.serviceTier, tier?.label ?? '')
+    const mode = agentModes.find((option) => option.id === resolved.agentMode)
+    const access = sandboxModeOptions.find((option) => option.value === resolved.sandboxMode)
+    const review = approvalModeOptions.find((option) => option.value === resolved.approvalMode)
+    const modelLabel = formatModelLabel(presetModel?.label ?? resolved.model)
+    const reasoningLabel = hasReasoning ? reasoning.label : null
+    const speedLabel =
+      resolved.serviceTier == null ? null : (tier?.label ?? formatOptionLabel(resolved.serviceTier))
+    const disabled =
+      modelSelectionUnavailable ||
+      !presetModel ||
+      (hasReasoning &&
+        !presetModel.supportedReasoningEfforts.some(
+          (option) => option.id === resolved.reasoningEffort
+        )) ||
+      (resolved.serviceTier != null && !tier) ||
+      (showAccessSelector && !access) ||
+      (showReviewSelector && resolved.sandboxMode !== 'danger-full-access' && !review) ||
+      (presetEditableFields.agentMode && !mode)
+    return {
+      modelLabel,
+      reasoningLabel,
+      speedLabel,
+      disabled,
+      selected: selectionsEqual(resolved, currentPresetSelection),
+      title: [
+        `Model: ${modelLabel}`,
+        hasReasoning ? `Reasoning: ${reasoning.label}` : null,
+        `Access: ${access?.label ?? formatOptionLabel(resolved.sandboxMode)}`,
+        `Review: ${review?.label ?? formatOptionLabel(resolved.approvalMode)}`,
+        questionsSelectorVisible ? `Questions: ${mode?.label ?? resolved.agentMode}` : null,
+        `Speed: ${speedLabel ?? 'Standard'}`,
+        disabled ? 'Unavailable with the current provider or settings' : null
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      statusIcons: [
+        ...(resolved.sandboxMode === 'danger-full-access'
+          ? [
+              {
+                key: 'full-access',
+                title: 'Full access',
+                icon: sandboxModeIcons[resolved.sandboxMode]
+              }
+            ]
+          : []),
+        ...(hasReasoning && reasoning.showStatusIcon
+          ? [{ key: 'reasoning', title: `${reasoning.label} reasoning`, icon: reasoning.icon }]
+          : []),
+        ...(fast
+          ? [
+              {
+                key: 'speed',
+                title: `${speedLabel} speed`,
+                icon: <Zap className={fastServiceTierIconClassName} aria-hidden="true" />
+              }
+            ]
+          : []),
+        ...(questionsSelectorVisible && resolved.agentMode === 'autopilot'
+          ? [{ key: 'autopilot', title: 'Autopilot', icon: <Rocket aria-hidden="true" /> }]
+          : [])
+      ]
+    }
+  }
   const selectorsVisible =
     showAccessSelector ||
     reviewSelectorVisible ||
@@ -1602,7 +1304,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const actionsButtonVisible = Boolean(
     showActions && onActionsChange && onLastActionChange && onRunAction
   )
-  const workspaceControlsVisible = notesButtonVisible || actionsButtonVisible
+  const workspaceControlsVisible = Boolean(onSetGoal) || notesButtonVisible || actionsButtonVisible
   const promptControlsVisible = selectorsVisible || workspaceControlsVisible
   const controlsClassName = [
     'message-box__controls',
@@ -3019,6 +2721,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               {selectorsVisible && (
                 <ChatConfigDropdown
                   id="chat-config-mode"
+                  key={providerId}
+                  presetsEnabled={presetsEnabled}
+                  selectionAction={selectionAction}
+                  providerId={providerId}
+                  selection={currentPresetSelection}
+                  getPresetDetails={getPresetDetails}
+                  onPresetChange={(preset) =>
+                    onPresetChange(getChatPresetChanges(preset, presetEditableFields))
+                  }
                   modelsError={modelsError}
                   modelLabel={selectedModelLabel}
                   providerIcon={<ProviderIcon providerId={providerId} />}
@@ -3030,6 +2741,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   sections={chatConfigSections}
                   statusIcons={chatConfigStatusIcons}
                   title={chatConfigSelectorTitle}
+                />
+              )}
+              {onSetGoal && (
+                <ChatGoalButton
+                  key={`${providerId}:${chatId}`}
+                  objective={goalObjective}
+                  disabled={disabled || operationsDisabled || pending}
+                  onSetGoal={onSetGoal}
                 />
               )}
               {notesButtonVisible && (

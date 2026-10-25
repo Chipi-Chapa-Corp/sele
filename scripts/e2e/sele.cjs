@@ -128,11 +128,13 @@ class Sele {
   /** Scripted turns run shell tools; approval prompts would stall them. */
   async setFullAccess() {
     const option = `([...document.querySelectorAll('.message-box__chat-config-menu button')].find(button => window.__sele.text(button.querySelector('.message-box__chat-config-option-label')) === 'Full access'))`
-    const section = `([...document.querySelectorAll('.message-box__chat-config-section-button')].find(button => window.__sele.text(button).startsWith('Access')))`
+    const section = `document.querySelector('[data-chat-config-section="access"]')`
     const openAccess = async () => {
       if (await this.q(`window.__sele.visible(${option})`)) return
       if (!(await this.q(`Boolean(document.querySelector('.message-box__chat-config-menu'))`)))
         await this.page.click('.message-box__chat-config-trigger')
+      const configure = `([...document.querySelectorAll('.message-box__chat-config-section-button')].find(button => window.__sele.text(button) === 'Configure'))`
+      if (await this.q(`Boolean(${configure})`)) await this.page.click(configure)
       await this.page.waitFor(section, { message: 'Chat settings have no Access section' })
       await this.page.click(section)
       await this.page.waitFor(option, { message: 'Full access is not offered' })

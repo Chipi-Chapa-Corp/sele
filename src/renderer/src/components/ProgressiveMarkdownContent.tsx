@@ -8,7 +8,9 @@ import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { DeferredChatTurn } from './DeferredChatTurn'
 import { MarkdownElement, MarkdownNodes } from './MarkdownContent'
 
-export const progressiveMarkdownThreshold = 12_000
+// Even a few kilobytes of code and file links expand into a large highlighted
+// DOM. Keep parsing off the renderer before a message reaches that size.
+export const progressiveMarkdownThreshold = 4_096
 
 // HTML fragments inside tables need their native parse context. Sanitizing a bare <tr> or
 // <tbody> as body HTML would strip the table structure before React could mount it.

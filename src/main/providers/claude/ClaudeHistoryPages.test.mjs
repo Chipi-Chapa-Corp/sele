@@ -77,6 +77,27 @@ const fixture = (entries) => {
 }
 const items = (page) => renderClaudeChatItems(page.messages, { active: false, stopped: false })
 
+test('latest pages recover goal attachments without extra history reads or moving turn cursors', async () => {
+  const entries = turns(1000, 'x'.repeat(4096))
+  const goal = (met) => ({
+    type: 'attachment',
+    sessionId,
+    uuid: `goal-${met}`,
+    parentUuid: 'a999',
+    timestamp: '2026-10-25T00:00:00Z',
+    attachment: { type: 'goal_status', met, condition: 'All checks pass', sentinel: true }
+  })
+  const f = fixture([...entries, goal(false)])
+  const active = await f.read()
+  assert.equal(active.goal.objective, 'All checks pass')
+  assert.equal(active.messages[0].uuid, 'u990')
+  assert.ok(f.bytes < 150000)
+  f.append([goal(true)])
+  assert.equal((await f.read()).goal, null)
+  const older = await f.read(active.pagination.olderCursor)
+  assert.equal(older.goal, undefined)
+})
+
 test('opening reads a bounded tail; older/newer pages round-trip with identical IDs', async () => {
   const entries = turns(1000, 'x'.repeat(4096))
   const f = fixture(entries)

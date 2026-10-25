@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AppContainerTarget } from '../../shared/app'
-import type { ProviderTurnOptions } from '../../shared/provider'
+import type { ProviderStartChatOptions } from '../../shared/provider'
 import { isNoProjectCwd, noProjectWorkspaceDirectory } from '../../shared/noProject'
 import { getHostCommand, isRunningInFlatpak } from '../hostProcess'
 import { getCurrentContainerHostBridge } from '../currentContainer'
@@ -51,8 +51,8 @@ export const createNoProjectWorkspace = async (
 
 export const prepareChatWorkspace = async (
   localRoot: string,
-  options: ProviderTurnOptions | undefined
-): Promise<ProviderTurnOptions | undefined> =>
+  options: ProviderStartChatOptions | undefined
+): Promise<ProviderStartChatOptions | undefined> =>
   options?.noProject
     ? {
         ...options,
