@@ -79,7 +79,7 @@ export async function checkClaudeBrowserTools({
       { action: 'javascript_exec', text: '1', tabId: window.webContents.id },
       /outside/
     )
-    await error('navigate', { url: 'file:///etc/passwd', tabId: tab.id }, /Unsupported/)
+    await error('navigate', { url: 'javascript:alert(1)', tabId: tab.id }, /Unsupported/)
     const tree = await value('read_page', { tabId: tab.id })
     assert.match(tree, /textbox/)
     const inputRef = tree.match(/\[(ref_\d+)\] textbox/)[1]

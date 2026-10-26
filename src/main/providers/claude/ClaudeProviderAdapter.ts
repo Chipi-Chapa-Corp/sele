@@ -1490,6 +1490,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.sessionContainers.set(id, state.container)
     await this.startStateQuery(state, options)
     await onChatCreated?.(id)
+    if (options?.deferInitialMessage) return this.createChatDetail(state)
     if (options?.initialGoal) {
       await this.setChatGoal(id, options.initialGoal, { container: options.container })
     } else {
@@ -1658,6 +1659,28 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       this.emitUpdate(state)
     }
     return this.createChatDetail(state)
+  }
+
+  enqueueLimitResetMessage = async (
+    chatId: string,
+    message: string,
+    messageId: string,
+    options: ProviderTurnOptions,
+    commit: () => Promise<void>
+  ): Promise<void> => {
+    const state = await this.ensureState(chatId, options)
+    state.queuedMessagesPaused = true
+    if (!state.queuedMessages.some((pending) => pending.id === messageId)) {
+      state.queuedMessages.push(this.createQueuedMessage(message, options, messageId))
+    }
+    this.pendingMessageStore.invalidate(chatId)
+    this.emitUpdate(state)
+    await commit()
+    state.queuedMessagesPaused = false
+    void this.drainNextQueuedMessage(state).catch((error) => {
+      console.error('Unable to start a queued reset prompt.', error)
+      this.emitUpdate(state)
+    })
   }
 
   beginPendingMessageEdit = async (
@@ -2376,11 +2399,29 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const state = this.createState(chatId, rememberedOptions, rememberedContainer)
     const generation = this.stateGeneration
     const pending = (async (): Promise<ClaudeSessionState> => {
+      let missingScheduledHistory = false
       const [page, stored] = await Promise.all([
         this.readHistoryPage(chatId, state.container, {
           cursor: null,
           direction: 'older',
           limit: 10
+        }).catch((error: unknown) => {
+          // A scheduled session may have been created just before shutdown, before Claude
+          // persisted its first turn. Restart it under the same identity without resuming.
+          if (
+            !(rememberedOptions as ProviderStartChatOptions)?.deferInitialMessage ||
+            !(error instanceof Error) ||
+            error.message !== 'Claude session was not found.'
+          )
+            throw error
+          missingScheduledHistory = true
+          return {
+            messages: [],
+            metadata: { sessionId: chatId, summary: '', lastModified: Date.now() },
+            pagination: { kind: 'cursor' as const, olderCursor: null, newerCursor: null },
+            inputIds: [],
+            goal: null
+          }
         }),
         this.pendingMessageStore.restore(chatId)
       ])
@@ -2399,12 +2440,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       const current = this.states.get(chatId)
       if (current) return current
       if (!metadata && messages.length === 0) throw new Error('Claude session was not found.')
-      state.metadata = metadata ?? null
+      state.metadata = missingScheduledHistory ? null : (metadata ?? null)
       state.createdAt = metadata?.createdAt ?? state.createdAt
       state.updatedAt = metadata?.lastModified ?? state.updatedAt
       state.cwd = metadata?.cwd ?? rememberedOptions?.cwd ?? null
       state.messages = messages
-      state.historyPagination = page.pagination
+      state.historyPagination = missingScheduledHistory ? undefined : page.pagination
       state.goal = page.goal ?? null
       state.failed = isClaudeAuthenticationFailure(
         messages.findLast(

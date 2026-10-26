@@ -42,3 +42,7 @@
 .rolling-value__label::before {
   content: attr(data-value);
 }
+
+.rolling-value__label--previous {
+  opacity: 0;
+}

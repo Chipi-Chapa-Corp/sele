@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import {
   buildChatConversationModel,
@@ -9,6 +10,52 @@ import { assertUniqueProviderChatItemIds } from '../../shared/chatTurns.ts'
 
 // Test fixtures intentionally omit optional presentation fields.
 const message = (id, role, content) => ({ type: 'message', id, role, content })
+
+test('unrendered streaming updates release old snapshots and rebuild after collection', () => {
+  // A separate process gives this regression real GC without requiring --expose-gc
+  // for the whole renderer-state suite. Keep the newest array alive throughout.
+  const moduleUrl = new URL('./chatConversationModel.ts', import.meta.url).href
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--disable-warning=MODULE_TYPELESS_PACKAGE_JSON',
+      '--experimental-strip-types',
+      '--expose-gc',
+      '--input-type=module',
+      '--eval',
+      `
+        import assert from 'node:assert/strict'
+        import { markChatItemsChanged, buildChatConversationModel } from ${JSON.stringify(moduleUrl)}
+        const refs = []
+        let latest
+        function stream() {
+          let previous = [{ type: 'message', role: 'assistant', id: 'answer', content: 'initial' }]
+          buildChatConversationModel(previous)
+          for (let n = 0; n < 2000; n++) {
+            refs.push(new WeakRef(previous))
+            const next = [{ ...previous[0], content: 'revision ' + n }]
+            markChatItemsChanged(next, 0, previous)
+            previous = next
+          }
+          latest = previous
+        }
+        stream()
+        // WeakRef targets survive the current JS job. Yield before each full GC.
+        for (let n = 0; n < 8; n++) {
+          await new Promise(resolve => setImmediate(resolve))
+          global.gc()
+        }
+        assert.equal(refs.filter(ref => ref.deref()).length, 0, 'obsolete revisions retained')
+        const model = buildChatConversationModel(latest)
+        assert.equal(model.turns[0].items[0].content, 'revision 1999')
+        assert.deepEqual(model, buildChatConversationModel([...latest]))
+      `
+    ],
+    { encoding: 'utf8', timeout: 15_000 }
+  )
+  assert.equal(result.error, undefined)
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+})
 
 test('incremental conversation builds do not mutate the previously rendered model', () => {
   const initialItems = [

@@ -310,3 +310,9 @@
   flex-direction: column;
   gap: 0.25rem;
 }
+
+.message-box__reset-queue-control {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.4rem;
+}

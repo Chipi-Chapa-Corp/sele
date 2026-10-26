@@ -196,6 +196,14 @@ export type ProviderAdapter = {
     mode: ProviderActiveSendMode,
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
+  /** Hold delivery until the reset outbox has been atomically moved to durable pending storage. */
+  enqueueLimitResetMessage?: (
+    chatId: string,
+    message: string,
+    messageId: string,
+    options: ProviderTurnOptions,
+    commit: () => Promise<void>
+  ) => Promise<void>
   deletePendingMessage: (chatId: string, messageId: string) => Promise<ProviderChatDetail>
   beginPendingMessageEdit: (
     chatId: string,

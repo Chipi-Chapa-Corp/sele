@@ -16,6 +16,7 @@ if (!process.versions.electron) {
             import { flushSync } from 'react-dom'
             import { ChatDetailItem } from './src/renderer/src/components/ChatDetailItem'
             import { groupWorkingItemsForRenderer } from './src/main/providers/workingStepLazy'
+            import { getChatItems } from './src/main/providers/codex/CodexItemRenderers'
             const root = createRoot(document.getElementById('root'))
             window.renderStep = (items, status = 'working', extra = {}) => flushSync(() => root.render(
               <ChatDetailItem item={{type: 'working', id: 'step', status, items: groupWorkingItemsForRenderer(items), ...extra}} />
@@ -23,6 +24,7 @@ if (!process.versions.electron) {
             window.renderItems = (items, props = {}) => flushSync(() => root.render(
               items.map(item => <ChatDetailItem key={item.id} item={item} {...props} />)
             ))
+            window.renderCodexItems = turns => window.renderItems(getChatItems(turns))
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -160,7 +162,97 @@ if (!process.versions.electron) {
       const beforeAppendReads = messageReads
       renderItems([historyMessage, oldStep, {type: 'message', id: 'another-message', role: 'user', content: 'Another'}], {hasNextWorkingStep: true}); await settle()
       const historySkippedRender = messageReads === beforeAppendReads
-      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails, tailRetained, promotedToolOpen, restoredToolOpen, innerCloseKeptSequenceOpen, nextTurnRetained, historySkippedRender }
+      const appReadStates = []
+      for (const status of ['inProgress', 'completed']) {
+        renderCodexItems([{
+          id: 'app-turn', status, items: [{
+            id: 'github-read', type: 'mcpToolCall', server: 'codex_apps', tool: 'github.fetch_file', status,
+            arguments: { repository_full_name: 'aunetx/blur-my-shell', path: 'src/styles/popup/base.css' },
+            result: { structuredContent: { content: 'private-file-output' } }
+          }]
+        }]); await settle()
+        const progress = document.querySelector('details.chat-detail__working')
+        if (!progress.open) { progress.querySelector('summary').click(); await settle() }
+        const row = document.querySelector('.chat-detail__tool-read')
+        appReadStates.push({
+          text: row?.textContent,
+          fileIcon: !!row?.querySelector(status === 'inProgress' ? '.chat-detail__animated-icon svg' : '.lucide-file-text'),
+          disclosures: document.querySelectorAll('.chat-detail__tool-group').length,
+          body: document.body.textContent
+        })
+      }
+      const appActionStates = []
+      for (const [name, finished, active] of [
+        ['github.create_issue', 'Created issue in GitHub', 'Creating issue in GitHub'],
+        ['pets.select_pet', 'Selected pet in ChatGPT Pets', 'Selecting pet in ChatGPT Pets'],
+        ['plugin_management.update_app_permissions', 'Updated app permissions in Plugin Management', 'Updating app permissions in Plugin Management']
+      ]) {
+        for (const status of ['inProgress', 'completed']) {
+          renderCodexItems([{
+            id: 'app-action-turn', status, items: [{
+              id: name, type: 'mcpToolCall', server: 'codex_apps', tool: name, status,
+              arguments: { title: 'private-app-input' }, result: 'private-app-output'
+            }]
+          }]); await settle()
+          const progress = document.querySelector('details.chat-detail__working')
+          if (!progress.open) { progress.querySelector('summary').click(); await settle() }
+          const row = document.querySelector('.chat-detail__tool-read')
+          appActionStates.push({
+            text: row?.textContent, expected: status === 'inProgress' ? active : finished,
+            appIcon: !!row?.querySelector(status === 'inProgress' ? '.chat-detail__animated-icon svg' : '.lucide-blocks'),
+            disclosures: document.querySelectorAll('.chat-detail__tool-group').length,
+            body: document.body.textContent
+          })
+        }
+      }
+      renderCodexItems([{
+        id: 'unknown-app-turn', status: 'completed', items: [{
+          id: 'unknown-app-call', type: 'mcpToolCall', server: 'codex_apps', tool: 'github.frobnicate_widget',
+          arguments: { title: 'unknown-app-input' }, result: 'unknown-app-output'
+        }]
+      }]); await settle()
+      const fallbackProgress = document.querySelector('details.chat-detail__working')
+      if (!fallbackProgress.open) { fallbackProgress.querySelector('summary').click(); await settle() }
+      const fallbackDetails = document.querySelector('.chat-detail__tool-group')
+      if (!fallbackDetails.open) { fallbackDetails.querySelector('summary').click(); await settle() }
+      const appFallback = document.body.textContent
+      const failureMessage = 'Error running remote compact task: Selected model is at capacity.'
+      const emptyTerminalStates = []
+      for (const status of ['failed', 'stopped', 'worked']) {
+        for (const items of [[], [{type: 'message', id: 'blank', content: '  \\n '}]]) {
+          renderStep(items, status, {failureMessage}); await settle()
+          emptyTerminalStates.push({
+            status,
+            disclosure: !!document.querySelector('details.chat-detail__working'),
+            chevron: !!document.querySelector('.chat-detail__working .chat-detail__summary-chevron')
+          })
+        }
+      }
+      renderCodexItems([{id: 'compact-failure', status: 'failed', error: {message: failureMessage}, items: [
+        {type: 'userMessage', id: 'failed-prompt', content: [{type: 'text', text: 'Do the task'}]}
+      ]}]); await settle()
+      const failedWithoutActivity = {
+        disclosure: !!document.querySelector('details.chat-detail__working'),
+        chevron: !!document.querySelector('.chat-detail__working .chat-detail__summary-chevron'),
+        error: document.querySelector('.chat-detail__failure-label')?.textContent
+      }
+      renderStep([tool('failed-command', 'command', 'finished')], 'failed', {failureMessage}); await settle()
+      let failedProgress = document.querySelector('details.chat-detail__working')
+      const failedInitiallyClosed = !failedProgress.open
+      failedProgress.querySelector('summary').click(); await settle()
+      const failedActivityOpened = failedProgress.open && !!failedProgress.querySelector('.chat-detail__tool-group')
+      failedProgress.querySelector('summary').click(); await settle()
+      const failedActivityClosed = !failedProgress.open
+      const lazyFailure = {type: 'working', id: 'lazy-failure', status: 'failed', failureMessage, items: [], itemsLoaded: false, itemCount: 1}
+      let failureLoads = 0
+      renderItems([lazyFailure], {onLoadWorkingStep: async () => {
+        failureLoads++
+        renderItems([{...lazyFailure, itemsLoaded: true, items: [tool('loaded-command', 'command', 'finished')]}])
+      }}); await settle()
+      document.querySelector('.chat-detail__working-load').click(); await settle()
+      failedProgress = document.querySelector('details.chat-detail__working')
+      const lazyFailedActivityOpened = failureLoads === 1 && failedProgress?.open && !!failedProgress.querySelector('.chat-detail__tool-group')
+      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails, tailRetained, promotedToolOpen, restoredToolOpen, innerCloseKeptSequenceOpen, nextTurnRetained, historySkippedRender, appReadStates, appActionStates, appFallback, emptyTerminalStates, failedWithoutActivity, failedInitiallyClosed, failedActivityOpened, failedActivityClosed, lazyFailedActivityOpened }
     })()`)
       const [empty, single, grouped, waiting, following, , emptyAgain] = result.snapshots
       assert.equal(empty.wrapper, true)
@@ -175,6 +267,37 @@ if (!process.versions.electron) {
       assert.equal(result.manuallyClosed, true)
       assert.equal(result.stayedClosed, true)
       assert.equal(emptyAgain.wrapper, true)
+      for (const [index, state] of result.appReadStates.entries()) {
+        assert.equal(state.text, index === 0 ? 'Reading file from GitHub' : 'Read file from GitHub')
+        assert.equal(state.fileIcon, true)
+        assert.equal(state.disclosures, 0)
+        assert.doesNotMatch(
+          state.body,
+          /codex_apps|repository_full_name|private-file-output|base\.css/
+        )
+      }
+      for (const state of result.appActionStates) {
+        assert.equal(state.text, state.expected)
+        assert.equal(state.appIcon, true)
+        assert.equal(state.disclosures, 0)
+        assert.doesNotMatch(state.body, /codex_apps|private-app-input|private-app-output/)
+      }
+      assert.match(result.appFallback, /Used GitHub: frobnicate widget/)
+      assert.match(result.appFallback, /unknown-app-input/)
+      assert.match(result.appFallback, /unknown-app-output/)
+      for (const state of result.emptyTerminalStates) {
+        assert.equal(state.disclosure, false, state.status + ' with no content has no disclosure')
+        assert.equal(state.chevron, false, state.status + ' with no content has no chevron')
+      }
+      assert.deepEqual(result.failedWithoutActivity, {
+        disclosure: false,
+        chevron: false,
+        error: 'Error running remote compact task: Selected model is at capacity.'
+      })
+      assert.equal(result.failedInitiallyClosed, true)
+      assert.equal(result.failedActivityOpened, true)
+      assert.equal(result.failedActivityClosed, true)
+      assert.equal(result.lazyFailedActivityOpened, true)
       assert.equal(result.namedHeading, 'Fetched web pages, Used mcp__example__run')
       assert.match(result.namedRows, /Fetched https:\/\/example.test/)
       assert.match(result.namedRows, /Used mcp__example__run/)

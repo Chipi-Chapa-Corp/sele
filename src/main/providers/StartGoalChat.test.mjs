@@ -9,7 +9,10 @@ import { getCopilotGoalInput } from './copilot/CopilotGoals.ts'
 
 // Run the adapter startup methods without a user profile, native app, or model request.
 const createAdapter = (provider, methods, globals = {}) => {
-  const name = `${provider[0].toUpperCase()}${provider.slice(1)}ProviderAdapter`
+  const name =
+    provider === 'opencode'
+      ? 'OpenCodeProviderAdapter'
+      : `${provider[0].toUpperCase()}${provider.slice(1)}ProviderAdapter`
   const source = ts.createSourceFile(
     `${name}.ts`,
     readFileSync(new URL(`./${provider}/${name}.ts`, import.meta.url), 'utf8'),
@@ -150,4 +153,90 @@ test('Codex establishes the goal before admitting the first turn and stops on go
     calls.map(([method]) => method),
     ['thread/start', 'thread/goal/set']
   )
+})
+
+for (const provider of ['claude', 'copilot']) {
+  test(`${provider} can create a scheduled session without delivering any initial prompt`, async () => {
+    const state = { id: 'scheduled', container: null }
+    const adapter = createAdapter(provider, ['startChat'], {
+      randomUUID: () => state.id,
+      getMessageOptions: () => assert.fail('must wait for durable queue handoff')
+    })
+    Object.assign(adapter, {
+      states: new Map(),
+      sessionContainers: new Map(),
+      pendingMessageStore: { track: () => {} },
+      createState: () => state,
+      requireAuthentication: () => {},
+      startStateQuery: async () => {},
+      createSession: async () => ({
+        send: () => assert.fail('must not deliver an initial prompt')
+      }),
+      sendMessageNow: () => assert.fail('must not deliver an initial prompt'),
+      createChatDetail: () => ({ id: state.id })
+    })
+    let created
+    const result = await adapter.startChat('', { deferInitialMessage: true }, async (id) => {
+      created = id
+    })
+    assert.equal(created, state.id)
+    assert.equal(result.id, state.id)
+  })
+}
+
+test('Codex deferred startup creates an idle thread without admitting a model turn', async () => {
+  const calls = []
+  const adapter = createAdapter('codex', ['startChat', 'startChatInContext'], {
+    hasAttachmentInput: () => false,
+    assertSupportedCodexHistory: () => {},
+    getRecommendedPluginsConfig: () => ({}),
+    getThreadAccessOptions: () => ({}),
+    getThreadModelOptions: () => ({}),
+    getThreadTurns: () => []
+  })
+  let cached
+  Object.assign(adapter, {
+    runWithContainer: (_container, run) => run(),
+    client: {
+      request: async (method) => {
+        calls.push(method)
+        return { thread: { id: 'scheduled' } }
+      }
+    },
+    rememberThreadContainer: () => {},
+    resolveThreadCwd: async () => '/repo',
+    resolveThreadName: async () => null,
+    cacheThread: (thread) => {
+      cached = thread
+    },
+    getCachedChatDetail: () => ({ id: 'scheduled' }),
+    emitChatUpdated: () => {},
+    addSubmittedPendingTurn: () => assert.fail('initial prompt must wait for queue handoff')
+  })
+  const result = await adapter.startChat('', { deferInitialMessage: true })
+  assert.deepEqual(calls, ['thread/start'])
+  assert.equal(cached.status.type, 'idle')
+  assert.equal(result.id, 'scheduled')
+})
+
+test('OpenCode deferred startup creates a session without sending a prompt', async () => {
+  const adapter = createAdapter('opencode', ['startChat'], {
+    homedir: () => '/home/fixture',
+    parseOpenCodeModelId: () => ({ providerID: 'fixture', modelID: 'model' }),
+    getOpenCodePermissionRules: () => [],
+    requireData: (response) => response.data
+  })
+  const state = { session: { id: 'scheduled' } }
+  Object.assign(adapter, {
+    getClientEntry: async () => ({
+      container: null,
+      client: { session: { create: async () => ({ data: state.session }) } }
+    }),
+    rememberSession: () => state,
+    pendingMessageStore: { track: () => {} },
+    sendPrompt: () => assert.fail('initial prompt must wait for queue handoff'),
+    createChatDetail: async () => ({ id: state.session.id })
+  })
+  const result = await adapter.startChat('', { model: 'fixture', deferInitialMessage: true })
+  assert.equal(result.id, 'scheduled')
 })

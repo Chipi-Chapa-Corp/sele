@@ -2,6 +2,7 @@
 // Set SELE_BENCHMARK_RICH_HISTORY=1 to include rich transcripts and cached switches.
 // Set SELE_BENCHMARK_ACTIVE_CHATS=1 to switch rich conversations while both stream.
 // Set SELE_BENCHMARK_PROFILE to a path to save the active-chat CPU profile and bundle.
+// Set SELE_BENCHMARK_DEV=1 for development JSX and StrictMode, matching npm run dev.
 // Run through isolated-gui. Never starts provider processes or opens real profiles.
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -9,6 +10,7 @@ const assert = require('node:assert/strict')
 const providerId = process.env.SELE_BENCHMARK_PROVIDER || 'codex'
 const historySections = Math.max(1, Number(process.env.SELE_BENCHMARK_HISTORY_SECTIONS) || 40)
 const activeChats = process.env.SELE_BENCHMARK_ACTIVE_CHATS === '1'
+const devBuild = process.env.SELE_BENCHMARK_DEV === '1'
 if (activeChats) process.env.SELE_BENCHMARK_RICH_HISTORY = '1'
 if (!process.versions.electron) {
   ;(async () => {
@@ -45,7 +47,7 @@ if (!process.versions.electron) {
           import {createRoot} from 'react-dom/client'
           import {App} from './src/renderer/src/App'
           import './src/renderer/src/assets/main.css'
-          const root=createRoot(document.getElementById('root'));root.render(<App/>);window.unmountFixture=()=>root.unmount();
+          const root=createRoot(document.getElementById('root'));root.render(<React.StrictMode><App/></React.StrictMode>);window.unmountFixture=()=>root.unmount();
           window.frameGaps=[];window.longTasks=[];window.fixtureTurnNodes=new Map();
           new PerformanceObserver(list=>window.longTasks.push(...list.getEntries().map(e=>e.duration)))
             .observe({type:'longtask',buffered:true});
@@ -65,17 +67,19 @@ if (!process.versions.electron) {
               paintSamples.push({ms:performance.now()-start,selected,turns,loading,faded:shell&&getComputedStyle(shell).opacity!=='1'});
               if(measuring)requestAnimationFrame(sample);
             };
-            window.fixtureRowRenders=[];window.fixtureMotionRenders=0;window.fixtureGroupRenders=[];
+            window.fixtureRowRenders=[];window.fixtureMotionRenders=0;window.fixtureGroupRenders=[];window.fixtureMessageRenders=[];
             window.fixtureAlignments=[];
             const spinner=document.querySelector('[data-chat-id="0"] .chat-list-item__loading');
             if(!spinner)throw new Error('Missing background running spinner');
             const historyRequests=window.fixtureCalls.filter(name=>name==='getChats').length;
             const detailRequests=window.fixtureCalls.filter(name=>name==='getChat').length;
+            const availabilityRequests=window.fixtureCalls.filter(name=>name==='getSourceAvailability').length;
             const selectedBefore=document.querySelector('.chat-list-item--selected')?.dataset.chatId??null;
             const styleSheetCount=document.styleSheets.length;
             const popLayoutRules=window.fixturePopLayoutRules;
             const canvasTransfers=window.fixtureCanvasTransfers;
             const markdownRequests=window.fixtureMarkdownRequests??0;
+            const markdownChatRequests=window.fixtureMarkdownChatRequests?.length??0;
             const start=performance.now();
             const measurementId='navigate:'+action+':'+destination+':'+start;
             const button=action==='done-project' ? document.querySelector('[data-chat-id="'+destination+'"]')?.closest('.chat-list-group').querySelector('[title="Mark project chats done"]') : action==='done' ? document.querySelector('[data-chat-id="'+destination+'"] [aria-label="Mark chat done"]') : destination==='new' ? document.querySelector('button[aria-label="New chat"]') :
@@ -89,7 +93,7 @@ if (!process.versions.electron) {
             await new Promise(resolve=>setTimeout(resolve,${richHistory ? 650 : 300}));
             if(${activeChats}&&destination!=='new')await new Promise((resolve,reject)=>{
               const deadline=performance.now()+10000;
-              function check(){if(document.querySelectorAll('#chat-search-content [data-chat-turn-id]').length===10)return resolve();
+              function check(){if(document.getElementById('chat-search-content')?.getElementsByClassName('chat-detail__turn').length===10)return resolve();
                 if(performance.now()>deadline)return reject(new Error('Running history did not finish mounting'));requestAnimationFrame(check)}check()
             });
             measuring=false;
@@ -102,7 +106,12 @@ if (!process.versions.electron) {
             return {measurementId,destination,action,selectedBefore,affectedChatIds,clickMs,reusedTurns,
               bottomAlignments:window.fixtureAlignments.length,bottomAlignmentMs:window.fixtureAlignments.reduce((sum,ms)=>sum+ms,0),
               markdownRequests:(window.fixtureMarkdownRequests??0)-markdownRequests,
+              destinationMarkdownRequests:(window.fixtureMarkdownChatRequests??[]).slice(markdownChatRequests).filter(id=>id===destination).length,
+              messageRenders:window.fixtureMessageRenders.length,
+              destinationMessageRenders:window.fixtureMessageRenders.filter(id=>id.startsWith(destination+':')).length,
+              renderedMessageIds:[...new Set(window.fixtureMessageRenders)],
               detailRequests:window.fixtureCalls.filter(name=>name==='getChat').length-detailRequests,
+              availabilityRequests:window.fixtureCalls.filter(name=>name==='getSourceAvailability').length-availabilityRequests,
               firstSelectionMs:paintSamples.find(sample=>sample.selected===destination)?.ms??null,
               firstMessagesMs:paintSamples.find(sample=>sample.selected===destination&&sample.turns.some(id=>id.startsWith(destination+':')))?.ms??null,
               allTurnsMs:paintSamples.find(sample=>sample.selected===destination&&sample.turns.length===10)?.ms??null,
@@ -123,13 +132,22 @@ if (!process.versions.electron) {
         bundle: true,
         platform: 'browser',
         jsx: 'automatic',
+        jsxDev: devBuild,
         loader: { '.ttf': 'dataurl' },
-        define: { 'process.env.NODE_ENV': '"production"' },
+        define: { 'process.env.NODE_ENV': devBuild ? '"development"' : '"production"' },
         outfile: path.join(directory, 'fixture.js'),
         plugins: [
           {
             name: 'fixture-workers',
             setup(build) {
+              build.onLoad({ filter: /ChatDetailItem\.tsx$/ }, async (args) => ({
+                contents: (await fs.readFile(args.path, 'utf8')).replace(
+                  '  const messageRef = useRef<HTMLDivElement>(null)',
+                  '  window.fixtureMessageRenders.push(item.id);\n  const messageRef = useRef<HTMLDivElement>(null)'
+                ),
+                loader: 'tsx',
+                resolveDir: path.dirname(args.path)
+              }))
               build.onLoad({ filter: /chatLayout\.ts$/ }, async (args) => ({
                 contents: (await fs.readFile(args.path, 'utf8'))
                   .replace(
@@ -178,7 +196,7 @@ if (!process.versions.electron) {
                 contents: args.path.includes('vegvisir')
                   ? "export default class extends Worker {constructor(){super(new URL('art.worker.js',document.baseURI));window.fixtureArtWorkers=(window.fixtureArtWorkers??0)+1} postMessage(...args){if(args[0]?.type==='active')window.fixtureArtActive=args[0].active;return super.postMessage(...args)} terminate(){window.fixtureArtTerminated=(window.fixtureArtTerminated??0)+1;return super.terminate()}}"
                   : args.path.includes('chatMarkdown')
-                    ? "export default class extends Worker {constructor(){super(new URL('markdown.worker.js',document.baseURI))} postMessage(...args){window.fixtureMarkdownRequests=(window.fixtureMarkdownRequests??0)+1;return super.postMessage(...args)}}"
+                    ? "export default class extends Worker {constructor(){super(new URL('markdown.worker.js',document.baseURI))} postMessage(...args){window.fixtureMarkdownRequests=(window.fixtureMarkdownRequests??0)+1;(window.fixtureMarkdownChatRequests??=[]).push(args[0]?.content?.match(/^(?:### Section |Inspect )(\\d+)[ -]/)?.[1]??null);return super.postMessage(...args)}}"
                     : 'export default class {constructor(){throw new Error("Editor outside navigation fixture")}}'
               }))
             }
@@ -201,8 +219,10 @@ if (!process.versions.electron) {
         window.fixtureChats=Array.from({length:${chatCount}},(_,i)=>({id:String(i),providerId:'${providerId}',title:'Empty conversation '+i,
           preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0||(${activeChats}&&i<3)?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
           cwdKind:'directory',projectCwd:null,branchName:null,worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,
-          done:false,seenUpdatedAt:now,purpose:null,container:null}));
+          done:false,seenUpdatedAt:now,purpose:null,container:{kind:'host'}}));
         window.fixtureCalls=[];
+        window.fixtureMessageRenders=[];
+        window.fixtureLastDetails=new Map();
         window.fixtureRowRenders=[];window.fixtureMotionRenders=0;window.fixtureGroupRenders=[];
         const usage={updatedAt:now,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,rateLimits:[],rateLimitResetCredits:null,errors:[]};
         const histories=new Map();
@@ -217,7 +237,9 @@ if (!process.versions.electron) {
         const defaults={
           getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'${providerId}',available:true}]}),
           // IPC returns fresh objects; sharing the fixture's source objects hides list reloads.
-          getChats:()=>({chats:fixtureChats.map(chat=>({...chat})),nextCursor:null}),getChat:(_provider,id)=>detail(id),
+          getChats:()=>({chats:fixtureChats.map(chat=>({...chat,container:{...chat.container}})),nextCursor:null}),
+          getChat:(_provider,id)=>{const view=structuredClone(detail(id));
+            fixtureLastDetails.set(id,view);return view},
           markChatDone:(_provider,id,done=true)=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done,doneAt:done?Date.now():null});return {...chat}},
           markChatsDone:ids=>ids.map(id=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done:true,doneAt:Date.now()});return {...chat}}),
           markChatSeen:(_provider,id,seenUpdatedAt)=>({...fixtureChats.find(chat=>chat.id===id),seenUpdatedAt}),
@@ -226,7 +248,7 @@ if (!process.versions.electron) {
           getDefaultCwd:()=>'/fixture/project-0',getWindowState:()=>({isMaximized:false}),getAppUpdate:()=>null,
           getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
           getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
-          getSkills:()=>[],getApps:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
+          getSkills:()=>[],getApps:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],getLimitResetMessages:()=>[],
           getUpdateAvailability:()=>null,
           setViewedChat:(_provider,id)=>{window.fixtureViewedChat=id}
         };
@@ -305,15 +327,128 @@ if (!process.versions.electron) {
         app.exit(1)
       })
       win.webContents.on('console-message', (event) => {
-        if (event.level === 'error') errors.push(event.message)
+        if (event.level === 'error') {
+          errors.push(event.message)
+          console.error(event.message)
+        }
       })
       await win.loadFile(path.join(directory, 'index.html'))
       const run = (source) => win.webContents.executeJavaScript(source)
       await run('new Promise(resolve=>setTimeout(resolve,1200))')
+      // Size containment must preserve the grid track and the entire scroll
+      // range, including after resizing. Menus and row details portal outside it.
+      for (const [width, height] of [
+        [1100, 750],
+        [1500, 950]
+      ]) {
+        win.setSize(width, height)
+        const sidebar =
+          await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
+          const body=document.querySelector('.chat-sidebar__body');
+          body.scrollTop=body.scrollHeight;
+          const rows=body.getElementsByClassName('chat-list-item');
+          const last=rows[rows.length-1].getBoundingClientRect();
+          const viewport=body.getBoundingClientRect();
+          resolve({height:body.clientHeight,scrollable:body.scrollTop>0,
+            lastRowVisible:last.bottom>viewport.top&&last.top<viewport.bottom});
+          body.scrollTop=0;
+        })))`)
+        assert.ok(sidebar.height > 100, 'the sidebar keeps its allocated grid height')
+        assert.equal(sidebar.scrollable, true, 'sidebar history remains scrollable')
+        assert.equal(sidebar.lastRowVisible, true, 'the final sidebar row remains reachable')
+      }
+      await run(`document.querySelector('.chat-list-item__main').focus({preventScroll:true})`)
+      await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+      assert.equal(
+        await run(`(() => {
+        const card=document.querySelector('.chat-list-item__detail-card');
+        const sidebar=document.querySelector('.chat-sidebar__body').getBoundingClientRect();
+        return Boolean(card&&!card.closest('.chat-sidebar__body')&&card.getBoundingClientRect().right>sidebar.right);
+      })()`),
+        true,
+        'row details remain visible outside the contained sidebar'
+      )
+      await run(`document.querySelector('.chat-list-item [aria-label="Chat menu"]').click()`)
+      await run('new Promise(resolve=>setTimeout(resolve,250))')
+      assert.equal(
+        await run(`(() => {
+        const menu=document.querySelector('.ui-dropdown__menu');
+        return Boolean(menu&&!menu.closest('.chat-sidebar__body')&&menu.getBoundingClientRect().height>0);
+      })()`),
+        true,
+        'row menus remain visible outside the contained sidebar'
+      )
+      await run(
+        `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));document.activeElement?.blur()`
+      )
+      await run('new Promise(resolve=>setTimeout(resolve,250))')
       await run('window.backgroundUpdates=window.beginBackgroundUpdates()')
       win.webContents.debugger.attach('1.3')
+      // Compare the actual navigation's browser layout work with and without a
+      // sidebar boundary. Row-render counts alone miss this regression: even
+      // memoized rows participate in a parent's intrinsic-size calculation.
+      let layoutComparison = null
+      if (process.env.SELE_BENCHMARK_RICH_HISTORY !== '1') {
+        await run('clearInterval(window.backgroundUpdates)')
+        await win.webContents.debugger.sendCommand('Performance.enable')
+        const layoutDuration = async () => {
+          const { metrics } = await win.webContents.debugger.sendCommand('Performance.getMetrics')
+          return metrics.find((metric) => metric.name === 'LayoutDuration').value
+        }
+        // Warm both existing-chat and new-composer paths before either sample.
+        for (const id of ['1', '2', 'new']) await run(`window.measureNavigation('${id}')`)
+        const samples = []
+        for (const control of [true, false]) {
+          await run(
+            `document.querySelector('.chat-sidebar__body').style.contain=${control ? "'none'" : "''"}`
+          )
+          await run(
+            'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'
+          )
+          const before = await layoutDuration()
+          for (const id of ['1', '2', 'new', '1', 'new']) {
+            await run(`window.measureNavigation('${id}')`)
+          }
+          samples.push((await layoutDuration()) - before)
+        }
+        layoutComparison = { uncontainedMs: samples[0] * 1000, productionMs: samples[1] * 1000 }
+        console.error('Navigation layout comparison:', JSON.stringify(layoutComparison))
+        assert.ok(
+          samples[1] < samples[0] * 0.65,
+          'navigation layout work must stay isolated from the sidebar: ' +
+            JSON.stringify(layoutComparison)
+        )
+        await win.webContents.debugger.sendCommand('Performance.disable')
+        await run('window.backgroundUpdates=window.beginBackgroundUpdates()')
+      }
       await win.webContents.debugger.sendCommand('Profiler.enable')
       await win.webContents.debugger.sendCommand('Profiler.start')
+      if (process.env.SELE_BENCHMARK_RICH_HISTORY === '1') {
+        await run('window.measureNavigation("3")')
+        await run('window.fixtureMessageRenders=[]')
+        await run('new Promise(resolve=>setTimeout(resolve,400))')
+        assert.deepEqual(
+          await run('window.fixtureMessageRenders'),
+          [],
+          'background sidebar updates must not rerender unchanged message rows'
+        )
+        await run(`(() => {
+          window.fixtureMessageRenders=[];
+          const chat=fixtureChats.find(chat=>chat.id==='3');chat.title='Renamed fixture';chat.updatedAt=Date.now();
+          const view=fixtureLastDetails.get('3');
+          window.fixtureChatListener({providerId:'${providerId}',chatId:'3',sequence:999999,turnCompleted:false,
+            summary:{...chat,revision:view.revision+1,currentActivity:null,previewLength:0},
+            detail:{...view,revision:view.revision+1,title:chat.title,updatedAt:chat.updatedAt,baseRevision:null,baseItemIds:null,
+              itemIds:view.items.map(item=>item.id),changedItems:view.items}});
+        })()`)
+        await run('new Promise(resolve=>setTimeout(resolve,200))')
+        assert.deepEqual(
+          await run('window.fixtureMessageRenders'),
+          [],
+          'selected metadata refreshes must not rerender unchanged message rows'
+        )
+        await run('window.measureNavigation("new")')
+      }
       const trace = []
       if (process.env.SELE_BENCHMARK_TRACE) {
         win.webContents.debugger.on('message', (_event, method, params) => {
@@ -355,6 +490,33 @@ if (!process.versions.electron) {
         results.push(await run('window.measureNavigation(' + JSON.stringify(destination) + ')'))
         if (process.env.SELE_BENCHMARK_PROGRESS) console.error('Navigated:', destination)
       }
+      const rapidNavigation = await run(`(async () => {
+        const spinner=document.querySelector('[data-chat-id="0"] .chat-list-item__loading');
+        window.frameGaps=[];
+        for(const id of ['1','new','2','3','4','new','1','2','new','3','4','2']) {
+          const button=id==='new'?document.querySelector('[aria-label="New chat"]'):
+            document.querySelector('[data-chat-id="'+id+'"] .chat-list-item__main');
+          button.click();
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        await new Promise(resolve=>setTimeout(resolve,300));
+        return {selected:document.querySelector('.chat-list-item--selected')?.dataset.chatId,
+          spinnerRetained:spinner===document.querySelector('[data-chat-id="0"] .chat-list-item__loading'),
+          maxFrameGap:Math.max(...window.frameGaps)};
+      })()`)
+      assert.equal(rapidNavigation.selected, '2', 'rapid switches commit the final selection')
+      assert.equal(
+        rapidNavigation.spinnerRetained,
+        true,
+        'rapid switches preserve the running spinner'
+      )
+      for (const result of results)
+        assert.equal(
+          result.availabilityRequests,
+          0,
+          'same-environment navigation must not reload source availability: ' +
+            JSON.stringify(result)
+        )
       if (activeChats) {
         await run('clearInterval(window.backgroundUpdates)')
         const warm = results.slice(0, 6).filter((result) => result.reusedTurns !== null)
@@ -369,8 +531,15 @@ if (!process.versions.electron) {
           assert.equal(result.selected, result.destination === 'new' ? null : result.destination)
           assert.equal(result.mixedChatFrames, 0, 'never paint a different conversation')
           if (['3', '4'].includes(result.destination) && result.reusedTurns === 10) {
+            // The outgoing stream remains visible while navigation yields and
+            // may legitimately render another chunk. Check the cached target.
             assert.equal(
-              result.markdownRequests,
+              result.destinationMessageRenders,
+              0,
+              'equivalent IPC history must not rerender cached rows: ' + JSON.stringify({destination:result.destination,renderedMessageIds:result.renderedMessageIds})
+            )
+            assert.equal(
+              result.destinationMarkdownRequests,
               0,
               'unchanged inactive chats reuse their Markdown plans'
             )
@@ -394,7 +563,13 @@ if (!process.versions.electron) {
             process.env.SELE_BENCHMARK_PROFILE + '.fixture.js'
           )
         }
-        console.log(JSON.stringify({ providerId, activeChats: true, results, errors }, null, 2))
+        console.log(
+          JSON.stringify(
+            { providerId, activeChats: true, rapidNavigation, results, errors },
+            null,
+            2
+          )
+        )
         await run('window.unmountFixture()')
         app.exit(0)
         return
@@ -483,6 +658,8 @@ if (!process.versions.electron) {
         JSON.stringify(
           {
             chatCount: await run('window.fixtureChats.length'),
+            layoutComparison,
+            rapidNavigation,
             traceSummary,
             results,
             errors,

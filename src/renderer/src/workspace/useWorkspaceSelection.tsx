@@ -1,19 +1,13 @@
+import { useAccountUsageState } from './useAccountUsageState'
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
+import { reuseChatSnapshotItems } from '../chatSnapshotItems'
 import {
   getSubagentPageNavigationEpoch,
   getSubagentToolSignature,
   refreshSubagentDetail
 } from '../subagentUi'
 import { chatWorkingItemPageSize, chatWorkingItemWindowSize } from './controllerTypes'
-import {
-  startTransition,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import type { ProviderSubagent, ProviderUsageOptions } from '../../../shared/provider'
 import { providerIds } from '../../../shared/provider'
@@ -120,6 +114,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     gitChangeLoadRequest,
     setTerminalOpened,
     setBrowserOpened,
+    terminalOpened,
+    browserOpened,
     lastNonTerminalChangesPaneViewRef,
     setChangesPaneView,
     changesPaneView,
@@ -133,9 +129,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     changesCwdRef,
     approvalResolution,
     userInputResolution,
-    setAccountUsage,
-    setAccountUsageState,
-    setAccountUsageError,
     providerAccountRevision,
     chatDetailRef,
     cacheRecentChatDetail,
@@ -262,25 +255,29 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       ) {
         return
       }
-      setSubagentListState((currentState) =>
-        currentState?.rootChatKey === selectedChatKey &&
-        currentState.loadState === 'ready' &&
-        currentState.error === null &&
-        areSubagentListsEqual(currentState.items, subagents)
-          ? currentState
-          : {
-              rootChatKey: selectedChatKey,
-              items: subagents,
-              loadState: 'ready',
-              error: null
-            }
-      )
-      setSubagentChatView((currentView) => {
-        if (currentView?.rootChatKey !== selectedChatKey) return currentView
-        const updatedSummary = subagents.find((subagent) => subagent.id === currentView.summary.id)
-        return updatedSummary && !areSubagentSummariesEqual(currentView.summary, updatedSummary)
-          ? { ...currentView, summary: updatedSummary }
-          : currentView
+      startTransition(() => {
+        setSubagentListState((currentState) =>
+          currentState?.rootChatKey === selectedChatKey &&
+          currentState.loadState === 'ready' &&
+          currentState.error === null &&
+          areSubagentListsEqual(currentState.items, subagents)
+            ? currentState
+            : {
+                rootChatKey: selectedChatKey,
+                items: subagents,
+                loadState: 'ready',
+                error: null
+              }
+        )
+        setSubagentChatView((currentView) => {
+          if (currentView?.rootChatKey !== selectedChatKey) return currentView
+          const updatedSummary = subagents.find(
+            (subagent) => subagent.id === currentView.summary.id
+          )
+          return updatedSummary && !areSubagentSummariesEqual(currentView.summary, updatedSummary)
+            ? { ...currentView, summary: updatedSummary }
+            : currentView
+        })
       })
       return
     }
@@ -328,27 +325,30 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           const viewUnchanged =
             !viewSummary || areSubagentSummariesEqual(committedView!.summary, viewSummary)
           if (listUnchanged && viewUnchanged) return
-          setSubagentListState((currentState) =>
-            currentState?.rootChatKey === selectedChatKey &&
-            currentState.loadState === 'ready' &&
-            currentState.error === null &&
-            areSubagentListsEqual(currentState.items, subagents)
-              ? currentState
-              : {
-                  rootChatKey: selectedChatKey,
-                  items: subagents,
-                  loadState: 'ready',
-                  error: null
-                }
-          )
-          setSubagentChatView((currentView) => {
-            if (currentView?.rootChatKey !== selectedChatKey) return currentView
-            const updatedSummary = subagents.find(
-              (subagent) => subagent.id === currentView.summary.id
+          startTransition(() => {
+            setSubagentListState((currentState) =>
+              currentState?.rootChatKey === selectedChatKey &&
+              currentState.loadState === 'ready' &&
+              currentState.error === null &&
+              areSubagentListsEqual(currentState.items, subagents)
+                ? currentState
+                : {
+                    rootChatKey: selectedChatKey,
+                    items: subagents,
+                    loadState: 'ready',
+                    error: null
+                  }
             )
-            return updatedSummary && !areSubagentSummariesEqual(currentView.summary, updatedSummary)
-              ? { ...currentView, summary: updatedSummary }
-              : currentView
+            setSubagentChatView((currentView) => {
+              if (currentView?.rootChatKey !== selectedChatKey) return currentView
+              const updatedSummary = subagents.find(
+                (subagent) => subagent.id === currentView.summary.id
+              )
+              return updatedSummary &&
+                !areSubagentSummariesEqual(currentView.summary, updatedSummary)
+                ? { ...currentView, summary: updatedSummary }
+                : currentView
+            })
           })
         })
         .catch((error) => {
@@ -613,10 +613,16 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     : selectedChat
       ? (currentChatDetail?.projectCwd ?? selectedChat.projectCwd ?? changesCwd)
       : newSessionCwd
-  const changesContainer = selectedChat
+  const changesContainerSource = selectedChat
     ? (currentChatDetail?.container ?? selectedChat.container)
     : newSessionContainer
-  const changesContainerKey = getContainerTargetKey(changesContainer)
+  const changesContainerKey = getContainerTargetKey(changesContainerSource)
+  // IPC snapshots create new objects for the same environment. Their identity
+  // must not reload availability, Git, and the file tree on every chat switch.
+  const changesContainer = useMemo(
+    () => normalizeContainerTarget(changesContainerSource),
+    [changesContainerKey]
+  )
   const recentlyOpenedFilesWorkspaceKey = `${changesContainerKey}\0${changesCwd ?? ''}`
   const terminalWorkspaceKey = `${changesContainerKey}\0${changesProjectCwd ?? changesCwd ?? ''}`
   const browserWorkspaceKey =
@@ -662,11 +668,11 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       saved.lastNonTerminal === 'browser' && !browserEnabled ? 'git' : saved.lastNonTerminal
     const view = saved.view === 'browser' && !browserEnabled ? 'git' : saved.view
     lastNonTerminalChangesPaneViewRef.current = lastNonTerminal
-    if (view === 'terminal') setTerminalOpened(true)
-    if (view === 'browser') setBrowserOpened(true)
+    if (view === 'terminal' && !terminalOpened) setTerminalOpened(true)
+    if (view === 'browser' && !browserOpened) setBrowserOpened(true)
     // Layout effect during a chat switch: an unchanged set still forces a render.
     if (view !== changesPaneView) setChangesPaneView(view)
-  }, [changesPaneView, terminalWorkspaceKey])
+  }, [changesPaneView, terminalWorkspaceKey, terminalOpened, browserOpened])
   const gitAvailableForCurrentSource =
     gitSourceAvailability?.containerKey === changesContainerKey
       ? gitSourceAvailability.availability.gitAvailable
@@ -879,24 +885,16 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       selectedChatId
     ]
   )
-  const usageScopeRef = useRef<object | null>(usageScope)
-  const [usageAuthentication, setUsageAuthentication] = useState<{
-    scope: object
-    required: boolean
-  } | null>(null)
-  const usageAuthenticationRequired =
-    usageAuthentication?.scope === usageScope && usageAuthentication.required
-  useLayoutEffect(() => {
-    if (usageScopeRef.current !== usageScope) {
-      setAccountUsage(null)
-      setAccountUsageState('loading')
-      setAccountUsageError(null)
-    }
-    usageScopeRef.current = usageScope
-    return () => {
-      usageScopeRef.current = null
-    }
-  }, [usageScope])
+  const {
+    accountUsage,
+    accountUsageState,
+    accountUsageError,
+    usageAuthenticationRequired,
+    usageScopeRef,
+    setAccountUsage,
+    setAccountUsageState,
+    setAccountUsageError
+  } = useAccountUsageState(usageScope)
   const refreshAccountUsage = useCallback(
     async (options: ProviderUsageOptions = {}): Promise<void> => {
       if (!usageProviderAvailable) {
@@ -918,10 +916,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           chatId: selectedChatId
         })
         if (usageScopeRef.current !== usageScope) return
-        setUsageAuthentication({
-          scope: usageScope,
-          required: usage.authenticationRequired === true
-        })
         setAccountUsage((currentUsage) => mergeAccountUsage(currentUsage, usage))
         setAccountUsageState('ready')
       } catch (error) {
@@ -977,10 +971,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       .getUsage(providerId, { container, chatId: selectedChatId })
       .then((usage) => {
         if (!active || usageScopeRef.current !== usageScope) return
-        setUsageAuthentication({
-          scope: usageScope,
-          required: usage.authenticationRequired === true
-        })
         setAccountUsage((currentUsage) => mergeAccountUsage(currentUsage, usage))
         setAccountUsageState('ready')
       })
@@ -1088,11 +1078,13 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           startTransition(() => setChatLoadState('ready'))
           return
         }
-        const loadedDetail =
+        const loadedDetail = reuseChatSnapshotItems(
+          currentDetail,
           shouldPreserveOptimisticTurnUntilUserMessage(selectedProviderId) &&
-          isActiveChatStatus(detail.status)
+            isActiveChatStatus(detail.status)
             ? preserveOptimisticChatDetail(currentDetail, detail)
             : detail
+        )
         chatDetailRef.current = loadedDetail
         cacheRecentChatDetail(
           selectedProviderId,
@@ -1100,10 +1092,17 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           selectedChatUpdatedAtRef.current ?? Date.now(),
           true
         )
-        // Publishing a processed view and revealing it are one urgent commit.
-        // A transition here could leave a known chat blank before its content commits.
-        setChatDetail(loadedDetail)
-        setChatLoadState('ready')
+        const publish = (): void => {
+          setChatDetail(loadedDetail)
+          setChatLoadState('ready')
+        }
+        // First content stays urgent. Refreshing an already readable view can
+        // yield instead of adding a second blocking commit to the switch frame.
+        if (currentDetail?.id === selectedChatId && currentDetail.items.length > 0) {
+          startTransition(publish)
+        } else {
+          publish()
+        }
         markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
       })
       .catch((error) => {
@@ -1156,7 +1155,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     scrollChatContentToBottom(contentElement)
   }, [
     activeSubagentId,
-    chatDetail,
+    chatDetail?.items,
     scrollChatContentToBottom,
     selectedChatCommitMarkers,
     selectedChatKey
@@ -1715,6 +1714,12 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   }, [changesContainer, changesContainerKey, changesCwd, changesPaneView, fileTreeLoadRequest])
 
   return {
+    accountUsage,
+    accountUsageState,
+    accountUsageError,
+    setAccountUsage,
+    setAccountUsageState,
+    setAccountUsageError,
     activeSubagentChatView,
     approvalDecisionInFlight,
     approvalError,

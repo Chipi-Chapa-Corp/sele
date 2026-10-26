@@ -1,5 +1,6 @@
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { getTranscriptRecordChange } from '../transcriptProjection/recordChanges.ts'
+import { getProviderToolPresentation } from '../ToolPresentation.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -14,7 +15,6 @@ import type {
   ProviderFileDiff,
   ProviderMessage,
   ProviderMessageAttachment,
-  ProviderToolActivity,
   ProviderToolImage,
   ProviderWorkingItem,
   ProviderWorkingTool
@@ -175,64 +175,8 @@ const getArgument = (args: unknown, ...keys: string[]): string | null => {
   return null
 }
 
-const getToolCommand = (event: ToolStartEvent): string | null =>
-  getArgument(event.data.arguments, 'command', 'cmd', 'script', 'query', 'pattern')
-
 const getToolCwd = (event: ToolStartEvent): string | null =>
   getArgument(event.data.arguments, 'cwd', 'workingDirectory', 'directory')
-
-const classifyTool = (event: ToolStartEvent): ProviderToolActivity => {
-  const name = event.data.toolName.toLocaleLowerCase()
-  const command = getToolCommand(event)?.toLocaleLowerCase() ?? ''
-
-  if (name.includes('delete') || /\brm\b/.test(command)) return 'delete'
-  if (name.includes('create')) return 'create'
-  if (
-    name.includes('edit') ||
-    name.includes('write') ||
-    name.includes('patch') ||
-    name.includes('replace')
-  ) {
-    return 'edit'
-  }
-  if (name.includes('search') || name.includes('grep') || name.includes('glob')) return 'search'
-  if (name.includes('read') || name.includes('view') || name.includes('list')) return 'read'
-  if (name.includes('git') || /^git(?:\s|$)/.test(command)) return 'git'
-  if (name.includes('npm') || /^npm(?:\s|$)/.test(command)) return 'npm'
-  if (name.includes('npx') || /^npx(?:\s|$)/.test(command)) return 'npx'
-  if (name.includes('shell') || name.includes('bash') || name.includes('command') || command) {
-    return 'command'
-  }
-
-  return 'other'
-}
-
-const getToolPath = (event: ToolStartEvent): string | null =>
-  getArgument(event.data.arguments, 'path', 'filePath', 'file', 'fileName', 'target', 'directory')
-
-const getToolLabel = (event: ToolStartEvent): string => {
-  if (event.data.toolName === 'ask_user') return 'Asking question'
-
-  const activity = classifyTool(event)
-  const path = getToolPath(event)
-  const command = getToolCommand(event)
-
-  if (path) {
-    const displayPath = basename(path) || path
-    if (activity === 'read') return `Read ${displayPath}`
-    if (activity === 'search') return `Search ${displayPath}`
-    if (activity === 'create') return `Create ${displayPath}`
-    if (activity === 'delete') return `Delete ${displayPath}`
-    if (activity === 'edit') return `Edit ${displayPath}`
-  }
-  if (command) return command
-
-  return (
-    event.data.toolDescription?.name?.trim() ||
-    event.data.mcpToolName?.trim() ||
-    event.data.toolName.replace(/[_-]+/g, ' ')
-  )
-}
 
 /**
  * The delegation call is a compact row in the parent. The subagent's prompt and report belong to
@@ -258,36 +202,50 @@ const createSubagentTool = (event: ToolStartEvent): ProviderWorkingTool => ({
   images: []
 })
 
-const createTool = (event: ToolStartEvent): ProviderWorkingTool => ({
-  type: 'tool',
-  id: event.id,
-  ...(event.data.mcpServerName
-    ? {
-        mcpApp: {
-          callId: event.data.toolCallId,
-          serverName: event.data.mcpServerName,
-          resourceUri: event.data.toolDescription?._meta?.ui?.resourceUri
+const createTool = (event: ToolStartEvent): ProviderWorkingTool => {
+  const presentation = getProviderToolPresentation(
+    'copilot',
+    event.data.toolName,
+    event.data.arguments,
+    {
+      serverName: event.data.mcpServerName,
+      mcpToolName: event.data.mcpToolName
+    }
+  )
+  const hidePayload = presentation?.hidePayload === true
+  return {
+    type: 'tool',
+    id: event.id,
+    ...(event.data.mcpServerName
+      ? {
+          mcpApp: {
+            callId: event.data.toolCallId,
+            serverName: event.data.mcpServerName,
+            resourceUri: event.data.toolDescription?._meta?.ui?.resourceUri
+          }
         }
-      }
-    : {}),
-  toolId: event.data.toolCallId,
-  status: 'running',
-  activity: classifyTool(event),
-  icon: event.data.toolName === 'ask_user' ? 'question' : null,
-  label: getToolLabel(event),
-  command: getToolCommand(event),
-  cwd: getToolCwd(event),
-  stdout: null,
-  diffs: [],
-  backgroundSessionId: null,
-  finishedBackgroundSessionId: null,
-  rawInput:
-    event.data.toolName === 'ask_user'
-      ? null
-      : getBoundedCopilotRawToolValue(event.data.arguments ?? null),
-  rawOutput: null,
-  images: []
-})
+      : {}),
+    toolId: event.data.toolCallId,
+    status: 'running',
+    activity: presentation?.activity ?? 'other',
+    icon: presentation?.icon ?? null,
+    label:
+      presentation?.label ??
+      `Used ${event.data.mcpServerName ? `${event.data.mcpServerName}/` : ''}${event.data.mcpToolName || event.data.toolName}`,
+    summaryLabel: presentation?.summaryLabel,
+    ...(presentation?.compact ? { compact: true } : {}),
+    ...(hidePayload ? { hidePayload: true } : {}),
+    command: presentation?.command ?? null,
+    cwd: getToolCwd(event),
+    stdout: null,
+    diffs: [],
+    backgroundSessionId: null,
+    finishedBackgroundSessionId: null,
+    rawInput: hidePayload ? null : getBoundedCopilotRawToolValue(event.data.arguments ?? null),
+    rawOutput: null,
+    images: []
+  }
+}
 
 const getToolOutput = (event: ToolCompleteEvent): string | null => {
   if (event.data.error?.message) return event.data.error.message
@@ -620,7 +578,8 @@ export const renderCopilotChatItems = (
     events.flatMap((event) => (event.type === 'subagent.started' ? [event.data.toolCallId] : []))
   )
   const isSubagentToolCall = (event: ToolStartEvent): boolean =>
-    event.data.toolName === 'task' || subagentToolCallIds.has(event.data.toolCallId)
+    (!event.data.mcpServerName && event.data.toolName === 'task') ||
+    subagentToolCallIds.has(event.data.toolCallId)
   const hiddenOutputToolCallIds = new Set<string>()
 
   for (const event of events) {
@@ -706,13 +665,12 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'tool.execution_start') {
-      if (event.data.toolName === 'ask_user') askUserToolCallIds.add(event.data.toolCallId)
-      const subagent = isSubagentToolCall(event)
-      if (subagent) hiddenOutputToolCallIds.add(event.data.toolCallId)
-      appendWorkingItem(
-        ensureSegment(event.id),
-        subagent ? createSubagentTool(event) : createTool(event)
-      )
+      const tool = isSubagentToolCall(event) ? createSubagentTool(event) : createTool(event)
+      if (tool.icon === 'question') askUserToolCallIds.add(event.data.toolCallId)
+      if (tool.icon === 'subagent') subagentToolCallIds.add(event.data.toolCallId)
+      if (tool.hidePayload || tool.icon === 'subagent')
+        hiddenOutputToolCallIds.add(event.data.toolCallId)
+      appendWorkingItem(ensureSegment(event.id), tool)
       continue
     }
 
@@ -743,23 +701,20 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'tool.execution_complete') {
-      if (hiddenOutputToolCallIds.has(event.data.toolCallId)) {
-        updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
-          ...tool,
-          status: 'finished'
-        }))
-        continue
-      }
       const askedQuestion = askUserToolCallIds.has(event.data.toolCallId)
-      const images = askedQuestion ? [] : getToolImages(event, binaryAssets)
+      const hide = hiddenOutputToolCallIds.has(event.data.toolCallId) || askedQuestion
+      const images =
+        askedQuestion || subagentToolCallIds.has(event.data.toolCallId)
+          ? []
+          : getToolImages(event, binaryAssets)
       updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         status: 'finished',
         label: askedQuestion ? 'Asked a question' : tool.label,
         icon: images.length > 0 ? 'image-generation' : tool.icon,
-        stdout: askedQuestion ? null : truncateCopilotToolOutput(getToolOutput(event)),
-        diffs: askedQuestion ? [] : getToolDiffs(tool, event),
-        rawOutput: askedQuestion
+        stdout: hide ? null : truncateCopilotToolOutput(getToolOutput(event)),
+        diffs: hide ? [] : getToolDiffs(tool, event),
+        rawOutput: hide
           ? null
           : getBoundedCopilotRawToolValue(event.data.result ?? event.data.error ?? null),
         images,

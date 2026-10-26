@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { memo, useRef } from 'react'
 import { useFeedbackMotion } from '../../motion/useFeedbackMotion'
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
@@ -15,6 +15,36 @@ import {
 } from '../../components/AppStatusStates'
 
 type ChangesContentProps = WorkspaceController['changesContent']
+
+// Chat-specific recents and permissions change while the same project tree is
+// visible. Keep those parent updates from rebuilding and reconciling every file.
+const ChangedFilesTree = memo(function ChangedFilesTree({
+  nodes,
+  renderNode
+}: {
+  nodes: ChangesContentProps['changeTree']
+  renderNode: ChangesContentProps['renderChangeTreeNode']
+}) {
+  return (
+    <ul className="changes-sidebar__tree" role="tree">
+      {nodes.map((node) => renderNode(node, 0))}
+    </ul>
+  )
+})
+
+const RepositoryFilesTree = memo(function RepositoryFilesTree({
+  nodes,
+  renderNode
+}: {
+  nodes: ChangesContentProps['repositoryFileTree']
+  renderNode: ChangesContentProps['renderRepositoryFileTreeNode']
+}) {
+  return (
+    <ul className="changes-sidebar__tree" role="tree">
+      {nodes.map((node) => renderNode(node, 0))}
+    </ul>
+  )
+})
 
 export function ChangesContent(props: ChangesContentProps): ReactElement {
   const {
@@ -150,9 +180,7 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
                   <ChangesSidebarGitState active={false} label={changesEmptyMessage} />
                 )}
               {visibleChangesLoadState === 'ready' && changedFiles.length > 0 && (
-                <ul className="changes-sidebar__tree" role="tree">
-                  {changeTree.map((node) => renderChangeTreeNode(node, 0))}
-                </ul>
+                <ChangedFilesTree nodes={changeTree} renderNode={renderChangeTreeNode} />
               )}
             </>
           ) : (
@@ -183,9 +211,10 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
                 <p className="changes-sidebar__status">{filesEmptyMessage}</p>
               )}
               {visibleFilesLoadState === 'ready' && repositoryFileCount > 0 && (
-                <ul className="changes-sidebar__tree" role="tree">
-                  {repositoryFileTree.map((node) => renderRepositoryFileTreeNode(node, 0))}
-                </ul>
+                <RepositoryFilesTree
+                  nodes={repositoryFileTree}
+                  renderNode={renderRepositoryFileTreeNode}
+                />
               )}
             </>
           )}

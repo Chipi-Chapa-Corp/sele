@@ -81,6 +81,7 @@ const appApi: AppApi = {
   getFileTreeListing: (options) => ipcRenderer.invoke(appIpcChannels.getFileTreeListing, options),
   getFileContents: (options) => ipcRenderer.invoke(appIpcChannels.getFileContents, options),
   openFileInSystemApp: (options) => ipcRenderer.invoke(appIpcChannels.openFileInSystemApp, options),
+  openFileInBrowser: (options) => ipcRenderer.invoke(appIpcChannels.openFileInBrowser, options),
   downloadFile: (options) => ipcRenderer.invoke(appIpcChannels.downloadFile, options),
   showFileInFolder: (options) => ipcRenderer.invoke(appIpcChannels.showFileInFolder, options),
   writeFileContents: (options) => ipcRenderer.invoke(appIpcChannels.writeFileContents, options),
@@ -390,6 +391,18 @@ const providerApi: ProviderRendererApi = {
       mode,
       options
     ),
+  getLimitResetMessages: (providerId, chatId) =>
+    ipcRenderer.invoke(providerIpcChannels.getLimitResetMessages, providerId, chatId),
+  addLimitResetMessage: (providerId, chatId, message, options) =>
+    ipcRenderer.invoke(
+      providerIpcChannels.addLimitResetMessage,
+      providerId,
+      chatId,
+      message,
+      options
+    ),
+  deleteLimitResetMessage: (providerId, chatId, messageId) =>
+    ipcRenderer.invoke(providerIpcChannels.deleteLimitResetMessage, providerId, chatId, messageId),
   deletePendingMessage: (providerId, chatId, messageId) =>
     ipcRenderer.invoke(providerIpcChannels.deletePendingMessage, providerId, chatId, messageId),
   beginPendingMessageEdit: (providerId, chatId, messageId, editId) =>

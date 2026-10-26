@@ -1,0 +1,12 @@
+.limit-reset-dialog__heading {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.6rem;
+}
+
+.limit-reset-dialog__time {
+  color: var(--quiet);
+  white-space: nowrap;
+}

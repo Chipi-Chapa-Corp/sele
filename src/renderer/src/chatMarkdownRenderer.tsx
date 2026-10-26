@@ -1,7 +1,7 @@
 import { Renderer, type Tokens } from 'marked'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { FileIcon as SymbolsFileIcon } from './components/SymbolIcons'
-import { Image as ImageIcon, Maximize2 } from 'lucide-react'
+import { Globe2, Image as ImageIcon, Maximize2 } from 'lucide-react'
 import { getVideoMimeType } from '../../shared/video'
 import { getBrowserFaviconUrl } from '../../shared/browser'
 import { renderMarkdownCodeBlock } from './codeHighlighting'
@@ -33,6 +33,7 @@ const renderHtmlAttributes = (attributes: Record<string, string | number | undef
 const defaultChatMarkdownRenderer = new Renderer()
 const loadingImageIconMarkup = renderToStaticMarkup(<ImageIcon aria-hidden="true" />)
 const expandTableIconMarkup = renderToStaticMarkup(<Maximize2 aria-hidden="true" />)
+const browserIconMarkup = renderToStaticMarkup(<Globe2 aria-hidden="true" />)
 
 const renderLocalMediaButton = (path: string, displayPath: string, name: string): string => {
   const video = Boolean(getVideoMimeType(path))
@@ -82,7 +83,7 @@ export const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Rende
         ? `<span class="chat-detail__file-link-separator" aria-hidden="true">·</span><span class="chat-detail__file-link-line" aria-label="Line ${fileTarget.line}">${fileTarget.line}</span>`
         : ''
 
-      return `<button${renderHtmlAttributes({
+      const fileButton = `<button${renderHtmlAttributes({
         class: 'chat-detail__file-link',
         type: 'button',
         title,
@@ -90,6 +91,17 @@ export const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Rende
         'data-file-link-display-path': fileTarget.displayPath,
         'data-file-link-line': fileTarget.line
       })}><span class="chat-detail__file-link-icon" aria-hidden="true">${iconMarkup}</span><span class="chat-detail__file-link-label">${escapeHtml(label)}</span>${lineMarkup}</button>`
+      if (!/\.html?$/i.test(fileTarget.path)) return fileButton
+
+      return `<span class="chat-detail__file-link-group">${fileButton}<button${renderHtmlAttributes(
+        {
+          class: 'chat-detail__file-link-browser',
+          type: 'button',
+          title: `Open ${fileTarget.displayPath} in browser`,
+          'aria-label': `Open ${fileTarget.displayPath} in browser`,
+          'data-file-browser-path': fileTarget.path
+        }
+      )}><span class="chat-detail__file-link-icon" aria-hidden="true">${browserIconMarkup}</span></button></span>`
     }
 
     const href = token.href

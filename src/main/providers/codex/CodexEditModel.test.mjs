@@ -149,3 +149,68 @@ test('editing a steering message replays the original prompt before revised stee
   assert.equal(requests[1].params.model, 'gpt-6-sol')
   assert.deepEqual(steering, ['Revised steering'])
 })
+
+for (const purpose of ['edit', 'mutation']) {
+  test(`resume for ${purpose} preserves a turn completed while the RPC was pending`, async () => {
+    const adapterClass = source.statements.find(
+      (node) => ts.isClassDeclaration(node) && node.name?.text === 'CodexProviderAdapter'
+    )
+    const method = adapterClass.members.find(
+      (node) => node.name?.getText(source) === 'resumeThread'
+    )
+    const adapter = vm.runInNewContext(
+      ts.transpile(`class Adapter { ${method.getText(source)} }; new Adapter()`, {
+        target: ts.ScriptTarget.ES2022
+      }),
+      {
+        getRecommendedPluginsConfig: () => ({}),
+        getThreadAccessOptions: () => ({}),
+        assertSupportedCodexHistory: () => {},
+        getThreadName: (thread) => thread.name
+      }
+    )
+    const before = {
+      id: 'chat',
+      historyMode: 'paginated',
+      createdAt: 1,
+      cwd: null,
+      name: null,
+      status: { type: 'active', activeFlags: [] },
+      turns: [{ id: 'pending', local: true, status: 'inProgress', items: [] }]
+    }
+    const completed = {
+      ...before,
+      name: 'Generated title',
+      status: { type: 'idle' },
+      turns: [
+        { id: 'server-turn', status: 'completed', items: [{ id: 'steer', type: 'userMessage' }] }
+      ]
+    }
+    let finish
+    Object.assign(adapter, {
+      threads: new Map([['chat', before]]),
+      client: {
+        request: () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      },
+      externallyOwnedThreadIds: new Set(),
+      paginatedTurnCatalogs: new Map(),
+      resolveThreadCwd: async () => null,
+      resolveThreadName: async () => {
+        await Promise.resolve()
+        return 'Generated title'
+      },
+      cacheThread: (thread) => adapter.threads.set('chat', thread)
+    })
+    const resuming = adapter.resumeThread('chat', {}, null, purpose)
+    adapter.threads.set('chat', completed)
+    finish({ thread: before })
+    const result = await resuming
+    assert.equal(result.turns[0].id, 'server-turn')
+    assert.equal(result.turns[0].status, 'completed')
+    assert.equal(result.status.type, 'idle')
+    assert.equal(result.name, 'Generated title')
+  })
+}

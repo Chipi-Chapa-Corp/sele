@@ -35,7 +35,7 @@ if (!process.versions.electron) {
                 </DeferredChatTurn>
               </Activity>));
             const histories=new Map();
-            window.allowed=['a','b','c','d','big','embedded'].map(id=>'codex:'+id);
+            window.allowed=['a','b','c','d','big','embedded','thumbnail','playback'].map(id=>'codex:'+id);
             const contentRef={current:null},searchRef={current:null},subagentRef={current:null};
             window.refs={contentRef,searchRef,subagentRef};
             function Turn({turn,version,id,streaming}) {
@@ -46,6 +46,8 @@ if (!process.versions.electron) {
                 <MarkdownMessage className="fixture-message" content={turn.items[0].content} streaming={streaming}/>
                 {id==='big' && Array.from({length:31000},(_,i)=><i key={i}/>)}
                 {id==='embedded' && <iframe src="about:blank"/>}
+                {id==='thumbnail' && <button className="chat-detail__markdown-video"><video muted preload="none" aria-hidden="true"/></button>}
+                {id==='playback' && <video controls/>}
               </div>
             }
             window.appendChatText=(id,text)=>{
@@ -289,6 +291,23 @@ if (!process.versions.electron) {
         await run(`Boolean(document.querySelector('[data-chat-view="codex:embedded"]'))`),
         false,
         'embedded apps retain their normal lifecycle'
+      )
+      await open('thumbnail')
+      await run(`window.thumbnailTurn=document.querySelector('#chat-search-content [data-chat-turn-id="thumbnail-9"]');thumbnailTurn.querySelector('button').click()`)
+      await open('b')
+      assert.equal(await run('thumbnailTurn.isConnected'), true, 'an idle thumbnail retains its conversation')
+      await open('thumbnail')
+      assert.equal(
+        await run(`document.querySelector('#chat-search-content [data-chat-turn-id="thumbnail-9"]')===thumbnailTurn && thumbnailTurn.querySelector('button').textContent==='1'`),
+        true,
+        'returning to video thumbnails preserves message DOM and state'
+      )
+      await open('playback')
+      await open('b')
+      assert.equal(
+        await run(`Boolean(document.querySelector('[data-chat-view="codex:playback"]'))`),
+        false,
+        'playback retains its normal cleanup lifecycle'
       )
       await open('a')
       await run(

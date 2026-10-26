@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../../shared/noProject'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
@@ -16,6 +16,7 @@ import type {
   ProviderAppInput,
   ProviderSkillInput,
   ProviderTurnOptions,
+  ProviderLimitResetTarget,
   ProviderUserInputResponse
 } from '../../../shared/provider'
 import { unloadWorkingStepItems } from '../../../shared/chatTurns'
@@ -398,6 +399,39 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         : {}),
       serviceTier: effectiveServiceTier
     })
+  const limitResetTarget = useMemo<ProviderLimitResetTarget>(
+    () =>
+      selectedChat?.id ?? {
+        draftKey: JSON.stringify([
+          getContainerTargetKey(changesContainer),
+          newSessionCwd,
+          newSessionNoProject,
+          newSessionLocation
+        ]),
+        worktree: !newSessionNoProject && newSessionLocation === 'worktree'
+      },
+    [selectedChat?.id, changesContainer, newSessionCwd, newSessionNoProject, newSessionLocation]
+  )
+  const handleQueueLimitReset = async (prompt: string): Promise<void> => {
+    const noProject = !selectedChat && newSessionNoProject
+    const options = getCurrentTurnOptions()
+    await providerApi.addLimitResetMessage(
+      selectedChat?.providerId ?? newSessionProvider,
+      limitResetTarget,
+      prompt,
+      {
+        ...options,
+        ...(!selectedChat
+          ? {
+              noProject,
+              cwd: noProject ? undefined : (newSessionCwd ?? undefined),
+              additionalDirectories: noProject ? undefined : options.additionalDirectories
+            }
+          : {})
+      }
+    )
+    window.dispatchEvent(new Event('sele-limit-reset-queue-changed'))
+  }
   const getGitTurnOptions = (): ProviderTurnOptions => {
     const commitModel = getAppGitCommitModel(
       effectiveAppSettings.git.commitModels,
@@ -1373,6 +1407,8 @@ export function useChatMessagingController(dependencies: ChatMessagingController
 
   return {
     getGitTurnOptions,
+    limitResetTarget,
+    handleQueueLimitReset,
     handleCancelEditMessage,
     handleCancelWorktreeCreation,
     handleContinueStoppedTurn,

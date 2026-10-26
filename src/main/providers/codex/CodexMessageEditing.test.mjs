@@ -5,6 +5,7 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { CodexMessageDelivery } from './CodexMessageDelivery.ts'
+import { hydrateCodexTurnRange, planCodexHistoryEdit } from './CodexPaginatedHistory.ts'
 const source = ts.createSourceFile(
   'adapter.ts',
   readFileSync(new URL('./CodexProviderAdapter.ts', import.meta.url), 'utf8'),
@@ -308,7 +309,7 @@ test('delivery failures are retryable and rollback removes obsolete edit targets
   assert.equal(delivery.wait('chat', 'id'), null)
 })
 
-const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn) => {
+const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn, history = {}) => {
   const requests = []
   const steering = []
   const hydrated = []
@@ -353,7 +354,8 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn) => {
       rendererChatUpdateTurnLimit: 100,
       deleteCodexSubmittedMessagesForTurns: async () => {},
       getTurnModelOptions: () => ({}),
-      getTurnAccessOptions: () => ({})
+      getTurnAccessOptions: () => ({}),
+      ...history
     }
   )
   Object.assign(adapter, {
@@ -383,6 +385,68 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn) => {
     getCachedChatDetail: () => ({ id: 'chat' })
   })
   return { adapter, requests, steering, hydrated }
+}
+
+for (const targetIndex of [0, 65, 129]) {
+  test(`editing failed turn ${targetIndex} loads retained history before reverting the full server catalog`, async () => {
+    const turns = Array.from({ length: 132 }, (_, index) => ({
+      id: `turn-${index}`,
+      status: index === targetIndex ? 'failed' : 'completed',
+      items: [
+        {
+          type: 'userMessage',
+          id: `message-${index}`,
+          content: [{ type: 'text', text: `Prompt ${index}` }]
+        }
+      ]
+    }))
+    const fixture = createHistoryAdapter(turns[targetIndex], undefined, {
+      loadCodexTurnCatalog: async () => turns.map((turn) => ({ ...turn, items: [] })),
+      hydrateCodexTurnRange,
+      planCodexHistoryEdit
+    })
+    // Editing from a history window: earlier retained turns and newer turns are not loaded.
+    const thread = fixture.adapter.threads.get('chat')
+    thread.turnWindowStartIndex = targetIndex
+    const requests = []
+    let reverted = false
+    let cached
+    fixture.adapter.cacheThread = (next) => {
+      cached = next
+    }
+    fixture.adapter.client.request = async (method, params) => {
+      requests.push({ method, params })
+      if (method === 'thread/turns/list') {
+        assert.equal(reverted, false, 'history must be hydrated before mutation')
+        const offset = Number(params.cursor ?? 0)
+        const data = turns.toReversed().slice(offset, offset + params.limit)
+        return {
+          data,
+          nextCursor: offset + data.length < turns.length ? String(offset + data.length) : null
+        }
+      }
+      if (method === 'thread/revert') {
+        assert.equal(params.beforeTurnId, turns[targetIndex].id)
+        reverted = true
+        return { thread }
+      }
+      assert.equal(method, 'turn/start')
+      assert.equal(reverted, true)
+      assert.equal(params.input[0].text, 'Revised prompt')
+      return { turn: { id: 'replacement' } }
+    }
+
+    await fixture.adapter.editMessageInContext('chat', turns[targetIndex].id, 'Revised prompt')
+
+    const retainedStart = Math.max(0, targetIndex - 99)
+    assert.deepEqual(
+      Array.from(cached.turns, (turn) => turn.id),
+      turns.slice(retainedStart, targetIndex).map((turn) => turn.id)
+    )
+    assert.equal(cached.turnWindowStartIndex, retainedStart)
+    assert.equal(requests.filter(({ method }) => method === 'thread/revert').length, 1)
+    assert.equal(requests.filter(({ method }) => method === 'turn/start').length, 1)
+  })
 }
 
 for (const images of [[image, { path: '/added.png' }], []]) {

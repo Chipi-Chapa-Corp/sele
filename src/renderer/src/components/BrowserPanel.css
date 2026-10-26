@@ -82,9 +82,10 @@
   min-height: 0;
   flex: 1;
   overflow: hidden;
-  border: 0.0625rem solid var(--panel-border);
+  border: 0.0625rem solid var(--field-border);
   border-radius: var(--control-radius);
-  background: var(--floating-bg);
+  background: var(--control-surface);
+  box-shadow: var(--field-shadow);
 }
 
 .browser-panel__page {
@@ -95,7 +96,7 @@
   pointer-events: none;
   min-width: 0;
   min-height: 0;
-  background: var(--floating-bg);
+  background: transparent;
   overflow: hidden;
 }
 
@@ -124,7 +125,7 @@
   gap: 0.5rem;
   padding: 1.2rem;
   color: var(--quiet);
-  background: var(--floating-bg);
+  background: transparent;
   text-align: center;
 }
 
@@ -136,6 +137,7 @@
 
 .browser-panel__page-message--error {
   color: var(--danger, #b9473f);
+  background: var(--control-surface);
 }
 
 .browser-panel__page-message > svg,

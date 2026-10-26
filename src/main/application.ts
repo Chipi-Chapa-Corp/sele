@@ -1,4 +1,5 @@
 import { registerChatArchiveIpc } from './providers/ChatArchiveIpc'
+import { bufferedCommands } from './BufferedCommandWorker'
 import { registerMcpApps } from './mcpApps/registerMcpApps'
 import { getProviderMcpApp } from './providers/providerService'
 import { stopPtys } from './pty'
@@ -394,6 +395,7 @@ app.on('before-quit', (event) => {
     .then(stopPtys)
     .then(stopModelPricingRefresh)
     .then(flushTokenUsage)
+    .finally(() => bufferedCommands.dispose())
     .catch((error: unknown) => {
       console.error('Unable to finish shutdown.', error)
     })

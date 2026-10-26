@@ -1,4 +1,5 @@
 :where(.ui-segmented-control) {
+  position: relative;
   display: grid;
   min-width: 0;
   grid-template-columns: repeat(var(--ui-segmented-control-count), minmax(0, 1fr));
@@ -170,13 +171,29 @@
 
 .ui-segmented-control__indicator {
   position: absolute;
-  inset: 0;
+  top: 0.15rem;
+  bottom: 0.15rem;
+  left: 0.15rem;
+  width: calc(
+    (100% - 0.3rem - (var(--ui-segmented-control-count) - 1) * 0.15rem) /
+    var(--ui-segmented-control-count)
+  );
+  transform: translateX(calc(var(--ui-segmented-control-index) * (100% + 0.15rem)));
   border: var(--tab-indicator-border-width) solid var(--secondary-border);
   border-color: var(--secondary-border-colors);
-  border-radius: inherit;
+  border-radius: calc(var(--control-radius) - 0.2rem);
   background: var(--secondary-surface);
   box-shadow: var(--secondary-shadow);
   pointer-events: none;
+  transition: transform 180ms ease-out;
+}
+.ui-segmented-control--small .ui-segmented-control__indicator {
+  border-radius: calc(var(--control-radius-small) - 0.1rem);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-segmented-control__indicator {
+    transition: none;
+  }
 }
 .ui-segmented-control__option {
   position: relative;

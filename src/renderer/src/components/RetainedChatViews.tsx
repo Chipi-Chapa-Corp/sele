@@ -12,7 +12,11 @@ type View = {
 const maxViews = 3
 const maxNodes = 30_000
 // These elements have a lifecycle beyond rendering static conversation content.
-const liveContent = 'iframe, video, audio, canvas, [data-visualization], .mcp-app'
+// Markdown video thumbnails never play; useMarkdownImages owns their media
+// leases and reconnects them with Activity. Keeping one thumbnail must not force
+// the entire conversation to remount on every return.
+const liveContent =
+  'iframe, video:not(.chat-detail__markdown-video > video), audio, canvas, [data-visualization], .mcp-app'
 
 // Cache the mounted tree as well as its data. Activity pauses effects while hidden
 // and restores the same nodes and component state when the chat becomes visible.

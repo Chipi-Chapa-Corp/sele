@@ -6,12 +6,7 @@ import type {
   AppGitChangesResult
 } from '../../../shared/app'
 
-import type {
-  ProviderChat,
-  ProviderChatDetail,
-  ProviderId,
-  ProviderAccountUsage
-} from '../../../shared/provider'
+import type { ProviderChat, ProviderChatDetail, ProviderId } from '../../../shared/provider'
 
 import type { ChatPlanData } from '../components/ChatPlan'
 
@@ -47,7 +42,6 @@ import {
   type SubagentChatView,
   type SubagentListState,
   type UncommittedPatchFilter,
-  type UsageLoadState,
   type UserInputResolutionState
 } from './controllerTypes'
 
@@ -87,6 +81,8 @@ export type WorkspaceSelectionDependencies = {
   gitChangeLoadRequest: number
   setTerminalOpened: React.Dispatch<React.SetStateAction<boolean>>
   setBrowserOpened: React.Dispatch<React.SetStateAction<boolean>>
+  terminalOpened: boolean
+  browserOpened: boolean
   lastNonTerminalChangesPaneViewRef: React.RefObject<'recents' | 'git' | 'files' | 'browser'>
   setChangesPaneView: React.Dispatch<React.SetStateAction<ChangesPaneView>>
   changesPaneView: ChangesPaneView
@@ -102,9 +98,6 @@ export type WorkspaceSelectionDependencies = {
   changesCwdRef: React.RefObject<string | null>
   approvalResolution: ApprovalResolutionState
   userInputResolution: UserInputResolutionState
-  setAccountUsage: React.Dispatch<React.SetStateAction<ProviderAccountUsage | null>>
-  setAccountUsageState: React.Dispatch<React.SetStateAction<UsageLoadState>>
-  setAccountUsageError: React.Dispatch<React.SetStateAction<string | null>>
   loadState: LoadState
   providerAccountRevision: number
   chatDetailRef: React.RefObject<ProviderChatDetail | null>

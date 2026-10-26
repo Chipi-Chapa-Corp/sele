@@ -1,3 +1,4 @@
+import { LimitResetQueueMessages } from '../../components/LimitResetQueueMessages'
 import { useEffect, useState, type ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { getComposerDraftScopeKey } from '../../composerDraft'
@@ -84,6 +85,8 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     handleSandboxModeChange,
     handleSelectedReviewChange,
     handleSendMessage,
+    handleQueueLimitReset,
+    limitResetTarget,
     handleSkipProviderUpdate,
     handleCompactChat,
     handleStopChat,
@@ -464,6 +467,16 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
       )}
       <div className="chat-panel__composer-input">
         <div className="chat-panel__composer-inner">
+          {(selectedChat || newChatOpen) && !activeSubagentChatView && (
+            <LimitResetQueueMessages
+              key={JSON.stringify([
+                selectedChat?.providerId ?? newSessionProvider,
+                limitResetTarget
+              ])}
+              providerId={selectedChat?.providerId ?? newSessionProvider}
+              target={limitResetTarget}
+            />
+          )}
           <MessageBox
             active={activeSubagentChatView ? false : editingMessage ? false : chatHasActiveTurn}
             activePrimaryMode="queue"
@@ -566,6 +579,15 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             onStop={handleStopChat}
             onUsageRefresh={refreshAccountUsage}
             onUsageReset={resetAccountRateLimits}
+            onQueueLimitReset={
+              (selectedChat || newChatOpen) &&
+              !activeSubagentChatView &&
+              !chatOpenedElsewhere &&
+              !chatLegacyHistoryReadOnly &&
+              !providerUpdateInProgress
+                ? handleQueueLimitReset
+                : undefined
+            }
             onSend={handleSendMessage}
           />
         </div>

@@ -8,6 +8,7 @@ export type SemanticLexicalDateDifference = {
 
 type SemanticLexicalDateDifferenceOptions = {
   now?: Date | number
+  compact?: boolean
 }
 
 const semanticDateRefreshMs = 30_000
@@ -71,6 +72,22 @@ const formatFutureDifference = (differenceMs: number): string => {
   return `In ${pluralize(Math.max(1, Math.ceil(differenceMs / hourMs)), 'hour')}`
 }
 
+const formatCompactDifference = (differenceMs: number): string => {
+  const future = differenceMs < 0
+  const absolute = Math.abs(differenceMs)
+  if (absolute < minuteMs) return future ? 'in <1m' : 'just now'
+  const minutes = future ? Math.ceil(absolute / minuteMs) : Math.floor(absolute / minuteMs)
+  const duration = [
+    [Math.floor(minutes / 1440), 'd'],
+    [Math.floor((minutes % 1440) / 60), 'h'],
+    [minutes % 60, 'm']
+  ]
+    .filter(([value]) => value !== 0)
+    .map(([value, unit]) => `${value}${unit}`)
+    .join(' ')
+  return future ? `in ${duration}` : `${duration} ago`
+}
+
 const getSemanticDateNowSnapshot = (): number => currentSemanticDateNow
 
 const notifySemanticDateNowSubscribers = (): void => {
@@ -123,7 +140,9 @@ export const formatSemanticLexicalDateDifference = (
   const sameYear = date.getFullYear() === now.getFullYear()
   let label: string
 
-  if (calendarDayDifference === 0) {
+  if (options.compact) {
+    label = formatCompactDifference(nowTimestamp - timestamp)
+  } else if (calendarDayDifference === 0) {
     const differenceMs = now.getTime() - date.getTime()
     label =
       differenceMs >= 0

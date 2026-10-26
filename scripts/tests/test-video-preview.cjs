@@ -216,7 +216,8 @@ if (!process.versions.electron) {
           requestAnimationFrame(() => resolve({
             attachment: document.querySelector('[aria-label="Open Attachment one"] img')?.src,
             markdown: Boolean(document.querySelector('[data-local-image-path="./image.png"] img')),
-            loading: Boolean(document.querySelector('.chat-detail__generated-image-loading, .chat-detail__markdown-image-loading'))
+            loading: [...document.querySelectorAll('.chat-detail__generated-image-loading, .chat-detail__markdown-image-loading')]
+              .some(node=>!node.closest('[data-local-image-path="./missing.webm"]'))
           }));
         })`)
         assert.equal(returned.attachment, await js('window.attachmentUrl'))

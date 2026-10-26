@@ -14,7 +14,8 @@ import {
   selectionsEqual
 } from './chatModelPreferences'
 import { useSidebarSearch } from './workspace/useSidebarSearch'
-import { useLatestHandler, useShallowStable } from './workspace/stableProps'
+import { useChatViewState } from './workspace/useChatViewState'
+import { useLatestHandler, useStableProps } from './workspace/stableProps'
 import {
   renderRootChatTurn,
   renderSubagentChatTurn as renderSubagentTurn,
@@ -77,7 +78,6 @@ import type {
   ProviderId,
   ProviderModel,
   ProviderModelId,
-  ProviderAccountUsage,
   ProviderAccountConfiguration,
   ProviderReasoningEffort,
   ProviderServiceTier,
@@ -304,7 +304,6 @@ import {
   type SubagentChatView,
   type SubagentListState,
   type UncommittedPatchFilter,
-  type UsageLoadState,
   type UserInputResolutionState,
   type WorktreeCreationState
 } from './workspace/controllerTypes'
@@ -434,9 +433,9 @@ export const useWorkspaceController = () => {
   const [browserOpenRequest, setBrowserOpenRequest] = useState<BrowserOpenRequest | null>(null)
   const [chats, setChats] = useState<ProviderChat[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
-  const [selectedChat, setSelectedChat] = useState<ProviderChat | null>(null)
+  const { selectedChat, setSelectedChat, chatDetail, setChatDetail, selectChatView } =
+    useChatViewState()
   useChatTerminalActivity(chats, selectedChat)
-  const [chatDetail, setChatDetail] = useState<ProviderChatDetail | null>(null)
   const [recentChatReferencesCache, setRecentChatReferencesCache] = useState<{
     chatKey: string
     references: RecentChatReference[]
@@ -566,9 +565,6 @@ export const useWorkspaceController = () => {
   }, [newSessionContainerKey])
   const [newSessionSourceAvailability, setNewSessionSourceAvailability] =
     useState<SourceAvailabilityState | null>(null)
-  const [accountUsage, setAccountUsage] = useState<ProviderAccountUsage | null>(null)
-  const [accountUsageState, setAccountUsageState] = useState<UsageLoadState>('idle')
-  const [accountUsageError, setAccountUsageError] = useState<string | null>(null)
   const [newChatOpen, setNewChatOpen] = useState(true)
   const [newSessionProjectSelection, setNewSessionProjectSelection] = useState<string | null>(null)
   const newSessionNoProject = newSessionProjectSelection === newSessionNoProjectValue
@@ -824,17 +820,18 @@ export const useWorkspaceController = () => {
   const [workingSubagentChatKeys, setWorkingSubagentChatKeys] = useState<ReadonlySet<string>>(
     () => new Set()
   )
+  const workingSubagentChatKeysRef = useRef(workingSubagentChatKeys)
   const subagentCompletionTimelines = useRef(new Map<string, SubagentCompletionTimeline>())
   const updateSubagentWorkingChat = useCallback(
     (chatKey: string, agents: readonly ProviderSubagent[]) => {
       const working = getWorkingSubagentIds(agents).size > 0
-      setWorkingSubagentChatKeys((current) => {
-        if (current.has(chatKey) === working) return current
-        const next = new Set(current)
-        if (working) next.add(chatKey)
-        else next.delete(chatKey)
-        return next
-      })
+      const current = workingSubagentChatKeysRef.current
+      if (current.has(chatKey) === working) return
+      const next = new Set(current)
+      if (working) next.add(chatKey)
+      else next.delete(chatKey)
+      workingSubagentChatKeysRef.current = next
+      startTransition(() => setWorkingSubagentChatKeys(next))
     },
     []
   )
@@ -1081,10 +1078,9 @@ export const useWorkspaceController = () => {
         return
       }
 
-      chatAutoScrollTargetRef.current = {
-        element: contentElement,
-        top: contentElement.scrollTop
-      }
+      // Requesting a correction must not measure layout. Item mount effects can
+      // call this while the rest of the commit is still changing the transcript.
+      // The actual correction records its resulting position in the frame below.
       chatAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
         chatAutoScrollFrameRef.current = null
         if (contentRef.current !== contentElement || !chatAutoScrollEnabledRef.current) {
@@ -1341,10 +1337,10 @@ export const useWorkspaceController = () => {
         console.error('Unable to parse a clicked link.', error)
         return
       }
-      if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) return
+      if (!['http:', 'https:', 'file:', 'mailto:', 'tel:'].includes(url.protocol)) return
 
       event.preventDefault()
-      if (url.protocol === 'http:' || url.protocol === 'https:') {
+      if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'file:') {
         handleOpenBrowserRequest({ id: crypto.randomUUID(), url: url.toString() })
         return
       }
@@ -2411,23 +2407,28 @@ export const useWorkspaceController = () => {
     let active = true
     const fallbackModels = getFallbackModels(configProviderId)
     const cachedModels = providerModelCatalogCacheRef.current.get(configProviderModelCatalogKey)
+    // Catalog refreshes change composer metadata, not the selected transcript.
+    // Keep their renders out of the urgent cached-chat reveal.
+    const publishCatalog = (publish: () => void): void => startTransition(publish)
 
     if (!configProviderModelsReady) {
-      queueMicrotask(() => {
-        if (!active) return
-        if (cachedModels) {
-          setModels(cachedModels)
-          setDisplayedModelCatalogKey(configProviderModelCatalogKey)
-        } else {
-          setDisplayedModelCatalogKey((currentKey) => {
-            if (currentKey === configProviderModelCatalogKey) return currentKey
-            setModels([])
-            return null
-          })
-        }
-        setModelsError(null)
-        setModelsLoading(false)
-      })
+      queueMicrotask(() =>
+        publishCatalog(() => {
+          if (!active) return
+          if (cachedModels) {
+            setModels(cachedModels)
+            setDisplayedModelCatalogKey(configProviderModelCatalogKey)
+          } else {
+            setDisplayedModelCatalogKey((currentKey) => {
+              if (currentKey === configProviderModelCatalogKey) return currentKey
+              setModels([])
+              return null
+            })
+          }
+          setModelsError(null)
+          setModelsLoading(false)
+        })
+      )
 
       return () => {
         active = false
@@ -2435,19 +2436,21 @@ export const useWorkspaceController = () => {
     }
 
     const container = normalizeContainerTarget(configProviderContainerRef.current)
-    queueMicrotask(() => {
-      if (!active) return
-      if (cachedModels) {
-        setModels(cachedModels)
-        setModelsLoading(false)
-        setDisplayedModelCatalogKey(configProviderModelCatalogKey)
-      } else {
-        setModels(configProviderId === 'claude' ? [] : fallbackModels)
-        setModelsLoading(true)
-        setDisplayedModelCatalogKey(null)
-      }
-      setModelsError(null)
-    })
+    queueMicrotask(() =>
+      publishCatalog(() => {
+        if (!active) return
+        if (cachedModels) {
+          setModels(cachedModels)
+          setModelsLoading(false)
+          setDisplayedModelCatalogKey(configProviderModelCatalogKey)
+        } else {
+          setModels(configProviderId === 'claude' ? [] : fallbackModels)
+          setModelsLoading(true)
+          setDisplayedModelCatalogKey(null)
+        }
+        setModelsError(null)
+      })
+    )
 
     Promise.all([
       providerApi.getModels(configProviderId, { container, chatId: selectedChat?.id }),
@@ -2461,41 +2464,45 @@ export const useWorkspaceController = () => {
       .then(([nextModels, configuration]) => {
         if (!active) return
 
-        const result = resolveProviderModelCatalogSuccess(nextModels, fallbackModels)
-        const accountId = configuration?.accounts.find((account) => account.active)?.id
-        setModelCatalogIdentity(
-          nextModels.length > 0
-            ? {
-                key: configProviderModelCatalogKey,
-                revision: providerModelsRevision,
-                accountKey: accountId
-                  ? getAccountModelPreferenceKey(
-                      configProviderId,
-                      configProviderContainerKey,
-                      accountId
-                    )
-                  : null
-              }
-            : null
-        )
-        providerModelCatalogCacheRef.current.set(configProviderModelCatalogKey, result.models)
-        setDisplayedModelCatalogKey(configProviderModelCatalogKey)
-        setModels(result.models)
-        setModelsError(result.error)
-        setModelsLoading(false)
+        publishCatalog(() => {
+          const result = resolveProviderModelCatalogSuccess(nextModels, fallbackModels)
+          const accountId = configuration?.accounts.find((account) => account.active)?.id
+          setModelCatalogIdentity(
+            nextModels.length > 0
+              ? {
+                  key: configProviderModelCatalogKey,
+                  revision: providerModelsRevision,
+                  accountKey: accountId
+                    ? getAccountModelPreferenceKey(
+                        configProviderId,
+                        configProviderContainerKey,
+                        accountId
+                      )
+                    : null
+                }
+              : null
+          )
+          providerModelCatalogCacheRef.current.set(configProviderModelCatalogKey, result.models)
+          setDisplayedModelCatalogKey(configProviderModelCatalogKey)
+          setModels(result.models)
+          setModelsError(result.error)
+          setModelsLoading(false)
+        })
       })
       .catch((error: unknown) => {
         console.error('Unable to load provider models.', error)
         if (!active) return
-        const result = resolveProviderModelCatalogFailure(
-          cachedModels,
-          fallbackModels,
-          getErrorMessage(error, 'Unable to load models.')
-        )
-        setDisplayedModelCatalogKey(configProviderModelCatalogKey)
-        setModels(result.models)
-        setModelsError(result.error)
-        setModelsLoading(false)
+        publishCatalog(() => {
+          const result = resolveProviderModelCatalogFailure(
+            cachedModels,
+            fallbackModels,
+            getErrorMessage(error, 'Unable to load models.')
+          )
+          setDisplayedModelCatalogKey(configProviderModelCatalogKey)
+          setModels(result.models)
+          setModelsError(result.error)
+          setModelsLoading(false)
+        })
       })
 
     return () => {
@@ -2635,18 +2642,16 @@ export const useWorkspaceController = () => {
     const selectedModel = models.find((nextModel) => nextModel.id === model)
     const catalog = activeModelCatalog
 
-    setReasoningEffort((currentReasoningEffort) => {
-      const selection = reconcileReasoningSelection(
-        selectedModel,
-        {
-          reasoningEffort: currentReasoningEffort,
-          manuallySelected: reasoningManuallySelectedRef.current
-        },
-        catalog
-      )
-      reasoningManuallySelectedRef.current = selection.manuallySelected
-      return selection.reasoningEffort
-    })
+    const selection = reconcileReasoningSelection(
+      selectedModel,
+      {
+        reasoningEffort,
+        manuallySelected: reasoningManuallySelectedRef.current
+      },
+      catalog
+    )
+    reasoningManuallySelectedRef.current = selection.manuallySelected
+    if (selection.reasoningEffort !== reasoningEffort) setReasoningEffort(selection.reasoningEffort)
 
     if (
       catalog.loading ||
@@ -2655,12 +2660,11 @@ export const useWorkspaceController = () => {
       !selectedModel
     )
       return
-    setServiceTier((currentServiceTier) =>
-      modelSupportsServiceTier(selectedModel, currentServiceTier)
-        ? currentServiceTier
-        : (selectedModel.defaultServiceTier ?? null)
-    )
-  }, [model, models, activeModelCatalog])
+    const nextServiceTier = modelSupportsServiceTier(selectedModel, serviceTier)
+      ? serviceTier
+      : (selectedModel.defaultServiceTier ?? null)
+    if (nextServiceTier !== serviceTier) setServiceTier(nextServiceTier)
+  }, [model, models, activeModelCatalog, reasoningEffort, serviceTier])
 
   const removeRecentChatCacheEntry = useCallback((providerId: ProviderId, chatId: string): void => {
     recentChatCacheRef.current.delete(getProviderChatKey(providerId, chatId))
@@ -2769,9 +2773,8 @@ export const useWorkspaceController = () => {
 
       if (options.select) {
         resetChatSearch()
-        setChatDetail(appliedDetail)
+        selectChatView(getChatFromDetail(providerId, appliedDetail, null, updatedAt), appliedDetail)
         setChatLoadState('ready')
-        setSelectedChat(getChatFromDetail(providerId, appliedDetail, null, updatedAt))
         setNewChatOpen(false)
       } else {
         if (selectedChatKeyRef.current === detailKey) {
@@ -2797,7 +2800,7 @@ export const useWorkspaceController = () => {
         return mergeChats(currentChats, [nextChat])
       })
     },
-    [cacheRecentChatDetail, resetChatSearch]
+    [cacheRecentChatDetail, resetChatSearch, selectChatView, setChatDetail, setSelectedChat]
   )
 
   const applyChatSummary = useCallback(
@@ -3097,12 +3100,23 @@ export const useWorkspaceController = () => {
         } else if (selectedDetail) {
           chatDetailResyncRequestIdRef.current += 1
           chatDetailResyncRef.current = null
-          applyChatDetail(event.providerId, selectedDetail)
-          setCommittedChatUpdate({
-            detailApplied: selectedDetailMatchesDeliveredTranscript,
-            sequence: event.sequence,
-            turnCompleted: event.turnCompleted
-          })
+          const publish = (): void => {
+            applyChatDetail(event.providerId, selectedDetail)
+            // Acknowledge only when this same transcript update commits.
+            setCommittedChatUpdate({
+              detailApplied: selectedDetailMatchesDeliveredTranscript,
+              sequence: event.sequence,
+              turnCompleted: event.turnCompleted
+            })
+          }
+          if (
+            chatDetailRef.current?.id === event.chatId &&
+            chatDetailRef.current.items.length > 0
+          ) {
+            startTransition(publish)
+          } else {
+            publish()
+          }
         } else {
           applyChatSummary(event.providerId, event.summary, event.turnCompleted)
           if (viewingUpdatedChat) {
@@ -3262,6 +3276,12 @@ export const useWorkspaceController = () => {
 
   const {
     activeSubagentChatView,
+    accountUsage,
+    accountUsageState,
+    accountUsageError,
+    setAccountUsage,
+    setAccountUsageState,
+    setAccountUsageError,
     approvalDecisionInFlight,
     approvalError,
     browserWorkspaceKey,
@@ -3329,6 +3349,8 @@ export const useWorkspaceController = () => {
     gitChangeLoadRequest,
     setTerminalOpened,
     setBrowserOpened,
+    terminalOpened,
+    browserOpened,
     lastNonTerminalChangesPaneViewRef,
     setChangesPaneView,
     changesPaneView,
@@ -3342,9 +3364,6 @@ export const useWorkspaceController = () => {
     changesCwdRef,
     approvalResolution,
     userInputResolution,
-    setAccountUsage,
-    setAccountUsageState,
-    setAccountUsageError,
     loadState,
     providerAccountRevision,
     chatDetailRef,
@@ -4755,61 +4774,61 @@ export const useWorkspaceController = () => {
     }
   }
 
-  const handleSelectChat = (chat: ProviderChat): void => {
-    const selectingCurrentChat =
-      selectedChat?.providerId === chat.providerId && selectedChat.id === chat.id
-    if (selectingCurrentChat && activeSubagentChatView) {
-      handleReturnToRootChat()
-      return
-    }
-    const seenUpdatedAt = chat.updatedAt
-    const cachedDetail = getRecentCachedChatDetail(chat)
-    const seenChat = {
-      ...chat,
-      seenUpdatedAt:
-        chat.seenUpdatedAt == null ? seenUpdatedAt : Math.max(chat.seenUpdatedAt, seenUpdatedAt)
-    }
-    const nextCachedDetail = cachedDetail
-      ? {
-          ...cachedDetail,
-          seenUpdatedAt:
-            cachedDetail.seenUpdatedAt == null
-              ? seenUpdatedAt
-              : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
-        }
-      : null
+  const handleSelectChat = (chat: ProviderChat): void =>
+    startTransition(() => {
+      const selectingCurrentChat =
+        selectedChatKeyRef.current === getChatKey(chat) &&
+        selectedChat?.providerId === chat.providerId &&
+        selectedChat.id === chat.id
+      if (selectingCurrentChat && activeSubagentChatView) {
+        handleReturnToRootChat()
+        return
+      }
+      const seenUpdatedAt = chat.updatedAt
+      const cachedDetail = getRecentCachedChatDetail(chat)
+      const seenChat = {
+        ...chat,
+        seenUpdatedAt:
+          chat.seenUpdatedAt == null ? seenUpdatedAt : Math.max(chat.seenUpdatedAt, seenUpdatedAt)
+      }
+      const nextCachedDetail = cachedDetail
+        ? {
+            ...cachedDetail,
+            seenUpdatedAt:
+              cachedDetail.seenUpdatedAt == null
+                ? seenUpdatedAt
+                : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
+          }
+        : null
 
-    resetChatSearch()
-    setCommitChatReturnTarget(null)
-    subagentChatLoadRequestRef.current += 1
-    setSubagentChatView(null)
-    setSendState(sendInFlightRef.current ? 'sending' : 'idle')
-    setEditingMessage(null)
-    setNewChatOpen(false)
-    setSearchOpen(false)
-    setSearchQuery('')
+      resetChatSearch()
+      setCommitChatReturnTarget(null)
+      subagentChatLoadRequestRef.current += 1
+      setSubagentChatView(null)
+      setSendState(sendInFlightRef.current ? 'sending' : 'idle')
+      setEditingMessage(null)
+      setNewChatOpen(false)
+      setSearchOpen(false)
+      setSearchQuery('')
 
-    if (selectingCurrentChat && chatLoadState === 'ready' && chatDetail?.id === chat.id) {
-      markSelectedChatSeen()
-      return
-    }
+      // Even a click on the currently painted chat is a selection request: a
+      // different transition may still be pending behind that visible view.
+      // Publishing this request cancels the intermediate destination.
+      markSelectedChatSeen(true)
+      recentlyViewedActiveChatPreviewsRef.current.delete(getChatKey(chat))
+      selectedChatKeyRef.current = getChatKey(chat)
+      selectedChatUpdatedAtRef.current = chat.updatedAt
+      chatDetailRef.current = nextCachedDetail
+      selectChatView(seenChat, nextCachedDetail)
+      // Selection and already prepared messages commit together. Provider refreshes
+      // run independently; they never put a loader in front of readable history.
+      setChatLoadState(nextCachedDetail ? 'ready' : 'loading')
+      markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
 
-    markSelectedChatSeen(true)
-    recentlyViewedActiveChatPreviewsRef.current.delete(getChatKey(chat))
-    selectedChatKeyRef.current = getChatKey(chat)
-    selectedChatUpdatedAtRef.current = chat.updatedAt
-    chatDetailRef.current = nextCachedDetail
-    setSelectedChat(seenChat)
-    // Selection and already prepared messages commit together. Provider refreshes
-    // run independently; they never put a loader in front of readable history.
-    setChatDetail(nextCachedDetail)
-    setChatLoadState(nextCachedDetail ? 'ready' : 'loading')
-    markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
-
-    if (selectingCurrentChat && !cachedDetail) {
-      setChatLoadRequest((currentRequest) => currentRequest + 1)
-    }
-  }
+      if (selectingCurrentChat && !cachedDetail) {
+        setChatLoadRequest((currentRequest) => currentRequest + 1)
+      }
+    })
 
   const handleOpenLinkedChat = (reference: LinkedChatReference): void => {
     const listedChat = chatsRef.current.find(
@@ -4839,64 +4858,68 @@ export const useWorkspaceController = () => {
     []
   )
 
-  const handleBack = (): void => {
-    if (activeSubagentChatView) {
-      handleReturnFromSubagentChat()
-      return
-    }
+  const handleBack = (): void =>
+    startTransition(() => {
+      if (activeSubagentChatView) {
+        handleReturnFromSubagentChat()
+        return
+      }
 
-    markSelectedChatSeen(true)
-    setCommitChatReturnTarget(null)
-    subagentChatLoadRequestRef.current += 1
-    setSubagentChatView(null)
-    selectedChatKeyRef.current = null
-    selectedChatUpdatedAtRef.current = null
-    resetChatSearch()
-    chatDetailRef.current = null
-    setSelectedChat(null)
-    setChatDetail(null)
-    setNewChatOpen(false)
-    setSendState(sendInFlightRef.current ? 'sending' : 'idle')
-    setEditingMessage(null)
-  }
+      markSelectedChatSeen(true)
+      setCommitChatReturnTarget(null)
+      subagentChatLoadRequestRef.current += 1
+      setSubagentChatView(null)
+      selectedChatKeyRef.current = null
+      selectedChatUpdatedAtRef.current = null
+      resetChatSearch()
+      chatDetailRef.current = null
+      setSelectedChat(null)
+      setChatDetail(null)
+      setNewChatOpen(false)
+      setSendState(sendInFlightRef.current ? 'sending' : 'idle')
+      setEditingMessage(null)
+    })
 
-  const handleNewChat = (): void => {
-    const currentChat = selectedChat
-      ? chatDetail?.id === selectedChat.id
-        ? chatDetail
-        : selectedChat
-      : null
-    const projectCwd =
-      currentChat && !currentChat.imported ? getChatProjectCwd(currentChat) : undefined
-    const projectContainer = currentChat?.container ?? undefined
-    markSelectedChatSeen(true)
-    selectedChatKeyRef.current = null
-    selectedChatUpdatedAtRef.current = null
-    subagentChatLoadRequestRef.current += 1
-    setSubagentChatView(null)
-    showNewChatView(projectCwd, projectContainer)
-  }
+  const handleNewChat = (): void =>
+    startTransition(() => {
+      const currentChat = selectedChat
+        ? chatDetail?.id === selectedChat.id
+          ? chatDetail
+          : selectedChat
+        : null
+      const projectCwd =
+        currentChat && !currentChat.imported ? getChatProjectCwd(currentChat) : undefined
+      const projectContainer = currentChat?.container ?? undefined
+      markSelectedChatSeen(true)
+      selectedChatKeyRef.current = null
+      selectedChatUpdatedAtRef.current = null
+      subagentChatLoadRequestRef.current += 1
+      setSubagentChatView(null)
+      showNewChatView(projectCwd, projectContainer)
+    })
 
-  const handleNewChatNoProject = (): void => {
-    markSelectedChatSeen(true)
-    selectedChatKeyRef.current = null
-    selectedChatUpdatedAtRef.current = null
-    subagentChatLoadRequestRef.current += 1
-    setSubagentChatView(null)
-    showNewChatView(null)
-    setNewSessionLocation('folder')
-  }
+  const handleNewChatNoProject = (): void =>
+    startTransition(() => {
+      markSelectedChatSeen(true)
+      selectedChatKeyRef.current = null
+      selectedChatUpdatedAtRef.current = null
+      subagentChatLoadRequestRef.current += 1
+      setSubagentChatView(null)
+      showNewChatView(null)
+      setNewSessionLocation('folder')
+    })
 
-  const handleNewChatInCwd = (group: ChatListGroupData): void => {
-    if (group.kind !== 'cwd') return
+  const handleNewChatInCwd = (group: ChatListGroupData): void =>
+    startTransition(() => {
+      if (group.kind !== 'cwd') return
 
-    markSelectedChatSeen(true)
-    selectedChatKeyRef.current = null
-    selectedChatUpdatedAtRef.current = null
-    subagentChatLoadRequestRef.current += 1
-    setSubagentChatView(null)
-    showNewChatView(group.cwd)
-  }
+      markSelectedChatSeen(true)
+      selectedChatKeyRef.current = null
+      selectedChatUpdatedAtRef.current = null
+      subagentChatLoadRequestRef.current += 1
+      setSubagentChatView(null)
+      showNewChatView(group.cwd)
+    })
 
   const handleCloseSearch = (): void => {
     setSearchOpen(false)
@@ -5164,6 +5187,8 @@ export const useWorkspaceController = () => {
 
   const {
     getGitTurnOptions,
+    limitResetTarget,
+    handleQueueLimitReset,
     handleCancelEditMessage,
     handleCancelWorktreeCreation,
     handleContinueStoppedTurn,
@@ -6127,7 +6152,9 @@ export const useWorkspaceController = () => {
     accountUsage?.rateLimitResetCredits?.credits ?? null
   )
 
-  const rootChatTurnInputs = useShallowStable<RootChatTurnInputs>({
+  // Handlers call the current controller, but changing their closures must not
+  // invalidate every cached message during unrelated workspace updates.
+  const rootChatTurnInputs = useStableProps<RootChatTurnInputs>({
     itemIndexesById: chatItemIndexesById,
     visibleChatItems,
     followingWorkingStepsById,
@@ -6197,7 +6224,7 @@ export const useWorkspaceController = () => {
   const loadSubagentWorkingStep = useLatestHandler(handleLoadSubagentWorkingStep)
   const loadSubagentWorkingItem = useLatestHandler(handleLoadSubagentWorkingItem)
   const loadSubagentWorkingToolPage = useLatestHandler(handleLoadSubagentWorkingToolPage)
-  const subagentChatTurnInputs = useShallowStable<SubagentChatTurnInputs>({
+  const subagentChatTurnInputs = useStableProps<SubagentChatTurnInputs>({
     itemIndexesById: subagentChatItemIndexesById,
     visibleChatItems: subagentVisibleChatItems,
     followingWorkingStepsById: subagentChatConversationModel.followingWorkingStepsById,
@@ -6313,7 +6340,15 @@ export const useWorkspaceController = () => {
           sendState === 'sending',
         onCompact: selectedChat && !activeSubagentChatView ? handleCompactChat : undefined,
         onUsageRefresh: refreshAccountUsage,
-        onUsageReset: resetAccountRateLimits
+        onUsageReset: resetAccountRateLimits,
+        onQueueLimitReset:
+          (selectedChat || newChatOpen) &&
+          !activeSubagentChatView &&
+          !chatOpenedElsewhere &&
+          !chatLegacyHistoryReadOnly &&
+          !providerUpdateInProgress
+            ? handleQueueLimitReset
+            : undefined
       },
       providerAccount: {
         openCode: {
@@ -6516,6 +6551,8 @@ export const useWorkspaceController = () => {
       handleSandboxModeChange,
       handleSelectedReviewChange,
       handleSendMessage,
+      handleQueueLimitReset,
+      limitResetTarget,
       handleSkipProviderUpdate,
       handleCompactChat,
       handleStopChat,

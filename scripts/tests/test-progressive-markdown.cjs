@@ -54,7 +54,8 @@ if (!process.versions.electron) {
           const noop=()=>{}
           window.render=(content,key='large',streaming=false,visible=true)=>flushSync(()=>root.render(
             <Activity mode={visible?'visible':'hidden'}><MarkdownMessage key={key} className="chat-detail__message chat-detail__message--assistant"
-              content={content} streaming={streaming} onOpenFileLink={(...args)=>window.links.push(args)}/></Activity>))
+              content={content} streaming={streaming} localImageCwd="/fixture"
+              onOpenFileLink={(...args)=>window.links.push(args)}/></Activity>))
           window.planRequests=0;
           window.links=[];window.errors=[];window.gaps=[];window.tasks=[];window.counts=[]
           new MutationObserver(()=>window.counts.push(document.querySelectorAll('p').length))
@@ -92,7 +93,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<html data-color-scheme="dark"><link rel="stylesheet" href="fixture.css"><style>body{margin:20px}.chat-detail__message{width:900px}</style><div id="root"></div><script>window.appApi={};</script><script src="fixture.js"></script></html>'
+        '<html data-color-scheme="dark"><link rel="stylesheet" href="fixture.css"><style>body{margin:20px}.chat-detail__message{width:900px}</style><div id="root"></div><script>window.browserFiles=[];window.appApi={openFileInBrowser:async options=>window.browserFiles.push(options)};</script><script src="fixture.js"></script></html>'
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
@@ -282,6 +283,43 @@ if (!process.versions.electron) {
         'ordinary rich replies must parse in the worker'
       )
       assert.equal(await run(`document.querySelectorAll('code .token').length>0`), true)
+      const htmlLinks =
+        '[Preview](docs/my%20page.html:12) and [other](file:///fixture/index%20%231.HTM) and [source](/fixture/source.ts)'
+      for (const [key, text] of [
+        ['html-links', htmlLinks],
+        ['html-links-worker', htmlLinks + '\n\n' + content]
+      ]) {
+        await run(
+          `window.links=[];window.browserFiles=[];window.render(${JSON.stringify(text)},${JSON.stringify(key)})`
+        )
+        await waitFor(`document.querySelectorAll('.chat-detail__file-link-browser').length===2`)
+        assert.equal(await run(`document.querySelector('button button')===null`), true)
+        await run(`document.querySelector('.chat-detail__file-link').click()`)
+        assert.deepEqual(await run('window.links'), [
+          ['docs/my page.html', 'docs/my page.html', 12]
+        ])
+        await run(
+          `document.querySelector('.chat-detail__file-link-browser svg').dispatchEvent(new MouseEvent('click',{bubbles:true}))`
+        )
+        assert.deepEqual(await run('window.browserFiles'), [
+          { container: undefined, cwd: '/fixture', path: 'docs/my page.html' }
+        ])
+        assert.equal(await run('window.links.length'), 1, 'browser action must not open the editor')
+        win.focus()
+        win.webContents.focus()
+        await run(`document.querySelector('.chat-detail__file-link-browser').focus()`)
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+        win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' })
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+        await waitFor('window.browserFiles.length===2')
+        await run(`document.querySelectorAll('.chat-detail__file-link-browser')[1].click()`)
+        assert.equal(await run('window.browserFiles[2].path'), '/fixture/index #1.HTM')
+        if (key === 'html-links') {
+          const screenshot = path.resolve(__dirname, '../../test-results/html-file-links.png')
+          await fs.mkdir(path.dirname(screenshot), { recursive: true })
+          await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG())
+        }
+      }
       assert.deepEqual(errors, [])
       console.log(
         JSON.stringify({

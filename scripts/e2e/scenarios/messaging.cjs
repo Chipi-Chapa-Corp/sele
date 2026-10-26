@@ -112,6 +112,50 @@ async function afterTurn(t, name = 'H') {
 
 const scenarios = [
   {
+    name: 'completed and interrupted messages remain editable with settled activity',
+    async run(t, { sele, page, provider }) {
+      if (provider !== 'codex') return
+      const chatId = await sele.startChat(provider, t.token('A'))
+      await t.waitReply('A')
+      await t.settle()
+      await page.waitFor(
+        `window.__sele.chatRows().some(row => row.id === ${JSON.stringify(chatId)} && row.title && !row.title.includes('Untitled chat'))`,
+        {
+          message: 'Generated Codex title did not reach the sidebar'
+        }
+      )
+      const edit = async (from, to) => {
+        await page.click(
+          `(() => { const message = [...document.querySelectorAll('.chat-detail__message-block--user')].find(element => element.textContent.includes(${JSON.stringify(t.token(from))})); return message?.querySelector('[aria-label="Edit message"]') })()`
+        )
+        await page.waitFor(
+          `window.__sele.composer()?.value.includes(${JSON.stringify(t.token(from))})`
+        )
+        await page.fillComposer(t.token(to))
+        await page.press('Enter')
+        await t.waitReply(to)
+        await t.settle()
+      }
+      await edit('A', 'B')
+      await sele.send(`${t.token('H')} #hold ${t.tag}`)
+      await sele.waitActive()
+      await t.waitDelivered(['H'])
+      await page.click(`(window.__sele.byLabel('Stop response'))`)
+      t.release()
+      await sele.waitIdle()
+      await edit('H', 'C')
+      await sele.openNewChat(provider)
+      await sele.selectChat(chatId)
+      await sele.waitIdle()
+      assert.equal(
+        await page.eval(
+          `window.__sele.messages().some(message => message.text.includes(${JSON.stringify(t.token('C'))}))`
+        ),
+        true
+      )
+    }
+  },
+  {
     name: 'queue messages are delivered once, in order, after the turn',
     async run(t, { sele, page, context }) {
       await t.startHeld()

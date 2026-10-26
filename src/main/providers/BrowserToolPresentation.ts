@@ -39,7 +39,65 @@ const observations = new Set([
   'markHandoff'
 ])
 
+const browserToolActions: Record<string, string> = {
+  tabs_context: 'Listed browser tabs',
+  tabs_create: 'Opened a new tab',
+  tabs_select: 'Selected browser tab',
+  tabs_close: 'Closed browser tab',
+  navigate: 'Navigated to webpage',
+  read_page: 'Read webpage',
+  find: 'Searched webpage',
+  get_page_text: 'Read webpage text',
+  form_input: 'Filled a field',
+  javascript_tool: 'Ran webpage script',
+  resize_window: 'Resized browser viewport',
+  read_console_messages: 'Read browser console',
+  read_network_requests: 'Read network requests',
+  upload_files: 'Uploaded files to webpage',
+  downloads: 'Checked browser downloads',
+  handle_dialog: 'Handled browser dialog',
+  save_screenshot: 'Took browser screenshot',
+  print_pdf: 'Saved webpage as PDF',
+  record_gif: 'Recorded browser interaction'
+}
+
+const computerActions: Record<string, string> = {
+  screenshot: 'Took browser screenshot',
+  zoom: 'Read browser screenshot',
+  left_click: 'Clicked on webpage',
+  right_click: 'Clicked on webpage',
+  middle_click: 'Clicked on webpage',
+  double_click: 'Clicked on webpage',
+  triple_click: 'Clicked on webpage',
+  hover: 'Hovered on webpage',
+  type: 'Typed on webpage',
+  key: 'Pressed a key',
+  scroll: 'Scrolled webpage',
+  scroll_to: 'Scrolled webpage',
+  wait: 'Waited for webpage',
+  left_click_drag: 'Dragged on webpage'
+}
+
 export function getBrowserToolLabel(names: string[], input: unknown): string | null {
+  const browserTool = names
+    .map(
+      (name) =>
+        name.match(
+          /^(?:mcp__)?(?:Claude_Browser|Sele_Browser|OpenCode_Browser)(?:__|\/|_)(.+)$/i
+        )?.[1]
+    )
+    .find(Boolean)
+  if (browserTool) {
+    const tool = browserTool.replace(/^chrome_/, '')
+    if (tool === 'computer' || tool === 'native_computer') {
+      const action = input && typeof input === 'object' && 'action' in input ? input.action : null
+      if (tool === 'native_computer') return 'Used shared desktop'
+      return typeof action === 'string'
+        ? (computerActions[action] ?? 'Interacted with webpage')
+        : 'Interacted with webpage'
+    }
+    return browserToolActions[tool] ?? null
+  }
   const isCua = names.some((name) =>
     /(?:^|[ /])(?:mcp__)?cua_repl(?:__|\/)(?:js|js_reset)$/.test(name)
   )

@@ -19,6 +19,129 @@ const userPrompt = {
   parent_tool_use_id: null
 }
 
+const firstTool = (items) =>
+  items.flatMap((item) =>
+    item.type === 'working'
+      ? item.items.flatMap((child) =>
+          child.type === 'toolGroup' ? child.tools : child.type === 'tool' ? [child] : []
+        )
+      : []
+  )[0]
+
+test('Claude apps share readable actions and keep payloads hidden after live and persisted results', () => {
+  for (const [name, label] of [
+    ['mcp__github__fetch_file', 'Read file from GitHub'],
+    ['mcp__plugin_github_github__get_file_contents', 'Read file from GitHub'],
+    ['mcp__claude_ai_GitHub__get_file_contents', 'Read file from GitHub'],
+    ['mcp__github-mcp-server__get_file_contents', 'Read file from GitHub'],
+    ['mcp__github__create_issue', 'Created issue in GitHub'],
+    ['mcp__slack__search_messages', 'Searched Slack'],
+    ['mcp__openaiDeveloperDocs__fetch_openai_doc', 'Read OpenAI docs'],
+    ['mcp__Claude_Browser__navigate', 'Navigated to webpage']
+  ]) {
+    const source = [
+      userPrompt,
+      {
+        type: 'assistant',
+        uuid: 'app',
+        session_id: 'session',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'call',
+              name,
+              input: { path: '/private-input', command: 'rm /private-input' }
+            }
+          ]
+        }
+      }
+    ]
+    const options = { active: true, stopped: false }
+    const projection = new ClaudeTranscriptProjection()
+    const running = projection.read(source, [], options).items
+    const completed = [
+      ...source,
+      {
+        type: 'user',
+        uuid: 'result',
+        session_id: 'session',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 'call', content: 'private-output' }]
+        }
+      }
+    ]
+    const projected = projection.read(completed, [], options).items
+    assert.deepEqual(firstTool(projected), firstTool(renderClaudeChatItems(completed, options)))
+    for (const [items, status] of [
+      [running, 'running'],
+      [projected, 'finished']
+    ]) {
+      const tool = firstTool(items)
+      assert.equal(tool.label, label)
+      assert.equal(tool.status, status)
+      for (const key of ['command', 'stdout', 'rawInput', 'rawOutput'])
+        assert.equal(tool[key], null)
+      assert.doesNotMatch(JSON.stringify(items), /private-input|private-output/)
+    }
+  }
+})
+
+test('Claude native tools retain searches, shell output and diffs without guessing MCP operations', () => {
+  for (const [name, input, activity, label, hidden] of [
+    ['Read', { file_path: '/repo/code.ts', command: 'rm /ignored' }, 'read', 'Read code.ts', true],
+    [
+      'Grep',
+      { pattern: 'needle', path: '/repo/src' },
+      'search',
+      'Searched for needle in src',
+      false
+    ],
+    [
+      'Bash',
+      { command: 'curl https://example.test/rm' },
+      'command',
+      'Ran curl https://example.test/rm',
+      false
+    ],
+    ['Edit', { file_path: '/repo/code.ts' }, 'edit', 'Edited code.ts', false],
+    [
+      'mcp__crm__delete_customer',
+      { path: '/customer', command: 'rm /customer' },
+      'other',
+      'Used mcp__crm__delete_customer',
+      false
+    ]
+  ]) {
+    const output = '@@ -1 +1 @@\n-old\n+new'
+    const source = [
+      userPrompt,
+      {
+        type: 'assistant',
+        uuid: 'native',
+        session_id: 'session',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'call', name, input }] }
+      },
+      {
+        type: 'user',
+        uuid: 'result',
+        session_id: 'session',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'call', content: output }] }
+      }
+    ]
+    const tool = firstTool(renderClaudeChatItems(source, { active: false, stopped: false }))
+    assert.equal(tool.activity, activity)
+    assert.equal(tool.label, label)
+    assert.equal(tool.stdout, hidden ? null : output)
+    assert.equal(tool.command, name === 'Bash' ? input.command : null)
+    if (activity === 'edit') assert.equal(tool.diffs.length, 1)
+  }
+})
+
 const renderUserPresentations = (message) => {
   const options = { active: false, stopped: false }
   return [
@@ -274,7 +397,9 @@ test('skill tool renders as a labeled step without an expandable payload', () =>
     stopped: false
   })
   const tool = getSkillTool(items)
-  assert.equal(tool.label, 'Use dataviz skill')
+  assert.equal(tool.label, 'Used dataviz skill')
+  assert.equal(tool.activity, 'skill')
+  assert.equal(tool.icon, 'skill')
   assert.equal(tool.status, 'finished')
   assert.equal(tool.command, null)
   assert.equal(tool.stdout, null)

@@ -1,3 +1,6 @@
+import { createLimitResetDelivery } from './LimitResetDelivery'
+import { LimitResetQueue } from './LimitResetQueue'
+import { limitResetMessageBackend } from '../database/limitResetMessages'
 import { isNoProjectChat } from '../../shared/noProject'
 import { getLastTurnOutcome } from '../../shared/chatTurnOutcome'
 import { getChatTurnOutcomes, setChatTurnOutcome } from '../database/chatTurnOutcome'
@@ -13,7 +16,11 @@ import { SqliteChatHistoryCache } from '../database/chatHistoryCache'
 import { PersistentChatHistory, type HistoryRead } from './PersistentChatHistory'
 import { prepareChatDetailForRenderer } from './chatDetailLazy'
 import { SqliteConversationViews } from '../database/conversationViews'
-import { createConversationView, isConversationOpeningDetail } from '../../shared/conversationView'
+import {
+  createConversationView,
+  isConversationOpeningDetail,
+  restoreConversationView
+} from '../../shared/conversationView'
 import type { ConversationViewScope } from './PersistentChatHistory'
 import type { McpAppScope } from '../../shared/mcpApps'
 import { applyTurnTokenUsage, emptyTokenUsage } from '../../shared/tokenUsage'
@@ -265,15 +272,7 @@ export const getProviderConversationViews = async (
       }
     }
     if (view && scope.current())
-      views.push({
-        ...view,
-        ...chat,
-        revision: -1,
-        historyPreview: true,
-        conversationView: true,
-        pendingApproval: null,
-        pendingUserInput: null
-      })
+      views.push(restoreConversationView(view, chat))
   }
   return views
 }
@@ -845,6 +844,70 @@ const codexReauthentications = new Map<
   { source: string; loginId: string | null; adapter: CodexProviderAdapter }
 >()
 
+const uncommittedResetHandoffs = new Set<string>()
+const limitResetQueue = new LimitResetQueue(
+  limitResetMessageBackend,
+  createLimitResetDelivery({
+    backend: limitResetMessageBackend,
+    prepare: async (entry) => {
+      let options = (await prepareChatWorkspace(app.getPath('userData'), entry.options))!
+      if (entry.worktree && !options.noProject) {
+        if (!options.cwd) throw new Error('Choose a folder before creating a worktree.')
+        const { createChatGitWorktree } = await import('../registerAppIpc')
+        const worktree = await createChatGitWorktree({
+          container: options.container,
+          cwd: options.cwd,
+          name: `limit-reset-${entry.id.slice(0, 8)}`
+        })
+        options = { ...options, cwd: worktree.worktreePath }
+      }
+      return options
+    },
+    create: (entry, onCreated) =>
+      adapters[entry.providerId].startChat(
+        '',
+        {
+          ...entry.options,
+          deferInitialMessage: true,
+          accountId: entry.accountId
+        },
+        onCreated
+      ),
+    saveMetadata: async (entry) => {
+      if (!entry.draftKey || !entry.chatId) return
+      await Promise.all([
+        entry.options.noProject ? setChatNoProject(entry.chatId) : Promise.resolve(),
+        entry.options.container
+          ? setChatContainer(entry.chatId, entry.options.container)
+          : Promise.resolve()
+      ])
+    },
+    enqueue: async (entry) => {
+      const adapter = adapters[entry.providerId]
+      if (!adapter.enqueueLimitResetMessage)
+        throw new Error('This provider cannot queue reset prompts.')
+      await adapter.enqueueLimitResetMessage(
+        entry.chatId,
+        entry.content,
+        entry.id,
+        entry.options,
+        async () => {
+          uncommittedResetHandoffs.add(entry.id)
+          await flushPersistentPendingMessages()
+          if ((await limitResetMessageBackend.list()).some((stored) => stored.id === entry.id)) {
+            throw new Error(
+              'Unable to persist the reset prompt in the chat queue. Retrying shortly.'
+            )
+          }
+          uncommittedResetHandoffs.delete(entry.id)
+        }
+      )
+    }
+  })
+)
+
+export const startLimitResetQueue = (): void => limitResetQueue.start()
+
 export const providerApi: ProviderApi = {
   reauthenticateAccount: async (providerId, options) => {
     persistentChatHistory.forgetAccount(providerId, options?.container)
@@ -1145,6 +1208,9 @@ export const providerApi: ProviderApi = {
     adapters[providerId].setAppEnabled(appId, enabled, options),
   getUsage: async (providerId, options?: ProviderUsageOptions) => {
     const usage = await adapters[providerId].getUsage(options)
+    if (options?.chatId && !usage.authenticationRequired) {
+      await limitResetQueue.observe(providerId, options.chatId, usage.rateLimits)
+    }
     if (usage.authenticationRequired || !options?.includeStatistics || !usage.summary) return usage
     try {
       const costs = await getAccountUsageCosts(
@@ -1375,6 +1441,37 @@ export const providerApi: ProviderApi = {
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].sendActiveChatMessage(chatId, message, mode, options)
     ).then((detail) => applyMetadataToDetail(detail, providerId)),
+  getLimitResetMessages: (providerId, chatId) => limitResetQueue.list(providerId, chatId),
+  addLimitResetMessage: async (providerId, target, message, options) => {
+    const chatId = typeof target === 'string' ? target : undefined
+    const detail = chatId ? await providerApi.getChat(providerId, chatId) : null
+    if (detail?.writeAccess === 'readOnly') throw new Error('This chat is read-only.')
+    const container = detail?.container ?? options.container
+    const accountId = chatId
+      ? (detail?.accountId ?? undefined)
+      : (await providerApi.getAccounts(providerId, { container })).accounts.find(
+          (account) => account.active
+        )?.id
+    const source = { chatId, container, accountId }
+    const usage = await adapters[providerId].getUsage({ ...source, forceRefresh: true })
+    const models = await adapters[providerId].getModels(source)
+    await limitResetQueue.add(
+      providerId,
+      target,
+      message,
+      { ...options, container },
+      usage.rateLimits,
+      models.find((model) => model.id === options.model)?.usageScope,
+      accountId
+    )
+  },
+  deleteLimitResetMessage: (providerId, target, messageId) =>
+    limitResetQueue.remove(providerId, target, messageId, async (entry) => {
+      if (!entry.chatId || !uncommittedResetHandoffs.has(entry.id)) return
+      await adapters[providerId].deletePendingMessage(entry.chatId, entry.id)
+      await flushPersistentPendingMessages()
+      uncommittedResetHandoffs.delete(entry.id)
+    }),
   deletePendingMessage: (providerId, chatId, messageId) =>
     adapters[providerId]
       .deletePendingMessage(chatId, messageId)
@@ -1474,6 +1571,7 @@ export const providerApi: ProviderApi = {
 }
 
 export const disposeProviderAdapters = async (): Promise<void> => {
+  await limitResetQueue.close()
   await Promise.allSettled(Object.values(adapters).map((adapter) => adapter.dispose()))
   await flushPersistentPendingMessages()
   for (const pending of pendingConversationViews.values()) clearTimeout(pending.timer)

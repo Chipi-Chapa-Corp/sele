@@ -3,7 +3,8 @@ import { getCodexTurnOutcome } from './CodexTurnOutcome.ts'
 import { isImageSizingMetadata } from '../imageSizingMetadata.ts'
 import type { CodexGoalPrompt } from './CodexGoalPrompts.ts'
 import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
-import { getBrowserToolLabel } from './CodexBrowserToolPresentation.ts'
+import { getBrowserToolLabel } from '../BrowserToolPresentation.ts'
+import { getAppToolPresentation } from '../AppToolPresentation.ts'
 import type {
   ProviderChatItem,
   ProviderFileDiff,
@@ -1175,14 +1176,21 @@ type ToolPresentation = {
   activity: ProviderToolActivity
   icon?: ProviderToolIcon
   label: string
+  compact?: boolean
 }
 
-const openAiDeveloperDocsToolNames = new Set(['search_openai_docs', 'fetch_openai_doc'])
+const openAiDeveloperDocsLabels = new Map([
+  ['search_openai_docs', 'Searched OpenAI docs'],
+  ['fetch_openai_doc', 'Read OpenAI docs'],
+  ['list_openai_docs', 'Listed OpenAI docs'],
+  ['get_openapi_spec', 'Read OpenAI API specification'],
+  ['list_api_endpoints', 'Listed OpenAI API endpoints']
+])
 
 const isOpenAiDeveloperDocsToolName = (name: string | null | undefined): boolean =>
   Boolean(
     name &&
-      (openAiDeveloperDocsToolNames.has(name) ||
+      (openAiDeveloperDocsLabels.has(name) ||
         name.startsWith('openaiDeveloperDocs/') ||
         name.startsWith('mcp__openaiDeveloperDocs__'))
   )
@@ -1326,12 +1334,18 @@ const getToolNameCandidates = (item: CodexThreadItem): string[] => {
 
 const getMappedToolPresentation = (item: CodexThreadItem): ToolPresentation | null => {
   const names = getToolNameCandidates(item)
-  const browserLabel = getBrowserToolLabel(
-    names,
+  const input =
     (item.customToolName && item.customToolInput
       ? getJsonToolArgument(item.customToolInput, item.customToolName)
       : null) ?? getRawToolInput(item)
+  // Keep the server scope: an unrelated server may expose a similarly named tool.
+  const appPresentation = getAppToolPresentation(
+    names.filter((name) => name !== item.tool || (!item.server && !item.namespace)),
+    input
   )
+  if (appPresentation) return appPresentation
+
+  const browserLabel = getBrowserToolLabel(names, input)
   if (browserLabel) return { activity: 'other', icon: 'browser', label: browserLabel }
 
   if (
@@ -1339,7 +1353,11 @@ const getMappedToolPresentation = (item: CodexThreadItem): ToolPresentation | nu
     item.namespace === 'openaiDeveloperDocs' ||
     names.some(isOpenAiDeveloperDocsToolName)
   ) {
-    return { activity: 'other', icon: 'openai-docs', label: 'Checked OpenAI docs' }
+    const label =
+      names
+        .map((name) => openAiDeveloperDocsLabels.get(name.split(/__|\//).pop() ?? ''))
+        .find(Boolean) ?? 'Checked OpenAI docs'
+    return { activity: 'other', icon: 'openai-docs', label, compact: true }
   }
 
   for (const name of names) {
@@ -1378,7 +1396,7 @@ const renderMappedTool = (
     images.length > 0 ? null : defaultRawToolOutput,
     images,
     presentation.icon ?? null,
-    presentation.icon === 'browser'
+    presentation.compact ?? presentation.icon === 'browser'
   )
 }
 
@@ -2161,12 +2179,6 @@ const renderChatItems = (
       )
     }
 
-    if (workingStatus === 'failed') {
-      const errorText = getTurnErrorText(turn)
-      if (errorText) {
-        appendWorkingItems([{ type: 'message', id: `${turn.id}:failure`, content: errorText }])
-      }
-    }
     if (!flushBufferedFinalMessage()) pushWorkingStep(workingStatus)
     if (projection && checkpoint)
       projection.set(turn.id, {

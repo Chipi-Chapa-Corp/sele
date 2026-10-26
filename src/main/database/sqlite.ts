@@ -126,6 +126,7 @@ export type LocalDatabase = {
     input_json: string
     created_at: number
   }
+  limit_reset_messages: { id: string; created_at: number; payload: string }
   pending_messages: {
     provider_id: ProviderId
     chat_id: string
@@ -307,6 +308,14 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .unique()
     .on('codex_submitted_messages')
     .columns(['chat_id', 'turn_id'])
+    .execute()
+
+  await db.schema
+    .createTable('limit_reset_messages')
+    .ifNotExists()
+    .addColumn('id', 'text', (column) => column.primaryKey())
+    .addColumn('created_at', 'integer', (column) => column.notNull())
+    .addColumn('payload', 'text', (column) => column.notNull())
     .execute()
 
   await db.schema

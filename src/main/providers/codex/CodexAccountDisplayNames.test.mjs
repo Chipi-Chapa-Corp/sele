@@ -34,6 +34,7 @@ test('Codex reads default and managed display names in the selected runtime with
       format: 'cjs',
       write: false,
       plugins: [
+        createRequire(import.meta.url)('../../../../scripts/tests/helpers/node-workers.cjs')(root),
         {
           name: 'fixture-runtime',
           setup(build) {

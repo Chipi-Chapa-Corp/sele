@@ -23,6 +23,34 @@ const code = (names) =>
     target: ts.ScriptTarget.ES2022
   })
 
+test('optimistic user messages have no editable provider identity', () => {
+  const utils = ts.createSourceFile(
+    'utils.tsx',
+    readFileSync(new URL('./workspace/chatControllerUtils.tsx', import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const statement = utils.statements.find(
+    (node) =>
+      ts.isVariableStatement(node) &&
+      node.declarationList.declarations.some(
+        (entry) => entry.name.getText(utils) === 'getOptimisticItems'
+      )
+  )
+  const items = vm.runInNewContext(
+    ts.transpile(
+      `${statement.getText(utils).replace('export ', '')}; getOptimisticItems([], 'Hello')`,
+      {
+        target: ts.ScriptTarget.ES2022
+      }
+    ),
+    { optimisticChatItemIdPrefix: 'optimistic:' }
+  )
+  assert.equal(items[0].editTargetId, null)
+  assert.equal(items[1].status, 'working')
+})
+
 for (const type of ['message', 'pending']) {
   for (const attachments of [
     [],

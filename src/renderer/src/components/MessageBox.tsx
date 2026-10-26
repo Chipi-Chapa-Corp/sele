@@ -205,6 +205,7 @@ type MessageBoxProps = {
   onCompact?: () => Promise<void> | void
   onStop?: () => Promise<void> | void
   onUsageRefresh?: (options?: ProviderUsageOptions) => Promise<void> | void
+  onQueueLimitReset?: (prompt: string) => Promise<void>
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
   onSend: (
     message: string,
@@ -646,6 +647,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   onStop,
   onUsageRefresh,
   onUsageReset,
+  onQueueLimitReset,
   onSend
 }) => {
   const fileMentionListboxId = useId().replace(/:/g, '')
@@ -2806,6 +2808,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 onCompact={onCompact}
                 onUsageRefresh={onUsageRefresh}
                 onUsageReset={onUsageReset}
+                onQueueLimitReset={onQueueLimitReset}
               />
             )}
             <Button

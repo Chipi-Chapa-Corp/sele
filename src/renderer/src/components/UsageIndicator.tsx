@@ -1,3 +1,5 @@
+import { LimitResetQueueButton } from './LimitResetQueueButton'
+import { nextLimitReset } from '../../../shared/limitReset'
 import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom'
 import {
   useEffect,
@@ -76,6 +78,7 @@ type UsageIndicatorProps = {
   compactDisabled?: boolean
   onCompact?: () => Promise<void> | void
   onUsageRefresh?: (options?: ProviderUsageOptions) => Promise<void> | void
+  onQueueLimitReset?: (prompt: string) => Promise<void>
   onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
 }
 
@@ -332,7 +335,8 @@ export function UsageIndicator({
   compactDisabled = false,
   onCompact,
   onUsageRefresh,
-  onUsageReset
+  onUsageReset,
+  onQueueLimitReset
 }: UsageIndicatorProps): ReactElement | null {
   const usagePopoverId = useId().replace(/:/g, '')
   const usageControlRef = useRef<HTMLDivElement>(null)
@@ -414,12 +418,12 @@ export function UsageIndicator({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: source changes reset the popover without remounting badges.
   useEffect(() => {
-    setUsageOpenSource(null)
-    setUsageView('limits')
-    setOtherLimitsOpen(false)
-    setResetDetailsOpen(false)
-    setRateLimitResetMessage(null)
-    setRateLimitRefreshBaseline(null)
+    if (usageOpenSource !== null) setUsageOpenSource(null)
+    if (usageView !== 'limits') setUsageView('limits')
+    if (otherLimitsOpen) setOtherLimitsOpen(false)
+    if (resetDetailsOpen) setResetDetailsOpen(false)
+    if (rateLimitResetMessage !== null) setRateLimitResetMessage(null)
+    if (rateLimitRefreshBaseline !== null) setRateLimitRefreshBaseline(null)
     rateLimitResetBaselineRef.current = null
   }, [popoverSourceKey])
 
@@ -630,6 +634,23 @@ export function UsageIndicator({
           />
         )}
       </AnimatePresence>
+      {onQueueLimitReset && (
+        <span className="message-box__reset-queue-control">
+          <LimitResetQueueButton
+            key={sourceKey}
+            onQueue={onQueueLimitReset}
+            resetsAt={
+              nextLimitReset(accountUsage?.rateLimits ?? [], Date.now(), modelUsageScope)
+                ?.resetsAt ?? null
+            }
+            onOpen={() => {
+              void Promise.resolve(onUsageRefresh?.({ forceRefresh: true })).catch((error) =>
+                console.error('Unable to refresh the reset time.', error)
+              )
+            }}
+          />
+        </span>
+      )}
       {createPortal(
         <AnimatePresence>
           {usageMenuOpen && (

@@ -50,6 +50,7 @@ const setup = (stored = new Map()) => {
     for (const method of [
       'continueChat',
       'sendActiveChatMessage',
+      'enqueueLimitResetMessage',
       'getChat',
       'getChatWindow',
       'resolveApproval',
@@ -117,6 +118,28 @@ test('discovered legacy chats are pinned before changing the new-chat default', 
   await h.adapter.getChat('existing')
   assert.equal(h.stored.get('existing'), 'a')
   assert.deepEqual(h.calls, [['getChat', 'a', 'existing']])
+})
+
+test('opening a completed chat replaces stale running activity from a missed update', async () => {
+  const h = setup()
+  await h.adapter.getChat('existing')
+  const runtime = h.runtimes.get('a')
+  runtime.update({ id: 'existing', status: 'active', revision: 101, items: [] })
+  runtime.getChat = async () => ({ id: 'existing', status: null, revision: 102, items: [] })
+  await h.adapter.getChat('existing')
+  assert.equal((await h.adapter.getChats()).chats[0].status, null)
+  runtime.update({ id: 'existing', status: 'active', revision: 101, items: [] })
+  assert.equal((await h.adapter.getChats()).chats[0].status, null)
+})
+
+test('opening an older history window does not replace the running sidebar activity', async () => {
+  const h = setup()
+  await h.adapter.getChat('existing')
+  const runtime = h.runtimes.get('a')
+  runtime.update({ id: 'existing', status: 'active', revision: 101, items: [] })
+  runtime.getChatWindow = async () => ({ id: 'existing', status: null, revision: 102, items: [] })
+  await h.adapter.getChatWindow('existing', { startIndex: 0, limit: 1 })
+  assert.equal((await h.adapter.getChats()).chats[0].status, 'active')
 })
 
 test('chat account selection changes only that chat and rejects updates from its previous runtime', async () => {
@@ -251,4 +274,21 @@ test('a failed writer release preserves the binding and permits a later switch',
   h.runtimes.get('a').releaseChat = async () => {}
   await h.router.select('source', 'b')
   assert.equal((await h.adapter.getChat('source')).account, 'b')
+})
+
+test('reset queue handoffs use the chat account instead of the default account', async () => {
+  const h = setup()
+  await h.adapter.getChat('source')
+  await h.adapter.enqueueLimitResetMessage('source', 'prompt', 'reset-id', {}, async () => {})
+  assert.deepEqual(h.calls.at(-1), ['enqueueLimitResetMessage', 'a', 'source'])
+})
+
+test('scheduled new chats retain their captured account after the new-chat default changes', async () => {
+  const h = setup()
+  h.select('b')
+  const chat = await h.adapter.startChat('', { accountId: 'a', deferInitialMessage: true })
+  assert.equal(chat.accountId, 'a')
+  assert.equal(h.stored.get(chat.id), 'a')
+  assert.equal((await h.adapter.getUsage({ accountId: 'a' })).account, 'a')
+  assert.deepEqual(await h.adapter.getModels({ accountId: 'a' }), ['a'])
 })

@@ -180,7 +180,8 @@ if (!process.versions.electron) {
       )
       await run(`click('[data-chat-id="10"] .chat-list-item__main');
         click('[data-chat-id="10"] [aria-label="Mark chat done"]');
-        click('[data-chat-id="10"] [aria-label="Pin chat"]');
+        click('[data-chat-id="10"] [aria-label="Chat menu"]');
+        click('.ui-dropdown__action');
         click('[data-chat-id="10"] [aria-label="Approve approval for Conversation 10"]');
         click('[data-chat-id="10"] [aria-label="Edit chat name"]');`)
       await run(`(() => {

@@ -128,7 +128,7 @@ class Sele {
   /** Scripted turns run shell tools; approval prompts would stall them. */
   async setFullAccess() {
     const option = `([...document.querySelectorAll('.message-box__chat-config-menu button')].find(button => window.__sele.text(button.querySelector('.message-box__chat-config-option-label')) === 'Full access'))`
-    const section = `document.querySelector('[data-chat-config-section="access"]')`
+    const section = `(document.querySelector('[data-chat-config-section="access"]'))`
     const openAccess = async () => {
       if (await this.q(`window.__sele.visible(${option})`)) return
       if (!(await this.q(`Boolean(document.querySelector('.message-box__chat-config-menu'))`)))

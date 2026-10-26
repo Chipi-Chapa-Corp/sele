@@ -1,5 +1,6 @@
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
+import { getProviderToolPresentation } from '../ToolPresentation.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -15,7 +16,7 @@ import {
   rendererWorkingItemPageSize,
   rendererWorkingToolGroupLimit
 } from '../workingStepLazy.ts'
-import { basename, extname, posix, win32 } from 'node:path'
+import { extname, posix, win32 } from 'node:path'
 import type {
   ProviderChatItem,
   ProviderChatTurnOutcome,
@@ -154,60 +155,16 @@ const getArgument = (input: unknown, ...keys: string[]): string | null => {
   return null
 }
 
-const getToolCommand = (input: unknown): string | null =>
-  getArgument(input, 'command', 'cmd', 'query', 'pattern', 'prompt')
-
 const getToolCwd = (input: unknown): string | null =>
   getArgument(input, 'cwd', 'working_directory', 'workingDirectory', 'directory')
 
 const getToolPath = (input: unknown): string | null =>
   getArgument(input, 'file_path', 'path', 'filePath', 'file', 'notebook_path', 'directory')
 
-const classifyTool = (nameValue: unknown, input: unknown): ProviderToolActivity => {
-  const name = getString(nameValue)?.toLocaleLowerCase() ?? ''
-  const command = getToolCommand(input)?.toLocaleLowerCase() ?? ''
-
-  if (name.includes('delete') || /\brm\b/.test(command)) return 'delete'
-  if (name === 'write' || name.includes('create')) return 'create'
-  if (name.includes('edit') || name.includes('patch') || name.includes('replace')) return 'edit'
-  if (name.includes('grep') || name.includes('glob') || name.includes('search')) return 'search'
-  if (name.includes('read') || name.includes('view') || name.includes('list')) return 'read'
-  if (/^git(?:\s|$)/.test(command)) return 'git'
-  if (/^npm(?:\s|$)/.test(command)) return 'npm'
-  if (/^npx(?:\s|$)/.test(command)) return 'npx'
-  if (name === 'bash' || name.includes('shell') || command) return 'command'
-  return 'other'
-}
-
-const getToolLabel = (nameValue: unknown, input: unknown): string => {
-  const name = getString(nameValue) ?? 'Tool'
-  if (name === 'AskUserQuestion') return 'Asking question'
-  if (name === 'TodoWrite') return 'Updated plan'
-
-  const activity = classifyTool(name, input)
-  const path = getToolPath(input)
-  const command = getToolCommand(input)
-  if (path) {
-    const displayPath = basename(path) || path
-    if (activity === 'read') return `Read ${displayPath}`
-    if (activity === 'search') return `Search ${displayPath}`
-    if (activity === 'create') return `Create ${displayPath}`
-    if (activity === 'delete') return `Delete ${displayPath}`
-    if (activity === 'edit') return `Edit ${displayPath}`
-  }
-  if (command) return command
-  return name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ')
-}
-
 const skillToolName = 'Skill'
 
 const isSkillToolBlock = (block: ClaudeContentBlock): boolean =>
   getString(block.name) === skillToolName
-
-const getSkillToolLabel = (input: unknown): string => {
-  const skillName = getArgument(input, 'skill')
-  return skillName ? `Use ${skillName} skill` : 'Use skill'
-}
 
 /**
  * Claude streams one API response as a single partial record but persists it as one transcript
@@ -279,25 +236,26 @@ const createSubagentTool = (
 
 // Questions show their answer elsewhere; a subagent's report is in its own chat.
 const hidesToolResult = (tool: ProviderWorkingTool): boolean =>
-  tool.icon === 'question' || tool.icon === 'subagent'
+  tool.hidePayload === true || tool.icon === 'question' || tool.icon === 'subagent'
 
 const createTool = (messageId: string, block: ClaudeContentBlock): ProviderWorkingTool => {
   const toolId = getString(block.id) ?? `${messageId}:tool`
   if (isSubagentToolBlock(block)) return createSubagentTool(messageId, toolId, block)
   const name = getString(block.name) ?? 'Tool'
-  const isSkill = isSkillToolBlock(block)
-  // Skill invocations only inject instructions into the conversation. Their payload is
-  // the skill body, which is not useful to inspect, so they render without details.
-  const hidePayload = name === 'AskUserQuestion' || isSkill
+  const presentation = getProviderToolPresentation('claude', name, block.input)
+  const hidePayload = presentation?.hidePayload === true
   return {
     type: 'tool',
     id: `${messageId}:${toolId}`,
     toolId,
     status: 'running',
-    activity: isSkill ? 'read' : classifyTool(name, block.input),
-    icon: name === 'AskUserQuestion' ? 'question' : name === 'TodoWrite' ? 'plan' : null,
-    label: isSkill ? getSkillToolLabel(block.input) : getToolLabel(name, block.input),
-    command: isSkill ? null : getToolCommand(block.input),
+    activity: presentation?.activity ?? 'other',
+    icon: presentation?.icon ?? null,
+    label: presentation?.label ?? `Used ${name}`,
+    summaryLabel: presentation?.summaryLabel,
+    ...(presentation?.compact ? { compact: true } : {}),
+    ...(hidePayload ? { hidePayload: true } : {}),
+    command: presentation?.command ?? null,
     cwd: getToolCwd(block.input),
     stdout: null,
     diffs: [],

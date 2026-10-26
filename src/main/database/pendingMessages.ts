@@ -31,6 +31,16 @@ export const sqlitePendingMessageBackend: PendingMessageBackend = {
           }))
         )
         .execute()
+      // A reset prompt leaves its outbox in the same transaction that makes the normal
+      // queue durable. A crash can never leave it absent from both queues or in both.
+      await transaction
+        .deleteFrom('limit_reset_messages')
+        .where(
+          'id',
+          'in',
+          rows.map((row) => row.id)
+        )
+        .execute()
     })
   },
   read: async (providerId: ProviderId, chatId: string) => {

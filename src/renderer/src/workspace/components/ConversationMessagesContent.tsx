@@ -420,8 +420,8 @@ export function ConversationMessagesContent(
           <DelayedMessagesLoader
             key={
               activeSubagentChatView
-                ? `${selectedChatKey}:subagent:${activeSubagentChatView.summary.id}`
-                : selectedChatKey
+                ? `loader:${selectedChatKey}:subagent:${activeSubagentChatView.summary.id}`
+                : `loader:${selectedChatKey}`
             }
           />
         )}

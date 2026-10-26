@@ -1,3 +1,4 @@
+import { bufferedCommands } from './BufferedCommandWorker'
 import { prepareMessageAttachments } from './messageAttachments'
 import { getVideoMimeType } from '../shared/video'
 import { copyVideoFile } from './videoClipboard'
@@ -11,6 +12,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, clipboard, dialog, nativeTheme, shell } from 'electron'
 import type {
   AppColorScheme,
@@ -127,6 +129,7 @@ import {
 } from './optionalProbe'
 import { getProcessFailureMessage } from './processFailure'
 import { openExternalLink } from './externalLink'
+import { browserIpcChannels } from '../shared/browser'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
 import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
 import { getCopilotExecutable } from './providers/copilot/CopilotExecutable'
@@ -154,7 +157,7 @@ const getDefaultPath = (value: unknown): string | undefined => {
   return value
 }
 
-const externalLinkProtocols = new Set(['http:', 'https:', 'mailto:', 'tel:'])
+const externalLinkProtocols = new Set(['http:', 'https:', 'file:', 'mailto:', 'tel:'])
 const maxExternalLinkLength = 8_192
 const sourceAvailabilityTimeoutMs = 5_000
 const sourceAvailabilityMaxBuffer = 64 * 1024
@@ -821,49 +824,32 @@ const runGit = async (
   const hostCommand = await getHostCommand('git', args, { container, cwd, env })
   const timeoutMs = runOptions.timeoutMs ?? 10_000
 
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      hostCommand.file,
-      hostCommand.args,
-      {
-        cwd: hostCommand.cwd,
-        encoding: 'utf8',
-        env: hostCommand.env,
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: timeoutMs
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          if (runOptions.required) {
-            reject(
-              new Error(
-                getProcessFailureMessage(error, stdout, stderr, {
-                  label: getGitCommandLabel(args),
-                  timeoutMs
-                })
-              )
-            )
-          } else {
-            logUnexpectedOptionalGitProbeFailure(
-              args,
-              error,
-              stderr,
-              getProcessFailureMessage(error, stdout, stderr, {
-                label: `${getGitCommandLabel(args)} failed during an optional check`,
-                timeoutMs
-              })
-            )
-            resolve(null)
-          }
-          return
-        }
-
-        resolve(stdout.trimEnd())
-      }
-    )
-
-    child.stdin?.end(runOptions.input)
+  const { error, stdout, stderr } = await bufferedCommands.run(hostCommand, {
+    timeout: timeoutMs,
+    maxBuffer: 10 * 1024 * 1024,
+    input: runOptions.input
   })
+  if (error) {
+    if (runOptions.required) {
+      throw new Error(
+        getProcessFailureMessage(error, stdout, stderr, {
+          label: getGitCommandLabel(args),
+          timeoutMs
+        })
+      )
+    }
+    logUnexpectedOptionalGitProbeFailure(
+      args,
+      error,
+      stderr,
+      getProcessFailureMessage(error, stdout, stderr, {
+        label: `${getGitCommandLabel(args)} failed during an optional check`,
+        timeoutMs
+      })
+    )
+    return null
+  }
+  return stdout.trimEnd()
 }
 
 const getGitErrorMessage = (error: unknown): string =>
@@ -1723,6 +1709,14 @@ const normalizeGitWorktreeName = (name: string): string => {
   return normalizedName
 }
 
+/** Shared with delayed chat creation; uses the same workspace and container handling as the UI. */
+export const createChatGitWorktree = (
+  options: AppGitCreateWorktreeOptions
+): Promise<AppGitCreateWorktreeResult> =>
+  runWithGitContainer(options.container, () =>
+    createGitWorktree(options.cwd ?? process.cwd(), options.name)
+  )
+
 const createGitWorktree = async (
   cwd: string,
   name: string
@@ -2406,7 +2400,7 @@ const shouldStageFileForSystemApp = async (
       (container.tool === 'ssh' || !(await isCurrentContainerTarget(container)))
   )
 
-const openFileInSystemApp = async (options: AppFileContentsOptions): Promise<void> => {
+const getFileOpenPath = async (options: AppFileContentsOptions): Promise<string> => {
   const cwd = options.cwd ?? process.cwd()
   let openPath: string
 
@@ -2425,7 +2419,11 @@ const openFileInSystemApp = async (options: AppFileContentsOptions): Promise<voi
     openPath = (await resolveFileTarget(cwd, options.path)).absolutePath
   }
 
-  const openError = await shell.openPath(openPath)
+  return openPath
+}
+
+const openFileInSystemApp = async (options: AppFileContentsOptions): Promise<void> => {
+  const openError = await shell.openPath(await getFileOpenPath(options))
   if (openError) throw new Error(openError)
 }
 
@@ -3399,6 +3397,15 @@ export const registerAppIpc = (): void => {
   handleLoggedIpc(appIpcChannels.openFileInSystemApp, async (_event, value: unknown) => {
     const options = getFileContentsOptions(value)
     return runWithGitContainer(options.container, () => openFileInSystemApp(options))
+  })
+
+  handleLoggedIpc(appIpcChannels.openFileInBrowser, async (event, value: unknown) => {
+    const options = getFileContentsOptions(value)
+    const path = await runWithGitContainer(options.container, () => getFileOpenPath(options))
+    event.sender.send(browserIpcChannels.openRequested, {
+      id: randomUUID(),
+      url: pathToFileURL(path).href
+    })
   })
 
   handleLoggedIpc(appIpcChannels.downloadFile, async (event, value: unknown) => {

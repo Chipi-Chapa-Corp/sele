@@ -15,7 +15,7 @@ if (!process.versions.electron) {
       await build({
         stdin: {
           contents:
-            "export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {startBrowserAutomationService} from './src/main/browser/BrowserAutomation';export {startBrowserUseBridge} from './src/main/providers/codex/CodexBrowserBridge';export {registerBrowserUseSession, removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
+            "export {registerAppIpc} from './src/main/registerAppIpc';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {startBrowserAutomationService} from './src/main/browser/BrowserAutomation';export {startBrowserUseBridge} from './src/main/providers/codex/CodexBrowserBridge';export {registerBrowserUseSession, removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
           resolveDir: process.cwd(),
           loader: 'ts'
         },
@@ -23,7 +23,7 @@ if (!process.versions.electron) {
         bundle: true,
         platform: 'node',
         format: 'cjs',
-        external: ['electron', '@anthropic-ai/claude-agent-sdk']
+        external: ['electron', 'better-sqlite3', '@anthropic-ai/claude-agent-sdk']
       })
       await build({
         entryPoints: ['src/preload/index.ts'],
@@ -77,7 +77,10 @@ if (!process.versions.electron) {
   const net = require('node:net')
   const http = require('node:http')
   const assert = require('node:assert/strict')
+  app.setPath('userData', path.join(process.argv[2], 'user-data'))
+  app.setPath('logs', path.join(process.argv[2], 'logs'))
   const {
+    registerAppIpc,
     createClaudeBrowserIntegration,
     createBrowserMcpServer,
     startBrowserAutomationService,
@@ -85,7 +88,6 @@ if (!process.versions.electron) {
     registerBrowserUseSession,
     removeBrowserUseSessions
   } = require(path.join(process.argv[2], 'bridge.cjs'))
-  app.setPath('userData', path.join(process.argv[2], 'user-data'))
   app.whenReady().then(async () => {
     let closeBridge, server, socket
     try {
@@ -112,6 +114,8 @@ if (!process.versions.electron) {
       }))
       ipcMain.handle('browser:resolve-page-zoom-scale', () => 100)
       const externalLinks = []
+      registerAppIpc()
+      ipcMain.removeHandler('app:handle-external-link')
       ipcMain.handle('app:handle-external-link', (_event, options) => {
         externalLinks.push(options)
         return { action: 'open', always: false }
@@ -400,7 +404,7 @@ if (!process.versions.electron) {
         }),
         /outside/
       )
-      await assert.rejects(cdp('Page.navigate', { url: 'file:///etc/passwd' }), /Unsupported/)
+      await assert.rejects(cdp('Page.navigate', { url: 'javascript:alert(1)' }), /Unsupported/)
       const target = (await cdp('Target.getTargets')).targetInfos[0]
       await cdp('Target.closeTarget', { targetId: target.targetId })
       assert.equal((await rpc('getTabs')).length, 1)
@@ -504,6 +508,35 @@ if (!process.versions.electron) {
       assert.equal(restored.tabs.length, 4)
       assert.equal(restored.activeTabId, beforeRemount.activeTabId, 'Reuses a restored blank tab')
       console.log('PASS: browser URL requests reuse active, inactive and restored blank tabs')
+      const localPath = path.join(process.argv[2], 'local page #1.html')
+      await fs.writeFile(path.join(process.argv[2], 'local.css'), 'body { color: rgb(12, 34, 56) }')
+      await fs.writeFile(
+        localPath,
+        '<!doctype html><title>Local browser file</title><link rel="stylesheet" href="local.css"><h1>Local page</h1><script>document.body.dataset.ready="yes"</script>'
+      )
+      const localUrl = require('node:url').pathToFileURL(localPath).href
+      await run(`window.appApi.openFileInBrowser({path:${JSON.stringify(localPath)}})`)
+      await waitForSession((session) => session.tabs.some((tab) => tab.url === localUrl))
+      const waitForLocalPage = () =>
+        run(`new Promise((resolve,reject)=>{
+        const end=Date.now()+8000;
+        async function check(){
+          const view=[...document.querySelectorAll('webview')].find(view=>view.getAttribute('src')===${JSON.stringify(localUrl)});
+          try {
+            if(view && await view.executeJavaScript('document.body.dataset.ready==="yes" && getComputedStyle(document.body).color==="rgb(12, 34, 56)"')) return resolve(true);
+          } catch {}
+          if(Date.now()>end)return reject(new Error('Local page failed to load'));
+          setTimeout(check,30);
+        }check();
+      })`)
+      await waitForLocalPage()
+      await run('window.browserTabReuseFixture.mount(false)')
+      await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+      await run('window.browserTabReuseFixture.mount(true)')
+      await waitForLocalPage()
+      console.log(
+        'PASS: file:/// pages load scripts and relative styles and survive browser restoration'
+      )
       console.log(
         'PASS: native Browser Use discovery, real BrowserPanel tabs, CDP events, navigation, typing, clicking, screenshots, closing and session/tab isolation'
       )

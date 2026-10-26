@@ -59,6 +59,111 @@ const render = (events) =>
     stopped: false
   })
 
+test('Copilot app actions remain readable through progress and completion without losing widget associations', () => {
+  for (const [name, server, mcpName, label] of [
+    ['mcp__github__fetch_file', undefined, undefined, 'Read file from GitHub'],
+    ['dispatch', 'github', 'fetch_file', 'Read file from GitHub'],
+    ['dispatch', 'github-mcp-server', 'get_file_contents', 'Read file from GitHub'],
+    ['mcp__github__fetch_file', 'github', undefined, 'Read file from GitHub'],
+    ['dispatch', 'github', 'create_issue', 'Created issue in GitHub'],
+    ['dispatch', 'slack', 'search_messages', 'Searched Slack'],
+    ['dispatch', 'Sele_Browser', 'navigate', 'Navigated to webpage'],
+    ['dispatch', 'openaiDeveloperDocs', 'fetch_openai_doc', 'Read OpenAI docs']
+  ]) {
+    const start = toolStart('start', 'call', name, {
+      path: 'private-input',
+      command: 'rm private-input'
+    })
+    start.data.mcpServerName = server
+    start.data.mcpToolName = mcpName
+    const partial = {
+      id: 'partial',
+      type: 'tool.execution_partial_result',
+      data: { toolCallId: 'call', partialOutput: 'private-partial' }
+    }
+    const progress = {
+      id: 'progress',
+      type: 'tool.execution_progress',
+      data: { toolCallId: 'call', progressMessage: 'private-progress' }
+    }
+    const end = {
+      id: 'end',
+      type: 'tool.execution_complete',
+      data: {
+        toolCallId: 'call',
+        success: true,
+        result: { content: 'private-output', uiResource: { uri: 'ui://app/widget' } }
+      }
+    }
+    for (const events of [[start], [start, partial, progress], [start, partial, progress, end]]) {
+      const items = renderCopilotChatItems([userMessage('user', 'Help'), ...events], {
+        active: true,
+        stopped: false
+      })
+      const tool = items.find((item) => item.type === 'working').items[0]
+      assert.equal(tool.label, label)
+      assert.equal(tool.status, events.includes(end) ? 'finished' : 'running')
+      for (const key of ['command', 'stdout', 'rawInput', 'rawOutput'])
+        assert.equal(tool[key], null)
+      assert.doesNotMatch(JSON.stringify(items), /private-/)
+      if (server && events.includes(end))
+        assert.deepEqual(tool.mcpApp, {
+          serverName: server,
+          callId: 'call',
+          resourceUri: 'ui://app/widget'
+        })
+    }
+  }
+})
+
+test('Copilot does not classify unknown app names and arbitrary arguments as local tools', () => {
+  for (const name of [
+    'mcp__crm__delete_customer',
+    'customer_search',
+    'read_file',
+    'task',
+    'ask_user'
+  ]) {
+    const start = toolStart('start', 'call', name, {
+      command: 'rm /customer',
+      query: 'private-query',
+      path: '/customer'
+    })
+    start.data.mcpServerName = 'crm'
+    start.data.mcpToolName = name
+    const tool = render([userMessage('user', 'Help'), start]).find(
+      (item) => item.type === 'working'
+    ).items[0]
+    assert.equal(tool.activity, 'other')
+    assert.equal(tool.command, null)
+    assert.equal(tool.icon, null)
+    assert.equal(tool.rawInput.query, 'private-query')
+  }
+})
+
+test('Copilot image results survive label-only native read presentation', () => {
+  const items = render([
+    userMessage('user', 'Read image'),
+    toolStart('start', 'call', 'view', { path: '/repo/image.png' }),
+    {
+      id: 'end',
+      type: 'tool.execution_complete',
+      data: {
+        toolCallId: 'call',
+        success: true,
+        result: {
+          content: 'raw-protocol',
+          contents: [{ type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' }]
+        }
+      }
+    }
+  ])
+  const tool = items.find((item) => item.type === 'working').items[0]
+  assert.equal(tool.images[0].dataUrl, 'data:image/png;base64,aW1hZ2U=')
+  assert.equal(tool.rawOutput, null)
+  assert.equal(tool.stdout, null)
+})
+
 test('latest Copilot turn outcome ignores older, tool and subagent failures', () => {
   const failure = { type: 'session.error', id: 'error', data: { message: 'Failed' } }
   const stop = { type: 'abort', id: 'stop', data: {} }

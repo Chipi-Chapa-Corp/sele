@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { bufferedCommands } from '../../BufferedCommandWorker'
 import { randomUUID } from 'node:crypto'
 import type { AppContainerTarget } from '../../../shared/app'
 import type { ProviderAccountConfiguration } from '../../../shared/provider'
@@ -232,27 +232,12 @@ const runAccountCommand = async (
     env: process.env
   })
 
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      hostCommand.file,
-      hostCommand.args,
-      {
-        cwd: hostCommand.cwd,
-        encoding: 'utf8',
-        env: hostCommand.env,
-        maxBuffer: accountCommandMaxBuffer,
-        timeout
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(stderr.trim() || error.message))
-          return
-        }
-        resolve(stdout)
-      }
-    )
-    child.stdin?.end()
+  const { error, stdout, stderr } = await bufferedCommands.run(hostCommand, {
+    timeout,
+    maxBuffer: accountCommandMaxBuffer
   })
+  if (error) throw new Error(stderr.trim() || error.message)
+  return stdout
 }
 
 export const ensureCodexAccountView = async (

@@ -110,7 +110,7 @@ export function createBrowserTools(
     ),
     defineBrowserTool(
       'navigate',
-      'Navigate to an HTTP(S) URL, or "back"/"forward" in history. Opens a tab if none exists.',
+      'Navigate to an HTTP(S) or file:/// URL, or "back"/"forward" in history. Opens a tab if none exists.',
       { url: z.string(), tabId },
       (args) => run(async () => textResult(await browser.navigate(args.url, args.tabId)))
     ),

@@ -147,6 +147,20 @@ const reconciliationFixture = () => {
   }
 }
 
+test('an empty steering echo keeps the pending message visible until content arrives', () => {
+  const f = reconciliationFixture()
+  f.receive('item/started', [{ ...userMessage('server-steer', 'steer-client'), content: [] }])
+  const pending = f.adapter.steeringMessagesByThread.get('chat')[0]
+  assert.equal(pending.status, 'pending')
+  assert.equal(pending.itemId, 'steer-client')
+  f.receive('item/completed', [userMessage('server-steer', 'steer-client')])
+  assert.equal(f.adapter.steeringMessagesByThread.get('chat')[0].status, 'sent')
+  assert.equal(
+    f.turn.items.find((item) => item.id === 'server-steer').content[0].text,
+    'server-steer'
+  )
+})
+
 for (const method of ['item/started', 'item/completed', 'turn snapshot']) {
   test(`${method}: steering before the original echo preserves both message identities`, () => {
     const f = reconciliationFixture()

@@ -1,6 +1,7 @@
 import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { createDiagnosticLog, type LogLevel } from './diagnosticLog'
+import { startProcessMemoryDiagnostics } from './processMemoryDiagnostics'
 
 app.setAppLogsPath()
 export const diagnosticLog = createDiagnosticLog(join(app.getPath('logs'), 'sele.log'))
@@ -28,6 +29,15 @@ process.on('warning', (warning) => logDiagnostic('warn', 'process', warning))
 process.on('uncaughtExceptionMonitor', (error, origin) => logDiagnostic('error', origin, error))
 process.on('unhandledRejection', (reason) => console.error('Unhandled promise rejection:', reason))
 
+let processMemoryDiagnostics: ReturnType<typeof startProcessMemoryDiagnostics> | null = null
+app.on('ready', () => {
+  processMemoryDiagnostics = startProcessMemoryDiagnostics({
+    read: () => app.getAppMetrics(),
+    logDiagnostic: (level, details) => logDiagnostic(level, 'process-memory', details)
+  })
+})
+app.on('will-quit', () => processMemoryDiagnostics?.dispose())
+
 app.on('web-contents-created', (_event, contents) => {
   // Webviews contain third-party browsing content, not Sele diagnostics.
   if (contents.getType() !== 'window') return
@@ -44,7 +54,13 @@ app.on('web-contents-created', (_event, contents) => {
     logDiagnostic('error', 'preload', path, error)
   )
   contents.on('render-process-gone', (_event, details) => {
-    if (details.reason !== 'clean-exit') logDiagnostic('error', 'renderer-process', details)
+    if (details.reason !== 'clean-exit') {
+      logDiagnostic('error', 'renderer-process', {
+        ...details,
+        webContentsId: contents.id,
+        lastMemorySample: processMemoryDiagnostics?.latest() ?? null
+      })
+    }
   })
   contents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
     if (isMainFrame && code !== -3) logDiagnostic('error', 'renderer-load', code, description)

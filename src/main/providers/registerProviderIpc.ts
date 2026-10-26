@@ -24,6 +24,7 @@ import type {
   ProviderImageInput,
   ProviderOneShotOptions,
   ProviderPendingMessage,
+  ProviderLimitResetTarget,
   ProviderPermissionOptions,
   ProviderApp,
   ProviderResourceUpdateOptions,
@@ -73,7 +74,8 @@ import {
   getProviderChatItemWindow,
   getProviderSubagentItemWindow,
   getProviderChatWindow,
-  providerApi
+  providerApi,
+  startLimitResetQueue
 } from './providerService'
 import {
   prepareChatDetailForRenderer,
@@ -891,6 +893,21 @@ const requireUsageOptions = (value: unknown): ProviderUsageOptions | undefined =
   }
 }
 
+const requireLimitResetTarget = (value: unknown): ProviderLimitResetTarget => {
+  if (typeof value === 'string') return requireChatId(value)
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Invalid reset queue target')
+  const { draftKey, worktree } = value as { draftKey?: unknown; worktree?: unknown }
+  if (
+    typeof draftKey !== 'string' ||
+    !draftKey ||
+    draftKey.length > 8192 ||
+    draftKey.includes('\0')
+  )
+    throw new Error('Invalid reset draft key')
+  return { draftKey, ...(worktree === undefined ? {} : { worktree: requireBoolean(worktree) }) }
+}
+
 const requireMessage = (value: unknown): string => {
   if (typeof value !== 'string') throw new Error('Invalid message')
   return value
@@ -1210,6 +1227,7 @@ const requireOneShotOptions = (value: unknown): ProviderOneShotOptions | undefin
 }
 
 export const registerProviderIpc = (): void => {
+  startLimitResetQueue()
   providerApi.onChatUpdated((event) => {
     BrowserWindow.getAllWindows().forEach((window) => {
       queueChatUpdateForWindow(window.webContents, event)
@@ -2057,6 +2075,39 @@ export const registerProviderIpc = (): void => {
       )
       return getChatUpdateSummary(detail, Date.now())
     }
+  )
+
+  handleLoggedIpc(
+    providerIpcChannels.getLimitResetMessages,
+    (_, providerId: unknown, chatId: unknown) =>
+      providerApi.getLimitResetMessages(
+        requireProviderId(providerId),
+        requireLimitResetTarget(chatId)
+      )
+  )
+  handleLoggedIpc(
+    providerIpcChannels.addLimitResetMessage,
+    (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) => {
+      const turnOptions = requireStartChatOptions(options)
+      if (!turnOptions) throw new Error('Message options are required')
+      const prompt = requireMessage(message).trim()
+      if (!prompt) throw new Error('Cannot queue an empty message')
+      return providerApi.addLimitResetMessage(
+        requireProviderId(providerId),
+        requireLimitResetTarget(chatId),
+        prompt,
+        turnOptions
+      )
+    }
+  )
+  handleLoggedIpc(
+    providerIpcChannels.deleteLimitResetMessage,
+    (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
+      providerApi.deleteLimitResetMessage(
+        requireProviderId(providerId),
+        requireLimitResetTarget(chatId),
+        requireMessageId(messageId)
+      )
   )
 
   handleLoggedIpc(

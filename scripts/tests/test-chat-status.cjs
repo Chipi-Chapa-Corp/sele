@@ -13,6 +13,9 @@ if (!process.versions.electron) {
             import {createRoot} from 'react-dom/client'
             import {flushSync} from 'react-dom'
             import {ChatListItem} from './src/renderer/src/components/ChatListItem'
+            import {ChatDetailItem} from './src/renderer/src/components/ChatDetailItem'
+            import {createConversationViews} from './src/renderer/src/conversationViews'
+            import {createConversationView} from './src/shared/conversationView'
             import {useChatTerminalActivity} from './src/renderer/src/useChatTerminalActivity'
             import {chatTerminalActivity} from './src/renderer/src/chatTerminalActivity'
             window.setAgentTasks = (id, ids) => {
@@ -29,6 +32,20 @@ if (!process.versions.electron) {
               {id:providerId+'-stopped', providerId, title:providerId+' — stopped latest turn', lastTurnOutcome:'stopped'},
               {id:providerId+'-unread', providerId, title:providerId+' — unread completed chat', lastTurnOutcome:null}
             ]).map(chat => ({...chat, status:null, cwd:'/repo', updatedAt:2000, createdAt:1000}))
+            const views = createConversationViews()
+            for (const chat of chats.filter(chat => chat.lastTurnOutcome)) {
+              // Round-trip a viewport captured before shutdown; native sidebar
+              // recovery has already observed the stopped/failed turn on restart.
+              const key = 'saved-view:' + chat.id
+              const saved = JSON.parse(localStorage.getItem(key) || 'null') || createConversationView({
+                ...chat, revision:999, status:'active', lastTurnOutcome:null,
+                capabilities:{editMessages:true,activeMessages:true},
+                items:[{type:'message',id:chat.id+':user',role:'user',content:'Check banners'},
+                  {type:'working',id:chat.id+':working',status:'working',items:[]}]
+              })
+              localStorage.setItem(key, JSON.stringify(saved))
+              views.install(chat.providerId, [saved])
+            }
             let selected = null
             window.closeChat = () => {selected = null; render()}
             window.completeChat = id => {chats.find(chat => chat.id === id).lastTurnOutcome = null; render()}
@@ -39,6 +56,7 @@ if (!process.versions.electron) {
                   selected={selected === chat.id}
                   onClick={() => {selected = chat.id; localStorage.setItem(chat.id, '2000'); render()}}
                   onMarkDone={() => {}} onRename={async () => {}} onResolveApproval={() => {}} onTogglePinned={() => {}} />
+                {chat.lastTurnOutcome && <ChatDetailItem item={views.get(chat).items.at(-1)} />}
               </div>)}</>
             }
             function render() { flushSync(() => root.render(<Fixture />)) }
@@ -50,6 +68,21 @@ if (!process.versions.electron) {
         bundle: true,
         platform: 'browser',
         jsx: 'automatic',
+        loader: { '.woff2': 'dataurl', '.ttf': 'dataurl' },
+        plugins: [
+          {
+            name: 'unused-workers',
+            setup(build) {
+              build.onResolve({ filter: /\?worker$/ }, (args) => ({
+                path: args.path,
+                namespace: 'worker'
+              }))
+              build.onLoad({ filter: /.*/, namespace: 'worker' }, () => ({
+                contents: 'export default class {}'
+              }))
+            }
+          }
+        ],
         outfile: path.join(directory, 'status.js')
       })
       await fs.writeFile(
@@ -119,6 +152,26 @@ if (!process.versions.electron) {
         for (const provider of ['codex', 'claude', 'copilot', 'opencode']) {
           assert.equal((await indicator(provider + '-failed')).label, 'Error')
           assert.equal((await indicator(provider + '-stopped')).label, 'Stopped')
+          for (const [suffix, label] of [
+            ['failed', 'Failed'],
+            ['stopped', 'Stopped']
+          ]) {
+            const id = provider + '-' + suffix
+            assert.equal(
+              await run(
+                `document.querySelector('[data-chat="${id}"] .chat-detail__working-label')?.textContent.trim()`
+              ),
+              label,
+              'restored chat progress must agree with the sidebar before provider history arrives'
+            )
+            assert.equal(
+              await run(
+                `Boolean(document.querySelector('[data-chat="${id}"] .chat-detail__working-spinner'))`
+              ),
+              false,
+              'stopped and failed snapshots cannot keep spinning after restart'
+            )
+          }
           assert.ok((await indicator(provider + '-failed')).width > 0)
           assert.notEqual(
             (await indicator(provider + '-failed')).color,
@@ -188,7 +241,7 @@ if (!process.versions.electron) {
         assert.equal((await indicator(provider + '-unread')).label, 'Finished since last viewed')
       }
       console.log(
-        'PASS chat status UI: all four providers, unread startup, persistent red/gray dots after read, window restart, successful continuation, agent terminal polling, connection loss and recovery, and persisted unread'
+        'PASS chat status UI: all four providers, restored progress agrees with terminal sidebar status across restart, unread startup, persistent red/gray dots after read, successful continuation, agent terminal polling, connection loss and recovery, and persisted unread'
       )
       win.destroy()
       app.exit(0)

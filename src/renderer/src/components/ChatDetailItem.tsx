@@ -1,3 +1,4 @@
+import { getInputLanguage, getOutputLanguage, getToolValueLanguage } from '../toolValueLanguage'
 import { McpApp, McpAppScope } from './McpApp'
 import type { McpAppScope as McpAppScopeValue } from '../../../shared/mcpApps'
 import { useMarkdownImages } from '../useMarkdownImages'
@@ -17,6 +18,7 @@ import {
   progressiveMarkdownThreshold
 } from './ProgressiveMarkdownContent'
 import { createChatMarkdownRenderer } from '../chatMarkdownRenderer'
+import { appApi } from '../appApi'
 import { WorkingMark, type WorkingMarkAnimation } from './WorkingMark'
 import { visualizationExtension } from '../visualizationReference'
 import {
@@ -212,6 +214,33 @@ const areProgressSettingsEqual = (
 const isQueuedPendingMessage = (item: ProviderChatItem | null | undefined): boolean =>
   item?.type === 'pendingMessage' && item.kind === 'queued'
 
+const hasSameMessageModelLabel = (
+  first: ChatDetailItemProps,
+  second: ChatDetailItemProps
+): boolean => {
+  if (first.item.type !== 'message' || second.item.type !== 'message') return true
+  if (
+    first.selectedModelId === second.selectedModelId &&
+    first.modelLabelsById === second.modelLabelsById &&
+    first.resolvedModelIdsById === second.resolvedModelIdsById
+  )
+    return true
+  return (
+    getMessageModelLabel(
+      first.item,
+      first.selectedModelId,
+      first.modelLabelsById,
+      first.resolvedModelIdsById
+    ) ===
+    getMessageModelLabel(
+      second.item,
+      second.selectedModelId,
+      second.modelLabelsById,
+      second.resolvedModelIdsById
+    )
+  )
+}
+
 const areChatDetailItemPropsEqual = (
   first: ChatDetailItemProps,
   second: ChatDetailItemProps
@@ -230,8 +259,7 @@ const areChatDetailItemPropsEqual = (
   first.followingWorkingStepStatus === second.followingWorkingStepStatus &&
   first.hasNextWorkingStep === second.hasNextWorkingStep &&
   first.messagePinned === second.messagePinned &&
-  first.modelLabelsById === second.modelLabelsById &&
-  first.resolvedModelIdsById === second.resolvedModelIdsById &&
+  hasSameMessageModelLabel(first, second) &&
   first.onDeletePendingMessage === second.onDeletePendingMessage &&
   first.onEditPendingMessage === second.onEditPendingMessage &&
   first.onSteerPendingMessage === second.onSteerPendingMessage &&
@@ -262,7 +290,6 @@ const areChatDetailItemPropsEqual = (
   first.rateLimitResetDisabled === second.rateLimitResetDisabled &&
   first.retryMessage === second.retryMessage &&
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
-  first.selectedModelId === second.selectedModelId &&
   first.streaming === second.streaming &&
   first.turnIndex === second.turnIndex &&
   first.workingStepContent === second.workingStepContent &&
@@ -334,6 +361,7 @@ const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent 
 }
 
 const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
+  app: AnimatedBoxIcon,
   skill: AnimatedZapIcon,
   'image-view': AnimatedEyeIcon,
   'image-generation': AnimatedSparklesIcon,
@@ -483,40 +511,6 @@ const formatToolValue = (value: unknown): string => {
   }
 }
 
-const isJson = (value: string): boolean => {
-  const trimmed = value.trim()
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false
-
-  try {
-    JSON.parse(trimmed)
-    return true
-  } catch (error) {
-    console.error('[caught:ChatDetailItem:isJson]', error)
-    return false
-  }
-}
-
-const getOutputLanguage = (value: string): string | null => {
-  if (isJson(value)) return 'json'
-
-  const trimmed = value.trimStart()
-  if (trimmed.startsWith('diff --git ') || trimmed.startsWith('@@ ')) return 'diff'
-  if (/^<(?!!--)[A-Za-z][^>]*>/.test(trimmed)) return 'markup'
-
-  return null
-}
-
-const getInputLanguage = (value: string): string => {
-  if (isJson(value)) return 'json'
-  if (/^(?:tools|functions)\.[A-Za-z0-9_]+\s*\(/.test(value.trimStart())) return 'javascript'
-  return 'bash'
-}
-
-const getToolValueLanguage = (value: unknown, input = false): string | null => {
-  if (typeof value !== 'string') return 'json'
-  return input ? getInputLanguage(value) : getOutputLanguage(value)
-}
-
 const RawContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ tools }) => (
   <div className="chat-detail__activity-content chat-detail__activity-content--command">
     {tools.map((tool) => (
@@ -543,6 +537,7 @@ const ToolTypeIcon: React.FC<{
   activity: ProviderToolActivity
   icon?: ProviderToolIcon | null
 }> = ({ activity, icon }) => {
+  if (icon === 'app') return <Blocks aria-hidden="true" />
   if (icon === 'skill' || activity === 'skill') return <Zap aria-hidden="true" />
   if (icon === 'browser') return <Globe2 aria-hidden="true" />
   if (icon === 'image-view' || activity === 'image-view') return <Eye aria-hidden="true" />
@@ -1413,6 +1408,22 @@ const MarkdownMessageComponent: React.FC<{
         return
       }
 
+      const browserButton = event.target.closest<HTMLButtonElement>(
+        '.chat-detail__file-link-browser[data-file-browser-path]'
+      )
+      if (browserButton && containerRef.current?.contains(browserButton)) {
+        const path = browserButton.dataset.fileBrowserPath
+        if (!path) return
+
+        event.preventDefault()
+        void appApi
+          .openFileInBrowser({ container: localImageContainer, cwd: localImageCwd, path })
+          .catch((error: unknown) => {
+            console.error('Unable to open the file in the browser.', error)
+          })
+        return
+      }
+
       if (!onOpenFileLink) return
 
       const fileLink = event.target.closest<HTMLButtonElement>(
@@ -1913,9 +1924,9 @@ const WorkingStep: React.FC<{
       blocks: groupWorkingItems(
         remaining.filter(
           (workingItem) =>
-            !failureMessage ||
             workingItem.type !== 'message' ||
-            workingItem.content.trim() !== failureMessage
+            !isWorkingItemPayloadLoaded(workingItem) ||
+            (Boolean(workingItem.content.trim()) && workingItem.content.trim() !== failureMessage)
         )
       ),
       generatedImages

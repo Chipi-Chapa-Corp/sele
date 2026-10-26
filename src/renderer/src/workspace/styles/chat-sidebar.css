@@ -11,6 +11,9 @@
 }
 
 .chat-sidebar__body {
+  /* This grid track has its own size and scrollport. Keep conversation/composer
+     layout changes from traversing every sidebar row during chat navigation. */
+  contain: strict;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;

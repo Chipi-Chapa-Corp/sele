@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { asChatPreview, chatPreviewSourceKey } from '../../shared/chatPreview.ts'
+import { reuseChatSnapshotItems } from './chatSnapshotItems.ts'
 
 // Execute the actual effect and update callback with deferred provider responses.
 const extract = (path, predicate) => {
@@ -90,6 +91,7 @@ const setup = (providerId, initial = null) => {
       state.loadState = value
     },
     startTransition: (fn) => fn(),
+    reuseChatSnapshotItems,
     isChatDetailSnapshotStale: (next, current) =>
       current?.id === next.id && next.revision <= current.revision,
     shouldPreserveOptimisticTurnUntilUserMessage: () => false,
@@ -262,9 +264,9 @@ test('a failed request from a closed chat is logged without changing the view', 
   assert.match(h.state.errors[0][0], /Unable to load messages/)
 })
 
-test('cached selection commits messages immediately without scheduling a transition', () => {
+test('cached selection schedules its matching transcript as one view update', () => {
   const cached = detail()
-  const state = { detail: null, loadState: 'ready' }
+  const state = { selected: null, detail: null, loadState: 'ready' }
   const transitions = []
   const context = vm.createContext({
     selectedChat: null,
@@ -279,6 +281,10 @@ test('cached selection commits messages immediately without scheduling a transit
     selectedChatUpdatedAtRef: { current: null },
     chatDetailRef: { current: null },
     startTransition: (callback) => transitions.push(callback),
+    selectChatView: (selected, detail) => {
+      state.selected = selected
+      state.detail = detail
+    },
     setChatDetail: (value) => {
       state.detail = value
     },
@@ -303,9 +309,38 @@ test('cached selection commits messages immediately without scheduling a transit
     context[name] = () => {}
   vm.runInContext(selectCode, context)
   context.callback({ providerId: 'claude', id: 'chat', updatedAt: 1 })
-  assert.equal(transitions.length, 0)
+  assert.equal(transitions.length, 1)
+  assert.equal(state.selected, null)
+  assert.equal(state.detail, null)
+  transitions[0]()
+  assert.equal(state.selected.id, 'chat')
   assert.equal(state.detail.id, 'chat')
   assert.equal(state.loadState, 'ready')
+
+  // The visible chat can still be the clicked target while another navigation
+  // is queued. Returning to it must cancel that intermediate destination.
+  context.selectedChat = state.selected
+  context.chatDetail = cached
+  context.activeSubagentChatView = null
+  context.selectedChatKeyRef.current = 'claude:intermediate'
+  let selectedAgain = false
+  context.selectChatView = (selected, transcript) => {
+    selectedAgain = true
+    assert.equal(selected.id, 'chat')
+    assert.equal(transcript.id, 'chat')
+  }
+  context.callback({ providerId: 'claude', id: 'chat', updatedAt: 1 })
+  transitions[1]()
+  assert.equal(selectedAgain, true, 'last click cancels the pending intermediate selection')
+  assert.equal(context.selectedChatKeyRef.current, 'claude:chat')
+
+  // A passive effect from the visible chat can have synchronized the shared
+  // ref while another transition is pending. It cannot prove there is no work
+  // queued; this click must still publish the user's final choice.
+  selectedAgain = false
+  context.callback({ providerId: 'claude', id: 'chat', updatedAt: 1 })
+  transitions[2]()
+  assert.equal(selectedAgain, true, 'committed refs cannot turn a selection request into a no-op')
 })
 
 for (const outcome of ['stale response', 'failed refresh']) {

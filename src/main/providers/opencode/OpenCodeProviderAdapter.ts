@@ -70,6 +70,7 @@ import {
   type ProviderSubagentDetail,
   type ProviderTokenUsageBreakdown,
   type ProviderTurnOptions,
+  type ProviderStartChatOptions,
   type ProviderUpdateAvailability,
   type ProviderUsageOptions,
   type ProviderUserInputResponse
@@ -1341,11 +1342,15 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   startChat = async (
     message: string,
-    options?: ProviderTurnOptions,
+    options?: ProviderStartChatOptions,
     onChatCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text && !(options?.files?.length || options?.images?.length)) {
+    if (
+      !text &&
+      !(options?.files?.length || options?.images?.length) &&
+      !options?.deferInitialMessage
+    ) {
       throw new Error('Cannot start a chat with an empty message')
     }
     const entry = await this.getClientEntry(options?.container)
@@ -1369,7 +1374,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const state = this.rememberSession(session, entry.container)
     this.pendingMessageStore.track(session.id)
     await onChatCreated?.(session.id)
-    await this.sendPrompt(state, text, options)
+    if (!options?.deferInitialMessage) await this.sendPrompt(state, text, options)
     return this.createChatDetail(state, true)
   }
 
@@ -1472,6 +1477,30 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       console.error('[caught:OpenCodeProviderAdapter:sendActiveChatMessage]', error)
       return this.queueMessage(state, message, options, 'steering')
     }
+  }
+
+  enqueueLimitResetMessage = async (
+    chatId: string,
+    message: string,
+    messageId: string,
+    options: ProviderTurnOptions,
+    commit: () => Promise<void>
+  ): Promise<void> => {
+    const state = await this.ensureState(chatId, options.container)
+    state.queuePaused = true
+    if (!state.queuedMessages.some((pending) => pending.id === messageId)) {
+      await this.queueMessage(state, message, options, 'queued', messageId)
+    }
+    this.pendingMessageStore.invalidate(chatId)
+    this.persistPendingMessages(state)
+    await commit()
+    state.queuePaused = false
+    state.stopped = false
+    state.usageLimitReached = false
+    void this.drainQueue(state).catch((error) => {
+      console.error('Unable to start a queued reset prompt.', error)
+      this.scheduleUpdate(state.id)
+    })
   }
 
   beginPendingMessageEdit = async (
@@ -2689,7 +2718,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     state: OpenCodeChatState,
     message: string,
     options?: ProviderTurnOptions,
-    kind: ProviderPendingMessage['kind'] = 'queued'
+    kind: ProviderPendingMessage['kind'] = 'queued',
+    id: string = randomUUID()
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
     if (!text && !(options?.files?.length || options?.images?.length)) {
@@ -2697,7 +2727,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     }
     state.queuedMessages.push({
       type: 'pendingMessage',
-      id: randomUUID(),
+      id,
       kind,
       content: text,
       attachments: [

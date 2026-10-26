@@ -30,7 +30,7 @@ type ChatConversationModelInternals = {
 }
 
 type ChatItemsChange = {
-  previousItems: readonly ProviderChatItem[] | null
+  previousItems: WeakRef<readonly ProviderChatItem[]> | null
   startIndex: number
 }
 
@@ -70,7 +70,13 @@ export const markChatItemsChanged = (
   previousItems: readonly ProviderChatItem[] | null = null
 ): void => {
   if (Number.isSafeInteger(startIndex) && startIndex >= 0 && startIndex <= items.length) {
-    chatItemsChanges.set(items, { previousItems, startIndex })
+    // Unrendered updates can accumulate while React batches work or a chat is hidden.
+    // Strong ancestry here would keep every old streaming snapshot alive through
+    // the newest array. An incremental-build hint must not own transcript history.
+    chatItemsChanges.set(items, {
+      previousItems: previousItems ? new WeakRef(previousItems) : null,
+      startIndex
+    })
   }
 }
 
@@ -352,8 +358,9 @@ export const buildChatConversationModel = (
 
   const change = chatItemsChanges.get(items)
   chatItemsChanges.delete(items)
+  const previousItems = change?.previousItems?.deref()
   const resolvedPreviousModel =
-    previousModel ?? (change?.previousItems ? modelsByItems.get(change.previousItems) : null)
+    previousModel ?? (previousItems ? modelsByItems.get(previousItems) : null)
   if (resolvedPreviousModel && change) {
     const internals = modelInternals.get(resolvedPreviousModel)
     if (internals) {
@@ -364,7 +371,7 @@ export const buildChatConversationModel = (
         change.startIndex
       )
       if (incrementalModel) {
-        if (change.previousItems) modelsByItems.delete(change.previousItems)
+        if (previousItems) modelsByItems.delete(previousItems)
         return incrementalModel
       }
     }

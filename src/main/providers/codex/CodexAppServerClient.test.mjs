@@ -25,10 +25,10 @@ const brokenPipe = () => Object.assign(new Error('write EPIPE'), { code: 'EPIPE'
 
 // Use real Node streams so a failed write emits the asynchronous 'error' that
 // escapes a synchronous try/catch. No Electron or real Codex process is launched.
-const fixture = (t, { failInitialize = false } = {}) => {
+const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
   const children = []
   const logs = []
-  const client = vm.runInNewContext(code, {
+  const context = {
     Buffer,
     Error,
     process,
@@ -37,6 +37,7 @@ const fixture = (t, { failInitialize = false } = {}) => {
     requestTimeoutMs: 1000,
     threadListRequestTimeoutMs: 1000,
     createInterface,
+    app: { getPath: () => '/fixture-profile' },
     console: { error: (...args) => logs.push(args) },
     getAppServerCommand: () => ({ command: 'fixture', args: [] }),
     getHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
@@ -44,6 +45,14 @@ const fixture = (t, { failInitialize = false } = {}) => {
     removeBrowserUseSessions() {},
     CodexDynamicTools: class {
       specs = []
+      bindings = new Map()
+      readOnly = new Map()
+      bind(id, specs) {
+        this.bindings.set(id, specs)
+      }
+      setReadOnly(id, value) {
+        this.readOnly.set(id, value)
+      }
       clear() {}
     },
     spawn: () => {
@@ -67,7 +76,12 @@ const fixture = (t, { failInitialize = false } = {}) => {
           const message = JSON.parse(chunk.toString())
           if (message.id && (child.autoReply || message.method === 'initialize'))
             queueMicrotask(() => {
-              child.stdout.write(`${JSON.stringify({ id: message.id, result: {} })}\n`)
+              child.stdout.write(
+                `${JSON.stringify({
+                  id: message.id,
+                  result: message.method === 'initialize' ? initializeResult : {}
+                })}\n`
+              )
             })
           callback()
         }
@@ -75,7 +89,17 @@ const fixture = (t, { failInitialize = false } = {}) => {
       children.push(child)
       return child
     }
-  })
+  }
+  context.connectCodexRuntime = async () => {
+    const child = context.spawn()
+    child.detaches = 0
+    child.detach = () => {
+      child.detaches++
+      queueMicrotask(() => child.emit('close', 0))
+    }
+    return child
+  }
+  const client = vm.runInNewContext(code, context)
   t.after(() => {
     client.dispose()
     for (const child of children) {
@@ -166,4 +190,73 @@ test('late pipe errors after disposal are handled without stopping a replacement
   assert.equal(client.connectionIdentity, children[1])
   assert.equal(stopped.length, 0)
   await client.request('model/list')
+})
+
+test('app shutdown detaches persistent workers while an explicit reset still stops them', async (t) => {
+  const { client, children } = fixture(t)
+  client.persistent = true
+  await client.request('model/list')
+  client.dispose({ preserveRuntime: true })
+  await tick()
+  assert.equal(children[0].detaches, 1)
+  assert.equal(children[0].kills, 0)
+  await client.request('model/list')
+  client.dispose()
+  assert.equal(children[1].kills, 1)
+})
+
+test('reattachment restores ownership and tool permissions before publishing recovery', async (t) => {
+  const { client } = fixture(t, {
+    initializeResult: {
+      seleRuntime: {
+        threads: [
+          {
+            thread: { id: 'running', cwd: '/fixture' },
+            dynamicTools: [{ type: 'function', name: 'fixture' }],
+            readOnly: true
+          }
+        ]
+      }
+    }
+  })
+  client.persistent = true
+  const recovered = []
+  client.onNotification((notification) => {
+    if (notification.method !== 'sele/runtime/restored') return
+    assert.equal(client.ownsThread('running'), true)
+    assert.equal(client.dynamicTools.readOnly.get('running'), true)
+    assert.equal(client.dynamicTools.bindings.get('running')[0].name, 'fixture')
+    recovered.push(notification.params.threadIds)
+  })
+  await client.request('model/list')
+  assert.equal(recovered.length, 1)
+  assert.equal(recovered[0][0], 'running')
+})
+
+test('a lost persistent connection reconnects without stopping the worker and reloads its chats', async (t) => {
+  const { client, children } = fixture(t)
+  client.persistent = true
+  await client.request('model/list')
+  client.ownedThreadIds.add('running')
+  client.reconnectDelay = 1
+  const recovered = []
+  client.onNotification((notification) => recovered.push(notification))
+  children[0].emit('error', brokenPipe())
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(children[0].kills, 0)
+  assert.equal(children[0].detaches, 1)
+  assert.equal(children.length, 2)
+  assert.equal(recovered[0].method, 'sele/runtime/restored')
+  assert.equal(recovered[0].params.threadIds[0], 'running')
+})
+
+test('shutdown cancels a scheduled reconnect', async (t) => {
+  const { client, children } = fixture(t)
+  client.persistent = true
+  await client.request('model/list')
+  client.reconnectDelay = 5
+  children[0].emit('error', brokenPipe())
+  client.dispose({ preserveRuntime: true })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(children.length, 1)
 })

@@ -142,6 +142,8 @@ export const renderRootChatTurn = (
         const itemIndex = itemIndexesById.get(item.id) ?? -1
         const followingWorkingStep = followingWorkingStepsById.get(item.id)
         const rateLimitFailure = item.type === 'working' && item.failureReason === 'rateLimit'
+        const stopped =
+          item.type === 'working' && (item.status === 'stopped' || item.status === 'failed')
 
         return (
           <DeferredChatTurn
@@ -157,12 +159,18 @@ export const renderRootChatTurn = (
             <ChatDetailItem
               mcpAppScope={mcpAppScope}
               motionChatKey={inputs.motionChatKey}
-              authenticationRequired={inputs.authenticationRequired}
+              authenticationRequired={
+                item.type === 'working' && item.failureReason === 'authentication'
+                  ? inputs.authenticationRequired
+                  : undefined
+              }
               availableRateLimitResets={rateLimitFailure ? inputs.availableRateLimitResets : 0}
-              canEditOwnMessages={inputs.canEditOwnMessages}
+              canEditOwnMessages={
+                item.type === 'message' && item.role === 'user' && inputs.canEditOwnMessages
+              }
               container={inputs.container}
-              continuePrompt={inputs.continuePrompt}
-              continueStoppedTurnDisabled={inputs.stoppedTurnActionDisabled}
+              continuePrompt={stopped ? inputs.continuePrompt : undefined}
+              continueStoppedTurnDisabled={stopped && inputs.stoppedTurnActionDisabled}
               continuedStoppedTurn={inputs.continuedStoppedWorkingStepIds.has(item.id)}
               followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
               followingWorkingStepStatus={followingWorkingStep?.status}
@@ -174,15 +182,19 @@ export const renderRootChatTurn = (
               resolvedModelIdsById={inputs.resolvedModelIdsById}
               onDeletePendingMessage={inputs.onDeletePendingMessage}
               onEditPendingMessage={inputs.onEditPendingMessage}
-              onSteerPendingMessage={inputs.onSteerPendingMessage}
-              onInterruptPendingMessage={inputs.onInterruptPendingMessage}
-              onContinueStoppedTurn={
-                item.type === 'working' && (item.status === 'stopped' || item.status === 'failed')
-                  ? inputs.onContinueStoppedTurn
+              onSteerPendingMessage={
+                item.type === 'pendingMessage' && item.kind === 'queued'
+                  ? inputs.onSteerPendingMessage
                   : undefined
               }
+              onInterruptPendingMessage={inputs.onInterruptPendingMessage}
+              onContinueStoppedTurn={stopped ? inputs.onContinueStoppedTurn : undefined}
               onEditMessage={inputs.onEditMessage}
-              onForkMessage={inputs.onForkMessage}
+              onForkMessage={
+                item.type === 'message' && item.role === 'assistant'
+                  ? inputs.onForkMessage
+                  : undefined
+              }
               onLoadWorkingStep={inputs.onLoadWorkingStep}
               onLoadWorkingItem={inputs.onLoadWorkingItem}
               onLoadWorkingToolPage={inputs.onLoadWorkingToolPage}
@@ -203,11 +215,13 @@ export const renderRootChatTurn = (
               }
               progressSettings={inputs.progressSettings}
               progressDisclosureTarget={inputs.steeredWorkingStepDisclosureTargets.get(item.id)}
-              rateLimitResetDisabled={inputs.rateLimitResetDisabled}
+              rateLimitResetDisabled={rateLimitFailure && inputs.rateLimitResetDisabled}
               retryMessage={
-                inputs.canRetryStoppedTurns ? inputs.stoppedTurnRetryMessages.get(item.id) : null
+                stopped && inputs.canRetryStoppedTurns
+                  ? (inputs.stoppedTurnRetryMessages.get(item.id) ?? null)
+                  : null
               }
-              retryStoppedTurnDisabled={inputs.stoppedTurnActionDisabled}
+              retryStoppedTurnDisabled={stopped && inputs.stoppedTurnActionDisabled}
               selectedModelId={inputs.selectedModelId}
               streaming={item.id === inputs.streamingChatItemId}
               turnIndex={turnIndex}

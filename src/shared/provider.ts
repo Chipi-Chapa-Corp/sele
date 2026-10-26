@@ -798,6 +798,7 @@ export type ProviderToolActivity =
 export type ProviderWorkingToolStatus = 'running' | 'finished'
 
 export type ProviderToolIcon =
+  | 'app'
   | 'skill'
   | 'image-view'
   | 'image-generation'
@@ -818,6 +819,8 @@ export type ProviderWorkingTool = {
   id: string
   toolId: string
   compact?: boolean
+  /** Known reads and app actions stay label-only when later result events arrive. */
+  hidePayload?: boolean
   status: ProviderWorkingToolStatus
   activity: ProviderToolActivity
   icon: ProviderToolIcon | null
@@ -883,6 +886,18 @@ export type ProviderWorkingStep = {
   itemCount?: number
   itemsStartIndex?: number
   itemSegments?: ProviderWorkingItemSegment[]
+}
+
+/** An existing chat or a persistent new-chat draft awaiting its first execution. */
+export type ProviderLimitResetTarget = string | { draftKey: string; worktree?: boolean }
+
+export type ProviderLimitResetMessage = {
+  id: string
+  content: string
+  createdAt: number
+  /** Absolute reset deadline in milliseconds, saved when the prompt was queued. */
+  resetsAt: number
+  error?: string
 }
 
 export type ProviderPendingMessageKind = 'steering' | 'queued'
@@ -1134,6 +1149,10 @@ export type ProviderTurnOptions = {
 }
 
 export type ProviderStartChatOptions = ProviderTurnOptions & {
+  /** Internal scheduling: create the native session without delivering its first prompt. */
+  deferInitialMessage?: boolean
+  /** Internal account snapshot for a scheduled new chat. */
+  accountId?: string
   /** Establish the native goal before starting work in the new session. */
   initialGoal?: string
 }
@@ -1360,6 +1379,21 @@ export type ProviderApi = {
     mode: ProviderActiveSendMode,
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
+  getLimitResetMessages: (
+    providerId: ProviderId,
+    target: ProviderLimitResetTarget
+  ) => Promise<ProviderLimitResetMessage[]>
+  addLimitResetMessage: (
+    providerId: ProviderId,
+    target: ProviderLimitResetTarget,
+    message: string,
+    options: ProviderStartChatOptions
+  ) => Promise<void>
+  deleteLimitResetMessage: (
+    providerId: ProviderId,
+    target: ProviderLimitResetTarget,
+    messageId: string
+  ) => Promise<void>
   deletePendingMessage: (
     providerId: ProviderId,
     chatId: string,
@@ -1601,6 +1635,9 @@ export const providerIpcChannels = {
   continueChatInFork: 'provider:continue-chat-in-fork',
   forkChat: 'provider:fork-chat',
   sendActiveChatMessage: 'provider:send-active-chat-message',
+  getLimitResetMessages: 'provider:get-limit-reset-messages',
+  addLimitResetMessage: 'provider:add-limit-reset-message',
+  deleteLimitResetMessage: 'provider:delete-limit-reset-message',
   deletePendingMessage: 'provider:delete-pending-message',
   beginPendingMessageEdit: 'provider:begin-pending-message-edit',
   cancelPendingMessageEdit: 'provider:cancel-pending-message-edit',

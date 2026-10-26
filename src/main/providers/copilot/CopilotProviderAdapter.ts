@@ -1513,6 +1513,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.pendingMessageStore.track(sessionId)
     const session = await this.createSession(state, options)
     await onChatCreated?.(sessionId)
+    if (options?.deferInitialMessage) return this.createChatDetail(state)
     if (options?.initialGoal) {
       await this.setChatGoal(sessionId, options.initialGoal, { container: options.container })
     } else {
@@ -1671,6 +1672,28 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       await this.drainQueue(state)
     }
     return this.createChatDetail(state)
+  }
+
+  enqueueLimitResetMessage = async (
+    chatId: string,
+    message: string,
+    messageId: string,
+    options: ProviderTurnOptions,
+    commit: () => Promise<void>
+  ): Promise<void> => {
+    const state = await this.ensureSession(chatId, options)
+    state.queuePaused = true
+    if (!state.pendingMessages.some((pending) => pending.id === messageId)) {
+      state.pendingMessages.push(this.createPendingMessage(message, options, 'queued', messageId))
+    }
+    this.pendingMessageStore.invalidate(chatId)
+    this.emitUpdate(state)
+    await commit()
+    state.queuePaused = false
+    void this.drainQueue(state).catch((error) => {
+      console.error('Unable to start a queued reset prompt.', error)
+      this.emitUpdate(state)
+    })
   }
 
   beginPendingMessageEdit = async (

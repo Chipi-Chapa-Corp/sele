@@ -10,16 +10,16 @@ import {
   type NetworkRetrySettings
 } from '../../shared/networkRetry.ts'
 export const networkRetryPrompt =
-  'The previous response was interrupted by a network failure. Continue from where you left off with the same task. Check the current state before repeating any tool actions that may already have completed.'
+  'The previous response failed because of a temporary provider or network error. Continue from where you left off with the same task. Check the current state before repeating any tool actions that may already have completed.'
 
-export const isTransientNetworkFailure = (message: string): boolean => {
+export const isTransientProviderFailure = (message: string): boolean => {
   if (
     /\b(?:401|403|429)\b|rate[ _-]?limit|usage[ _-]?limit|quota|insufficient (?:balance|credits)|unauthori[sz]ed|authentication|invalid api key|permission denied|certificate|ENOTFOUND/i.test(
       message
     )
   )
     return false
-  return /\b(?:ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|408|502|503|504)\b|(?:network|connection)[ _-]?(?:error|failure)|fetch failed|failed to fetch|socket hang up|(?:connection|stream).*(?:reset|closed|disconnected|interrupted|lost)|(?:connect|connection|request) (?:timeout|timed out)|failed to connect|error sending request|disconnected before completing the turn/i.test(
+  return /\b(?:ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|408|502|503|504|529)\b|(?:network|connection)[ _-]?(?:error|failure)|fetch failed|failed to fetch|socket hang up|(?:connection|stream).*(?:reset|closed|disconnected|interrupted|lost)|(?:connect|connection|request) (?:timeout|timed out)|failed to connect|error sending request|disconnected before completing the turn|\bat[ _-]capacity\b|\bmodel[ _-]?at[ _-]?capacity\b|\b(?:server[ _-]?)?overloaded(?:[ _-]?error)?\b|\b(?:model[ _-]?)?capacity[ _-]?(?:exceeded|error)\b/i.test(
     message
   )
 }
@@ -49,7 +49,7 @@ const getFailedStep = (detail: ProviderChatDetail): ProviderWorkingStep | undefi
   return lastTurnItem?.type === 'working' &&
     lastTurnItem.status === 'failed' &&
     lastTurnItem.failureReason !== 'rateLimit' &&
-    isTransientNetworkFailure(lastTurnItem.failureMessage ?? '')
+    isTransientProviderFailure(lastTurnItem.failureMessage ?? '')
     ? lastTurnItem
     : undefined
 }
@@ -92,7 +92,7 @@ export const withProviderNetworkRetries = (adapter: ProviderAdapter): ProviderAd
         item.type === 'working' && item.id === state.failedStepId
           ? {
               ...item,
-              failureMessage: `Network interrupted. Retrying in ${state.policy.delaySeconds}s (${state.attempt}/${state.policy.count}). ${item.failureMessage ?? ''}`
+              failureMessage: `Temporary provider error. Retrying in ${state.policy.delaySeconds}s (${state.attempt}/${state.policy.count}). ${item.failureMessage ?? ''}`
             }
           : item
       )

@@ -131,7 +131,17 @@ test('client ownership lasts through idle turns and clears on disposal or proces
   const client = extract(
     './CodexAppServerClient.ts',
     'CodexAppServerClient',
-    ['ownedThreadIds', 'dynamicTools', 'ownsThread', 'request', 'dispose', 'handleProcessEnd'],
+    [
+      'ownedThreadIds',
+      'recoveryThreadIds',
+      'lifecycle',
+      'reconnectTimer',
+      'dynamicTools',
+      'ownsThread',
+      'request',
+      'dispose',
+      'handleProcessEnd'
+    ],
     { CodexDynamicTools, registerBrowserUseSession() {}, removeBrowserUseSessions() {} }
   )
   Object.assign(client, {

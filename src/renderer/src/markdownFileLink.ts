@@ -32,7 +32,7 @@ export const getMarkdownFileTarget = (href: string | undefined): MarkdownFileTar
     ? rawHref.slice(0, fragmentLocationMatch.index)
     : rawHref
   const locationMatch = withoutFragment.match(sourceLocationPattern)
-  let path = decodeLinkTarget(locationMatch?.[1] ?? withoutFragment)
+  let path = locationMatch?.[1] ?? withoutFragment
   const lineValue = fragmentLocationMatch?.[1] ?? locationMatch?.[2]
   const parsedLine = lineValue ? Number.parseInt(lineValue, 10) : undefined
   const line =
@@ -48,8 +48,9 @@ export const getMarkdownFileTarget = (href: string | undefined): MarkdownFileTar
       }
       return null
     }
-  } else if (/^[a-z][a-z\d+.-]*:/i.test(path) && !windowsAbsolutePathPattern.test(path)) {
-    return null
+  } else {
+    path = decodeLinkTarget(path)
+    if (/^[a-z][a-z\d+.-]*:/i.test(path) && !windowsAbsolutePathPattern.test(path)) return null
   }
 
   const displayPath = path.replace(/\\/g, '/').replace(/^\.\//, '')

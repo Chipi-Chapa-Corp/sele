@@ -271,6 +271,16 @@ if (!process.versions.electron) {
         await run(`document.querySelectorAll('.ui-segmented-control__indicator').length`),
         1
       )
+      assert.equal(
+        await run(`(() => {
+          const control=document.querySelector('[aria-label="Test tabs"]');
+          const indicator=control.querySelector('.ui-segmented-control__indicator').getBoundingClientRect();
+          const selected=control.querySelector('.ui-segmented-control__item--active').getBoundingClientRect();
+          return Math.abs(indicator.left-selected.left)<1&&Math.abs(indicator.width-selected.width)<1;
+        })()`),
+        true,
+        'the CSS indicator follows the selected grid cell'
+      )
       // Portal exits survive the trigger's conditional; reopening must not retain duplicates.
       await run(`document.getElementById('test-dropdown').click()`)
       await frames()

@@ -26,12 +26,16 @@ const bundled = await build({
           contents: path.endsWith('logging')
             ? `export const handleLoggedIpc = (channel, handler) => globalThis.harness.handlers.set(channel, handler);
              export const logDiagnostic = (...args) => globalThis.harness.logs.push(args);`
-            : `export const providerApi = {
+            : `export const startLimitResetQueue = () => {};
+             export const providerApi = {
                beginPendingMessageEdit: (...args) => globalThis.harness.beginPendingMessageEdit(...args),
                cancelPendingMessageEdit: (...args) => globalThis.harness.cancelPendingMessageEdit(...args),
                editPendingMessage: (...args) => globalThis.harness.editPendingMessage(...args),
                getAccounts: (...args) => globalThis.harness.getAccounts(...args),
                useAccount: (...args) => globalThis.harness.useAccount(...args),
+               getLimitResetMessages: (...args) => globalThis.harness.limitReset('list', ...args),
+               addLimitResetMessage: (...args) => globalThis.harness.limitReset('add', ...args),
+               deleteLimitResetMessage: (...args) => globalThis.harness.limitReset('delete', ...args),
                getUsage: (...args) => globalThis.harness.getUsage(...args),
                createAccount: (...args) => globalThis.harness.createAccount(...args),
                getConnections: (...args) => globalThis.harness.connection('list', ...args),
@@ -942,4 +946,74 @@ test('usage IPC follows each chat account and preserves the default for new chat
   assert.equal(nextChat.rateLimits[0].usedPercent, 10)
   assert.equal(nextChat.statisticsLoaded, true)
   assert.throws(() => usage({}, 'codex', { chatId: 42 }), /Invalid chat ID/)
+})
+
+test('reset queue IPC validates chat, prompt, settings and message IDs', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.limitReset = async (...args) => calls.push(JSON.parse(JSON.stringify(args)))
+  const list = h.harness.handlers.get(channels.getLimitResetMessages)
+  const add = h.harness.handlers.get(channels.addLimitResetMessage)
+  const remove = h.harness.handlers.get(channels.deleteLimitResetMessage)
+  const options = {
+    model: 'gpt-5.5',
+    sandboxMode: 'workspace-write',
+    approvalPolicy: 'on-request',
+    approvalsReviewer: 'user',
+    serviceTier: null
+  }
+  await list({}, 'codex', 'chat')
+  await add({}, 'codex', 'chat', 'after reset', options)
+  await remove({}, 'codex', 'chat', 'message')
+  assert.deepEqual(
+    calls.map((call) => call.slice(0, 3)),
+    [
+      ['list', 'codex', 'chat'],
+      ['add', 'codex', 'chat'],
+      ['delete', 'codex', 'chat']
+    ]
+  )
+  assert.equal(calls[1][3], 'after reset')
+  assert.equal(calls[1][4].model, 'gpt-5.5')
+  assert.throws(() => add({}, 'codex', 'chat', '   ', options), /empty|Invalid message/i)
+  assert.throws(() => add({}, 'codex', 'chat', 'prompt', undefined), /options are required/)
+  assert.throws(() => list({}, 'codex', ''), /Invalid chat ID/)
+  assert.throws(() => remove({}, 'codex', 'chat', ''), /Invalid message ID/)
+})
+
+test('reset queue IPC accepts persistent new-chat draft targets and strips internal startup flags', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.limitReset = async (...args) => calls.push(JSON.parse(JSON.stringify(args)))
+  const target = { draftKey: 'new-chat-project', worktree: true }
+  const options = {
+    model: 'gpt-5.5',
+    sandboxMode: 'workspace-write',
+    approvalPolicy: 'on-request',
+    approvalsReviewer: 'user',
+    serviceTier: null,
+    noProject: true,
+    deferInitialMessage: true,
+    accountId: 'cannot-override'
+  }
+  const add = h.harness.handlers.get(channels.addLimitResetMessage)
+  await h.harness.handlers.get(channels.getLimitResetMessages)({}, 'codex', target)
+  await add({}, 'codex', target, 'start later', options)
+  await h.harness.handlers.get(channels.deleteLimitResetMessage)({}, 'codex', target, 'message')
+  assert.deepEqual(
+    calls.map((call) => call[2]),
+    [target, target, target]
+  )
+  assert.equal(calls[1][4].noProject, true)
+  assert.equal(calls[1][4].deferInitialMessage, undefined)
+  assert.equal(calls[1][4].accountId, undefined)
+  for (const target of [
+    null,
+    {},
+    [],
+    { draftKey: '' },
+    { draftKey: 42 },
+    { draftKey: 'valid', worktree: 'yes' }
+  ])
+    assert.throws(() => add({}, 'codex', target, 'prompt', options), /Invalid/)
 })

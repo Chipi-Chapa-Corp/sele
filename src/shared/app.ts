@@ -592,6 +592,7 @@ export type AppApi = {
   getFileTreeListing: (options?: AppFileTreeOptions) => Promise<AppFileTreeListing>
   getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
   openFileInSystemApp: (options: AppFileContentsOptions) => Promise<void>
+  openFileInBrowser: (options: AppFileContentsOptions) => Promise<void>
   downloadFile: (options: AppFileContentsOptions) => Promise<string | null>
   showFileInFolder: (options: AppLocalMediaOptions) => Promise<void>
   writeFileContents: (options: AppWriteFileContentsOptions) => Promise<AppWriteFileContentsResult>
@@ -671,6 +672,7 @@ export const appIpcChannels = {
   getFileTreeListing: 'app:get-file-tree-listing',
   getFileContents: 'app:get-file-contents',
   openFileInSystemApp: 'app:open-file-in-system-app',
+  openFileInBrowser: 'app:open-file-in-browser',
   downloadFile: 'app:download-file',
   showFileInFolder: 'app:show-file-in-folder',
   writeFileContents: 'app:write-file-contents',

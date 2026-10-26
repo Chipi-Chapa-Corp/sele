@@ -26,6 +26,7 @@ import type {
 
 import { getProviderChatTurns } from '../../../shared/chatTurns'
 import { markChatItemsChanged } from '../chatConversationModel'
+import { reuseChatSnapshotItems } from '../chatSnapshotItems'
 import { mergeSeenUpdatedAt } from '../chatMetadata'
 
 import { type ChatListGroupData } from '../components/ChatListGroup'
@@ -421,7 +422,7 @@ const retainLoadedChatItemPayload = (
  * order and cardinality; stable IDs are used only to retain lazily-loaded payloads, never to
  * splice transcript structure.
  */
-export const getChatDetailFromSnapshot = (
+const resolveChatDetailSnapshot = (
   snapshot: ProviderChatDetail,
   currentDetail: ProviderChatDetail | null,
   options: {
@@ -492,6 +493,13 @@ export const getChatDetailFromSnapshot = (
     : nextDetail
 }
 
+export const getChatDetailFromSnapshot: typeof resolveChatDetailSnapshot = (
+  snapshot,
+  currentDetail,
+  options
+) =>
+  reuseChatSnapshotItems(currentDetail, resolveChatDetailSnapshot(snapshot, currentDetail, options))
+
 export type ChatDetailUpdateResult = {
   detail: ProviderChatDetail
   detailApplied: boolean
@@ -550,8 +558,8 @@ export const getChatDetailFromUpdate = (
   const detail = getChatDetailFromSnapshot(reconstructed, currentDetail, options)
   // A retained history window may merge live items without matching the delivered snapshot.
   // Only acknowledge that snapshot as a delta base when its entire ordered transcript is present.
+  // An unchanged transcript can now reuse the previous array across an IPC copy.
   const detailApplied =
-    detail.items !== currentDetail?.items &&
     detail.items.length === itemIds.length &&
     detail.items.every((item, index) => item.id === itemIds[index])
 
@@ -693,6 +701,7 @@ export const getOptimisticItems = (
     {
       type: 'message',
       id: `${id}:user`,
+      editTargetId: null,
       role: 'user',
       content: message.trim(),
       attachments: [

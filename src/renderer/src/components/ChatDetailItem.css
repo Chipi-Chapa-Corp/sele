@@ -703,7 +703,8 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   vertical-align: -0.12em;
 }
 
-.chat-detail__file-link {
+.chat-detail__file-link,
+.chat-detail__file-link-browser {
   display: inline-flex;
   max-width: 100%;
   align-items: center;
@@ -757,16 +758,47 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   font-weight: normal;
 }
 
-.chat-detail__file-link:hover {
+.chat-detail__file-link:hover,
+.chat-detail__file-link-browser:hover {
   border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
   box-shadow: var(--secondary-shadow-hover);
 }
 
-.chat-detail__file-link:focus-visible {
+.chat-detail__file-link:focus-visible,
+.chat-detail__file-link-browser:focus-visible {
   outline: 0.125rem solid var(--focus-ring);
   outline-offset: 0.125rem;
+}
+
+.chat-detail__file-link-group {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: stretch;
+  margin: 0 0.05em;
+  vertical-align: -0.14em;
+}
+
+.chat-detail__file-link-group .chat-detail__file-link {
+  min-width: 0;
+  margin: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.chat-detail__file-link-browser {
+  flex: none;
+  justify-content: center;
+  margin: 0 0 0 -0.0625rem;
+  padding-inline: 0.36em;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.chat-detail__file-link-group > :focus-visible {
+  position: relative;
+  z-index: 1;
 }
 
 .chat-detail__markdown-image {

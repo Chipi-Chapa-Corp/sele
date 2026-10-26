@@ -4,7 +4,7 @@ import { setImmediate } from 'node:timers/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
-import { projectCodexTurnTail } from './CodexLiveMerge.ts'
+import { isCodexTurnTerminal, projectCodexTurnTail } from './CodexLiveMerge.ts'
 import {
   isLegacyCodexHistory,
   isUnsupportedTurnPaginationError,
@@ -63,6 +63,8 @@ const fixture = () => {
     isLegacyCodexHistory,
     isUnsupportedTurnPaginationError,
     projectCodexTurnTail,
+    isCodexTurnTerminal,
+    getThreadName: (thread) => thread.name ?? null,
     assertSupportedCodexHistory: () => {},
     assertReadableCodexHistory: () => {},
     rendererChatUpdateTurnLimit: 10,
@@ -347,6 +349,41 @@ test('a latest page cannot resurrect a queued message delivered while it was loa
       Array.from(detail.items, (item) => item.id),
       ['delivered-turn']
     )
+  } finally {
+    finishMetadata(false)
+  }
+})
+
+test('an update during a latest read cannot discard a recovered completion or title', async () => {
+  const { adapter, finishMetadata } = fixture()
+  const running = { id: 'turn', status: 'inProgress', items: [] }
+  adapter.threads.set('chat', {
+    id: 'chat',
+    path: '/rollout',
+    historyMode: 'paginated',
+    preview: '',
+    name: null,
+    turns: [running]
+  })
+  let finishPage
+  adapter.client.request = () =>
+    new Promise((resolve) => {
+      finishPage = resolve
+    })
+  const opening = adapter.getChat('chat')
+  await setImmediate()
+  adapter.threadRevisions.set('chat', 1)
+  const completed = {
+    ...running,
+    status: 'completed',
+    items: [{ id: 'steer', type: 'userMessage' }]
+  }
+  finishPage({ data: [completed], nextCursor: null, backwardsCursor: null })
+  try {
+    const detail = await opening
+    assert.equal(detail.items[0].status, 'completed')
+    assert.equal(detail.items[0].items[0].id, 'steer')
+    assert.equal(adapter.threads.get('chat').name, 'Saved chat')
   } finally {
     finishMetadata(false)
   }

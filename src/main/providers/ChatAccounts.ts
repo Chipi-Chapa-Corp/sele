@@ -30,6 +30,7 @@ const chatMethods = [
   'continueChatInFork',
   'forkChat',
   'sendActiveChatMessage',
+  'enqueueLimitResetMessage',
   'deletePendingMessage',
   'beginPendingMessageEdit',
   'cancelPendingMessageEdit',
@@ -99,7 +100,7 @@ export class ChatAccounts {
         }
       },
       startChat: async (message, options, created) => {
-        const account = await dependencies.selected(options?.container)
+        const account = options?.accountId ?? (await dependencies.selected(options?.container))
         return this.present(
           account,
           await this.runtime(account).startChat(message, options, this.created(account, created))
@@ -181,7 +182,7 @@ export class ChatAccounts {
             const run = runtime[method] as (id: string, ...args: unknown[]) => Promise<unknown>
             const result = await run(id, ...args)
             return result && typeof result === 'object' && 'revision' in result && 'items' in result
-              ? this.present(account, result as ProviderChatDetail)
+              ? this.present(account, result as ProviderChatDetail, method === 'getChat')
               : result
           })
       })
@@ -195,7 +196,11 @@ export class ChatAccounts {
     ] as const) {
       Object.assign(overrides, {
         [method]: async (options?: ProviderSourceOptions) => {
-          const runtime = options?.chatId ? this.runtime(await this.account(options.chatId)) : base
+          const runtime = options?.chatId
+            ? this.runtime(await this.account(options.chatId))
+            : options?.accountId
+              ? this.runtime(options.accountId)
+              : base
           return runtime[method](options)
         }
       })
@@ -257,7 +262,11 @@ export class ChatAccounts {
     return pending
   }
 
-  private present = (account: string, detail: ProviderChatDetail): ProviderChatDetail => {
+  private present = (
+    account: string,
+    detail: ProviderChatDetail,
+    rememberActivity = false
+  ): ProviderChatDetail => {
     if (this.bindings.has(detail.id) && this.bindings.get(detail.id) !== account)
       throw new Error('This chat’s account changed while loading. Please try again.')
     const previous = this.revisions.get(detail.id)
@@ -268,8 +277,21 @@ export class ChatAccounts {
           ? previous.latest + 1 - detail.revision
           : 0
     const revision = detail.revision + offset
-    if (!previous || previous.account !== account || detail.revision >= previous.native)
+    if (!previous || previous.account !== account || detail.revision >= previous.native) {
       this.revisions.set(detail.id, { account, native: detail.revision, offset, latest: revision })
+      // A direct open can recover a completion whose event was missed. Sidebar overlays must
+      // advance with that read instead of restoring the old running status on the next list.
+      if (rememberActivity)
+        this.latest.set(detail.id, {
+          id: detail.id,
+          status:
+            detail.pendingUserInput && detail.status !== 'waitingOnApproval'
+              ? 'waitingOnUserInput'
+              : detail.status,
+          pendingApproval: detail.pendingApproval,
+          lastTurnOutcome: detail.lastTurnOutcome
+        })
+    }
     return { ...detail, accountId: account, revision }
   }
 
@@ -286,16 +308,7 @@ export class ChatAccounts {
     const runtime = this.dependencies.create(account)
     runtime.onChatUpdated((detail, metadata) => {
       if (this.bindings.get(detail.id) !== account) return
-      const bound = this.present(account, detail)
-      this.latest.set(detail.id, {
-        id: detail.id,
-        status:
-          detail.pendingUserInput && detail.status !== 'waitingOnApproval'
-            ? 'waitingOnUserInput'
-            : detail.status,
-        pendingApproval: detail.pendingApproval,
-        lastTurnOutcome: detail.lastTurnOutcome
-      })
+      const bound = this.present(account, detail, true)
       this.listeners.forEach((listener) => listener(bound, metadata))
     })
     runtime.onTokenUsage?.((observation) =>

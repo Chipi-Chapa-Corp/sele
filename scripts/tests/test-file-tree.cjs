@@ -31,6 +31,18 @@ if (!process.versions.electron) {
             window.filePaths = getFileTreeIndexNodes(index, 'src').map((node) => node.file)
             window.collapsed = getDefaultFileTreeCollapsedFolders(index)
             window.renderFiles('error', "EACCES: permission denied, scandir '/project/nested/private'")
+            window.treeRenders=0;window.fileActions=[];
+            const nodes=[{type:'file',name:'fixture.ts',path:'fixture.ts',file:{path:'fixture.ts'}}];
+            const renderers=[0,1].map(version=>node=>{
+              window.treeRenders++;
+              return <li key={node.path}><button onClick={()=>window.fileActions.push(version)}>{node.name}</button></li>
+            });
+            window.renderTreeState=(view,version=0,changed=false)=>flushSync(()=>root.render(
+              <ChangesContent changesPaneView={view} visibleFilesLoadState="ready" visibleChangesLoadState="ready"
+                repositoryFileCount={1} repositoryFileTree={changed?[...nodes]:nodes} changedFiles={[nodes[0].file]}
+                changeTree={changed?[...nodes]:nodes} renderRepositoryFileTreeNode={renderers[version]} renderChangeTreeNode={renderers[version]}
+                displayedRecentChatReferences={{pinnedReferences:[],recentReferences:[]}} changesContainer={{kind:'host'}}/>
+            ));
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -100,6 +112,18 @@ if (!process.versions.electron) {
         '/project/nested/src/main.ts'
       )
       assert.equal(await run('window.collapsed.docs'), true)
+      for (const view of ['files', 'git']) {
+        await run(`window.treeRenders=0;window.renderTreeState('${view}')`)
+        assert.equal(await run('window.treeRenders'), 1)
+        await run(`window.renderTreeState('${view}')`)
+        assert.equal(await run('window.treeRenders'), 1, 'unrelated chat props must not rebuild the file tree')
+        await run(`window.renderTreeState('${view}',1)`)
+        assert.equal(await run('window.treeRenders'), 2, 'changed handlers must update the tree')
+        await run(`document.querySelector('[role=tree] button').click()`)
+        assert.equal(await run('window.fileActions.at(-1)'), 1)
+        await run(`window.renderTreeState('${view}',1,true)`)
+        assert.equal(await run('window.treeRenders'), 3, 'changed tree data remains visible')
+      }
       console.log('File tree UI checks passed: error details, retry, recovery, nested paths.')
     } catch (error) {
       console.error(error)

@@ -3,7 +3,8 @@ import test from 'node:test'
 import { createConversationViews } from './conversationViews.ts'
 import {
   createConversationView,
-  isConversationOpeningDetail
+  isConversationOpeningDetail,
+  restoreConversationView
 } from '../../shared/conversationView.ts'
 import { buildChatConversationModel } from './chatConversationModel.ts'
 
@@ -104,4 +105,72 @@ test('a low live revision after restart replaces its baseline and late list page
     true
   )
   assert.equal(views.get(chat()).items[0].id, 'new')
+})
+
+for (const outcome of ['stopped', 'failed']) {
+  test(`restart reconciles a saved working viewport with the sidebar's ${outcome} outcome`, () => {
+    const views = createConversationViews()
+    const work = { type: 'working', id: 'work', status: 'working', items: [] }
+    const baseline = createConversationView(
+      detail('one', {
+        status: 'active',
+        lastTurnOutcome: null,
+        items: [detail().items[0], work]
+      })
+    )
+    views.install('codex', [baseline])
+    const restored = views.get(chat('one', { lastTurnOutcome: outcome, revision: 100 }))
+    assert.equal(restored.status, null)
+    assert.equal(restored.items.at(-1).status, outcome)
+    assert.equal(baseline.items.at(-1), work, 'do not mutate the durable snapshot')
+    assert.equal(work.status, 'working')
+    assert.equal(restored.revision, -1, 'sidebar revisions must not grant live snapshot authority')
+    assert.equal(restored.writeAccess, 'checking')
+    assert.equal(restored.pendingApproval, null)
+    assert.equal(restored.capabilities.activeMessages, false)
+
+    // A fresh provider reply still replaces the reconciled preview after restart.
+    views.install('codex', [detail('one', { revision: 1 })])
+    assert.equal(views.get(chat()).items.at(-1).content, 'Answer')
+  })
+}
+
+test('restored outcomes leave earlier turns and queued prompts intact', () => {
+  const old = { type: 'working', id: 'old', status: 'worked', items: [] }
+  const working = { type: 'working', id: 'work', status: 'working', items: [] }
+  const pending = { type: 'pendingMessage', id: 'pending', content: 'Later' }
+  const queued = { type: 'working', id: 'queued', status: 'queued', items: [] }
+  const input = detail('one', {
+    items: [old, detail().items[0], working, pending, queued]
+  })
+  const next = restoreConversationView(input, chat('one', { lastTurnOutcome: 'stopped' }))
+  assert.equal(next.items[0], old)
+  assert.equal(next.items[2].status, 'stopped')
+  assert.equal(next.items[3], pending)
+  assert.equal(next.items[4], queued)
+})
+
+test('active, stale and historical sidebar outcomes cannot stop a different viewport', () => {
+  const input = detail('one', {
+    items: [detail().items[0], { type: 'working', id: 'work', status: 'working', items: [] }]
+  })
+  for (const summary of [
+    { status: 'active', lastTurnOutcome: 'stopped' },
+    { status: 'waitingOnApproval', lastTurnOutcome: 'stopped' },
+    { lastTurnOutcome: 'stopped', updatedAt: 0 },
+    { lastTurnOutcome: undefined },
+    { lastTurnOutcome: null }
+  ]) {
+    assert.equal(restoreConversationView(input, chat('one', summary)).items, input.items)
+  }
+  for (const pagination of [
+    { turnPagination: { kind: 'cursor', newerCursor: 'newer' } },
+    { itemsStartTurnIndex: 0, turnCount: 2 }
+  ]) {
+    const older = { ...input, ...pagination }
+    assert.equal(
+      restoreConversationView(older, chat('one', { lastTurnOutcome: 'stopped' })).items,
+      input.items
+    )
+  }
 })

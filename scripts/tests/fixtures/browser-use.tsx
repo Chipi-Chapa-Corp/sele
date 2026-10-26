@@ -42,6 +42,14 @@ export function Fixture(): React.JSX.Element {
     []
   )
   useEffect(() => browserApi.onAutomationVisibility(setActive), [])
+  useEffect(
+    () =>
+      browserApi.onOpenRequested((request) => {
+        setOpenRequest(request)
+        setOpened(true)
+      }),
+    []
+  )
   return (
     <div style={{ width: 850, height: 650 }}>
       <textarea id="prompt" aria-label="Prompt" autoFocus defaultValue="Draft prompt" />

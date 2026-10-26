@@ -151,7 +151,7 @@ import {
 } from './CodexPaginatedHistory'
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { selectCodexTitleModel } from './CodexTitleModel'
-import { isTransientNetworkFailure } from '../ProviderNetworkRetry.ts'
+import { isTransientProviderFailure } from '../ProviderNetworkRetry.ts'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
 import {
   assertUniqueCodexSnapshotIds,
@@ -993,10 +993,8 @@ const titleGenerationRetryDelayMs = 2_000
 const isRetryableTitleGenerationFailure = (error: unknown): boolean => {
   const message = error instanceof Error ? error.message : String(error)
   return (
-    isTransientNetworkFailure(message) ||
-    /\bat capacity\b|\bserver overloaded\b|\bserverOverloaded\b|^Timed out waiting for thread title generation$/i.test(
-      message
-    )
+    isTransientProviderFailure(message) ||
+    /^Timed out waiting for thread title generation$/i.test(message)
   )
 }
 const oneShotGenerationTimeoutMs = 120_000
@@ -1470,7 +1468,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const existingClient = this.clients.get(key)
     if (existingClient) return existingClient
 
-    const client = new CodexAppServerClient(storedContainer, this.accountId)
+    const client = new CodexAppServerClient(storedContainer, this.accountId, true)
     client.onRequestFailed((method, _params, error) => {
       if (!/^(?:account|thread|turn|model)\//.test(method) || !isCodexAuthenticationFailure(error))
         return
@@ -2767,8 +2765,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
         const cacheChangedDuringLoad =
           (this.threadRevisions.get(chatId) ?? 0) !== loadStartedAtRevision
         if (cacheChangedDuringLoad) {
+          // Token usage and metadata updates can advance the revision without supplying a
+          // completion. Keep the live tail, but still accept terminal lifecycle recovery and
+          // the resolved title from this read.
+          const terminalTurns = new Map(
+            thread.turns.filter(isCodexTurnTerminal).map((turn) => [turn.id, turn])
+          )
+          this.reconcileAuthoritativeTurnLifecycles(chatId, thread.turns)
           thread = {
             ...currentThread,
+            name: getThreadName(currentThread) ?? name,
+            turns: currentThread.turns.map((turn) => {
+              const terminal = terminalTurns.get(turn.id)
+              return terminal && !isCodexTurnTerminal(turn)
+                ? this.mergeTurn(chatId, turn, terminal)
+                : turn
+            }),
             turnPaginationBoundaryStale: true
           }
         } else {
@@ -3554,7 +3566,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     onChatCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
-    if (!text && !hasAttachmentInput(options)) {
+    if (!text && !hasAttachmentInput(options) && !options?.deferInitialMessage) {
       throw new Error('Cannot start a chat with an empty message')
     }
 
@@ -3577,10 +3589,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...startedThread.thread,
       name,
       cwd,
-      status: { type: 'active', activeFlags: [] },
+      status: { type: options?.deferInitialMessage ? 'idle' : 'active', activeFlags: [] },
       turns: getThreadTurns(startedThread.thread)
     } satisfies CodexThread
     this.cacheThread(thread)
+
+    if (options?.deferInitialMessage) {
+      const detail = this.getCachedChatDetail(thread.id)
+      if (!detail) throw new Error('Unable to create the scheduled chat.')
+      this.emitChatUpdated(thread.id)
+      return detail
+    }
 
     if (options?.initialGoal) {
       await this.goals.save(thread.id, options.initialGoal, (method, params) =>
@@ -3842,6 +3861,28 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (mode === 'interrupt') return this.interruptAndContinueChat(chatId, message, options)
     return this.steerActiveChat(chatId, message, options)
   }
+
+  enqueueLimitResetMessage = (
+    chatId: string,
+    message: string,
+    messageId: string,
+    options: ProviderTurnOptions,
+    commit: () => Promise<void>
+  ): Promise<void> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      await this.ensureChatTailLoaded(chatId)
+      this.pausedQueuedTurnThreads.add(chatId)
+      if (!this.queuedTurnsByThread.get(chatId)?.some((pending) => pending.id === messageId)) {
+        const pending = this.addQueuedTurn(chatId, message, options)
+        if (!pending) throw new Error('Unable to queue reset prompt.')
+        pending.id = messageId
+      }
+      this.pendingMessageStore.invalidate(chatId)
+      this.emitChatUpdated(chatId)
+      await commit()
+      this.pausedQueuedTurnThreads.delete(chatId)
+      this.scheduleQueueDrain(chatId)
+    })
 
   beginPendingMessageEdit = (
     chatId: string,
@@ -4167,7 +4208,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
       editPlan.retainedCatalog.length - (rendererChatUpdateTurnLimit - 1)
     )
     // Hydrate the retained tail before thread/revert. After the revert, later turn IDs are gone and
-    // cannot be used to reconstruct the pre-revert window.
+    // cannot be used to reconstruct the pre-revert window. Seek against the full catalog because
+    // the server still includes the target and all later turns until that mutation.
     const retainedCatalogWindow = editPlan.retainedCatalog.slice(retainedTurnStartIndex)
     const loadedTurnsById = new Map(
       thread.turns
@@ -4180,7 +4222,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       : await hydrateCodexTurnRange(
           (method, params) => this.client.request(method, params),
           chatId,
-          editPlan.retainedCatalog,
+          turnCatalog,
           retainedTurnStartIndex,
           editPlan.retainedCatalog.length
         )
@@ -4432,7 +4474,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.pendingApprovalsByThread.clear()
     this.userQuestions.clear()
     this.contextUsageByThread.clear()
-    this.clients.forEach((client) => client.dispose())
+    this.clients.forEach((client) => client.dispose({ preserveRuntime: true }))
     this.clients.clear()
     this.threadRevisions.clear()
     this.agentResponseOverlays.clear()
@@ -5366,7 +5408,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         limit: rendererChatUpdateTurnLimit
       })
     }
-    const existingThread = this.threads.get(threadId) ?? null
+    let existingThread = this.threads.get(threadId) ?? null
     if (existingThread) assertSupportedCodexHistory(existingThread)
     let resume: ThreadResumeResponse
     try {
@@ -5387,6 +5429,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.resolveThreadCwd(resume.thread, fallbackCwd),
       this.resolveThreadName(resume.thread)
     ])
+    // Resuming and resolving metadata can yield while live events bind a submitted turn,
+    // finish it, or echo steering. Never restore the pre-request transcript over those events.
+    const resumedFrom = existingThread
+    existingThread = this.threads.get(threadId) ?? existingThread
     const historyMode = resume.thread.historyMode ?? existingThread?.historyMode
     assertSupportedCodexHistory({ historyMode })
     if (!existingThread) throw new Error('Unable to resume Codex chat without loaded history')
@@ -5396,9 +5442,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const commonThread = {
       ...resume.thread,
       createdAt: existingThread?.createdAt ?? resume.thread.createdAt,
-      name,
+      name: existingThread !== resumedFrom ? (getThreadName(existingThread) ?? name) : name,
       cwd,
       historyMode,
+      status: existingThread.status,
       turns
     } satisfies CodexThread
 
@@ -6358,9 +6405,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   /**
-   * The previous process ended with these messages undelivered. Its turn is gone, so steering
-   * waits in the paused queue with the queued messages, as after Stop. Steering that Codex
-   * already recorded in the thread is dropped.
+   * The previous UI process ended with these messages undelivered. Keep them in the paused
+   * queue until delivery is explicitly resumed, even if its native turn survived. Steering
+   * that Codex already recorded in the thread is dropped.
    */
   private applyRestoredPendingMessages = (
     threadId: string,
@@ -6788,7 +6835,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const replacementSteeringMessages = new Map<string, SteeringMessage>()
 
     for (const item of nextItems) {
-      if (item.type !== 'userMessage') {
+      if (!isCompleteCodexUserMessage(item)) {
         continue
       }
 
@@ -7556,6 +7603,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private handleNotification = (notification: RpcNotification): void => {
     const params = notification.params
     if (!params || typeof params !== 'object') return
+
+    if (notification.method === 'sele/runtime/restored') {
+      const threadIds = (params as { threadIds?: string[] }).threadIds ?? []
+      const container = this.getCurrentContainer()
+      for (const threadId of threadIds) {
+        this.rememberThreadContainer(threadId, container)
+        // Rehydrate from the still-running provider rather than replaying deltas
+        // or turn/start requests that could duplicate accepted work.
+        void this.getChat(threadId, { container }).then(() => {
+          this.emitChatUpdated(threadId)
+        }).catch((error: unknown) => {
+          console.error(`Unable to restore live Codex thread ${threadId}.`, error)
+        })
+      }
+      return
+    }
 
     if (notification.method === 'thread/started') {
       const thread = (params as { thread?: CodexThread }).thread

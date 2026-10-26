@@ -227,12 +227,13 @@ export const getBrowserCloseShortcutAction = (
     : 'close-tab'
 }
 
-const browserPageProtocols = new Set(['http:', 'https:'])
+const browserNetworkProtocols = new Set(['http:', 'https:'])
+const browserPageProtocols = new Set([...browserNetworkProtocols, 'file:'])
 
 export const getBrowserPageHostname = (value: string): string | null => {
   try {
     const url = new URL(value)
-    return browserPageProtocols.has(url.protocol) && url.hostname
+    return browserNetworkProtocols.has(url.protocol) && url.hostname
       ? url.hostname.toLocaleLowerCase()
       : null
   } catch (error) {
@@ -279,9 +280,14 @@ export const normalizeBrowserAddress = (value: string): string | null => {
 
 export const getBrowserPageLabel = (value: string): string => {
   try {
-    return new URL(value).hostname || 'New tab'
+    const url = new URL(value)
+    if (url.protocol === 'file:') {
+      const name = url.pathname.split('/').filter(Boolean).at(-1)
+      return name ? decodeURIComponent(name) : 'Local files'
+    }
+    return url.hostname || 'New tab'
   } catch (error) {
-    if (!isExpectedUrlParseError(error)) {
+    if (!(error instanceof URIError) && !isExpectedUrlParseError(error)) {
       console.error('[caught:browser:getBrowserPageLabel]', error)
     }
     return 'New tab'
@@ -291,7 +297,7 @@ export const getBrowserPageLabel = (value: string): string => {
 export const getBrowserFaviconUrl = (value: string): string | null => {
   try {
     const url = new URL(value)
-    if (!browserPageProtocols.has(url.protocol)) return null
+    if (!browserNetworkProtocols.has(url.protocol)) return null
 
     return `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(url.origin)}&sz=32`
   } catch (error) {

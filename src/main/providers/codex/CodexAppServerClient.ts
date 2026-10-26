@@ -1,5 +1,6 @@
 import { registerBrowserUseSession, removeBrowserUseSessions } from './CodexBrowserSessions'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { app } from 'electron'
 import { createInterface } from 'node:readline'
 import type { AppContainerTarget } from '../../../shared/app'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
@@ -8,6 +9,7 @@ import { getCodexAccountViewCommand } from './CodexAccountView'
 import { ensureCodexAccountView } from './CodexAccounts'
 import { CodexDynamicTools } from './CodexDynamicTools'
 import { registerCodexDesktopTools } from './CodexDesktopTools'
+import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
 
 type RpcError = {
   code: number
@@ -98,14 +100,19 @@ const getAppServerCommand = (
 export class CodexAppServerClient {
   constructor(
     private readonly container: AppContainerTarget | null = null,
-    private readonly accountId?: string
+    private readonly accountId?: string,
+    private readonly persistent = false
   ) {
     if (!container) this.desktopTools = registerCodexDesktopTools(this.dynamicTools)
   }
   private desktopTools: ReturnType<typeof registerCodexDesktopTools> | null = null
 
-  private process: ChildProcessWithoutNullStreams | null = null
+  private process: CodexProcess | null = null
   private startPromise: Promise<void> | null = null
+  private lifecycle = 0
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectDelay = 250
+  private recoveryThreadIds = new Set<string>()
   private pendingRequests = new Map<number, PendingRequest>()
   private notificationListeners = new Set<(notification: RpcNotification) => void>()
   private serverRequestListeners = new Set<(request: RpcRequest) => boolean | void>()
@@ -258,12 +265,17 @@ export class CodexAppServerClient {
     this.write({ id, error: { code, message } })
   }
 
-  dispose = (): void => {
+  dispose = (options: { preserveRuntime?: boolean } = {}): void => {
+    this.lifecycle++
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    this.recoveryThreadIds.clear()
     this.desktopTools?.close()
     this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
-    this.process?.kill()
+    if (options.preserveRuntime && this.process?.detach) this.process.detach()
+    else this.process?.kill()
     this.process = null
     this.startPromise = null
     this.rejectPending(new Error('Codex app-server stopped'))
@@ -294,6 +306,7 @@ export class CodexAppServerClient {
   }
 
   private initialize = async (): Promise<void> => {
+    const lifecycle = this.lifecycle
     if (this.accountId && this.accountId !== 'default') await ensureCodexAccountView(this.container)
     const appServerCommand = getAppServerCommand(
       this.container?.kind === 'container' ? 'codex' : getCodexExecutable(),
@@ -305,10 +318,27 @@ export class CodexAppServerClient {
     }).catch((error: unknown) => {
       throw getCodexExecutableError(error)
     })
-    const child = spawn(hostCommand.file, hostCommand.args, {
-      env: hostCommand.env,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    const child: CodexProcess = this.persistent
+      ? await connectCodexRuntime(
+          app.getPath('userData'),
+          [
+            this.container,
+            this.accountId ?? null,
+            process.env.CODEX_HOME ?? null,
+            process.env.SELE_CODEX_PATH ?? null
+          ],
+          hostCommand
+        )
+      : spawn(hostCommand.file, hostCommand.args, {
+          env: hostCommand.env,
+          stdio: ['pipe', 'pipe', 'pipe']
+        })
+
+    if (lifecycle !== this.lifecycle) {
+      if (child.detach) child.detach()
+      else child.kill()
+      throw new Error('Codex connection closed during startup.')
+    }
 
     this.process = child
     this.stderr = ''
@@ -336,17 +366,53 @@ export class CodexAppServerClient {
       handleError(new Error(message))
     })
 
-    await this.sendRequest('initialize', {
-      clientInfo: { name: 'sele', title: 'Sele', version: '1.0.0' },
-      capabilities: {
-        experimentalApi: true,
-        mcpServerOpenaiFormElicitation: true,
-        extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } },
-        requestAttestation: false
-      }
-    })
+    try {
+      const initialized = await this.sendRequest<{
+        seleRuntime?: {
+          threads: Array<{
+            thread: { id: string; cwd?: string }
+            dynamicTools?: unknown
+            readOnly?: boolean
+          }>
+        }
+      }>('initialize', {
+        clientInfo: { name: 'sele', title: 'Sele', version: '1.0.0' },
+        capabilities: {
+          experimentalApi: true,
+          mcpServerOpenaiFormElicitation: true,
+          extensions: {
+            'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] }
+          },
+          requestAttestation: false
+        }
+      })
 
-    this.sendNotification('initialized')
+      const restored = initialized.seleRuntime?.threads ?? []
+      for (const { thread, dynamicTools, readOnly } of restored) {
+        this.ownedThreadIds.add(thread.id)
+        this.browserSessionCwds.set(thread.id, thread.cwd ?? '')
+        this.dynamicTools.bind(thread.id, dynamicTools)
+        this.dynamicTools.setReadOnly(thread.id, readOnly === true)
+        registerBrowserUseSession(this, thread.id, thread.cwd ?? null, this.container)
+      }
+      const recoveredThreadIds = [
+        ...new Set([...restored.map(({ thread }) => thread.id), ...this.recoveryThreadIds])
+      ]
+      this.recoveryThreadIds.clear()
+      this.reconnectDelay = 250
+      if (recoveredThreadIds.length)
+        this.notificationListeners.forEach((listener) =>
+          listener({
+            method: 'sele/runtime/restored',
+            params: { threadIds: recoveredThreadIds }
+          })
+        )
+      this.sendNotification('initialized')
+    } catch (error) {
+      if (this.process === child)
+        this.handleProcessEnd(error instanceof Error ? error : new Error(String(error)))
+      throw error
+    }
   }
 
   private sendRequest = <Result>(
@@ -512,6 +578,8 @@ export class CodexAppServerClient {
   }
 
   private handleProcessEnd = (error: Error): void => {
+    if (this.persistent)
+      for (const threadId of this.ownedThreadIds) this.recoveryThreadIds.add(threadId)
     this.desktopTools?.close()
     this.dynamicTools.clear()
     this.ownedThreadIds.clear()
@@ -520,11 +588,29 @@ export class CodexAppServerClient {
     this.process = null
     this.startPromise = null
     this.rejectPending(error)
-    child?.kill()
+    if (child?.detach) child.detach()
+    else child?.kill()
     if (child) {
       console.error('Codex app-server stopped unexpectedly', error)
       this.stoppedListeners.forEach((listener) => listener(error))
+      if (this.persistent) this.scheduleReconnect()
     }
+  }
+
+  private scheduleReconnect = (): void => {
+    if (this.reconnectTimer || this.process) return
+    const lifecycle = this.lifecycle
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      if (lifecycle !== this.lifecycle || this.process) return
+      void this.start().catch((error: unknown) => {
+        if (lifecycle !== this.lifecycle) return
+        console.error('Unable to reconnect to the Codex runtime.', error)
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000)
+        this.scheduleReconnect()
+      })
+    }, this.reconnectDelay)
+    this.reconnectTimer.unref()
   }
 
   private rejectPending = (error: Error): void => {

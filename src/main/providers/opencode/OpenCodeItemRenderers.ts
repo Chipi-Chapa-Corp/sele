@@ -1,5 +1,6 @@
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { isDefaultOpenCodeTitle } from './OpenCodeChatTitle.ts'
+import { getProviderToolPresentation } from '../ToolPresentation.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -135,71 +136,11 @@ const getArgument = (input: unknown, ...keys: string[]): string | null => {
   return null
 }
 
-const shellTools = new Set(['bash', 'shell'])
-const searchTools = new Set(['grep', 'glob', 'websearch', 'codesearch'])
-const editTools = new Set(['edit', 'multiedit', 'patch', 'apply_patch'])
-
-const getToolCommand = (name: string, input: unknown): string | null =>
-  shellTools.has(name) ? getArgument(input, 'command', 'cmd') : null
-
 const getToolPath = (input: unknown): string | null =>
   getArgument(input, 'filePath', 'file_path', 'path', 'file', 'directory')
 
 const getToolCwd = (input: unknown): string | null =>
   getArgument(input, 'cwd', 'workingDirectory', 'working_directory', 'directory', 'workdir')
-
-const classifyTool = (name: string, input: unknown): ProviderToolActivity => {
-  if (name === 'write') return 'create'
-  if (editTools.has(name)) return 'edit'
-  if (searchTools.has(name)) return 'search'
-  if (name === 'read' || name === 'list') return 'read'
-  if (name === 'skill') return 'skill'
-  const command = getToolCommand(name, input)
-  if (command) {
-    if (/^git(?:\s|$)/.test(command)) return 'git'
-    if (/^npm(?:\s|$)/.test(command)) return 'npm'
-    if (/^npx(?:\s|$)/.test(command)) return 'npx'
-  }
-  return shellTools.has(name) ? 'command' : 'other'
-}
-
-const getToolLabel = (name: string, input: unknown, finished: boolean): string => {
-  if (name === 'question') return finished ? 'Asked a question' : 'Asking question'
-  if (name === 'todoread') return 'Read plan'
-  if (name === 'todowrite' || name === 'todo') return 'Updated plan'
-  if (name === 'webfetch') {
-    const url = getArgument(input, 'url')
-    return url ? `Fetched ${url}` : 'Used webfetch'
-  }
-  if (name === 'skill') {
-    const skill = getArgument(input, 'name', 'skill')
-    return skill ? `Used ${skill} skill` : 'Used skill'
-  }
-  const activity = classifyTool(name, input)
-  const path = getToolPath(input)
-  const displayPath = path ? basename(path) || path : null
-  if (activity === 'search') {
-    const query = getArgument(input, 'pattern', 'query')
-    return `Searched${query ? ` for ${query}` : ''}${displayPath ? ` in ${displayPath}` : ''}`
-  }
-  if (displayPath) {
-    if (activity === 'read') return `Read ${displayPath}`
-    if (activity === 'create') return `Created ${displayPath}`
-    if (activity === 'edit') return `Edited ${displayPath}`
-  }
-  const command = getToolCommand(name, input)
-  // Plugin/MCP names and input fields are arbitrary. Preserve the exact tool identity rather
-  // than guessing a file/shell operation from a substring or an argument named "prompt".
-  return command ? `Ran ${command}` : `Used ${name}`
-}
-
-const getToolSummaryLabel = (name: string): string | undefined => {
-  if (name === 'webfetch') return 'Fetched web pages'
-  if (name === 'question') return 'Asked a question'
-  if (name === 'todoread') return 'Read plan'
-  if (name === 'todowrite' || name === 'todo') return 'Updated plan'
-  return undefined
-}
 
 const truncateOutput = (value: string | null): string | null => {
   if (value == null || value.length <= maxToolOutputLength) return value
@@ -285,32 +226,36 @@ const renderTool = (part: Extract<Part, { type: 'tool' }>): ProviderWorkingTool 
   const output =
     state.status === 'completed' ? state.output : state.status === 'error' ? state.error : null
   const metadata = 'metadata' in state ? state.metadata : null
-  const activity = classifyTool(part.tool, input)
+  const presentation = getProviderToolPresentation('opencode', part.tool, input, { finished })
+  const activity = presentation?.activity ?? 'other'
+  const hidePayload = presentation?.hidePayload === true
   return {
     type: 'tool',
     id: part.id,
     toolId: part.callID,
     status: finished ? 'finished' : 'running',
     activity,
-    icon:
-      part.tool === 'question'
-        ? 'question'
-        : part.tool === 'todowrite' || part.tool === 'todo' || part.tool === 'todoread'
-          ? 'plan'
-          : part.tool === 'skill'
-            ? 'skill'
-            : null,
-    label: getToolLabel(part.tool, input, finished),
-    summaryLabel: getToolSummaryLabel(part.tool),
-    command: getToolCommand(part.tool, input),
+    icon: presentation?.icon ?? null,
+    label: presentation?.label ?? `Used ${part.tool}`,
+    summaryLabel: presentation?.summaryLabel,
+    ...(presentation?.compact ? { compact: true } : {}),
+    ...(hidePayload ? { hidePayload: true } : {}),
+    command: presentation?.command ?? null,
     cwd: getToolCwd(input),
-    stdout: truncateOutput(output),
-    diffs: getToolDiffs(activity, input, metadata, output),
+    stdout: hidePayload ? null : truncateOutput(output),
+    diffs: hidePayload ? [] : getToolDiffs(activity, input, metadata, output),
     backgroundSessionId: null,
     finishedBackgroundSessionId: null,
-    rawInput: part.tool === 'question' ? null : boundRawValue(input),
-    rawOutput: boundRawValue(output),
-    images: []
+    rawInput: hidePayload ? null : boundRawValue(input),
+    rawOutput: hidePayload ? null : boundRawValue(output),
+    images:
+      state.status === 'completed'
+        ? getAttachments(state.attachments ?? []).flatMap((attachment) =>
+            attachment.kind === 'image' && (attachment.path || attachment.dataUrl)
+              ? [{ path: attachment.path, dataUrl: attachment.dataUrl, name: attachment.name }]
+              : []
+          )
+        : []
   }
 }
 

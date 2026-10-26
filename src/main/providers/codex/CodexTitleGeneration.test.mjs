@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
-import { isTransientNetworkFailure } from '../ProviderNetworkRetry.ts'
+import { isTransientProviderFailure } from '../ProviderNetworkRetry.ts'
 
 const source = ts.createSourceFile(
   'CodexProviderAdapter.ts',
@@ -43,7 +43,7 @@ const fixture = () => {
   const updates = []
   const adapter = vm.runInNewContext(code, {
     Error,
-    isTransientNetworkFailure,
+    isTransientProviderFailure,
     getThreadName: (thread) => thread.name,
     normalizeGeneratedTitle: (title) => title.trim() || null,
     console: { warn() {} },

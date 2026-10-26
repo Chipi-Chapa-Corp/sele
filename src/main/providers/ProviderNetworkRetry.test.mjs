@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { getChatItems } from './codex/CodexItemRenderers.ts'
+import { renderClaudeChatItems } from './claude/ClaudeItemRenderers.ts'
+import { renderCopilotChatItems } from './copilot/CopilotItemRenderers.ts'
+import { renderOpenCodeChatItems } from './opencode/OpenCodeItemRenderers.ts'
 import {
-  isTransientNetworkFailure,
+  isTransientProviderFailure,
   networkRetryPrompt,
   withProviderNetworkRetries
 } from './ProviderNetworkRetry.ts'
@@ -24,7 +28,7 @@ const options = {
   review: { id: 'review' }
 }
 
-const fixture = (t) => {
+const fixture = (t, providerId = 'codex') => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   let listener
   let revision = 0
@@ -36,7 +40,7 @@ const fixture = (t) => {
     listener(current, { turnCompleted: terminal })
   }
   const native = {
-    id: 'codex',
+    id: providerId,
     onChatUpdated: (fn) => {
       listener = fn
       return () => {
@@ -88,7 +92,7 @@ const fixture = (t) => {
   return { adapter, native, calls, updates, fail, emit }
 }
 
-test('recognizes transient transport failures and rejects permanent failures', () => {
+test('recognizes transient transport and capacity failures and rejects permanent failures', () => {
   for (const message of [
     'fetch failed',
     'Connection error.',
@@ -99,9 +103,18 @@ test('recognizes transient transport failures and rejects permanent failures', (
     'HTTP 503 Service Unavailable',
     'network_error',
     'The connection to the model provider was interrupted.',
-    'Claude disconnected before completing the turn.'
+    'Claude disconnected before completing the turn.',
+    'Selected model is at capacity. Please try a different model.',
+    'serverOverloaded',
+    'Server overloaded. Try again later.',
+    'Overloaded. Try again later.',
+    'overloaded_error',
+    'ModelAtCapacity',
+    'model-at-capacity',
+    'model_capacity_exceeded',
+    'HTTP 529'
   ]) {
-    assert.equal(isTransientNetworkFailure(message), true, message)
+    assert.equal(isTransientProviderFailure(message), true, message)
   }
   for (const message of [
     'HTTP 401: network error',
@@ -112,9 +125,13 @@ test('recognizes transient transport failures and rejects permanent failures', (
     'ENOTFOUND',
     'tool execution failed',
     'command timed out',
-    'context length exceeded'
+    'context length exceeded',
+    'HTTP 429: model is at capacity',
+    'usage limit exceeded: serverOverloaded',
+    'quota exceeded: overloaded_error',
+    'HTTP 403: model is at capacity'
   ]) {
-    assert.equal(isTransientNetworkFailure(message), false, message)
+    assert.equal(isTransientProviderFailure(message), false, message)
   }
 })
 
@@ -143,6 +160,102 @@ test('resumes a confirmed failure after backoff with settings but without duplic
     review: undefined
   })
 })
+
+const capacityFailures = {
+  codex: () =>
+    getChatItems([
+      {
+        id: 'turn',
+        status: 'failed',
+        error: {
+          message: 'Selected model is at capacity. Please try a different model.',
+          codexErrorInfo: 'serverOverloaded'
+        },
+        items: [{ type: 'userMessage', id: 'prompt', content: [{ type: 'text', text: 'task' }] }]
+      }
+    ]),
+  claude: () =>
+    renderClaudeChatItems(
+      [
+        { type: 'user', uuid: 'prompt', message: { role: 'user', content: 'task' } },
+        {
+          type: 'system',
+          uuid: 'error',
+          failed: true,
+          message: { content: 'Overloaded. Try again later.' }
+        }
+      ],
+      { active: false, stopped: false }
+    ),
+  copilot: () =>
+    renderCopilotChatItems(
+      [
+        { type: 'user.message', id: 'prompt', data: { content: 'task' } },
+        { type: 'session.error', id: 'error', data: { message: 'Model is at capacity' } }
+      ],
+      { active: false, stopped: false }
+    ),
+  opencode: () =>
+    renderOpenCodeChatItems(
+      [
+        {
+          info: { id: 'prompt', role: 'user', time: { created: 1000 } },
+          parts: [{ type: 'text', id: 'text', text: 'task' }]
+        },
+        {
+          info: {
+            id: 'error',
+            role: 'assistant',
+            time: { created: 1100, completed: 1200 },
+            error: { name: 'APIError', data: { message: 'overloaded_error', statusCode: 529 } }
+          },
+          parts: []
+        }
+      ],
+      { active: false, stopped: false }
+    )
+}
+
+for (const [providerId, renderFailure] of Object.entries(capacityFailures)) {
+  test(`${providerId} capacity failures retry after the configured delay and respect the retry budget`, async (t) => {
+    const { adapter, calls, emit, updates } = fixture(t, providerId)
+    await adapter.continueChat('chat', 'task', {
+      ...options,
+      networkRetry: { count: 1, delaySeconds: 0.5 }
+    })
+    const items = renderFailure()
+    const failure = items.find((item) => item.type === 'working')
+    assert.equal(failure.status, 'failed')
+    const detail = { id: 'chat', status: providerId === 'codex' ? null : 'error', items }
+    emit(detail, true)
+    emit(detail, true)
+    assert.equal(updates.at(-1).metadata.turnCompleted, false)
+    assert.match(
+      updates.at(-1).detail.items.find((item) => item.type === 'working').failureMessage,
+      /Temporary provider error\. Retrying in 0.5s \(1\/1\)/
+    )
+    t.mock.timers.tick(499)
+    await flush()
+    assert.equal(calls.length, 1)
+    t.mock.timers.tick(1)
+    await flush()
+    assert.equal(calls.length, 2)
+    assert.equal(calls[1].message, networkRetryPrompt)
+    assert.equal(calls[1].settings.model, options.model)
+    emit(
+      {
+        ...detail,
+        items: items.map((item) => (item.type === 'working' ? { ...item, id: 'exhausted' } : item))
+      },
+      true
+    )
+    assert.equal(updates.at(-1).metadata.turnCompleted, true)
+    assert.equal(updates.at(-1).detail.status, detail.status)
+    t.mock.timers.tick(60000)
+    await flush()
+    assert.equal(calls.length, 2)
+  })
+}
 
 test('defaults to ten retries at a fixed two-second interval and deduplicates terminal notifications', async (t) => {
   const { adapter, calls, updates, fail } = fixture(t)

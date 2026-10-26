@@ -510,3 +510,25 @@ test('disposing while query runtime resolves cannot create or resurrect a query'
   assert.equal(state.query, null)
   assert.equal(h.states.size, 0)
 })
+
+test('a scheduled session with no first transcript recovers under its saved identity after restart', async () => {
+  const { instance: h, context } = makeHarness()
+  h.readHistoryPage = async () => {
+    throw vm.runInContext("new Error('Claude session was not found.')", context)
+  }
+  const state = await h.ensureState('scheduled', { deferInitialMessage: true, cwd: '/repo' })
+  assert.equal(state.metadata, null)
+  assert.equal(state.historyPagination, undefined)
+  let queryOptions
+  context.query = ({ options }) => {
+    queryOptions = options
+    return { close() {} }
+  }
+  h.consumeStateQuery = async () => {}
+  await h.startStateQuery(state)
+  assert.equal(queryOptions.sessionId, 'scheduled')
+  assert.equal(queryOptions.resume, undefined)
+  await h.closeStateQuery(state)
+  await assert.rejects(h.ensureState('ordinary'), /session was not found/)
+  h.dispose()
+})

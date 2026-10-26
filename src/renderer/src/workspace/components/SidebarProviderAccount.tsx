@@ -63,7 +63,7 @@ export function SidebarProviderAccount({
   useEffect(() => {
     sourceRevision.current += 1
     if (!available || isOpenCode) return
-    setFailure(null)
+    if (failure !== null) setFailure(null)
     let active = true
     void providerApi
       .getAccounts(providerId, {

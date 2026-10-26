@@ -12,6 +12,337 @@ import { updateIndexedTranscriptRecord } from '../transcriptProjection/recordCha
 const imageSizingMetadata =
   '[Image: original 2380x292, displayed at 2000x245. Multiply coordinates by 1.19 to map to original image.]'
 
+test('Codex app reads, searches, and lists render without raw payloads in every call format', () => {
+  const cases = [
+    ['github.fetch_file', 'Read file from GitHub', 'read'],
+    ['github.fetch_pull_request', 'Read pull request from GitHub', 'read'],
+    ['github.search_code', 'Searched GitHub', 'search'],
+    ['github.list_repositories', 'Listed repositories in GitHub', 'search'],
+    ['gdrive.fetch', 'Read file from Google Drive', 'read'],
+    ['google_drive.search', 'Searched Google Drive', 'search'],
+    ['slack.fetch', 'Read message from Slack', 'read'],
+    ['gmail.get_thread', 'Read thread from Gmail', 'read'],
+    ['notion.fetch_page', 'Read page from Notion', 'read'],
+    ['linear.get_issue', 'Read issue from Linear', 'read'],
+    ['dropbox.fetch_file', 'Read file from Dropbox', 'read'],
+    ['box.search', 'Searched Box', 'search'],
+    ['sharepoint.list_files', 'Listed files in SharePoint', 'search'],
+    ['outlook_email.fetch', 'Read email from Outlook Email', 'read'],
+    ['outlook_calendar.list_events', 'Listed events in Outlook Calendar', 'search'],
+    ['google_calendar.get_event', 'Read event from Google Calendar', 'read'],
+    ['teams.get_message', 'Read message from Teams', 'read']
+  ]
+  for (const [name, label, activity] of cases) {
+    const [app, operation] = name.split('.')
+    const flattened = `mcp__codex_apps__${app}_${operation}`
+    for (const status of ['inProgress', 'completed']) {
+      for (const call of [
+        { type: 'mcpToolCall', server: 'codex_apps', tool: name },
+        { type: 'dynamicToolCall', namespace: 'codex_apps', tool: name },
+        { type: 'mcpToolCall', server: app, tool: operation },
+        { type: 'customToolCall', customToolName: `codex_apps/${name}` },
+        { type: 'customToolCall', customToolName: `mcp__${app}__${operation}` },
+        { type: 'customToolCall', customToolName: flattened },
+        { type: 'commandExecution', command: `await tools.${flattened}({})` }
+      ]) {
+        const turn = {
+          id: 'apps',
+          status,
+          items: [
+            {
+              id: 'call',
+              status,
+              arguments: { path: 'private-input' },
+              customToolInput: '{}',
+              result: { structuredContent: 'private-output' },
+              aggregatedOutput: 'private-output',
+              customToolOutput: 'private-output',
+              ...call
+            }
+          ]
+        }
+        const items = getChatItems([turn])
+        assert.deepEqual(items, getChatItems([turn], null, {}, new CodexTranscriptProjection()))
+        const tool = items.find((item) => item.type === 'working')?.items[0]
+        assert.equal(tool?.label, label, JSON.stringify(call))
+        assert.equal(tool.activity, activity)
+        assert.equal(tool.status, status === 'inProgress' ? 'running' : 'finished')
+        for (const key of ['command', 'stdout', 'rawInput', 'rawOutput'])
+          assert.equal(tool[key], null)
+        assert.equal(JSON.stringify(items).includes('private-'), false)
+        assert.equal(getToolDisplayLabel(label, activity, false), label)
+        if (activity === 'read') {
+          assert.equal(
+            getToolDisplayLabel(label, activity, true),
+            label.replace(/^Read/, 'Reading')
+          )
+        }
+      }
+    }
+  }
+})
+
+test('app file reads group with local reads and unknown app tools remain inspectable', () => {
+  const items = getChatItems([
+    {
+      id: 'apps',
+      status: 'completed',
+      items: [
+        { id: 'local', type: 'commandExecution', command: 'cat themes.ts', status: 'completed' },
+        {
+          id: 'github',
+          type: 'mcpToolCall',
+          server: 'codex_apps',
+          tool: 'github.fetch_file',
+          arguments: { path: 'src/styles/popup/base.css' },
+          status: 'completed'
+        },
+        {
+          id: 'unknown-operation',
+          type: 'mcpToolCall',
+          server: 'codex_apps',
+          tool: 'github.frobnicate_widget',
+          arguments: { inspect: true },
+          result: 'inspect result',
+          status: 'completed'
+        },
+        {
+          id: 'unknown-app',
+          type: 'mcpToolCall',
+          server: 'codex_apps',
+          tool: 'custom.frobnicate_widget',
+          arguments: { path: 'custom' },
+          result: 'custom result',
+          status: 'completed'
+        },
+        {
+          id: 'unknown-server',
+          type: 'mcpToolCall',
+          server: 'custom',
+          tool: 'github.fetch_file',
+          arguments: { path: 'custom' },
+          result: 'custom result',
+          status: 'completed'
+        }
+      ]
+    }
+  ])
+  const group = items.find((item) => item.type === 'working').items[0]
+  assert.equal(group.type, 'toolGroup')
+  assert.equal(group.tools[0].activity, 'read')
+  assert.equal(group.tools[1].activity, 'read')
+  assert.equal(group.tools[1].label, 'Read file from GitHub')
+  for (const tool of group.tools.slice(2)) {
+    assert.equal(tool.activity, 'other')
+    assert.ok(tool.rawInput)
+    assert.ok(tool.rawOutput)
+  }
+})
+
+test('app action families cover GitHub writes and enabled Pets and plugin tools', () => {
+  const cases = [
+    ['github.create_issue', 'Created issue in GitHub', 'Creating issue in GitHub'],
+    ['github.update_issue', 'Updated issue in GitHub', 'Updating issue in GitHub'],
+    ['github.add_issue_comment', 'Added issue comment in GitHub', 'Adding issue comment in GitHub'],
+    [
+      'github.create_pull_request',
+      'Created pull request in GitHub',
+      'Creating pull request in GitHub'
+    ],
+    [
+      'github.merge_pull_request',
+      'Merged pull request in GitHub',
+      'Merging pull request in GitHub'
+    ],
+    ['github.create_or_update_file', 'Saved file in GitHub', 'Saving file in GitHub'],
+    ['github.delete_file', 'Deleted file from GitHub', 'Deleting file from GitHub'],
+    ['github.push_files', 'Pushed files to GitHub', 'Pushing files to GitHub'],
+    ['github.fork_repository', 'Forked repository in GitHub', 'Forking repository in GitHub'],
+    ['github.download_file', 'Downloaded file from GitHub', 'Downloading file from GitHub'],
+    ['slack.send_message', 'Sent message via Slack', 'Sending message via Slack'],
+    ['gmail.reply_email', 'Replied to email in Gmail', 'Replying to email in Gmail'],
+    ['gdrive.upload_file', 'Uploaded file to Google Drive', 'Uploading file to Google Drive'],
+    ['notion.archive_page', 'Archived page in Notion', 'Archiving page in Notion'],
+    ['linear.assign_issue', 'Assigned issue in Linear', 'Assigning issue in Linear'],
+    ['pets.adopt', 'Adopted pet in ChatGPT Pets', 'Adopting pet in ChatGPT Pets'],
+    ['pets.create_pet', 'Created pet in ChatGPT Pets', 'Creating pet in ChatGPT Pets'],
+    ['pets.update_pet', 'Updated pet in ChatGPT Pets', 'Updating pet in ChatGPT Pets'],
+    ['pets.delete_pet', 'Deleted pet from ChatGPT Pets', 'Deleting pet from ChatGPT Pets'],
+    ['pets.select_pet', 'Selected pet in ChatGPT Pets', 'Selecting pet in ChatGPT Pets'],
+    ['pets.share_pet', 'Shared pet in ChatGPT Pets', 'Sharing pet in ChatGPT Pets'],
+    ['pets.unshare_pet', 'Unshared pet in ChatGPT Pets', 'Unsharing pet in ChatGPT Pets'],
+    [
+      'pets.prepare_pet_upload',
+      'Prepared pet upload in ChatGPT Pets',
+      'Preparing pet upload in ChatGPT Pets'
+    ],
+    [
+      'pets.validate_pet_spritesheet',
+      'Validated pet sprite sheet in ChatGPT Pets',
+      'Validating pet sprite sheet in ChatGPT Pets'
+    ],
+    [
+      'plugin_management.suggest_plugins',
+      'Suggested plugins in Plugin Management',
+      'Suggesting plugins in Plugin Management'
+    ],
+    [
+      'plugin_management.uninstall_app',
+      'Uninstalled app from Plugin Management',
+      'Uninstalling app from Plugin Management'
+    ],
+    [
+      'plugin_management.update_app_permissions',
+      'Updated app permissions in Plugin Management',
+      'Updating app permissions in Plugin Management'
+    ]
+  ]
+  for (const [name, label, active] of cases) {
+    const flattened = `mcp__codex_apps__${name.replace('.', '_')}`
+    for (const status of ['inProgress', 'completed']) {
+      for (const call of [
+        { type: 'mcpToolCall', server: 'codex_apps', tool: name },
+        { type: 'dynamicToolCall', namespace: 'codex_apps', tool: name },
+        { type: 'customToolCall', customToolName: flattened },
+        { type: 'commandExecution', command: `await tools.${flattened}({})` }
+      ]) {
+        const items = getChatItems([
+          {
+            id: 'apps',
+            status,
+            items: [
+              {
+                id: 'call',
+                status,
+                arguments: { private: 'private-input' },
+                customToolInput: '{}',
+                result: { private: 'private-output' },
+                customToolOutput: 'private-output',
+                aggregatedOutput: 'private-output',
+                ...call
+              }
+            ]
+          }
+        ])
+        const tool = items.find((item) => item.type === 'working').items[0]
+        assert.equal(tool.label, label)
+        assert.equal(
+          tool.activity,
+          'other',
+          'remote mutations must not be grouped as local file edits'
+        )
+        assert.equal(tool.icon, 'app')
+        assert.equal(tool.compact, true)
+        assert.equal(
+          getToolDisplayLabel(tool.label, tool.activity, status === 'inProgress'),
+          status === 'inProgress' ? active : label
+        )
+        assert.equal(JSON.stringify(items).includes('private-'), false)
+      }
+    }
+  }
+})
+
+test('new apps and new resources get readable labels without reinterpreting unrelated MCP servers', () => {
+  for (const [name, label, activity] of [
+    ['new_app.fetch_widget', 'Read widget from New App', 'read'],
+    ['new_app.list_widgets', 'Listed widgets in New App', 'search'],
+    ['new_app.create_widget', 'Created widget in New App', 'other'],
+    ['github.fetch_pr_patch', 'Read pull request patch from GitHub', 'read'],
+    ['github.get_or_create_branch', 'Opened branch in GitHub', 'other'],
+    ['pets.get_pet_download_link', 'Read pet download link from ChatGPT Pets', 'read'],
+    ['pets.list_pets', 'Listed pets in ChatGPT Pets', 'search'],
+    [
+      'plugin_management.get_app_permissions',
+      'Read app permissions from Plugin Management',
+      'read'
+    ],
+    [
+      'plugin_management.get_plugin_dependencies',
+      'Read plugin dependencies from Plugin Management',
+      'read'
+    ],
+    ['plugin_management.search_plugins', 'Searched Plugin Management', 'search']
+  ]) {
+    for (const call of [
+      { type: 'mcpToolCall', server: 'codex_apps', tool: name },
+      { type: 'customToolCall', customToolName: `mcp__codex_apps__${name.replace('.', '_')}` },
+      { type: 'customToolCall', customToolName: `mcp__codex_apps__${name.replace('.', '__')}` }
+    ]) {
+      const tool = getChatItems([
+        {
+          id: 'turn',
+          status: 'completed',
+          items: [{ id: 'call', arguments: {}, result: 'private-output', ...call }]
+        }
+      ]).find((item) => item.type === 'working').items[0]
+      assert.equal(tool.label, label)
+      assert.equal(tool.activity, activity)
+      assert.equal(tool.rawOutput, null)
+    }
+  }
+})
+
+test('web and developer documentation tools render concrete compact actions', () => {
+  const cases = [
+    [
+      'codex_apps',
+      'search_service.web_run',
+      { search_query: [{ q: 'example' }] },
+      'Searched the web',
+      'browser'
+    ],
+    [
+      'codex_apps',
+      'search_service.web_run',
+      { open: [{ ref_id: 'https://example.com' }] },
+      'Read webpages',
+      'browser'
+    ],
+    [
+      'codex_apps',
+      'search_service.web_run',
+      { weather: [{ location: 'London' }] },
+      'Checked weather',
+      'browser'
+    ],
+    ['web', 'run', { image_query: [{ q: 'example' }] }, 'Searched web images', 'browser'],
+    ['openaiDeveloperDocs', 'search_openai_docs', {}, 'Searched OpenAI docs', 'openai-docs'],
+    ['openaiDeveloperDocs', 'fetch_openai_doc', {}, 'Read OpenAI docs', 'openai-docs'],
+    ['openaiDeveloperDocs', 'list_openai_docs', {}, 'Listed OpenAI docs', 'openai-docs'],
+    ['openaiDeveloperDocs', 'get_openapi_spec', {}, 'Read OpenAI API specification', 'openai-docs'],
+    ['openaiDeveloperDocs', 'list_api_endpoints', {}, 'Listed OpenAI API endpoints', 'openai-docs']
+  ]
+  for (const [server, name, args, label, icon] of cases) {
+    const flattened = `mcp__${server}__${name.replace('.', '_')}`
+    for (const call of [
+      { type: 'mcpToolCall', server, tool: name },
+      { type: 'customToolCall', customToolName: flattened, customToolInput: JSON.stringify(args) },
+      { type: 'commandExecution', command: `await tools.${flattened}(${JSON.stringify(args)})` }
+    ]) {
+      const tool = getChatItems([
+        {
+          id: 'turn',
+          status: 'completed',
+          items: [
+            {
+              id: 'call',
+              arguments: args,
+              result: 'private-output',
+              ...call
+            }
+          ]
+        }
+      ]).find((item) => item.type === 'working').items[0]
+      assert.equal(tool.label, label)
+      assert.equal(tool.icon, icon)
+      assert.equal(tool.compact, true)
+      assert.equal(tool.rawInput, null)
+      assert.equal(tool.rawOutput, null)
+    }
+  }
+})
+
 test('structured async questions render only as a question tool in live and completed history', () => {
   for (const status of ['inProgress', 'completed']) {
     for (const phase of [null, 'commentary', 'final_answer']) {
@@ -280,10 +611,10 @@ test('marks Codex usage and rate-limit failures as resettable rate-limit turns',
 })
 
 test('keeps Codex failure details on the failed step', () => {
-  assert.equal(
-    renderFailedWorkingStep('serverOverloaded')?.failureMessage,
-    'Provider request failed'
-  )
+  const failedStep = renderFailedWorkingStep('serverOverloaded')
+  assert.equal(failedStep?.failureMessage, 'Provider request failed')
+  assert.deepEqual(failedStep.items, [])
+  assert.equal(failedStep.itemCount, 0)
   const step = getChatItems([{ id: 'failed', status: 'failed', items: [] }]).find(
     (item) => item.type === 'working'
   )

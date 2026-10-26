@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'motion/react'
+import { memo, useLayoutEffect, useRef } from 'react'
 import { useReducedMotionPreference } from '../motion/useReducedMotionPreference'
 import './RollingValue.css'
 
@@ -46,17 +46,60 @@ const getCharacters = (value: string): Character[] => {
 }
 
 /** Only changed digits roll upward; punctuation, units, and unchanged places stay still. */
-export function RollingValue({ value }: { value: string }): React.ReactElement {
+export const RollingValue = memo(function RollingValue({
+  value
+}: {
+  value: string
+}): React.ReactElement {
   const reduced = useReducedMotionPreference()
+  const host = useRef<HTMLSpanElement>(null)
+  const characters = getCharacters(value)
+  const previous = useRef(new Map(characters.map(({ key, value }) => [key, value])))
+  useLayoutEffect(() => {
+    const animations: Animation[] = []
+    // One effect per counter, rather than a presence tree and Motion effects
+    // for every digit. Navigation can reconnect this cached label cheaply.
+    if (!reduced) {
+      for (const node of host.current?.querySelectorAll<HTMLElement>('[data-place]') ?? []) {
+        const old = previous.current.get(node.dataset.place!)
+        if (old === undefined || old === node.dataset.value) continue
+        const current = node.querySelector<HTMLElement>('.rolling-value__label--current')
+        const outgoing = node.querySelector<HTMLElement>('.rolling-value__label--previous')
+        const timing = { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+        if (current)
+          animations.push(
+            current.animate(
+              [
+                { transform: 'translateY(100%)', opacity: 0 },
+                { transform: 'translateY(0)', opacity: 1 }
+              ],
+              timing
+            )
+          )
+        if (outgoing)
+          animations.push(
+            outgoing.animate(
+              [
+                { transform: 'translateY(0)', opacity: 1 },
+                { transform: 'translateY(-100%)', opacity: 0 }
+              ],
+              timing
+            )
+          )
+      }
+    }
+    previous.current = new Map(getCharacters(value).map(({ key, value }) => [key, value]))
+    return () => animations.forEach((animation) => animation.cancel())
+  }, [value, reduced])
   return (
-    <span className="rolling-value">
+    <span ref={host} className="rolling-value">
       {reduced ? (
         value
       ) : (
         <>
           <span className="rolling-value__measure">{value}</span>
           <span className="rolling-value__characters" aria-hidden="true">
-            {getCharacters(value).map((character) => (
+            {characters.map((character) => (
               <span
                 key={character.key}
                 className={`rolling-value__character${character.digit ? ' rolling-value__character--digit' : ''}`}
@@ -64,17 +107,19 @@ export function RollingValue({ value }: { value: string }): React.ReactElement {
                 data-value={character.value}
               >
                 {character.digit && (
-                  <AnimatePresence initial={false}>
-                    <motion.span
-                      key={character.value}
-                      className="rolling-value__label"
+                  <>
+                    <span
+                      className="rolling-value__label rolling-value__label--current"
                       data-value={character.value}
-                      initial={{ y: '100%', opacity: 0 }}
-                      animate={{ y: '0%', opacity: 1 }}
-                      exit={{ y: '-100%', opacity: 0 }}
-                      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                     />
-                  </AnimatePresence>
+                    {previous.current.has(character.key) &&
+                      previous.current.get(character.key) !== character.value && (
+                        <span
+                          className="rolling-value__label rolling-value__label--previous"
+                          data-value={previous.current.get(character.key)}
+                        />
+                      )}
+                  </>
                 )}
               </span>
             ))}
@@ -83,4 +128,4 @@ export function RollingValue({ value }: { value: string }): React.ReactElement {
       )}
     </span>
   )
-}
+})

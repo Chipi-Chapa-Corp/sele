@@ -3,6 +3,90 @@ import test from 'node:test'
 import { renderOpenCodeChatItems } from './OpenCodeItemRenderers.ts'
 import { unloadWorkingItemPayload } from '../workingStepLazy.ts'
 
+test('OpenCode app calls use shared actions in live and completed tool states', () => {
+  for (const [name, label] of [
+    ['github_fetch_file', 'Read file from GitHub'],
+    ['github_create_issue', 'Created issue in GitHub'],
+    ['mcp__slack__search_messages', 'Searched Slack'],
+    ['sele_browser_navigate', 'Navigated to webpage'],
+    ['mcp__openaiDeveloperDocs__fetch_openai_doc', 'Read OpenAI docs'],
+    ['read', 'Read code.ts']
+  ]) {
+    for (const status of ['running', 'completed']) {
+      const items = renderOpenCodeChatItems(
+        [
+          {
+            info: { id: 'assistant', role: 'assistant', time: { created: 1000 } },
+            parts: [
+              {
+                type: 'tool',
+                id: 'part',
+                callID: 'call',
+                tool: name,
+                state: {
+                  status,
+                  input: { filePath: '/repo/code.ts', command: 'private-input' },
+                  output: 'private-output',
+                  metadata: {},
+                  title: 'Protocol label',
+                  time: { start: 1000, end: 2000 }
+                }
+              }
+            ]
+          }
+        ],
+        { active: status === 'running', stopped: false }
+      )
+      const tool = items.find((item) => item.type === 'working').items[0]
+      assert.equal(tool.label, label)
+      assert.equal(tool.status, status === 'running' ? 'running' : 'finished')
+      for (const key of ['command', 'stdout', 'rawInput', 'rawOutput'])
+        assert.equal(tool[key], null)
+      assert.doesNotMatch(JSON.stringify(items), /private-input|private-output|Protocol label/)
+    }
+  }
+})
+
+test('OpenCode browser screenshot attachments survive compact presentation', () => {
+  const items = renderOpenCodeChatItems(
+    [
+      {
+        info: { id: 'assistant', role: 'assistant', time: { created: 1000, completed: 2000 } },
+        parts: [
+          {
+            type: 'tool',
+            id: 'part',
+            callID: 'call',
+            tool: 'sele_browser_computer',
+            state: {
+              status: 'completed',
+              input: { action: 'screenshot' },
+              output: 'raw-protocol',
+              metadata: {},
+              title: '',
+              time: { start: 1000, end: 2000 },
+              attachments: [
+                {
+                  type: 'file',
+                  id: 'shot',
+                  mime: 'image/png',
+                  url: 'data:image/png;base64,aW1hZ2U=',
+                  filename: 'page.png'
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    { active: false, stopped: false }
+  )
+  const tool = items.find((item) => item.type === 'working').items[0]
+  assert.equal(tool.label, 'Took browser screenshot')
+  assert.equal(tool.images[0].dataUrl, 'data:image/png;base64,aW1hZ2U=')
+  assert.equal(tool.rawOutput, null)
+})
+
 test('reasoning keeps its own lifecycle and identity through lazy payloads', () => {
   for (const [end, completed, expected] of [
     [undefined, undefined, 'inProgress'],

@@ -2,7 +2,8 @@ import type { ProviderChat, ProviderChatDetail, ProviderId } from '../../shared/
 import { chatPreviewSourceKey } from '../../shared/chatPreview.ts'
 import {
   createConversationView,
-  isConversationOpeningDetail
+  isConversationOpeningDetail,
+  restoreConversationView
 } from '../../shared/conversationView.ts'
 import { buildChatConversationModel } from './chatConversationModel.ts'
 
@@ -40,15 +41,7 @@ export const createConversationViews = () => {
     get: (chat: ProviderChat): ProviderChatDetail | null => {
       const view = views.get(keyOf(chat.providerId, chat.id, chat.container))
       if (!view) return null
-      return {
-        ...view,
-        ...chat,
-        revision: -1,
-        historyPreview: true,
-        conversationView: true,
-        pendingApproval: null,
-        pendingUserInput: null
-      }
+      return restoreConversationView(view, chat)
     },
     clear: (): void => {
       views.clear()
