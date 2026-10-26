@@ -74,3 +74,31 @@ export const saveChatPreset = (
   storage.setItem(storageKey(providerId), JSON.stringify(next))
   return next
 }
+
+export const updateChatPreset = (
+  providerId: ProviderId,
+  original: MessageBoxSelection,
+  selection: MessageBoxSelection,
+  storage: Pick<Storage, 'getItem' | 'setItem'> = preferences
+): MessageBoxSelection[] => {
+  const presets = readChatPresets(providerId, storage)
+  const next = presets
+    .map((preset) => (selectionsEqual(preset, original) ? selection : preset))
+    .filter(
+      (preset, index, all) => !all.slice(0, index).some((other) => selectionsEqual(other, preset))
+    )
+  storage.setItem(storageKey(providerId), JSON.stringify(next))
+  return next
+}
+
+export const deleteChatPreset = (
+  providerId: ProviderId,
+  selection: MessageBoxSelection,
+  storage: Pick<Storage, 'getItem' | 'setItem'> = preferences
+): MessageBoxSelection[] => {
+  const next = readChatPresets(providerId, storage).filter(
+    (preset) => !selectionsEqual(preset, selection)
+  )
+  storage.setItem(storageKey(providerId), JSON.stringify(next))
+  return next
+}

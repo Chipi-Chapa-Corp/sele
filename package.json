@@ -94,7 +94,7 @@
     "test:e2e": "node scripts/e2e/run-e2e.cjs",
     "test:performance-pipeline": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/database/readCache.test.mjs src/main/database/tokenUsageAccumulator.test.mjs src/main/providers/ProviderUpdatePerformance.test.mjs src/main/providers/transcriptProjection/recordChanges.test.mjs src/main/providers/codex/CodexRecordBatch.test.mjs src/renderer/src/markdownPlan.test.mjs",
     "test:performance-accounting": "node scripts/tests/test-performance-accounting.cjs",
-    "test:progressive-markdown": "node scripts/tests/test-progressive-markdown.cjs"
+    "test:progressive-markdown": "node scripts/tests/test-progressive-markdown.cjs && node scripts/tests/test-markdown-dev-worker.cjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.263",

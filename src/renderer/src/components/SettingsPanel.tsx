@@ -456,6 +456,10 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
     section: 'chat',
     key: 'selectionAction'
   } satisfies AppProjectSettingPath
+  const chatDefaultActiveActionPath = {
+    section: 'chat',
+    key: 'defaultActiveAction'
+  } satisfies AppProjectSettingPath
   const chatForceAccessPath = {
     section: 'chat',
     key: 'forceAccess'
@@ -1078,6 +1082,24 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
             Prompt Box
           </h2>
           <div className="settings-dialog__section-cards">
+            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
+              <div className="settings-dialog__field-header">
+                <h3>Default active action</h3>
+                <p>Choose how to send messages while a response is active.</p>
+              </div>
+              {renderProjectSettingAction(chatDefaultActiveActionPath, 'Default active action')}
+              <SegmentedControl<AppChatDropdownSettings['defaultActiveAction']>
+                aria-label="Default active action"
+                className="settings-dialog__appearance-toggle"
+                disabled={isScopedSettingControlDisabled(chatDefaultActiveActionPath)}
+                options={[
+                  { value: 'queue', label: 'Queue' },
+                  { value: 'steer', label: 'Steer' }
+                ]}
+                value={settingsPanelSettings.chat.defaultActiveAction}
+                onChange={(value) => handleChatDropdownSettingChange('defaultActiveAction', value)}
+              />
+            </div>
             {chatPromptBoxSettingFields.map(renderChatBooleanSettingField)}
           </div>
         </section>

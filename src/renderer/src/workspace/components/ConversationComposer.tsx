@@ -479,7 +479,9 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           )}
           <MessageBox
             active={activeSubagentChatView ? false : editingMessage ? false : chatHasActiveTurn}
-            activePrimaryMode="queue"
+            activePrimaryMode={
+              chatHasPendingSteeringMessage ? 'queue' : effectiveAppSettings.chat.defaultActiveAction
+            }
             activeSteeringEnabled={!chatHasPendingSteeringMessage}
             actions={appSettings.actions}
             agentMode={agentMode}

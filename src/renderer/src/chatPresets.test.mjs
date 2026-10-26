@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getChatPresetChanges, readChatPresets, saveChatPreset } from './chatPresets.ts'
+import {
+  deleteChatPreset,
+  getChatPresetChanges,
+  readChatPresets,
+  saveChatPreset,
+  updateChatPreset
+} from './chatPresets.ts'
 
 const selection = {
   model: 'model-a',
@@ -47,6 +53,33 @@ test('invalid stored rows are ignored without losing valid presets', () => {
   assert.deepEqual(readChatPresets('codex', storage), [selection])
   storage.setItem('sele:chat-presets:v1:codex', '{}')
   assert.deepEqual(readChatPresets('codex', storage), [])
+})
+
+test('editing replaces a saved preset, preserves order, and merges duplicate selections', () => {
+  const storage = memoryStorage()
+  const fast = { ...selection, serviceTier: 'priority' }
+  const high = { ...selection, reasoningEffort: 'xhigh' }
+  saveChatPreset('codex', selection, storage)
+  saveChatPreset('codex', fast, storage)
+  saveChatPreset('claude', selection, storage)
+  assert.deepEqual(updateChatPreset('codex', selection, high, storage), [high, fast])
+  assert.deepEqual(readChatPresets('codex', storage), [high, fast])
+  assert.deepEqual(readChatPresets('claude', storage), [selection])
+  assert.deepEqual(updateChatPreset('codex', high, fast, storage), [fast])
+  assert.deepEqual(readChatPresets('codex', storage), [fast])
+})
+
+test('deleting persists removal through the final preset and leaves other providers alone', () => {
+  const storage = memoryStorage()
+  const fast = { ...selection, serviceTier: 'priority' }
+  saveChatPreset('codex', selection, storage)
+  saveChatPreset('codex', fast, storage)
+  saveChatPreset('claude', selection, storage)
+  assert.deepEqual(deleteChatPreset('codex', selection, storage), [fast])
+  assert.deepEqual(readChatPresets('codex', storage), [fast])
+  assert.deepEqual(deleteChatPreset('codex', fast, storage), [])
+  assert.deepEqual(readChatPresets('codex', storage), [])
+  assert.deepEqual(readChatPresets('claude', storage), [selection])
 })
 
 test('applying a preset omits forced settings and unavailable questions controls', () => {

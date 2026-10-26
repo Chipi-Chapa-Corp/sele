@@ -776,7 +776,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           providerId,
           chatId,
           serializedMessage,
-          activeMode ?? 'queue',
+          activeMode ?? effectiveAppSettings.chat.defaultActiveAction,
           turnOptions
         )
         applyChatSummary(providerId, summary, false)

@@ -343,6 +343,52 @@ if (!process.versions.electron) {
         (await rows()).every((row) => row.disabled),
         true
       )
+      assert.equal(
+        await run(
+          `document.querySelectorAll('button[title="Delete preset"]:not(:disabled)').length`
+        ),
+        2,
+        'unavailable presets can still be deleted'
+      )
+      await Promise.all([
+        new Promise((resolve) => win.webContents.once('did-finish-load', resolve)),
+        win.webContents.reload()
+      ])
+      await wait()
+      await run(`window.renderFixture({selectionAction:'close'})`)
+      await open()
+      await run(`document.querySelector('button[title="Edit preset"]').click()`)
+      await wait()
+      assert.ok((await labels()).includes('Save changes'))
+      await click('Low')
+      await click('High')
+      assert.ok((await labels()).includes('Save changes'), 'editing stays open until saved')
+      await click('Save changes')
+      assert.equal((await rows()).length, 2, 'editing replaces the original preset')
+      assert.match((await rows())[0].text, /AlphaHigh/)
+      await Promise.all([
+        new Promise((resolve) => win.webContents.once('did-finish-load', resolve)),
+        win.webContents.reload()
+      ])
+      await wait()
+      await open()
+      assert.match((await rows())[0].text, /AlphaHigh/, 'edits survive remount')
+      const beforeDelete = await run('JSON.stringify(window.selection)')
+      await run(`document.querySelector('button[title="Delete preset"]').click()`)
+      await wait()
+      assert.equal((await rows()).length, 1)
+      assert.equal(await run('JSON.stringify(window.selection)'), beforeDelete)
+      assert.equal(await run('document.activeElement.disabled'), false)
+      await run(`document.querySelector('button[title="Delete preset"]').click()`)
+      await wait()
+      assert.equal((await rows()).length, 0)
+      assert.ok(
+        (await labels()).includes('Save preset'),
+        'deleting the final preset opens configuration'
+      )
+      await open()
+      await open()
+      assert.equal((await rows()).length, 0, 'deletions survive reopening')
       assert.deepEqual(errors, [])
       console.log('Chat preset UI checks passed')
     } catch (error) {

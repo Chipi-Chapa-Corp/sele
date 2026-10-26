@@ -9,18 +9,19 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence } from 'motion/react'
-import { Check, ChevronDown, ChevronRight, Save, Settings2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Pencil, Save, Settings2, Trash2 } from 'lucide-react'
 import { MenuPageTransition } from '../motion/MenuPageTransition'
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { toCssRem } from '../cssUnits'
 import type { DropdownOption } from './Dropdown'
 import { ChatConfigSectionHeader } from './ChatConfigSectionHeader'
 import { Input } from './Input'
+import { Button } from './Button'
 import { MenuSurface } from './MenuSurface'
 import type { ProviderId } from '../../../shared/provider'
 import type { MessageBoxSelection } from '../messageBoxPreferences'
 import { selectionsEqual } from '../chatModelPreferences'
-import { readChatPresets, saveChatPreset } from '../chatPresets'
+import { deleteChatPreset, readChatPresets, saveChatPreset, updateChatPreset } from '../chatPresets'
 import type { AppChatDropdownSelectionAction } from '../settings'
 
 export type SelectorIconItem = {
@@ -136,6 +137,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   const [modelSearchQuery, setModelSearchQuery] = useState('')
   const [configuring, setConfiguring] = useState(false)
   const [presets, setPresets] = useState<MessageBoxSelection[]>([])
+  const [editingPreset, setEditingPreset] = useState<MessageBoxSelection | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const labelRef = useRef<HTMLSpanElement>(null)
   useFeedbackMotion(labelRef, `${modelLabel}:${reasoningLabel}`)
@@ -167,6 +169,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
     setActiveSectionId(null)
     setModelSearchQuery('')
     setConfiguring(false)
+    setEditingPreset(null)
     setSaveError(null)
   }, [])
 
@@ -268,7 +271,11 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       event.preventDefault()
       setActiveSectionId(null)
       setModelSearchQuery('')
-      if (!activeSection) setConfiguring(false)
+      if (!activeSection) {
+        setConfiguring(false)
+        setEditingPreset(null)
+        setSaveError(null)
+      }
       focusFirstMenuButton()
     }
   }
@@ -307,10 +314,18 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           <button
             className="message-box__chat-config-section-button"
             type="button"
-            disabled={getPresetDetails(selection).disabled || currentPresetSaved}
+            disabled={
+              getPresetDetails(selection).disabled ||
+              (editingPreset ? selectionsEqual(editingPreset, selection) : currentPresetSaved)
+            }
             onClick={() => {
               try {
-                setPresets(saveChatPreset(providerId, selection))
+                setPresets(
+                  editingPreset
+                    ? updateChatPreset(providerId, editingPreset, selection)
+                    : saveChatPreset(providerId, selection)
+                )
+                setEditingPreset(null)
                 setSaveError(null)
                 setConfiguring(false)
                 focusFirstMenuButton()
@@ -322,7 +337,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           >
             <Save className="message-box__chat-config-section-icon" aria-hidden="true" />
             <span className="message-box__chat-config-section-label">
-              {currentPresetSaved ? 'Preset saved' : 'Save preset'}
+              {editingPreset ? 'Save changes' : currentPresetSaved ? 'Preset saved' : 'Save preset'}
             </span>
           </button>
           {saveError && (
@@ -334,6 +349,8 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
             <ChatConfigSectionHeader
               onBack={() => {
                 setConfiguring(false)
+                setEditingPreset(null)
+                setSaveError(null)
                 focusFirstMenuButton()
               }}
             />
@@ -349,60 +366,100 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
         {presets.map((preset, index) => {
           const details = getPresetDetails(preset)
           return (
-            <button
-              className={[
-                'message-box__chat-config-option',
-                'message-box__chat-config-preset',
-                details.selected ? 'message-box__chat-config-option--selected' : null
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              type="button"
-              key={index}
-              disabled={details.disabled}
-              aria-pressed={details.selected}
-              title={details.title}
-              onClick={() => {
-                onPresetChange(preset)
-                closeMenu()
-                buttonRef.current?.focus({ preventScroll: true })
-              }}
-            >
-              <span className="message-box__chat-config-value">
-                {details.statusIcons.map((item) => (
-                  <span
-                    className="message-box__chat-config-status-icon"
-                    key={item.key}
-                    title={item.title}
-                    aria-label={item.title}
-                  >
-                    {item.icon}
+            <div className="message-box__chat-config-preset-row" key={index}>
+              <button
+                className={[
+                  'message-box__chat-config-option',
+                  'message-box__chat-config-preset',
+                  details.selected ? 'message-box__chat-config-option--selected' : null
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                type="button"
+                disabled={details.disabled}
+                aria-pressed={details.selected}
+                title={details.title}
+                onClick={() => {
+                  onPresetChange(preset)
+                  closeMenu()
+                  buttonRef.current?.focus({ preventScroll: true })
+                }}
+              >
+                <span className="message-box__chat-config-value">
+                  {details.statusIcons.map((item) => (
+                    <span
+                      className="message-box__chat-config-status-icon"
+                      key={item.key}
+                      title={item.title}
+                      aria-label={item.title}
+                    >
+                      {item.icon}
+                    </span>
+                  ))}
+                  <span className="message-box__chat-config-provider-icon" aria-hidden="true">
+                    {providerIcon}
                   </span>
-                ))}
-                <span className="message-box__chat-config-provider-icon" aria-hidden="true">
-                  {providerIcon}
+                  <span className="message-box__chat-config-label">
+                    {[details.modelLabel, details.reasoningLabel, details.speedLabel]
+                      .filter(Boolean)
+                      .map((label, partIndex) => (
+                        <span className="message-box__chat-config-preset-part" key={partIndex}>
+                          {partIndex > 0 && (
+                            <span className="message-box__chat-config-dot" aria-hidden="true" />
+                          )}
+                          <span className="message-box__chat-config-label-part">{label}</span>
+                        </span>
+                      ))}
+                  </span>
                 </span>
-                <span className="message-box__chat-config-label">
-                  {[details.modelLabel, details.reasoningLabel, details.speedLabel]
-                    .filter(Boolean)
-                    .map((label, partIndex) => (
-                      <span className="message-box__chat-config-preset-part" key={partIndex}>
-                        {partIndex > 0 && (
-                          <span className="message-box__chat-config-dot" aria-hidden="true" />
-                        )}
-                        <span className="message-box__chat-config-label-part">{label}</span>
-                      </span>
-                    ))}
-                </span>
+                {details.selected && (
+                  <Check className="message-box__chat-config-check" aria-hidden="true" />
+                )}
+              </button>
+              <span className="message-box__chat-config-preset-actions">
+                <Button
+                  theme="transparent"
+                  size="small"
+                  aria-label={`Edit preset: ${details.title}`}
+                  title="Edit preset"
+                  disabled={details.disabled}
+                  icon={<Pencil aria-hidden="true" />}
+                  callback={() => {
+                    onPresetChange(preset)
+                    setEditingPreset(preset)
+                    setSaveError(null)
+                    setConfiguring(true)
+                    focusFirstMenuButton()
+                  }}
+                />
+                <Button
+                  theme="transparent"
+                  size="small"
+                  aria-label={`Delete preset: ${details.title}`}
+                  title="Delete preset"
+                  icon={<Trash2 aria-hidden="true" />}
+                  callback={() => {
+                    try {
+                      setPresets(deleteChatPreset(providerId, preset))
+                      setSaveError(null)
+                      focusFirstMenuButton()
+                    } catch (error) {
+                      console.error('Unable to delete chat preset.', error)
+                      setSaveError('Unable to delete preset. Try again.')
+                    }
+                  }}
+                />
               </span>
-              {details.selected && (
-                <Check className="message-box__chat-config-check" aria-hidden="true" />
-              )}
-            </button>
+            </div>
           )
         })}
       </div>
       <div className="message-box__chat-config-footer">
+        {saveError && (
+          <div className="message-box__chat-config-error" role="alert">
+            {saveError}
+          </div>
+        )}
         <div className="message-box__chat-config-separator" role="presentation" />
         <button
           className="message-box__chat-config-section-button"
@@ -453,10 +510,10 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
                   title={option.description}
                   onClick={() => {
                     group.onChange(option.value)
-                    if (selectionAction === 'close') {
+                    if (selectionAction === 'close' && !editingPreset) {
                       closeMenu()
                       buttonRef.current?.focus({ preventScroll: true })
-                    } else if (selectionAction === 'back') {
+                    } else if (selectionAction === 'back' || editingPreset) {
                       setActiveSectionId(null)
                       setModelSearchQuery('')
                       setConfiguring(true)

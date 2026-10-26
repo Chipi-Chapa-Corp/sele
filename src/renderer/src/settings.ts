@@ -6,6 +6,7 @@ import {
   normalizeNetworkRetryDelaySeconds
 } from '../../shared/networkRetry'
 import type {
+  ProviderActiveSendMode,
   ProviderApprovalMode,
   ProviderModelId,
   ProviderReasoningEffort,
@@ -121,6 +122,7 @@ export const isAppChatDropdownSelectionAction = (
   value === 'stay' || value === 'back' || value === 'close'
 
 export type AppChatDropdownSettings = {
+  defaultActiveAction: Extract<ProviderActiveSendMode, 'queue' | 'steer'>
   selectionAction: AppChatDropdownSelectionAction
   forceAccess: typeof appChatManualDropdownValue | ProviderSandboxMode
   forceReview: typeof appChatManualDropdownValue | ProviderApprovalMode
@@ -261,6 +263,7 @@ export const defaultAppChatProgressSettings: AppChatProgressSettings = {
 }
 
 export const defaultAppChatDropdownSettings: AppChatDropdownSettings = {
+  defaultActiveAction: 'queue',
   selectionAction: 'back',
   forceAccess: appChatManualDropdownValue,
   forceReview: appChatManualDropdownValue,
@@ -646,6 +649,9 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
   }
   if (isAppChatDropdownSelectionAction(chat.selectionAction)) {
     overrides.selectionAction = chat.selectionAction
+  }
+  if (chat.defaultActiveAction === 'queue' || chat.defaultActiveAction === 'steer') {
+    overrides.defaultActiveAction = chat.defaultActiveAction
   }
 
   const booleanKeys = [
@@ -1149,6 +1155,8 @@ export const readStoredAppSettings = (): AppSettings => {
         displayUsage:
           getStoredChatUsageDisplay(chat.displayUsage) ?? defaultAppSettings.chat.displayUsage,
         presets: getStoredChatBoolean(chat, 'presets'),
+        defaultActiveAction:
+          chat.defaultActiveAction === 'steer' ? 'steer' : defaultAppSettings.chat.defaultActiveAction,
         selectionAction: isAppChatDropdownSelectionAction(chat.selectionAction)
           ? chat.selectionAction
           : defaultAppChatDropdownSettings.selectionAction,
@@ -1480,6 +1488,9 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
     if (settings.chat.selectionAction !== defaultAppSettings.chat.selectionAction) {
       storedChat.selectionAction = settings.chat.selectionAction
+    }
+    if (settings.chat.defaultActiveAction !== defaultAppSettings.chat.defaultActiveAction) {
+      storedChat.defaultActiveAction = settings.chat.defaultActiveAction
     }
     if (settings.chat.hidePlans !== defaultAppSettings.chat.hidePlans) {
       storedChat.hidePlans = settings.chat.hidePlans

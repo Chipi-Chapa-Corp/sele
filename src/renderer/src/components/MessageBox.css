@@ -89,6 +89,36 @@
   overflow: hidden;
 }
 
+.message-box__chat-config-preset-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  border-radius: 0.35rem;
+}
+
+.message-box__chat-config-preset-row:hover,
+.message-box__chat-config-preset-row:focus-within {
+  background: var(--menu-option-active-bg);
+}
+
+.message-box__chat-config-preset-row .message-box__chat-config-preset {
+  flex: 1;
+}
+
+.message-box__chat-config-preset-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.1rem;
+  padding-right: 0.4rem;
+}
+
+.message-box__chat-config-preset-actions .ui-button--small.ui-button--icon-only {
+  width: 1.3rem;
+  height: 1.3rem;
+  min-height: 1.3rem;
+}
+
 .message-box__chat-config-preset-part {
   display: inline-flex;
   min-width: 0;

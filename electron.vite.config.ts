@@ -20,7 +20,13 @@ const config = defineConfig({
         )
       }
     },
-    plugins: [react()]
+    plugins: [
+      react({
+        // These TSX modules also run in the Markdown worker. React Refresh's
+        // development runtime requires window and crashes before the worker starts.
+        exclude: [/node_modules/, /\/chatMarkdownRenderer\.tsx$/, /\/components\/SymbolIcons\.tsx$/]
+      })
+    ]
   }
 })
 
