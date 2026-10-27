@@ -4,7 +4,12 @@ import { setImmediate } from 'node:timers/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
-import { isCodexTurnTerminal, projectCodexTurnTail } from './CodexLiveMerge.ts'
+import {
+  isCodexTurnTerminal,
+  mergeCodexTurnStatus,
+  projectCodexTurnTail
+} from './CodexLiveMerge.ts'
+import { getChatItems } from './CodexItemRenderers.ts'
 import {
   isLegacyCodexHistory,
   isUnsupportedTurnPaginationError,
@@ -35,7 +40,8 @@ const code = ts.transpile(
         'loadThreadWithoutPagination',
         'loadChatCursorWindowInContext',
         'usesLegacyHistory',
-        'loadLegacyChatWindowInContext'
+        'loadLegacyChatWindowInContext',
+        'reconcileAuthoritativeTurnLifecycles'
       ].includes(node.name?.getText(source))
     )
     .map((node) => node.getText(source))
@@ -72,6 +78,8 @@ const fixture = () => {
   })
   Object.assign(adapter, {
     threads: new Map(),
+    activeTurnIds: new Map(),
+    manuallyStoppedTurnIds: new Map(),
     threadRevisions: new Map(),
     runWithContainer: (_container, run) => run(),
     getThreadContainer: () => null,
@@ -98,9 +106,12 @@ const fixture = () => {
     attachSubmittedUserMessages: async (_id, items) => items,
     filterRolledBackTurns: (_id, items) => items,
     getRenderableTurns: (thread) => thread.turns,
-    reconcileAuthoritativeTurnLifecycles: () => {},
-    getLiveOverlayTurnIds: () => new Set(),
-    mergeTurn: (_threadId, previous, next) => ({ ...previous, ...next }),
+    getLiveOverlayTurnIds: (id) => new Set([adapter.activeTurnIds.get(id)].filter(Boolean)),
+    mergeTurn: (_threadId, previous, next) => ({
+      ...previous,
+      ...next,
+      status: mergeCodexTurnStatus(previous, next)
+    }),
     hydrateFullThread: async (thread) => thread,
     resolveThreadName: async () => 'Saved chat',
     resolveThreadCwd: async () => '/repo',
@@ -386,5 +397,71 @@ test('an update during a latest read cannot discard a recovered completion or ti
     assert.equal(adapter.threads.get('chat').name, 'Saved chat')
   } finally {
     finishMetadata(false)
+  }
+})
+
+for (const updateDuringRead of [false, true]) {
+  test(`history cannot stop a live answer (concurrent update: ${updateDuringRead})`, async () => {
+    const { adapter, finishMetadata } = fixture()
+    const running = {
+      id: 'turn',
+      status: 'inProgress',
+      items: [
+        { id: 'user', type: 'userMessage', content: [{ type: 'text', text: 'Hello' }] },
+        { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: 'Still streaming' }
+      ]
+    }
+    adapter.threads.set('chat', {
+      id: 'chat',
+      historyMode: 'paginated',
+      preview: '',
+      turns: [running]
+    })
+    adapter.activeTurnIds.set('chat', running.id)
+    let finishPage
+    adapter.client.request = () =>
+      new Promise((resolve) => {
+        finishPage = resolve
+      })
+    const opening = adapter.getChat('chat')
+    await setImmediate()
+    if (updateDuringRead) adapter.threadRevisions.set('chat', 1)
+    finishPage({
+      data: [{ ...running, status: 'interrupted', completedAt: 123 }],
+      nextCursor: null,
+      backwardsCursor: null
+    })
+    try {
+      const detail = await opening
+      assert.equal(detail.items[0].status, 'inProgress')
+      assert.equal(detail.items[0].completedAt, undefined)
+      assert.equal(adapter.activeTurnIds.get('chat'), running.id)
+      assert.equal(
+        getChatItems(detail.items).some((item) => item.status === 'stopped'),
+        false
+      )
+    } finally {
+      finishMetadata(false)
+    }
+  })
+}
+
+test('history still recovers terminal outcomes and respects live interruption events', () => {
+  for (const [liveStatus, tracked, savedStatus] of [
+    ['inProgress', false, 'interrupted'],
+    ['interrupted', true, 'interrupted'],
+    ['inProgress', true, 'completed'],
+    ['inProgress', true, 'failed']
+  ]) {
+    const { adapter } = fixture()
+    const live = { id: 'turn', status: liveStatus, items: [] }
+    const saved = { ...live, status: savedStatus }
+    adapter.threads.set('chat', { id: 'chat', turns: [live] })
+    if (tracked) adapter.activeTurnIds.set('chat', live.id)
+    adapter.manuallyStoppedTurnIds.set('chat', new Set([live.id]))
+    const turns = adapter.reconcileAuthoritativeTurnLifecycles('chat', [saved])
+    assert.equal(turns[0], saved)
+    assert.equal(adapter.activeTurnIds.has('chat'), false)
+    assert.equal(adapter.manuallyStoppedTurnIds.has('chat'), false)
   }
 })

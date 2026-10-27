@@ -2629,7 +2629,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
         if ((this.threadRevisions.get(chatId) ?? 0) !== loadStartedAtRevision) {
           thread = currentThread
         } else {
-          this.reconcileAuthoritativeTurnLifecycles(chatId, thread.turns)
+          thread = {
+            ...thread,
+            turns: this.reconcileAuthoritativeTurnLifecycles(chatId, thread.turns)
+          }
           thread = {
             ...thread,
             turns: projectCodexTurnTail(
@@ -2762,6 +2765,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (cacheLatest && window.direction === 'older' && window.cursor == null) {
       const currentThread = this.threads.get(chatId)
       if (currentThread) {
+        thread = {
+          ...thread,
+          turns: this.reconcileAuthoritativeTurnLifecycles(chatId, thread.turns)
+        }
         const cacheChangedDuringLoad =
           (this.threadRevisions.get(chatId) ?? 0) !== loadStartedAtRevision
         if (cacheChangedDuringLoad) {
@@ -2771,7 +2778,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
           const terminalTurns = new Map(
             thread.turns.filter(isCodexTurnTerminal).map((turn) => [turn.id, turn])
           )
-          this.reconcileAuthoritativeTurnLifecycles(chatId, thread.turns)
           thread = {
             ...currentThread,
             name: getThreadName(currentThread) ?? name,
@@ -2784,7 +2790,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
             turnPaginationBoundaryStale: true
           }
         } else {
-          this.reconcileAuthoritativeTurnLifecycles(chatId, thread.turns)
           const overlayTurnIds = this.getLiveOverlayTurnIds(chatId)
           const projectedTurns = projectCodexTurnTail(
             thread.turns,
@@ -5031,16 +5036,27 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private reconcileAuthoritativeTurnLifecycles = (
     threadId: string,
     turns: readonly CodexTurn[]
-  ): void => {
-    const authoritativeTurnsById = new Map(turns.map((turn) => [turn.id, turn] as const))
+  ): CodexTurn[] => {
     const activeTurnId = this.activeTurnIds.get(threadId)
+    const liveTurn = activeTurnId
+      ? this.threads.get(threadId)?.turns.find((turn) => turn.id === activeTurnId)
+      : undefined
+    // Persisted history can report an unfinished turn as interrupted while its live stream
+    // is still running. Keep that stream authoritative until its terminal notification;
+    // otherwise a history read both shows Stopped and releases the active queue guard.
+    const reconciledTurns = turns.map((turn) =>
+      turn.id === activeTurnId && turn.status === 'interrupted' && liveTurn?.status === 'inProgress'
+        ? liveTurn
+        : turn
+    )
+    const authoritativeTurnsById = new Map(reconciledTurns.map((turn) => [turn.id, turn] as const))
     if (activeTurnId) {
       const activeTurn = authoritativeTurnsById.get(activeTurnId)
       if (activeTurn && isCodexTurnTerminal(activeTurn)) this.activeTurnIds.delete(threadId)
     }
 
     const stoppedTurnIds = this.manuallyStoppedTurnIds.get(threadId)
-    if (!stoppedTurnIds) return
+    if (!stoppedTurnIds) return reconciledTurns
     for (const turnId of stoppedTurnIds) {
       const authoritativeTurn = authoritativeTurnsById.get(turnId)
       if (authoritativeTurn && isCodexTurnTerminal(authoritativeTurn)) {
@@ -5048,6 +5064,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       }
     }
     if (stoppedTurnIds.size === 0) this.manuallyStoppedTurnIds.delete(threadId)
+    return reconciledTurns
   }
 
   private refreshLatestThread = (threadId: string): void => {
