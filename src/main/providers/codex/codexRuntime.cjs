@@ -21,11 +21,9 @@ function startRuntime(config) {
   const completedTurns = new Set()
   const send = (socket, message) => {
     if (socket && !socket.destroyed) {
-      if (socket.writableLength > 8 * 1024 * 1024) {
-        socket.destroy()
-        return
-      }
-      socket.write(JSON.stringify(message) + '\n')
+      // A single transcript can exceed the socket buffer. Keep the connection
+      // and slow the provider instead of discarding an in-flight JSON record.
+      if (!socket.write(JSON.stringify(message) + '\n')) child?.stdout.pause()
     }
   }
   const write = (message) => {
@@ -51,6 +49,8 @@ function startRuntime(config) {
   const disconnect = (socket) => {
     if (client !== socket) return
     client = null
+    // Detached turns must keep running even if the frontend stopped reading.
+    child?.stdout.resume()
     // Never repeat a client-side action whose result was lost during a crash.
     // Other server requests are approvals/questions, and remain pending for reattachment.
     for (const [id, request] of approvals) {
@@ -92,6 +92,9 @@ function startRuntime(config) {
     let ready = false
     const authTimeout = setTimeout(() => socket.destroy(), 5000)
     socket.on('error', () => socket.destroy())
+    socket.on('drain', () => {
+      if (client === socket) child?.stdout.resume()
+    })
     socket.on('close', () => {
       clearTimeout(authTimeout)
       disconnect(socket)

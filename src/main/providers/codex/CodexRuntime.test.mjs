@@ -60,6 +60,7 @@ createInterface({input:process.stdin}).on('line',line=>{
   return reply({});
  }
  if(m.method==='fixture/delayed')return setTimeout(()=>reply({marker:p.marker}),200);
+ if(m.method==='fixture/large')return reply({marker:p.marker,text:'ж'.repeat(p.size)});
  if(m.method==='fixture/complete') {active=false;
   send({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed'}}});return reply({})}
  if(m.method==='fixture/state')return reply({pid:process.pid,starts,active,lastResult});
@@ -272,6 +273,70 @@ test('a second live client cannot replace the worker or take over its stream', a
   const original = await first.initialize()
   await assert.rejects(connectRuntime(profile), /rejected the connection/)
   assert.equal((await first.request('fixture/state')).pid, original.pid)
+})
+
+test('large concurrent replies survive a slow frontend without truncation or reconnection', async (t) => {
+  const profile = join(directory, 'backpressure')
+  const transport = await connectRuntime(profile)
+  t.after(async () => {
+    if (transport.exitCode !== null) (await connectRuntime(profile)).kill()
+  })
+  const client = rpc(transport)
+  const original = await client.initialize()
+  const errors = []
+  transport.on('error', (error) => errors.push(error))
+  // Stop reading the actual TCP connection while several transcript-sized replies arrive.
+  transport.stdin.pause()
+  const size = 6 * 1024 * 1024
+  const replies = Promise.all(
+    ['first', 'second', 'third'].map((marker) => client.request('fixture/large', { marker, size }))
+  )
+  const resume = setTimeout(() => transport.stdin.resume(), 400)
+  try {
+    const results = await replies
+    assert.deepEqual(
+      results.map(({ marker }) => marker),
+      ['first', 'second', 'third']
+    )
+    for (const { text } of results) assert.equal(text, 'ж'.repeat(size))
+    assert.deepEqual(errors, [])
+    assert.equal((await client.request('fixture/state')).pid, original.pid)
+  } finally {
+    clearTimeout(resume)
+    transport.stdin.resume()
+  }
+})
+
+test('a frontend crash during backpressure does not block detached turn completion', async () => {
+  const profile = join(directory, 'backpressure-crash')
+  const finishFile = join(directory, 'backpressure-finished')
+  const transport = await connectRuntime(profile)
+  const first = rpc(transport)
+  const original = await first.initialize()
+  await first.request('thread/start')
+  await first.request('turn/start', { threadId: 'thread', finishFile })
+  transport.stdin.pause()
+  const abandoned = assert.rejects(
+    first.request('fixture/large', { marker: 'abandoned', size: 6 * 1024 * 1024 }),
+    /Connection closed/
+  )
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  const closed = once(transport, 'close')
+  transport.stdin.destroy()
+  await closed
+  await abandoned
+  await waitFor(async () => {
+    try {
+      return (await readFile(finishFile, 'utf8')) === 'completed'
+    } catch {
+      return false
+    }
+  })
+  const second = rpc(await connectRuntime(profile))
+  assert.equal((await second.initialize()).pid, original.pid)
+  const state = await second.request('fixture/state')
+  assert.equal(state.active, false)
+  assert.equal(state.starts, 1)
 })
 
 test('idle cleanup waits for detached work to finish and allows a later fresh launch', async (t) => {

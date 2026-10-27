@@ -34,3 +34,13 @@ It kills a frontend during an accepted turn and verifies completion by the same
 provider PID with one submission, reconnects pending approvals, checks initialization
 and RPC-ID races, prevents client-action replay, and checks exclusive attachment
 and idle cleanup. No real provider, account data, or application window is used.
+
+Large replies apply backpressure to the provider's stdout until the frontend
+socket drains. The runtime must not destroy the socket just because its write
+buffer exceeds 8 MiB: one transcript reply can exceed that size, and concurrent
+recovery reads previously cut JSON records in half. That caused parsing errors,
+connection resets, and repeated recovery reads across the account's chats.
+Disconnecting the frontend resumes provider output so detached turns can finish.
+Transport regressions cover three concurrent 12 MiB replies to a paused frontend
+and a frontend crash while output is blocked, preserving the provider PID and
+submitting the detached turn only once.
