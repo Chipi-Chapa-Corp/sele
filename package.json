@@ -77,6 +77,7 @@
     "test:file-editor": "node scripts/tests/test-file-editor.cjs",
     "test:editor-comments": "node scripts/tests/test-editor-comments.cjs",
     "test:input-focus": "node scripts/tests/test-input-focus.cjs",
+    "test:composer-input": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/composerMention.test.mjs && node scripts/tests/test-composer-input.cjs",
     "test:switch-settled": "node scripts/tests/test-switch-settled-disabled.cjs",
     "test:media-cache": "node scripts/tests/test-video-preview.cjs --cache-only",
     "test:video-preview": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatMedia.test.mjs && node scripts/tests/test-video-preview.cjs",

@@ -24,12 +24,12 @@ const quoteHostSelector = '.chat-detail__message-quote-host'
 const getNodeElement = (node: Node): Element | null =>
   node instanceof Element ? node : node.parentElement
 
+const isEditingTarget = (node: Node): boolean =>
+  Boolean(getNodeElement(node)?.closest('input, textarea, [contenteditable="true"]'))
+
 const getSelectedQuote = (container: HTMLElement): SelectedQuote | null => {
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null
-
-  const content = selection.toString().trim()
-  if (!content) return null
 
   const range = selection.getRangeAt(0)
   const startMessage = getNodeElement(range.startContainer)?.closest<HTMLElement>(
@@ -39,6 +39,9 @@ const getSelectedQuote = (container: HTMLElement): SelectedQuote | null => {
     '.chat-detail__message--assistant'
   )
   if (!startMessage || startMessage !== endMessage || !container.contains(startMessage)) return null
+
+  const content = selection.toString().trim()
+  if (!content) return null
 
   const host = startMessage.querySelector<HTMLElement>(`:scope > ${quoteHostSelector}`)
   if (!host?.isConnected) return null
@@ -127,6 +130,7 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
 
       const container = containerRef.current
       dismiss()
+      if (isEditingTarget(target)) return
       selectingWithPointer =
         event.isPrimary && event.button === 0 && Boolean(container?.contains(target))
       if (event.isPrimary && event.button === 0) window.getSelection()?.removeAllRanges()
@@ -143,6 +147,12 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
     }
 
     const handleSelectionChange = (): void => {
+      // Chromium also emits document selection changes for text controls. Their
+      // private editing selection must not be serialized or measured as a quote.
+      if (document.activeElement?.matches('input, textarea, [contenteditable="true"]')) {
+        hideQuote()
+        return
+      }
       const selection = window.getSelection()
       if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
         hideQuote()
@@ -155,6 +165,12 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       const target = event.target
       if (!(target instanceof Node)) return
       if (rootRef.current?.contains(target)) return
+      // Removing ranges after Chromium focuses an input also removes its editing
+      // caret. Dismiss the action without interfering with native text selection.
+      if (isEditingTarget(target)) {
+        dismiss()
+        return
+      }
       clearSelectionAndDismiss()
     }
 

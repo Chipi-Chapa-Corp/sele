@@ -1,5 +1,6 @@
 import { UsageIndicator, type ChatContextUsage } from './UsageIndicator'
 import { captureMessageFlight } from '../motion/messageFlight'
+import { composerMentionsEqual, getComposerMentionAtCaret } from '../composerMention'
 import { ComposerPlaceholder } from './ComposerPlaceholder'
 import {
   type CSSProperties,
@@ -332,29 +333,11 @@ const getMentionMenuStyle = (anchorRect: DOMRect): MentionMenuStyle => {
 }
 
 const getFileMentionAtCaret = (message: string, caret: number): FileMention | null => {
-  const prefix = message.slice(0, caret)
-  const match = /(^|[\s([{])@([^@\s]*)$/.exec(prefix)
-  if (!match) return null
-
-  const query = match[2] ?? ''
-  return {
-    start: caret - query.length - 1,
-    end: caret,
-    query
-  }
+  return getComposerMentionAtCaret(message, caret, '@')
 }
 
 const getSkillMentionAtCaret = (message: string, caret: number): SkillMention | null => {
-  const prefix = message.slice(0, caret)
-  const match = /(^|[\s([{])\$([^$\s]*)$/.exec(prefix)
-  if (!match) return null
-
-  const query = match[2] ?? ''
-  return {
-    start: caret - query.length - 1,
-    end: caret,
-    query
-  }
+  return getComposerMentionAtCaret(message, caret, '$')
 }
 
 const getMentionFileName = (path: string): string => path.split('/').pop() || path
@@ -1690,10 +1673,16 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [autoFocus])
 
   useEffect(() => {
-    const handleControlChange = (event: KeyboardEvent): void => {
-      setControlPressed(event.ctrlKey)
+    let pressed = false
+    const updateControlPressed = (next: boolean): void => {
+      if (pressed === next) return
+      pressed = next
+      setControlPressed(next)
     }
-    const handleWindowBlur = (): void => setControlPressed(false)
+    const handleControlChange = (event: KeyboardEvent): void => {
+      updateControlPressed(event.ctrlKey)
+    }
+    const handleWindowBlur = (): void => updateControlPressed(false)
 
     window.addEventListener('keydown', handleControlChange)
     window.addEventListener('keyup', handleControlChange)
@@ -2083,29 +2072,31 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const handleMessageChange = (event: React.ChangeEvent<HTMLTextAreaElement>): void => {
     const nextMessage = event.currentTarget.value
     setMessage(nextMessage)
-    setFileMention(getFileMentionAtCaret(nextMessage, event.currentTarget.selectionStart))
-    setSkillMention(getSkillMentionAtCaret(nextMessage, event.currentTarget.selectionStart))
+    updateMessageMentions(event.currentTarget)
     setActiveFileMentionIndex(0)
     setActiveSkillMentionIndex(0)
   }
 
-  const handleMessageSelect = (event: React.SyntheticEvent<HTMLTextAreaElement>): void => {
-    const textarea = event.currentTarget
-    const nextFileMention = getFileMentionAtCaret(textarea.value, textarea.selectionStart)
-    const nextSkillMention = getSkillMentionAtCaret(textarea.value, textarea.selectionStart)
-    const fileMentionChanged =
-      nextFileMention?.start !== fileMention?.start ||
-      nextFileMention?.end !== fileMention?.end ||
-      nextFileMention?.query !== fileMention?.query
-    const skillMentionChanged =
-      nextSkillMention?.start !== skillMention?.start ||
-      nextSkillMention?.end !== skillMention?.end ||
-      nextSkillMention?.query !== skillMention?.query
+  const updateMessageMentions = (textarea: HTMLTextAreaElement): void => {
+    const collapsed = textarea.selectionStart === textarea.selectionEnd
+    const nextFileMention = collapsed
+      ? getFileMentionAtCaret(textarea.value, textarea.selectionStart)
+      : null
+    const nextSkillMention = collapsed
+      ? getSkillMentionAtCaret(textarea.value, textarea.selectionStart)
+      : null
+    if (!composerMentionsEqual(nextFileMention, fileMention)) {
+      setFileMention(nextFileMention)
+      setActiveFileMentionIndex(0)
+    }
+    if (!composerMentionsEqual(nextSkillMention, skillMention)) {
+      setSkillMention(nextSkillMention)
+      setActiveSkillMentionIndex(0)
+    }
+  }
 
-    setFileMention(nextFileMention)
-    setSkillMention(nextSkillMention)
-    if (fileMentionChanged) setActiveFileMentionIndex(0)
-    if (skillMentionChanged) setActiveSkillMentionIndex(0)
+  const handleMessageSelect = (event: React.SyntheticEvent<HTMLTextAreaElement>): void => {
+    updateMessageMentions(event.currentTarget)
   }
 
   const handleSelectFileMention = (file: AppFileTreeFile): void => {
