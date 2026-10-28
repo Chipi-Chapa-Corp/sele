@@ -101,6 +101,12 @@ import {
 import type { AccountAuthorizationSession } from './components/AccountDialog'
 import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
+import {
+  getChatBookmarkKey,
+  readHideBookmarkedChats,
+  useBookmarkedChatKeys,
+  writeHideBookmarkedChats
+} from './chatBookmarks'
 import { getChatWriteAccessPresentation } from './chatWriteAccess'
 import { type ChatListGroupData } from './components/ChatListGroup'
 import { ChatSubagentList } from './components/ChatSubagentList'
@@ -454,6 +460,9 @@ export const useWorkspaceController = () => {
     useState<PinnedRecentChatReferencesByChat>(readStoredPinnedRecentChatReferences)
   const [recentlyOpenedFilesByWorkspace, setRecentlyOpenedFilesByWorkspace] =
     useState<RecentlyOpenedFilesByWorkspace>(readStoredRecentlyOpenedFiles)
+  const bookmarkedChatKeys = useBookmarkedChatKeys()
+  const [showOnlyBookmarkedChats, setShowOnlyBookmarkedChats] = useState(false)
+  const [hideBookmarkedChats, setHideBookmarkedChats] = useState(readHideBookmarkedChats)
   const [chatTurnWindow, setChatTurnWindow] = useState<ChatTurnWindow | null>(null)
   const [chatTurnPageLoadDirection, setChatTurnPageLoadDirection] =
     useState<ChatTurnPageLoadDirection | null>(null)
@@ -3480,16 +3489,39 @@ export const useWorkspaceController = () => {
     },
     [searchTerms, nativeSidebarSearchKeys]
   )
+  const isBookmarkedChat = useCallback(
+    (chat: ProviderChat): boolean =>
+      bookmarkedChatKeys.has(getChatBookmarkKey(chat.providerId, chat.id)),
+    [bookmarkedChatKeys]
+  )
   const filteredChats = useMemo(() => {
-    if (searchTerms.length === 0) return chats
+    const bookmarkFilteredChats = showOnlyBookmarkedChats
+      ? chats.filter(isBookmarkedChat)
+      : hideBookmarkedChats
+        ? chats.filter((chat) => !isBookmarkedChat(chat))
+        : chats
+    if (searchTerms.length === 0) return bookmarkFilteredChats
     const matching = new Map(
-      chats.filter(matchesChatSearch).map((chat) => [getChatKey(chat), chat])
+      bookmarkFilteredChats.filter(matchesChatSearch).map((chat) => [getChatKey(chat), chat])
     )
     for (const chat of sidebarSearch.chats) {
+      if (
+        (showOnlyBookmarkedChats && !isBookmarkedChat(chat)) ||
+        (!showOnlyBookmarkedChats && hideBookmarkedChats && isBookmarkedChat(chat))
+      )
+        continue
       if (!matching.has(getChatKey(chat))) matching.set(getChatKey(chat), chat)
     }
     return [...matching.values()]
-  }, [chats, matchesChatSearch, searchTerms, sidebarSearch.chats])
+  }, [
+    chats,
+    isBookmarkedChat,
+    matchesChatSearch,
+    searchTerms,
+    hideBookmarkedChats,
+    showOnlyBookmarkedChats,
+    sidebarSearch.chats
+  ])
   const projectRecordsByCwd = useMemo(
     () => new Map(projects.map((project) => [project.cwd, project])),
     [projects]
@@ -6030,6 +6062,11 @@ export const useWorkspaceController = () => {
     handleChatDropdownSettingChange,
     handleChatUsageDisplayChange,
     groupChatsByProject: chatGroupingPreference === 'grouped',
+    hideBookmarkedChats,
+    handleHideBookmarkedChatsChange: (hide) => {
+      setHideBookmarkedChats(hide)
+      writeHideBookmarkedChats(hide)
+    },
     handleGroupChatsByProjectChange: (enabled) => {
       const preference = enabled ? 'grouped' : 'ungrouped'
       setChatGroupingPreference(preference)
@@ -6415,6 +6452,8 @@ export const useWorkspaceController = () => {
           )
       },
       importedChatGroup,
+      showOnlyBookmarkedChats,
+      handleToggleBookmarkFilter: () => setShowOnlyBookmarkedChats((current) => !current),
       handleImportedChat: (providerId: ProviderId, summary: ProviderChatUpdateSummary): void => {
         const chat = getChatFromUpdateSummary(providerId, summary, null, false)
         setChats((current) => mergeChats(current, [chat]))

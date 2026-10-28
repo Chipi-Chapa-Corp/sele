@@ -9,7 +9,16 @@ import type { ChatImportPreview } from '../../../../shared/chatArchive'
 import { providerApi } from '../../providerApi'
 import { ChatImportDialog } from '../../components/ChatImportDialog'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import { Download, LoaderCircle, MessageSquare, Search, SquarePen, X } from 'lucide-react'
+import {
+  Bookmark,
+  BookmarkOff,
+  Download,
+  LoaderCircle,
+  MessageSquare,
+  Search,
+  SquarePen,
+  X
+} from 'lucide-react'
 import { Button } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { ChatSidebarLoadingState } from '../../components/AppStatusStates'
@@ -19,6 +28,8 @@ type ChatSidebarProps = WorkspaceController['chatSidebar']
 export function ChatSidebar(props: ChatSidebarProps): ReactElement {
   const {
     handleImportedChat,
+    showOnlyBookmarkedChats,
+    handleToggleBookmarkFilter,
     importedChatGroup,
     chats,
     chromeControlTheme,
@@ -120,6 +131,22 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
                   )
                 }
               />
+              <Button
+                theme={chromeControlTheme}
+                aria-label={
+                  showOnlyBookmarkedChats ? 'Show all chats' : 'Show only bookmarked chats'
+                }
+                aria-pressed={showOnlyBookmarkedChats}
+                title={showOnlyBookmarkedChats ? 'Show all chats' : 'Show only bookmarked chats'}
+                callback={handleToggleBookmarkFilter}
+                icon={
+                  showOnlyBookmarkedChats ? (
+                    <Bookmark aria-hidden="true" />
+                  ) : (
+                    <BookmarkOff aria-hidden="true" />
+                  )
+                }
+              />
             </div>
             <div className="chat-home__actions-right">
               <Button
@@ -170,7 +197,11 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
         {loadState === 'error' && <p className="chat__status">Unable to load chats.</p>}
         {loadState === 'ready' && !hasVisibleGroups && !sidebarSearch.loading && (
           <p className="chat__status">
-            {searchQuery.trim() ? 'No matching chats.' : 'No chats found.'}
+            {searchQuery.trim()
+              ? 'No matching chats.'
+              : showOnlyBookmarkedChats
+                ? 'No bookmarked chats.'
+                : 'No chats found.'}
           </p>
         )}
         {sidebarSearch.error && (

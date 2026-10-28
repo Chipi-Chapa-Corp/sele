@@ -1,5 +1,7 @@
 import { isNoProjectChat, isNoProjectCwd } from '../../../shared/noProject'
 import {
+  Bookmark,
+  BookmarkOff,
   Check,
   Folder,
   FolderKanban,
@@ -45,6 +47,7 @@ import { Dropdown } from './Dropdown'
 import { providerApi } from '../providerApi'
 import { useChatTerminalStatus } from '../useChatTerminalActivity'
 import { chatTerminalActivity } from '../chatTerminalActivity'
+import { getChatBookmarkKey, setChatBookmarked, useBookmarkedChatKeys } from '../chatBookmarks'
 
 type ChatListItemProps = {
   chat: ProviderChat
@@ -147,6 +150,9 @@ export const ChatListItem = memo(function ChatListItem({
   approvalDecisionInFlight = null
 }: ChatListItemProps) {
   const terminalActivity = useChatTerminalStatus(`${chat.providerId}:${chat.id}`)
+  const bookmarkedChatKeys = useBookmarkedChatKeys()
+  const bookmarkKey = getChatBookmarkKey(chat.providerId, chat.id)
+  const bookmarked = bookmarkedChatKeys.has(bookmarkKey)
   const [exporting, setExporting] = useState(false)
   const [exportResult, setExportResult] = useState<string | null>(null)
   const exportChat = async (): Promise<void> => {
@@ -541,6 +547,12 @@ export const ChatListItem = memo(function ChatListItem({
             }
             disabled={exporting}
             menuActions={[
+              {
+                id: 'bookmark',
+                label: bookmarked ? 'Remove bookmark' : 'Bookmark',
+                icon: bookmarked ? <BookmarkOff /> : <Bookmark />,
+                callback: () => setChatBookmarked(bookmarkKey, !bookmarked)
+              },
               {
                 id: 'pin',
                 label: chat.pinned ? 'Unpin' : 'Pin',
