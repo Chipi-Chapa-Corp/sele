@@ -343,7 +343,8 @@ test('OpenCode sidebar previews request bounded tails without hydrating conversa
           data: Array.from({ length: limit }, (_, index) => ({
             info: { id: String(index) },
             parts: []
-          }))
+          })),
+          response: new Response()
         }
       }
     }

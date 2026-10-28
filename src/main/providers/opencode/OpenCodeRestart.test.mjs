@@ -106,7 +106,7 @@ const fixture = (messages, { title = defaultTitle, status } = {}) => {
   return { adapter, requests, session, client }
 }
 
-test('restart restores an unfinished turn as stopped and keeps its original prompt name', async () => {
+test('restart restores a stopped turn without reading history to recover a default name', async () => {
   const messages = [user('first', 'Original conversation name')]
   for (let index = 0; index < 20; index++) {
     messages.push(assistant(`answer-${index}`, 1200, 'stop'))
@@ -115,19 +115,19 @@ test('restart restores an unfinished turn as stopped and keeps its original prom
   messages.push(assistant('interrupted'))
   const { adapter, requests } = fixture(messages)
   const { chats } = await adapter.getChats()
-  assert.equal(chats[0].title, 'Original conversation name')
+  assert.equal(chats[0].title, defaultTitle)
   assert.equal(chats[0].lastTurnOutcome, 'stopped')
   assert.equal(chats[0].status, null)
-  assert.ok(requests.length > 1, 'name recovery follows history pagination to the original prompt')
+  assert.equal(requests.length, 1, 'default names must not trigger full history loading')
   requests.length = 0
   assert.equal((await adapter.getChats()).chats[0].title, chats[0].title)
-  assert.equal(requests.length, 1, 'later sidebar refreshes reuse the recovered name')
+  assert.equal(requests.length, 1, 'later sidebar refreshes stay bounded')
   assert.equal(requests[0].limit, 8)
 
   const state = adapter.states.get('chat')
   Object.assign(state, { messages, messagesHydrated: true })
   const detail = adapter.createChatDetailFromState(state)
-  assert.equal(detail.title, chats[0].title)
+  assert.equal(detail.title, 'Original conversation name')
   assert.equal(detail.lastTurnOutcome, 'stopped')
   assert.equal(detail.items.at(-1).status, 'stopped')
   assert.equal(

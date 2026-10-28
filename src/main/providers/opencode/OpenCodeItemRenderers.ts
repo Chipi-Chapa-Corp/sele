@@ -519,7 +519,7 @@ export const renderOpenCodeChatItems = (
   return items
 }
 
-const classifyOpenCodeTurnRecord = (
+export const classifyOpenCodeTurnRecord = (
   message: OpenCodeMessageWithParts
 ): 'start' | 'content' | 'ignore' => {
   if (message.info.role === 'user') {
