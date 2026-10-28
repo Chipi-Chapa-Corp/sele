@@ -8,7 +8,7 @@ import ts from 'typescript'
 import { getOpenCodePermissionRules } from './OpenCodePermissions.ts'
 import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks.ts'
 import {
-  applyOpenCodeMessageEvent,
+  queueOpenCodeMessageEvent,
   parseOpenCodeSessionEvent,
   reconcileOpenCodeMessageSnapshot
 } from './OpenCodeEvents.ts'
@@ -46,7 +46,7 @@ const fixture = () => {
     getOpenCodeUsageLimitMessage,
     getOpenCodePermissionRules,
     parseOpenCodeSessionEvent,
-    applyOpenCodeMessageEvent,
+    queueOpenCodeMessageEvent,
     reconcileOpenCodeMessageSnapshot,
     createPromptParts: async (text) => [{ type: 'text', text }],
     parseOpenCodeModelId: () => ({}),

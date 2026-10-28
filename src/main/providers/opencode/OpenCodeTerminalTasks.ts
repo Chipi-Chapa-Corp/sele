@@ -46,7 +46,7 @@ export const createOpenCodeTerminalTasks = (now = Date.now) => {
       if (!current()) return []
       // A new assistant step supersedes an abandoned tool record, even if the old
       // record was never finalized. Never pin old messages and poll them forever.
-      const message = [...messages].reverse().find((message) => message.info.role === 'assistant')
+      const message = messages.findLast((message) => message.info.role === 'assistant')
       if (
         !message ||
         message.info.role !== 'assistant' ||

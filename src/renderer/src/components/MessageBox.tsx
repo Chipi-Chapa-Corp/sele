@@ -882,20 +882,26 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const modelSelectionUnavailable = modelsUnavailable || modelsLoading || models.length === 0
   const unavailableModelLabel =
     modelsLoading && !modelsUnavailable ? 'Loading models…' : 'No models'
-  const modelOptions = modelSelectionUnavailable
-    ? []
-    : models.map(
-        (candidateModel): DropdownOption<ProviderModelId> => ({
-          value: candidateModel.id,
-          label: formatModelLabel(candidateModel.label),
-          menuLabel: getModelMenuLabel(
-            formatModelLabel(candidateModel.label),
-            candidateModel.isDefault
+  // Typing changes the draft, not the model catalog. Keep this work out of the
+  // synchronous input render, especially for OpenCode's large model lists.
+  const modelOptions = useMemo(
+    () =>
+      modelSelectionUnavailable
+        ? []
+        : models.map(
+            (candidateModel): DropdownOption<ProviderModelId> => ({
+              value: candidateModel.id,
+              label: formatModelLabel(candidateModel.label),
+              menuLabel: getModelMenuLabel(
+                formatModelLabel(candidateModel.label),
+                candidateModel.isDefault
+              ),
+              description: candidateModel.description || undefined,
+              icon: <ProviderIcon providerId={providerId} aria-hidden="true" />
+            })
           ),
-          description: candidateModel.description || undefined,
-          icon: <ProviderIcon providerId={providerId} aria-hidden="true" />
-        })
-      )
+    [modelSelectionUnavailable, models, providerId]
+  )
   const displayedModelOptions = modelSelectionUnavailable
     ? [
         {

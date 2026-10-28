@@ -134,6 +134,7 @@ import type { MessageBoxQuoteRequest } from './components/MessageBox'
 import type { TerminalCommandLaunchRequest } from './components/TerminalPanel'
 import { appApi } from './appApi'
 import { shouldDisableRateLimitReset } from './accountRateLimits'
+import { nextLimitReset } from '../../shared/limitReset'
 import { browserApi } from './browserApi'
 import {
   getComparableChatPreview,
@@ -4648,20 +4649,25 @@ export const useWorkspaceController = () => {
       icon: chatApprovalModeIcons[mode.id]
     }))
   ]
-  const forceModelOptions: DropdownOption<AppChatDropdownSettings['forceModel']>[] = [
-    {
-      value: appChatManualDropdownValue,
-      label: 'Manual',
-      description: 'Use the model selected manually in the chat.',
-      icon: <MessageSquare aria-hidden="true" />
-    },
-    ...models.map((candidateModel) => ({
-      value: candidateModel.id,
-      label: formatModelLabel(candidateModel.label),
-      description: candidateModel.description || undefined,
-      icon: <Bot aria-hidden="true" />
-    }))
-  ]
+  // Catalogs can contain hundreds of models. Streaming renders must not rebuild
+  // their JSX (including development stack traces) for a closed settings dialog.
+  const forceModelOptions = useMemo<DropdownOption<AppChatDropdownSettings['forceModel']>[]>(
+    () => [
+      {
+        value: appChatManualDropdownValue,
+        label: 'Manual',
+        description: 'Use the model selected manually in the chat.',
+        icon: <MessageSquare aria-hidden="true" />
+      },
+      ...models.map((candidateModel) => ({
+        value: candidateModel.id,
+        label: formatModelLabel(candidateModel.label),
+        description: candidateModel.description || undefined,
+        icon: <Bot aria-hidden="true" />
+      }))
+    ],
+    [models]
+  )
   const forceReasoningOptions: DropdownOption<AppChatDropdownSettings['forceReasoning']>[] = [
     {
       value: appChatManualDropdownValue,
@@ -6229,6 +6235,13 @@ export const useWorkspaceController = () => {
     motionChatKey: selectedChatKey,
     authenticationRequired,
     availableRateLimitResets: accountUsage?.rateLimitResetCredits?.availableCount ?? 0,
+    limitResetsAt:
+      nextLimitReset(
+        accountUsage?.rateLimits.filter((limit) => limit.usedPercent >= 100) ?? [],
+        Date.now(),
+        selectedEffectiveModel?.usageScope
+      )?.resetsAt ?? null,
+    onQueueLimitReset: handleQueueLimitReset,
     canEditOwnMessages,
     continuePrompt: effectiveAppSettings.chat.continuePrompt,
     stoppedTurnActionDisabled,

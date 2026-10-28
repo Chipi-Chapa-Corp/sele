@@ -6,6 +6,7 @@ import ts from 'typescript'
 import { reconcileProviderRecords } from './ProviderConversationEngine.ts'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './opencode/OpenCodeHistory.ts'
 import { reconcileOpenCodeMessageSnapshot } from './opencode/OpenCodeEvents.ts'
+import { getOpenCodeUsageLimitMessage } from './opencode/OpenCodeUsageLimit.ts'
 
 const adapterHarness = (provider, name, methods, globals = {}) => {
   const source = ts.createSourceFile(
@@ -182,6 +183,7 @@ const openCodeHarness = (state, client) => {
       'refreshStateNow',
       'getChatWindow',
       'getChatWindowForItem',
+      'getSubagents',
       'getSubagent',
       'getChats'
     ],
@@ -189,6 +191,7 @@ const openCodeHarness = (state, client) => {
       requireData: (result) => result.data,
       forEachOpenCodeHistoryMessage,
       loadOpenCodeMessages,
+      getOpenCodeUsageLimitMessage,
       reconcileOpenCodeMessageSnapshot,
       isOneShotSession: () => false,
       isDefaultOpenCodeTitle: () => false,
@@ -204,6 +207,8 @@ const openCodeHarness = (state, client) => {
     sessionDiscoveries: new Map(),
     refreshes: new WeakMap(),
     stateChecks: new WeakMap(),
+    pendingMessageStore: { restore: async () => [] },
+    restorePendingMessages: () => {},
     getClientEntry: async () => ({ client, container: null }),
     createChatDetailFromState: (current) => ({ count: current.messages.length }),
     reportMessageTokenUsage: () => {},
@@ -216,6 +221,69 @@ const openCodeHarness = (state, client) => {
   })
   return adapter
 }
+
+test('OpenCode tree polling never hydrates the streaming parent transcript', async () => {
+  const state = openCodeState()
+  const child = { id: 'child', directory: '/tmp', time: { updated: 1 } }
+  let statuses = 0
+  let trees = 0
+  const adapter = openCodeHarness(state, {
+    session: {
+      get: async () => assert.fail('tree polling does not need parent metadata checks'),
+      messages: async () => assert.fail('tree polling must not read parent history'),
+      status: async () => {
+        statuses++
+        return { data: { child: { type: 'busy' } } }
+      }
+    }
+  })
+  adapter.loadSubagentSessions = async (_client, session) => {
+    assert.equal(session.id, 'chat')
+    trees++
+    return [child]
+  }
+  adapter.pendingMessageStore.restore = async () =>
+    assert.fail('tree polling needs no queue restore')
+  for (let revision = 1; revision <= 50; revision++) {
+    state.session = { ...state.session, time: { updated: revision } }
+    state.active = true
+    state.messagesDirty = true
+    const agents = await adapter.getSubagents('chat')
+    assert.equal(agents[0].id, 'child')
+  }
+  assert.equal(trees, 50)
+  assert.equal(statuses, 50)
+  assert.equal(state.messagesHydrated, false)
+})
+
+test('OpenCode tree discovery loads an unknown or event-only parent identity without its messages', async () => {
+  for (const eventOnly of [false, true]) {
+    const state = openCodeState()
+    const session = state.session
+    const adapter = openCodeHarness(state, {
+      session: { status: async () => ({ data: {} }) }
+    })
+    if (eventOnly) state.session = null
+    else adapter.states.clear()
+    let discoveries = 0
+    adapter.findSession = async () => {
+      discoveries++
+      return session
+    }
+    adapter.rememberSession = (session) => {
+      state.session = session
+      adapter.states.set(session.id, state)
+      return state
+    }
+    adapter.loadSubagentSessions = async (_client, session) => {
+      assert.equal(session.id, 'chat')
+      return []
+    }
+    await Promise.all([adapter.getSubagents('chat'), adapter.getSubagents('chat')])
+    assert.equal(discoveries, 1)
+    assert.equal(state.messagesHydrated, false)
+  }
+})
 
 test('OpenCode navigation hydrates once, then detects external changes with session metadata', async () => {
   const messages = Array.from({ length: 10_000 }, (_, index) => ({

@@ -75,6 +75,26 @@ test('only shells in the current unfinished assistant step of a busy execution c
   }
 })
 
+test('finding the live assistant step does not copy or scan its historical prefix', async () => {
+  const tracker = createOpenCodeTerminalTasks(() => 0)
+  let visits = 0
+  const messages = new Proxy([...Array(10_000).fill(null), reply(1, [shell(2)])], {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) visits++
+      return Reflect.get(target, key, receiver)
+    }
+  })
+  assert.deepEqual(
+    await tracker.read(
+      'chat',
+      async () => ({ type: 'busy' }),
+      async () => messages
+    ),
+    ['shell-2']
+  )
+  assert.equal(visits, 1)
+})
+
 test('idle, missing and retry statuses never turn transcript records into background tasks', async () => {
   for (const status of [{ type: 'idle' }, undefined, { type: 'retry' }]) {
     const f = fixture()

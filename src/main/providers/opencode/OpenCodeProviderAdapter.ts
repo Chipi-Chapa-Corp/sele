@@ -4,6 +4,7 @@ import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
 import { encodeOpenCodeHistory, importOpenCodeHistory } from './OpenCodeHistoryImport'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './OpenCodeHistory'
+import { getOpenCodeContextUsage } from './OpenCodeContextUsage'
 import {
   raceLinkedChatCancellation,
   requireLinkedChatSummary,
@@ -68,7 +69,6 @@ import {
   type ProviderSourceOptions,
   type ProviderSubagent,
   type ProviderSubagentDetail,
-  type ProviderTokenUsageBreakdown,
   type ProviderTurnOptions,
   type ProviderStartChatOptions,
   type ProviderUpdateAvailability,
@@ -137,7 +137,8 @@ import { OpenCodeServerClient } from './OpenCodeServerClient'
 import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks'
 import { getOpenCodeUpdateAvailability, updateOpenCodeProvider } from './OpenCodeProviderUpdate'
 import {
-  applyOpenCodeMessageEvent,
+  queueOpenCodeMessageEvent,
+  forEachOpenCodeEvent,
   parseOpenCodeSessionEvent,
   reconcileOpenCodeMessageSnapshot
 } from './OpenCodeEvents'
@@ -351,47 +352,6 @@ const getSelectedSkillsSystemPrompt = (
     .map((skill) => skill.name)
     .join(', ')}.`
 }
-
-const getTokenBreakdown = (
-  message: OpenCodeMessageWithParts | undefined
-): ProviderTokenUsageBreakdown => {
-  if (message?.info.role !== 'assistant') {
-    return {
-      totalTokens: 0,
-      inputTokens: 0,
-      cachedInputTokens: 0,
-      outputTokens: 0,
-      reasoningOutputTokens: 0
-    }
-  }
-  const tokens = message.info.tokens
-  const cachedInputTokens = tokens.cache.read
-  return {
-    totalTokens: tokens.input + tokens.output + tokens.reasoning + cachedInputTokens,
-    inputTokens: tokens.input,
-    cachedInputTokens,
-    outputTokens: tokens.output,
-    reasoningOutputTokens: tokens.reasoning
-  }
-}
-
-const sumBreakdowns = (breakdowns: ProviderTokenUsageBreakdown[]): ProviderTokenUsageBreakdown =>
-  breakdowns.reduce(
-    (total, value) => ({
-      totalTokens: total.totalTokens + value.totalTokens,
-      inputTokens: total.inputTokens + value.inputTokens,
-      cachedInputTokens: total.cachedInputTokens + value.cachedInputTokens,
-      outputTokens: total.outputTokens + value.outputTokens,
-      reasoningOutputTokens: total.reasoningOutputTokens + value.reasoningOutputTokens
-    }),
-    {
-      totalTokens: 0,
-      inputTokens: 0,
-      cachedInputTokens: 0,
-      outputTokens: 0,
-      reasoningOutputTokens: 0
-    }
-  )
 
 const getMessagePreview = (messages: OpenCodeMessageWithParts[]): string => {
   const items = renderOpenCodeChatItems(messages.slice(-8), { active: false, stopped: false })
@@ -953,6 +913,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           await entry.client.session.status({ directory: state.directory }, { throwOnError: true })
         )[chatId],
       async () => {
+        // The event stream already maintains hydrated messages. Re-fetching even eight
+        // records can repeatedly decode megabytes of tool output for every active chat.
+        if (state.messagesHydrated && !state.messagesDirty && state.client === entry.client)
+          return state.messages
         const before = state.messages
         const messages = await this.loadMessages(entry.client, session, 8)
         return reconcileOpenCodeMessageSnapshot(before, state.messages, messages)
@@ -1065,7 +1029,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     chatId: string,
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderSubagent[]> => {
-    const state = await this.ensureState(chatId, options.container)
+    // Discovery needs the parent identity, not its transcript. A streaming session's
+    // updated timestamp otherwise makes every tree poll hydrate all history again.
+    const state = await this.ensureState(chatId, options.container, false)
     const client = (await this.getClientEntry(state.container)).client
     const [sessions, statuses] = await Promise.all([
       this.loadSubagentSessions(client, state.session!),
@@ -1932,10 +1898,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         signal: entry.eventAbortController.signal,
         throwOnError: true
       })
-      for await (const event of events.stream) {
-        if (entry.eventAbortController.signal.aborted) return
+      await forEachOpenCodeEvent(events.stream, entry.eventAbortController.signal, (event) =>
         this.handleEvent(entry, event)
-      }
+      )
     } catch (error) {
       console.error(
         entry.eventAbortController.signal.aborted
@@ -1962,6 +1927,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const event = parseOpenCodeSessionEvent(globalEvent)
     if (!event) return
     const { type, properties, sessionID } = event
+    // These payloads never feed the conversation model. Turning file-diff/todo
+    // notifications into transcript revisions needlessly rebuilds every active chat
+    // and can invalidate an overlapping HTTP reconciliation.
+    if (type === 'session.diff' || type === 'todo.updated') return
     const sessionInfo = isRecord(properties.info) ? (properties.info as unknown as Session) : null
     // Title and one-shot sessions count too: they use the same stored credentials.
     if (type === 'message.updated')
@@ -2003,9 +1972,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const state = this.getOrCreateState(sessionID, directory, entry.container)
     state.eventRevision += 1
     if (type.startsWith('message.')) {
-      const messages = applyOpenCodeMessageEvent(state.messages, type, properties)
-      if (messages) state.messages = messages
-      else {
+      if (!queueOpenCodeMessageEvent(state, type, properties)) {
         state.messagesDirty = true
         state.historyInvalidationRevision = (state.historyInvalidationRevision ?? 0) + 1
       }
@@ -2276,7 +2243,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   private ensureState = async (
     chatId: string,
-    container?: AppContainerTarget | null
+    container?: AppContainerTarget | null,
+    includeMessages = true
   ): Promise<OpenCodeChatState> => {
     const storedContainer =
       container === undefined
@@ -2284,7 +2252,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         : normalizeStoredContainer(container)
     const entry = await this.getClientEntry(storedContainer)
     let state = this.states.get(chatId)
-    if (!state) {
+    if (!state?.session) {
       const key = `${getContainerTargetKey(entry.container)}:${chatId}`
       let discovery = this.sessionDiscoveries.get(key)
       if (!discovery) {
@@ -2295,6 +2263,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       }
       state = await discovery
     }
+    if (!includeMessages) return state
     this.restorePendingMessages(state, await this.pendingMessageStore.restore(chatId))
     if (!state.messagesHydrated || state.messagesDirty || state.client !== entry.client) {
       await this.refreshState(state, entry.client)
@@ -2530,27 +2499,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     })
   }
 
-  private getContextUsage = (state: OpenCodeChatState): ProviderChatContextUsage | null => {
-    const assistantMessages = state.messages.filter((message) => message.info.role === 'assistant')
-    const lastMessage = assistantMessages.at(-1)
-    if (!lastMessage) return null
-    const last = getTokenBreakdown(lastMessage)
-    const total = sumBreakdowns(assistantMessages.map(getTokenBreakdown))
-    const model =
-      lastMessage.info.role === 'assistant'
-        ? `${lastMessage.info.providerID}/${lastMessage.info.modelID}`
-        : null
-    return {
-      usedTokens: last.totalTokens,
-      maxTokens: model ? (this.modelContextLimits.get(model) ?? null) : null,
-      total,
-      last,
-      updatedAt:
-        lastMessage.info.role === 'assistant'
-          ? (lastMessage.info.time.completed ?? lastMessage.info.time.created)
-          : Date.now()
-    }
-  }
+  private getContextUsage = (state: OpenCodeChatState): ProviderChatContextUsage | null =>
+    getOpenCodeContextUsage(state, this.modelContextLimits)
 
   private createChatDetail = async (
     state: OpenCodeChatState,

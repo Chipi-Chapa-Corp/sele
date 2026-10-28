@@ -7,7 +7,7 @@ import ts from 'typescript'
 import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks.ts'
 import { reconcileProviderRecords } from '../ProviderConversationEngine.ts'
 import {
-  applyOpenCodeMessageEvent,
+  queueOpenCodeMessageEvent,
   parseOpenCodeSessionEvent,
   reconcileOpenCodeMessageSnapshot
 } from './OpenCodeEvents.ts'
@@ -46,7 +46,7 @@ const fixture = () => {
     getOpenCodeUsageLimitMessage,
     clearTimeout,
     parseOpenCodeSessionEvent,
-    applyOpenCodeMessageEvent,
+    queueOpenCodeMessageEvent,
     reconcileOpenCodeMessageSnapshot,
     reconcileProviderRecords,
     requireData: (result) => result.data,

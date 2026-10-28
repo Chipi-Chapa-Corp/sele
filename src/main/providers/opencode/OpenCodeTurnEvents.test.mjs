@@ -6,7 +6,7 @@ import test from 'node:test'
 import ts from 'typescript'
 import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks.ts'
 import {
-  applyOpenCodeMessageEvent,
+  queueOpenCodeMessageEvent,
   parseOpenCodeSessionEvent,
   reconcileOpenCodeMessageSnapshot
 } from './OpenCodeEvents.ts'
@@ -35,7 +35,7 @@ const fixture = () => {
     console: { ...console, error() {} },
     getOpenCodeUsageLimitMessage,
     parseOpenCodeSessionEvent,
-    applyOpenCodeMessageEvent,
+    queueOpenCodeMessageEvent,
     reconcileOpenCodeMessageSnapshot,
     getContainerTargetKey: () => 'host',
     isRecord: (value) => !!value && typeof value === 'object' && !Array.isArray(value),
@@ -100,6 +100,42 @@ const reply = (fields = {}) => ({
     time: { created: 1 },
     ...fields
   }
+})
+
+test('actual adapter batches token bursts before publishing message snapshots', () => {
+  const { adapter, state, send } = fixture()
+  let visits = 0
+  state.messages = new Proxy(
+    Array.from({ length: 10_000 }, (_, index) => ({
+      info: { id: String(index), role: 'assistant', time: { created: 1 } },
+      parts: [{ id: 'text', type: 'text', text: '' }]
+    })),
+    {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/.test(key)) visits++
+        return Reflect.get(target, key, receiver)
+      }
+    }
+  )
+  const properties = { messageID: '9999', partID: 'text', field: 'text', delta: 'x' }
+  send('message.part.delta', properties)
+  const initialVisits = visits
+  for (let index = 0; index < 500; index++) send('message.part.delta', properties)
+  assert.equal(visits, initialVisits, 'event ingestion must not revisit historical records')
+  assert.equal(state.messages.at(-1).parts[0].text.length, 501)
+  let scheduled = 0
+  adapter.scheduleUpdate = () => scheduled++
+  const revision = state.eventRevision
+  for (let index = 0; index < 100; index++) {
+    send('session.diff', { diff: [] })
+    send('todo.updated', { todos: [] })
+  }
+  assert.equal(scheduled, 0, 'non-transcript notifications do not schedule transcript publications')
+  assert.equal(
+    state.eventRevision,
+    revision,
+    'unrelated notifications cannot invalidate history reads'
+  )
 })
 
 // Event order recorded from OpenCode 1.19.3 for a request the provider rejected.

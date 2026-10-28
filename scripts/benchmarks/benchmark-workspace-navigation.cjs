@@ -4,6 +4,7 @@
 // Set SELE_BENCHMARK_PROFILE to a path to save the active-chat CPU profile and bundle.
 // Set SELE_BENCHMARK_DEV=1 for development JSX and StrictMode, matching npm run dev.
 // Set SELE_BENCHMARK_TOOL_PAYLOAD=1 to include a large structured tool result.
+// Set SELE_BENCHMARK_TYPING=1 with active chats to type through five mixed-provider streams.
 // Run through isolated-gui. Never starts provider processes or opens real profiles.
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -12,6 +13,12 @@ const providerId = process.env.SELE_BENCHMARK_PROVIDER || 'codex'
 const historySections = Math.max(1, Number(process.env.SELE_BENCHMARK_HISTORY_SECTIONS) || 40)
 const activeChats = process.env.SELE_BENCHMARK_ACTIVE_CHATS === '1'
 const devBuild = process.env.SELE_BENCHMARK_DEV === '1'
+const typingCheck = process.env.SELE_BENCHMARK_TYPING === '1'
+const mixedProviders = typingCheck
+const modelCount = Math.max(
+  1,
+  Number(process.env.SELE_BENCHMARK_MODEL_COUNT) || (typingCheck ? 300 : 1)
+)
 if (activeChats) process.env.SELE_BENCHMARK_RICH_HISTORY = '1'
 if (!process.versions.electron) {
   ;(async () => {
@@ -141,6 +148,17 @@ if (!process.versions.electron) {
           {
             name: 'fixture-workers',
             setup(build) {
+              if (process.env.SELE_BENCHMARK_UNCACHED_CATALOGS === '1') {
+                build.onLoad({ filter: /(?:useWorkspaceController|MessageBox)\.tsx$/ }, (args) => ({
+                  contents: require('node:child_process').execFileSync(
+                    'git',
+                    ['show', 'HEAD:' + path.relative(root, args.path)],
+                    { encoding: 'utf8' }
+                  ),
+                  loader: 'tsx',
+                  resolveDir: path.dirname(args.path)
+                }))
+              }
               build.onLoad({ filter: /ChatDetailItem\.tsx$/ }, async (args) => ({
                 contents: (await fs.readFile(args.path, 'utf8')).replace(
                   '  const messageRef = useRef<HTMLDivElement>(null)',
@@ -217,8 +235,8 @@ if (!process.versions.electron) {
         window.fixtureCanvasTransfers=0;
         const transfer=HTMLCanvasElement.prototype.transferControlToOffscreen;
         if(transfer)HTMLCanvasElement.prototype.transferControlToOffscreen=function(...args){fixtureCanvasTransfers++;return transfer.apply(this,args)};
-        window.fixtureChats=Array.from({length:${chatCount}},(_,i)=>({id:String(i),providerId:'${providerId}',title:'Empty conversation '+i,
-          preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0||(${activeChats}&&i<3)?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
+        window.fixtureChats=Array.from({length:${chatCount}},(_,i)=>({id:String(i),providerId:${mixedProviders}&&[2,6].includes(i)?'opencode':'${providerId}',title:'Empty conversation '+i,
+          preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0||(${activeChats}&&[1,2,${typingCheck ? '5,6' : ''}].includes(i))?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
           cwdKind:'directory',projectCwd:null,branchName:null,worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,
           done:false,seenUpdatedAt:now,purpose:null,container:{kind:'host'}}));
         window.fixtureCalls=[];
@@ -243,16 +261,17 @@ if (!process.versions.electron) {
         const detail=id=>({...fixtureChats.find(chat=>chat.id===id),revision:window.fixtureRevision??1,capabilities:{editMessages:true,activeMessages:true},
           pendingApproval:null,pendingUserInput:null,contextUsage:null,items:history(id),subagents:[],turnCount:${richHistory ? 10 : 0},itemsStartTurnIndex:0});
         const defaults={
-          getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'${providerId}',available:true}]}),
+          getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'${providerId}',available:true},...(${mixedProviders}?[{providerId:'opencode',available:true}]:[])]}),
           // IPC returns fresh objects; sharing the fixture's source objects hides list reloads.
-          getChats:()=>({chats:fixtureChats.map(chat=>({...chat,container:{...chat.container}})),nextCursor:null}),
+          getChats:provider=>({chats:fixtureChats.filter(chat=>chat.providerId===provider).map(chat=>({...chat,container:{...chat.container}})),nextCursor:null}),
           getChat:(_provider,id)=>{const view=structuredClone(detail(id));
             fixtureLastDetails.set(id,view);return view},
           markChatDone:(_provider,id,done=true)=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done,doneAt:done?Date.now():null});return {...chat}},
           markChatsDone:ids=>ids.map(id=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done:true,doneAt:Date.now()});return {...chat}}),
           markChatSeen:(_provider,id,seenUpdatedAt)=>({...fixtureChats.find(chat=>chat.id===id),seenUpdatedAt}),
-          getModels:()=>[{id:'fixture',label:'Fixture model',description:'Fixture',isDefault:true,supportedReasoningEfforts:[],defaultReasoningEffort:'medium'}],
+          getModels:()=>Array.from({length:${modelCount}},(_,i)=>({id:i?'fixture-'+i:'fixture',get label(){window.fixtureModelLabelReads=(window.fixtureModelLabelReads??0)+1;return 'Fixture model '+i},description:'Fixture',isDefault:i===0,supportedReasoningEfforts:[],defaultReasoningEffort:'medium'})),
           getAccounts:()=>({available:true,unavailableMessage:null,accounts:[]}),getUsage:()=>usage,
+          getConnections:()=>[],getTokenUsage:()=>({chat:null}),
           getDefaultCwd:()=>'/fixture/project-0',getWindowState:()=>({isMaximized:false}),getAppUpdate:()=>null,
           getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
           getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
@@ -270,12 +289,12 @@ if (!process.versions.electron) {
           revision++;
           window.fixtureRevision=revision;
           if(${activeChats}){
-            for(const id of ['1','2']){
+            for(const id of ['1','2',${typingCheck ? "'5','6'" : ''}]){
               const items=history(id);histories.set(id,items.map((item,index)=>index===items.length-1?
                 {...item,content:item.content+'\\n\\nLive '+id+' update '+revision+'.'}:item));
               const chat=fixtureChats.find(chat=>chat.id===id);chat.updatedAt=Date.now();
               const snapshot=detail(id);
-              window.fixtureChatListener?.({providerId:'${providerId}',chatId:id,sequence:revision*10+Number(id),turnCompleted:false,
+              window.fixtureChatListener?.({providerId:chat.providerId,chatId:id,sequence:revision*10+Number(id),turnCompleted:false,
                 detail:fixtureViewedChat===id?{...snapshot,baseRevision:null,baseItemIds:null,
                   itemIds:snapshot.items.map(item=>item.id),changedItems:snapshot.items}:null,
                 summary:{...chat,revision,currentActivity:null,previewLength:0}});
@@ -392,6 +411,84 @@ if (!process.versions.electron) {
       await run('new Promise(resolve=>setTimeout(resolve,250))')
       await run('window.backgroundUpdates=window.beginBackgroundUpdates()')
       win.webContents.debugger.attach('1.3')
+      if (typingCheck) {
+        await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {
+          enabled: true
+        })
+        await win.webContents.debugger.sendCommand('Performance.enable')
+        await win.webContents.debugger.sendCommand('Profiler.enable')
+        await win.webContents.debugger.sendCommand('Profiler.start')
+        const samples = []
+        const text = 'Typing a prompt while five conversations stream should stay responsive. '
+        for (const [chatId, prefix] of [
+          ['1', ''],
+          ['2', ''],
+          ['1', 'A longer draft. '.repeat(1000)]
+        ]) {
+          await run(`window.measureNavigation(${JSON.stringify(chatId)})`)
+          await run(
+            `document.querySelector('#message-input').focus(); window.frameGaps=[];window.longTasks=[];window.fixtureMessageRenders=[]`
+          )
+          const beforeText = await run(`document.querySelector('#message-input').value`)
+          if (prefix)
+            await win.webContents.debugger.sendCommand('Input.insertText', { text: prefix })
+          const labelReadsBefore = await run('window.fixtureModelLabelReads??0')
+          const before = await win.webContents.debugger.sendCommand('Performance.getMetrics')
+          const delays = []
+          for (const char of text) {
+            const start = performance.now()
+            await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+              type: 'char',
+              text: char
+            })
+            await run('new Promise(resolve=>requestAnimationFrame(resolve))')
+            delays.push(performance.now() - start)
+            await new Promise((resolve) => setTimeout(resolve, 20))
+          }
+          const after = await win.webContents.debugger.sendCommand('Performance.getMetrics')
+          const readMetric = (result, name) =>
+            result.metrics.find((metric) => metric.name === name)?.value ?? 0
+          const observed = await run(
+            `({text:document.querySelector('#message-input').value,focused:document.activeElement===document.querySelector('#message-input'),working:document.querySelectorAll('.chat-list-item--working').length,maxFrameGap:Math.max(...window.frameGaps),longTasks:window.longTasks,messageRenders:window.fixtureMessageRenders.length,nodes:document.querySelectorAll('*').length})`
+          )
+          assert.equal(observed.text, beforeText + prefix + text)
+          assert.equal(observed.focused, true)
+          assert.equal(observed.working, 5)
+          const sample = {
+            chatId,
+            draftLength: observed.text.length,
+            modelLabelReads: (await run('window.fixtureModelLabelReads??0')) - labelReadsBefore,
+            maxInputToFrameMs: Math.max(...delays),
+            p95InputToFrameMs: delays.sort((a, b) => a - b)[Math.floor(delays.length * 0.95)],
+            layoutMs:
+              (readMetric(after, 'LayoutDuration') - readMetric(before, 'LayoutDuration')) * 1000,
+            scriptMs:
+              (readMetric(after, 'ScriptDuration') - readMetric(before, 'ScriptDuration')) * 1000,
+            ...observed,
+            text: undefined
+          }
+          samples.push(sample)
+        }
+        const { profile } = await win.webContents.debugger.sendCommand('Profiler.stop')
+        const output = process.env.SELE_BENCHMARK_PROFILE
+        if (output) {
+          await fs.mkdir(path.dirname(output), { recursive: true })
+          await fs.writeFile(output, JSON.stringify(profile))
+          await fs.copyFile(path.join(directory, 'fixture.js'), output + '.fixture.js')
+          await fs.writeFile(output + '.json', JSON.stringify(samples, null, 2))
+        }
+        console.log(JSON.stringify({ typing: true, devBuild, samples, errors }, null, 2))
+        for (const sample of samples)
+          assert.ok(
+            sample.modelLabelReads < text.length * 10,
+            'typing and streaming must not repeatedly traverse the model catalog: ' +
+              JSON.stringify(sample)
+          )
+        assert.deepEqual(errors, [])
+        await run('clearInterval(window.backgroundUpdates);window.unmountFixture()')
+        app.exit(0)
+        return
+      }
       // Compare the actual navigation's browser layout work with and without a
       // sidebar boundary. Row-render counts alone miss this regression: even
       // memoized rows participate in a parent's intrinsic-size calculation.

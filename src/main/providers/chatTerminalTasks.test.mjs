@@ -4,7 +4,10 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { createOpenCodeTerminalTasks } from './opencode/OpenCodeTerminalTasks.ts'
-import { reconcileOpenCodeMessageSnapshot } from './opencode/OpenCodeEvents.ts'
+import {
+  forEachOpenCodeEvent,
+  reconcileOpenCodeMessageSnapshot
+} from './opencode/OpenCodeEvents.ts'
 
 const harness = (provider, globals = {}, methods = ['getChatTerminalTasks']) => {
   const name = { codex: 'Codex', claude: 'Claude', copilot: 'Copilot', opencode: 'OpenCode' }[
@@ -31,6 +34,7 @@ const harness = (provider, globals = {}, methods = ['getChatTerminalTasks']) => 
       getContainerTargetKey: (target) => target?.name ?? 'host',
       requireData: (result) => result.data,
       reconcileOpenCodeMessageSnapshot,
+      forEachOpenCodeEvent,
       ...globals
     }
   )
@@ -203,6 +207,86 @@ test('OpenCode verifies server liveness before reading the current shell step', 
   assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
   adapter.clientEntries.clear()
   await assert.rejects(adapter.getChatTerminalTasks('chat'), /unavailable/)
+})
+
+test('five hydrated OpenCode streams reuse live messages across repeated terminal polls', async () => {
+  const adapter = harness('opencode')
+  let statuses = 0
+  const client = {
+    session: {
+      status: async () => {
+        statuses++
+        return {
+          data: Object.fromEntries(
+            Array.from({ length: 5 }, (_, id) => [String(id), { type: 'busy' }])
+          )
+        }
+      }
+    }
+  }
+  adapter.clientEntries = new Map([
+    [
+      'host',
+      {
+        client,
+        terminalTasks: createOpenCodeTerminalTasks(() => 0)
+      }
+    ]
+  ])
+  adapter.states = new Map(
+    Array.from({ length: 5 }, (_, id) => [
+      String(id),
+      {
+        session: { id: String(id) },
+        directory: '/project',
+        container: null,
+        client,
+        messagesHydrated: true,
+        messagesDirty: false,
+        messages: [
+          {
+            info: { id: 'reply', role: 'assistant', time: { created: 1 } },
+            parts: [
+              {
+                type: 'tool',
+                tool: 'bash',
+                callID: 'shell-' + id,
+                state: { status: 'running', time: { start: 2 } }
+              }
+            ]
+          }
+        ]
+      }
+    ])
+  )
+  adapter.loadMessages = async () =>
+    assert.fail('hydrated streams must not fetch tool output again')
+  for (let poll = 0; poll < 10; poll++) {
+    for (const [id, state] of adapter.states) {
+      const ids = await adapter.getChatTerminalTasks(id)
+      assert.deepEqual(Array.from(ids), poll < 5 ? ['shell-' + id] : [])
+      if (poll === 4) state.messages = [{ ...state.messages[0], parts: [] }]
+    }
+  }
+  assert.equal(statuses, 50, 'reuse must retain the server liveness check')
+
+  // Unknown history or a replacement client still needs the bounded HTTP fallback.
+  let reads = 0
+  adapter.loadMessages = async (_client, _session, limit) => {
+    assert.equal(limit, 8)
+    reads++
+    return []
+  }
+  const state = adapter.states.get('0')
+  state.messagesDirty = true
+  await adapter.getChatTerminalTasks('0')
+  state.messagesDirty = false
+  state.client = {}
+  await adapter.getChatTerminalTasks('0')
+  state.client = client
+  state.messagesHydrated = false
+  await adapter.getChatTerminalTasks('0')
+  assert.equal(reads, 3)
 })
 
 test('OpenCode never pins an abandoned message after later assistant steps', async () => {

@@ -26,17 +26,50 @@ async function openChat(sele, chat) {
 module.exports = async function navigation({ runner, sele, page, mock, providers }) {
   const tag = `nav${Date.now().toString(36).slice(-4)}`
   const chats = []
+  const chatCount = Math.max(providers.length * 2, Number(process.env.SELE_E2E_CHAT_COUNT) || 0)
 
   await runner.check('[navigation] start working chats on every provider', async () => {
-    for (const provider of providers)
-      for (let index = 0; index < 2; index++) {
-        const marker = `${tag}-${provider}-${index}`
-        // Each chat keeps working (streaming tool calls) until released.
-        const id = await sele.startChat(provider, `${marker} #hold ${marker}`)
-        await sele.waitActive()
-        chats.push({ id, provider, marker })
+    for (let index = 0; index < chatCount; index++) {
+      const provider = providers[index % providers.length]
+      const marker = `${tag}-${provider}-${index}`
+      // Each chat keeps working (streaming tool calls) until released.
+      const id = await sele.startChat(provider, `${marker} #hold ${marker}`)
+      await sele.waitActive()
+      chats.push({ id, provider, marker })
+    }
+    assert.equal(chats.length, chatCount)
+  })
+
+  await runner.check('[navigation] typing while chats work', async (context) => {
+    assert.equal(chats.length, chatCount)
+    await page.startRecording()
+    const text = 'Typing while other providers run.'
+    for (const provider of providers) {
+      await openChat(
+        sele,
+        chats.find((chat) => chat.provider === provider)
+      )
+      await page.fillComposer('')
+      const latencies = []
+      for (const char of text) {
+        const start = performance.now()
+        await page.cdp.send('Input.dispatchKeyEvent', { type: 'char', text: char })
+        await page.eval('new Promise(resolve=>requestAnimationFrame(resolve))')
+        latencies.push(performance.now() - start)
+        await sleep(20)
       }
-    assert.equal(chats.length, providers.length * 2)
+      assert.equal(await page.eval('window.__sele.composer().value'), text)
+      assert.equal(await page.eval('document.activeElement === window.__sele.composer()'), true)
+      context.metric(
+        `${provider}.typingP95`,
+        Math.round(percentile(latencies, 0.95)),
+        budgets.p95Frame
+      )
+      context.metric(`${provider}.typingMax`, Math.round(Math.max(...latencies)), budgets.maxFrame)
+      await page.fillComposer('')
+    }
+    frames(context, await page.stopRecording())
+    context.metric('workingChats', chats.length)
   })
 
   await runner.check('[navigation] switching chats fast while they work', async (context) => {
