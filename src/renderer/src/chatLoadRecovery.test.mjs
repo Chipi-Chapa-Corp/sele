@@ -72,7 +72,7 @@ const setup = (providerId, initial = null) => {
     resolve = yes
     reject = no
   })
-  const state = { detail: initial, loadState: initial ? 'ready' : 'loading', errors: [] }
+  const state = { detail: initial, loadState: initial ? 'ready' : 'loading', errors: [], seen: [] }
   const key = `${providerId}:chat`
   const context = vm.createContext({
     selectedProviderId: providerId,
@@ -97,7 +97,7 @@ const setup = (providerId, initial = null) => {
     shouldPreserveOptimisticTurnUntilUserMessage: () => false,
     isActiveChatStatus: () => false,
     cacheRecentChatDetail: () => {},
-    markChatSeenAt: () => {},
+    markChatSeenAt: (...args) => state.seen.push(args),
     resetChatSearch: () => {},
     getProviderChatKey: (provider, id) => `${provider}:${id}`,
     setSelectedChat: () => {},
@@ -130,6 +130,24 @@ const savedPreview = () => ({
   historyPreview: true,
   writeAccess: 'checking',
   capabilities: { editMessages: false, activeMessages: false }
+})
+
+test('reopening a snapshot marks its observed update seen without advancing to the wall clock', async () => {
+  const snapshot = { ...detail(2), updatedAt: 5000 }
+  const h = setup('codex', snapshot)
+  h.startLoad()
+  h.resolve({ ...structuredClone(snapshot), revision: 3 })
+  await settle()
+  assert.deepEqual(h.state.seen, [['codex', 'chat', 5000]])
+})
+
+test('a loaded snapshot cannot mark less seen than the latest observed sidebar update', async () => {
+  const h = setup('codex')
+  h.context.selectedChatUpdatedAtRef.current = 6000
+  h.startLoad()
+  h.resolve({ ...detail(2), updatedAt: 5000 })
+  await settle()
+  assert.deepEqual(h.state.seen, [['codex', 'chat', 6000]])
 })
 
 test('SQLite preview displays while the provider is pending and a fresh low revision replaces it', async () => {

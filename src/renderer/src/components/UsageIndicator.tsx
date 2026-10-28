@@ -27,6 +27,7 @@ import {
   getTokenCost
 } from '../../../shared/tokenUsage'
 import { providerApi } from '../providerApi'
+import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import {
   groupAccountRateLimits,
   shouldDisableRateLimitReset,
@@ -296,6 +297,21 @@ const formatResetTime = (resetsAt: number | null): string | null => {
     hour: 'numeric',
     minute: '2-digit'
   }).format(new Date(timestamp))
+}
+
+const LimitResetCountdown = ({ resetsAt }: { resetsAt: number | null }): ReactElement | null => {
+  const now = useSemanticDateNow()
+  if (!resetsAt) return null
+
+  const timestamp = resetsAt > 1_000_000_000_000 ? resetsAt : resetsAt * 1_000
+  const reset = formatSemanticLexicalDateDifference(timestamp, { now, compact: true })
+  if (!reset) return null
+
+  return (
+    <time className="message-box__limit-reset" dateTime={reset.dateTime} title={reset.title}>
+      {timestamp > now ? reset.label.replace(/^in /, 'for ') : 'Reset pending'}
+    </time>
+  )
 }
 
 const formatDurationSeconds = (value: string | null | undefined): string => {
@@ -597,7 +613,6 @@ export function UsageIndicator({
 
   const renderRateLimit = (limit: AccountRateLimit, key: string): ReactNode => {
     const usedPercent = clampPercent(limit.usedPercent)
-    const resetTime = formatResetTime(limit.resetsAt)
     const windowLabel = formatWindowLabel(limit.windowMinutes)
     const limitLabel = limit.displayLabel ?? `${limit.label} ${windowLabel}`
 
@@ -605,7 +620,7 @@ export function UsageIndicator({
       <div className="message-box__limit" key={key}>
         <span className="message-box__limit-label">{limitLabel}</span>
         <UsageStrip usedPercent={usedPercent} />
-        {resetTime && <span className="message-box__limit-reset">{resetTime}</span>}
+        <LimitResetCountdown resetsAt={limit.resetsAt} />
       </div>
     )
   }

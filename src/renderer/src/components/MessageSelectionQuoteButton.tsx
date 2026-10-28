@@ -133,7 +133,12 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       if (isEditingTarget(target)) return
       selectingWithPointer =
         event.isPrimary && event.button === 0 && Boolean(container?.contains(target))
-      if (event.isPrimary && event.button === 0) window.getSelection()?.removeAllRanges()
+      // Leave the current range in place during native selection gestures.
+      // Chromium needs it for Shift+click, word selection and selected-text drags;
+      // clearing it in pointerdown runs before its mousedown selection handling.
+      if (!selectingWithPointer && event.isPrimary && event.button === 0) {
+        window.getSelection()?.removeAllRanges()
+      }
     }
 
     const handlePointerUp = (): void => {

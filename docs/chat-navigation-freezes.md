@@ -1,5 +1,43 @@
 # Chat navigation freezes — 2026-10-17
 
+## Repeated read-marker writes — 2026-10-28
+
+A live six-switch capture recorded selection frames at 13–43 ms but later frame
+gaps of 59–77 ms without renderer LongTasks. Main-process profiling identified
+SQLite writes as substantial synchronous work. Non-pausing SQL timing probes
+then recorded 18 read-marker upserts in six switches, some taking about 20 ms.
+
+Selection, authoritative refresh, and departure were all marking the conversation
+read. Refresh/departure advanced the marker to wall-clock time even when the
+observed conversation had not changed. They now use the observed update timestamp.
+The renderer shares pending writes and retains a bounded set of acknowledged
+timestamps; new updates still persist, failures remain retryable, and older
+acknowledgements cannot regress the saved timestamp.
+
+After renderer hot reload, a six-switch replay of the same pair produced zero
+read-marker writes. Some frame gaps near 50 ms remained; this does not prove all
+stutter is eliminated. Main-process history refresh and durable-view persistence
+still contribute work. The probes and breakpoints were removed after capture.
+`npm run test:chat-read-state` covers duplicate writes, retries, bounds, out-of-order
+acknowledgements, and observed timestamps rather than wall-clock advancement.
+
+## Structured tool results — 2026-10-27
+
+The renderer's snapshot comparison used one shared 20,000-value budget. A large
+structured tool result could exhaust it, preventing unchanged messages later in
+the transcript from recovering their cached identities. A private workspace
+fixture reproduced 19 unnecessary message renders when reopening an unchanged
+conversation containing an 8,000-record tool result.
+
+Each item now has a small 64-value allowance in addition to the shared budget.
+Large payload comparisons remain bounded, while later ordinary messages can
+still reuse their identities. Unit tests check exhaustion and changed text. Run
+`npm run test:chat-snapshot-items`; for the full workspace fixture, run with
+`SELE_BENCHMARK_ACTIVE_CHATS=1 SELE_BENCHMARK_TOOL_PAYLOAD=1` through isolated-gui.
+The fixed fixture records zero cached-target message renders and zero Markdown
+requests. These synthetic software-rendered results do not establish the cause
+of every live-session switching stall; that still needs a live capture.
+
 ## Current implementation — 2026-10-26
 
 The sections below record successive findings, including experiments that were

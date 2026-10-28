@@ -1103,7 +1103,14 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         } else {
           publish()
         }
-        markChatSeenAt(selectedProviderId, selectedChatId, Date.now())
+        markChatSeenAt(
+          selectedProviderId,
+          selectedChatId,
+          Math.max(
+            loadedDetail.updatedAt ?? selectedChatUpdatedAtRef.current ?? Date.now(),
+            selectedChatUpdatedAtRef.current ?? 0
+          )
+        )
       })
       .catch((error) => {
         providerFinished = true

@@ -34,14 +34,17 @@
   content-visibility: visible;
 }
 
-/* Containment also makes each turn a stacking context. Interactive overlays
-   that can extend past their turn must stay above the following turn. */
-.chat-detail__turn:has(
-  .unified-diff__review-form,
-  .unified-diff__review-overlay,
-  .message-selection-quote
-) {
+/* Review forms can extend beyond the turn's paint containment. */
+.chat-detail__turn:has(.unified-diff__review-form, .unified-diff__review-overlay) {
   content-visibility: visible;
+}
+
+/* The quote button fits within overflow-clip-margin. Keep the selected turn's
+   containment stable while Chromium handles a native text-selection gesture;
+   toggling it for every double click rebuilds layout around the live range.
+   Turns are flex items, so z-index raises the overlay without removing containment. */
+.chat-detail__turn:has(.message-selection-quote) {
+  z-index: 1;
 }
 
 .chat-detail__messages-header {

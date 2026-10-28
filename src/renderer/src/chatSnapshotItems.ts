@@ -6,8 +6,14 @@ import type { ProviderChatDetail } from '../../shared/provider'
 const sameValue = (first: unknown, second: unknown, budget: { left: number }): boolean => {
   const pending: [unknown, unknown][] = [[first, second]]
   const visited = new WeakMap<object, object>()
+  // Reserve a small allowance for each item. A large tool result can exhaust
+  // the shared deep-comparison budget without invalidating every later message.
+  let allowance = 64
+  const remaining = (): number => allowance + budget.left
   while (pending.length) {
-    if (--budget.left < 0) return false
+    if (allowance > 0) allowance--
+    else if (budget.left > 0) budget.left--
+    else return false
     const [a, b] = pending.pop()!
     if (Object.is(a, b)) continue
     if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
@@ -15,7 +21,7 @@ const sameValue = (first: unknown, second: unknown, budget: { left: number }): b
     if (visited.get(a) === b) continue
     visited.set(a, b)
     if (Array.isArray(a) && Array.isArray(b)) {
-      if (a.length !== b.length || a.length > budget.left) return false
+      if (a.length !== b.length || a.length > remaining()) return false
       for (let i = 0; i < a.length; i++) pending.push([a[i], b[i]])
     } else {
       const prototype = Object.getPrototypeOf(a)
@@ -25,7 +31,7 @@ const sameValue = (first: unknown, second: unknown, budget: { left: number }): b
       )
         return false
       const keys = Object.keys(a)
-      if (keys.length !== Object.keys(b).length || keys.length > budget.left) return false
+      if (keys.length !== Object.keys(b).length || keys.length > remaining()) return false
       for (const key of keys) {
         if (!Object.hasOwn(b, key)) return false
         pending.push([(a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]])

@@ -3,6 +3,7 @@
 // Set SELE_BENCHMARK_ACTIVE_CHATS=1 to switch rich conversations while both stream.
 // Set SELE_BENCHMARK_PROFILE to a path to save the active-chat CPU profile and bundle.
 // Set SELE_BENCHMARK_DEV=1 for development JSX and StrictMode, matching npm run dev.
+// Set SELE_BENCHMARK_TOOL_PAYLOAD=1 to include a large structured tool result.
 // Run through isolated-gui. Never starts provider processes or opens real profiles.
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -143,7 +144,7 @@ if (!process.versions.electron) {
               build.onLoad({ filter: /ChatDetailItem\.tsx$/ }, async (args) => ({
                 contents: (await fs.readFile(args.path, 'utf8')).replace(
                   '  const messageRef = useRef<HTMLDivElement>(null)',
-                  '  window.fixtureMessageRenders.push(item.id);\n  const messageRef = useRef<HTMLDivElement>(null)'
+                  "  if (item.type === 'message') window.fixtureMessageRenders.push(item.id);\n  const messageRef = useRef<HTMLDivElement>(null)"
                 ),
                 loader: 'tsx',
                 resolveDir: path.dirname(args.path)
@@ -226,8 +227,15 @@ if (!process.versions.electron) {
         window.fixtureRowRenders=[];window.fixtureMotionRenders=0;window.fixtureGroupRenders=[];
         const usage={updatedAt:now,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,rateLimits:[],rateLimitResetCredits:null,errors:[]};
         const histories=new Map();
+        const toolOutput=${process.env.SELE_BENCHMARK_TOOL_PAYLOAD === '1'}
+          ? Array.from({length:8000},(_,i)=>({i,value:i})) : null;
         const history=id=>histories.get(id)??(${richHistory} ? Array.from({length:10},(_,i)=>[
           {id:id+':user-'+i,type:'message',role:'user',content:'Inspect '+id+' task '+i},
+          ...(i===0&&toolOutput&&['3','4'].includes(id)?[{id:id+':work',type:'working',status:'worked',items:[{
+            id:id+':tool',type:'tool',toolId:'fixture',status:'finished',activity:'read',icon:null,
+            label:'Read fixture records',command:null,cwd:null,stdout:null,diffs:[],images:[],
+            backgroundSessionId:null,finishedBackgroundSessionId:null,rawInput:null,rawOutput:toolOutput,
+            compact:true}]}]:[]),
           {id:id+':answer-'+i,type:'message',role:'assistant',content:Array.from({length:${historySections}},(_,n)=>
             '### Section '+id+'-'+i+'-'+n+'\\n\\nFindings with **important text** and [source](/fixture/source'+n+'.ts:10).\\n\\n'+
             String.fromCharCode(96).repeat(3)+'ts\\nconst result'+n+' = {value: "'+id+'-'+i+'", ready: true};\\n'+String.fromCharCode(96).repeat(3)+'\\n\\n').join('')}
@@ -522,7 +530,11 @@ if (!process.versions.electron) {
         const warm = results.slice(0, 6).filter((result) => result.reusedTurns !== null)
         assert.equal(warm.length, 4, 'exercise both running chats repeatedly before LRU eviction')
         for (const result of warm) {
-          assert.equal(result.reusedTurns, 10, 'streaming chats reuse every mounted turn')
+          assert.equal(
+            result.reusedTurns,
+            10,
+            'streaming chats reuse every mounted turn: ' + JSON.stringify(result)
+          )
           assert.equal(result.mixedChatFrames, 0, 'never paint the other running chat')
           assert.equal(result.blankFrames, 0, 'warm streaming chats stay readable')
           assert.equal(result.selected, result.destination)
@@ -536,7 +548,11 @@ if (!process.versions.electron) {
             assert.equal(
               result.destinationMessageRenders,
               0,
-              'equivalent IPC history must not rerender cached rows: ' + JSON.stringify({destination:result.destination,renderedMessageIds:result.renderedMessageIds})
+              'equivalent IPC history must not rerender cached rows: ' +
+                JSON.stringify({
+                  destination: result.destination,
+                  renderedMessageIds: result.renderedMessageIds
+                })
             )
             assert.equal(
               result.destinationMarkdownRequests,

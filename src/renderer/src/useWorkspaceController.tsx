@@ -143,6 +143,7 @@ import {
 } from './collapsedProjectGroups'
 import { applyFontAppearancePreferences } from './fontAppearance'
 import { providerApi } from './providerApi'
+import { createChatSeenWriter } from './chatSeenWriter'
 import { chatOpenElsewhereMessage } from './requestError'
 import { getProjectDisplayName, renderProjectGlyph } from './projectPresentation'
 import {
@@ -366,6 +367,8 @@ import { useWorkspaceSelection } from './workspace/useWorkspaceSelection'
 import { useOpenCodeConnectionHealth } from './useOpenCodeConnectionHealth'
 import { useOpenCodeProviders } from './useOpenCodeProviders'
 import { filterOpenCodeModels } from './openCodeProviderPreferences'
+
+const persistChatSeen = createChatSeenWriter((...args) => providerApi.markChatSeen(...args))
 
 // The return type intentionally stays inferred so every view slice remains exact.
 export const useWorkspaceController = () => {
@@ -2973,9 +2976,10 @@ export const useWorkspaceController = () => {
     (providerId: ProviderId, chatId: string, seenUpdatedAt: number): void => {
       applySeenUpdatedAt(providerId, chatId, seenUpdatedAt)
 
-      void providerApi
-        .markChatSeen(providerId, chatId, seenUpdatedAt)
-        .then((metadata) => applyChatMetadata([metadata]))
+      void persistChatSeen(providerId, chatId, seenUpdatedAt)
+        .then((metadata) => {
+          if (metadata) applyChatMetadata([metadata])
+        })
         .catch((error: unknown) => {
           console.error('Unable to persist the chat seen state.', error)
           // Keep the optimistic in-memory seen state if persistence fails.
@@ -3005,8 +3009,10 @@ export const useWorkspaceController = () => {
         selectedChat.providerId,
         selectedChat.id,
         Math.max(
-          Date.now(),
           selectedChat.updatedAt,
+          chatDetailRef.current?.id === selectedChat.id
+            ? (chatDetailRef.current.updatedAt ?? 0)
+            : 0,
           selectedChatUpdatedAtRef.current ?? 0,
           cacheEntry?.updatedAt ?? 0
         )
@@ -3022,7 +3028,7 @@ export const useWorkspaceController = () => {
       options: ApplyChatDetailOptions = {}
     ): void => {
       applyChatDetail(providerId, detail, options)
-      markChatSeenAt(providerId, detail.id, Date.now())
+      markChatSeenAt(providerId, detail.id, detail.updatedAt ?? Date.now())
     },
     [applyChatDetail, markChatSeenAt]
   )

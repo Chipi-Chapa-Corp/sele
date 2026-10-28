@@ -60,3 +60,25 @@ test('exotic values and bounded comparison never claim unequal payloads are equa
   const copy = structuredClone(big)
   assert.equal(reuseChatSnapshotItems(big, copy).items[0], copy.items[0])
 })
+
+test('exhausting the tool comparison budget still reuses unchanged messages after it', () => {
+  const old = detail([
+    {
+      id: 'step',
+      type: 'working',
+      status: 'worked',
+      items: [{ id: 'tool', rawOutput: Array.from({ length: 8000 }, (_, i) => ({ i, value: i })) }]
+    },
+    message('answer', 'A long answer '.repeat(10000)),
+    message('edited', 'Before')
+  ])
+  const next = structuredClone(old)
+  next.items[2].content = 'After'
+  const result = reuseChatSnapshotItems(old, next)
+  assert.ok(result.items[0] === next.items[0], 'oversized payload comparison stays bounded')
+  assert.ok(
+    result.items[1] === old.items[1],
+    'the payload must not invalidate the following answer'
+  )
+  assert.ok(result.items[2] === next.items[2], 'edited text is still authoritative')
+})
